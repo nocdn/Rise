@@ -1,0 +1,136 @@
+import AppKit
+import WebKit
+
+/// Routes precise trackpad events only over visible pages. WebKit's large native
+/// history slide is disabled; ordinary wheel/vertical/page horizontal scrolling
+/// still goes to WebKit. A short isolated DOM probe protects carousels/editors.
+@MainActor final class HistorySwipeController {
+    static let world = WKContentWorld.world(name: "Rise.HistorySwipe")
+    private weak var window: BrowserWindow?
+    private let pageAt: (NSEvent) -> WKWebView?
+    private let feedback: (HistoryDirection?, Double, Bool, Bool?) -> Void
+    var thresholdClick: () -> Void = {
+        NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
+    }
+    private weak var page: WKWebView?
+    private(set) var gesture = HistorySwipeState()
+    private var pending: [NSEvent] = []
+    private var probing = false, permitted = false, suppressMomentum = false
+    private var generation = 0
+    private var probeTimeout: DispatchWorkItem?
+    init(window: BrowserWindow, pageAt: @escaping (NSEvent) -> WKWebView?,
+         feedback: @escaping (HistoryDirection?, Double, Bool, Bool?) -> Void) {
+        self.window = window; self.pageAt = pageAt; self.feedback = feedback
+    }
+    @discardableResult func handle(_ event: NSEvent) -> Bool {
+        guard event.type == .scrollWheel, event.hasPreciseScrollingDeltas else { return false }
+        if !event.momentumPhase.isEmpty {
+            if probing { pending.append(event); return true }
+            let consumed = suppressMomentum
+            if event.momentumPhase.contains(.ended) { suppressMomentum = false }
+            return consumed
+        }
+        if event.phase.contains(.began) {
+            cancel()
+            guard let page = pageAt(event), page.canGoBack || page.canGoForward else { return false }
+            self.page = page; probing = true; pending = [event]
+            probe(page, at: event)
+            return true
+        }
+        if probing { pending.append(event); return true }
+        return permitted ? route(event) : false
+    }
+    private func probe(_ page: WKWebView, at event: NSEvent) {
+        let token = generation
+        let point = page.convert(event.locationInWindow, from: nil)
+        let timeout = DispatchWorkItem { [weak self] in self?.resolveProbe(false, token: token) }
+        probeTimeout = timeout
+        // A busy web process must not hold up normal scrolling.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: timeout)
+        Task { [weak self, weak page] in
+            guard let page else { self?.resolveProbe(false, token: token); return }
+            let result = try? await page.callAsyncJavaScript(Self.scrollProbe,
+                arguments: ["x": point.x, "y": point.y, "width": max(1, page.bounds.width), "height": max(1, page.bounds.height)],
+                in: nil, contentWorld: Self.world)
+            self?.resolveProbe(result as? Bool ?? false, token: token)
+        }
+    }
+    private func resolveProbe(_ allows: Bool, token: Int) {
+        guard generation == token, probing else { return }
+        probing = false; permitted = allows; probeTimeout?.cancel(); probeTimeout = nil
+        let events = pending; pending.removeAll()
+        if allows { gesture.begin() }
+        for event in events {
+            if !handleResolved(event) { window?.deliverPageScroll(event) }
+        }
+    }
+    private func handleResolved(_ event: NSEvent) -> Bool {
+        if !event.momentumPhase.isEmpty {
+            let consumed = suppressMomentum
+            if event.momentumPhase.contains(.ended) { suppressMomentum = false }
+            return consumed
+        }
+        return permitted ? route(event) : false
+    }
+    private func route(_ event: NSEvent) -> Bool {
+        guard let page else { cancel(); return false }
+        if event.phase.contains(.cancelled) || event.phase.contains(.ended) {
+            let consumed = gesture.consumesScroll, direction = gesture.direction
+            let committed = gesture.finish(cancelled: event.phase.contains(.cancelled))
+            suppressMomentum = consumed; permitted = false
+            feedback(direction, 0, false, committed != nil)
+            if let committed {
+                if committed == .back { page.goBack() } else { page.goForward() }
+            }
+            return consumed
+        }
+        guard event.phase.contains(.began) || event.phase.contains(.changed), gesture.isTracking else { return false }
+        // Undo the user's scroll preference: physical right = back, left = forward.
+        let dx = event.scrollingDeltaX * (event.isDirectionInvertedFromDevice ? 1 : -1)
+        if gesture.move(dx: Double(dx), dy: Double(event.scrollingDeltaY),
+                        canBack: page.canGoBack, canForward: page.canGoForward) { thresholdClick() }
+        if gesture.consumesScroll { feedback(gesture.direction, gesture.arrowPull, gesture.isArmed, nil) }
+        return gesture.consumesScroll
+    }
+    func cancel(for page: WKWebView) { if self.page === page { cancel() } }
+    func cancel() {
+        generation += 1; probeTimeout?.cancel(); probeTimeout = nil
+        pending.removeAll(); probing = false; permitted = false; suppressMomentum = false
+        let direction = gesture.direction
+        _ = gesture.finish(cancelled: true); page = nil
+        if let direction { feedback(direction, 0, false, false) }
+    }
+    // CSS coordinates account for WKWebView.pageZoom. Shadow DOM is traversed;
+    // iframe contents are conservatively left alone, including cross-origin ones.
+    static let scrollProbe = #"""
+    let node = document.elementFromPoint(x * innerWidth / width, y * innerHeight / height);
+    while (node?.shadowRoot) {
+        const child = node.shadowRoot.elementFromPoint(x * innerWidth / width, y * innerHeight / height);
+        if (!child || child === node) break;
+        node = child;
+    }
+    while (node) {
+        if (node.matches?.('iframe, frame, embed, object')) return false;
+        const style = getComputedStyle(node);
+        if (node.scrollWidth > node.clientWidth + 1 &&
+            /^(auto|scroll|overlay)$/.test(style.overflowX)) return false;
+        node = node.parentElement || node.getRootNode()?.host;
+    }
+    const root = document.scrollingElement;
+    return !root || root.scrollWidth <= root.clientWidth + 1 ||
+        /^(hidden|clip)$/.test(getComputedStyle(root).overflowX);
+    """#
+}
+
+@MainActor extension BrowserController {
+    func historyPage(at event: NSEvent) -> WKWebView? {
+        // Hit-testing also excludes the URL palette, find panel, and Peek controls.
+        guard window?.isKeyWindow == true else { return nil }
+        let point = root.convert(event.locationInWindow, from: nil)
+        guard let hit = root.hitTest(point) else { return nil }
+        let pages = [peekTab?.webView, selectedTab?.webView, splitTab?.webView].compactMap { $0 }
+        guard let page = pages.first(where: { $0.superview != nil && (hit === $0 || hit.isDescendant(of: $0)) }) else { return nil }
+        if let tab = tabs.first(where: { $0.webView === page }), selectedID != tab.id { select(tab.id) }
+        return page
+    }
+}

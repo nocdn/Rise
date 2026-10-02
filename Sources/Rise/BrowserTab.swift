@@ -1,0 +1,79 @@
+import AppKit
+import WebKit
+import RiseCore
+
+@MainActor final class BrowserTab: NSObject {
+    let id: UUID
+    let webView: WKWebView
+    var title: String
+    var pinned: Bool
+    var developer: Bool
+    var requestedURL: URL?
+    var observations: [NSKeyValueObservation] = []
+    var onChange: (() -> Void)?
+    var favicon: NSImage?
+    var iconHost: String?
+    var iconTask: URLSessionDataTask?
+    var thumbnail: NSImage?
+    var onThumbnailChange: (() -> Void)?
+    private var thumbnailCaptureInFlight = false
+    init(saved: SavedTab? = nil, configuration: WKWebViewConfiguration? = nil) {
+        id = saved?.id ?? UUID(); title = saved?.title ?? "New Tab"
+        pinned = saved?.pinned ?? false; developer = saved?.developer ?? false
+        requestedURL = saved.flatMap { URL(string: $0.url) }
+        let configuration = configuration ?? WKWebViewConfiguration()
+        configuration.websiteDataStore = .default()
+        webView = WKWebView(frame: .zero, configuration: configuration)
+        super.init()
+        webView.isInspectable = true; webView.allowsBackForwardNavigationGestures = false
+        webView.underPageBackgroundColor = NSColor(hex: 0xFDFCFC)
+        observations.append(webView.observe(\.title, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.changed() } })
+        observations.append(webView.observe(\.url, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.changed() } })
+        observations.append(webView.observe(\.estimatedProgress, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.onChange?() } })
+        observations.append(webView.observe(\.isLoading, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.onChange?() } })
+        observations.append(webView.observe(\.canGoBack, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.onChange?() } })
+        observations.append(webView.observe(\.canGoForward, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.onChange?() } })
+    }
+    var url: URL? { webView.url ?? requestedURL }
+    var saved: SavedTab { SavedTab(id: id, url: url?.absoluteString ?? "about:blank", title: title, pinned: pinned, developer: developer) }
+    func load(_ url: URL) {
+        requestedURL = url
+        if AddressResolver.isLocal(url) { developer = true }
+        if url.isFileURL { webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent()) }
+        else { webView.load(URLRequest(url: url)) }
+        onChange?()
+    }
+    func changed() {
+        if AddressResolver.isLocal(url) { developer = true }
+        if let value = webView.title, !value.isEmpty { title = value }
+        else if let url, url.absoluteString != "about:blank" { title = AddressResolver.displayHost(url) }
+        updateIcon(); onChange?()
+    }
+    func captureThumbnail() {
+        guard !thumbnailCaptureInFlight, webView.bounds.width > 0, webView.bounds.height > 0 else { return }
+        thumbnailCaptureInFlight = true
+        let capturedURL = url
+        let snapshot = WKSnapshotConfiguration()
+        snapshot.snapshotWidth = 320; snapshot.afterScreenUpdates = false
+        webView.takeSnapshot(with: snapshot) { [weak self] image, _ in
+            guard let self else { return }
+            self.thumbnailCaptureInFlight = false
+            guard self.url == capturedURL, let image, image.size.width > 0 else { return }
+            self.thumbnail = image; self.onThumbnailChange?()
+        }
+    }
+    func updateIcon() {
+        guard let url, let host = url.host, host != iconHost else { return }
+        iconHost = host; favicon = nil; iconTask?.cancel()
+        guard !AddressResolver.isLocal(url), let iconURL = URL(string: "\(url.scheme ?? "https")://\(host)/favicon.ico") else { return }
+        iconTask = URLSession.shared.dataTask(with: iconURL) { [weak self] data, response, _ in
+            guard let data, data.count < 1_000_000, (response as? HTTPURLResponse)?.statusCode == 200 else { return }
+            Task { @MainActor in
+                guard let self, self.iconHost == host else { return }
+                self.favicon = NSImage(data: data); self.onChange?()
+            }
+        }
+        iconTask?.resume()
+    }
+    deinit { iconTask?.cancel() }
+}
