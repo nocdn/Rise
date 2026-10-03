@@ -20,8 +20,9 @@ import RiseCore
     var isPreparingNavigation: Bool { navigationTask != nil }
     var isLoading: Bool { isPreparingNavigation || webView.isLoading }
     var needsBlockingReload = false
-    var favicon: NSImage?
-    var iconHost: String?
+    var favicon: NSImage? { didSet { faviconData = FaviconSnapshot.encode(favicon) } }
+    private(set) var faviconData: Data?
+    var iconOrigin: String?
     var iconTask: URLSessionDataTask?
     var thumbnail: NSImage?
     var onThumbnailChange: (() -> Void)?
@@ -34,6 +35,11 @@ import RiseCore
         configuration.websiteDataStore = .default()
         webView = WKWebView(frame: .zero, configuration: configuration)
         super.init()
+        if let data = saved?.faviconData, data.count <= FaviconSnapshot.maximumBytes,
+           let origin = saved?.faviconOrigin, origin == SitePermissions.origin(requestedURL),
+           let image = NSImage(data: data), image.isValid {
+            iconOrigin = origin; favicon = image; faviconData = data
+        }
         webView.isInspectable = true; webView.allowsBackForwardNavigationGestures = false
         webView.underPageBackgroundColor = NSColor(hex: 0xFDFCFC)
         observations.append(webView.observe(\.title, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.changed() } })
@@ -44,7 +50,12 @@ import RiseCore
         observations.append(webView.observe(\.canGoForward, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.onChange?() } })
     }
     var url: URL? { webView.url ?? requestedURL }
-    var saved: SavedTab { SavedTab(id: id, url: url?.absoluteString ?? "about:blank", title: title, pinned: pinned, developer: developer, customTitle: customTitle) }
+    var saved: SavedTab {
+        let origin = SitePermissions.origin(url)
+        let data = origin != nil && origin == iconOrigin ? faviconData : nil
+        return SavedTab(id: id, url: url?.absoluteString ?? "about:blank", title: title, pinned: pinned, developer: developer, customTitle: customTitle,
+                        faviconData: data, faviconOrigin: data == nil ? nil : origin)
+    }
     func rename(_ text: String) {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return }
@@ -93,14 +104,18 @@ import RiseCore
         }
     }
     func updateIcon() {
-        guard let url, let host = url.host, host != iconHost else { return }
-        iconHost = host; favicon = nil; iconTask?.cancel()
-        guard !AddressResolver.isLocal(url), let iconURL = URL(string: "\(url.scheme ?? "https")://\(host)/favicon.ico") else { return }
+        let origin = SitePermissions.origin(url)
+        guard origin != iconOrigin else { return }
+        iconTask?.cancel(); iconTask = nil; iconOrigin = origin; favicon = nil
+        guard let url, let origin, !AddressResolver.isLocal(url),
+              var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
+        parts.user = nil; parts.password = nil; parts.path = "/favicon.ico"; parts.query = nil; parts.fragment = nil
+        guard let iconURL = parts.url else { return }
         iconTask = URLSession.shared.dataTask(with: iconURL) { [weak self] data, response, _ in
             guard let data, data.count < 1_000_000, (response as? HTTPURLResponse)?.statusCode == 200 else { return }
             Task { @MainActor in
-                guard let self, self.iconHost == host else { return }
-                self.favicon = NSImage(data: data); self.onChange?()
+                guard let self, self.iconOrigin == origin, let image = NSImage(data: data), image.isValid else { return }
+                self.favicon = image; self.iconTask = nil; self.onChange?()
             }
         }
         iconTask?.resume()

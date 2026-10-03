@@ -7,6 +7,9 @@ final class BrowserStateTests: XCTestCase {
         let session = try JSONDecoder().decode(BrowserSession.self, from: data)
         XCTAssertEqual(session.theme, "dark")
         XCTAssertTrue(session.splitGroups.isEmpty)
+        let tabJSON = "{\"id\":\"\(UUID())\",\"url\":\"https://example.com\",\"title\":\"Example\",\"pinned\":false,\"developer\":false}"
+        let tab = try JSONDecoder().decode(SavedTab.self, from: Data(tabJSON.utf8))
+        XCTAssertNil(tab.faviconData); XCTAssertNil(tab.faviconOrigin)
     }
     func testMissingDuplicateAndOverlappingSplitMembersAreDiscarded() throws {
         let a = SavedTab(url: "about:blank", title: "A"), b = SavedTab(url: "about:blank", title: "B"), c = SavedTab(url: "about:blank", title: "C")

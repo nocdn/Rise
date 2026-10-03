@@ -2,28 +2,34 @@ import AppKit
 
 final class NewTabButton: NSButton {
     private let plus = NSImageView()
-    private let caption = label("New Tab", size: 14)
+    private let caption = TabTitleField(frame: .zero)
     private var hovered = false
     var theme = RiseTheme.neutral {
-        didSet { plus.contentTintColor = theme.muted; caption.textColor = theme.muted; updateBackground() }
+        didSet {
+            plus.contentTintColor = theme == .neutral ? .black.withAlphaComponent(0.3) : theme.muted
+            caption.textColor = theme == .neutral ? .black.withAlphaComponent(0.5) : theme.muted
+            updateBackground()
+        }
     }
     init() {
         super.init(frame: .zero)
         isBordered = false; title = ""; wantsLayer = true
-        layer?.cornerRadius = 12; layer?.cornerCurve = .continuous
-        plus.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 16, weight: .regular))
+        layer?.cornerRadius = TabAppearance.radius; layer?.cornerCurve = .continuous
+        caption.stringValue = "New Tab"
+        plus.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 12, weight: .regular))
         plus.contentTintColor = theme.muted; caption.textColor = theme.muted
         addSubview(plus); addSubview(caption)
         setAccessibilityLabel("New Tab")
         toolTip = "New Tab (⌘T)"
     }
     required init?(coder: NSCoder) { fatalError() }
+    override func draw(_ dirtyRect: NSRect) {}
     override var isFlipped: Bool { true }
     override func layout() {
         super.layout()
-        plus.frame = NSRect(x: 10, y: (bounds.height - 16)/2, width: 16, height: 16)
+        plus.frame = NSRect(x: 8, y: (bounds.height - 16)/2, width: 16, height: 16)
         let height = caption.intrinsicContentSize.height
-        caption.frame = NSRect(x: 34, y: (bounds.height - height)/2, width: max(0, bounds.width - 44), height: height)
+        caption.frame = NSRect(x: 30, y: (bounds.height - height)/2, width: max(0, bounds.width - 38), height: height)
     }
     override func updateTrackingAreas() {
         super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
@@ -32,5 +38,5 @@ final class NewTabButton: NSButton {
     override func mouseEntered(with event: NSEvent) { hovered = true; updateBackground() }
     override func mouseExited(with event: NSEvent) { resetHover() }
     func resetHover() { hovered = false; updateBackground() }
-    private func updateBackground() { layer?.backgroundColor = (hovered ? theme.hoveredTab : .clear).cgColor }
+    private func updateBackground() { layer?.backgroundColor = (hovered ? TabAppearance.hoverFill(theme) : .clear).cgColor }
 }

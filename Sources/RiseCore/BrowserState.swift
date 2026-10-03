@@ -36,9 +36,12 @@ public struct SavedTab: Codable, Equatable {
     public var pinned: Bool
     public var developer: Bool
     public var customTitle: String?
-    public init(id: UUID = UUID(), url: String, title: String, pinned: Bool = false, developer: Bool = false, customTitle: String? = nil) {
+    public var faviconData: Data?
+    public var faviconOrigin: String?
+    public init(id: UUID = UUID(), url: String, title: String, pinned: Bool = false, developer: Bool = false, customTitle: String? = nil, faviconData: Data? = nil, faviconOrigin: String? = nil) {
         self.id = id; self.url = url; self.title = title; self.pinned = pinned; self.developer = developer
         self.customTitle = customTitle
+        self.faviconData = faviconData; self.faviconOrigin = faviconOrigin
     }
 }
 public struct SplitTabGroup: Codable, Equatable {

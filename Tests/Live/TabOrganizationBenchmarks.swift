@@ -26,19 +26,19 @@ import WebKit
                 browser.window!.sendEvent(event(.leftMouseDown,point:NSPoint(x:50,y:18),view:row))
                 try await Task.sleep(for:.milliseconds(150))
                 let scale = row.layer!.presentation()!.affineTransform().a
-                check(scale < 1 && scale >= 0.99,"Native spring visibly presses down without overshoot")
+                check(abs(scale-1) < 0.001,"Holding a tab does not scale it")
                 let shadowScale = browser.sidebar.selectedTabShadow.layer!.presentation()!.affineTransform().a
-                check(abs(scale-shadowScale) < 0.002,"The selected shadow follows the same press spring")
+                check(abs(scale-shadowScale) < 0.002,"The selected shadow keeps its full size")
                 check(row.frame == initial,"Pressing leaves tab geometry unchanged")
                 browser.window!.sendEvent(event(.leftMouseDragged,point:NSPoint(x:900,y:12),view:browser.sidebar.rowsHost))
                 check(browser.tabs.map(\.id) == [b.id,c.id,a.id] && clicks == 1,"Native vertical drag commits one crossing and haptic")
-                check(row.frame.minX == 8 && row.frame.size == initial.size && b.webView === web,"Dragging keeps width, height, x-position and WebKit identity")
+                check(row.frame.minX == 6 && row.frame.size == initial.size && b.webView === web,"Dragging keeps width, height, x-position and WebKit identity")
                 try await Task.sleep(for:.milliseconds(80))
                 let moved = browser.sidebar.rows[c.id]!
                 check(moved.layer!.presentation()!.position.y != moved.layer!.position.y,"Neighbors visibly move instead of jumping")
                 browser.window!.sendEvent(event(.leftMouseUp,point:NSPoint(x:900,y:12),view:browser.sidebar.rowsHost))
                 try await Task.sleep(for:.milliseconds(600))
-                check(abs(row.layer!.presentation()!.affineTransform().a-1) < 0.001,"Press releases smoothly back to full size")
+                check(abs(row.layer!.presentation()!.affineTransform().a-1) < 0.001,"Release leaves the tab at full size")
                 let old = row.layer!.position.y
                 let d = browser.addTab(); browser.root.layoutSubtreeIfNeeded()
                 check(browser.sidebar.rows[d.id]!.frame.minY == 8,"A new tab appears immediately at the top")
@@ -54,7 +54,7 @@ import WebKit
                 editor.string = "Named workspace"
                 _ = row.control(row.titleField,textView:editor,doCommandBy:#selector(NSResponder.insertNewline(_:)))
                 check(b.customTitle == "Named workspace" && row.frame.size == initial.size,"Rename saves immediately without changing layout")
-                print("PASS: native drag routing, preserved WebKit identity, live press/shadow spring, neighbor movement, insertion/collapse and inline field editor")
+                print("PASS: native drag routing, preserved WebKit identity, no press scaling, neighbor movement, insertion/collapse and inline field editor")
                 browser.sidebar.cancelTabInteractions(); browser.saveWork?.cancel(); browser.window?.orderOut(nil); NSApp.terminate(nil)
             } catch { fputs("TAB ORGANIZATION VERIFICATION FAILED: \(error)\n",stderr); exit(1) }
         }

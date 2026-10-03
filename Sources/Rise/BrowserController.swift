@@ -136,6 +136,8 @@ import RiseCore
             theme = RiseTheme(rawValue: saved.theme) ?? .neutral
             sidebarWidth = min(360, max(200, saved.sidebarWidth))
             tabs = saved.tabs.map { configure(BrowserTab(saved: $0)) }
+            // Old sessions can fill their missing icons without loading every page.
+            tabs.forEach { $0.updateIcon() }
             splitGroups = saved.splitGroups
             selectedID = saved.selectedID.flatMap { id in tabs.contains { $0.id == id } ? id : nil } ?? tabs.first?.id
         }

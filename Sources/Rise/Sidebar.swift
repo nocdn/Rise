@@ -13,7 +13,7 @@ import RiseCore
     let scroll = NSScrollView()
     let rowsHost = FlippedView()
     // The shadow is a sibling of the scroller, so NSClipView cannot crop it.
-    let selectedTabShadow = Surface(radius: 12)
+    let selectedTabShadow = Surface(radius: TabAppearance.radius)
     var selectedTabID: UUID?
     let archiveButton: ChromeButton
     let themeButton: ChromeButton
@@ -24,7 +24,6 @@ import RiseCore
     var targetFrames: [UUID: NSRect] = [:]
     var drag: SidebarDrag?
     var dragScrollTimer: Timer?
-    var pressedRow: NSView?
     var shadowRowID: UUID?
     var crossingClick: () -> Void = { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
     var onAddress: (() -> Void)?
@@ -54,7 +53,7 @@ import RiseCore
         scroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(positionSelectedTabShadow), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
         selectedTabShadow.layer?.cornerCurve = .continuous
-        selectedTabShadow.shadow = chromeShadow(opacity: 0.09, blur: 5, offset: -1)
+        selectedTabShadow.shadow = TabAppearance.shadow(.neutral)
         selectedTabShadow.isHidden = true
         addSubview(selectedTabShadow)
         [address, copyButton, settingsButton, newTab, scroll, archiveButton, themeButton, clearButton].forEach(addSubview)
@@ -66,8 +65,8 @@ import RiseCore
     func update(tabs: [BrowserTab], selected: BrowserTab?, theme: RiseTheme, splits: [SplitTabGroup] = []) {
         fill = theme.background; gradientColors = theme.backgroundGradient; address.layer?.backgroundColor = theme.pill.cgColor
         selectedTabID = selected?.id
-        selectedTabShadow.fill = theme.selectedTab
-        selectedTabShadow.shadow = chromeShadow(opacity: 0.09, blur: 5, offset: -1, color: theme == .dark ? .white : .black)
+        selectedTabShadow.fill = TabAppearance.selectedFill(theme)
+        selectedTabShadow.shadow = TabAppearance.shadow(theme)
         newTab.theme = theme
         addressText.stringValue = AddressResolver.displayHost(selected?.url)
         let blank = selected?.url == nil || selected?.url?.absoluteString == "about:blank"
@@ -91,7 +90,6 @@ import RiseCore
                 row.onSelect = { [weak self] in self?.onSelect?(id) }
                 row.onMenu = { [weak self] event in self?.onTabMenu?(id, event) }
                 row.onRename = { [weak self] title in self?.onRename?(id, title) }
-                row.onPress = { [weak self] down, animated in self?.pressTab(id, down: down, animated: animated) }
                 row.onDragStart = { [weak self] event in self?.beginTabDrag(id, event: event) }
                 row.onDragMove = { [weak self] event in self?.moveTabDrag(event) }
                 row.onDragEnd = { [weak self] in self?.endTabDrag() }
@@ -121,9 +119,6 @@ import RiseCore
             }
         }
         if let drag, !displayedRows.contains(where: { $0 === drag.view }) { endTabDrag() }
-        if let pressedRow, !displayedRows.contains(where: { $0 === pressedRow }) {
-            TabListMotion.press(pressedRow, down: false, animated: false); self.pressedRow = nil
-        }
         needsLayout = true
         if bounds.width > 0 { layoutSubtreeIfNeeded() }
     }
@@ -146,19 +141,19 @@ import RiseCore
         copyButton.frame = NSRect(x: w-67, y: 56, width: 27, height: 24)
         settingsButton.frame = NSRect(x: w-39, y: 56, width: 27, height: 24)
         let start: CGFloat = 98
-        newTab.frame = NSRect(x: 8, y: start, width: w-16, height: 37)
+        newTab.frame = NSRect(x: TabAppearance.inset, y: start, width: w-2*TabAppearance.inset, height: TabAppearance.height)
         let scrollY = newTab.frame.maxY+8
         scroll.frame = NSRect(x: 0, y: scrollY, width: w, height: max(0, bounds.height-scrollY-44))
         var y: CGFloat = 8; targetFrames = [:]
         let time = CACurrentMediaTime()
         for (index, row) in displayedRows.enumerated() {
-            let h: CGFloat = (row as? SplitTabRow)?.rowHeight ?? ((row as? TabRow)?.developer == true ? 40 : 37)
-            let target = NSRect(x: 8, y: y, width: w-16, height: h)
+            let h: CGFloat = (row as? SplitTabRow)?.rowHeight ?? ((row as? TabRow)?.developer == true ? TabAppearance.developerHeight : TabAppearance.height)
+            let target = NSRect(x: TabAppearance.inset, y: y, width: w-2*TabAppearance.inset, height: h)
             targetFrames[orderedIDs[index]] = target
             if drag?.view !== row {
                 TabListMotion.move(row, to: target, animated: row.frame.width > 0, at: time)
             }
-            y += h+4
+            y += h+TabAppearance.spacing
         }
         rowsHost.frame = NSRect(x: 0, y: 0, width: w, height: max(y+8, scroll.bounds.height))
         archiveButton.frame = NSRect(x: 10, y: bounds.height-39, width: 28, height: 28)
@@ -177,7 +172,6 @@ import RiseCore
         if shadowRowID != canonicalID(for: row) {
             shadowRowID = canonicalID(for: row)
         }
-        TabListMotion.mirrorPress(from: row, to: selectedTabShadow)
         if let source = row.layer, let movement = source.animation(forKey: TabListMotion.movementKey) as? CABasicAnimation,
            let from = movement.fromValue as? NSValue, let destination = selectedTabShadow.layer {
             let copy = movement.copy() as! CABasicAnimation
@@ -187,7 +181,7 @@ import RiseCore
             copy.beginTime = destination.convertTime(source.convertTime(movement.beginTime, to: nil), from: nil)
             destination.add(copy, forKey: TabListMotion.movementKey)
         } else { selectedTabShadow.layer?.removeAnimation(forKey: TabListMotion.movementKey) }
-        // Let the continuous layer outline supply the shadow shape as well.
+        // Let the rounded layer outline supply the shadow shape as well.
         selectedTabShadow.layer?.shadowPath = nil
     }
     override func updateTrackingAreas() {

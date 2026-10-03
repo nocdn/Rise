@@ -4,7 +4,7 @@ import RiseCore
 @MainActor final class TabRow: NSButton, NSTextFieldDelegate {
     let tabID: UUID
     let icon = NSImageView()
-    let titleField = label("", size: 13)
+    let titleField = TabTitleField(frame: .zero)
     let subtitle = label("", size: 11, color: .secondaryLabelColor)
     let close: ChromeButton
     let loadingBackground = TabLoadingBackground()
@@ -15,7 +15,6 @@ import RiseCore
     var onSelect: (() -> Void)?
     var onMenu: ((NSEvent) -> Void)?
     var onRename: ((String) -> Void)?
-    var onPress: ((Bool, Bool) -> Void)?
     var onDragStart: ((NSEvent) -> Void)?
     var onDragMove: ((NSEvent) -> Void)?
     var onDragEnd: (() -> Void)?
@@ -26,10 +25,10 @@ import RiseCore
     private var hover = false
     init(tab: BrowserTab, onClose: @escaping () -> Void) {
         tabID = tab.id
-        close = ChromeButton(symbol: "xmark", size: 10, title: "Close \(tab.title)", action: onClose)
+        close = ChromeButton(symbol: "xmark", size: 13, title: "Close \(tab.title)", action: onClose)
         super.init(frame: .zero)
         isBordered = false; title = ""; wantsLayer = true; clipsToBounds = false
-        layer?.cornerRadius = 12; layer?.cornerCurve = .continuous
+        layer?.cornerRadius = TabAppearance.radius; layer?.cornerCurve = .continuous
         target = self; action = #selector(selectTab)
         addSubview(loadingBackground); addSubview(icon); addSubview(titleField); addSubview(subtitle); addSubview(close)
         icon.imageScaling = .scaleProportionallyUpOrDown
@@ -43,7 +42,7 @@ import RiseCore
     func update(tab: BrowserTab, selected: Bool, theme: RiseTheme) {
         self.selected = selected; self.theme = theme; developer = tab.developer
         if !isRenaming { titleField.stringValue = tab.title }
-        titleField.textColor = selected ? theme.selectedText : theme.text
+        titleField.textColor = TabAppearance.text(theme, selected: selected)
         subtitle.stringValue = AddressResolver.displayHost(tab.url) + (tab.url?.port.map { ":\($0)" } ?? "")
         subtitle.textColor = theme.muted; subtitle.isHidden = !developer
         if let favicon = tab.favicon { icon.image = favicon }
@@ -59,7 +58,7 @@ import RiseCore
             }; icon.image = image
         } else { icon.image = NSImage(systemSymbolName: tab.pinned ? "pin.fill" : "globe", accessibilityDescription: nil) }
         icon.contentTintColor = theme.muted
-        close.contentTintColor = theme.muted
+        close.contentTintColor = theme == .rose ? theme.muted : (theme == .dark ? NSColor.white : .black).withAlphaComponent(0.8)
         close.hoverColor = theme == .dark ? NSColor.white.withAlphaComponent(0.08) : NSColor.black.withAlphaComponent(0.05)
         setAccessibilityLabel(tab.title + (selected ? ", selected" : ""))
         close.toolTip = "Close \(tab.title)"
@@ -67,33 +66,38 @@ import RiseCore
         style(); needsLayout = true; needsDisplay = true
     }
     func style() {
-        layer?.cornerRadius = isSplitMember ? 8 : 12
-        layer?.backgroundColor = (selected ? (isSplitMember ? theme.pill : theme.selectedTab) : hover ? theme.hoveredTab : .clear).cgColor
-        layer?.borderColor = NSColor.white.withAlphaComponent(selected ? (theme == .dark ? 0.08 : 0.7) : 0).cgColor
+        layer?.cornerRadius = isSplitMember ? 8 : TabAppearance.radius
+        loadingBackground.layer?.cornerRadius = isSplitMember ? 8 : TabAppearance.radius
+        loadingBackground.layer?.cornerCurve = .continuous
+        layer?.backgroundColor = (selected ? (isSplitMember ? theme.pill : TabAppearance.selectedFill(theme)) : hover ? TabAppearance.hoverFill(theme) : .clear).cgColor
+        // The border follows the same continuous contour as the background.
+        layer?.borderColor = NSColor.white.withAlphaComponent(theme == .dark ? 0.08 : 0.7).cgColor
         layer?.borderWidth = selected && !isSplitMember ? 0.5 : 0
         close.isHidden = !hover || isSplitMember
+        needsLayout = true
     }
     override func layout() {
         super.layout()
         loadingBackground.frame = bounds
-        icon.frame = NSRect(x: isSplitMember ? 6 : 10, y: (bounds.height-16)/2, width: 16, height: 16)
+        icon.frame = NSRect(x: isSplitMember ? 6 : 8, y: (bounds.height-16)/2, width: 16, height: 16)
         let titleHeight = ceil(titleField.intrinsicContentSize.height)
         let subtitleHeight = ceil(subtitle.intrinsicContentSize.height)
         let textHeight = developer ? titleHeight + 1 + subtitleHeight : titleHeight
         let textY = (bounds.height - textHeight) / 2
-        let textX: CGFloat = isSplitMember ? 30 : 34
-        let textWidth = max(0, bounds.width - (isSplitMember ? 38 : 62))
+        let textX: CGFloat = isSplitMember ? 28 : 30
+        let textWidth = max(0, bounds.width - textX - (close.isHidden ? 8 : 32))
         titleField.frame = NSRect(x: textX, y: textY, width: textWidth, height: titleHeight)
         subtitle.frame = NSRect(x: textX, y: textY + titleHeight + 1, width: textWidth, height: subtitleHeight)
-        close.frame = NSRect(x: bounds.width-30, y: (bounds.height-24)/2, width: 24, height: 24)
+        close.frame = NSRect(x: bounds.width-28.5, y: (bounds.height-24)/2-0.5, width: 24, height: 24)
     }
     override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
+        // The layer and child views draw this custom row, without a button bezel.
         if selected && developer {
-            let radius: CGFloat = isSplitMember ? 8 : 12
+            let radius: CGFloat = isSplitMember ? 8 : TabAppearance.radius
             let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.8, dy: 0.8), xRadius: radius, yRadius: radius)
-            NSColor(hex: 0xFFD73D).setStroke(); path.lineWidth = 2; path.stroke()
-            NSColor(hex: 0x332D25).setStroke(); path.setLineDash([5, 6], count: 2, phase: 0); path.stroke()
+            let scale = TabAppearance.height / 37
+            NSColor(hex: 0xFFD73D).setStroke(); path.lineWidth = 2*scale; path.stroke()
+            NSColor(hex: 0x332D25).setStroke(); path.setLineDash([5*scale, 6*scale], count: 2, phase: 0); path.stroke()
         }
     }
     override func updateTrackingAreas() {
@@ -113,10 +117,10 @@ import RiseCore
     }
     override func mouseDown(with event: NSEvent) {
         guard event.clickCount < 2 else {
-            cancelPress(animated: false); beginRename(); return
+            cancelPress(); beginRename(); return
         }
         if isRenaming { finishRename(save: true) }
-        pressEvent = event; dragging = false; onPress?(true, true)
+        pressEvent = event; dragging = false
     }
     override func mouseDragged(with event: NSEvent) {
         guard let pressEvent else { return }
@@ -133,12 +137,12 @@ import RiseCore
         if wasDragging { onDragEnd?() }
         else if bounds.contains(convert(event.locationInWindow, from: nil)) { onSelect?() }
     }
-    func cancelPress(animated: Bool = true) {
-        pressEvent = nil; dragging = false; onPress?(false, animated)
+    func cancelPress() {
+        pressEvent = nil; dragging = false
     }
     func beginRename() {
         guard !isRenaming else { return }
-        onSelect?(); onPress?(false, false)
+        onSelect?()
         originalTitle = titleField.stringValue; isRenaming = true
         titleField.isEditable = true; titleField.isSelectable = true
         titleField.selectText(nil)

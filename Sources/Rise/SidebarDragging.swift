@@ -7,15 +7,6 @@ import AppKit
     func displayedRow(for id: UUID) -> NSView? {
         displayedRows.first { ($0 as? TabRow)?.tabID == id || ($0 as? SplitTabRow)?.group.contains(id) == true }
     }
-    func pressTab(_ id: UUID, down: Bool, animated: Bool) {
-        guard let row = displayedRow(for: id) else { return }
-        if down {
-            if let pressedRow, pressedRow !== row { TabListMotion.press(pressedRow, down: false, animated: false) }
-            pressedRow = row
-        } else if pressedRow === row { pressedRow = nil }
-        TabListMotion.press(row, down: down, animated: animated)
-        if selectedTabID.flatMap({ displayedRow(for: $0) }) === row { TabListMotion.press(selectedTabShadow, down: down, animated: animated) }
-    }
     func beginTabDrag(_ id: UUID, event: NSEvent) {
         guard drag == nil, let row = displayedRow(for: id), let canonical = canonicalID(for: row) else { return }
         // Continue from a row's visible position if it was still settling.
@@ -37,7 +28,7 @@ import AppKit
         let point = rowsHost.convert(event.locationInWindow, from: nil)
         let maxY = max(8, targetFrames.values.map(\.minY).max() ?? 8)
         var frame = drag.view.frame
-        frame.origin.x = 8
+        frame.origin.x = TabAppearance.inset
         let minimum = max(8,scroll.contentView.bounds.minY)
         let maximum = max(minimum,min(maxY,scroll.contentView.bounds.maxY-frame.height))
         frame.origin.y = min(max(minimum, point.y-drag.grabOffset),maximum)

@@ -5,8 +5,10 @@ extension NSColor {
 }
 enum RiseTheme: String, CaseIterable {
     case neutral, rose, dark
-    var background: NSColor { NSColor(hex: self == .dark ? 0x363636 : self == .rose ? 0xF3D4D8 : 0xE8E8E8) }
-    var backgroundGradient: [NSColor]? { self == .dark ? [NSColor(hex: 0x363636), NSColor(hex: 0x2B2B2B)] : nil }
+    var background: NSColor { NSColor(hex: self == .dark ? 0x363636 : self == .rose ? 0xF3D4D8 : 0xDFDFDF) }
+    var backgroundGradient: [NSColor]? {
+        self == .neutral ? [NSColor(hex: 0xDFDFDF), NSColor(hex: 0xE5E5E5)] : self == .dark ? [NSColor(hex: 0x363636), NSColor(hex: 0x2B2B2B)] : nil
+    }
     var pill: NSColor { NSColor(hex: self == .dark ? 0x404040 : self == .rose ? 0xE9CACE : 0xDEDEDE) }
     var text: NSColor { NSColor(hex: self == .dark ? 0xD1D1D1 : self == .rose ? 0x42121F : 0x343434) }
     var selectedText: NSColor { self == .dark ? NSColor(hex: 0xFEFEFE) : self == .neutral ? NSColor(hex: 0x111111) : text }
