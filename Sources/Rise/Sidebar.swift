@@ -1,104 +1,14 @@
 import AppKit
 import RiseCore
 
-@MainActor final class TabRow: NSButton {
-    let tabID: UUID
-    let icon = NSImageView()
-    let titleField = label("", size: 13)
-    let subtitle = label("", size: 11, color: .secondaryLabelColor)
-    let close: ChromeButton
-    let loadingBackground = TabLoadingBackground()
-    var selected = false
-    var developer = false
-    var isSplitMember = false
-    var theme = RiseTheme.neutral
-    var onSelect: (() -> Void)?
-    var onMenu: ((NSEvent) -> Void)?
-    private var hover = false
-    init(tab: BrowserTab, onClose: @escaping () -> Void) {
-        tabID = tab.id
-        close = ChromeButton(symbol: "xmark", size: 10, title: "Close \(tab.title)", action: onClose)
-        super.init(frame: .zero)
-        isBordered = false; title = ""; wantsLayer = true; clipsToBounds = false
-        layer?.cornerRadius = 12; layer?.cornerCurve = .continuous
-        target = self; action = #selector(selectTab)
-        addSubview(loadingBackground); addSubview(icon); addSubview(titleField); addSubview(subtitle); addSubview(close)
-        icon.imageScaling = .scaleProportionallyUpOrDown
-        setAccessibilityLabel(tab.title)
-    }
-    required init?(coder: NSCoder) { fatalError() }
-    override var isFlipped: Bool { true }
-    @objc func selectTab() { onSelect?() }
-    func update(tab: BrowserTab, selected: Bool, theme: RiseTheme) {
-        self.selected = selected; self.theme = theme; developer = tab.developer
-        titleField.stringValue = tab.title; titleField.textColor = selected ? theme.selectedText : theme.text
-        subtitle.stringValue = AddressResolver.displayHost(tab.url) + (tab.url?.port.map { ":\($0)" } ?? "")
-        subtitle.textColor = theme.muted; subtitle.isHidden = !developer
-        if let favicon = tab.favicon { icon.image = favicon }
-        else if AddressResolver.isLocal(tab.url) {
-            icon.image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
-                NSColor(hex: 0xEAA8B3).setFill(); NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: 3, yRadius: 3).fill(); return true
-            }
-        }
-        else if tab.url?.host == "news.ycombinator.com" {
-            let image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
-                NSColor(hex: 0xFF6600).setFill(); NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3).fill()
-                ("Y" as NSString).draw(at: NSPoint(x: 4, y: 1), withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: NSColor.white]); return true
-            }; icon.image = image
-        } else { icon.image = NSImage(systemSymbolName: tab.pinned ? "pin.fill" : "globe", accessibilityDescription: nil) }
-        icon.contentTintColor = theme.muted
-        close.contentTintColor = theme.muted
-        close.hoverColor = theme == .dark ? NSColor.white.withAlphaComponent(0.08) : NSColor.black.withAlphaComponent(0.05)
-        setAccessibilityLabel(tab.title + (selected ? ", selected" : ""))
-        close.toolTip = "Close \(tab.title)"
-        loadingBackground.update(loading: tab.webView.isLoading, progress: tab.webView.estimatedProgress, theme: theme)
-        style(); needsLayout = true; needsDisplay = true
-    }
-    func style() {
-        layer?.cornerRadius = isSplitMember ? 8 : 12
-        layer?.backgroundColor = (selected ? (isSplitMember ? theme.pill : theme.selectedTab) : hover ? theme.hoveredTab : .clear).cgColor
-        layer?.borderColor = NSColor.white.withAlphaComponent(selected ? (theme == .dark ? 0.08 : 0.7) : 0).cgColor
-        layer?.borderWidth = selected && !isSplitMember ? 0.5 : 0
-        close.isHidden = !hover || isSplitMember
-    }
-    override func layout() {
-        super.layout()
-        loadingBackground.frame = bounds
-        icon.frame = NSRect(x: isSplitMember ? 6 : 10, y: (bounds.height-16)/2, width: 16, height: 16)
-        let titleHeight = ceil(titleField.intrinsicContentSize.height)
-        let subtitleHeight = ceil(subtitle.intrinsicContentSize.height)
-        let textHeight = developer ? titleHeight + 1 + subtitleHeight : titleHeight
-        let textY = (bounds.height - textHeight) / 2
-        let textX: CGFloat = isSplitMember ? 30 : 34
-        let textWidth = max(0, bounds.width - (isSplitMember ? 38 : 62))
-        titleField.frame = NSRect(x: textX, y: textY, width: textWidth, height: titleHeight)
-        subtitle.frame = NSRect(x: textX, y: textY + titleHeight + 1, width: textWidth, height: subtitleHeight)
-        close.frame = NSRect(x: bounds.width-30, y: (bounds.height-24)/2, width: 24, height: 24)
-    }
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        if selected && developer {
-            let radius: CGFloat = isSplitMember ? 8 : 12
-            let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.8, dy: 0.8), xRadius: radius, yRadius: radius)
-            NSColor(hex: 0xFFD73D).setStroke(); path.lineWidth = 2; path.stroke()
-            NSColor(hex: 0x332D25).setStroke(); path.setLineDash([5, 6], count: 2, phase: 0); path.stroke()
-        }
-    }
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
-    }
-    override func mouseEntered(with event: NSEvent) { hover = true; style() }
-    override func mouseExited(with event: NSEvent) { hover = false; style() }
-    override func rightMouseDown(with event: NSEvent) { onMenu?(event) }
-}
-
 @MainActor final class SidebarView: Surface {
     let address = NSButton()
     let addressText = FadingTextField(frame: .zero)
     let searchIcon = NSImageView()
-    let copyButton: ChromeButton
-    let settingsButton: ChromeButton
+    let copyButton: SidebarHoverButton
+    let settingsButton: SidebarHoverButton
+    var isSidebarHovered = false
+    var hasAddress = false
     let newTab = NewTabButton()
     let scroll = NSScrollView()
     let rowsHost = FlippedView()
@@ -110,15 +20,23 @@ import RiseCore
     let clearButton: ChromeButton
     var rows: [UUID: TabRow] = [:]
     var splitRows: [UUID: SplitTabRow] = [:]
-    private var displayedRows: [NSView] = []
+    var displayedRows: [NSView] = []
+    var targetFrames: [UUID: NSRect] = [:]
+    var drag: SidebarDrag?
+    var dragScrollTimer: Timer?
+    var pressedRow: NSView?
+    var shadowRowID: UUID?
+    var crossingClick: () -> Void = { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
     var onAddress: (() -> Void)?
     var onNewTab: (() -> Void)?
     var onSelect: ((UUID) -> Void)?
     var onClose: ((UUID) -> Void)?
     var onTabMenu: ((UUID, NSEvent) -> Void)?
+    var onReorder: (([UUID]) -> Void)?
+    var onRename: ((UUID, String) -> Void)?
     init(copy: @escaping () -> Void, settings: @escaping () -> Void, archive: @escaping () -> Void, theme: @escaping () -> Void, clear: @escaping () -> Void) {
-        copyButton = ChromeButton(symbol: "link", size: 15, title: "Copy current URL", action: copy)
-        settingsButton = ChromeButton(symbol: "slider.horizontal.3", size: 15, title: "Site controls", action: settings)
+        copyButton = SidebarHoverButton(symbol: "link", size: 14, title: "Copy current URL (⌘⇧C)", action: copy)
+        settingsButton = SidebarHoverButton(symbol: "slider.horizontal.3", size: 14, title: "Site controls", action: settings)
         archiveButton = ChromeButton(symbol: "archivebox.fill", size: 15, title: "Recently closed tabs", action: archive)
         themeButton = ChromeButton(symbol: "paintpalette.fill", size: 13, title: "Change theme", action: theme)
         clearButton = ChromeButton(symbol: "broom", size: 17, title: "Clear unpinned tabs", action: clear)
@@ -140,6 +58,7 @@ import RiseCore
         selectedTabShadow.isHidden = true
         addSubview(selectedTabShadow)
         [address, copyButton, settingsButton, newTab, scroll, archiveButton, themeButton, clearButton].forEach(addSubview)
+        updateAddressControlVisibility(animated: false)
     }
     required init?(coder: NSCoder) { fatalError() }
     @objc func openAddress() { onAddress?() }
@@ -153,7 +72,8 @@ import RiseCore
         addressText.stringValue = AddressResolver.displayHost(selected?.url)
         let blank = selected?.url == nil || selected?.url?.absoluteString == "about:blank"
         addressText.textColor = blank ? theme.muted : theme.text.withAlphaComponent(theme == .dark ? 0.95 : 0.7)
-        searchIcon.isHidden = !blank; copyButton.isHidden = blank; settingsButton.isHidden = blank
+        searchIcon.isHidden = !blank; hasAddress = !blank
+        updateAddressControlVisibility()
         clearButton.isEnabled = tabs.contains { !$0.pinned }
         clearButton.contentTintColor = theme.muted
         [copyButton, settingsButton, archiveButton, themeButton].forEach {
@@ -170,6 +90,11 @@ import RiseCore
                 row = TabRow(tab: tab) { [weak self] in self?.onClose?(id) }
                 row.onSelect = { [weak self] in self?.onSelect?(id) }
                 row.onMenu = { [weak self] event in self?.onTabMenu?(id, event) }
+                row.onRename = { [weak self] title in self?.onRename?(id, title) }
+                row.onPress = { [weak self] down, animated in self?.pressTab(id, down: down, animated: animated) }
+                row.onDragStart = { [weak self] event in self?.beginTabDrag(id, event: event) }
+                row.onDragMove = { [weak self] event in self?.moveTabDrag(event) }
+                row.onDragEnd = { [weak self] in self?.endTabDrag() }
                 rows[id] = row
             }
             let group = splits.first { $0.contains(tab.id) }
@@ -188,14 +113,19 @@ import RiseCore
         }
         displayedRows = []; orderedIDs = []
         var seen = Set<UUID>()
-        for tab in tabs.sorted(by: { $0.pinned && !$1.pinned }) where !seen.contains(tab.id) {
+        for tab in tabs where !seen.contains(tab.id) {
             if let group = splits.first(where: { $0.contains(tab.id) }), let row = splitRows[group.id] {
                 displayedRows.append(row); orderedIDs.append(group.leftID); seen.formUnion([group.leftID, group.rightID])
             } else if let row = rows[tab.id] {
                 displayedRows.append(row); orderedIDs.append(tab.id); seen.insert(tab.id)
             }
         }
+        if let drag, !displayedRows.contains(where: { $0 === drag.view }) { endTabDrag() }
+        if let pressedRow, !displayedRows.contains(where: { $0 === pressedRow }) {
+            TabListMotion.press(pressedRow, down: false, animated: false); self.pressedRow = nil
+        }
         needsLayout = true
+        if bounds.width > 0 { layoutSubtreeIfNeeded() }
     }
     var orderedIDs: [UUID] = []
     func tabID(at point: NSPoint) -> UUID? {
@@ -219,12 +149,18 @@ import RiseCore
         newTab.frame = NSRect(x: 8, y: start, width: w-16, height: 37)
         let scrollY = newTab.frame.maxY+8
         scroll.frame = NSRect(x: 0, y: scrollY, width: w, height: max(0, bounds.height-scrollY-44))
-        var y: CGFloat = 8
-        for row in displayedRows {
+        var y: CGFloat = 8; targetFrames = [:]
+        let time = CACurrentMediaTime()
+        for (index, row) in displayedRows.enumerated() {
             let h: CGFloat = (row as? SplitTabRow)?.rowHeight ?? ((row as? TabRow)?.developer == true ? 40 : 37)
-            row.frame = NSRect(x: 8, y: y, width: w-16, height: h); y += h+4
+            let target = NSRect(x: 8, y: y, width: w-16, height: h)
+            targetFrames[orderedIDs[index]] = target
+            if drag?.view !== row {
+                TabListMotion.move(row, to: target, animated: row.frame.width > 0, at: time)
+            }
+            y += h+4
         }
-        rowsHost.frame = NSRect(x: 0, y: 0, width: w, height: max(y, scroll.bounds.height))
+        rowsHost.frame = NSRect(x: 0, y: 0, width: w, height: max(y+8, scroll.bounds.height))
         archiveButton.frame = NSRect(x: 10, y: bounds.height-39, width: 28, height: 28)
         themeButton.frame = NSRect(x: (w-28)/2, y: bounds.height-39, width: 28, height: 28)
         clearButton.frame = NSRect(x: w-37, y: bounds.height-39, width: 28, height: 28)
@@ -235,8 +171,31 @@ import RiseCore
         let rect = row.convert(row.bounds, to: self)
         // Avoid painting a full card behind a row clipped by vertical scrolling.
         selectedTabShadow.isHidden = !scroll.frame.contains(rect)
+        CATransaction.begin(); CATransaction.setDisableActions(true)
         selectedTabShadow.frame = rect
+        CATransaction.commit()
+        if shadowRowID != canonicalID(for: row) {
+            shadowRowID = canonicalID(for: row)
+        }
+        TabListMotion.mirrorPress(from: row, to: selectedTabShadow)
+        if let source = row.layer, let movement = source.animation(forKey: TabListMotion.movementKey) as? CABasicAnimation,
+           let from = movement.fromValue as? NSValue, let destination = selectedTabShadow.layer {
+            let copy = movement.copy() as! CABasicAnimation
+            let offset = NSPoint(x: from.pointValue.x-source.position.x, y: from.pointValue.y-source.position.y)
+            copy.fromValue = NSPoint(x: destination.position.x+offset.x, y: destination.position.y+offset.y)
+            copy.toValue = destination.position
+            copy.beginTime = destination.convertTime(source.convertTime(movement.beginTime, to: nil), from: nil)
+            destination.add(copy, forKey: TabListMotion.movementKey)
+        } else { selectedTabShadow.layer?.removeAnimation(forKey: TabListMotion.movementKey) }
         // Let the continuous layer outline supply the shadow shape as well.
         selectedTabShadow.layer?.shadowPath = nil
     }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect, .enabledDuringMouseDrag], owner: self))
+        if let window, !isHidden { setSidebarHovered(bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))) }
+    }
+    override func mouseEntered(with event: NSEvent) { setSidebarHovered(true) }
+    override func mouseExited(with event: NSEvent) { setSidebarHovered(false) }
+    override func viewDidHide() { super.viewDidHide(); setSidebarHovered(false, animated: false) }
 }

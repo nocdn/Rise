@@ -1,0 +1,164 @@
+import AppKit
+
+/// The border, arrow, material and outer shadow belong to NSPopover.
+final class PopoverContentView: FlippedView {}
+
+/// Shared Arc-style action bezel used by settings and copy confirmation.
+final class PopoverActionButton: ChromeButton {
+    init(symbol: String, size: CGFloat = 18, title: String, theme: RiseTheme, action: @escaping () -> Void) {
+        super.init(symbol: symbol, size: size, title: title, action: action)
+        contentTintColor = theme.text
+        baseColor = theme == .dark ? NSColor(hex: 0x3D3D3D) : .white.withAlphaComponent(0.75)
+        layer?.backgroundColor = baseColor.cgColor
+        layer?.cornerRadius = 8; layer?.cornerCurve = .continuous
+        layer?.borderWidth = 0.65
+        layer?.borderColor = (theme == .dark ? NSColor.white : NSColor.black).withAlphaComponent(theme == .dark ? 0.17 : 0.20).cgColor
+        clipsToBounds = false; layer?.masksToBounds = false
+        layer?.shadowColor = NSColor.black.cgColor; layer?.shadowOpacity = 0.14
+        layer?.shadowRadius = 1.5; layer?.shadowOffset = NSSize(width: 0, height: -0.5)
+        hoverColor = theme.hoveredTab
+    }
+    required init?(coder: NSCoder) { fatalError() }
+}
+
+final class SiteSettingRow: NSButton {
+    let name: NSTextField
+    let detail: NSTextField
+    let icon = NSImageView()
+    private let perform: () -> Void
+    override var isFlipped: Bool { true }
+    init(title: String, subtitle: String, symbol: String, active: Bool, checked: Bool? = nil, theme: RiseTheme, action: @escaping () -> Void) {
+        perform = action
+        name = label(title, size: 14, weight: .semibold, color: theme.text)
+        detail = label(subtitle, size: 13, color: theme.muted)
+        super.init(frame: .zero)
+        isBordered = false; self.title = ""; target = self; self.action = #selector(invoke)
+        wantsLayer = true; layer?.cornerRadius = 8; layer?.cornerCurve = .continuous
+        icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 15, weight: .semibold))
+        icon.contentTintColor = .white; icon.wantsLayer = true; icon.layer?.cornerRadius = 16
+        icon.layer?.backgroundColor = NSColor(hex: active ? 0x915439 : theme == .dark ? 0x685957 : 0xD9C5BF).cgColor
+        if let checked { state = checked ? .on : .off }
+        [icon, name, detail].forEach(addSubview)
+        setAccessibilityLabel(title); setAccessibilityValue(subtitle)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    @objc func invoke() { perform() }
+    override func layout() {
+        super.layout()
+        icon.frame = NSRect(x: 0, y: (bounds.height-32)/2, width: 32, height: 32)
+        let width = bounds.width-44
+        name.frame = NSRect(x: 40, y: bounds.midY-18, width: width, height: 19)
+        detail.frame = NSRect(x: 40, y: bounds.midY+1, width: width, height: 18)
+    }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        isHidden || !bounds.contains(convert(point, from: superview)) ? nil : self
+    }
+}
+
+@MainActor final class SiteControlsController: NSViewController {
+    weak var browser: BrowserController?
+    private(set) var rows: [String: SiteSettingRow] = [:]
+    private(set) var quickActions: [NSButton] = []
+    private(set) var extensionsButton: PopoverActionButton!
+    init(browser: BrowserController) { self.browser = browser; super.init(nibName: nil, bundle: nil) }
+    required init?(coder: NSCoder) { fatalError() }
+    override func loadView() {
+        guard let browser else { view = NSView(); return }
+        let theme = browser.theme
+        view = PopoverContentView(frame: NSRect(x: 0, y: 0, width: 240, height: 440))
+        let actions: [(String, String, () -> Void)] = [
+            ("square.and.arrow.up", "Share Page", { [weak browser] in browser?.shareCurrentPage() }),
+            ("camera", "Save Page Screenshot", { [weak browser] in browser?.siteControlsPopover.close(); browser?.capturePage() }),
+            ("text.viewfinder", "Copy Text from Page Image", { [weak browser] in browser?.siteControlsPopover.close(); browser?.copyTextFromPageImage() }),
+            ("ellipsis", "More Site Controls", { [weak browser] in browser?.moreSiteControls() })
+        ]
+        for (index, action) in actions.enumerated() {
+            let button = PopoverActionButton(symbol: action.0, size: action.0 == "ellipsis" ? 18 : 17, title: action.1, theme: theme, action: action.2)
+            button.frame = NSRect(x: 10+CGFloat(index)*56, y: 10, width: 52, height: 34)
+            view.addSubview(button); quickActions.append(button)
+        }
+        func heading(_ title: String, y: CGFloat) {
+            let field = label(title, size: 14, weight: .semibold, color: theme.text)
+            field.frame = NSRect(x: 10, y: y, width: 220, height: 20); view.addSubview(field)
+        }
+        heading("Extensions", y: 52)
+        let add = PopoverActionButton(symbol: "plus", size: 15, title: "Extensions", theme: theme) { [weak browser] in
+            browser?.siteControlsPopover.close()
+            browser?.showMessage("Extensions", "Rise uses Apple WebKit. Safari and Chrome extensions cannot be installed in this browser yet.")
+        }
+        add.frame = NSRect(x: 10, y: 78, width: 52, height: 34)
+        extensionsButton = add
+        add.toolTip = "Extension support"; add.setAccessibilityLabel("Extensions"); view.addSubview(add)
+        heading("Settings", y: 125)
+        var y: CGFloat = 151
+        func row(_ title: String, subtitle: String, symbol: String, active: Bool, checked: Bool? = nil, action: @escaping () -> Void) {
+            let row = SiteSettingRow(title: title, subtitle: subtitle, symbol: symbol, active: active, checked: checked, theme: theme, action: action)
+            row.frame = NSRect(x: 10, y: y, width: 220, height: 43); view.addSubview(row); rows[title] = row; y += 43
+        }
+        let origin = SitePermissions.origin(browser.selectedTab?.url)
+        let notification = browser.sitePermissions.permission(.notifications, origin: origin)
+        row("Notifications", subtitle: notification.subtitle, symbol: "gearshape.fill", active: notification == .allow) { [weak browser] in browser?.permissionSettingMenu(.notifications) }
+        row("Developer Mode", subtitle: browser.selectedTab?.developer == true ? "On" : "Off", symbol: "hammer.fill", active: browser.selectedTab?.developer == true) { [weak browser] in browser?.toggleDeveloper(); browser?.refreshSiteControls() }
+        row("Block Ads & Trackers", subtitle: browser.adBlocker.enabled ? "On" : "Off", symbol: "shield.fill", active: browser.adBlocker.enabled, checked: browser.adBlocker.enabled) { [weak browser] in browser?.toggleAdBlocking(); browser?.refreshSiteControls() }
+        let pip = browser.sitePermissions.automaticPictureInPicture(origin: origin)
+        row("Automatic Picture-In-Picture", subtitle: pip ? "Allowed" : "Blocked", symbol: "gearshape.fill", active: pip) { [weak browser] in browser?.toggleAutomaticPictureInPicture(); browser?.refreshSiteControls() }
+        row("Preload Links", subtitle: browser.linkPreloader.enabled ? "On · Experimental" : "Off · Experimental", symbol: "bolt.fill", active: browser.linkPreloader.enabled, checked: browser.linkPreloader.enabled) { [weak browser] in
+            guard let browser else { return }; browser.linkPreloader.setEnabled(!browser.linkPreloader.enabled); browser.refreshSiteControls()
+        }
+        rows["Preload Links"]?.toolTip = "Preload a link after hovering for 150 ms."
+        for capability in [SiteCapability.camera, .microphone, .location] where browser.sitePermissions.hasDecision(capability, origin: origin) {
+            let permission = browser.sitePermissions.permission(capability, origin: origin)
+            row(capability.title, subtitle: permission.subtitle, symbol: capability.symbol, active: permission == .allow) { [weak browser] in browser?.permissionSettingMenu(capability) }
+        }
+        view.setFrameSize(NSSize(width: 240, height: y+8))
+    }
+}
+
+final class PermissionPromptController: NSViewController {
+    let message: String
+    let symbol: String
+    let reply: (Bool) -> Void
+    private(set) var allowButton: NSButton!
+    private(set) var notNowButton: NSButton!
+    init(host: String, capabilities: [SiteCapability], reply: @escaping (Bool) -> Void) {
+        let use: String
+        if capabilities == [.notifications] { use = "send you notifications?" }
+        else if capabilities == [.location] { use = "use your location?" }
+        else if capabilities.count == 2 { use = "use your camera and microphone?" }
+        else { use = "use your \(capabilities.first == .camera ? "camera" : "microphone")?" }
+        message = "Allow \(host) to \(use)"; symbol = capabilities.first?.symbol ?? "gearshape.fill"; self.reply = reply
+        super.init(nibName: nil, bundle: nil)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func loadView() {
+        let text = NSTextField(wrappingLabelWithString: message); text.font = .systemFont(ofSize: 14)
+        let dark = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        text.textColor = NSColor(hex: dark ? 0xD1D1D1 : 0x575757); text.preferredMaxLayoutWidth = 176
+        let height = max(62, ceil((message as NSString).boundingRect(with: NSSize(width: 176, height: 300), options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: text.font!]).height)+4)
+        view = PopoverContentView(frame: NSRect(x: 0, y: 0, width: 236, height: height+60))
+        let icon = NSImageView(frame: NSRect(x: 10, y: 10, width: 32, height: 32)); icon.wantsLayer = true
+        icon.layer?.cornerRadius = 16; icon.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.08).cgColor
+        icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 16, weight: .medium))
+        icon.contentTintColor = .secondaryLabelColor; view.addSubview(icon)
+        text.frame = NSRect(x: 50, y: 10, width: 176, height: height); view.addSubview(text)
+        notNowButton = NSButton(title: "Not Now", target: self, action: #selector(decline))
+        allowButton = NSButton(title: "Allow", target: self, action: #selector(allow))
+        for (i, button) in [notNowButton!, allowButton!].enumerated() {
+            button.bezelStyle = .rounded; button.font = .systemFont(ofSize: 14, weight: .semibold)
+            button.frame = NSRect(x: 10+CGFloat(i)*111, y: height+20, width: 105, height: 32); view.addSubview(button)
+        }
+        notNowButton.isBordered = false; notNowButton.wantsLayer = true
+        notNowButton.layer?.cornerRadius = 6; notNowButton.layer?.cornerCurve = .continuous
+        notNowButton.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.13).cgColor
+        allowButton.isBordered = false; allowButton.wantsLayer = true
+        allowButton.layer?.cornerRadius = 6; allowButton.layer?.cornerCurve = .continuous
+        allowButton.layer?.backgroundColor = (dark ? NSColor(hex: 0x404040) : NSColor.white.withAlphaComponent(0.8)).cgColor
+        allowButton.layer?.borderWidth = 0.5; allowButton.layer?.borderColor = NSColor.labelColor.withAlphaComponent(0.28).cgColor
+        allowButton.layer?.shadowColor = NSColor.black.cgColor; allowButton.layer?.shadowOpacity = 0.1
+        allowButton.layer?.shadowRadius = 2; allowButton.layer?.shadowOffset = NSSize(width: 0, height: -1)
+        // Never assign Return to Allow: granting access requires choosing it.
+        notNowButton.keyEquivalent = "\u{1b}"
+    }
+    @objc private func decline() { reply(false) }
+    @objc private func allow() { reply(true) }
+}

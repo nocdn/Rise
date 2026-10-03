@@ -18,7 +18,8 @@ import RiseCore
         let visible = Set(visibleTabIDs)
         for tab in tabs {
             if !visible.contains(tab.id) { tab.webView.removeFromSuperview(); continue }
-            if tab.webView.url == nil, !tab.webView.isLoading, let url = tab.requestedURL { tab.load(url) }
+            if tab.needsBlockingReload, tab.webView.url != nil { tab.needsBlockingReload = false; tab.webView.reloadFromOrigin() }
+            if tab.webView.url == nil, !tab.hasAttemptedNavigation, !tab.webView.isLoading, let url = tab.requestedURL { tab.load(url) }
             if tab.webView.superview !== pageClip { pageClip.addSubview(tab.webView, positioned: .below, relativeTo: developerBar) }
         }
     }
@@ -27,7 +28,7 @@ import RiseCore
         guard let current = selectedTab else { return }
         if let other = tabs.first(where: { $0.id != current.id }) { showSplit(other) }
         else if let url = current.url {
-            let other = configure(BrowserTab()); tabs.append(other); other.load(url); showSplit(other)
+            let other = configure(BrowserTab()); tabs.insert(other, at: 0); other.load(url); showSplit(other)
         }
     }
     func showSplit(_ tab: BrowserTab) {

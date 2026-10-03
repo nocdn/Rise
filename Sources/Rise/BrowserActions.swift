@@ -21,23 +21,23 @@ import RiseCore
         menu.popUp(positioning: nil, at: NSPoint(x: 80, y: sidebar.bounds.height-42), in: sidebar)
     }
     func siteMenu() {
-        let menu = makeSiteMenu()
-        menu.popUp(positioning: nil, at: NSPoint(x: sidebarWidth-40, y: 86), in: sidebar)
+        if siteControlsPopover.isShown { siteControlsPopover.close(); return }
+        guard selectedTab != nil else { return }
+        copiedLinkPopover.close()
+        permissionCoordinator.cancel(); siteInfoPopover.close(); historySwipe.cancel()
+        let controller = SiteControlsController(browser: self)
+        siteControlsPopover.appearance = theme.appearance
+        siteControlsPopover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        siteControlsPopover.contentViewController = controller
+        siteControlsPopover.contentSize = controller.view.frame.size
+        siteControlsPopover.show(relativeTo: sidebar.settingsAnchorRect, of: sidebar.address, preferredEdge: .maxY)
     }
     func makeSiteMenu() -> NSMenu {
         let menu = NSMenu()
         menu.addItem(menuItem("Copy URL") { [weak self] in self?.copyURL() })
-        menu.addItem(menuItem("Developer Mode", checked: selectedTab?.developer == true) { [weak self] in self?.toggleDeveloper() })
         menu.addItem(menuItem("Site Information") { [weak self] in self?.siteInformation() })
         menu.addItem(menuItem("Save Page Screenshot…") { [weak self] in self?.capturePage() })
         menu.addItem(menuItem("Split View", checked: splitTab != nil) { [weak self] in self?.toggleSplit() })
-        menu.addItem(.separator())
-        let preload = menuItem("Preload Links (Experimental)", checked: linkPreloader.enabled) { [weak self] in
-            guard let self else { return }
-            self.linkPreloader.setEnabled(!self.linkPreloader.enabled)
-        }
-        preload.toolTip = "Hover over a link for 150 ms to warm its page in WebKit’s cache. Uses additional bandwidth."
-        menu.addItem(preload)
         return menu
     }
     func archiveMenu() {
@@ -46,7 +46,7 @@ import RiseCore
         for saved in closedTabs.suffix(15).reversed() {
             menu.addItem(menuItem(saved.title) { [weak self] in
                 guard let self else { return }; self.closedTabs.removeAll { $0.id == saved.id }
-                let tab = self.configure(BrowserTab(saved: saved)); self.tabs.append(tab); self.select(tab.id)
+                let tab = self.configure(BrowserTab(saved: saved)); self.tabs.insert(tab, at: 0); self.select(tab.id)
             })
         }
         menu.popUp(positioning: nil, at: NSPoint(x: 12, y: sidebar.bounds.height-42), in: sidebar)
@@ -66,21 +66,25 @@ import RiseCore
         NSMenu.popUpContextMenu(menu, with: event, for: row)
     }
     @objc func peekCurrentPage() { if let url = selectedTab?.url { showPeek(url: url) } }
-    func showPeek(url: URL) {
+    func showPeek(url: URL, from source: WKWebView? = nil) {
         cancelTabSwitch()
-        closePeek()
-        let tab = configure(BrowserTab()); peekTab = tab
+        closePeek(replacing: true); hideLinkStatus()
+        let reveal = beginPeekReveal(from: source)
+        // A page already rendering from a Shift-hover shows from the first frame.
+        let standby = takePeekStandby(for: url)
+        let tab = standby ?? configure(BrowserTab()); peekTab = tab
         let backdrop = PeekBackdrop(color: theme.background.withAlphaComponent(0.72));
-        backdrop.dismiss = { [weak self] in self?.closePeek() }; backdrop.frame = pageClip.bounds
-        root.addSubview(backdrop, positioned: .below, relativeTo: dismissArea); peekBackdrop = backdrop
-        let card = Surface(color: theme.page, radius: 8); card.layer?.masksToBounds = false
+        backdrop.dismiss = { [weak self] in self?.closePeek(animated: true) }; backdrop.frame = pageClip.bounds
+        // Dimming lives inside the page so it recedes with it and never covers the page's shadow.
+        pageClip.addSubview(backdrop); peekBackdrop = backdrop
+        let card = PageSurface(color: theme.page, radius: 8); card.layer?.masksToBounds = false
         card.layer?.shadowColor = NSColor.black.cgColor; card.layer?.shadowOpacity = 0.25
         card.layer?.shadowRadius = 8; card.layer?.shadowOffset = NSSize(width: 0, height: -2)
-        let clip = Surface(color: theme.page, radius: 8); clip.layer?.masksToBounds = true; clip.clipsToBounds = true; clip.autoresizingMask = [.width, .height]
+        let clip = PageSurface(color: theme.page, radius: 8); clip.layer?.masksToBounds = true; clip.clipsToBounds = true; clip.autoresizingMask = [.width, .height]
         card.addSubview(clip); clip.addSubview(tab.webView)
         root.addSubview(card, positioned: .below, relativeTo: dismissArea); peekCard = card
         for (symbol, title, action) in [
-            ("xmark", "Close Peek", { [weak self] in self?.closePeek() }),
+            ("xmark", "Close Peek", { [weak self] in self?.closePeek(animated: true) }),
             ("arrow.up.left.and.arrow.down.right", "Expand Peek to tab", { [weak self] in self?.expandPeek() }),
             ("rectangle.split.2x1", "Open Peek in split view", { [weak self] in self?.splitPeek() })
         ] as [(String, String, () -> Void)] {
@@ -90,32 +94,63 @@ import RiseCore
             button.contentTintColor = NSColor(hex: 0xE87088)
             root.addSubview(button, positioned: .below, relativeTo: dismissArea); peekControls.append(button)
         }
-        layoutPeek(); tab.load(url); window?.makeFirstResponder(tab.webView)
+        layoutPeek(); if standby == nil { tab.load(url) }; window?.makeFirstResponder(tab.webView)
+        revealPeek(reveal)
+    }
+    var peekCardFrame: NSRect {
+        let page = pageShadow.frame; let margin = min(120, page.width*0.1)
+        return NSRect(x: page.minX+margin, y: 12, width: page.width-margin*2, height: root.bounds.height-24)
     }
     func layoutPeek() {
+        layoutPeekStandby()
         guard let peekCard, let peekTab else { return }
-        peekBackdrop?.frame = pageShadow.frame
-        let page = pageShadow.frame; let margin = min(120, page.width*0.1)
-        peekCard.frame = NSRect(x: page.minX+margin, y: 12, width: page.width-margin*2, height: root.bounds.height-24)
-        peekCard.layer?.shadowPath = CGPath(roundedRect: peekCard.bounds, cornerWidth: 8, cornerHeight: 8, transform: nil)
+        peekBackdrop?.frame = pageClip.bounds
+        peekCard.frame = peekCardFrame
+        // Keep a settled, receded page centered after the window resizes.
+        if let layer = pageShadow.layer, layer.animation(forKey: "peek.recede") == nil, !CATransform3DIsIdentity(layer.transform) {
+            recedePage(true, along: nil)
+        }
+        (peekCard as? PageSurface)?.refreshOutline()
         peekCard.subviews.first?.frame = peekCard.bounds; peekTab.webView.frame = peekCard.bounds
         for (i, button) in peekControls.enumerated() { button.frame = NSRect(x: peekCard.frame.maxX+12, y: 20+CGFloat(i)*44, width: 34, height: 34) }
     }
-    func closePeek() {
+    /// Animated closes spring the Peek back into its link, reversing one that is still
+    /// growing. State clears immediately either way. Replacing a Peek keeps the page
+    /// receded and lets the old dimming fade under the new one.
+    func closePeek(animated: Bool = false, replacing: Bool = false) {
+        let card = peekCard, backdrop = peekBackdrop, web = peekTab?.webView, origin = peekOrigin
+        let motion = animated && peekMotionAllowed, growing = peekGhosts.first { $0.phase == .opening }
+        // Pending lookups and snapshots no longer apply; cards already shrinking finish on their own.
+        peekMotionToken = nil; peekLeftovers.forEach { $0.removeFromSuperview() }; peekLeftovers = []
+        if !motion { growing?.dismantle() }
+        peekOrigin = nil
+        if let peekTab { permissionCoordinator.cancel(for: peekTab.webView) }
         if let peekTab, hoveredWebView === peekTab.webView { hideLinkStatus() }
-        peekTab?.webView.stopLoading(); peekTab = nil
-        peekBackdrop?.removeFromSuperview(); peekBackdrop = nil
-        peekCard?.removeFromSuperview(); peekCard = nil
+        peekTab?.cancelLoad(); peekTab = nil
+        peekBackdrop = nil; peekCard = nil
+        if motion, let card {
+            recedePage(false, along: Self.peekCloseSpring)
+            if let growing { card.removeFromSuperview(); shrinkPeek(growing, into: peekFrame(of: origin), backdrop: backdrop) }
+            else if card.alphaValue == 1, let web { dismissPeek(card: card, backdrop: backdrop, page: web, origin: origin) }
+            else { backdrop?.removeFromSuperview(); card.removeFromSuperview() }
+        } else {
+            card?.removeFromSuperview()
+            if replacing, peekMotionAllowed, let backdrop, backdrop.alphaValue > 0 {
+                NSAnimationContext.runAnimationGroup({ $0.duration = 0.2; backdrop.animator().alphaValue = 0 },
+                    completionHandler: { backdrop.removeFromSuperview() })
+            } else { backdrop?.removeFromSuperview() }
+            if !replacing, !peekGhosts.contains(where: { $0.phase == .closing }) { recedePage(false, along: nil) }
+        }
         peekControls.forEach { $0.removeFromSuperview() }; peekControls = []
         window?.makeFirstResponder(selectedTab?.webView)
     }
     func expandPeek() {
         guard let tab = peekTab else { return }; tab.webView.removeFromSuperview()
-        peekTab = nil; closePeek(); tabs.append(tab); select(tab.id)
+        peekTab = nil; closePeek(); tabs.insert(tab, at: 0); select(tab.id)
     }
     func splitPeek() {
         guard let tab = peekTab else { return }; tab.webView.removeFromSuperview()
-        peekTab = nil; closePeek(); tabs.append(tab); showSplit(tab)
+        peekTab = nil; closePeek(); tabs.insert(tab, at: 0); showSplit(tab)
     }
     func showMessage(_ title: String, _ message: String) {
         let alert = NSAlert(); alert.messageText = title; alert.informativeText = message
@@ -128,8 +163,8 @@ import RiseCore
         content.view.appearance = theme.appearance
         siteInfoPopover.contentViewController = content
         siteInfoPopover.contentSize = content.view.fittingSize
-        let anchor: NSView = selectedTab?.developer == true ? devButtons[4] : sidebarVisible ? sidebar.settingsButton : pageClip
-        let rect = anchor === pageClip ? NSRect(x: 16, y: 8, width: 1, height: 1) : anchor.bounds
+        let anchor: NSView = selectedTab?.developer == true ? devButtons[4] : sidebarVisible ? sidebar.address : pageClip
+        let rect = anchor === pageClip ? NSRect(x: 16, y: 8, width: 1, height: 1) : anchor === sidebar.address ? sidebar.settingsAnchorRect : anchor.bounds
         siteInfoPopover.show(relativeTo: rect, of: anchor, preferredEdge: .minY)
     }
     func navigateDeveloperAddress(_ text: String) {

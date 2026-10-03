@@ -6,11 +6,20 @@ import RiseCore
     let id: UUID
     let webView: WKWebView
     var title: String
+    var customTitle: String?
     var pinned: Bool
     var developer: Bool
     var requestedURL: URL?
     var observations: [NSKeyValueObservation] = []
     var onChange: (() -> Void)?
+    var prepareForLoad: ((WKWebView) async throws -> Void)?
+    var onLoadError: ((Error) -> Void)?
+    private var navigationTask: Task<Void, Never>?
+    private var loadGeneration = 0
+    private(set) var hasAttemptedNavigation = false
+    var isPreparingNavigation: Bool { navigationTask != nil }
+    var isLoading: Bool { isPreparingNavigation || webView.isLoading }
+    var needsBlockingReload = false
     var favicon: NSImage?
     var iconHost: String?
     var iconTask: URLSessionDataTask?
@@ -18,7 +27,7 @@ import RiseCore
     var onThumbnailChange: (() -> Void)?
     private var thumbnailCaptureInFlight = false
     init(saved: SavedTab? = nil, configuration: WKWebViewConfiguration? = nil) {
-        id = saved?.id ?? UUID(); title = saved?.title ?? "New Tab"
+        id = saved?.id ?? UUID(); customTitle = saved?.customTitle; title = saved?.customTitle ?? saved?.title ?? "New Tab"
         pinned = saved?.pinned ?? false; developer = saved?.developer ?? false
         requestedURL = saved.flatMap { URL(string: $0.url) }
         let configuration = configuration ?? WKWebViewConfiguration()
@@ -35,17 +44,38 @@ import RiseCore
         observations.append(webView.observe(\.canGoForward, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.onChange?() } })
     }
     var url: URL? { webView.url ?? requestedURL }
-    var saved: SavedTab { SavedTab(id: id, url: url?.absoluteString ?? "about:blank", title: title, pinned: pinned, developer: developer) }
+    var saved: SavedTab { SavedTab(id: id, url: url?.absoluteString ?? "about:blank", title: title, pinned: pinned, developer: developer, customTitle: customTitle) }
+    func rename(_ text: String) {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty else { return }
+        customTitle = value; title = value; onChange?()
+    }
     func load(_ url: URL) {
+        hasAttemptedNavigation = true
         requestedURL = url
         if AddressResolver.isLocal(url) { developer = true }
-        if url.isFileURL { webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent()) }
-        else { webView.load(URLRequest(url: url)) }
+        loadGeneration += 1; let generation = loadGeneration
+        navigationTask?.cancel()
+        navigationTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.prepareForLoad?(self.webView)
+                guard !Task.isCancelled, self.loadGeneration == generation else { return }
+                self.navigationTask = nil
+                if url.isFileURL { self.webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent()) }
+                else { self.webView.load(URLRequest(url: url)) }
+            } catch {
+                guard !Task.isCancelled, self.loadGeneration == generation else { return }
+                self.navigationTask = nil; self.onLoadError?(error)
+            }
+        }
         onChange?()
     }
+    func cancelLoad() { loadGeneration += 1; navigationTask?.cancel(); navigationTask = nil; webView.stopLoading() }
     func changed() {
         if AddressResolver.isLocal(url) { developer = true }
-        if let value = webView.title, !value.isEmpty { title = value }
+        if let customTitle { title = customTitle }
+        else if let value = webView.title, !value.isEmpty { title = value }
         else if let url, url.absoluteString != "about:blank" { title = AddressResolver.displayHost(url) }
         updateIcon(); onChange?()
     }
@@ -75,5 +105,5 @@ import RiseCore
         }
         iconTask?.resume()
     }
-    deinit { iconTask?.cancel() }
+    deinit { navigationTask?.cancel(); iconTask?.cancel() }
 }

@@ -6,15 +6,17 @@ import RiseCore
     func shouldPeek(modifiers: NSEvent.ModifierFlags) -> Bool {
         modifiers.contains(.shift) || modifiers.contains(.option)
     }
-    @discardableResult func openModifiedLink(_ url: URL, modifiers: NSEvent.ModifierFlags) -> Bool {
-        if shouldPeek(modifiers: modifiers) { showPeek(url: url); return true }
+    @discardableResult func openModifiedLink(_ url: URL, modifiers: NSEvent.ModifierFlags, from source: WKWebView? = nil) -> Bool {
+        if shouldPeek(modifiers: modifiers) { showPeek(url: url, from: source); return true }
         if modifiers.contains(.command) { addTab(url: url); return true }
         return false
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        if action.targetFrame?.isMainFrame == true, action.navigationType != .backForward { pageCloth.cancel(for: webView) }
+        if action.targetFrame?.isMainFrame == true { permissionCoordinator.cancel(for: webView) }
         if action.shouldPerformDownload { decisionHandler(.download); return }
         if action.navigationType == .linkActivated, let url = action.request.url {
-            if openModifiedLink(url, modifiers: action.modifierFlags) { decisionHandler(.cancel); return }
+            if openModifiedLink(url, modifiers: action.modifierFlags, from: webView) { decisionHandler(.cancel); return }
         }
         if let scheme = action.request.url?.scheme?.lowercased(), !["http", "https", "file", "about", "data", "blob"].contains(scheme) {
             // External schemes require a deliberate choice; never silently run them.
@@ -29,11 +31,16 @@ import RiseCore
         decisionHandler(response.canShowMIMEType ? .allow : .download)
     }
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        permissionCoordinator.cancel(for: webView)
+        if selectedTab?.webView === webView { siteControlsPopover.close(); copiedLinkPopover.close() }
         historySwipe.cancel(for: webView)
         if hoveredWebView === webView { hideLinkStatus() }
         if errorWebView === webView { errorWebView = nil }; update()
     }
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) { pageCloth.destinationDidCommit(webView) }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        pageCloth.remember(webView)
+        pageCloth.destinationDidCommit(webView)
         if let tab = tabs.first(where: { $0.webView === webView }), let url = tab.url, url.absoluteString != "about:blank" {
             tab.captureThumbnail()
             history.removeAll { $0.url == url.absoluteString }; history.append(tab.saved)
@@ -44,17 +51,32 @@ import RiseCore
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { showNavigationError(error, in: webView) }
     func showNavigationError(_ error: Error, in webView: WKWebView) {
         guard (error as NSError).code != NSURLErrorCancelled else { return }
+        pageCloth.cancel(for: webView)
         errorWebView = webView; errorMessage.stringValue = error.localizedDescription; update()
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { webView.reload() }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         guard action.targetFrame == nil else { return nil }
         if shouldPeek(modifiers: action.modifierFlags), let url = action.request.url {
-            showPeek(url: url); return nil
+            showPeek(url: url, from: webView); return nil
         }
         return addTab(configuration: configuration).webView
     }
     func webViewDidClose(_ webView: WKWebView) { if let tab = tabs.first(where: { $0.webView === webView }) { closeTab(tab.id) } }
+    func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        let capabilities: [SiteCapability]
+        switch type {
+        case .camera: capabilities = [.camera]
+        case .microphone: capabilities = [.microphone]
+        case .cameraAndMicrophone: capabilities = [.camera, .microphone]
+        @unknown default: decisionHandler(.deny); return
+        }
+        permissionCoordinator.request(in: webView, origin: SitePermissions.origin(origin), capabilities: capabilities) { decisionHandler($0 ? .grant : .deny) }
+    }
+    @available(macOS 27.0, *)
+    func webView(_ webView: WKWebView, requestGeolocationPermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+        permissionCoordinator.request(in: webView, origin: SitePermissions.origin(origin), capabilities: [.location]) { decisionHandler($0 ? .grant : .deny) }
+    }
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
         let alert = NSAlert(); alert.messageText = AddressResolver.displayHost(webView.url); alert.informativeText = message
         guard let window else { completionHandler(); return }

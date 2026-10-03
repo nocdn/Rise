@@ -93,11 +93,13 @@ final class LinkPreloadingTests: XCTestCase {
         XCTAssertEqual(server.count("/disabled"), 0)
         XCTAssertEqual(browser.linkStatus.url?.path, "/disabled", "The destination appears even when preloading is disabled")
         XCTAssertFalse(browser.linkStatus.isHidden)
-        let menuEntry = try XCTUnwrap(browser.makeSiteMenu().items.first { $0.title == "Preload Links (Experimental)" })
+        let content = SiteControlsController(browser: browser); _ = content.view
+        let menuEntry = try XCTUnwrap(content.rows["Preload Links"])
         XCTAssertEqual(menuEntry.state, .off)
-        (menuEntry.target as? MenuAction)?.invoke()
+        menuEntry.performClick(nil)
         XCTAssertTrue(browser.linkPreloader.enabled)
-        XCTAssertEqual(browser.makeSiteMenu().items.last?.state, .on)
+        let updatedContent = SiteControlsController(browser: browser); _ = updatedContent.view
+        XCTAssertEqual(updatedContent.rows["Preload Links"]?.state, .on)
         XCTAssertTrue(LinkPreloader(preferences: defaults).enabled)
 
         try await evaluate(hover("short"), in: tab.webView)

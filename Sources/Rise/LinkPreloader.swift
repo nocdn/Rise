@@ -30,6 +30,7 @@ import WebKit
     private var recent: [URL: Date] = [:]
     private var readyUntil: [URL: Date] = [:]
     private var completedUntil: [URL: Date] = [:]
+    var prepareWebView: ((WKWebView) -> Void)?
     var onHover: ((URL?, WKWebView) -> Void)?
     var onReady: ((URL) -> Void)?
     var onComplete: ((URL) -> Void)?
@@ -80,6 +81,7 @@ import WebKit
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.mediaTypesRequiringUserActionForPlayback = .all
         let webView = WKWebView(frame: source.bounds, configuration: configuration)
+        prepareWebView?(webView)
         webView.navigationDelegate = self
         let timeout = DispatchWorkItem { [weak self, weak webView] in
             if let webView { self?.finish(webView) }

@@ -40,7 +40,7 @@ final class TabSwitchingTests: XCTestCase {
         XCTAssertTrue(browser.window!.performKeyEquivalent(with: key(browser)))
         releaseControl(browser)
         XCTAssertEqual(browser.selectedID, first.id)
-        XCTAssertEqual(browser.tabs.map(\.id), [first.id, second.id, third.id])
+        XCTAssertEqual(browser.tabs.map(\.id), [third.id, second.id, first.id])
     }
     @MainActor func testHeldControlShowsCardsAndShiftCyclesFrozenOrderBeforeCommit() async throws {
         let browser = makeBrowser(); defer { clean(browser) }

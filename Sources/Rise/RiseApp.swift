@@ -76,7 +76,7 @@ import AppKit
         item(history, "Forward", #selector(BrowserController.goForward), "]", target: browser)
         item(history, "Next Tab", #selector(BrowserController.nextTab), "]", modifiers: [.command, .shift], target: browser)
         item(history, "Previous Tab", #selector(BrowserController.previousTab), "[", modifiers: [.command, .shift], target: browser)
-        item(history, "Copy Current URL", #selector(BrowserController.copyURL), "c", modifiers: [.command, .shift], target: browser)
+        item(history, "Copy Link", #selector(BrowserController.copyURL), "C", modifiers: [.command, .shift], target: browser)
         let window = addMenu("Window"); NSApp.windowsMenu = window
         item(window, "Minimize", #selector(NSWindow.performMiniaturize(_:)), "m")
         item(window, "Zoom", #selector(NSWindow.performZoom(_:)))

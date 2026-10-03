@@ -35,8 +35,10 @@ public struct SavedTab: Codable, Equatable {
     public var title: String
     public var pinned: Bool
     public var developer: Bool
-    public init(id: UUID = UUID(), url: String, title: String, pinned: Bool = false, developer: Bool = false) {
+    public var customTitle: String?
+    public init(id: UUID = UUID(), url: String, title: String, pinned: Bool = false, developer: Bool = false, customTitle: String? = nil) {
         self.id = id; self.url = url; self.title = title; self.pinned = pinned; self.developer = developer
+        self.customTitle = customTitle
     }
 }
 public struct SplitTabGroup: Codable, Equatable {

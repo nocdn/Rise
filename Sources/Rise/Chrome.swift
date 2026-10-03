@@ -92,11 +92,13 @@ final class BrowserWindow: NSWindow {
     var pageMouseDown: ((NSEvent) -> Void)?
     var otherMouseEvent: ((NSEvent) -> Bool)?
     var historyScrollEvent: ((NSEvent) -> Bool)?
+    var modifiersChanged: (() -> Void)?
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if tabSwitchEvent?(event) == true { return true }
         return super.performKeyEquivalent(with: event)
     }
     override func sendEvent(_ event: NSEvent) {
+        if event.type == .flagsChanged { modifiersChanged?() }
         if tabSwitchEvent?(event) != true {
             if event.type == .scrollWheel, historyScrollEvent?(event) == true { return }
             if otherMouseEvent?(event) == true { return }

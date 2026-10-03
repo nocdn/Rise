@@ -1,0 +1,57 @@
+{
+  "format": 1,
+  "generated": "2026-10-02",
+  "converter": "AdGuard SafariConverterLib 4.3.0 (Safari 17 syntax)",
+  "lists": [
+    {
+      "file": "rules-hagezi-1.json",
+      "sha256": "7f8b4893c97a7c8837cf479d6df9d0cf472ebce8ae1b1ce69178eadc49a566b4",
+      "rules": 40000
+    },
+    {
+      "file": "rules-hagezi-2.json",
+      "sha256": "ecb69587ff43448e4c6cb43ce22331353bcc34ff1edd084929d0e79f59675cd4",
+      "rules": 24392
+    },
+    {
+      "file": "rules-easylist-1.json",
+      "sha256": "c058e3f272f61bb111596c18dfc364ad9d8ef82f04eabb5d78e3ee091569d871",
+      "rules": 40756
+    },
+    {
+      "file": "rules-easylist-2.json",
+      "sha256": "8a6fa5b21baf21540930a56cd241c4331a336c0a9cd4c856cfac9f101458dcf2",
+      "rules": 20285
+    },
+    {
+      "file": "rules-easyprivacy-1.json",
+      "sha256": "63e81b023448e1e2f0df589b8ef088229d0541f2cf97e78d5ed2e904bff6f3c7",
+      "rules": 40849
+    },
+    {
+      "file": "rules-easyprivacy-2.json",
+      "sha256": "c39696e43c2c099490f1e147edd5f7d281aed764465c30e05efa9b54b9e301ff",
+      "rules": 16238
+    },
+    {
+      "file": "rules-rise-1.json",
+      "sha256": "a6b4fd7b5971c0a6e7573df2cd18a4d624ebad74c02c85219ce446819a424fa1",
+      "rules": 5
+    }
+  ],
+  "hostDomains": 64392,
+  "sources": [
+    {
+      "file": "easylist.txt",
+      "sha256": "1e17a02b1cbca65116d4c161a92da45af6b49c411c4777606966c2d85776eab5"
+    },
+    {
+      "file": "easyprivacy.txt",
+      "sha256": "7888a243c2a5c170fff589cefe28ab192d0da7e37572617beec87203eea2a855"
+    },
+    {
+      "file": "hagezi-mini.txt",
+      "sha256": "6c13fb874963be125bf3c0e7060105e28848ba555e251a97db172a7d553403cb"
+    }
+  ]
+}

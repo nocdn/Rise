@@ -11,6 +11,7 @@ import WebKit
         root.addSubview(linkStatus, positioned: .below, relativeTo: dismissArea)
         layoutLinkStatus()
         if let url, linkPreloader.isComplete(url) { linkStatus.markReady(url) }
+        updatePeekStandby()
     }
     func hideLinkStatus() {
         hoveredWebView = nil; linkStatus.show(nil, theme: theme)

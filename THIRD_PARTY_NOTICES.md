@@ -24,3 +24,9 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Blocking filter data
+
+EasyList and EasyPrivacy: The EasyList authors (https://easylist.to/). HaGeZi Multi PRO mini: HaGeZi (https://github.com/hagezi/dns-blocklists). The original and converted filter data is distributed under GPL-3.0; its complete license is in Filters/LICENSES/GPL-3.0.txt and the app’s Blocking resource bundle. Original source snapshots are included in Filters/Sources/.
+
+AdGuard SafariConverterLib 4.3.0 is used as a build-time conversion tool (GPL-3.0, https://github.com/AdguardTeam/SafariConverterLib); its binary is not bundled or linked into Rise.

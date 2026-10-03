@@ -9,6 +9,10 @@ import WebKit
     private weak var window: BrowserWindow?
     private let pageAt: (NSEvent) -> WKWebView?
     private let feedback: (HistoryDirection?, Double, Bool, Bool?) -> Void
+    var prepareCloth: ((WKWebView) -> Void)?
+    var dragCloth: ((WKWebView, HistoryDirection, Double) -> Void)?
+    var releaseCloth: ((Double, Bool, Bool) -> Void)?
+    var cancelCloth: (() -> Void)?
     var thresholdClick: () -> Void = {
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
     }
@@ -16,6 +20,7 @@ import WebKit
     private(set) var gesture = HistorySwipeState()
     private var pending: [NSEvent] = []
     private var probing = false, permitted = false, suppressMomentum = false
+    private var clothPrepared = false
     private var generation = 0
     private var probeTimeout: DispatchWorkItem?
     init(window: BrowserWindow, pageAt: @escaping (NSEvent) -> WKWebView?,
@@ -23,9 +28,12 @@ import WebKit
         self.window = window; self.pageAt = pageAt; self.feedback = feedback
     }
     @discardableResult func handle(_ event: NSEvent) -> Bool {
-        guard event.type == .scrollWheel, event.hasPreciseScrollingDeltas else { return false }
+        guard event.type == .scrollWheel else { return false }
+        let terminal = event.phase.contains(.ended) || event.phase.contains(.cancelled)
+        guard event.hasPreciseScrollingDeltas || terminal || !event.momentumPhase.isEmpty else { return false }
         if !event.momentumPhase.isEmpty {
             if probing { pending.append(event); return true }
+            if event.momentumPhase.contains(.began), permitted, gesture.isTracking { _ = finish(cancelled: false) }
             let consumed = suppressMomentum
             if event.momentumPhase.contains(.ended) { suppressMomentum = false }
             return consumed
@@ -34,6 +42,9 @@ import WebKit
             cancel()
             guard let page = pageAt(event), page.canGoBack || page.canGoForward else { return false }
             self.page = page; probing = true; pending = [event]
+            if abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) * 1.2 {
+                prepareCloth?(page); clothPrepared = true
+            }
             probe(page, at: event)
             return true
         }
@@ -59,13 +70,14 @@ import WebKit
         guard generation == token, probing else { return }
         probing = false; permitted = allows; probeTimeout?.cancel(); probeTimeout = nil
         let events = pending; pending.removeAll()
-        if allows { gesture.begin() }
+        if allows { gesture.begin() } else { cancelCloth?(); clothPrepared = false }
         for event in events {
             if !handleResolved(event) { window?.deliverPageScroll(event) }
         }
     }
     private func handleResolved(_ event: NSEvent) -> Bool {
         if !event.momentumPhase.isEmpty {
+            if event.momentumPhase.contains(.began), permitted, gesture.isTracking { _ = finish(cancelled: false) }
             let consumed = suppressMomentum
             if event.momentumPhase.contains(.ended) { suppressMomentum = false }
             return consumed
@@ -75,29 +87,42 @@ import WebKit
     private func route(_ event: NSEvent) -> Bool {
         guard let page else { cancel(); return false }
         if event.phase.contains(.cancelled) || event.phase.contains(.ended) {
-            let consumed = gesture.consumesScroll, direction = gesture.direction
-            let committed = gesture.finish(cancelled: event.phase.contains(.cancelled))
-            suppressMomentum = consumed; permitted = false
-            feedback(direction, 0, false, committed != nil)
-            if let committed {
-                if committed == .back { page.goBack() } else { page.goForward() }
-            }
-            return consumed
+            return finish(cancelled: event.phase.contains(.cancelled))
         }
         guard event.phase.contains(.began) || event.phase.contains(.changed), gesture.isTracking else { return false }
         // Undo the user's scroll preference: physical right = back, left = forward.
         let dx = event.scrollingDeltaX * (event.isDirectionInvertedFromDevice ? 1 : -1)
         if gesture.move(dx: Double(dx), dy: Double(event.scrollingDeltaY),
                         canBack: page.canGoBack, canForward: page.canGoForward) { thresholdClick() }
-        if gesture.consumesScroll { feedback(gesture.direction, gesture.arrowPull, gesture.isArmed, nil) }
+        if gesture.consumesScroll {
+            feedback(gesture.direction, gesture.arrowPull, gesture.isArmed, nil)
+            if let direction = gesture.direction {
+                if !clothPrepared { prepareCloth?(page); clothPrepared = true }
+                dragCloth?(page, direction, gesture.distance)
+            }
+        }
         return gesture.consumesScroll
+    }
+    private func finish(cancelled: Bool) -> Bool {
+        let consumed = gesture.consumesScroll, direction = gesture.direction, distance = gesture.distance
+        let page = self.page, committed = gesture.finish(cancelled: cancelled)
+        suppressMomentum = consumed; permitted = false; self.page = nil
+        feedback(direction, 0, false, committed != nil)
+        if consumed { releaseCloth?(distance, committed != nil, cancelled) }
+        else { cancelCloth?() }
+        if let committed, let page {
+            if committed == .back { page.goBack() } else { page.goForward() }
+        }
+        return consumed
     }
     func cancel(for page: WKWebView) { if self.page === page { cancel() } }
     func cancel() {
         generation += 1; probeTimeout?.cancel(); probeTimeout = nil
         pending.removeAll(); probing = false; permitted = false; suppressMomentum = false
+        clothPrepared = false
         let direction = gesture.direction
         _ = gesture.finish(cancelled: true); page = nil
+        cancelCloth?()
         if let direction { feedback(direction, 0, false, false) }
     }
     // CSS coordinates account for WKWebView.pageZoom. Shadow DOM is traversed;

@@ -18,7 +18,7 @@ final class SplitTabsTests: XCTestCase {
         browser.select(left.id); browser.showSplit(right); browser.root.layoutSubtreeIfNeeded()
         let group = try XCTUnwrap(browser.splitGroups.first)
         let row = try XCTUnwrap(browser.sidebar.splitRows[group.id])
-        XCTAssertEqual(browser.sidebar.orderedIDs, [left.id, other.id])
+        XCTAssertEqual(browser.sidebar.orderedIDs, [other.id, left.id])
         XCTAssertTrue(row.left.superview === row && row.right.superview === row)
         XCTAssertTrue(row.divider.isHidden)
         let leftFrame = left.webView.frame, rightFrame = right.webView.frame
