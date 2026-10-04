@@ -47,8 +47,23 @@ def signing_certificate(identity):
     return matches[0]
 
 
+def local_identity(listing):
+    """An Apple Development identity for everyday builds, or ad-hoc ("-") without one.
+
+    macOS keys privacy grants (such as Downloads folder access) to the signature's
+    designated requirement. Ad-hoc signatures pin each build's hash, so every rebuild
+    asks again; a development certificate keeps the requirement stable across builds.
+    Identities sharing a name produce the same requirement, so any match will do.
+    """
+    matches = sorted(sha for sha, name in re.findall(r'([A-Fa-f0-9]{40})\s+"([^"]+)"', listing)
+                     if name.startswith("Apple Development:"))
+    return matches[0] if matches else "-"
+
+
 def configuration(info):
-    identity = os.environ.get("RISE_SIGNING_IDENTITY") or "-"
+    identity = os.environ.get("RISE_SIGNING_IDENTITY")
+    if not identity:
+        identity = local_identity(subprocess.check_output(["security", "find-identity", "-v", "-p", "codesigning"], text=True))
     profile_path = os.environ.get("RISE_PROVISIONING_PROFILE")
     if profile_path:
         if identity == "-":
@@ -83,7 +98,7 @@ def main():
         # Also remove a profile left by a previous approved build of this bundle.
         embedded.unlink(missing_ok=True)
         subprocess.run([*command, str(app)], check=True)
-        print("Local build: browser passkeys need an Apple-approved provisioning profile.")
+        print("Local build" + (" (ad-hoc)" if identity == "-" else "") + ": browser passkeys need an Apple-approved provisioning profile.")
     subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
 
 

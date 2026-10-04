@@ -18,7 +18,7 @@ import RiseCore
     // The shadow is a sibling of the scroller, so NSClipView cannot crop it.
     let selectedTabShadow = Surface(radius: TabAppearance.radius)
     var selectedTabID: UUID?
-    let archiveButton: ChromeButton
+    let archiveButton: ArchiveButton
     let themeButton: ChromeButton
     let clearButton: ChromeButton
     var rows: [UUID: TabRow] = [:]
@@ -39,7 +39,7 @@ import RiseCore
     init(copy: @escaping () -> Void, settings: @escaping () -> Void, archive: @escaping () -> Void, theme: @escaping () -> Void, clear: @escaping () -> Void) {
         copyButton = SidebarCopyButton(action: copy)
         settingsButton = SidebarHoverButton(symbol: "slider.horizontal.3", size: 14, title: "Site controls", action: settings)
-        archiveButton = ChromeButton(symbol: "archivebox.fill", size: 15, title: "Recently closed tabs", action: archive)
+        archiveButton = ArchiveButton(title: "Recently closed tabs", action: archive)
         themeButton = ChromeButton(symbol: "paintpalette.fill", size: 13, title: "Change theme", action: theme)
         clearButton = ChromeButton(symbol: "broom", size: 17, title: "Clear unpinned tabs", action: clear)
         if clearButton.image == nil { clearButton.image = broomIcon() }

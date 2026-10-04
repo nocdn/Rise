@@ -6,7 +6,7 @@ passkey selection. Rise keeps this flow in WebKit: it does not override
 
 Arbitrary website passkeys require Apple's restricted
 `com.apple.developer.web-browser.public-key-credential` entitlement, a matching
-provisioning profile, and the person's macOS consent. The current local ad-hoc build
+provisioning profile, and the person's macOS consent. The standard local build
 does **not** enable the restricted capability. Adding it without a valid profile
 can prevent the app from launching.
 
@@ -58,8 +58,9 @@ profiles for another app, and certificates not included in the profile. It embed
 the approved profile and signs with the matching entitlement. Certificate hashes
 and downloaded profiles stay local; do not commit profiles or signing credentials.
 
-Without these environment variables, the standard build continues to use ad-hoc
-signing without the restricted passkey entitlement. Approval cannot be replaced
+Without these environment variables, the standard build signs with a local Apple
+Development identity (or ad-hoc when none is installed) and without the restricted
+passkey entitlement. Approval cannot be replaced
 by a WebKit preference or a JavaScript polyfill.
 
 ## References

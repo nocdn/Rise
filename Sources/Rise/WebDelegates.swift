@@ -101,15 +101,23 @@ import RiseCore
         guard let window else { completionHandler(nil); return }
         panel.beginSheetModal(for: window) { completionHandler($0 == .OK ? panel.urls : nil) }
     }
-    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { download.delegate = self }
-    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { download.delegate = self }
+    func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { download.delegate = self; launchDownloadFlight() }
+    func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { download.delegate = self; launchDownloadFlight() }
 }
 @MainActor extension BrowserController: WKDownloadDelegate {
+    /// Saves straight to Downloads; names in use, on disk or by another download, get a number.
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
-        let panel = NSSavePanel(); panel.nameFieldStringValue = suggestedFilename
-        guard let window else { completionHandler(nil); return }
-        panel.beginSheetModal(for: window) { completionHandler($0 == .OK ? panel.url : nil) }
+        try? FileManager.default.createDirectory(at: downloadsFolder, withIntermediateDirectories: true)
+        let pending = Set(downloadDestinations.values)
+        let destination = Self.downloadDestination(for: suggestedFilename, in: downloadsFolder) {
+            pending.contains($0) || FileManager.default.fileExists(atPath: $0.path)
+        }
+        downloadDestinations[ObjectIdentifier(download)] = destination
+        completionHandler(destination)
     }
-    func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) { showMessage("Download failed", error.localizedDescription) }
-    func downloadDidFinish(_ download: WKDownload) { }
+    func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
+        downloadDestinations[ObjectIdentifier(download)] = nil
+        showMessage("Download failed", error.localizedDescription)
+    }
+    func downloadDidFinish(_ download: WKDownload) { downloadDestinations[ObjectIdentifier(download)] = nil }
 }

@@ -53,5 +53,16 @@ class PasskeySigningTests(unittest.TestCase):
                     signing.passkey_entitlements(profile, "dev.bartosz.Rise", self.sha, self.now)
 
 
+class LocalIdentityTests(unittest.TestCase):
+    def testPrefersADevelopmentIdentityAndFallsBackToAdHoc(self):
+        listing = (
+            '  1) 2B1DE14C84151F148B532FB126FA3F69231D544A "Apple Development: Test (TEAM)"\n'
+            '  2) 353C762A57F47FAF8D1B8DC04484F99B3FDBF2DF "Developer ID Application: Test (TEAM)"\n'
+            '  3) 0378CD50D675A3ECCD5C39A78159E47E2D01981B "Apple Development: Test (TEAM)"\n'
+            '     3 valid identities found\n')
+        self.assertEqual(signing.local_identity(listing), "0378CD50D675A3ECCD5C39A78159E47E2D01981B")
+        self.assertEqual(signing.local_identity("     0 valid identities found\n"), "-")
+
+
 if __name__ == "__main__":
     unittest.main()

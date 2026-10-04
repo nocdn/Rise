@@ -84,6 +84,10 @@ import RiseCore
     let peekStandbyView = PeekStandbyView()
     var peekStandbyWork: DispatchWorkItem?
     var peekStandbyExpiry: DispatchWorkItem?
+    var downloadFlight: DownloadFlightView?
+    /// Downloads save here without asking; tests point it elsewhere.
+    var downloadsFolder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+    var downloadDestinations: [ObjectIdentifier: URL] = [:]
     var saveWork: DispatchWorkItem?
     let sessionURL: URL
     var lastSaved: BrowserSession?
