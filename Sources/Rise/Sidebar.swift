@@ -20,7 +20,6 @@ import RiseCore
     var selectedTabID: UUID?
     let archiveButton: ArchiveButton
     let themeButton: ChromeButton
-    let clearButton: ChromeButton
     var rows: [UUID: TabRow] = [:]
     var splitRows: [UUID: SplitTabRow] = [:]
     var displayedRows: [NSView] = []
@@ -36,16 +35,16 @@ import RiseCore
     var onTabMenu: ((UUID, NSEvent) -> Void)?
     var onReorder: (([UUID]) -> Void)?
     var onRename: ((UUID, String) -> Void)?
-    init(copy: @escaping () -> Void, settings: @escaping () -> Void, archive: @escaping () -> Void, theme: @escaping () -> Void, clear: @escaping () -> Void) {
+    init(copy: @escaping () -> Void, settings: @escaping () -> Void, archive: @escaping () -> Void, theme: @escaping () -> Void) {
         copyButton = SidebarCopyButton(action: copy)
         settingsButton = SidebarHoverButton(symbol: "slider.horizontal.3", size: 14, title: "Site controls", action: settings)
-        archiveButton = ArchiveButton(title: "Recently closed tabs", action: archive)
-        themeButton = ChromeButton(symbol: "paintpalette.fill", size: 13, title: "Change theme", action: theme)
-        clearButton = ChromeButton(symbol: "broom", size: 17, title: "Clear unpinned tabs", action: clear)
-        if clearButton.image == nil { clearButton.image = broomIcon() }
+        settingsButton.image = TablerIcon.image(TablerIcon.adjustments, size: 16, description: "Site controls")
+        archiveButton = ArchiveButton(title: "Downloads", action: archive)
+        themeButton = ChromeButton(symbol: "paintpalette", size: 13, title: "Change theme", action: theme)
+        themeButton.image = TablerIcon.image(TablerIcon.palette, size: 20, description: "Change theme")
         super.init()
         address.isBordered = false; address.title = ""; address.wantsLayer = true
-        address.layer?.cornerRadius = 12; address.layer?.cornerCurve = .continuous
+        address.layer?.cornerRadius = AddressAppearance.cornerRadius; address.layer?.cornerCurve = .continuous
         address.target = self; address.action = #selector(openAddress); address.setAccessibilityLabel("Search or Enter URL")
         searchIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
         searchIcon.contentTintColor = NSColor(hex: 0xA09E9E)
@@ -60,7 +59,7 @@ import RiseCore
         selectedTabShadow.shadow = TabAppearance.shadow(.neutral)
         selectedTabShadow.isHidden = true
         addSubview(selectedTabShadow)
-        [address, copyButton, settingsButton, newTab, scroll, archiveButton, themeButton, clearButton].forEach(addSubview)
+        [address, copyButton, settingsButton, newTab, scroll, archiveButton, themeButton].forEach(addSubview)
         updateAddressControlVisibility(animated: false)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -74,13 +73,11 @@ import RiseCore
         newTab.theme = theme
         addressText.stringValue = AddressResolver.displayHost(selected?.url)
         let blank = selected?.url == nil || selected?.url?.absoluteString == "about:blank"
-        addressText.textColor = blank ? theme.muted : theme.text.withAlphaComponent(theme == .dark ? 0.95 : 0.7)
+        addressText.textColor = blank ? theme.muted : theme.text.withAlphaComponent(theme == .dark ? 0.95 : 0.85)
         searchIcon.isHidden = !blank; hasAddress = !blank
         updateAddressControlVisibility()
-        clearButton.isEnabled = tabs.contains { !$0.pinned }
-        clearButton.contentTintColor = theme.muted
         [copyButton, settingsButton, archiveButton, themeButton].forEach {
-            $0.contentTintColor = theme.muted
+            $0.contentTintColor = $0 === archiveButton || $0 === themeButton ? theme.sidebarIcon : theme.muted
             $0.hoverColor = theme.text.withAlphaComponent(0.07)
         }
         searchIcon.contentTintColor = theme.muted
@@ -139,12 +136,12 @@ import RiseCore
     }
     override func layout() {
         super.layout(); let w = bounds.width
-        address.frame = NSRect(x: 8, y: 50, width: w-16, height: 36)
+        address.frame = NSRect(x: TabAppearance.inset, y: 50, width: w-2*TabAppearance.inset, height: 36)
         searchIcon.frame = NSRect(x: 12, y: 10, width: 14, height: 16)
         let textX: CGFloat = searchIcon.isHidden ? 13 : 34
         addressText.frame = NSRect(x: textX, y: 10, width: max(0, address.bounds.width-textX-13), height: 18)
-        copyButton.frame = NSRect(x: w-67, y: 56, width: 27, height: 24)
-        settingsButton.frame = NSRect(x: w-39, y: 56, width: 27, height: 24)
+        copyButton.frame = NSRect(x: address.frame.maxX-59, y: 56, width: 27, height: 24)
+        settingsButton.frame = NSRect(x: address.frame.maxX-31, y: 56, width: 27, height: 24)
         updateAddressTextBoundary(animated: false)
         let start: CGFloat = 98
         newTab.frame = NSRect(x: TabAppearance.inset, y: start, width: w-2*TabAppearance.inset, height: TabAppearance.height)
@@ -162,9 +159,8 @@ import RiseCore
             y += h+TabAppearance.spacing
         }
         rowsHost.frame = NSRect(x: 0, y: 0, width: w, height: max(y+8, scroll.bounds.height))
-        archiveButton.frame = NSRect(x: 10, y: bounds.height-39, width: 28, height: 28)
-        themeButton.frame = NSRect(x: (w-28)/2, y: bounds.height-39, width: 28, height: 28)
-        clearButton.frame = NSRect(x: w-37, y: bounds.height-39, width: 28, height: 28)
+        archiveButton.frame = NSRect(x: w-37, y: bounds.height-39, width: 28, height: 28)
+        themeButton.frame = NSRect(x: 10, y: bounds.height-39, width: 28, height: 28)
         positionSelectedTabShadow()
     }
     @objc func positionSelectedTabShadow() {

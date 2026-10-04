@@ -69,8 +69,8 @@ import RiseCore
                 ("Y" as NSString).draw(at: NSPoint(x: 4, y: 1), withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: NSColor.white]); return true
             }; icon.image = image
         } else { icon.image = NSImage(systemSymbolName: tab.pinned ? "pin.fill" : "globe", accessibilityDescription: nil) }
-        icon.contentTintColor = theme.muted
-        close.contentTintColor = theme == .rose ? theme.muted : (theme == .dark ? NSColor.white : .black).withAlphaComponent(0.8)
+        icon.contentTintColor = theme.sidebarIcon
+        close.contentTintColor = theme == .dark ? NSColor.white.withAlphaComponent(0.8) : theme.sidebarIcon
         close.hoverColor = theme == .dark ? NSColor.white.withAlphaComponent(0.08) : NSColor.black.withAlphaComponent(0.05)
         setAccessibilityLabel(tab.title + (selected ? ", selected" : ""))
         close.toolTip = "Close \(tab.title)"

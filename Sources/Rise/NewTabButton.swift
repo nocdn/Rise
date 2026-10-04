@@ -6,7 +6,7 @@ final class NewTabButton: NSButton {
     private var hovered = false
     var theme = RiseTheme.neutral {
         didSet {
-            plus.contentTintColor = theme == .neutral ? .black.withAlphaComponent(0.3) : theme.muted
+            plus.contentTintColor = theme.sidebarIcon
             caption.textColor = theme == .neutral ? .black.withAlphaComponent(0.5) : theme.muted
             updateBackground()
         }

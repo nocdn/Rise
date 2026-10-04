@@ -123,6 +123,9 @@ final class TabLoadingBackground: FlippedView {
 
 final class LinkStatusPill: Surface {
     let text = ShimmeringTextField(frame: .zero)
+    let peekPrefix = label("Open ", size: 12, weight: .medium)
+    let peekSuffix = label(" in Peek", size: 12, weight: .medium)
+    private(set) var showsPeekHint = false
     private(set) var url: URL?
     private(set) var ready = false
     private var restingFrame = NSRect.zero
@@ -132,20 +135,28 @@ final class LinkStatusPill: Surface {
         layer?.cornerCurve = .circular
         shadow = chromeShadow(opacity: 0.075, blur: 3, offset: -0.5)
         text.font = .systemFont(ofSize: 12, weight: .medium)
-        addSubview(text); isHidden = true
+        for hint in [peekPrefix, peekSuffix] {
+            hint.cell?.usesSingleLineMode = true; hint.lineBreakMode = .byClipping
+        }
+        addSubview(peekPrefix); addSubview(text); addSubview(peekSuffix)
+        peekPrefix.isHidden = true; peekSuffix.isHidden = true; isHidden = true
     }
     required init?(coder: NSCoder) { fatalError() }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    func show(_ url: URL?, theme: RiseTheme) {
+    func show(_ url: URL?, theme: RiseTheme, peek: Bool = false) {
         if self.url != url { ready = false; text.stopShimmer() }
+        let peek = url != nil && peek
+        if showsPeekHint != peek { text.stopShimmer() }
+        showsPeekHint = peek; peekPrefix.isHidden = !peek; peekSuffix.isHidden = !peek
         self.url = url; isHidden = url == nil
         guard let url else { return }
-        let value = url.absoluteString.replacingOccurrences(of: "^https?://", with: "", options: .regularExpression)
+        let value = peek ? url.absoluteString : url.absoluteString.replacingOccurrences(of: "^https?://", with: "", options: .regularExpression)
         text.stringValue = value; text.textColor = theme.text.withAlphaComponent(0.8)
+        peekPrefix.textColor = theme.text.withAlphaComponent(0.6); peekSuffix.textColor = peekPrefix.textColor
         text.shimmerColor = theme.linkShimmer
         fill = theme.status
         layer?.borderWidth = 0.75; layer?.borderColor = theme.text.withAlphaComponent(0.18).cgColor
-        setAccessibilityLabel(url.absoluteString); toolTip = url.absoluteString
+        setAccessibilityLabel(peek ? "Open \(url.absoluteString) in Peek" : url.absoluteString); toolTip = url.absoluteString
     }
     func markReady(_ url: URL) {
         guard self.url == url, !ready else { return }
@@ -153,11 +164,17 @@ final class LinkStatusPill: Surface {
         text.startShimmer()
     }
     func place(in page: NSRect) {
-        let width = min(max(80, text.attributedStringValue.size().width + 26), max(0, min(650, page.width - 28)))
+        // Measure the glyphs independently of the previous field frame and leave
+        // room for NSTextFieldCell's internal drawing insets.
+        let prefixWidth = showsPeekHint ? ceil(peekPrefix.attributedStringValue.size().width)+6 : 0
+        let suffixWidth = showsPeekHint ? ceil(peekSuffix.attributedStringValue.size().width)+6 : 0
+        let width = min(max(80, text.attributedStringValue.size().width + prefixWidth + suffixWidth + 26), max(0, min(650, page.width - 28)))
         restingFrame = NSRect(x: page.minX + 10, y: page.maxY - 36, width: width, height: 26)
         applyPosition()
-        text.frame = NSRect(x: 12, y: (26 - text.intrinsicContentSize.height)/2,
-                            width: max(0, width - 24), height: text.intrinsicContentSize.height)
+        peekPrefix.frame = NSRect(x: 12, y: (26-peekPrefix.intrinsicContentSize.height)/2, width: prefixWidth, height: peekPrefix.intrinsicContentSize.height)
+        text.frame = NSRect(x: 12 + prefixWidth, y: (26 - text.intrinsicContentSize.height)/2,
+                            width: max(0, width - 24 - prefixWidth - suffixWidth), height: text.intrinsicContentSize.height)
+        peekSuffix.frame = NSRect(x: text.frame.maxX, y: (26-peekSuffix.intrinsicContentSize.height)/2, width: suffixWidth, height: peekSuffix.intrinsicContentSize.height)
         text.needsLayout = true
     }
     private func applyPosition() {

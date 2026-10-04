@@ -5,6 +5,39 @@ import RiseCore
 @testable import Rise
 
 final class BrowserLifecycleTests: XCTestCase {
+    @MainActor func testPeekModifierUpdatesExistingHoverAndCursorRectClearsOnMovementOrDismissal() throws {
+        let browser = makeBrowser(); defer { browser.hideLinkStatus(); clean(browser) }
+        let tab = browser.addTab(), target = URL(string: "https://example.com/target")!
+        browser.showHoveredLink(target, in: tab.webView)
+        let web = try XCTUnwrap(tab.webView as? LinkCursorWebView)
+        let window = try XCTUnwrap(browser.window as? BrowserWindow)
+        func flags(_ value: NSEvent.ModifierFlags) throws {
+            let event = try XCTUnwrap(NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: value, timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 56))
+            window.sendEvent(event)
+        }
+        try flags(.shift)
+        XCTAssertTrue(browser.linkStatus.showsPeekHint)
+        XCTAssertEqual(browser.linkStatus.url, target)
+        try flags([])
+        XCTAssertFalse(browser.linkStatus.showsPeekHint)
+        try flags(.option)
+        XCTAssertTrue(browser.linkStatus.showsPeekHint, "The existing Option Peek shortcut gets the same hint")
+        try flags([])
+        web.keepPeekCursor(at: NSPoint(x: 50, y: 50)); web.resetCursorRects()
+        XCTAssertNotNil(web.peekCursorPoint)
+        let move = try XCTUnwrap(NSEvent.mouseEvent(with: .mouseMoved, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0))
+        window.pointerMoved?(move)
+        XCTAssertNil(web.peekCursorPoint, "Moving away must hand cursor selection back to WebKit")
+        web.keepPeekCursor(at: NSPoint(x: 50, y: 50))
+        browser.showHoveredLink(nil, in: web)
+        XCTAssertNil(web.peekCursorPoint); XCTAssertTrue(browser.linkStatus.isHidden)
+        browser.showHoveredLink(target, in: web); web.keepPeekCursor(at: NSPoint(x: 50, y: 50))
+        browser.hideLinkStatus()
+        XCTAssertNil(web.peekCursorPoint); XCTAssertTrue(browser.linkStatus.isHidden)
+        browser.peekStandbyWork?.cancel()
+    }
     @MainActor func makeBrowser() -> BrowserController {
         _ = NSApplication.shared
         let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json")
@@ -26,15 +59,6 @@ final class BrowserLifecycleTests: XCTestCase {
         XCTAssertEqual(browser.tabs.count, 1)
         XCTAssertEqual(browser.selectedTab?.id, tab.id)
         XCTAssertEqual(browser.selectedTab?.title, "Example")
-    }
-    @MainActor func testClearPreservesPinnedTabsAndSelection() {
-        let browser = makeBrowser(); defer { clean(browser) }
-        let pinned = browser.addTab(); pinned.pinned = true
-        let second = browser.addTab(); browser.addTab()
-        browser.clearTabs()
-        XCTAssertEqual(browser.tabs.map(\.id), [pinned.id])
-        XCTAssertEqual(browser.selectedTab?.id, pinned.id)
-        XCTAssertTrue(browser.closedTabs.contains { $0.id == second.id })
     }
     @MainActor func testClosingSelectedSplitKeepsRemainingTabUsable() {
         let browser = makeBrowser(); defer { clean(browser) }

@@ -25,15 +25,19 @@ import RiseCore
     var iconOrigin: String?
     var iconTask: URLSessionDataTask?
     var thumbnail: NSImage?
+    /// The saved back/forward history, restored when the tab first loads its saved page.
+    private var restoredState: (url: String, data: Data)?
+    static let maximumSessionState = 2_000_000
     var onThumbnailChange: (() -> Void)?
     private var thumbnailCaptureInFlight = false
     init(saved: SavedTab? = nil, configuration: WKWebViewConfiguration? = nil) {
         id = saved?.id ?? UUID(); customTitle = saved?.customTitle; title = saved?.customTitle ?? saved?.title ?? "New Tab"
         pinned = saved?.pinned ?? false; developer = saved?.developer ?? false
         requestedURL = saved.flatMap { URL(string: $0.url) }
+        if let saved, let data = saved.sessionState { restoredState = (saved.url, data) }
         let configuration = configuration ?? WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
-        webView = WKWebView(frame: .zero, configuration: configuration)
+        webView = LinkCursorWebView(frame: .zero, configuration: configuration)
         super.init()
         if let data = saved?.faviconData, data.count <= FaviconSnapshot.maximumBytes,
            let origin = saved?.faviconOrigin, origin == SitePermissions.origin(requestedURL),
@@ -54,7 +58,13 @@ import RiseCore
         let origin = SitePermissions.origin(url)
         let data = origin != nil && origin == iconOrigin ? faviconData : nil
         return SavedTab(id: id, url: url?.absoluteString ?? "about:blank", title: title, pinned: pinned, developer: developer, customTitle: customTitle,
-                        faviconData: data, faviconOrigin: data == nil ? nil : origin)
+                        faviconData: data, faviconOrigin: data == nil ? nil : origin, sessionState: sessionState)
+    }
+    /// The live history once the page has loaded; until then, the history it was restored with.
+    var sessionState: Data? {
+        guard webView.url != nil else { return restoredState?.data }
+        guard let data = webView.interactionState as? Data, data.count <= Self.maximumSessionState else { return nil }
+        return data
     }
     func rename(_ text: String) {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -73,6 +83,13 @@ import RiseCore
                 try await self.prepareForLoad?(self.webView)
                 guard !Task.isCancelled, self.loadGeneration == generation else { return }
                 self.navigationTask = nil
+                // A restored tab reopens its saved page with its back/forward history.
+                if let state = self.restoredState, state.url == url.absoluteString {
+                    self.restoredState = nil
+                    self.webView.interactionState = state.data
+                    if self.webView.backForwardList.currentItem != nil { return }
+                }
+                self.restoredState = nil
                 if url.isFileURL { self.webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent()) }
                 else { self.webView.load(URLRequest(url: url)) }
             } catch {

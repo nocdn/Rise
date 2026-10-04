@@ -113,11 +113,16 @@ import RiseCore
             pending.contains($0) || FileManager.default.fileExists(atPath: $0.path)
         }
         downloadDestinations[ObjectIdentifier(download)] = destination
+        downloadItems[ObjectIdentifier(download)] = downloads.begin(destination, progress: download.progress)
         completionHandler(destination)
     }
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
         downloadDestinations[ObjectIdentifier(download)] = nil
+        if let item = downloadItems.removeValue(forKey: ObjectIdentifier(download)) { downloads.fail(item) }
         showMessage("Download failed", error.localizedDescription)
     }
-    func downloadDidFinish(_ download: WKDownload) { downloadDestinations[ObjectIdentifier(download)] = nil }
+    func downloadDidFinish(_ download: WKDownload) {
+        downloadDestinations[ObjectIdentifier(download)] = nil
+        if let item = downloadItems.removeValue(forKey: ObjectIdentifier(download)) { downloads.finish(item) }
+    }
 }

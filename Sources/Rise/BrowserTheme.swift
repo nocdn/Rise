@@ -9,7 +9,7 @@ import AppKit
         errorTitle.textColor = theme.text; errorMessage.textColor = theme.muted
         developerBar.fill = theme.developerSurface; developerAddress.textColor = theme.text
         toolbarButtons.forEach {
-            $0.contentTintColor = theme.muted; $0.hoverColor = theme.text.withAlphaComponent(0.07)
+            $0.contentTintColor = theme.sidebarIcon; $0.hoverColor = theme.text.withAlphaComponent(0.07)
         }
         let allTabs = tabs + (peekTab.map { [$0] } ?? [])
         for tab in allTabs {

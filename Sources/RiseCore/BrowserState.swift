@@ -38,10 +38,13 @@ public struct SavedTab: Codable, Equatable {
     public var customTitle: String?
     public var faviconData: Data?
     public var faviconOrigin: String?
-    public init(id: UUID = UUID(), url: String, title: String, pinned: Bool = false, developer: Bool = false, customTitle: String? = nil, faviconData: Data? = nil, faviconOrigin: String? = nil) {
+    /// WebKit's archived session for the tab, including its back/forward list.
+    public var sessionState: Data?
+    public init(id: UUID = UUID(), url: String, title: String, pinned: Bool = false, developer: Bool = false, customTitle: String? = nil, faviconData: Data? = nil, faviconOrigin: String? = nil, sessionState: Data? = nil) {
         self.id = id; self.url = url; self.title = title; self.pinned = pinned; self.developer = developer
         self.customTitle = customTitle
         self.faviconData = faviconData; self.faviconOrigin = faviconOrigin
+        self.sessionState = sessionState
     }
 }
 public struct SplitTabGroup: Codable, Equatable {

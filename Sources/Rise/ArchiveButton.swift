@@ -100,5 +100,9 @@ final class ArchiveButton: ChromeButton {
         addSubview(glyph)
     }
     required init?(coder: NSCoder) { fatalError() }
+    var secondaryAction: (() -> Void)?
     override func layout() { super.layout(); glyph.frame = bounds }
+    override func rightMouseDown(with event: NSEvent) {
+        if let secondaryAction { secondaryAction() } else { super.rightMouseDown(with: event) }
+    }
 }

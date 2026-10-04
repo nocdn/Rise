@@ -350,7 +350,7 @@ final class DownloadIconView: FlippedView {
             // The tile is a little lighter than the sidebar, with a hairline edge to set it off the page.
             let dark = theme == .dark
             // On the tile the archive takes the stronger text color, so it stands out from the page.
-            let view = DownloadFlightView(button: tray ? nil : sidebar.archiveButton, tint: tray ? theme.text : theme.muted,
+            let view = DownloadFlightView(button: tray ? nil : sidebar.archiveButton, tint: tray ? theme.text : theme.sidebarIcon,
                                           tileColor: theme.background.blended(withFraction: dark ? 0.13 : 0.7, of: .white) ?? theme.background,
                                           tileBorder: dark ? NSColor.white.withAlphaComponent(0.1) : NSColor.black.withAlphaComponent(0.09))
             view.frame = root.bounds; view.autoresizingMask = [.width, .height]

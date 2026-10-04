@@ -3,6 +3,46 @@ import AppKit
 @testable import Rise
 
 final class ChromeFeedbackTests: XCTestCase {
+    @MainActor func testPeekHintSwapsImmediatelyAndKeepsSuffixVisibleForLongLinks() throws {
+        _ = NSApplication.shared
+        let pill = LinkStatusPill()
+        let url = URL(string: "https://example.com/" + String(repeating: "long-path/", count: 80))!
+        let page = NSRect(x: 0, y: 0, width: 800, height: 600)
+        pill.show(url, theme: .dark); pill.place(in: page)
+        let font = pill.text.font
+        pill.markReady(url)
+        pill.show(url, theme: .dark, peek: true); pill.place(in: page); pill.layoutSubtreeIfNeeded()
+        XCTAssertTrue(pill.showsPeekHint); XCTAssertTrue(pill.ready)
+        XCTAssertFalse(pill.isShimmering, "Changing modifiers swaps text without a shimmer or transition")
+        XCTAssertFalse(pill.peekPrefix.isHidden); XCTAssertFalse(pill.peekSuffix.isHidden)
+        XCTAssertEqual(pill.text.stringValue, url.absoluteString)
+        XCTAssertEqual(pill.text.font, font)
+        XCTAssertEqual(pill.frame.width, 650)
+        XCTAssertEqual(pill.peekPrefix.frame.maxX, pill.text.frame.minX)
+        XCTAssertEqual(pill.text.frame.maxX, pill.peekSuffix.frame.minX)
+        XCTAssertEqual(pill.peekSuffix.frame.maxX, pill.bounds.width-12)
+        XCTAssertNotNil(pill.text.layer?.mask, "Only the URL fades; the Peek hint remains visible")
+        XCTAssertTrue(pill.layer?.animationKeys()?.isEmpty ?? true)
+        func ink(_ field: NSTextField) throws -> Int {
+            let bitmap = try XCTUnwrap(field.bitmapImageRepForCachingDisplay(in: field.bounds))
+            field.cacheDisplay(in: field.bounds, to: bitmap)
+            return (0..<bitmap.pixelsHigh).reduce(0) { sum, y in
+                sum + (0..<bitmap.pixelsWide).filter { bitmap.colorAt(x: $0, y: y)!.alphaComponent > 0 }.count
+            }
+        }
+        let reference = label(" in Peek", size: 12, weight: .medium)
+        reference.textColor = pill.peekSuffix.textColor; reference.lineBreakMode = .byClipping
+        reference.frame = NSRect(x: 0, y: 0, width: 200, height: pill.peekSuffix.frame.height)
+        XCTAssertEqual(try ink(pill.peekSuffix), try ink(reference), "Every suffix glyph must be drawn without clipping or an ellipsis")
+        pill.show(URL(string: "https://a.co")!, theme: .dark, peek: true); pill.place(in: page)
+        XCTAssertEqual(try ink(pill.peekSuffix), try ink(reference), "Short pills must show the full Peek hint too")
+        pill.show(url, theme: .dark); pill.place(in: page)
+        XCTAssertFalse(pill.showsPeekHint); XCTAssertFalse(pill.isShimmering)
+        XCTAssertTrue(pill.peekPrefix.isHidden); XCTAssertTrue(pill.peekSuffix.isHidden)
+        XCTAssertEqual(pill.text.frame.minX, 12)
+        XCTAssertEqual(pill.text.stringValue, url.absoluteString.replacingOccurrences(of: "https://", with: ""))
+        XCTAssertEqual(pill.frame.minX, page.minX+10); XCTAssertEqual(pill.frame.maxY, page.maxY-10)
+    }
     @MainActor func testRestartingLoadCancelsPreviousCompletionFade() async throws {
         _ = NSApplication.shared
         let background = TabLoadingBackground()

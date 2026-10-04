@@ -55,6 +55,7 @@ import AppKit
         item(view, "Reload", #selector(BrowserController.reload), "r", target: browser)
         item(view, "Toggle Developer Mode", #selector(BrowserController.toggleDeveloper), "d", modifiers: .control, target: browser)
         item(view, "Change Theme", #selector(BrowserController.toggleTheme), target: browser)
+        item(view, "Show Downloads", #selector(BrowserController.toggleDownloads), "l", modifiers: [.command, .option], target: browser)
         item(view, "Peek Current Page", #selector(BrowserController.peekCurrentPage), "p", modifiers: [.command, .shift], target: browser)
         item(view, "Split View", #selector(BrowserController.toggleSplit), target: browser)
         view.addItem(.separator())

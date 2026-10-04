@@ -6,7 +6,7 @@ import RiseCore
         let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
         var result: [AddressSuggestion] = [], seen = Set<String>()
         var typedURL: URL?
-        let ranked = browsingHistory.ranked(for: query)
+        let ranked = browsingHistory.ranked(for: query, limit: AddressAppearance.maximumSuggestions)
         func appendSite(title: String, url: URL, tabID: UUID? = nil, learned: Bool = false, fetchFavicon: Bool = true) {
             guard let key = BrowsingHistory.key(url), seen.insert(key).inserted else { return }
             let completion = learned ? BrowsingHistory.completion(for: query, url: url) : nil
@@ -35,6 +35,14 @@ import RiseCore
             if let url = tab.url { appendSite(title: tab.title, url: url, tabID: tab.id) }
         }
         if !query.isEmpty { ranked.forEach(appendHistory) }
+        // Opening the current address also offers recent destinations, while
+        // retaining that exact address as the default Enter action.
+        if !query.isEmpty, query == selectedTab?.url?.absoluteString {
+            browsingHistory.ranked(for: "", limit: AddressAppearance.maximumSuggestions).forEach(appendHistory)
+            for tab in tabs {
+                if let url = tab.url { appendSite(title: tab.title, url: url, tabID: tab.id) }
+            }
+        }
         if query.isEmpty {
             for (name, address) in [("Hacker News", "https://news.ycombinator.com"), ("Wikipedia", "https://en.wikipedia.org"), ("GitHub", "https://github.com")] {
                 appendSite(title: name, url: URL(string: address)!)
@@ -46,8 +54,21 @@ import RiseCore
                 else { result.insert(command, at: 0) }
             }
         }
+        if palette.isPresented, (palette.input.currentEditor() as? NSTextView)?.hasMarkedText() != true,
+           result.first?.command == nil {
+            let remote = googleSearchSuggestions.suggestions(for: query)
+            if !remote.isEmpty {
+                result = Array(result.prefix(max(2, AddressAppearance.maximumSuggestions-remote.count)))
+                var destinations = Set(result.compactMap { $0.url?.absoluteString })
+                for term in remote {
+                    let url = GoogleSearchSuggestions.searchURL(for: term)
+                    guard destinations.insert(url.absoluteString).inserted else { continue }
+                    result.append(AddressSuggestion(title: term, subtitle: "", symbol: "magnifyingglass", url: url, tabID: nil, command: nil))
+                }
+            }
+        } else { googleSearchSuggestions.cancel() }
         suggestionFavicons.preview(typedURL)
-        return result.prefix(5).map { suggestion in
+        return result.prefix(AddressAppearance.maximumSuggestions).map { suggestion in
             var suggestion = suggestion
             if suggestion.symbol == "globe" {
                 let origin = SitePermissions.origin(suggestion.url)

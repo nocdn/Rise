@@ -68,6 +68,7 @@ import RiseCore
     var closedTabs: [SavedTab] = []
     let browsingHistory: BrowsingHistory
     let suggestionFavicons: SuggestionFavicons
+    let googleSearchSuggestions: GoogleSearchSuggestions
     var theme: RiseTheme = .neutral
     var sidebarWidth: CGFloat = 228
     var sidebarVisible = true
@@ -88,6 +89,13 @@ import RiseCore
     /// Downloads save here without asking; tests point it elsewhere.
     var downloadsFolder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
     var downloadDestinations: [ObjectIdentifier: URL] = [:]
+    var downloadItems: [ObjectIdentifier: UUID] = [:]
+    lazy var downloads = DownloadList(storeURL: sessionURL.deletingLastPathComponent().appendingPathComponent("downloads.json"))
+    let downloadsPopover = NSPopover()
+    /// The download Quick Look is showing, while Rise controls the preview panel.
+    var quickLookURL: URL?
+    /// The row to restore when the download's Quick Look panel closes.
+    var quickLookDownloadID: UUID?
     var saveWork: DispatchWorkItem?
     let sessionURL: URL
     var lastSaved: BrowserSession?
@@ -104,7 +112,8 @@ import RiseCore
     var tabSwitchGeneration = 0
     var pendingMiddleTabID: UUID?
 
-    init(sessionURL: URL? = nil, restore: Bool = true, preferences: UserDefaults = .standard) {
+    init(sessionURL: URL? = nil, restore: Bool = true, preferences: UserDefaults = .standard, searchSuggestions: GoogleSearchSuggestions? = nil) {
+        googleSearchSuggestions = searchSuggestions ?? GoogleSearchSuggestions()
         sitePermissions = SitePermissions(preferences: preferences)
         adBlocker = AdBlocker(preferences: preferences)
         linkPreloader = LinkPreloader(preferences: preferences)
@@ -114,6 +123,11 @@ import RiseCore
         suggestionFavicons = SuggestionFavicons(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("suggestion-icons.json"))
         let window = BrowserWindow(contentRect: NSRect(x: 0, y: 0, width: 1496, height: 944), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         super.init(window: window)
+        googleSearchSuggestions.onLoad = { [weak self] query in
+            guard let self, self.palette.isPresented, self.palette.query.trimmingCharacters(in: .whitespacesAndNewlines) == query,
+                  (self.palette.input.currentEditor() as? NSTextView)?.hasMarkedText() != true else { return }
+            self.palette.replaceSuggestions(self.suggestions(for: query))
+        }
         suggestionFavicons.onLoad = { [weak self] origin, image in
             guard let self else { return }
             self.palette.updateFavicon(image, origin: origin)
@@ -126,7 +140,8 @@ import RiseCore
         window.pageMouseDown = { [weak self] event in self?.focusSplitPage(at: event) }
         window.historyScrollEvent = { [weak self] event in self?.historySwipe.handle(event) ?? false }
         window.otherMouseEvent = { [weak self] event in self?.handleMiddleTabClick(event) ?? false }
-        window.modifiersChanged = { [weak self] in self?.updatePeekStandby() }
+        window.modifiersChanged = { [weak self] flags in self?.updateHoveredLinkModifiers(flags) }
+        window.pointerMoved = { [weak self] event in self?.updateHoveredLinkCursor(event) }
         tabSwitcher.choose = { [weak self] id in self?.commitTabSwitch(id) }
         tabSwitchBackdrop.dismiss = { [weak self] in self?.cancelTabSwitch() }
         tabSwitchBackdrop.isHidden = true
@@ -166,8 +181,10 @@ import RiseCore
     }
     required init?(coder: NSCoder) { fatalError() }
     func buildChrome() {
-        sidebar = SidebarView(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() }, archive: { [weak self] in self?.archiveMenu() }, theme: { [weak self] in self?.themeMenu() }, clear: { [weak self] in self?.clearTabs() })
+        sidebar = SidebarView(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() }, archive: { [weak self] in self?.showDownloads() }, theme: { [weak self] in self?.themeMenu() })
         sidebar.onAddress = { [weak self] in self?.focusAddress() }
+        // Recently closed tabs stay one right-click away on the downloads button.
+        sidebar.archiveButton.secondaryAction = { [weak self] in self?.archiveMenu() }
         sidebar.onNewTab = { [weak self] in self?.newTab() }
         sidebar.onSelect = { [weak self] id in self?.select(id) }
         sidebar.onClose = { [weak self] id in self?.closeTab(id) }
@@ -199,6 +216,7 @@ import RiseCore
         developerAddress.onSubmit = { [weak self] text in self?.navigateDeveloperAddress(text) }
         developerAddress.onCancel = { [weak self] in self?.window?.makeFirstResponder(self?.selectedTab?.webView) }
         siteInfoPopover.behavior = .transient
+        downloadsPopover.behavior = .transient
         siteControlsPopover.behavior = .transient
         siteControlsPopover.delegate = self
         copiedLinkPopover.behavior = .transient
@@ -220,6 +238,7 @@ import RiseCore
         retryButton.bezelStyle = .rounded
         [errorTitle, errorMessage, retryButton].forEach(errorSurface.addSubview); errorSurface.isHidden = true
         pageClip.addSubview(errorSurface)
+        dismissArea.protectedView = palette
         dismissArea.dismiss = { [weak self] in self?.hidePalette() }; dismissArea.isHidden = true
         root.addSubview(findBar)
         findBar.search = { [weak self] text, backwards in
@@ -289,14 +308,15 @@ import RiseCore
         retryButton.frame = NSRect(x: body.width/2-55, y: body.height/2+55, width: 110, height: 32)
         findBar.frame = NSRect(x: pageShadow.frame.maxX-354, y: pageShadow.frame.minY+devHeight+8, width: 340, height: 42)
         dismissArea.frame = b
-        palette.place(at: NSPoint(x: 8, y: 50), width: paletteCreatesTab ? 400 : 350)
+        let paletteOrigin = NSPoint(x: sidebar.address.frame.minX, y: sidebar.address.frame.minY-2)
+        palette.place(at: paletteOrigin, width: min(paletteCreatesTab ? 640 : 600, b.width-paletteOrigin.x-8))
         layoutPeek()
         layoutLinkStatus()
         tabSwitchBackdrop.frame = b
         if !tabSwitcher.isHidden { tabSwitcher.place(in: b) }
     }
     func windowDidResize(_ notification: Notification) { layoutChrome() }
-    func windowWillClose(_ notification: Notification) { developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); saveNow() }
+    func windowWillClose(_ notification: Notification) { googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); saveNow() }
     func windowDidResignKey(_ notification: Notification) {
         pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch()
         sidebar?.cancelTabInteractions()
@@ -361,7 +381,7 @@ import RiseCore
     @objc func newTab() { paletteCreatesTab = true; showPalette(text: "") }
     @objc func focusAddress() { paletteCreatesTab = false; showPalette(text: selectedTab?.url?.absoluteString == "about:blank" ? "" : selectedTab?.url?.absoluteString ?? "") }
     func showPalette(text: String) { historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel(); dismissArea.isHidden = false; palette.show(text: text, theme: theme); layoutChrome() }
-    func hidePalette() { suggestionFavicons.cancelPreview(); guard palette.isPresented else { return }; palette.hide(); dismissArea.isHidden = true; window?.makeFirstResponder(selectedTab?.webView) }
+    func hidePalette() { googleSearchSuggestions.cancel(); suggestionFavicons.cancelPreview(); guard palette.isPresented else { return }; palette.hide(); dismissArea.isHidden = true; window?.makeFirstResponder(selectedTab?.webView) }
     func submitAddress(_ text: String, suggestion: AddressSuggestion?) {
         hidePalette()
         if let id = suggestion?.tabID { select(id); return }
@@ -399,7 +419,6 @@ import RiseCore
         attachVisiblePages(); update()
     }
     @objc func reopenTab() { guard let saved = closedTabs.popLast() else { return }; let tab = configure(BrowserTab(saved: saved)); tabs.insert(tab, at: 0); select(tab.id) }
-    func clearTabs() { for id in tabs.filter({ !$0.pinned }).map(\.id) { closeTab(id) } }
     @objc func goBack() { navigateHistory(.back) }
     @objc func goForward() { navigateHistory(.forward) }
     private func navigateHistory(_ direction: HistoryDirection) {

@@ -10,9 +10,13 @@ enum RiseTheme: String, CaseIterable {
         self == .neutral ? [NSColor(hex: 0xDFDFDF), NSColor(hex: 0xE5E5E5)] : self == .dark ? [NSColor(hex: 0x363636), NSColor(hex: 0x2B2B2B)] : nil
     }
     var pill: NSColor { NSColor(hex: self == .dark ? 0x404040 : self == .rose ? 0xE9CACE : 0xDEDEDE) }
-    var addressFill: NSColor { self == .neutral ? NSColor(hex: 0xD2D1D1) : pill }
+    var addressFill: NSColor {
+        (self == .neutral ? NSColor(hex: 0xD2D1D1) : pill).blended(withFraction: self == .dark ? 0.03 : 0.15, of: .white)!
+    }
     var text: NSColor { NSColor(hex: self == .dark ? 0xD1D1D1 : self == .rose ? 0x42121F : 0x343434) }
     var selectedText: NSColor { self == .dark ? NSColor(hex: 0xFEFEFE) : self == .neutral ? NSColor(hex: 0x111111) : text }
+    /// Sidebar chrome icons; the dark theme keeps its lighter muted tone for contrast.
+    var sidebarIcon: NSColor { self == .dark ? muted : NSColor(hex: 0x717171) }
     var muted: NSColor { NSColor(hex: self == .dark ? 0xA0A1A0 : self == .rose ? 0x90777C : 0x888787) }
     var selectedTab: NSColor { NSColor(hex: self == .dark ? 0x1E1E1E : self == .rose ? 0xF8F6F6 : 0xF7F7F7) }
     var hoveredTab: NSColor { self == .dark ? NSColor(hex: 0x3D3D3D) : self == .rose ? text.withAlphaComponent(0.055) : NSColor(hex: 0xD7D5D4) }
@@ -95,19 +99,23 @@ final class BrowserWindow: NSWindow {
     var pageMouseDown: ((NSEvent) -> Void)?
     var otherMouseEvent: ((NSEvent) -> Bool)?
     var historyScrollEvent: ((NSEvent) -> Bool)?
-    var modifiersChanged: (() -> Void)?
+    var modifiersChanged: ((NSEvent.ModifierFlags) -> Void)?
+    var pointerMoved: ((NSEvent) -> Void)?
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if tabSwitchEvent?(event) == true { return true }
         return super.performKeyEquivalent(with: event)
     }
     override func sendEvent(_ event: NSEvent) {
-        if event.type == .flagsChanged { modifiersChanged?() }
+        defer {
+            if [.mouseMoved, .leftMouseDragged, .scrollWheel, .leftMouseDown, .rightMouseDown].contains(event.type) { pointerMoved?(event) }
+        }
         if tabSwitchEvent?(event) != true {
             if event.type == .scrollWheel, historyScrollEvent?(event) == true { return }
             if otherMouseEvent?(event) == true { return }
             if event.type == .leftMouseDown || event.type == .rightMouseDown { pageMouseDown?(event) }
             super.sendEvent(event)
         }
+        if event.type == .flagsChanged { modifiersChanged?(event.modifierFlags) }
     }
     // Replay a buffered page scroll without recursively entering the swipe router.
     func deliverPageScroll(_ event: NSEvent) { super.sendEvent(event) }
@@ -160,20 +168,4 @@ func chromeShadow(opacity: CGFloat, blur: CGFloat, offset: CGFloat, color: NSCol
     shadow.shadowBlurRadius = blur
     shadow.shadowOffset = NSSize(width: 0, height: offset)
     return shadow
-}
-func broomIcon() -> NSImage {
-    let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { _ in
-        NSColor.black.setStroke()
-        let handle = NSBezierPath(); handle.lineWidth = 1.6; handle.lineCapStyle = .round
-        handle.move(to: NSPoint(x: 14, y: 17)); handle.line(to: NSPoint(x: 7.5, y: 10)); handle.stroke()
-        let head = NSBezierPath(); head.lineWidth = 1.3; head.lineJoinStyle = .round
-        head.move(to: NSPoint(x: 6, y: 11)); head.line(to: NSPoint(x: 2, y: 4))
-        head.curve(to: NSPoint(x: 8, y: 1.5), controlPoint1: NSPoint(x: 3.5, y: 2), controlPoint2: NSPoint(x: 6, y: 1.5))
-        head.line(to: NSPoint(x: 12, y: 7)); head.line(to: NSPoint(x: 8.5, y: 12)); head.close(); head.stroke()
-        for (a, b) in [(NSPoint(x: 7, y: 8), NSPoint(x: 4, y: 3)), (NSPoint(x: 9, y: 7), NSPoint(x: 6.5, y: 2.5))] {
-            let bristle = NSBezierPath(); bristle.lineWidth = 1; bristle.move(to: a); bristle.line(to: b); bristle.stroke()
-        }
-        return true
-    }
-    image.isTemplate = true; return image
 }
