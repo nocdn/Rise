@@ -114,7 +114,7 @@ import RiseCore
         iconTask = URLSession.shared.dataTask(with: iconURL) { [weak self] data, response, _ in
             guard let data, data.count < 1_000_000, (response as? HTTPURLResponse)?.statusCode == 200 else { return }
             Task { @MainActor in
-                guard let self, self.iconOrigin == origin, let image = NSImage(data: data), image.isValid else { return }
+                guard let self, self.iconTask != nil, self.iconOrigin == origin, let image = NSImage(data: data), image.isValid else { return }
                 self.favicon = image; self.iconTask = nil; self.onChange?()
             }
         }

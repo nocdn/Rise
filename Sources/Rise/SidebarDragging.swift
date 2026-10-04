@@ -26,10 +26,10 @@ import AppKit
     func moveTabDrag(_ event: NSEvent) {
         guard let drag else { return }; drag.event = event
         let point = rowsHost.convert(event.locationInWindow, from: nil)
-        let maxY = max(8, targetFrames.values.map(\.minY).max() ?? 8)
+        let maxY = max(0, targetFrames.values.map(\.minY).max() ?? 0)
         var frame = drag.view.frame
         frame.origin.x = TabAppearance.inset
-        let minimum = max(8,scroll.contentView.bounds.minY)
+        let minimum = max(0,scroll.contentView.bounds.minY)
         let maximum = max(minimum,min(maxY,scroll.contentView.bounds.maxY-frame.height))
         frame.origin.y = min(max(minimum, point.y-drag.grabOffset),maximum)
         TabListMotion.move(drag.view, to: frame, animated: false, at: CACurrentMediaTime())

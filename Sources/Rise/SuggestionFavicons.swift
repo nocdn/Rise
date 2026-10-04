@@ -1,0 +1,148 @@
+import AppKit
+import RiseCore
+
+/// Share icons by security origin, keeping bounded 32px PNGs across relaunches.
+@MainActor final class SuggestionFavicons {
+    static let limit = 128
+    private let storageURL: URL
+    private let session: URLSession
+    private var images: [String: NSImage] = [:]
+    private var data: [String: Data] = [:]
+    private var tasks: [String: URLSessionDataTask] = [:]
+    private var requested: [String: URL] = [:]
+    private var attempted = Set<String>()
+    private var order: [String] = []
+    private var saveWork: DispatchWorkItem?
+    private var dirty = false
+    private var previewTimer: Timer?
+    private var previewOrigin: String?
+    var onLoad: ((String, NSImage) -> Void)?
+
+    init(storageURL: URL, session: URLSession = .shared) {
+        self.storageURL = storageURL; self.session = session
+        if let bytes = try? Data(contentsOf: storageURL), bytes.count <= 12_000_000,
+           let saved = try? JSONDecoder().decode([String: Data].self, from: bytes) {
+            for (origin, png) in saved.sorted(by: { $0.key < $1.key }).prefix(Self.limit) {
+                guard SitePermissions.origin(URL(string: origin)) == origin, png.count <= FaviconSnapshot.maximumBytes,
+                      let image = NSImage(data: png), image.isValid else { continue }
+                images[origin] = image; data[origin] = png; order.append(origin)
+            }
+        }
+    }
+    func remember(_ tab: BrowserTab) {
+        guard let origin = tab.iconOrigin, origin == SitePermissions.origin(tab.url),
+              let image = tab.favicon, let png = tab.faviconData, data[origin] != png else { return }
+        store(image, png: png, origin: origin)
+    }
+    func image(for url: URL?, fetch allowFetch: Bool = true) -> NSImage? {
+        guard let origin = SitePermissions.origin(url), let url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return nil }
+        if let image = images[origin] { return image }
+        guard allowFetch, !AddressResolver.isLocal(url), attempted.insert(origin).inserted,
+              let iconURL = Self.defaultIcon(for: url) else { return nil }
+        fetch(iconURL, origin: origin, discoverIfNeeded: true)
+        return nil
+    }
+    /// Fetch only the origin's icon once a plausible typed address settles.
+    /// Paths/query strings never leave the address field in these requests.
+    func preview(_ url: URL?) {
+        guard let url, Self.isPreviewAddress(url), let origin = SitePermissions.origin(url) else {
+            cancelPreview(); return
+        }
+        guard images[origin] == nil, !attempted.contains(origin) else { cancelPreview(); return }
+        guard previewOrigin != origin else { return }
+        cancelPreview(); previewOrigin = origin
+        let timer = Timer(timeInterval: 0.25, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.previewOrigin == origin else { return }
+                self.cancelPreview()
+                _ = self.image(for: url)
+            }
+        }
+        previewTimer = timer; RunLoop.main.add(timer, forMode: .common)
+    }
+    func cancelPreview() {
+        previewTimer?.invalidate(); previewTimer = nil; previewOrigin = nil
+    }
+    private static func isPreviewAddress(_ url: URL) -> Bool {
+        guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              !AddressResolver.isLocal(url), let host = url.host?.lowercased() else { return false }
+        let labels = host.split(separator: ".", omittingEmptySubsequences: false)
+        if labels.count == 4, labels.allSatisfy({ Int($0).map { (0...255).contains($0) } ?? false }) { return true }
+        guard labels.count >= 2, let suffix = labels.last, suffix.count >= 2,
+              suffix.range(of: "^(?:[a-z]{2,63}|xn--[a-z0-9-]+)$", options: .regularExpression) != nil else { return false }
+        return labels.allSatisfy { label in
+            !label.isEmpty && label.count <= 63 && label.first != "-" && label.last != "-" &&
+            label.range(of: "^[a-z0-9-]+$", options: .regularExpression) != nil
+        }
+    }
+    func loadPageIcon(_ iconURL: URL, for pageURL: URL) {
+        guard ["http", "https"].contains(iconURL.scheme?.lowercased() ?? ""),
+              iconURL.user == nil, iconURL.password == nil, let origin = SitePermissions.origin(pageURL),
+              requested[origin] != iconURL else { return }
+        fetch(iconURL, origin: origin)
+    }
+    private func fetch(_ iconURL: URL, origin: String, discoverIfNeeded: Bool = false) {
+        tasks[origin]?.cancel(); requested[origin] = iconURL
+        var request = URLRequest(url: iconURL); request.timeoutInterval = 8
+        let task = session.dataTask(with: request) { [weak self] bytes, response, _ in
+            Task { @MainActor in
+                guard let self, self.requested[origin] == iconURL else { return }
+                self.tasks[origin] = nil
+                if let bytes, bytes.count <= 1_000_000, (response as? HTTPURLResponse)?.statusCode == 200,
+                   let image = NSImage(data: bytes), image.isValid, let png = FaviconSnapshot.encode(image) {
+                    self.store(image, png: png, origin: origin)
+                } else if discoverIfNeeded {
+                    if let bytes, let declared = FaviconDiscovery.icon(in: bytes, baseURL: response?.url ?? iconURL), declared != iconURL {
+                        self.fetch(declared, origin: origin)
+                    } else { self.discoverRootIcon(origin: origin) }
+                }
+            }
+        }
+        tasks[origin] = task; task.resume()
+    }
+    private func discoverRootIcon(origin: String) {
+        guard let root = URL(string: origin + "/") else { return }
+        requested[origin] = root
+        var request = URLRequest(url: root); request.timeoutInterval = 8
+        let task = session.dataTask(with: request) { [weak self] bytes, response, _ in
+            Task { @MainActor in
+                guard let self, self.requested[origin] == root else { return }
+                self.tasks[origin] = nil
+                guard let bytes, (response as? HTTPURLResponse)?.statusCode == 200 else { return }
+                let landed = response?.url ?? root
+                let redirectedIcon = SitePermissions.origin(landed) != origin ? Self.defaultIcon(for: landed) : nil
+                guard let icon = FaviconDiscovery.icon(in: bytes, baseURL: landed) ?? redirectedIcon else { return }
+                self.fetch(icon, origin: origin)
+            }
+        }
+        tasks[origin] = task; task.resume()
+    }
+    private static func defaultIcon(for url: URL) -> URL? {
+        guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        parts.user = nil; parts.password = nil; parts.path = "/favicon.ico"; parts.query = nil; parts.fragment = nil
+        return parts.url
+    }
+    private func store(_ image: NSImage, png: Data, origin: String) {
+        images[origin] = image; data[origin] = png
+        dirty = true
+        order.removeAll { $0 == origin }; order.append(origin)
+        while order.count > Self.limit {
+            let old = order.removeFirst(); images[old] = nil; data[old] = nil
+        }
+        onLoad?(origin, image)
+        saveWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.save() }; saveWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now()+0.4, execute: work)
+    }
+    func save() {
+        saveWork?.cancel(); saveWork = nil
+        guard dirty else { return }
+        do {
+            try FileManager.default.createDirectory(at: storageURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try JSONEncoder().encode(data).write(to: storageURL, options: .atomic)
+            dirty = false
+        } catch { NSLog("Rise suggestion icon save failed: %@", error.localizedDescription) }
+    }
+    func cancel() { cancelPreview(); tasks.values.forEach { $0.cancel() }; tasks = [:]; requested = [:]; saveWork?.cancel() }
+    deinit { previewTimer?.invalidate(); tasks.values.forEach { $0.cancel() }; saveWork?.cancel() }
+}

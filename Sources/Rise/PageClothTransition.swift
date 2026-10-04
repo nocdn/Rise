@@ -85,9 +85,14 @@ import MetalKit
                   web.pageZoom == zoom, web.effectiveAppearance.name == appearance,
                   let cg = image?.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
             if let item { self.store(cg, item: item, size: size, zoom: zoom, appearance: appearance) }
-            guard self.phase != .returning else { return }
+            // A quick finger-up can precede the outgoing snapshot. Let that
+            // snapshot join the still-running ripple while its original page
+            // is current, rather than silently dropping the entire effect.
+            if self.phase == .returning {
+                guard self.view == nil, self.motion.elapsed(at: ProcessInfo.processInfo.systemUptime) < ClothMotion.rippleDuration else { return }
+            }
             self.preparedImage = cg
-            if self.phase == .dragging {
+            if self.phase == .dragging || self.phase == .returning {
                 try? self.renderer?.setOutgoing(cg)
                 self.installSurfaceIfNeeded(); self.renderFrame()
             }
@@ -148,6 +153,8 @@ import MetalKit
         let backdrop = ClothBackdrop(color: theme().background)
         backdrop.gradientColors = theme().backgroundGradient; backdrop.frame = page.frame
         let view = ClothMetalView(renderer: renderer); view.frame = page.frame; view.delegate = self
+        view.corner = page.superview?.layer?.cornerRadius ?? 7
+        view.continuous = page.superview?.layer?.cornerCurve == .continuous
         host.addSubview(backdrop, positioned: .above, relativeTo: page)
         host.addSubview(view, positioned: .above, relativeTo: backdrop)
         self.backdrop = backdrop; self.view = view

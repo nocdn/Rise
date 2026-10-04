@@ -10,6 +10,7 @@ enum RiseTheme: String, CaseIterable {
         self == .neutral ? [NSColor(hex: 0xDFDFDF), NSColor(hex: 0xE5E5E5)] : self == .dark ? [NSColor(hex: 0x363636), NSColor(hex: 0x2B2B2B)] : nil
     }
     var pill: NSColor { NSColor(hex: self == .dark ? 0x404040 : self == .rose ? 0xE9CACE : 0xDEDEDE) }
+    var addressFill: NSColor { self == .neutral ? NSColor(hex: 0xD2D1D1) : pill }
     var text: NSColor { NSColor(hex: self == .dark ? 0xD1D1D1 : self == .rose ? 0x42121F : 0x343434) }
     var selectedText: NSColor { self == .dark ? NSColor(hex: 0xFEFEFE) : self == .neutral ? NSColor(hex: 0x111111) : text }
     var muted: NSColor { NSColor(hex: self == .dark ? 0xA0A1A0 : self == .rose ? 0x90777C : 0x888787) }

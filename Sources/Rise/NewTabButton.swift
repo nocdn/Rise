@@ -28,7 +28,7 @@ final class NewTabButton: NSButton {
     override func layout() {
         super.layout()
         plus.frame = NSRect(x: 8, y: (bounds.height - 16)/2, width: 16, height: 16)
-        let height = caption.intrinsicContentSize.height
+        let height = ceil(caption.intrinsicContentSize.height)
         caption.frame = NSRect(x: 30, y: (bounds.height - height)/2, width: max(0, bounds.width - 38), height: height)
     }
     override func updateTrackingAreas() {

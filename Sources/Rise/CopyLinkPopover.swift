@@ -65,6 +65,7 @@ final class CopyConfirmationView: FlippedView {
         guard let url = selectedTab?.url, url.absoluteString != "about:blank" else { return }
         linkPasteboard.clearContents()
         guard linkPasteboard.setString(url.absoluteString, forType: .string) else { return }
+        sidebar.copyButton.showCopied()
         siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); hidePalette()
         (copiedLinkPopover.contentViewController as? CopiedLinkController)?.cancelDismissal()
         if !sidebarVisible { toggleSidebar() }

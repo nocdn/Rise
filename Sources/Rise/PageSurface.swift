@@ -39,7 +39,7 @@ final class PageSurface: Surface {
         super.fill = clothOutline == nil ? pageColor : .clear
         shapedMask.path = clothOutline
         layer?.mask = clipsContents && clothOutline != nil ? shapedMask : nil
-        layer?.shadowPath = clothOutline ?? CGPath(roundedRect: bounds, cornerWidth: radius, cornerHeight: radius, transform: nil)
+        layer?.shadowPath = clothOutline ?? PageOutline.path(in: bounds, radius: radius, continuous: layer?.cornerCurve == .continuous)
         CATransaction.commit()
     }
     override func layout() { super.layout(); refreshOutline() }
@@ -54,7 +54,7 @@ final class PageSurface: Surface {
             shadow = card; clip = inner
         } else { return }
         let path = ClothMotion.frameOutline(size: clip.bounds.size, sheet: web.frame, pull: pull, forward: forward,
-            corner: clip.layer?.cornerRadius ?? 7)
+            corner: clip.layer?.cornerRadius ?? 7, continuous: clip.layer?.cornerCurve == .continuous)
         shadow.setClothOutline(path)
         clip.setClothOutline(path, clipContents: true)
         if clip === pageClip {

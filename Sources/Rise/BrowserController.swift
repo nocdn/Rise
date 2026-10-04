@@ -2,15 +2,16 @@ import AppKit
 import WebKit
 import RiseCore
 
-@MainActor final class BrowserController: NSWindowController, NSWindowDelegate {
+@MainActor final class BrowserController: NSWindowController, NSWindowDelegate, NSPopoverDelegate {
     let root = Surface()
-    let pageShadow = PageSurface(color: NSColor(hex: 0xFDFCFC), radius: 7)
-    let pageClip = PageSurface(color: NSColor(hex: 0xFDFCFC), radius: 7)
+    let pageShadow = PageSurface(color: NSColor(hex: 0xFDFCFC), radius: PageAppearance.radius)
+    let pageClip = PageSurface(color: NSColor(hex: 0xFDFCFC), radius: PageAppearance.radius)
     let emptyPage = Surface(color: NSColor(hex: 0xFDFCFC))
     let linkStatus = LinkStatusPill()
     weak var hoveredWebView: WKWebView?
     let developerBar = DeveloperHeader(color: NSColor(hex: 0xFCF6F7))
     let developerAddress = DeveloperAddressField(frame: .zero)
+    lazy var developerMotion = DeveloperModeMotion { [weak self] in self?.layoutChrome() }
     let siteInfoPopover = NSPopover()
     let siteControlsPopover = NSPopover()
     let copiedLinkPopover = NSPopover()
@@ -31,7 +32,6 @@ import RiseCore
     var sidebar: SidebarView!
     let toolbarHost = NativeTitlebarControls()
     let toolbarAccessory = NSTitlebarAccessoryViewController()
-    var trafficLights: NativeTrafficLights!
     var toolbarButtons: [ChromeButton] = []
     var devButtons: [ChromeButton] = []
     lazy var pageCloth: PageClothTransition = {
@@ -48,7 +48,11 @@ import RiseCore
             if let committed = release { arrow.release(committed: committed) }
             else { arrow.drag(pull: pull, armed: armed) }
         })
-        controller.prepareCloth = { [weak self] web in self?.pageCloth.prepare(web) }
+        controller.prepareCloth = { [weak self] web in
+            guard let self else { return }
+            self.developerMotion.cancel(); self.layoutChrome()
+            self.pageCloth.prepare(web)
+        }
         controller.dragCloth = { [weak self] web, direction, distance in
             self?.hideLinkStatus(); self?.pageCloth.drag(web, direction: direction, distance: distance)
         }
@@ -62,7 +66,8 @@ import RiseCore
     var selectedID: UUID?
     var selectedTab: BrowserTab? { tabs.first { $0.id == selectedID } }
     var closedTabs: [SavedTab] = []
-    var history: [SavedTab] = []
+    let browsingHistory: BrowsingHistory
+    let suggestionFavicons: SuggestionFavicons
     var theme: RiseTheme = .neutral
     var sidebarWidth: CGFloat = 228
     var sidebarVisible = true
@@ -99,9 +104,20 @@ import RiseCore
         sitePermissions = SitePermissions(preferences: preferences)
         adBlocker = AdBlocker(preferences: preferences)
         linkPreloader = LinkPreloader(preferences: preferences)
-        self.sessionURL = sessionURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Rise/session.json")
+        let sessionURL = sessionURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Rise/session.json")
+        self.sessionURL = sessionURL
+        browsingHistory = BrowsingHistory(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("history.json"))
+        suggestionFavicons = SuggestionFavicons(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("suggestion-icons.json"))
         let window = BrowserWindow(contentRect: NSRect(x: 0, y: 0, width: 1496, height: 944), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         super.init(window: window)
+        suggestionFavicons.onLoad = { [weak self] origin, image in
+            guard let self else { return }
+            self.palette.updateFavicon(image, origin: origin)
+            for tab in self.tabs where SitePermissions.origin(tab.url) == origin {
+                tab.iconTask?.cancel(); tab.iconTask = nil; tab.iconOrigin = origin; tab.favicon = image
+            }
+            self.update()
+        }
         window.tabSwitchEvent = { [weak self] event in self?.handleTabSwitchEvent(event) ?? false }
         window.pageMouseDown = { [weak self] event in self?.focusSplitPage(at: event) }
         window.historyScrollEvent = { [weak self] event in self?.historySwipe.handle(event) ?? false }
@@ -154,7 +170,8 @@ import RiseCore
         sidebar.onTabMenu = { [weak self] id, event in self?.tabMenu(id, event: event) }
         sidebar.onReorder = { [weak self] in self?.reorderTabs($0) }
         sidebar.onRename = { [weak self] id, title in self?.renameTab(id, title: title) }
-        pageShadow.shadow = chromeShadow(opacity: 0.10, blur: 4, offset: -1)
+        pageShadow.layer?.cornerCurve = .continuous; pageClip.layer?.cornerCurve = .continuous
+        pageShadow.shadow = chromeShadow(opacity: PageAppearance.shadowOpacity, blur: PageAppearance.shadowBlur, offset: PageAppearance.shadowOffset)
         pageClip.layer?.masksToBounds = true; pageClip.clipsToBounds = true
         root.addSubview(sidebar); root.addSubview(pageShadow); pageShadow.addSubview(pageClip)
         pageClip.addSubview(emptyPage); pageClip.addSubview(developerBar)
@@ -179,6 +196,7 @@ import RiseCore
         developerAddress.onCancel = { [weak self] in self?.window?.makeFirstResponder(self?.selectedTab?.webView) }
         siteInfoPopover.behavior = .transient
         siteControlsPopover.behavior = .transient
+        siteControlsPopover.delegate = self
         copiedLinkPopover.behavior = .transient
         let devActions: [(String, String, () -> Void)] = [
             ("link", "Copy URL", { [weak self] in self?.copyURL() }),
@@ -224,12 +242,11 @@ import RiseCore
         toolbarAccessory.view = toolbarHost
         toolbarAccessory.layoutAttribute = .left
         window?.addTitlebarAccessoryViewController(toolbarAccessory)
-        if let window { trafficLights = NativeTrafficLights(window: window) }
     }
     func layoutChrome() {
         // AppKit can deliver a resize while restoring the window, before its
         // sidebar and titlebar controls have finished being constructed.
-        guard let window, let sidebar, let trafficLights else { return }; let b = root.bounds
+        guard let window, let sidebar else { return }; let b = root.bounds
         root.fill = theme.background; root.gradientColors = theme.backgroundGradient; window.backgroundColor = theme.background
         let sw = sidebarVisible ? sidebarWidth : 0
         sidebar.isHidden = !sidebarVisible; sidebar.frame = NSRect(x: 0, y: 0, width: sidebarWidth, height: b.height)
@@ -245,18 +262,16 @@ import RiseCore
         let toolbarX = toolbarHost.convert(toolbarHost.bounds, to: root).minX
         toolbarHost.frame.size.width = sidebarVisible ? max(112, sidebarWidth-toolbarX-8) : 28
         toolbarHost.layout()
-        trafficLights.update(visible: sidebarVisible, theme: theme)
-        let pageX = sidebarVisible ? sw : 7
-        let pageY: CGFloat = 7
-        pageShadow.frame = NSRect(x: pageX, y: pageY, width: b.width-pageX-7, height: b.height-pageY-7)
+        pageShadow.frame = PageAppearance.frame(in: b, sidebarWidth: sw, sidebarVisible: sidebarVisible)
         pageShadow.refreshOutline()
         pageClip.frame = pageShadow.bounds
         grip.frame = NSRect(x: sw-3, y: 44, width: 6, height: b.height-88); grip.isHidden = !sidebarVisible
-        let cb = pageClip.bounds; let devHeight: CGFloat = selectedTab?.developer == true ? 40 : 0
-        developerBar.frame = NSRect(x: 0, y: 0, width: cb.width, height: devHeight)
+        let cb = pageClip.bounds
+        let devHeight = developerMotion.height(for: selectedID, enabled: selectedTab?.developer == true)
+        developerBar.frame = NSRect(x: 0, y: devHeight-DeveloperModeMotion.headerHeight, width: cb.width, height: DeveloperModeMotion.headerHeight)
         developerBar.isHidden = devHeight == 0
         let addressHeight = developerAddress.intrinsicContentSize.height
-        developerAddress.frame = NSRect(x: 18, y: (devHeight-addressHeight)/2, width: max(100, cb.width-270), height: addressHeight)
+        developerAddress.frame = NSRect(x: 18, y: (DeveloperModeMotion.headerHeight-addressHeight)/2, width: max(100, cb.width-270), height: addressHeight)
         devButtons.enumerated().forEach { i, button in button.frame = NSRect(x: cb.width-240+CGFloat(i)*38, y: 6, width: 30, height: 28) }
         let body = NSRect(x: 0, y: devHeight, width: cb.width, height: cb.height-devHeight)
         emptyPage.frame = body
@@ -277,10 +292,9 @@ import RiseCore
         if !tabSwitcher.isHidden { tabSwitcher.place(in: b) }
     }
     func windowDidResize(_ notification: Notification) { layoutChrome() }
-    func windowWillClose(_ notification: Notification) { sidebar.cancelTabInteractions(); historySwipe.cancel(); trafficLights.detach(); siteInfoPopover.close(); siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); saveNow() }
-    func windowDidBecomeKey(_ notification: Notification) { trafficLights?.update(visible: sidebarVisible, theme: theme) }
+    func windowWillClose(_ notification: Notification) { developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); saveNow() }
     func windowDidResignKey(_ notification: Notification) {
-        trafficLights?.update(visible: sidebarVisible, theme: theme); pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch()
+        pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch()
         sidebar?.cancelTabInteractions()
         DispatchQueue.main.async { [weak self] in
             guard let self, !NSApp.isActive else { return }
@@ -297,7 +311,15 @@ import RiseCore
         }
         linkPreloader.install(on: tab.webView)
         permissionCoordinator.install(on: tab.webView)
-        tab.onChange = { [weak self] in self?.update() }
+        suggestionFavicons.remember(tab)
+        tab.onChange = { [weak self, weak tab] in
+            guard let self, let tab else { return }
+            self.suggestionFavicons.remember(tab)
+            if !tab.webView.isLoading, let url = tab.webView.url, let title = tab.webView.title {
+                self.browsingHistory.updateTitle(title, for: url)
+            }
+            self.update()
+        }
         tab.onThumbnailChange = { [weak self] in self?.refreshTabSwitcher() }
         return tab
     }
@@ -335,30 +357,7 @@ import RiseCore
     @objc func newTab() { paletteCreatesTab = true; showPalette(text: "") }
     @objc func focusAddress() { paletteCreatesTab = false; showPalette(text: selectedTab?.url?.absoluteString == "about:blank" ? "" : selectedTab?.url?.absoluteString ?? "") }
     func showPalette(text: String) { historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel(); dismissArea.isHidden = false; palette.show(text: text, theme: theme); layoutChrome() }
-    func hidePalette() { guard palette.isPresented else { return }; palette.hide(); dismissArea.isHidden = true; window?.makeFirstResponder(selectedTab?.webView) }
-    func suggestions(for text: String) -> [AddressSuggestion] {
-        let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        var result: [AddressSuggestion] = []
-        if !query.isEmpty, let url = AddressResolver.resolve(query) {
-            result.append(AddressSuggestion(title: url.host == "www.google.com" && url.path == "/search" ? "Search Google for “\(query)”" : AddressResolver.displayHost(url), subtitle: "", symbol: "magnifyingglass", url: url, tabID: nil, command: nil))
-        }
-        let matchingTabs = tabs.filter { query.isEmpty || $0.title.localizedCaseInsensitiveContains(query) || ($0.url?.absoluteString.localizedCaseInsensitiveContains(query) ?? false) }
-        result += matchingTabs.prefix(3).map { AddressSuggestion(title: $0.title, subtitle: "Switch to tab", symbol: "globe", url: nil, tabID: $0.id, command: nil) }
-        if query.isEmpty {
-            for (name, url) in [("Hacker News", "https://news.ycombinator.com"), ("Wikipedia", "https://en.wikipedia.org"), ("GitHub", "https://github.com")] {
-                result.append(AddressSuggestion(title: name, subtitle: url, symbol: "globe", url: URL(string: url), tabID: nil, command: nil))
-            }
-        } else {
-            for entry in history.reversed() where entry.title.localizedCaseInsensitiveContains(query) || entry.url.localizedCaseInsensitiveContains(query) {
-                if !result.contains(where: { $0.url?.absoluteString == entry.url }) { result.append(AddressSuggestion(title: entry.title, subtitle: entry.url, symbol: "clock", url: URL(string: entry.url), tabID: nil, command: nil)) }
-                if result.count >= 5 { break }
-            }
-            for (name, symbol) in [("Toggle Developer Mode", "hammer"), ("Change Theme", "paintpalette"), ("Toggle Sidebar", "sidebar.left"), ("Split View", "rectangle.split.2x1")] where name.localizedCaseInsensitiveContains(query) {
-                result.insert(AddressSuggestion(title: name, subtitle: "", symbol: symbol, url: nil, tabID: nil, command: name), at: 0)
-            }
-        }
-        return Array(result.prefix(5))
-    }
+    func hidePalette() { suggestionFavicons.cancelPreview(); guard palette.isPresented else { return }; palette.hide(); dismissArea.isHidden = true; window?.makeFirstResponder(selectedTab?.webView) }
     func submitAddress(_ text: String, suggestion: AddressSuggestion?) {
         hidePalette()
         if let id = suggestion?.tabID { select(id); return }
@@ -397,8 +396,21 @@ import RiseCore
     }
     @objc func reopenTab() { guard let saved = closedTabs.popLast() else { return }; let tab = configure(BrowserTab(saved: saved)); tabs.insert(tab, at: 0); select(tab.id) }
     func clearTabs() { for id in tabs.filter({ !$0.pinned }).map(\.id) { closeTab(id) } }
-    @objc func goBack() { historySwipe.cancel(); errorWebView = nil; selectedTab?.webView.goBack(); update() }
-    @objc func goForward() { historySwipe.cancel(); errorWebView = nil; selectedTab?.webView.goForward(); update() }
+    @objc func goBack() { navigateHistory(.back) }
+    @objc func goForward() { navigateHistory(.forward) }
+    private func navigateHistory(_ direction: HistoryDirection) {
+        // Buttons/menu shortcuts use WebKit directly. Remove any in-flight
+        // swipe surface and arrow spring before navigation starts.
+        historySwipe.cancel()
+        developerMotion.cancel()
+        toolbarButtons.compactMap { $0 as? HistoryArrowButton }.forEach { $0.restore() }
+        errorWebView = nil
+        if let tab = selectedTab, direction == .back ? tab.webView.canGoBack : tab.webView.canGoForward {
+            tab.cancelLoad()
+            if direction == .back { tab.webView.goBack() } else { tab.webView.goForward() }
+        }
+        update()
+    }
     @objc func reload() { historySwipe.cancel(); errorWebView = nil; if selectedTab?.isLoading == true { selectedTab?.cancelLoad() } else if let tab = selectedTab, tab.webView.url == nil, let url = tab.requestedURL { tab.load(url) } else { selectedTab?.webView.reload() }; update() }
     @objc func retry() { errorWebView = nil; if let url = selectedTab?.url { selectedTab?.load(url) }; update() }
     @objc func toggleSidebar() {
@@ -409,7 +421,23 @@ import RiseCore
         layoutChrome(); root.layoutSubtreeIfNeeded()
         CATransaction.commit()
     }
-    @objc func toggleDeveloper() { window?.makeFirstResponder(selectedTab?.webView); siteInfoPopover.close(); selectedTab?.developer.toggle(); update() }
+    @objc func toggleDeveloper() {
+        guard let tab = selectedTab else { return }
+        toggleDeveloperMode(for: tab)
+    }
+    func toggleDeveloperMode(for tab: BrowserTab) {
+        let visible = tab.id == selectedID
+        if visible {
+            historySwipe.cancel()
+            window?.makeFirstResponder(tab.webView); siteInfoPopover.close()
+        }
+        let from = visible ? developerMotion.height(for: tab.id, enabled: tab.developer) : 0
+        tab.developer.toggle()
+        if visible {
+            developerMotion.start(tabID: tab.id, from: from, enabled: tab.developer, animated: window?.isVisible == true)
+        }
+        update()
+    }
     @objc func toggleTheme() {
         let themes = RiseTheme.allCases
         theme = themes[((themes.firstIndex(of: theme) ?? 0) + 1) % themes.count]; update()
@@ -425,6 +453,9 @@ import RiseCore
         DispatchQueue.main.asyncAfter(deadline: .now()+0.4, execute: work)
     }
     func saveNow() {
+        suggestionFavicons.save()
+        do { try browsingHistory.save() }
+        catch { NSLog("Rise history save failed: %@", error.localizedDescription) }
         let state = BrowserSession(tabs: tabs.map(\.saved), selectedID: selectedID, theme: theme.rawValue, sidebarWidth: sidebarWidth, splitGroups: splitGroups)
         guard state != lastSaved else { return }
         do { try SessionStorage.write(state, to: sessionURL); lastSaved = state }

@@ -128,6 +128,24 @@ import MetalKit
         try await wait { web.title == "two" && !cloth.isActive }
         _ = router.handle(event([],x: 250,momentum: 3)); check(web.title == "two", "Momentum commits a missing finger-up only once")
         try await begin(-150); router.cancel(); check(!cloth.isActive, "New navigation/tab change interrupts the cloth immediately")
+        let menuOwner = AppDelegate(); menuOwner.browser = browser; menuOwner.buildMenu()
+        for (direction, shortcut, title) in [(HistoryDirection.back, false, "one"), (.forward, false, "two"), (.back, true, "one"), (.forward, true, "two")] {
+            cloth.prepare(web); cloth.drag(web, direction: direction, distance: 180)
+            try await wait { cloth.isActive }
+            let arrow = browser.toolbarButtons[direction == .back ? 1 : 2] as! HistoryArrowButton
+            arrow.drag(pull: 1, armed: true)
+            if shortcut {
+                let key = direction == .back ? "[" : "]"
+                let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: browser.window!.windowNumber, context: nil, characters: key, charactersIgnoringModifiers: key, isARepeat: false, keyCode: 0)!
+                check(NSApp.mainMenu!.performKeyEquivalent(with: event), "Default history shortcut dispatches")
+            } else { arrow.performClick(nil) }
+            check(!cloth.isActive && cloth.phase == .idle, "Buttons and shortcuts cancel the page transition synchronously")
+            check(!arrow.isReturning && arrow.pull == 0 && arrow.image != nil, "Direct navigation restores the arrow without a spring")
+            check(browser.pageShadow.clothOutline == nil && browser.pageClip.layer?.mask == nil, "Direct navigation leaves the inset page flat")
+            try await wait { web.title == title && !web.isLoading }
+            check(!cloth.isActive, "History navigation does not restart a ripple")
+        }
+
         try await begin(150)
         web.loadFileURL(folder.appendingPathComponent("one.html"),allowingReadAccessTo:folder)
         try await wait { web.title == "one" && !cloth.isActive }
@@ -146,7 +164,7 @@ import MetalKit
         try await begin(150)
         check(cloth.renderer?.incoming == nil, "An outdated appearance preview cannot be revealed")
         router.cancel()
-        report("PASS: real WebKit back/forward, cached radial reveal, fixed chrome, immediate release, reversal, cancellation, missing finger-up, interruption and Reduce Motion")
+        report("PASS: real WebKit back/forward, cached reveal, fixed chrome, immediate release, reversal, cancellation, missing finger-up, animation-free buttons/shortcuts, interruption and Reduce Motion")
     }
     func saveFrame(_ name: String, _ cloth: PageClothTransition) throws {
         guard let directory = ProcessInfo.processInfo.environment["RISE_CLOTH_FRAMES"], let renderer = cloth.renderer else { return }

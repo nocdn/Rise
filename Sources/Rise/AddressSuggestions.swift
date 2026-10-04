@@ -1,0 +1,81 @@
+import AppKit
+import RiseCore
+
+@MainActor extension BrowserController {
+    func suggestions(for text: String) -> [AddressSuggestion] {
+        let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var result: [AddressSuggestion] = [], seen = Set<String>()
+        var typedURL: URL?
+        let ranked = browsingHistory.ranked(for: query)
+        func appendSite(title: String, url: URL, tabID: UUID? = nil, learned: Bool = false, fetchFavicon: Bool = true) {
+            guard let key = BrowsingHistory.key(url), seen.insert(key).inserted else { return }
+            let completion = learned ? BrowsingHistory.completion(for: query, url: url) : nil
+            result.append(AddressSuggestion(title: title, subtitle: url.absoluteString, symbol: "globe", url: url,
+                                            tabID: tabID, command: nil, completion: completion, fetchFavicon: fetchFavicon))
+        }
+        func appendHistory(_ entry: HistoryEntry) {
+            guard let url = URL(string: entry.url) else { return }
+            let tab = tabs.first { BrowsingHistory.key($0.url) == entry.url }
+            appendSite(title: tab?.title ?? entry.title, url: url, tabID: tab?.id, learned: true)
+        }
+        // A learned literal URL prefix takes Enter/autocomplete priority.
+        if !query.isEmpty, let first = ranked.first, let url = URL(string: first.url),
+           BrowsingHistory.completion(for: query, url: url) != nil {
+            appendHistory(first)
+        }
+        if !query.isEmpty, let url = AddressResolver.resolve(query) {
+            let search = url.host == "www.google.com" && url.path == "/search"
+            if search {
+                result.append(AddressSuggestion(title: "Search Google for “\(query)”", subtitle: "", symbol: "magnifyingglass", url: url, tabID: nil, command: nil))
+            } else { typedURL = url; appendSite(title: query, url: url, fetchFavicon: false) }
+        }
+        // On an empty query, the most useful learned sites come first.
+        if query.isEmpty { ranked.forEach(appendHistory) }
+        for tab in tabs where query.isEmpty || tab.title.localizedCaseInsensitiveContains(query) || (tab.url?.absoluteString.localizedCaseInsensitiveContains(query) ?? false) {
+            if let url = tab.url { appendSite(title: tab.title, url: url, tabID: tab.id) }
+        }
+        if !query.isEmpty { ranked.forEach(appendHistory) }
+        if query.isEmpty {
+            for (name, address) in [("Hacker News", "https://news.ycombinator.com"), ("Wikipedia", "https://en.wikipedia.org"), ("GitHub", "https://github.com")] {
+                appendSite(title: name, url: URL(string: address)!)
+            }
+        } else {
+            for (name, symbol) in [("Toggle Developer Mode", "hammer"), ("Change Theme", "paintpalette"), ("Toggle Sidebar", "sidebar.left"), ("Split View", "rectangle.split.2x1")] where name.localizedCaseInsensitiveContains(query) {
+                let command = AddressSuggestion(title: name, subtitle: "", symbol: symbol, url: nil, tabID: nil, command: name)
+                if result.first?.completion != nil { result.append(command) }
+                else { result.insert(command, at: 0) }
+            }
+        }
+        suggestionFavicons.preview(typedURL)
+        return result.prefix(5).map { suggestion in
+            var suggestion = suggestion
+            if suggestion.symbol == "globe" {
+                let origin = SitePermissions.origin(suggestion.url)
+                let tab = suggestion.tabID.flatMap { id in tabs.first { $0.id == id } } ??
+                    tabs.first { origin != nil && SitePermissions.origin($0.url) == origin && $0.favicon != nil }
+                suggestion.favicon = tab?.favicon ?? suggestionFavicons.image(for: suggestion.url, fetch: suggestion.fetchFavicon)
+            }
+            return suggestion
+        }
+    }
+
+    @objc func confirmClearBrowsingHistory() {
+        let alert = NSAlert()
+        alert.messageText = "Clear Browsing History?"
+        alert.informativeText = "Remove saved visits and learned address suggestions. Your open tabs and cookies will stay."
+        alert.addButton(withTitle: "Clear History"); alert.addButton(withTitle: "Cancel")
+        guard let window else { return }
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn, let self else { return }
+            do { try self.clearBrowsingHistory() }
+            catch {
+                let failure = NSAlert(); failure.messageText = "History could not be cleared"
+                failure.informativeText = error.localizedDescription; failure.beginSheetModal(for: window)
+            }
+        }
+    }
+    func clearBrowsingHistory() throws {
+        try browsingHistory.clear()
+        palette.removeInlineCompletion(); palette.refresh()
+    }
+}

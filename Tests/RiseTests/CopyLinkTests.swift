@@ -24,6 +24,7 @@ final class CopyLinkTests: XCTestCase {
         let url = browser.selectedTab!.url!
         browser.copyURL()
         XCTAssertEqual(browser.linkPasteboard.string(forType: .string), url.absoluteString)
+        XCTAssertTrue(browser.sidebar.copyButton.isShowingConfirmation)
         let content = try XCTUnwrap(browser.copiedLinkPopover.contentViewController as? CopiedLinkController)
         XCTAssertEqual(content.message.stringValue, "Link copied")
         XCTAssertEqual(content.url, url)
@@ -38,6 +39,8 @@ final class CopyLinkTests: XCTestCase {
         XCTAssertEqual(shared, url)
         try await Task.sleep(for: .milliseconds(350))
         XCTAssertFalse(browser.copiedLinkPopover.isShown)
+        try await Task.sleep(for: .milliseconds(800))
+        XCTAssertFalse(browser.sidebar.copyButton.isShowingConfirmation, "Restore the link glyph after one second")
     }
     @MainActor func testShortcutAndHiddenSidebarCopy() async throws {
         let browser = browser(); defer { clean(browser) }
@@ -55,23 +58,37 @@ final class CopyLinkTests: XCTestCase {
         browser.linkPasteboard.clearContents(); browser.copyURL()
         XCTAssertNil(browser.linkPasteboard.string(forType: .string), "Blank tabs have no link to copy")
     }
-    @MainActor func testSidebarHoverFadesIconsWithoutChangingTheirGeometryOrPopoverAnchor() throws {
+    @MainActor func testSidebarHoverAndOpenSettingsPreserveControlVisibilityGeometryAndAnchor() async throws {
         let browser = browser(); defer { clean(browser) }
         let sidebar = browser.sidebar!, frame = sidebar.copyButton.frame
         sidebar.setSidebarHovered(false, animated: false)
+        let textFrame = sidebar.addressText.frame
+        let hiddenEdge = try XCTUnwrap((sidebar.addressText.layer?.mask as? CAGradientLayer)?.locations?[2]).doubleValue
+        XCTAssertEqual(hiddenEdge, 1, "Hidden controls leave the whole URL pill available")
         XCTAssertEqual(sidebar.copyButton.alphaValue, 0); XCTAssertFalse(sidebar.copyButton.allowsInteraction)
         XCTAssertNil(sidebar.copyButton.hitTest(NSPoint(x: frame.midX, y: frame.midY)))
         sidebar.setSidebarHovered(true)
         XCTAssertEqual(sidebar.copyButton.alphaValue, 1); XCTAssertTrue(sidebar.settingsButton.allowsInteraction)
         XCTAssertEqual(sidebar.copyButton.frame, frame)
+        XCTAssertEqual(sidebar.addressText.frame, textFrame, "Animate the fade boundary without scaling or moving the glyphs")
+        let shownEdge = try XCTUnwrap((sidebar.addressText.layer?.mask as? CAGradientLayer)?.locations?[2]).doubleValue
+        XCTAssertLessThan(shownEdge, hiddenEdge)
         if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             XCTAssertNotNil(sidebar.copyButton.layer?.animation(forKey: SidebarView.controlsFadeKey))
+            XCTAssertNotNil(sidebar.addressText.layer?.mask?.animation(forKey: FadingTextField.fadeMovementKey))
         }
         browser.siteMenu(); sidebar.setSidebarHovered(false)
         XCTAssertFalse(sidebar.settingsButton.isHidden)
-        XCTAssertEqual(sidebar.settingsButton.alphaValue, 0)
-        XCTAssertFalse(sidebar.settingsButton.allowsInteraction)
+        XCTAssertEqual(sidebar.settingsButton.alphaValue, 1)
+        XCTAssertEqual(sidebar.copyButton.alphaValue, 1)
+        XCTAssertEqual((sidebar.addressText.layer?.mask as? CAGradientLayer)?.locations?[2].doubleValue, shownEdge)
+        XCTAssertTrue(sidebar.settingsButton.allowsInteraction); XCTAssertTrue(sidebar.copyButton.allowsInteraction)
         XCTAssertEqual(sidebar.settingsAnchorRect, sidebar.address.convert(sidebar.settingsButton.bounds, from: sidebar.settingsButton))
+        browser.siteControlsPopover.animates = false
+        browser.siteControlsPopover.close()
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertEqual(sidebar.settingsButton.alphaValue, 0); XCTAssertEqual(sidebar.copyButton.alphaValue, 0)
+        XCTAssertFalse(sidebar.settingsButton.allowsInteraction)
         browser.addTab(); sidebar.setSidebarHovered(true)
         XCTAssertTrue(sidebar.copyButton.isHidden); XCTAssertTrue(sidebar.settingsButton.isHidden)
     }

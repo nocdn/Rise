@@ -1,6 +1,8 @@
 #!/bin/zsh
 set -euo pipefail
 builtin cd "${0:A:h:h}"
+# Validate restricted passkey signing before changing the existing app bundle.
+python3 scripts/sign-app.py --check
 # Swift Build can otherwise stamp the deployment target as the SDK version,
 # which opts AppKit into legacy rendering despite compiling with a newer SDK.
 RISE_SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version)"
@@ -12,5 +14,5 @@ cp -R .build/release/Rise_Rise.bundle "$APP/Contents/Resources/"
 cp scripts/Info.plist "$APP/Contents/Info.plist"
 cp THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/THIRD_PARTY_NOTICES.md"
 if [[ -f scripts/Rise.icns ]]; then cp scripts/Rise.icns "$APP/Contents/Resources/"; fi
-codesign --force --sign - "$APP"
+python3 scripts/sign-app.py "$APP"
 echo "Built $APP"

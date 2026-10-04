@@ -2,12 +2,15 @@ import AppKit
 import RiseCore
 
 @MainActor final class SidebarView: Surface {
-    let address = NSButton()
+    let address = SidebarAddressButton()
     let addressText = FadingTextField(frame: .zero)
     let searchIcon = NSImageView()
-    let copyButton: SidebarHoverButton
+    let copyButton: SidebarCopyButton
     let settingsButton: SidebarHoverButton
     var isSidebarHovered = false
+    var isSiteControlsOpen = false {
+        didSet { updateAddressControlVisibility() }
+    }
     var hasAddress = false
     let newTab = NewTabButton()
     let scroll = NSScrollView()
@@ -34,14 +37,15 @@ import RiseCore
     var onReorder: (([UUID]) -> Void)?
     var onRename: ((UUID, String) -> Void)?
     init(copy: @escaping () -> Void, settings: @escaping () -> Void, archive: @escaping () -> Void, theme: @escaping () -> Void, clear: @escaping () -> Void) {
-        copyButton = SidebarHoverButton(symbol: "link", size: 14, title: "Copy current URL (⌘⇧C)", action: copy)
+        copyButton = SidebarCopyButton(action: copy)
         settingsButton = SidebarHoverButton(symbol: "slider.horizontal.3", size: 14, title: "Site controls", action: settings)
         archiveButton = ChromeButton(symbol: "archivebox.fill", size: 15, title: "Recently closed tabs", action: archive)
         themeButton = ChromeButton(symbol: "paintpalette.fill", size: 13, title: "Change theme", action: theme)
         clearButton = ChromeButton(symbol: "broom", size: 17, title: "Clear unpinned tabs", action: clear)
         if clearButton.image == nil { clearButton.image = broomIcon() }
         super.init()
-        address.isBordered = false; address.title = ""; address.wantsLayer = true; address.layer?.cornerRadius = 12
+        address.isBordered = false; address.title = ""; address.wantsLayer = true
+        address.layer?.cornerRadius = 12; address.layer?.cornerCurve = .continuous
         address.target = self; address.action = #selector(openAddress); address.setAccessibilityLabel("Search or Enter URL")
         searchIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
         searchIcon.contentTintColor = NSColor(hex: 0xA09E9E)
@@ -63,7 +67,7 @@ import RiseCore
     @objc func openAddress() { onAddress?() }
     @objc func createTab() { onNewTab?() }
     func update(tabs: [BrowserTab], selected: BrowserTab?, theme: RiseTheme, splits: [SplitTabGroup] = []) {
-        fill = theme.background; gradientColors = theme.backgroundGradient; address.layer?.backgroundColor = theme.pill.cgColor
+        fill = theme.background; gradientColors = theme.backgroundGradient; address.layer?.backgroundColor = theme.addressFill.cgColor
         selectedTabID = selected?.id
         selectedTabShadow.fill = TabAppearance.selectedFill(theme)
         selectedTabShadow.shadow = TabAppearance.shadow(theme)
@@ -137,14 +141,16 @@ import RiseCore
         super.layout(); let w = bounds.width
         address.frame = NSRect(x: 8, y: 50, width: w-16, height: 36)
         searchIcon.frame = NSRect(x: 12, y: 10, width: 14, height: 16)
-        addressText.frame = NSRect(x: searchIcon.isHidden ? 13 : 34, y: 10, width: w-(searchIcon.isHidden ? 90 : 60), height: 18)
+        let textX: CGFloat = searchIcon.isHidden ? 13 : 34
+        addressText.frame = NSRect(x: textX, y: 10, width: max(0, address.bounds.width-textX-13), height: 18)
         copyButton.frame = NSRect(x: w-67, y: 56, width: 27, height: 24)
         settingsButton.frame = NSRect(x: w-39, y: 56, width: 27, height: 24)
+        updateAddressTextBoundary(animated: false)
         let start: CGFloat = 98
         newTab.frame = NSRect(x: TabAppearance.inset, y: start, width: w-2*TabAppearance.inset, height: TabAppearance.height)
-        let scrollY = newTab.frame.maxY+8
+        let scrollY = newTab.frame.maxY+TabAppearance.spacing
         scroll.frame = NSRect(x: 0, y: scrollY, width: w, height: max(0, bounds.height-scrollY-44))
-        var y: CGFloat = 8; targetFrames = [:]
+        var y: CGFloat = 0; targetFrames = [:]
         let time = CACurrentMediaTime()
         for (index, row) in displayedRows.enumerated() {
             let h: CGFloat = (row as? SplitTabRow)?.rowHeight ?? ((row as? TabRow)?.developer == true ? TabAppearance.developerHeight : TabAppearance.height)

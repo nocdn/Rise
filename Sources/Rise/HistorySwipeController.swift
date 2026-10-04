@@ -33,10 +33,7 @@ import WebKit
         guard event.hasPreciseScrollingDeltas || terminal || !event.momentumPhase.isEmpty else { return false }
         if !event.momentumPhase.isEmpty {
             if probing { pending.append(event); return true }
-            if event.momentumPhase.contains(.began), permitted, gesture.isTracking { _ = finish(cancelled: false) }
-            let consumed = suppressMomentum
-            if event.momentumPhase.contains(.ended) { suppressMomentum = false }
-            return consumed
+            return handleMomentum(event)
         }
         if event.phase.contains(.began) {
             cancel()
@@ -57,7 +54,7 @@ import WebKit
         let timeout = DispatchWorkItem { [weak self] in self?.resolveProbe(false, token: token) }
         probeTimeout = timeout
         // A busy web process must not hold up normal scrolling.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: timeout)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: timeout)
         Task { [weak self, weak page] in
             guard let page else { self?.resolveProbe(false, token: token); return }
             let result = try? await page.callAsyncJavaScript(Self.scrollProbe,
@@ -77,12 +74,17 @@ import WebKit
     }
     private func handleResolved(_ event: NSEvent) -> Bool {
         if !event.momentumPhase.isEmpty {
-            if event.momentumPhase.contains(.began), permitted, gesture.isTracking { _ = finish(cancelled: false) }
-            let consumed = suppressMomentum
-            if event.momentumPhase.contains(.ended) { suppressMomentum = false }
-            return consumed
+            return handleMomentum(event)
         }
         return permitted ? route(event) : false
+    }
+    private func handleMomentum(_ event: NSEvent) -> Bool {
+        // Some drivers omit finger-up and momentum-began. Any momentum event
+        // ends the finger gesture once; its deltas never add navigation travel.
+        if permitted, gesture.isTracking { _ = finish(cancelled: event.momentumPhase.contains(.cancelled)) }
+        let consumed = suppressMomentum
+        if event.momentumPhase.contains(.ended) || event.momentumPhase.contains(.cancelled) { suppressMomentum = false }
+        return consumed
     }
     private func route(_ event: NSEvent) -> Bool {
         guard let page else { cancel(); return false }

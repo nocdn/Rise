@@ -4,13 +4,15 @@ import QuartzCore
 // Clip rather than insert an ellipsis, then soften only the overflowing edge.
 class FadingTextField: NSTextField {
     private let fade = CAGradientLayer()
+    private var fadeBoundary: CGFloat?
+    static let fadeMovementKey = "Rise.TextFadeBoundary"
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         isEditable = false; isSelectable = false; isBordered = false; drawsBackground = false
         cell?.usesSingleLineMode = true; lineBreakMode = .byClipping
         wantsLayer = true; clipsToBounds = true
         fade.startPoint = CGPoint(x: 0, y: 0.5); fade.endPoint = CGPoint(x: 1, y: 0.5)
-        fade.colors = [NSColor.black.cgColor, NSColor.black.cgColor, NSColor.clear.cgColor]
+        fade.colors = [NSColor.black.cgColor, NSColor.black.cgColor, NSColor.clear.cgColor, NSColor.clear.cgColor]
     }
     required init?(coder: NSCoder) { fatalError() }
     override var stringValue: String {
@@ -19,10 +21,33 @@ class FadingTextField: NSTextField {
     }
     override func layout() {
         super.layout()
+        updateFade()
+    }
+    /// Keep the text at its full size while moving only its clipping/fade edge.
+    /// Presentation values make a quick hover reversal continue smoothly.
+    func setFadeBoundary(_ width: CGFloat, duration: CFTimeInterval = 0) {
+        guard fadeBoundary != width else { return }
+        let old = fade.presentation()?.locations ?? fade.locations
+        fadeBoundary = width
+        updateFade()
+        if duration > 0, let old, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            let movement = CABasicAnimation(keyPath: "locations")
+            movement.fromValue = old; movement.toValue = fade.locations
+            movement.duration = duration
+            movement.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            fade.add(movement, forKey: Self.fadeMovementKey)
+        } else { fade.removeAnimation(forKey: Self.fadeMovementKey) }
+    }
+    private func updateFade() {
+        let width = max(1, bounds.width)
+        let edge = min(width, max(0, fadeBoundary ?? width))
+        let overflowing = attributedStringValue.size().width > edge - 2
         CATransaction.begin(); CATransaction.setDisableActions(true)
         fade.frame = bounds
-        fade.locations = [0, NSNumber(value: Double(max(0, 1 - 18/max(1, bounds.width)))), 1]
-        layer?.mask = currentEditor() == nil && attributedStringValue.size().width > bounds.width - 2 ? fade : nil
+        fade.locations = [0, NSNumber(value: Double(max(0, edge-(overflowing ? 18 : 0))/width)), NSNumber(value: Double(edge/width)), 1]
+        // Retain the sidebar mask even when the whole URL fits, so its edge can
+        // animate inward as controls appear without resizing the native glyphs.
+        layer?.mask = currentEditor() == nil && (overflowing || fadeBoundary != nil) ? fade : nil
         CATransaction.commit()
     }
 }

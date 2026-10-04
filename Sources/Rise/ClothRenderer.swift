@@ -81,6 +81,8 @@ final class ClothBackdrop: Surface {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 final class ClothMetalView: MTKView {
+    var corner: CGFloat = 7
+    var continuous = false
     override var isFlipped: Bool { true }
     override var isOpaque: Bool { false }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -100,7 +102,7 @@ final class ClothMetalView: MTKView {
     func setOutline(pull: Double, forward: Bool) {
         CATransaction.begin(); CATransaction.setDisableActions(true)
         outline.frame = bounds
-        outline.path = ClothMotion.outline(size: bounds.size, pull: pull, forward: forward)
+        outline.path = ClothMotion.outline(size: bounds.size, pull: pull, forward: forward, corner: corner, continuous: continuous)
         CATransaction.commit()
     }
 }

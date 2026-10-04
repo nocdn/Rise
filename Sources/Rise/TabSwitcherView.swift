@@ -6,7 +6,7 @@ final class TabPreviewCard: NSButton {
     private let thumbnailClip = Surface(color: NSColor(hex: 0x242424), radius: 5)
     private let preview = NSImageView()
     private let placeholder = NSImageView()
-    private let icon = NSImageView()
+    private let icon = FaviconView(frame: .zero)
     private let titleField = label("", size: 14, weight: .semibold, color: .white)
     var choose: ((UUID) -> Void)?
     init(_ tab: BrowserTab) {
@@ -19,7 +19,6 @@ final class TabPreviewCard: NSButton {
         thumbnailClip.addSubview(preview); thumbnailClip.addSubview(placeholder)
         placeholder.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
         placeholder.contentTintColor = NSColor(hex: 0x777777)
-        icon.imageScaling = .scaleProportionallyUpOrDown
         [thumbnailClip, icon, titleField].forEach(addSubview)
         target = self; action = #selector(openTab)
     }

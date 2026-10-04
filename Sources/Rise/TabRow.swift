@@ -3,7 +3,7 @@ import RiseCore
 
 @MainActor final class TabRow: NSButton, NSTextFieldDelegate {
     let tabID: UUID
-    let icon = NSImageView()
+    let icon = FaviconView(frame: .zero)
     let titleField = TabTitleField(frame: .zero)
     let subtitle = label("", size: 11, color: .secondaryLabelColor)
     let close: ChromeButton
@@ -23,6 +23,9 @@ import RiseCore
     private(set) var isRenaming = false
     private var originalTitle = ""
     private var hover = false
+    private var hasLaidOut = false
+    private var animateDeveloperLayout = false
+    private var subtitleHideWork: DispatchWorkItem?
     init(tab: BrowserTab, onClose: @escaping () -> Void) {
         tabID = tab.id
         close = ChromeButton(symbol: "xmark", size: 13, title: "Close \(tab.title)", action: onClose)
@@ -31,7 +34,7 @@ import RiseCore
         layer?.cornerRadius = TabAppearance.radius; layer?.cornerCurve = .continuous
         target = self; action = #selector(selectTab)
         addSubview(loadingBackground); addSubview(icon); addSubview(titleField); addSubview(subtitle); addSubview(close)
-        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.wantsLayer = true; subtitle.wantsLayer = true; subtitle.alphaValue = 0
         titleField.delegate = self; titleField.focusRingType = .none
         titleField.cell?.usesSingleLineMode = true
         setAccessibilityLabel(tab.title)
@@ -40,11 +43,20 @@ import RiseCore
     override var isFlipped: Bool { true }
     @objc func selectTab() { onSelect?() }
     func update(tab: BrowserTab, selected: Bool, theme: RiseTheme) {
+        let changedDeveloper = developer != tab.developer
+        if changedDeveloper {
+            subtitleHideWork?.cancel(); subtitleHideWork = nil
+            animateDeveloperLayout = hasLaidOut && window?.isVisible == true && !isRenaming && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        }
         self.selected = selected; self.theme = theme; developer = tab.developer
         if !isRenaming { titleField.stringValue = tab.title }
         titleField.textColor = TabAppearance.text(theme, selected: selected)
         subtitle.stringValue = AddressResolver.displayHost(tab.url) + (tab.url?.port.map { ":\($0)" } ?? "")
-        subtitle.textColor = theme.muted; subtitle.isHidden = !developer
+        subtitle.textColor = theme.muted
+        if developer { subtitle.isHidden = false }
+        if !animateDeveloperLayout && subtitleHideWork == nil {
+            subtitle.alphaValue = developer ? 1 : 0; subtitle.isHidden = !developer
+        }
         if let favicon = tab.favicon { icon.image = favicon }
         else if AddressResolver.isLocal(tab.url) {
             icon.image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
@@ -78,16 +90,35 @@ import RiseCore
     }
     override func layout() {
         super.layout()
+        let animated = animateDeveloperLayout
+        animateDeveloperLayout = false; hasLaidOut = bounds.width > 0 && bounds.height > 0
+        let time = CACurrentMediaTime()
+        let subtitleOpacity = subtitle.layer?.presentation()?.opacity ?? Float(subtitle.alphaValue)
         loadingBackground.frame = bounds
-        icon.frame = NSRect(x: isSplitMember ? 6 : 8, y: (bounds.height-16)/2, width: 16, height: 16)
+        TabListMotion.move(icon, to: NSRect(x: isSplitMember ? 6 : 8, y: (bounds.height-16)/2, width: 16, height: 16), animated: animated, at: time)
         let titleHeight = ceil(titleField.intrinsicContentSize.height)
         let subtitleHeight = ceil(subtitle.intrinsicContentSize.height)
         let textHeight = developer ? titleHeight + 1 + subtitleHeight : titleHeight
         let textY = (bounds.height - textHeight) / 2
         let textX: CGFloat = isSplitMember ? 28 : 30
         let textWidth = max(0, bounds.width - textX - (close.isHidden ? 8 : 32))
-        titleField.frame = NSRect(x: textX, y: textY, width: textWidth, height: titleHeight)
-        subtitle.frame = NSRect(x: textX, y: textY + titleHeight + 1, width: textWidth, height: subtitleHeight)
+        TabListMotion.move(titleField, to: NSRect(x: textX, y: textY, width: textWidth, height: titleHeight), animated: animated, at: time)
+        let subtitleY = developer ? textY + titleHeight + 1 : max(0, bounds.height-subtitleHeight-2)
+        let subtitleFrame = NSRect(x: textX, y: subtitleY, width: textWidth, height: subtitleHeight)
+        if animated && developer && subtitleOpacity == 0 { subtitle.frame = subtitleFrame.offsetBy(dx: 0, dy: -2) }
+        TabListMotion.move(subtitle, to: subtitleFrame, animated: animated, at: time)
+        if animated {
+            subtitle.isHidden = false
+            DeveloperModeMotion.fade(subtitle, from: subtitleOpacity, to: developer ? 1 : 0, at: time)
+            if !developer {
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self, !self.developer else { return }
+                    self.subtitle.isHidden = true; self.subtitleHideWork = nil
+                }
+                subtitleHideWork = work
+                DispatchQueue.main.asyncAfter(deadline: .now()+DeveloperModeMotion.duration, execute: work)
+            }
+        }
         close.frame = NSRect(x: bounds.width-28.5, y: (bounds.height-24)/2-0.5, width: 24, height: 24)
     }
     override func draw(_ dirtyRect: NSRect) {
@@ -143,6 +174,7 @@ import RiseCore
     func beginRename() {
         guard !isRenaming else { return }
         onSelect?()
+        titleField.layer?.removeAnimation(forKey: TabListMotion.movementKey)
         originalTitle = titleField.stringValue; isRenaming = true
         titleField.isEditable = true; titleField.isSelectable = true
         titleField.selectText(nil)

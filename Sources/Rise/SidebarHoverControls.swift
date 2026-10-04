@@ -1,8 +1,13 @@
 import AppKit
 
+/// The layer supplies the URL pill; the native cell must not clear its fill.
+final class SidebarAddressButton: NSButton {
+    override func draw(_ dirtyRect: NSRect) {}
+}
+
 /// Keep the anchor view attached while fading, but pass clicks through once
 /// the sidebar is no longer hovered. Popovers anchor to the stable address bar.
-final class SidebarHoverButton: ChromeButton {
+class SidebarHoverButton: ChromeButton {
     var allowsInteraction = false
     override func hitTest(_ point: NSPoint) -> NSView? {
         allowsInteraction ? super.hitTest(point) : nil
@@ -16,7 +21,8 @@ final class SidebarHoverButton: ChromeButton {
         updateAddressControlVisibility(animated: animated)
     }
     func updateAddressControlVisibility(animated: Bool = true) {
-        let visible = hasAddress && isSidebarHovered && !isHidden
+        let visible = hasAddress && (isSidebarHovered || isSiteControlsOpen) && !isHidden
+        updateAddressTextBoundary(animated: animated)
         for button in [copyButton,settingsButton] {
             button.allowsInteraction = visible
             button.isHidden = !hasAddress
@@ -37,6 +43,11 @@ final class SidebarHoverButton: ChromeButton {
                 button.layer?.add(fade,forKey:Self.controlsFadeKey)
             } else { button.layer?.removeAnimation(forKey: Self.controlsFadeKey) }
         }
+    }
+    func updateAddressTextBoundary(animated: Bool) {
+        let visible = hasAddress && (isSidebarHovered || isSiteControlsOpen) && !isHidden
+        let edge = visible ? copyButton.frame.minX-address.frame.minX-addressText.frame.minX-2 : addressText.bounds.width
+        addressText.setFadeBoundary(max(0, edge), duration: animated ? (visible ? 0.14 : 0.12) : 0)
     }
     var settingsAnchorRect: NSRect { address.convert(settingsButton.bounds, from: settingsButton) }
 }

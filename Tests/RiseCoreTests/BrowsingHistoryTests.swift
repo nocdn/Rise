@@ -1,0 +1,63 @@
+import XCTest
+@testable import RiseCore
+
+final class BrowsingHistoryTests: XCTestCase {
+    private func storage() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("history.json") }
+    func testVisitsSurviveRelaunchCanonicalizeFragmentsAndClearPermanently() throws {
+        let file = storage(); defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let history = BrowsingHistory(storageURL: file)
+        history.record(URL(string: "https://user:password@EXAMPLE.com:443/docs#first")!, title: "Docs")
+        history.record(URL(string: "https://example.com/docs#second")!, title: "Updated docs")
+        history.record(URL(string: "about:blank")!, title: "Blank")
+        history.record(URL(fileURLWithPath: "/private/file"), title: "File")
+        try history.save()
+        let restored = BrowsingHistory(storageURL: file)
+        XCTAssertEqual(restored.entries.count, 1)
+        XCTAssertEqual(restored.entries.first?.url, "https://example.com/docs")
+        XCTAssertEqual(restored.entries.first?.visits, 2)
+        XCTAssertEqual(restored.entries.first?.title, "Updated docs")
+        try restored.clear()
+        XCTAssertTrue(BrowsingHistory(storageURL: file).entries.isEmpty)
+    }
+    func testFrecencyRewardsRepeatedVisitsAndRecencyWithinTheSameMatchTier() {
+        let history = BrowsingHistory(storageURL: storage()), now = Date(timeIntervalSince1970: 1_000_000)
+        let frequent = URL(string: "https://frequent.example/docs")!, recent = URL(string: "https://recent.example/docs")!
+        for _ in 0..<20 { history.record(frequent, title: "Docs", at: now.addingTimeInterval(-86400)) }
+        history.record(recent, title: "Docs", at: now)
+        XCTAssertEqual(history.ranked(for: "docs", at: now).first?.url, frequent.absoluteString)
+        history.record(URL(string: "https://old.example")!, title: "Old", at: now.addingTimeInterval(-86400*60))
+        XCTAssertLessThan(history.ranked(for: "", at: now).firstIndex { $0.url == BrowsingHistory.key(recent) }!, history.ranked(for: "", at: now).firstIndex { $0.url == "https://old.example/" }!)
+    }
+    func testLiteralPrefixesOutrankPopularSubstringMatchesAndMultipleWordsMustMatch() {
+        let history = BrowsingHistory(storageURL: storage())
+        let prefix = URL(string: "https://github.com/nocdn/Rise")!, other = URL(string: "https://example.com/github")!
+        for _ in 0..<100 { history.record(other, title: "GitHub notes") }
+        history.record(prefix, title: "Rise source")
+        XCTAssertEqual(history.ranked(for: "git").first?.url, prefix.absoluteString)
+        XCTAssertEqual(history.ranked(for: "RISE source").count, 1)
+        XCTAssertTrue(history.ranked(for: "Rise unrelated").isEmpty)
+    }
+    func testCompletionIsALiteralPrefixAndRetainsSchemePortPathQueryAndUserCasing() {
+        let url = URL(string: "https://www.example.com:8443/docs?section=swift")!
+        XCTAssertEqual(BrowsingHistory.completion(for: "EXam", url: url), "EXample.com:8443/docs?section=swift")
+        XCTAssertEqual(BrowsingHistory.completion(for: "https://www.ex", url: url), url.absoluteString)
+        XCTAssertNil(BrowsingHistory.completion(for: "docs", url: url))
+        XCTAssertNil(BrowsingHistory.completion(for: "example swift", url: url))
+        XCTAssertNil(BrowsingHistory.completion(for: "e", url: url))
+        XCTAssertEqual(BrowsingHistory.completion(for: "exam", url: URL(string: "https://example.com/")!), "example.com")
+    }
+    func testBoundedHistoryTitleUpdatesDoNotCountAsVisitsAndInvalidStorageIsIgnored() throws {
+        let file = storage(); defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let history = BrowsingHistory(storageURL: file)
+        for index in 0...BrowsingHistory.maximumEntries {
+            history.record(URL(string: "https://example.com/\(index)")!, title: "Page \(index)", at: Date(timeIntervalSince1970: Double(index)))
+        }
+        XCTAssertEqual(history.entries.count, BrowsingHistory.maximumEntries)
+        XCTAssertFalse(history.entries.contains { $0.url == "https://example.com/0" })
+        history.updateTitle("New title", for: URL(string: "https://example.com/2000")!)
+        XCTAssertEqual(history.entries.first { $0.url.hasSuffix("/2000") }?.visits, 1)
+        try history.save()
+        try Data("broken JSON".utf8).write(to: file)
+        XCTAssertTrue(BrowsingHistory(storageURL: file).entries.isEmpty)
+    }
+}

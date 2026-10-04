@@ -112,7 +112,7 @@ final class BrowserLifecycleTests: XCTestCase {
         XCTAssertTrue(browser.toolbarAccessory.isHidden)
         XCTAssertFalse(window.toolbar!.isVisible)
         XCTAssertTrue(browser.toolbarButtons.allSatisfy(\.isHidden))
-        XCTAssertEqual(browser.pageShadow.frame, browser.root.bounds.insetBy(dx: 7, dy: 7))
+        XCTAssertEqual(browser.pageShadow.frame, browser.root.bounds.insetBy(dx: PageAppearance.inset, dy: PageAppearance.inset))
         XCTAssertEqual(tab.webView.frame, browser.pageClip.bounds)
         XCTAssertEqual(browser.selectedID, tab.id)
         XCTAssertTrue(browser.pageShadow.layer?.animationKeys()?.isEmpty ?? true)

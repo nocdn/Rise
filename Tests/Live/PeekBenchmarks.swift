@@ -120,7 +120,9 @@ import WebKit
                 check(onPath(last, from: link, to: card.frame, before: 0.2), "Close ends on the link: \(last) vs \(link)")
                 check(closing.last!.link > 0.9, "Close crossfades into the link")
                 let smallest = closing.map(\.frame.width).min()!
-                check(smallest < link.width+6-1 && smallest > (link.width+6)*0.9, "Close springs subtly past the link: \(smallest) vs \(link.width+6)")
+                check(smallest < link.width+6-0.3 && smallest > link.width+6-3, "Close springs subtly past the link: \(smallest) vs \(link.width+6)")
+                let pageReturn = closing.map(\.pageScale).max()!
+                check(pageReturn > 1.0005 && pageReturn < 1.005, "The page springs subtly past full size: \(pageReturn)")
                 check(abs(closing.last!.pageScale-1) < 0.001 && CATransform3DIsIdentity(browser.pageShadow.layer!.transform), "The page returns to full size")
                 try await Task.sleep(for: .milliseconds(100))
                 check(browser.peekLeftovers.isEmpty && card.superview == nil && !browser.root.subviews.contains { $0 is PeekGhost } && !browser.pageClip.subviews.contains { $0 is PeekBackdrop }, "Close removes every Peek view")
@@ -150,7 +152,7 @@ import WebKit
                 check(browser.peekCard?.alphaValue == 1 && browser.peekGhosts.isEmpty && browser.pageClip.subviews.filter { $0 is PeekBackdrop }.count == 1, "Reopening during a close settles on one Peek")
                 check(abs(browser.pageShadow.layer!.transform.m11-BrowserController.peekPageScale) < 0.0001, "The page stays receded behind the reopened Peek")
                 browser.closePeek()
-                print("Peek motion verified: open \(opening.count) samples (peak \(Int(peak)) vs card \(Int(card.frame.width))), close \(closing.count) samples (smallest \(smallest) vs \(link.width+6)), shadow \(recededShadow)/\(restingShadow).")
+                print("Peek motion verified: open \(opening.count) samples (peak \(Int(peak)) vs card \(Int(card.frame.width))), close \(closing.count) samples (smallest \(smallest) vs \(link.width+6), page \(pageReturn)), shadow \(recededShadow)/\(restingShadow).")
                 NSApp.terminate(nil)
             } catch { fputs("PEEK VERIFICATION FAILED: \(error)\n", stderr); exit(1) }
         }

@@ -33,7 +33,7 @@ import AppKit
                 browser.sidebar.setSidebarHovered(false)
                 try await Task.sleep(for: .milliseconds(150))
                 check(browser.siteControlsPopover.isShown, "Settings remain open after hovering out of the sidebar")
-                check(browser.sidebar.settingsButton.alphaValue == 0, "Settings icon fades out")
+                check(browser.sidebar.settingsButton.alphaValue == 1 && browser.sidebar.copyButton.alphaValue == 1, "URL controls stay visible while settings is open")
                 browser.copyURL(); try await Task.sleep(for: .milliseconds(350))
                 check(browser.copiedLinkPopover.isShown, "Native copy confirmation opens")
                 check(browser.copiedLinkPopover.animates == !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, "Native popover animations respect Reduce Motion")

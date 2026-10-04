@@ -104,7 +104,7 @@ final class HistoryArrowButton: ChromeButton {
         arrow.strokeColor = color.cgColor
         CATransaction.commit()
     }
-    private func restore() {
+    func restore() {
         returnTimer?.invalidate(); returnTimer = nil
         pull = 0; armed = false; isDragging = false; crossedThreshold = false; arrow.isHidden = true; arrow.removeAllAnimations()
         image = restingImage

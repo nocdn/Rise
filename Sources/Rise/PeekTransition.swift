@@ -76,7 +76,10 @@ extension NSView {
 @MainActor extension BrowserController {
     // A subtle overshoot on the way out; a little less settling back into the link.
     static var peekOpenSpring: CASpringAnimation { CASpringAnimation(perceptualDuration: 0.3, bounce: 0.12) }
-    static var peekCloseSpring: CASpringAnimation { CASpringAnimation(perceptualDuration: 0.22, bounce: 0.15) }
+    static var peekCloseSpring: CASpringAnimation { CASpringAnimation(perceptualDuration: 0.22, bounce: 0.11) }
+    // The page travels under 2% back to full size, so it needs a bouncier spring for
+    // its overshoot to be visible at all: about 1 point past its frame per side.
+    static var peekPageReturnSpring: CASpringAnimation { CASpringAnimation(perceptualDuration: 0.28, bounce: 0.38) }
     // Finds the link under the pointer (falling back to the focused link) and
     // remembers it in Rise's isolated world so closing can find it again.
     static let peekLinkScript = """

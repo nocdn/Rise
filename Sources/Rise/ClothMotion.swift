@@ -38,18 +38,18 @@ struct ClothMotion {
 
     /// Compress every row equally. The dragged edge and its corners move as
     /// one straight edge; displacement tapers linearly to the fixed far edge.
-    static func outline(size: CGSize, pull: Double, forward: Bool, corner: CGFloat = 7) -> CGPath {
+    static func outline(size: CGSize, pull: Double, forward: Bool, corner: CGFloat = 7, continuous: Bool = false) -> CGPath {
         let depth = size.width * 0.05 * pull
         let rect = CGRect(x: forward ? 0 : depth, y: 0, width: size.width-depth, height: size.height)
-        return CGPath(roundedRect: rect, cornerWidth: corner, cornerHeight: corner, transform: nil)
+        return PageOutline.path(in: rect, radius: corner, continuous: continuous)
     }
 
     /// The outer backing and shadow compress with the active page. An interior
     /// split edge leaves the other pane's external frame unchanged.
-    static func frameOutline(size: CGSize, sheet: CGRect, pull: Double, forward: Bool, corner: CGFloat = 7) -> CGPath? {
+    static func frameOutline(size: CGSize, sheet: CGRect, pull: Double, forward: Bool, corner: CGFloat = 7, continuous: Bool = false) -> CGPath? {
         guard forward ? abs(sheet.maxX-size.width) < 0.5 : abs(sheet.minX) < 0.5 else { return nil }
         let depth = sheet.width * 0.05 * pull
         let rect = CGRect(x: forward ? 0 : depth, y: 0, width: size.width-depth, height: size.height)
-        return CGPath(roundedRect: rect, cornerWidth: corner, cornerHeight: corner, transform: nil)
+        return PageOutline.path(in: rect, radius: corner, continuous: continuous)
     }
 }

@@ -2,6 +2,14 @@ import AppKit
 import Vision
 
 @MainActor extension BrowserController {
+    func popoverWillShow(_ notification: Notification) {
+        guard notification.object as? NSPopover === siteControlsPopover else { return }
+        sidebar.isSiteControlsOpen = true
+    }
+    func popoverDidClose(_ notification: Notification) {
+        guard notification.object as? NSPopover === siteControlsPopover else { return }
+        sidebar.isSiteControlsOpen = false
+    }
     func refreshSiteControls() {
         guard siteControlsPopover.isShown else { return }
         siteControlsPopover.appearance = theme.appearance
@@ -21,6 +29,8 @@ import Vision
     }
     func makeMoreSiteMenu() -> NSMenu {
         let menu = makeSiteMenu()
+        menu.addItem(.separator())
+        menu.addItem(menuItem("Clear Browsing History…") { [weak self] in self?.confirmClearBrowsingHistory() })
         let visibleRows = (siteControlsPopover.contentViewController as? SiteControlsController)?.rows ?? [:]
         let capabilities = [SiteCapability.camera, .microphone, .location].filter { visibleRows[$0.title] == nil }
         if !capabilities.isEmpty { menu.addItem(.separator()) }

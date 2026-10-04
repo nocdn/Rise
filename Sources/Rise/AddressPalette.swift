@@ -8,6 +8,9 @@ struct AddressSuggestion {
     let url: URL?
     let tabID: UUID?
     let command: String?
+    var favicon: NSImage? = nil
+    var completion: String? = nil
+    var fetchFavicon = true
 }
 @MainActor final class AddressPalette: Surface, NSTextFieldDelegate {
     let input = NSTextField()
@@ -19,6 +22,10 @@ struct AddressSuggestion {
     var submit: ((String, AddressSuggestion?) -> Void)?
     var dismiss: (() -> Void)?
     var theme: RiseTheme = .neutral
+    private var completionRange: NSRange?
+    private var completionPrefix = ""
+    private var suppressCompletion = false
+    private var applyingCompletion = false
     private var restingFrame = NSRect(x: 8, y: 50, width: 350, height: 110)
     var isPresented: Bool { !isHidden }
     init() {
@@ -36,6 +43,7 @@ struct AddressSuggestion {
     }
     required init?(coder: NSCoder) { fatalError() }
     func show(text: String, theme: RiseTheme) {
+        completionRange = nil; suppressCompletion = false
         applyTheme(theme); isHidden = false; alphaValue = 1; input.stringValue = text
         refresh(); window?.makeFirstResponder(input); input.selectText(nil)
     }
@@ -51,15 +59,15 @@ struct AddressSuggestion {
         restingFrame.origin = origin; restingFrame.size.width = width
         applyPresentation()
     }
-    func hide() { isHidden = true }
+    func hide() { isHidden = true; completionRange = nil }
     private func applyPresentation() {
         CATransaction.begin(); CATransaction.setDisableActions(true)
         frame = restingFrame
         CATransaction.commit()
         needsLayout = true; layoutSubtreeIfNeeded()
     }
-    func refresh() {
-        suggestions = queryChanged?(input.stringValue) ?? []; selectedIndex = 0
+    func refresh(query: String? = nil) {
+        suggestions = queryChanged?(query ?? input.stringValue) ?? []; selectedIndex = 0
         render()
     }
     func render() {
@@ -70,8 +78,9 @@ struct AddressSuggestion {
             button.layer?.backgroundColor = (index == selectedIndex ? theme.menuSelection : .clear).cgColor
             button.tag = index; button.target = self; button.action = #selector(choose(_:))
             button.setAccessibilityLabel(suggestion.title)
-            let imageView = NSImageView(); imageView.image = NSImage(systemSymbolName: suggestion.symbol, accessibilityDescription: nil)
-            imageView.contentTintColor = index == selectedIndex ? .white : theme.muted
+            let imageView = FaviconView(frame: .zero)
+            imageView.image = suggestion.favicon ?? NSImage(systemSymbolName: suggestion.symbol, accessibilityDescription: nil)
+            imageView.contentTintColor = suggestion.favicon == nil ? (index == selectedIndex ? .white : theme.muted) : nil
             let text = label(suggestion.title, size: 13, weight: .medium, color: index == selectedIndex ? .white : theme.text)
             button.addSubview(imageView); button.addSubview(text)
             addSubview(button); buttons.append(button)
@@ -96,13 +105,45 @@ struct AddressSuggestion {
             }
         }
     }
-    func controlTextDidChange(_ obj: Notification) { refresh() }
+    func updateFavicon(_ image: NSImage, origin: String) {
+        for index in suggestions.indices where SitePermissions.origin(suggestions[index].url) == origin && suggestions[index].symbol == "globe" {
+            suggestions[index].favicon = image
+            guard buttons.indices.contains(index), let icon = buttons[index].subviews.first as? NSImageView else { continue }
+            icon.image = image; icon.contentTintColor = nil
+        }
+    }
+    func removeInlineCompletion() {
+        if let editor = input.currentEditor() as? NSTextView, let range = completionRange, editor.selectedRange() == range {
+            editor.string = completionPrefix; input.stringValue = completionPrefix
+            editor.setSelectedRange(NSRange(location: completionPrefix.utf16.count, length: 0))
+        }
+        completionRange = nil
+    }
+    func controlTextDidChange(_ obj: Notification) {
+        guard !applyingCompletion else { return }
+        completionRange = nil
+        let editor = input.currentEditor() as? NSTextView
+        let typed = editor?.string ?? input.stringValue
+        if editor?.hasMarkedText() == true { refresh(query: typed); return }
+        input.stringValue = typed; refresh()
+        let suppressed = suppressCompletion; suppressCompletion = false
+        guard !suppressed, let editor, !editor.hasMarkedText(),
+              editor.selectedRange() == NSRange(location: typed.utf16.count, length: 0),
+              let completed = suggestions.first?.completion, completed.hasPrefix(typed), completed != typed else { return }
+        applyingCompletion = true
+        let range = NSRange(location: typed.utf16.count, length: completed.utf16.count-typed.utf16.count)
+        editor.string = completed; input.stringValue = completed; editor.setSelectedRange(range)
+        completionPrefix = typed; completionRange = range
+        applyingCompletion = false
+    }
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         switch commandSelector {
         case #selector(NSResponder.insertNewline(_:)): chooseSelected(); return true
         case #selector(NSResponder.cancelOperation(_:)): dismiss?(); return true
-        case #selector(NSResponder.moveDown(_:)): selectedIndex = min(suggestions.count-1, selectedIndex+1); render(); return true
-        case #selector(NSResponder.moveUp(_:)): selectedIndex = max(0, selectedIndex-1); render(); return true
+        case #selector(NSResponder.moveDown(_:)): removeInlineCompletion(); selectedIndex = max(0, min(suggestions.count-1, selectedIndex+1)); render(); return true
+        case #selector(NSResponder.moveUp(_:)): removeInlineCompletion(); selectedIndex = max(0, selectedIndex-1); render(); return true
+        case #selector(NSResponder.deleteBackward(_:)), #selector(NSResponder.deleteForward(_:)), #selector(NSResponder.deleteWordBackward(_:)):
+            suppressCompletion = true; completionRange = nil; return false
         default: return false
         }
     }

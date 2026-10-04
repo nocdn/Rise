@@ -3,19 +3,23 @@ import AppKit
 /// The border, arrow, material and outer shadow belong to NSPopover.
 final class PopoverContentView: FlippedView {}
 
+private enum SiteControlsLayout {
+    static let scale: CGFloat = 0.96
+}
+
 /// Shared Arc-style action bezel used by settings and copy confirmation.
 final class PopoverActionButton: ChromeButton {
-    init(symbol: String, size: CGFloat = 18, title: String, theme: RiseTheme, action: @escaping () -> Void) {
-        super.init(symbol: symbol, size: size, title: title, action: action)
+    init(symbol: String, size: CGFloat = 18, scale: CGFloat = 1, title: String, theme: RiseTheme, action: @escaping () -> Void) {
+        super.init(symbol: symbol, size: size*scale, title: title, action: action)
         contentTintColor = theme.text
         baseColor = theme == .dark ? NSColor(hex: 0x3D3D3D) : .white.withAlphaComponent(0.75)
         layer?.backgroundColor = baseColor.cgColor
-        layer?.cornerRadius = 8; layer?.cornerCurve = .continuous
-        layer?.borderWidth = 0.65
+        layer?.cornerRadius = 8*scale; layer?.cornerCurve = .continuous
+        layer?.borderWidth = 0.65*scale
         layer?.borderColor = (theme == .dark ? NSColor.white : NSColor.black).withAlphaComponent(theme == .dark ? 0.17 : 0.20).cgColor
         clipsToBounds = false; layer?.masksToBounds = false
         layer?.shadowColor = NSColor.black.cgColor; layer?.shadowOpacity = 0.14
-        layer?.shadowRadius = 1.5; layer?.shadowOffset = NSSize(width: 0, height: -0.5)
+        layer?.shadowRadius = 1.5*scale; layer?.shadowOffset = NSSize(width: 0, height: -0.5*scale)
         hoverColor = theme.hoveredTab
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -29,13 +33,14 @@ final class SiteSettingRow: NSButton {
     override var isFlipped: Bool { true }
     init(title: String, subtitle: String, symbol: String, active: Bool, checked: Bool? = nil, theme: RiseTheme, action: @escaping () -> Void) {
         perform = action
-        name = label(title, size: 14, weight: .semibold, color: theme.text)
-        detail = label(subtitle, size: 13, color: theme.muted)
+        let scale = SiteControlsLayout.scale
+        name = label(title, size: 14*scale, weight: .semibold, color: theme.text)
+        detail = label(subtitle, size: 13*scale, color: theme.muted)
         super.init(frame: .zero)
         isBordered = false; self.title = ""; target = self; self.action = #selector(invoke)
         wantsLayer = true; layer?.cornerRadius = 8; layer?.cornerCurve = .continuous
-        icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 15, weight: .semibold))
-        icon.contentTintColor = .white; icon.wantsLayer = true; icon.layer?.cornerRadius = 16
+        icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 15*scale, weight: .semibold))
+        icon.contentTintColor = .white; icon.wantsLayer = true; icon.layer?.cornerRadius = 16*scale
         icon.layer?.backgroundColor = NSColor(hex: active ? 0x915439 : theme == .dark ? 0x685957 : 0xD9C5BF).cgColor
         if let checked { state = checked ? .on : .off }
         [icon, name, detail].forEach(addSubview)
@@ -45,10 +50,11 @@ final class SiteSettingRow: NSButton {
     @objc func invoke() { perform() }
     override func layout() {
         super.layout()
-        icon.frame = NSRect(x: 0, y: (bounds.height-32)/2, width: 32, height: 32)
-        let width = bounds.width-44
-        name.frame = NSRect(x: 40, y: bounds.midY-18, width: width, height: 19)
-        detail.frame = NSRect(x: 40, y: bounds.midY+1, width: width, height: 18)
+        let scale = SiteControlsLayout.scale
+        icon.frame = NSRect(x: 0, y: (bounds.height-32*scale)/2, width: 32*scale, height: 32*scale)
+        let textX = 40*scale, width = bounds.width-textX-4
+        name.frame = NSRect(x: textX, y: bounds.midY-18*scale, width: width, height: 19*scale)
+        detail.frame = NSRect(x: textX, y: bounds.midY+scale, width: width, height: 18*scale)
     }
     override func hitTest(_ point: NSPoint) -> NSView? {
         isHidden || !bounds.contains(convert(point, from: superview)) ? nil : self
@@ -65,6 +71,7 @@ final class SiteSettingRow: NSButton {
     override func loadView() {
         guard let browser else { view = NSView(); return }
         let theme = browser.theme
+        let scale = SiteControlsLayout.scale
         view = PopoverContentView(frame: NSRect(x: 0, y: 0, width: 240, height: 440))
         let actions: [(String, String, () -> Void)] = [
             ("square.and.arrow.up", "Share Page", { [weak browser] in browser?.shareCurrentPage() }),
@@ -73,8 +80,8 @@ final class SiteSettingRow: NSButton {
             ("ellipsis", "More Site Controls", { [weak browser] in browser?.moreSiteControls() })
         ]
         for (index, action) in actions.enumerated() {
-            let button = PopoverActionButton(symbol: action.0, size: action.0 == "ellipsis" ? 18 : 17, title: action.1, theme: theme, action: action.2)
-            button.frame = NSRect(x: 10+CGFloat(index)*56, y: 10, width: 52, height: 34)
+            let button = PopoverActionButton(symbol: action.0, size: action.0 == "ellipsis" ? 18 : 17, scale: scale, title: action.1, theme: theme, action: action.2)
+            button.frame = NSRect(x: 10+CGFloat(index)*56+(52-52*scale)/2, y: 10+(34-34*scale)/2, width: 52*scale, height: 34*scale)
             view.addSubview(button); quickActions.append(button)
         }
         func heading(_ title: String, y: CGFloat) {
@@ -82,18 +89,18 @@ final class SiteSettingRow: NSButton {
             field.frame = NSRect(x: 10, y: y, width: 220, height: 20); view.addSubview(field)
         }
         heading("Extensions", y: 52)
-        let add = PopoverActionButton(symbol: "plus", size: 15, title: "Extensions", theme: theme) { [weak browser] in
+        let add = PopoverActionButton(symbol: "plus", size: 15, scale: scale, title: "Extensions", theme: theme) { [weak browser] in
             browser?.siteControlsPopover.close()
             browser?.showMessage("Extensions", "Rise uses Apple WebKit. Safari and Chrome extensions cannot be installed in this browser yet.")
         }
-        add.frame = NSRect(x: 10, y: 78, width: 52, height: 34)
+        add.frame = NSRect(x: 10+(52-52*scale)/2, y: 78+(34-34*scale)/2, width: 52*scale, height: 34*scale)
         extensionsButton = add
         add.toolTip = "Extension support"; add.setAccessibilityLabel("Extensions"); view.addSubview(add)
         heading("Settings", y: 125)
         var y: CGFloat = 151
         func row(_ title: String, subtitle: String, symbol: String, active: Bool, checked: Bool? = nil, action: @escaping () -> Void) {
             let row = SiteSettingRow(title: title, subtitle: subtitle, symbol: symbol, active: active, checked: checked, theme: theme, action: action)
-            row.frame = NSRect(x: 10, y: y, width: 220, height: 43); view.addSubview(row); rows[title] = row; y += 43
+            row.frame = NSRect(x: 14, y: y, width: 216, height: 43); view.addSubview(row); rows[title] = row; y += 43
         }
         let origin = SitePermissions.origin(browser.selectedTab?.url)
         let notification = browser.sitePermissions.permission(.notifications, origin: origin)

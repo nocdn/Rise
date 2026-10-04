@@ -5,6 +5,25 @@ import MetalKit
 @testable import Rise
 
 final class ClothTransitionTests: XCTestCase {
+    @MainActor func testLateOutgoingSnapshotJoinsQuickReleaseButCannotResurrectCancelledTransition() throws {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 840, height: 516), styleMask: [.titled], backing: .buffered, defer: false)
+        let host = FlippedView(frame: NSRect(x: 0, y: 0, width: 840, height: 516))
+        window.contentView = host
+        let web = DelayedSnapshotWebView(frame: host.bounds); host.addSubview(web)
+        let cloth = PageClothTransition(theme: { .neutral }); cloth.reduceMotion = { false }
+        defer { cloth.cancel(); window.orderOut(nil) }
+        cloth.prepare(web); cloth.drag(web, direction: .back, distance: 180)
+        XCTAssertFalse(cloth.isActive, "Snapshot is still pending")
+        cloth.release(distance: 180, committed: true, cancelled: false)
+        web.complete(NSImage(cgImage: image(gradient: false), size: web.bounds.size))
+        XCTAssertTrue(cloth.isActive, "A quick release still gets its visual surface")
+        XCTAssertEqual(cloth.phase, .returning); XCTAssertGreaterThan(cloth.uniforms.strength, 0)
+        cloth.prepare(web); cloth.drag(web, direction: .forward, distance: 180)
+        cloth.cancel()
+        web.complete(NSImage(cgImage: image(gradient: false), size: web.bounds.size))
+        XCTAssertFalse(cloth.isActive); XCTAssertEqual(cloth.phase, .idle)
+    }
     func testDemoClothResistanceSpringRippleClockAndExactEndpoints() {
         let released = 120.0/280.0
         XCTAssertEqual(ClothMotion.pull(distance: 120), released)
@@ -153,5 +172,15 @@ final class ClothTransitionTests: XCTestCase {
         let cancelled = try render(renderer,u)
         XCTAssertEqual(cancelled[(258*840+20)*4+2], 230, accuracy: 1, "Cancelled swipes never reveal the destination")
         renderer.clear(); XCTAssertNil(renderer.outgoing); XCTAssertNil(renderer.incoming)
+    }
+}
+
+@MainActor private final class DelayedSnapshotWebView: WKWebView {
+    private var completion: (@MainActor (NSImage?, Error?) -> Void)?
+    override func takeSnapshot(with snapshotConfiguration: WKSnapshotConfiguration?, completionHandler: @escaping @MainActor (NSImage?, Error?) -> Void) {
+        completion = completionHandler
+    }
+    func complete(_ image: NSImage) {
+        let callback = completion; completion = nil; callback?(image, nil)
     }
 }

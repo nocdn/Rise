@@ -60,7 +60,9 @@ import RiseCore
         if splitGroups.contains(where: { $0.contains(id) }) {
             menu.addItem(menuItem("Separate Split Tabs") { [weak self] in self?.separateSplit(containing: id) })
         }
-        menu.addItem(menuItem("Developer Mode", checked: tab.developer) { [weak self, weak tab] in tab?.developer.toggle(); self?.update() })
+        menu.addItem(menuItem("Developer Mode", checked: tab.developer) { [weak self, weak tab] in
+            if let tab { self?.toggleDeveloperMode(for: tab) }
+        })
         menu.addItem(.separator())
         menu.addItem(menuItem("Close Tab") { [weak self] in self?.closeTab(id) })
         NSMenu.popUpContextMenu(menu, with: event, for: row)
@@ -129,7 +131,7 @@ import RiseCore
         peekTab?.cancelLoad(); peekTab = nil
         peekBackdrop = nil; peekCard = nil
         if motion, let card {
-            recedePage(false, along: Self.peekCloseSpring)
+            recedePage(false, along: Self.peekPageReturnSpring)
             if let growing { card.removeFromSuperview(); shrinkPeek(growing, into: peekFrame(of: origin), backdrop: backdrop) }
             else if card.alphaValue == 1, let web { dismissPeek(card: card, backdrop: backdrop, page: web, origin: origin) }
             else { backdrop?.removeFromSuperview(); card.removeFromSuperview() }

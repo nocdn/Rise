@@ -79,6 +79,11 @@ final class HistorySwipeTests: XCTestCase {
         while !predicate() && Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertTrue(predicate(), message)
     }
+    @MainActor private func queueBusyWork(in web: WKWebView) {
+        // Deliberately do not await: the eligibility probe must queue behind
+        // this short workload while the main event loop continues handling input.
+        web.evaluateJavaScript("(()=>{const end=performance.now()+80;while(performance.now()<end){};return true})()") { _, _ in }
+    }
     @MainActor private func event(_ phase: NSEvent.Phase, fingerX: Int32 = 0,
                                   momentum: Int64 = 0) -> NSEvent {
         let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
@@ -144,6 +149,23 @@ final class HistorySwipeTests: XCTestCase {
         XCTAssertTrue(router.handle(event(.ended)))
         try await waitUntil("Released forward swipe navigates") { web.title == "three" && !web.isLoading }
         XCTAssertEqual(clicks, 4)
+        // A driver may omit both finger-up and momentum-began.
+        XCTAssertTrue(router.handle(event(.began, fingerX: 120)))
+        try await waitUntil("Back gesture armed") { router.gesture.isArmed }
+        XCTAssertTrue(router.handle(event([], fingerX: 250, momentum: 2)))
+        try await waitUntil("Momentum-changed finishes the gesture once") { web.title == "two" && !web.isLoading }
+        XCTAssertTrue(router.handle(event([], fingerX: 250, momentum: 3)))
+        XCTAssertEqual(web.title, "two"); XCTAssertFalse(router.gesture.isTracking)
+        XCTAssertTrue(router.handle(event(.began, fingerX: -120)))
+        try await waitUntil("Forward gesture armed") { router.gesture.isArmed }
+        XCTAssertTrue(router.handle(event([], momentum: 3)))
+        try await waitUntil("Momentum-ended alone finishes the gesture") { web.title == "three" && !web.isLoading }
+        // A short busy period must not permanently reject the whole swipe.
+        queueBusyWork(in: web)
+        XCTAssertTrue(router.handle(event(.began, fingerX: 120)))
+        try await waitUntil("Busy-page probe still permits a horizontal swipe") { router.gesture.isArmed }
+        XCTAssertTrue(router.handle(event(.ended)))
+        try await waitUntil("Busy-page swipe navigates") { web.title == "two" && !web.isLoading }
         router.cancel()
     }
     @MainActor func testDOMProbePreservesHorizontalContainersShadowDOMIframesAndZoom() async throws {

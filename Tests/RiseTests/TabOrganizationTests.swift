@@ -27,7 +27,11 @@ final class TabOrganizationTests: XCTestCase {
         let c = browser.addTab(); browser.root.layoutSubtreeIfNeeded()
         let cRow = browser.sidebar.rows[c.id]!
         XCTAssertEqual(browser.tabs.map(\.id), [c.id,b.id,a.id])
-        XCTAssertEqual(cRow.frame.minY,8); XCTAssertEqual(cRow.frame.height,34)
+        XCTAssertEqual(cRow.frame.minY,0); XCTAssertEqual(cRow.frame.height,34)
+        let firstFrame = cRow.convert(cRow.bounds, to: browser.sidebar)
+        XCTAssertEqual(firstFrame.minY-browser.sidebar.newTab.frame.maxY, TabAppearance.spacing)
+        XCTAssertEqual(firstFrame.width, browser.sidebar.newTab.frame.width)
+        XCTAssertEqual(firstFrame.height, browser.sidebar.newTab.frame.height)
         XCTAssertNil(cRow.layer?.animation(forKey:TabListMotion.movementKey), "The new row is immediately visible in its final position")
         XCTAssertEqual(aRow.frame.minY,aFrame.minY+37); XCTAssertEqual(bRow.frame.minY,bFrame.minY+37)
         let aMove = try XCTUnwrap(aRow.layer?.animation(forKey:TabListMotion.movementKey) as? CABasicAnimation)

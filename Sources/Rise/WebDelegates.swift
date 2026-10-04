@@ -43,8 +43,8 @@ import RiseCore
         pageCloth.destinationDidCommit(webView)
         if let tab = tabs.first(where: { $0.webView === webView }), let url = tab.url, url.absoluteString != "about:blank" {
             tab.captureThumbnail()
-            history.removeAll { $0.url == url.absoluteString }; history.append(tab.saved)
-            if history.count > 200 { history.removeFirst() }
+            browsingHistory.record(url, title: webView.title ?? tab.title)
+            discoverPageFavicon(webView)
         }; update()
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { showNavigationError(error, in: webView) }
