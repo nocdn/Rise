@@ -46,6 +46,7 @@ import RiseCore
             browsingHistory.record(url, title: webView.title ?? tab.title)
             discoverPageFavicon(webView)
         }; update()
+        if let tab = tabs.first(where: { $0.webView === webView }) { findBars[tab.id]?.pageChanged() }
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { showNavigationError(error, in: webView) }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { showNavigationError(error, in: webView) }

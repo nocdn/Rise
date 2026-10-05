@@ -13,12 +13,10 @@ import AppKit
         [peekCard].compactMap { $0 } + peekControls + peekGhosts.filter { $0.phase == .opening }
     }
 
-    /// The gesture already resists beyond the threshold. A smooth exponential
-    /// falloff adds stronger resistance for the card, without a hard stop.
+    /// The incoming pull already tapers smoothly beyond the threshold. Use it
+    /// directly so the card does not compound the gesture's resistance.
     nonisolated static func peekVisualProgress(for pull: Double) -> Double {
-        let pull = max(0, pull)
-        guard pull > 1 else { return pull }
-        return 1 + 0.15 * (1 - exp(-(pull-1)/0.15))
+        max(0, pull)
     }
 
     var peekRecededPageScale: CGFloat {

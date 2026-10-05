@@ -54,6 +54,7 @@ final class DownloadRow: NSView {
     }
     func performPreview() { if canPreview { preview?(item.record.url) } }
     func performRemove() { if isFinished { remove?(item.record.id) } else { cancel?(item.record.id) } }
+    func performDeleteFromDisk() { if isFinished { deleteFromDisk?(item.record.id) } }
     func performPause() { if item.canTogglePause { togglePause?(item.record.id) } }
     func performOpen() { if isFinished { open?(item.record.url) } }
     func update() {
@@ -171,7 +172,7 @@ final class DownloadRow: NSView {
         return menu
     }
     @objc private func revealFile() { reveal?(item.record.url) }
-    @objc private func deleteFile() { if isFinished { deleteFromDisk?(item.record.id) } }
+    @objc private func deleteFile() { performDeleteFromDisk() }
     @objc private func smartRename() {}
 }
 

@@ -51,6 +51,36 @@ private final class SlowDownloadServer {
 }
 
 final class DownloadControlsTests: XCTestCase {
+    @MainActor func testCommandBackspaceTrashesSelectedFinishedFileWhileBackspaceOnlyClearsList() throws {
+        _ = NSApplication.shared
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let file = folder.appendingPathComponent("Rise-download-shortcut-\(UUID().uuidString).txt")
+        let trash = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".Trash").appendingPathComponent(file.lastPathComponent)
+        defer { try? FileManager.default.removeItem(at: folder); try? FileManager.default.removeItem(at: trash) }
+        let list = DownloadList(storeURL: folder.appendingPathComponent("downloads.json"))
+        let controller = DownloadsController(list: list); _ = controller.view
+        list.onChange = { [weak controller] in controller?.reload() }
+        func key(_ modifiers: NSEvent.ModifierFlags = []) -> NSEvent {
+            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0, windowNumber: 0,
+                            context: nil, characters: "\u{7f}", charactersIgnoringModifiers: "\u{7f}", isARepeat: false, keyCode: 51)!
+        }
+        try Data("Keep with Backspace; trash with Command-Backspace".utf8).write(to: file)
+        var id = list.begin(file, progress: nil); list.finish(id); controller.focus(id)
+        XCTAssertTrue(controller.handle(key()))
+        XCTAssertTrue(list.visible.isEmpty); XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
+        id = list.begin(file, progress: nil); list.finish(id); controller.focus(id)
+        XCTAssertTrue(controller.view.performKeyEquivalent(with: key(.command)))
+        XCTAssertTrue(list.visible.isEmpty); XCTAssertTrue(controller.rows.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: trash.path), "Command-Backspace must use recoverable trash deletion")
+        let partial = folder.appendingPathComponent("unfinished.bin")
+        try Data("partial".utf8).write(to: partial)
+        id = list.begin(partial, progress: Progress(totalUnitCount: 100)); controller.focus(id)
+        XCTAssertTrue(controller.view.performKeyEquivalent(with: key(.command)))
+        XCTAssertEqual(list.visible.first?.record.id, id)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: partial.path), "Command-Backspace must not delete an in-progress file")
+    }
     @MainActor private func waitUntil(_ message: String, _ predicate: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(20)
         while !predicate() && Date() < deadline { try await Task.sleep(for: .milliseconds(30)) }

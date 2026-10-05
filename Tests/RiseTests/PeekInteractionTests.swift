@@ -12,11 +12,12 @@ final class PeekInteractionTests: XCTestCase {
         }
         XCTAssertEqual(progress(60), 0.5)
         XCTAssertEqual(progress(120), 1)
+        XCTAssertGreaterThan(progress(180), 1.24, "The first extra pull should remain responsive instead of quickly stiffening")
         XCTAssertLessThan(abs(progress(120.001)-progress(119.999)), 0.0001)
         let near = progress(140), further = progress(260), far = progress(1000), beyond = progress(2000)
         XCTAssertGreaterThan(near, 1); XCTAssertGreaterThan(further, near)
         XCTAssertGreaterThan(far, further); XCTAssertGreaterThan(beyond, far, "Long swipes still move; there is no hard cap")
-        XCTAssertLessThan(beyond, 1.15)
+        XCTAssertLessThan(beyond, 1.5)
         XCTAssertLessThan((further-near)/120, (near-1)/20)
         XCTAssertLessThan((beyond-far)/1000, (far-further)/740)
     }

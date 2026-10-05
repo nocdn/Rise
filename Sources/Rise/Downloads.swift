@@ -8,6 +8,10 @@ private final class DownloadsListView: NSView {
     var key: ((NSEvent) -> Bool)?, moved: (() -> Void)?
     override var acceptsFirstResponder: Bool { true }
     override func keyDown(with event: NSEvent) { if key?(event) != true { super.keyDown(with: event) } }
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if event.modifierFlags.contains(.command), [51, 117].contains(event.keyCode), key?(event) == true { return true }
+        return super.performKeyEquivalent(with: event)
+    }
     override func updateTrackingAreas() {
         super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .activeAlways, .inVisibleRect], owner: self))
@@ -18,7 +22,7 @@ private final class DownloadsListView: NSView {
 /// The archive popover: just the list of downloads. One row at a time is highlighted,
 /// either under the pointer or, after an arrow key, by the keyboard, which ignores the
 /// pointer until it moves. Return opens the highlighted download, Space previews it and
-/// Delete clears it from the list.
+/// Delete clears it from the list; Command-Delete moves a completed file to the Bin.
 @MainActor final class DownloadsController: NSViewController, NSPopoverDelegate {
     private let list: DownloadList
     private let stack = FlippedView(), scroll = NSScrollView(), listView = DownloadsListView()
@@ -160,8 +164,12 @@ private final class DownloadsListView: NSView {
     /// Arrow keys move the highlight; Return, Space and Delete act on it.
     func handle(_ event: NSEvent) -> Bool {
         let modifiers = event.modifierFlags.intersection([.command, .option, .control, .shift])
-        guard modifiers.isEmpty else { return false }
         let row = highlightedIndex.map { rows[$0] }
+        if modifiers == .command, [51, 117].contains(event.keyCode) {
+            row?.performDeleteFromDisk()
+            return true
+        }
+        guard modifiers.isEmpty else { return false }
         switch event.keyCode {
         case 125: move(by: 1)
         case 126: move(by: -1)

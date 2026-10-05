@@ -28,7 +28,10 @@ import RiseCore
     let dismissArea = DismissView()
     let palette = AddressPalette()
     let grip = SidebarGrip()
-    let findBar = FindBar()
+    /// One find bar per tab, so a search or question stays with the page it was made on.
+    var findBars: [UUID: FindBar] = [:]
+    /// Stands in while no tab is selected.
+    let tablessFindBar = FindBar()
     var sidebar: SidebarView!
     let toolbarHost = NativeTitlebarControls()
     let toolbarAccessory = NSTitlebarAccessoryViewController()
@@ -168,12 +171,22 @@ import RiseCore
         window.appearance = NSAppearance(named: .aqua); window.delegate = self
         window.contentView = root; window.setFrameAutosaveName("RiseBrowser")
         if !window.setFrameUsingName("RiseBrowser") { window.center() }
+        // Escape belongs to the find bar while open, including key up and repeated key down.
+        var swallowingEscape = false
+        window.escapeEvent = { [weak self] event in
+            guard let self else { return false }
+            if event.type == .keyUp { defer { swallowingEscape = false }; return swallowingEscape }
+            // Held Escape belongs to the same gesture even after the bar begins closing.
+            if swallowingEscape && event.isARepeat { return true }
+            guard self.findBar.isPresented, self.palette.isHidden, !self.isSwitchingTabs, self.sidebar.drag == nil else { return false }
+            swallowingEscape = true; self.findBar.handleEscape(); return true
+        }
         window.escapeAction = { [weak self] in
             guard let self else { return false }
             if self.sidebar.drag != nil { self.sidebar.cancelTabInteractions(); return true }
             if self.isSwitchingTabs { self.cancelTabSwitch(); return true }
             if !self.palette.isHidden { self.hidePalette(); return true }
-            if !self.findBar.isHidden { self.hideFind(); return true }
+            if self.findBar.isPresented { self.findBar.handleEscape(); return true }
             if self.peekTab != nil { self.closePeek(animated: true); return true }
             return false
         }
@@ -252,14 +265,6 @@ import RiseCore
         pageClip.addSubview(errorSurface)
         dismissArea.protectedView = palette
         dismissArea.dismiss = { [weak self] in self?.hidePalette() }; dismissArea.isHidden = true
-        root.addSubview(findBar)
-        findBar.search = { [weak self] text, backwards in
-            let config = WKFindConfiguration(); config.backwards = backwards; config.wraps = true
-            self?.selectedTab?.webView.find(text, configuration: config) { [weak self] result in
-                self?.findBar.input.textColor = text.isEmpty || result.matchFound ? .labelColor : .systemRed
-            }
-        }
-        findBar.dismiss = { [weak self] in self?.hideFind() }
         root.addSubview(linkStatus); root.addSubview(dismissArea); root.addSubview(palette)
         palette.dismiss = { [weak self] in self?.hidePalette() }
         palette.queryChanged = { [weak self] text in self?.suggestions(for: text) ?? [] }
@@ -322,7 +327,7 @@ import RiseCore
         errorTitle.frame = NSRect(x: 40, y: body.height/2-60, width: body.width-80, height: 34)
         errorMessage.frame = NSRect(x: 60, y: body.height/2-12, width: body.width-120, height: 56)
         retryButton.frame = NSRect(x: body.width/2-55, y: body.height/2+55, width: 110, height: 32)
-        findBar.frame = NSRect(x: pageShadow.frame.maxX-354, y: pageShadow.frame.minY+devHeight+8, width: 340, height: 42)
+        findBar.frame = pageShadow.frame; findBar.topInset = devHeight
         dismissArea.frame = b
         let paletteWidth: CGFloat = paletteCreatesTab ? 520 : 600
         if sidebarVisible {
@@ -381,13 +386,16 @@ import RiseCore
         if selectedID != id { selectedTab?.captureThumbnail() }
         hideLinkStatus()
         hidePalette(); closePeek()
+        let previousID = selectedID
         selectedID = id
+        swapFindBar(from: previousID)
         attachVisiblePages()
         recentTabIDs.removeAll { $0 == id }; recentTabIDs.insert(id, at: 0)
         if let tab = selectedTab {
             window?.makeFirstResponder(tab.webView)
         }
         update(); layoutChrome()
+        findBar.reattached()
     }
     func update() {
         applyTheme()
@@ -435,6 +443,7 @@ import RiseCore
         recentTabIDs.removeAll { $0 == id }
         if closedTabs.count > 50 { closedTabs.removeFirst() }
         tab.cancelLoad(); tab.webView.removeFromSuperview()
+        findBars.removeValue(forKey: id)?.discard()
         if selectedID == id {
             selectedID = nil
             if let partner, tabs.contains(where: { $0.id == partner }) { select(partner) }

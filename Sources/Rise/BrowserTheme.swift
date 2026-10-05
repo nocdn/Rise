@@ -16,8 +16,7 @@ import AppKit
             if tab.webView.appearance?.name != appearance.name { tab.webView.appearance = appearance }
             if tab.webView.underPageBackgroundColor != theme.page { tab.webView.underPageBackgroundColor = theme.page }
         }
-        findBar.fill = theme.popup
-        [findBar.previous, findBar.next, findBar.close].forEach { $0.contentTintColor = theme.muted }
+        (Array(findBars.values)+[tablessFindBar]).forEach { $0.applyTheme(theme) }
         if palette.theme != theme { palette.applyTheme(theme); if !palette.isHidden { palette.render() } }
         peekBackdrop?.fill = theme.background.withAlphaComponent(0.72)
         peekCard?.fill = theme.page; (peekCard?.subviews.first as? Surface)?.fill = theme.page

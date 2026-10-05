@@ -95,6 +95,8 @@ final class SidebarGrip: FlippedView {
 }
 final class BrowserWindow: NSWindow {
     var escapeAction: (() -> Bool)?
+    /// Sees Escape before the first responder does, so an open find bar can keep it from the page.
+    var escapeEvent: ((NSEvent) -> Bool)?
     var tabSwitchEvent: ((NSEvent) -> Bool)?
     var addressPaletteEvent: ((NSEvent) -> Bool)?
     var pageMouseDown: ((NSEvent) -> Void)?
@@ -115,6 +117,8 @@ final class BrowserWindow: NSWindow {
         if tabSwitchEvent?(event) != true {
             if event.type == .scrollWheel, historyScrollEvent?(event) == true { return }
             if otherMouseEvent?(event) == true { return }
+            // keyCode is only valid on key events (it raises on others), so the type goes first.
+            if event.type == .keyDown || event.type == .keyUp, event.keyCode == 53, escapeEvent?(event) == true { return }
             if event.type == .leftMouseDown || event.type == .rightMouseDown { pageMouseDown?(event) }
             super.sendEvent(event)
         }
