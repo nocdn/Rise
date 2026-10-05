@@ -5,13 +5,13 @@ import AppKit
 enum NavigationIcon {
     static let back = strengthenedSymbol("arrow.left", strokeIncrease: 0.05)
     static let forward = strengthenedSymbol("arrow.right", strokeIncrease: 0.05)
-    static let reload = strengthenedSymbol("arrow.clockwise", strokeIncrease: 0.12)
+    static let reload = strengthenedSymbol("arrow.clockwise", strokeIncrease: 0.12, size: 13.5)
     static let stop = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Stop loading")?
-        .withSymbolConfiguration(.init(pointSize: 16, weight: .regular))
+        .withSymbolConfiguration(.init(pointSize: 15, weight: .regular))
 
-    private static func strengthenedSymbol(_ name: String, strokeIncrease: CGFloat) -> NSImage? {
+    private static func strengthenedSymbol(_ name: String, strokeIncrease: CGFloat, size: CGFloat = 16) -> NSImage? {
         guard let source = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 16, weight: .regular)) else { return nil }
+            .withSymbolConfiguration(.init(pointSize: size, weight: .regular)) else { return nil }
         let density: CGFloat = 8
         let width = Int(ceil(source.size.width*density)), height = Int(ceil(source.size.height*density))
         guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height,

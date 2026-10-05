@@ -4,6 +4,34 @@ import RiseCore
 @testable import Rise
 
 final class AddressSuggestionsTests: XCTestCase {
+    @MainActor func testCollapsedSidebarCentersPaletteAndTogglingDismissesBothModes() {
+        let browser = browser(); defer { browser.hidePalette(); clean(browser) }
+        browser.showWindow(nil)
+        for createsTab in [true, false] {
+            if !browser.sidebarVisible { browser.toggleSidebar() }
+            if createsTab { browser.newTab() } else { browser.focusAddress() }
+            XCTAssertTrue(browser.palette.isPresented)
+            XCTAssertEqual(browser.palette.frame.minX, browser.sidebar.address.frame.minX, accuracy: 0.01)
+            XCTAssertEqual(browser.palette.frame.minY, browser.sidebar.address.frame.minY-2, accuracy: 0.01)
+            let anchoredWidth = browser.palette.frame.width, inputCenter = browser.palette.input.frame.midY
+            browser.toggleSidebar()
+            XCTAssertFalse(browser.palette.isPresented); XCTAssertTrue(browser.dismissArea.isHidden)
+            if createsTab { browser.newTab() } else { browser.focusAddress() }
+            XCTAssertTrue(browser.palette.isPresented)
+            XCTAssertEqual(browser.palette.frame.midX, browser.root.bounds.midX, accuracy: 0.01)
+            XCTAssertEqual(browser.palette.frame.midY, browser.root.bounds.midY, accuracy: 0.01)
+            if createsTab { XCTAssertGreaterThan(browser.palette.frame.width, anchoredWidth) }
+            else { XCTAssertEqual(browser.palette.frame.width, anchoredWidth) }
+            XCTAssertEqual(browser.palette.input.frame.midY, inputCenter, "Input spacing is consistent in both positions")
+            // A shorter results list stays centered as the popup height changes.
+            browser.palette.refresh(query: "unmatched long search query")
+            XCTAssertEqual(browser.palette.frame.midX, browser.root.bounds.midX, accuracy: 0.01)
+            XCTAssertEqual(browser.palette.frame.midY, browser.root.bounds.midY, accuracy: 0.01)
+            browser.toggleSidebar()
+            XCTAssertFalse(browser.palette.isPresented); XCTAssertTrue(browser.dismissArea.isHidden)
+        }
+    }
+
     @MainActor func testOpenTabsMatchTitlesWordsAndExactAddressesWithoutDuplicatingHistory() throws {
         let browser = browser(); defer { clean(browser) }
         let tab = browser.addTab(); tab.requestedURL = URL(string: "https://news.ycombinator.com/")!; tab.rename("Hacker News")

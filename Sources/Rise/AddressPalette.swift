@@ -19,6 +19,7 @@ struct AddressSuggestion {
     var buttons: [NSButton] = []
     var selectedIndex = 0
     private(set) var query = ""
+    private var placementCenter: NSPoint?
     var queryChanged: ((String) -> [AddressSuggestion])?
     var submit: ((String, AddressSuggestion?) -> Void)?
     var switchToTab: ((UUID) -> Void)?
@@ -30,6 +31,8 @@ struct AddressSuggestion {
     private var applyingCompletion = false
     private var restingFrame = NSRect(x: 8, y: 50, width: 350, height: 110)
     var isPresented: Bool { !isHidden }
+    private var createsTab = false
+    private var headerHeight: CGFloat { createsTab ? AddressAppearance.newTabHeaderHeight : AddressAppearance.headerHeight }
     init() {
         super.init(color: NSColor(hex: 0xF8F8F8), radius: AddressAppearance.cornerRadius)
         layer?.cornerCurve = .continuous
@@ -45,7 +48,8 @@ struct AddressSuggestion {
         isHidden = true
     }
     required init?(coder: NSCoder) { fatalError() }
-    func show(text: String, theme: RiseTheme) {
+    func show(text: String, theme: RiseTheme, createsTab: Bool = false) {
+        self.createsTab = createsTab
         completionRange = nil; suppressCompletion = false
         applyTheme(theme); isHidden = false; alphaValue = 1; input.stringValue = text
         refresh(); window?.makeFirstResponder(input); input.selectText(nil)
@@ -59,12 +63,20 @@ struct AddressSuggestion {
         leadingIcon.contentTintColor = theme.muted
     }
     func place(at origin: NSPoint, width: CGFloat) {
+        placementCenter = nil
         restingFrame.origin = origin; restingFrame.size.width = width
+        applyPresentation()
+    }
+    func place(centeredAt center: NSPoint, width: CGFloat) {
+        placementCenter = center; restingFrame.size.width = width
         applyPresentation()
     }
     func hide() { isHidden = true; completionRange = nil }
     private func applyPresentation() {
         CATransaction.begin(); CATransaction.setDisableActions(true)
+        if let center = placementCenter {
+            restingFrame.origin = NSPoint(x: center.x-restingFrame.width/2, y: center.y-restingFrame.height/2)
+        }
         frame = restingFrame
         CATransaction.commit()
         needsLayout = true; layoutSubtreeIfNeeded()
@@ -120,7 +132,7 @@ struct AddressSuggestion {
             addSubview(button); buttons.append(button)
         }
         let count = CGFloat(suggestions.count)
-        restingFrame.size.height = AddressAppearance.headerHeight + count*AddressAppearance.rowHeight + max(0, count-1)*AddressAppearance.rowSpacing + AddressAppearance.inset
+        restingFrame.size.height = headerHeight + count*AddressAppearance.rowHeight + max(0, count-1)*AddressAppearance.rowSpacing + AddressAppearance.inset
         updateSelection()
         applyPresentation()
     }
@@ -163,11 +175,11 @@ struct AddressSuggestion {
         super.layout()
         // Derive the shadow from the layer's continuous corners as well.
         layer?.shadowPath = nil
-        leadingIcon.frame = NSRect(x: AddressAppearance.inset+9, y: (AddressAppearance.headerHeight-16)/2, width: 16, height: 16)
+        leadingIcon.frame = NSRect(x: AddressAppearance.inset+9, y: (headerHeight-16)/2, width: 16, height: 16)
         let inputHeight = input.intrinsicContentSize.height
-        input.frame = NSRect(x: AddressAppearance.inset+35, y: (AddressAppearance.headerHeight-inputHeight)/2, width: bounds.width-AddressAppearance.inset-50, height: inputHeight)
+        input.frame = NSRect(x: AddressAppearance.inset+35, y: (headerHeight-inputHeight)/2, width: bounds.width-AddressAppearance.inset-50, height: inputHeight)
         for (i, button) in buttons.enumerated() {
-            button.frame = NSRect(x: AddressAppearance.inset, y: AddressAppearance.headerHeight+CGFloat(i)*(AddressAppearance.rowHeight+AddressAppearance.rowSpacing), width: bounds.width-2*AddressAppearance.inset, height: AddressAppearance.rowHeight)
+            button.frame = NSRect(x: AddressAppearance.inset, y: headerHeight+CGFloat(i)*(AddressAppearance.rowHeight+AddressAppearance.rowSpacing), width: bounds.width-2*AddressAppearance.inset, height: AddressAppearance.rowHeight)
             if let icon = button.subviews.first as? NSImageView {
                 icon.frame = NSRect(x: 9, y: (button.bounds.height-16)/2, width: 16, height: 16)
             }

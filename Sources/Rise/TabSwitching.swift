@@ -63,7 +63,7 @@ import AppKit
     func refreshTabSwitcher() {
         guard isSwitchingTabs, !tabSwitcher.isHidden else { return }
         let ordered = tabSwitchOrder.compactMap { id in tabs.first { $0.id == id } }
-        tabSwitcher.update(tabs: ordered, selected: tabSwitchCandidate, theme: theme)
+        tabSwitcher.update(tabs: ordered, selected: tabSwitchCandidate)
         tabSwitcher.place(in: root.bounds)
     }
     func commitTabSwitch(_ clicked: UUID? = nil) {

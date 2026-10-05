@@ -325,8 +325,14 @@ import RiseCore
         retryButton.frame = NSRect(x: body.width/2-55, y: body.height/2+55, width: 110, height: 32)
         findBar.frame = NSRect(x: pageShadow.frame.maxX-354, y: pageShadow.frame.minY+devHeight+8, width: 340, height: 42)
         dismissArea.frame = b
-        let paletteOrigin = NSPoint(x: sidebar.address.frame.minX, y: sidebar.address.frame.minY-2)
-        palette.place(at: paletteOrigin, width: min(paletteCreatesTab ? 640 : 600, b.width-paletteOrigin.x-8))
+        let paletteWidth: CGFloat = paletteCreatesTab ? 520 : 600
+        if sidebarVisible {
+            let paletteOrigin = NSPoint(x: sidebar.address.frame.minX, y: sidebar.address.frame.minY-2)
+            palette.place(at: paletteOrigin, width: min(paletteWidth, b.width-paletteOrigin.x-8))
+        } else {
+            let centeredWidth: CGFloat = paletteCreatesTab ? 640 : paletteWidth
+            palette.place(centeredAt: NSPoint(x: b.midX, y: b.midY), width: min(centeredWidth, b.width-16))
+        }
         layoutPeek()
         layoutLinkStatus()
         tabSwitchBackdrop.frame = b
@@ -397,7 +403,7 @@ import RiseCore
     }
     @objc func newTab() { paletteCreatesTab = true; showPalette(text: "") }
     @objc func focusAddress() { paletteCreatesTab = false; showPalette(text: selectedTab?.url?.absoluteString == "about:blank" ? "" : selectedTab?.url?.absoluteString ?? "") }
-    func showPalette(text: String) { historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel(); dismissArea.isHidden = false; palette.show(text: text, theme: theme); layoutChrome() }
+    func showPalette(text: String) { historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel(); dismissArea.isHidden = false; palette.show(text: text, theme: theme, createsTab: paletteCreatesTab); layoutChrome() }
     func hidePalette() { googleSearchSuggestions.cancel(); suggestionFavicons.cancelPreview(); guard palette.isPresented else { return }; palette.hide(); dismissArea.isHidden = true; window?.makeFirstResponder(selectedTab?.webView) }
     func submitAddress(_ text: String, suggestion: AddressSuggestion?) {
         hidePalette()
@@ -456,6 +462,7 @@ import RiseCore
     @objc func reload() { historySwipe.cancel(); errorWebView = nil; if selectedTab?.isLoading == true { selectedTab?.cancelLoad() } else if let tab = selectedTab, tab.webView.url == nil, let url = tab.requestedURL { tab.load(url) } else { selectedTab?.webView.reload() }; update() }
     @objc func retry() { errorWebView = nil; if let url = selectedTab?.url { selectedTab?.load(url) }; update() }
     @objc func toggleSidebar() {
+        hidePalette()
         siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel()
         sidebarVisible.toggle()
         if !sidebarVisible { sidebar.newTab.resetHover() }
