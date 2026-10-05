@@ -166,15 +166,18 @@ final class LinkStatusPill: Surface {
     func place(in page: NSRect) {
         // Measure the glyphs independently of the previous field frame and leave
         // room for NSTextFieldCell's internal drawing insets.
-        let prefixWidth = showsPeekHint ? ceil(peekPrefix.attributedStringValue.size().width)+6 : 0
-        let suffixWidth = showsPeekHint ? ceil(peekSuffix.attributedStringValue.size().width)+6 : 0
-        let width = min(max(80, text.attributedStringValue.size().width + prefixWidth + suffixWidth + 26), max(0, min(650, page.width - 28)))
+        let hintInset: CGFloat = showsPeekHint ? 6 : 0
+        let prefixWidth = showsPeekHint ? peekPrefix.attributedStringValue.size().width+hintInset : 0
+        let suffixWidth = showsPeekHint ? peekSuffix.attributedStringValue.size().width+hintInset : 0
+        let width = min(max(80, text.attributedStringValue.size().width + prefixWidth + suffixWidth + 26 - 2*hintInset + (showsPeekHint ? 4 : 0)), max(0, min(650, page.width - 28)))
         restingFrame = NSRect(x: page.minX + 10, y: page.maxY - 36, width: width, height: 26)
         applyPosition()
         peekPrefix.frame = NSRect(x: 12, y: (26-peekPrefix.intrinsicContentSize.height)/2, width: prefixWidth, height: peekPrefix.intrinsicContentSize.height)
-        text.frame = NSRect(x: 12 + prefixWidth, y: (26 - text.intrinsicContentSize.height)/2,
-                            width: max(0, width - 24 - prefixWidth - suffixWidth), height: text.intrinsicContentSize.height)
-        peekSuffix.frame = NSRect(x: text.frame.maxX, y: (26-peekSuffix.intrinsicContentSize.height)/2, width: suffixWidth, height: peekSuffix.intrinsicContentSize.height)
+        // Overlap only the cells' drawing slack. The literal spaces in the hints
+        // provide the glyph spacing, while their full widths prevent clipping.
+        text.frame = NSRect(x: 12 + prefixWidth - hintInset, y: (26 - text.intrinsicContentSize.height)/2,
+                            width: max(0, width - 24 - prefixWidth - suffixWidth + 2*hintInset), height: text.intrinsicContentSize.height)
+        peekSuffix.frame = NSRect(x: text.frame.maxX - hintInset, y: (26-peekSuffix.intrinsicContentSize.height)/2, width: suffixWidth, height: peekSuffix.intrinsicContentSize.height)
         text.needsLayout = true
     }
     private func applyPosition() {

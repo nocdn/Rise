@@ -78,9 +78,11 @@ import WebKit
         recent[url] = now
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = source.configuration.websiteDataStore
+        configuration.applicationNameForUserAgent = source.configuration.applicationNameForUserAgent
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.mediaTypesRequiringUserActionForPlayback = .all
         let webView = WKWebView(frame: source.bounds, configuration: configuration)
+        webView.customUserAgent = source.customUserAgent
         prepareWebView?(webView)
         webView.navigationDelegate = self
         let timeout = DispatchWorkItem { [weak self, weak webView] in

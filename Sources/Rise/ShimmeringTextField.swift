@@ -5,12 +5,19 @@ import QuartzCore
 /// 250% background width; transparent / foreground / transparent stops at
 /// 50% ± (UTF-16 text length * 2) px; linear movement from 100% to 0%.
 /// https://github.com/elevenlabs/ui/blob/main/apps/www/registry/elevenlabs-ui/ui/shimmering-text.tsx
-final class ShimmeringTextField: FadingTextField {
+final class ShimmeringTextField: NSTextField {
     static let duration = 0.65 // React default: 2 seconds.
     private var timer: Timer?
     private var started: CFTimeInterval = 0
     var isShimmering: Bool { timer != nil }
     var shimmerColor: NSColor = .labelColor { didSet { needsDisplay = true } }
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        isEditable = false; isSelectable = false; isBordered = false; drawsBackground = false
+        cell?.usesSingleLineMode = true; lineBreakMode = .byTruncatingTail
+        wantsLayer = true; clipsToBounds = true
+    }
+    required init?(coder: NSCoder) { fatalError() }
     func startShimmer() {
         stopShimmer()
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }

@@ -97,8 +97,7 @@ import RiseCore
     var downloadFlight: DownloadFlightView?
     /// Downloads save here without asking; tests point it elsewhere.
     var downloadsFolder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
-    var downloadDestinations: [ObjectIdentifier: URL] = [:]
-    var downloadItems: [ObjectIdentifier: UUID] = [:]
+    var pendingDownloads: [ObjectIdentifier: WKDownload] = [:]
     lazy var downloads = DownloadList(storeURL: sessionURL.deletingLastPathComponent().appendingPathComponent("downloads.json"))
     let downloadsPopover = NSPopover()
     /// The download Quick Look is showing, while Rise controls the preview panel.

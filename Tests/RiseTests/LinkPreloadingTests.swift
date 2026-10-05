@@ -122,6 +122,9 @@ final class LinkPreloadingTests: XCTestCase {
         }
         XCTAssertEqual(server.count("/script-ran"), 0, "Background page must not execute its scripts")
         XCTAssertTrue(server.headers("/warm").lowercased().contains("purpose: prefetch"))
+        let value = try await tab.webView.evaluateJavaScript("navigator.userAgent")
+        let identity = try XCTUnwrap(value as? String)
+        XCTAssertTrue(server.headers("/warm").contains("User-Agent: \(identity)"), "Preloads must request the same browser-specific content as navigation")
         XCTAssertEqual(browser.tabs.count, 1)
         XCTAssertEqual(tab.webView.url, server.baseURL)
         XCTAssertTrue(browser.linkStatus.ready)

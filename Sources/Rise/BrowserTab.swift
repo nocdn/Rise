@@ -37,6 +37,7 @@ import RiseCore
         if let saved, let data = saved.sessionState { restoredState = (saved.url, data) }
         let configuration = configuration ?? WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
+        configuration.applicationNameForUserAgent = BrowserIdentity.applicationName
         webView = LinkCursorWebView(frame: .zero, configuration: configuration)
         super.init()
         if let data = saved?.faviconData, data.count <= FaviconSnapshot.maximumBytes,
