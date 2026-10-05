@@ -6,7 +6,7 @@ struct AddressSuggestion {
     let subtitle: String
     let symbol: String
     let url: URL?
-    let tabID: UUID?
+    var tabID: UUID?
     let command: String?
     var favicon: NSImage? = nil
     var completion: String? = nil
@@ -21,6 +21,7 @@ struct AddressSuggestion {
     private(set) var query = ""
     var queryChanged: ((String) -> [AddressSuggestion])?
     var submit: ((String, AddressSuggestion?) -> Void)?
+    var switchToTab: ((UUID) -> Void)?
     var dismiss: (() -> Void)?
     var theme: RiseTheme = .neutral
     private var completionRange: NSRange?
@@ -35,7 +36,7 @@ struct AddressSuggestion {
         layer?.borderColor = NSColor.black.withAlphaComponent(0.16).cgColor; layer?.borderWidth = 0.5
         shadow = chromeShadow(opacity: 0.22, blur: 24, offset: -8)
         input.isBordered = false; input.drawsBackground = false; input.focusRingType = .none
-        input.font = .systemFont(ofSize: 13, weight: AddressAppearance.textWeight); input.textColor = NSColor(hex: 0x3D3D3D)
+        input.font = .systemFont(ofSize: AddressAppearance.textSize, weight: AddressAppearance.textWeight); input.textColor = NSColor(hex: 0x3D3D3D)
         input.placeholderString = "Search or Enter URL…"; input.delegate = self
         input.setAccessibilityLabel("Address or search")
         leadingIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
@@ -96,21 +97,26 @@ struct AddressSuggestion {
             button.layer?.backgroundColor = (index == selectedIndex ? AddressAppearance.selection(theme) : .clear).cgColor
             button.tag = index; button.target = self; button.action = #selector(choose(_:))
             button.setAccessibilityLabel(suggestion.title)
+            if suggestion.tabID != nil {
+                button.setAccessibilityHelp("Open existing tab")
+            }
             let imageView = FaviconView(frame: .zero)
-            imageView.image = suggestion.favicon ?? NSImage(systemSymbolName: suggestion.symbol, accessibilityDescription: nil)
+            imageView.image = suggestion.command == "Change Theme"
+                ? TablerIcon.themeImage(size: 16)
+                : suggestion.favicon ?? NSImage(systemSymbolName: suggestion.symbol, accessibilityDescription: nil)
             imageView.contentTintColor = suggestion.favicon == nil ? theme.muted : nil
-            let text = label(suggestion.title, size: 13, weight: AddressAppearance.textWeight, color: AddressAppearance.textColor(theme))
+            let text = label(suggestion.title, size: AddressAppearance.textSize, weight: AddressAppearance.textWeight, color: AddressAppearance.textColor(theme))
             if suggestion.symbol == "globe", suggestion.fetchFavicon, !suggestion.subtitle.isEmpty,
                suggestion.title != suggestion.subtitle {
                 let address = suggestion.subtitle.replacingOccurrences(of: "^https?://", with: "", options: .regularExpression)
                 let title = NSMutableAttributedString(string: suggestion.title, attributes: [.font: text.font!, .foregroundColor: text.textColor!])
-                title.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: 13), .kern: 3]))
-                title.append(NSAttributedString(string: address, attributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: theme.muted]))
+                title.append(NSAttributedString(string: " ", attributes: [.font: NSFont.systemFont(ofSize: AddressAppearance.textSize), .kern: 3]))
+                title.append(NSAttributedString(string: address, attributes: [.font: NSFont.systemFont(ofSize: AddressAppearance.textSize), .foregroundColor: theme.muted]))
                 let paragraph = NSMutableParagraphStyle(); paragraph.lineBreakMode = .byTruncatingTail
                 title.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: 0, length: title.length))
                 text.attributedStringValue = title
             }
-            button.addSubview(imageView); button.addSubview(text)
+            button.addSubview(imageView, positioned: .below, relativeTo: button.subviews.first); button.addSubview(text)
             addSubview(button); buttons.append(button)
         }
         let count = CGFloat(suggestions.count)
@@ -157,17 +163,17 @@ struct AddressSuggestion {
         super.layout()
         // Derive the shadow from the layer's continuous corners as well.
         layer?.shadowPath = nil
-        leadingIcon.frame = NSRect(x: AddressAppearance.inset+10, y: (AddressAppearance.headerHeight-16)/2, width: 16, height: 16)
+        leadingIcon.frame = NSRect(x: AddressAppearance.inset+9, y: (AddressAppearance.headerHeight-16)/2, width: 16, height: 16)
         let inputHeight = input.intrinsicContentSize.height
-        input.frame = NSRect(x: AddressAppearance.inset+36, y: (AddressAppearance.headerHeight-inputHeight)/2, width: bounds.width-AddressAppearance.inset-52, height: inputHeight)
+        input.frame = NSRect(x: AddressAppearance.inset+35, y: (AddressAppearance.headerHeight-inputHeight)/2, width: bounds.width-AddressAppearance.inset-50, height: inputHeight)
         for (i, button) in buttons.enumerated() {
             button.frame = NSRect(x: AddressAppearance.inset, y: AddressAppearance.headerHeight+CGFloat(i)*(AddressAppearance.rowHeight+AddressAppearance.rowSpacing), width: bounds.width-2*AddressAppearance.inset, height: AddressAppearance.rowHeight)
             if let icon = button.subviews.first as? NSImageView {
-                icon.frame = NSRect(x: 10, y: (button.bounds.height-16)/2, width: 16, height: 16)
+                icon.frame = NSRect(x: 9, y: (button.bounds.height-16)/2, width: 16, height: 16)
             }
             if let text = button.subviews.last as? NSTextField {
                 let height = text.intrinsicContentSize.height
-                text.frame = NSRect(x: 36, y: (button.bounds.height-height)/2, width: max(0, button.bounds.width-46), height: height)
+                text.frame = NSRect(x: 35, y: (button.bounds.height-height)/2, width: max(0, button.bounds.width-44), height: height)
             }
         }
     }
@@ -216,6 +222,13 @@ struct AddressSuggestion {
         }
     }
     @objc func choose(_ sender: NSButton) { selectResult(sender.tag); chooseSelected() }
+    func handleKeyEquivalent(_ event: NSEvent) -> Bool {
+        guard isPresented, event.type == .keyDown, [36, 76].contains(event.keyCode),
+              event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command,
+              suggestions.indices.contains(selectedIndex), let id = suggestions[selectedIndex].tabID else { return false }
+        switchToTab?(id)
+        return true
+    }
     func chooseSelected() {
         guard isPresented else { return }
         submit?(input.stringValue, suggestions.indices.contains(selectedIndex) ? suggestions[selectedIndex] : nil)

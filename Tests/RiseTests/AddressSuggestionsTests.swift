@@ -4,6 +4,75 @@ import RiseCore
 @testable import Rise
 
 final class AddressSuggestionsTests: XCTestCase {
+    @MainActor func testOpenTabsMatchTitlesWordsAndExactAddressesWithoutDuplicatingHistory() throws {
+        let browser = browser(); defer { clean(browser) }
+        let tab = browser.addTab(); tab.requestedURL = URL(string: "https://news.ycombinator.com/")!; tab.rename("Hacker News")
+        browser.browsingHistory.record(tab.url!, title: "Old page title")
+        browser.paletteCreatesTab = true
+        for query in ["", "hacker", "news hacker", "news.ycombinator.com", "https://news.ycombinator.com/"] {
+            let matches = browser.suggestions(for: query).filter { $0.tabID == tab.id }
+            XCTAssertEqual(matches.count, 1, "An open tab should be suggested once for \(query)")
+        }
+        XCTAssertFalse(browser.suggestions(for: "news missingword").contains { $0.tabID == tab.id })
+        XCTAssertNil(browser.suggestions(for: "news.ycombinator.com/newest").first?.tabID, "Sharing an origin does not make a different page a switch target")
+        browser.paletteCreatesTab = false
+        XCTAssertEqual(browser.suggestions(for: tab.url!.absoluteString).first?.tabID, tab.id)
+    }
+    @MainActor func testCompletedAddressEnterAndClickReuseTheOpenTabWithoutABadge() throws {
+        let browser = browser(); defer { browser.hidePalette(); clean(browser) }
+        let existing = browser.addTab(); existing.requestedURL = URL(string: "https://news.ycombinator.com/")!; existing.rename("Hacker News")
+        browser.browsingHistory.record(existing.url!, title: existing.title)
+        let current = browser.addTab(); current.requestedURL = URL(string: "https://example.com/")!
+        browser.showWindow(nil)
+        let palette = browser.palette
+        let count = browser.tabs.count
+        for click in [false, true] {
+            browser.select(current.id); browser.newTab()
+            let editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
+            editor.insertText("news.y", replacementRange: editor.selectedRange())
+            XCTAssertEqual(editor.string, "news.ycombinator.com")
+            XCTAssertEqual(palette.suggestions.first?.tabID, existing.id)
+            let row = try XCTUnwrap(palette.buttons.first)
+            let title = try XCTUnwrap(row.subviews.last as? NSTextField)
+            XCTAssertEqual(row.subviews.count, 2, "Only the favicon and title remain in the result")
+            XCTAssertEqual(title.frame.maxX, row.bounds.maxX-9, "The title uses the space formerly reserved for the badge")
+            if click { row.performClick(nil) }
+            else { editor.doCommand(by: #selector(NSResponder.insertNewline(_:))) }
+            XCTAssertEqual(browser.selectedID, existing.id); XCTAssertEqual(browser.tabs.count, count)
+            XCTAssertFalse(palette.isPresented)
+        }
+        browser.newTab()
+        palette.refresh(query: "hacker")
+        let index = try XCTUnwrap(palette.suggestions.firstIndex { $0.tabID == existing.id })
+        palette.selectResult(index)
+        let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+            windowNumber: browser.window!.windowNumber, context: nil, characters: "\r", charactersIgnoringModifiers: "\r", isARepeat: false, keyCode: 36))
+        XCTAssertTrue(browser.window!.performKeyEquivalent(with: event))
+        XCTAssertEqual(browser.selectedID, existing.id); XCTAssertEqual(browser.tabs.count, count)
+        XCTAssertFalse(palette.isPresented)
+        XCTAssertFalse(palette.handleKeyEquivalent(event), "The shortcut is inactive when the picker is closed")
+        browser.newTab(); palette.refresh(query: "unrelated search")
+        XCTAssertFalse(palette.handleKeyEquivalent(event), "A search result cannot switch to an unrelated tab")
+        XCTAssertTrue(palette.isPresented)
+    }
+    @MainActor func testReuseRequiresTheExactDestinationAndChecksOpenTabsAtSubmission() throws {
+        let browser = browser(); defer { clean(browser) }
+        let existing = browser.addTab(); existing.requestedURL = URL(string: "https://example.com/docs?q=one#intro")!
+        let other = browser.addTab(); other.requestedURL = URL(string: "https://other.example/")!
+        XCTAssertTrue(browser.openTab(for: URL(string: "https://EXAMPLE.com:443/docs?q=one#intro")!) === existing)
+        for address in ["https://example.com/other?q=one#intro", "https://example.com/docs?q=two#intro",
+                        "https://example.com/docs?q=one#other", "https://example.com/docs?q=one",
+                        "http://example.com/docs?q=one#intro"] {
+            XCTAssertNil(browser.openTab(for: URL(string: address)!))
+        }
+        browser.paletteCreatesTab = true
+        let count = browser.tabs.count
+        browser.submitAddress(existing.url!.absoluteString, suggestion: nil)
+        XCTAssertEqual(browser.selectedID, existing.id); XCTAssertEqual(browser.tabs.count, count)
+        browser.select(other.id); browser.paletteCreatesTab = false
+        browser.submitAddress(existing.url!.absoluteString, suggestion: nil)
+        XCTAssertEqual(browser.selectedID, existing.id); XCTAssertEqual(browser.tabs.count, count)
+    }
     @MainActor func testPopupPaddingAndSearchIconDoNotDismissButOutsideClickDoes() throws {
         let browser = browser(); defer { browser.hidePalette(); clean(browser) }
         for index in 0..<4 { browser.browsingHistory.record(URL(string: "https://example.com/\(index)")!, title: "Document \(index)") }
@@ -83,7 +152,7 @@ final class AddressSuggestionsTests: XCTestCase {
         let focused = browser.suggestions(for: tab.url!.absoluteString)
         XCTAssertEqual(focused.count, 8)
         XCTAssertEqual(focused.first?.url, tab.url, "Opening the current URL must keep Enter pointed at that page")
-        XCTAssertNil(focused.first?.tabID)
+        XCTAssertEqual(focused.first?.tabID, tab.id)
     }
     @MainActor func testTypedAddressReusesTheFaviconOfAnOpenPageOnTheSameOrigin() throws {
         let browser = browser(); defer { clean(browser) }

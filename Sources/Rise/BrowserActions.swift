@@ -68,9 +68,11 @@ import RiseCore
         NSMenu.popUpContextMenu(menu, with: event, for: row)
     }
     @objc func peekCurrentPage() { if let url = selectedTab?.url { showPeek(url: url) } }
-    func showPeek(url: URL, from source: WKWebView? = nil) {
+    func showPeek(url: URL, from source: WKWebView? = nil, opensNewTab: Bool = false) {
+        let sourceID = tabs.first { $0.webView === source }?.id ?? peekSourceTabID ?? selectedID
         cancelTabSwitch()
         closePeek(replacing: true); hideLinkStatus()
+        peekSourceTabID = sourceID; peekOpensNewTab = opensNewTab
         let reveal = beginPeekReveal(from: source)
         // A page already rendering from a Shift-hover shows from the first frame.
         let standby = takePeekStandby(for: url)
@@ -115,12 +117,15 @@ import RiseCore
         (peekCard as? PageSurface)?.refreshOutline()
         peekCard.subviews.first?.frame = peekCard.bounds; peekTab.webView.frame = peekCard.bounds
         for (i, button) in peekControls.enumerated() { button.frame = NSRect(x: peekCard.frame.maxX+12, y: 20+CGFloat(i)*44, width: 34, height: 34) }
+        if peekSwipePull > 0 { applyPeekSwipeTransform() }
     }
     /// Animated closes spring the Peek back into its link, reversing one that is still
     /// growing. State clears immediately either way. Replacing a Peek keeps the page
     /// receded and lets the old dimming fade under the new one.
     func closePeek(animated: Bool = false, replacing: Bool = false) {
+        if let web = peekTab?.webView { historySwipe.cancel(for: web) }
         let card = peekCard, backdrop = peekBackdrop, web = peekTab?.webView, origin = peekOrigin
+        peekSourceTabID = nil; peekOpensNewTab = false; peekSwipePull = 0
         let motion = animated && peekMotionAllowed, growing = peekGhosts.first { $0.phase == .opening }
         // Pending lookups and snapshots no longer apply; cards already shrinking finish on their own.
         peekMotionToken = nil; peekLeftovers.forEach { $0.removeFromSuperview() }; peekLeftovers = []
@@ -146,9 +151,19 @@ import RiseCore
         peekControls.forEach { $0.removeFromSuperview() }; peekControls = []
         window?.makeFirstResponder(selectedTab?.webView)
     }
-    func expandPeek() {
-        guard let tab = peekTab else { return }; tab.webView.removeFromSuperview()
-        peekTab = nil; closePeek(); tabs.insert(tab, at: 0); select(tab.id)
+    func expandPeek(modifiers: NSEvent.ModifierFlags = NSEvent.modifierFlags) {
+        guard let tab = peekTab else { return }
+        let source = tabs.first { $0.id == peekSourceTabID } ?? selectedTab
+        if !modifiers.contains(.command), !peekOpensNewTab, let source, let url = tab.url {
+            // Keep the original tab and its back history, as a normal link click would.
+            closePeek(); select(source.id); source.load(url)
+            return
+        }
+        let index = source.flatMap { source in tabs.firstIndex { $0.id == source.id } } ?? 0
+        historySwipe.cancel(for: tab.webView)
+        permissionCoordinator.cancel(for: tab.webView)
+        tab.webView.removeFromSuperview()
+        peekTab = nil; closePeek(); tabs.insert(tab, at: index); select(tab.id)
     }
     func splitPeek() {
         guard let tab = peekTab else { return }; tab.webView.removeFromSuperview()
@@ -170,7 +185,7 @@ import RiseCore
         siteInfoPopover.show(relativeTo: rect, of: anchor, preferredEdge: .minY)
     }
     func navigateDeveloperAddress(_ text: String) {
-        guard let url = AddressResolver.resolve(text), let tab = selectedTab else { return }
+        guard let url = AddressResolver.resolve(text, searchEngine: searchEngine), let tab = selectedTab else { return }
         errorWebView = nil; tab.load(url); update()
         window?.makeFirstResponder(tab.webView)
     }

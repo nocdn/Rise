@@ -96,12 +96,14 @@ final class SidebarGrip: FlippedView {
 final class BrowserWindow: NSWindow {
     var escapeAction: (() -> Bool)?
     var tabSwitchEvent: ((NSEvent) -> Bool)?
+    var addressPaletteEvent: ((NSEvent) -> Bool)?
     var pageMouseDown: ((NSEvent) -> Void)?
     var otherMouseEvent: ((NSEvent) -> Bool)?
     var historyScrollEvent: ((NSEvent) -> Bool)?
     var modifiersChanged: ((NSEvent.ModifierFlags) -> Void)?
     var pointerMoved: ((NSEvent) -> Void)?
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if addressPaletteEvent?(event) == true { return true }
         if tabSwitchEvent?(event) == true { return true }
         return super.performKeyEquivalent(with: event)
     }
@@ -109,6 +111,7 @@ final class BrowserWindow: NSWindow {
         defer {
             if [.mouseMoved, .leftMouseDragged, .scrollWheel, .leftMouseDown, .rightMouseDown].contains(event.type) { pointerMoved?(event) }
         }
+        if addressPaletteEvent?(event) == true { return }
         if tabSwitchEvent?(event) != true {
             if event.type == .scrollWheel, historyScrollEvent?(event) == true { return }
             if otherMouseEvent?(event) == true { return }

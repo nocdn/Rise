@@ -19,9 +19,10 @@ final class HistoryArrowButton: ChromeButton {
     init(direction: HistoryDirection, title: String, action: @escaping () -> Void) {
         self.direction = direction
         super.init(symbol: direction == .back ? "arrow.left" : "arrow.right", size: 16, title: title, action: action)
+        image = direction == .back ? NavigationIcon.back : NavigationIcon.forward
         restingImage = image
         arrow.fillColor = nil; arrow.lineCap = .round; arrow.lineJoin = .round
-        arrow.lineWidth = 1.35; arrow.isHidden = true
+        arrow.lineWidth = 1.40; arrow.isHidden = true
         layer?.addSublayer(arrow)
         setStrokeColor(contentTintColor ?? .secondaryLabelColor)
     }

@@ -30,6 +30,7 @@ import Vision
     func makeMoreSiteMenu() -> NSMenu {
         let menu = makeSiteMenu()
         menu.addItem(.separator())
+        menu.addItem(makeSearchEngineMenu())
         menu.addItem(menuItem("Clear Browsing History…") { [weak self] in self?.confirmClearBrowsingHistory() })
         let visibleRows = (siteControlsPopover.contentViewController as? SiteControlsController)?.rows ?? [:]
         let capabilities = [SiteCapability.camera, .microphone, .location].filter { visibleRows[$0.title] == nil }

@@ -40,6 +40,19 @@ final class BrowserStateTests: XCTestCase {
         XCTAssertEqual(components.host, "www.google.com")
         XCTAssertEqual(components.queryItems?.first?.value, "cats & dogs + birds")
     }
+    func testSelectedSearchEngineOnlyChangesSearchQueriesAndPreservesEncoding() throws {
+        let query = "résumé & cats + dogs?"
+        for engine in SearchEngine.allCases {
+            let url = try XCTUnwrap(AddressResolver.resolve(query, searchEngine: engine))
+            let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+            XCTAssertEqual(components.host, engine == .google ? "www.google.com" : "kagi.com")
+            XCTAssertEqual(components.path, "/search"); XCTAssertEqual(components.queryItems?.first?.value, query)
+            XCTAssertEqual(AddressResolver.resolve("https://example.com/a?q=test", searchEngine: engine)?.absoluteString, "https://example.com/a?q=test")
+            XCTAssertEqual(AddressResolver.resolve("localhost:8000", searchEngine: engine)?.absoluteString, "http://localhost:8000")
+            XCTAssertEqual(AddressResolver.resolve("/tmp/example.html", searchEngine: engine)?.path, "/tmp/example.html")
+            XCTAssertNil(AddressResolver.resolve(" ", searchEngine: engine))
+        }
+    }
     func testWhitespaceAndUntrustedSchemes() {
         XCTAssertNil(AddressResolver.resolve(" \n "))
         XCTAssertEqual(AddressResolver.resolve("javascript:alert(1)")?.host, "www.google.com")

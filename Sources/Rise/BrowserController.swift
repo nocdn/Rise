@@ -60,6 +60,12 @@ import RiseCore
             self?.pageCloth.release(distance: distance, committed: committed, cancelled: cancelled)
         }
         controller.cancelCloth = { [weak self] in self?.pageCloth.cancel() }
+        controller.isPeekPage = { [weak self] web in self?.peekTab?.webView === web }
+        controller.dragPeek = { [weak self] pull in self?.dragPeek(pull: pull) }
+        controller.releasePeek = { [weak self] committed in
+            if committed { self?.closePeek(animated: true) } else { self?.returnPeekFromSwipe() }
+        }
+        controller.cancelPeek = { [weak self] in self?.returnPeekFromSwipe() }
         return controller
     }()
     var tabs: [BrowserTab] = []
@@ -74,6 +80,9 @@ import RiseCore
     var sidebarVisible = true
     var paletteCreatesTab = false
     var splitGroups: [SplitTabGroup] = []
+    var peekSourceTabID: UUID?
+    var peekOpensNewTab = false
+    var peekSwipePull: Double = 0
     var peekTab: BrowserTab?
     var peekBackdrop: Surface?
     var peekCard: Surface?
@@ -98,6 +107,7 @@ import RiseCore
     var quickLookDownloadID: UUID?
     var saveWork: DispatchWorkItem?
     let sessionURL: URL
+    let preferences: UserDefaults
     var lastSaved: BrowserSession?
     var errorWebView: WKWebView?
     let adBlocker: AdBlocker
@@ -113,6 +123,7 @@ import RiseCore
     var pendingMiddleTabID: UUID?
 
     init(sessionURL: URL? = nil, restore: Bool = true, preferences: UserDefaults = .standard, searchSuggestions: GoogleSearchSuggestions? = nil) {
+        self.preferences = preferences
         googleSearchSuggestions = searchSuggestions ?? GoogleSearchSuggestions()
         sitePermissions = SitePermissions(preferences: preferences)
         adBlocker = AdBlocker(preferences: preferences)
@@ -137,6 +148,7 @@ import RiseCore
             self.update()
         }
         window.tabSwitchEvent = { [weak self] event in self?.handleTabSwitchEvent(event) ?? false }
+        window.addressPaletteEvent = { [weak self] event in self?.palette.handleKeyEquivalent(event) ?? false }
         window.pageMouseDown = { [weak self] event in self?.focusSplitPage(at: event) }
         window.historyScrollEvent = { [weak self] event in self?.historySwipe.handle(event) ?? false }
         window.otherMouseEvent = { [weak self] event in self?.handleMiddleTabClick(event) ?? false }
@@ -209,6 +221,7 @@ import RiseCore
             if symbol == "arrow.left" || symbol == "arrow.right" {
                 button = HistoryArrowButton(direction: symbol == "arrow.left" ? .back : .forward, title: title, action: action)
             } else { button = ChromeButton(symbol: symbol, size: 16, title: title, action: action) }
+            if symbol == "arrow.clockwise" { button.image = NavigationIcon.reload }
             toolbarHost.addSubview(button); toolbarButtons.append(button)
         }
         developerAddress.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
@@ -252,6 +265,10 @@ import RiseCore
         palette.dismiss = { [weak self] in self?.hidePalette() }
         palette.queryChanged = { [weak self] text in self?.suggestions(for: text) ?? [] }
         palette.submit = { [weak self] text, suggestion in self?.submitAddress(text, suggestion: suggestion) }
+        palette.switchToTab = { [weak self] id in
+            guard let self, self.tabs.contains(where: { $0.id == id }) else { return }
+            self.hidePalette(); self.select(id)
+        }
         // Keep system controls in their original titlebar hierarchy. AppKit owns
         // their size, grouping, Liquid Glass rendering, and fullscreen behavior.
         let toolbar = NSToolbar(identifier: "Rise.Toolbar")
@@ -373,7 +390,7 @@ import RiseCore
         window?.title = (selectedTab?.title).map { "\($0) — Rise" } ?? "Rise"
         toolbarButtons[1].isEnabled = selectedTab?.webView.canGoBack ?? false
         toolbarButtons[2].isEnabled = selectedTab?.webView.canGoForward ?? false
-        toolbarButtons[3].image = NSImage(systemSymbolName: selectedTab?.isLoading == true ? "xmark" : "arrow.clockwise", accessibilityDescription: "Reload or stop")
+        toolbarButtons[3].image = selectedTab?.isLoading == true ? NavigationIcon.stop : NavigationIcon.reload
         developerAddress.updateURL(selectedTab?.url?.absoluteString ?? "")
         errorSurface.isHidden = errorWebView == nil || errorWebView !== selectedTab?.webView
         layoutChrome(); refreshTabSwitcher(); scheduleSave()
@@ -384,7 +401,6 @@ import RiseCore
     func hidePalette() { googleSearchSuggestions.cancel(); suggestionFavicons.cancelPreview(); guard palette.isPresented else { return }; palette.hide(); dismissArea.isHidden = true; window?.makeFirstResponder(selectedTab?.webView) }
     func submitAddress(_ text: String, suggestion: AddressSuggestion?) {
         hidePalette()
-        if let id = suggestion?.tabID { select(id); return }
         if let command = suggestion?.command {
             switch command {
             case "Toggle Developer Mode": toggleDeveloper()
@@ -394,7 +410,10 @@ import RiseCore
             default: break
             }; return
         }
-        guard let url = suggestion?.url ?? AddressResolver.resolve(text) else { return }
+        guard let url = suggestion?.url ?? AddressResolver.resolve(text, searchEngine: searchEngine) else { return }
+        // Resolve again at activation time: an open tab may have navigated or
+        // closed since the result was built. Never create an exact duplicate.
+        if let existing = openTab(for: url) { select(existing.id); return }
         if paletteCreatesTab || selectedTab == nil { addTab(url: url) }
         else { errorWebView = nil; selectedTab?.load(url) }
     }

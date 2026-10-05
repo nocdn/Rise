@@ -130,7 +130,7 @@ extension NSView {
     /// Shrinks the page (and the backdrop dimming it) slightly about its center
     /// behind a Peek, or restores it. Without a spring the change is immediate.
     func recedePage(_ receded: Bool, along spring: CASpringAnimation?) {
-        let scale = receded ? Self.peekPageScale : 1
+        let scale = receded ? peekRecededPageScale : 1
         for layer in [pageShadow.layer].compactMap({ $0 }) {
             let size = layer.bounds.size, anchor = layer.anchorPoint
             let target = CATransform3DConcat(CATransform3DMakeScale(scale, scale, 1),
@@ -202,6 +202,7 @@ extension NSView {
         let spring = Self.peekOpenSpring
         ghost.layer?.shadowOpacity = 0; ghost.fadeShadow(to: 0.25, duration: spring.perceptualDuration*0.6)
         ghost.place(target, spring: spring)
+        if peekSwipePull > 0 { applyPeekSwipeTransform() }
         recedePage(true, along: spring)
         NSAnimationContext.runAnimationGroup { context in
             context.duration = spring.perceptualDuration*0.7; peekBackdrop?.animator().alphaValue = 1
@@ -223,7 +224,7 @@ extension NSView {
         let token = UUID(); peekMotionToken = token
         // Closing should feel immediate; never wait long for the snapshots.
         DispatchQueue.main.asyncAfter(deadline: .now()+0.08) { [weak self] in
-            self?.playPeekClose(card: card, backdrop: backdrop, page: nil, origin: nil, token: token)
+            self?.playPeekClose(card: card, backdrop: backdrop, page: nil, origin: origin, token: token)
         }
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -232,7 +233,7 @@ extension NSView {
             // The source may have scrolled since opening; find the link again.
             async let link = origin?.webView.asyncFlatMap { await self.peekLink(in: $0, locate: false) }
             let (image, found) = await (page, link)
-            self.playPeekClose(card: card, backdrop: backdrop, page: image, origin: found, token: token)
+            self.playPeekClose(card: card, backdrop: backdrop, page: image, origin: found ?? origin, token: token)
         }
     }
     func playPeekClose(card: Surface, backdrop: Surface?, page: NSImage?, origin: PeekOrigin?, token: UUID) {
@@ -240,13 +241,26 @@ extension NSView {
         peekMotionToken = nil; peekLeftovers = []
         let ghost = PeekGhost(color: theme.page); ghost.pageImage = page; ghost.linkImage = origin?.image
         ghost.pageAspect = card.frame.height/max(1, card.frame.width); ghost.link.alphaValue = 0
-        root.addSubview(ghost, positioned: .above, relativeTo: card); ghost.place(card.frame)
+        let start = visiblePeekFrame(card)
+        root.addSubview(ghost, positioned: .above, relativeTo: card); ghost.place(start)
         card.removeFromSuperview()
         shrinkPeek(ghost, into: peekFrame(of: origin), backdrop: backdrop)
     }
     /// Springs a card back into its link from wherever it currently appears, so a
     /// Peek can be dismissed mid-open and simply reverses.
     func shrinkPeek(_ ghost: PeekGhost, into end: NSRect?, backdrop: NSView?) {
+        // Flatten a pulled opening ghost into its displayed frame before reversing.
+        if let layer = ghost.layer, !CATransform3DIsIdentity(layer.transform) || layer.animation(forKey: "peek.swipeReturn") != nil {
+            let start = visiblePeekFrame(ghost)
+            for view in [ghost, ghost.clip, ghost.page, ghost.link] {
+                view.layer?.removeAnimation(forKey: "peek.position")
+                view.layer?.removeAnimation(forKey: "peek.bounds")
+            }
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            layer.removeAnimation(forKey: "peek.swipeReturn"); layer.transform = CATransform3DIdentity
+            ghost.place(start)
+            CATransaction.commit()
+        }
         ghost.phase = .closing; ghost.companions = [backdrop].compactMap { $0 }
         let spring = Self.peekCloseSpring, duration = spring.perceptualDuration
         ghost.fadeShadow(to: 0, duration: duration)

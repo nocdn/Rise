@@ -1,7 +1,7 @@
 import Foundation
 
 public enum AddressResolver {
-    public static func resolve(_ input: String) -> URL? {
+    public static func resolve(_ input: String, searchEngine: SearchEngine = .google) -> URL? {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
         if text == "about:blank" { return URL(string: text) }
@@ -14,9 +14,7 @@ public enum AddressResolver {
                 return URL(string: (local ? "http://" : "https://") + text)
             }
         }
-        var query = URLComponents(string: "https://www.google.com/search")!
-        query.queryItems = [URLQueryItem(name: "q", value: text)]
-        return query.url
+        return searchEngine.searchURL(for: text)
     }
     public static func displayHost(_ url: URL?) -> String {
         guard let url, url.absoluteString != "about:blank" else { return "Search or Enter URL…" }

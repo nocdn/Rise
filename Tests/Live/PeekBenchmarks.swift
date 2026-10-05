@@ -151,11 +151,79 @@ import WebKit
                 browser.showPeek(url: target, from: tab.webView); try await Task.sleep(for: .milliseconds(900))
                 check(browser.peekCard?.alphaValue == 1 && browser.peekGhosts.isEmpty && browser.pageClip.subviews.filter { $0 is PeekBackdrop }.count == 1, "Reopening during a close settles on one Peek")
                 check(abs(browser.pageShadow.layer!.transform.m11-BrowserController.peekPageScale) < 0.0001, "The page stays receded behind the reopened Peek")
-                browser.closePeek()
+                // A back swipe pulls the complete live card, then closes from that
+                // displayed frame. Reversing/cancelling springs it back first.
+                let pulledCard = browser.peekCard!, peekWeb = browser.peekTab!.webView
+                let resting = pulledCard.frame, pageBounds = peekWeb.bounds
+                let router = HistorySwipeController(window: browser.window as! BrowserWindow,
+                    pageAt: { _ in peekWeb }, feedback: { _, _, _, _ in })
+                var clicks = 0
+                router.isPeekPage = { $0 === peekWeb }; router.thresholdClick = { clicks += 1 }
+                router.dragPeek = { [self] in browser.dragPeek(pull: $0) }
+                router.releasePeek = { [self] committed in
+                    if committed { browser.closePeek(animated: true) } else { browser.returnPeekFromSwipe() }
+                }
+                router.cancelPeek = { [self] in browser.returnPeekFromSwipe() }
+                check(router.handle(scroll(.began, x: 60)), "Peek receives precise back swipes without page history")
+                try await waitUntil { router.gesture.consumesScroll }
+                try await Task.sleep(for: .milliseconds(40))
+                check(abs(presentedFrame(pulledCard).width-resting.width*0.985) < 1, "The entire card shrinks proportionally during the drag")
+                check(router.handle(scroll(.changed, x: 70)), "Drag reaches threshold")
+                try await Task.sleep(for: .milliseconds(40))
+                check(clicks == 1 && router.gesture.isArmed, "One threshold haptic arms dismissal")
+                check(peekWeb.bounds == pageBounds, "Dragging never resizes the live webpage")
+                let backgroundScale = browser.pageShadow.layer!.presentation()!.transform.m11
+                check(backgroundScale > BrowserController.peekPageScale + 0.004 && backgroundScale < BrowserController.peekPageScale + 0.006,
+                      "The background grows subtly while the Peek shrinks: \(backgroundScale)")
+                check(browser.peekControls.allSatisfy { $0.layer!.transform.m11 < 1 }, "The controls follow the complete card")
+                check(router.handle(scroll(.changed, x: -30)) && !router.gesture.isArmed, "Reversing disarms dismissal")
+                check(router.handle(scroll(.ended)), "A reversed release is consumed")
+                try await Task.sleep(for: .milliseconds(450))
+                check(browser.peekTab != nil && CATransform3DIsIdentity(pulledCard.layer!.transform), "A reversed swipe springs back without closing")
+                check(abs(presentedFrame(pulledCard).width-resting.width) < 0.5, "Return spring settles at the original size")
+                check(abs(browser.pageShadow.layer!.presentation()!.transform.m11-BrowserController.peekPageScale) < 0.0001,
+                      "Cancelling settles the background back to its original receded size")
+                check(router.handle(scroll(.began, x: 120)), "Second swipe starts")
+                try await waitUntil { router.gesture.isArmed }
+                try await Task.sleep(for: .milliseconds(40))
+                var dragged = presentedFrame(pulledCard)
+                check(abs(dragged.width-resting.width*0.97) < 1 && abs(dragged.midX-resting.midX-20) < 1,
+                      "Threshold gives a subtle 3% shrink and 20-point rightward shift: \(dragged) vs \(resting)")
+                let thresholdWidth = dragged.width
+                check(router.handle(scroll(.changed, x: 120)), "Peek keeps moving past the threshold")
+                try await Task.sleep(for: .milliseconds(40))
+                let further = presentedFrame(pulledCard)
+                check(router.handle(scroll(.changed, x: 600)), "A long swipe still meets elastic resistance")
+                try await Task.sleep(for: .milliseconds(40))
+                dragged = presentedFrame(pulledCard)
+                check(further.width < thresholdWidth && dragged.width < further.width,
+                      "Peek never hard stops beyond the threshold")
+                check(further.width-dragged.width < thresholdWidth-further.width,
+                      "Larger additional travel gives diminishing shrinkage")
+                check(router.handle(scroll(.ended)), "Armed release closes Peek")
+                let swipeClose = try await sampleGhost()
+                check(browser.peekTab == nil && !swipeClose.isEmpty, "Swipe closes through the source-link animation")
+                let swipeStart = swipeClose.first!.startBounds!.size
+                check(abs(swipeStart.width-dragged.width) < 1 && abs(swipeStart.height-dragged.height) < 1,
+                      "Close begins at the smaller dragged size: \(swipeStart) vs \(dragged.size)")
+                check(onPath(swipeClose.last!.frame, from: link, to: dragged, before: 0.2), "Swipe dismissal returns to its source link")
+                check(router.handle(scroll([], x: 250, momentum: 1)) && router.handle(scroll([], x: 250, momentum: 3)), "Momentum cannot dismiss again")
+                router.cancel()
+                try await Task.sleep(for: .milliseconds(100))
+                check(browser.peekGhosts.isEmpty && browser.peekLeftovers.isEmpty, "Swipe dismissal leaves no views behind")
+                check(abs(browser.pageShadow.layer!.presentation()!.transform.m11-1) < 0.0001,
+                      "Dismissal restores the background to full size")
                 print("Peek motion verified: open \(opening.count) samples (peak \(Int(peak)) vs card \(Int(card.frame.width))), close \(closing.count) samples (smallest \(smallest) vs \(link.width+6), page \(pageReturn)), shadow \(recededShadow)/\(restingShadow).")
                 NSApp.terminate(nil)
             } catch { fputs("PEEK VERIFICATION FAILED: \(error)\n", stderr); exit(1) }
         }
+    }
+    func scroll(_ phase: NSEvent.Phase, x: Int32 = 0, momentum: Int64 = 0) -> NSEvent {
+        let cg = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: 0, wheel2: -x, wheel3: 0)!
+        let raw: Int64 = phase == .began ? 1 : phase == .changed ? 2 : phase == .ended ? 4 : phase == .cancelled ? 8 : 0
+        cg.setIntegerValueField(.scrollWheelEventScrollPhase, value: raw)
+        cg.setIntegerValueField(.scrollWheelEventMomentumPhase, value: momentum)
+        return NSEvent(cgEvent: cg)!
     }
     struct Sample { var frame: NSRect; var page: Float; var link: Float; var image: NSImage?; var pageScale: CGFloat; var shadow: Float; var clipped: Bool; var startBounds: NSRect? }
     /// Presentation state of the travelling stand-in, in root coordinates.

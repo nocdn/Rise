@@ -117,4 +117,58 @@ final class GoogleSearchSuggestionsTests: XCTestCase {
         XCTAssertFalse(palette.isPresented)
         XCTAssertFalse(SearchProtocol.snapshot().contains { $0.url?.absoluteString.contains("closed%20query") == true })
     }
+    @MainActor func testRemoteCompletionsRetainMatchingOpenTabsAndIdentifyExistingSearchPages() async throws {
+        _ = NSApplication.shared
+        let session = session(); defer { session.invalidateAndCancel() }
+        let provider = GoogleSearchSuggestions(session: session, delay: 0.005)
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json")
+        let browser = BrowserController(sessionURL: file, restore: false, searchSuggestions: provider)
+        defer {
+            browser.hidePalette(); browser.suggestionFavicons.cancel(); browser.saveWork?.cancel()
+            browser.tabs.forEach { $0.cancelLoad(); $0.iconTask?.cancel() }; browser.window?.orderOut(nil)
+            try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+        }
+        for index in 0..<3 {
+            let tab = browser.addTab(); tab.requestedURL = URL(string: "https://example.com/\(index)")!; tab.rename("coffee document \(index)")
+        }
+        let search = browser.addTab(); search.requestedURL = GoogleSearchSuggestions.searchURL(for: "coffee beans"); search.rename("Saved search")
+        browser.showWindow(nil); browser.newTab()
+        let editor = try XCTUnwrap(browser.palette.input.currentEditor() as? NSTextView)
+        editor.insertText("coffee", replacementRange: editor.selectedRange())
+        try await Task.sleep(for: .milliseconds(240))
+        XCTAssertEqual(browser.palette.suggestions.count, 8)
+        for tab in browser.tabs { XCTAssertTrue(browser.palette.suggestions.contains { $0.tabID == tab.id }) }
+        XCTAssertEqual(browser.palette.suggestions.filter { $0.tabID == search.id }.count, 1)
+        XCTAssertTrue(browser.palette.suggestions.contains { $0.title == "coffee cake" }, "Search completions still fill the remaining space")
+    }
+    @MainActor func testChoosingKagiCancelsGoogleAutocompleteAndDoesNotRequestNewGoogleTerms() async throws {
+        _ = NSApplication.shared
+        let session = session(); defer { session.invalidateAndCancel() }
+        let provider = GoogleSearchSuggestions(session: session, delay: 0.005)
+        let suite = "Rise.SearchSuggestionsTests.\(UUID())", preferences = UserDefaults(suiteName: suite)!
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json")
+        let browser = BrowserController(sessionURL: file, restore: false, preferences: preferences, searchSuggestions: provider)
+        defer {
+            browser.hidePalette(); browser.suggestionFavicons.cancel(); browser.saveWork?.cancel(); browser.window?.orderOut(nil)
+            preferences.removePersistentDomain(forName: suite)
+            try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+        }
+        browser.showWindow(nil); browser.newTab()
+        let editor = try XCTUnwrap(browser.palette.input.currentEditor() as? NSTextView)
+        editor.insertText("coffee", replacementRange: editor.selectedRange())
+        // Wait for the request to start, so this tests cancellation of an in-flight
+        // request rather than depending on the main run loop's timer scheduling.
+        for _ in 0..<200 where SearchProtocol.snapshot().isEmpty {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(SearchProtocol.snapshot().count, 1)
+        browser.selectSearchEngine(.kagi)
+        XCTAssertEqual(browser.palette.suggestions.first?.url?.host, "kagi.com")
+        try await Task.sleep(for: .milliseconds(130))
+        XCTAssertEqual(browser.palette.suggestions.count, 1, "Cancelled Google results cannot reappear")
+        editor.selectAll(nil); editor.insertText("kagi query", replacementRange: editor.selectedRange())
+        try await Task.sleep(for: .milliseconds(130))
+        XCTAssertEqual(SearchProtocol.snapshot().count, 1)
+        XCTAssertEqual(browser.palette.suggestions.first?.title, "Search Kagi for “kagi query”")
+    }
 }

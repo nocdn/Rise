@@ -13,6 +13,11 @@ import WebKit
     var dragCloth: ((WKWebView, HistoryDirection, Double) -> Void)?
     var releaseCloth: ((Double, Bool, Bool) -> Void)?
     var cancelCloth: (() -> Void)?
+    var isPeekPage: ((WKWebView) -> Bool)?
+    var dragPeek: ((Double) -> Void)?
+    var releasePeek: ((Bool) -> Void)?
+    var cancelPeek: (() -> Void)?
+    private var peekGesture = false
     var thresholdClick: () -> Void = {
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
     }
@@ -37,9 +42,11 @@ import WebKit
         }
         if event.phase.contains(.began) {
             cancel()
-            guard let page = pageAt(event), page.canGoBack || page.canGoForward else { return false }
+            guard let page = pageAt(event) else { return false }
+            peekGesture = isPeekPage?(page) == true
+            guard peekGesture || page.canGoBack || page.canGoForward else { return false }
             self.page = page; probing = true; pending = [event]
-            if abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) * 1.2 {
+            if !peekGesture, abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) * 1.2 {
                 prepareCloth?(page); clothPrepared = true
             }
             probe(page, at: event)
@@ -95,12 +102,15 @@ import WebKit
         // Undo the user's scroll preference: physical right = back, left = forward.
         let dx = event.scrollingDeltaX * (event.isDirectionInvertedFromDevice ? 1 : -1)
         if gesture.move(dx: Double(dx), dy: Double(event.scrollingDeltaY),
-                        canBack: page.canGoBack, canForward: page.canGoForward) { thresholdClick() }
+                        canBack: peekGesture || page.canGoBack, canForward: page.canGoForward) { thresholdClick() }
         if gesture.consumesScroll {
             feedback(gesture.direction, gesture.arrowPull, gesture.isArmed, nil)
             if let direction = gesture.direction {
-                if !clothPrepared { prepareCloth?(page); clothPrepared = true }
-                dragCloth?(page, direction, gesture.distance)
+                if peekGesture, direction == .back { dragPeek?(gesture.arrowPull) }
+                else {
+                    if !clothPrepared { prepareCloth?(page); clothPrepared = true }
+                    dragCloth?(page, direction, gesture.distance)
+                }
             }
         }
         return gesture.consumesScroll
@@ -108,11 +118,13 @@ import WebKit
     private func finish(cancelled: Bool) -> Bool {
         let consumed = gesture.consumesScroll, direction = gesture.direction, distance = gesture.distance
         let page = self.page, committed = gesture.finish(cancelled: cancelled)
-        suppressMomentum = consumed; permitted = false; self.page = nil
+        let dismissesPeek = peekGesture && direction == .back
+        suppressMomentum = consumed; permitted = false; self.page = nil; peekGesture = false
         feedback(direction, 0, false, committed != nil)
-        if consumed { releaseCloth?(distance, committed != nil, cancelled) }
+        if dismissesPeek { releasePeek?(committed != nil) }
+        else if consumed { releaseCloth?(distance, committed != nil, cancelled) }
         else { cancelCloth?() }
-        if let committed, let page {
+        if !dismissesPeek, let committed, let page {
             if committed == .back { page.goBack() } else { page.goForward() }
         }
         return consumed
@@ -122,8 +134,9 @@ import WebKit
         generation += 1; probeTimeout?.cancel(); probeTimeout = nil
         pending.removeAll(); probing = false; permitted = false; suppressMomentum = false
         clothPrepared = false
-        let direction = gesture.direction
-        _ = gesture.finish(cancelled: true); page = nil
+        let direction = gesture.direction, returnsPeek = peekGesture && direction == .back
+        _ = gesture.finish(cancelled: true); page = nil; peekGesture = false
+        if returnsPeek { cancelPeek?() }
         cancelCloth?()
         if let direction { feedback(direction, 0, false, false) }
     }

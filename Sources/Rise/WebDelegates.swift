@@ -6,8 +6,8 @@ import RiseCore
     func shouldPeek(modifiers: NSEvent.ModifierFlags) -> Bool {
         modifiers.contains(.shift) || modifiers.contains(.option)
     }
-    @discardableResult func openModifiedLink(_ url: URL, modifiers: NSEvent.ModifierFlags, from source: WKWebView? = nil) -> Bool {
-        if shouldPeek(modifiers: modifiers) { showPeek(url: url, from: source); return true }
+    @discardableResult func openModifiedLink(_ url: URL, modifiers: NSEvent.ModifierFlags, from source: WKWebView? = nil, opensNewTab: Bool = false) -> Bool {
+        if shouldPeek(modifiers: modifiers) { showPeek(url: url, from: source, opensNewTab: opensNewTab); return true }
         if modifiers.contains(.command) { addTab(url: url); return true }
         return false
     }
@@ -16,7 +16,7 @@ import RiseCore
         if action.targetFrame?.isMainFrame == true { permissionCoordinator.cancel(for: webView) }
         if action.shouldPerformDownload { decisionHandler(.download); return }
         if action.navigationType == .linkActivated, let url = action.request.url {
-            if openModifiedLink(url, modifiers: action.modifierFlags, from: webView) { decisionHandler(.cancel); return }
+            if openModifiedLink(url, modifiers: action.modifierFlags, from: webView, opensNewTab: action.targetFrame == nil) { decisionHandler(.cancel); return }
         }
         if let scheme = action.request.url?.scheme?.lowercased(), !["http", "https", "file", "about", "data", "blob"].contains(scheme) {
             // External schemes require a deliberate choice; never silently run them.
@@ -58,7 +58,7 @@ import RiseCore
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         guard action.targetFrame == nil else { return nil }
         if shouldPeek(modifiers: action.modifierFlags), let url = action.request.url {
-            showPeek(url: url, from: webView); return nil
+            showPeek(url: url, from: webView, opensNewTab: true); return nil
         }
         return addTab(configuration: configuration).webView
     }

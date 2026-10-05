@@ -40,8 +40,8 @@ import RiseCore
         settingsButton = SidebarHoverButton(symbol: "slider.horizontal.3", size: 14, title: "Site controls", action: settings)
         settingsButton.image = TablerIcon.image(TablerIcon.adjustments, size: 16, description: "Site controls")
         archiveButton = ArchiveButton(title: "Downloads", action: archive)
-        themeButton = ChromeButton(symbol: "paintpalette", size: 13, title: "Change theme", action: theme)
-        themeButton.image = TablerIcon.image(TablerIcon.palette, size: 20, description: "Change theme")
+        themeButton = ChromeButton(symbol: "paintbrush", size: 13, title: "Change theme", action: theme)
+        themeButton.image = TablerIcon.themeImage(size: 20)
         super.init()
         address.isBordered = false; address.title = ""; address.wantsLayer = true
         address.layer?.cornerRadius = AddressAppearance.cornerRadius; address.layer?.cornerCurve = .continuous

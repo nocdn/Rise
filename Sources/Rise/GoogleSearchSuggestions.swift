@@ -76,9 +76,7 @@ import RiseCore
         return url.host == "www.google.com" && url.path == "/search"
     }
     nonisolated static func searchURL(for term: String) -> URL {
-        var url = URLComponents(string: "https://www.google.com/search")!
-        url.queryItems = [URLQueryItem(name: "q", value: term)]
-        return url.url!
+        SearchEngine.google.searchURL(for: term)
     }
     nonisolated static func parse(_ data: Data, query: String) -> [String]? {
         guard data.count <= 128_000, let response = try? JSONSerialization.jsonObject(with: data) as? [Any],
