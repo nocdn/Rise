@@ -226,7 +226,8 @@ final class FindInputCell: NSTextFieldCell {
     let shimmer = InputShimmer()
     private let separator = Surface()
     private let answerScroll = NSScrollView()
-    private let answerView = NSTextView()
+    // TextKit 1 from the start: the streaming effect paints with the layout manager.
+    private let answerView = NSTextView(usingTextLayoutManager: false)
     private let footer = FlippedView()
     private let footerIcon = NSImageView(image: TablerIcon.image(TablerIcon.searchWindow, size: 13))
     private let footerLabel = label("Answered by \(FindBar.modelName)", size: 11)
@@ -254,6 +255,10 @@ final class FindInputCell: NSTextFieldCell {
     var answer: ((String, [Turn]) -> AsyncThrowingStream<String, Error>)?
     private(set) var conversation: [Turn] = []
     private var answerText = "", answerFailed = false
+    /// The streamed answer, shown a word at a time; `answerText` is the part laid out so far.
+    private var stream = TokenStream()
+    /// Where the streaming effect's colors start in the answer.
+    private var paintedFrom = 0
     /// The last question asked, for Regenerate.
     private var lastQuestion: (question: String, asked: String)?
     /// The last search's matches, so Enter on none can offer to ask instead.
@@ -353,7 +358,7 @@ final class FindInputCell: NSTextFieldCell {
     func present() {
         if !isPresented {
             isPresented = true; isHidden = false
-            cancelAnswer(); hasSubmittedQuestion = false; conversation = []; answerText = ""; answerFailed = false; lastQuestion = nil; renderAnswer()
+            cancelAnswer(); hasSubmittedQuestion = false; conversation = []; answerText = ""; answerFailed = false; stream = TokenStream(); lastQuestion = nil; renderAnswer()
             answeredText = nil; badge.caption = .send; badge.settle()
             setMode(.find, animated: false)
             height.target = Self.rowHeight; height.settle()
@@ -367,7 +372,7 @@ final class FindInputCell: NSTextFieldCell {
     /// Back in the window after its tab was away: at rest, with the page's matches repainted
     /// where they were rather than searched afresh.
     func reattached() {
-        link?.invalidate(); link = nil; settle()
+        link?.invalidate(); link = nil; revealAllTokens(); settle()
         if isPresented && mode == .find && !input.stringValue.isEmpty { run(.refresh) }
     }
     /// Closed without sliding, for a bar whose tab is no longer shown.
@@ -511,7 +516,7 @@ final class FindInputCell: NSTextFieldCell {
         cancelAnswer()
         lastQuestion = (question, asked)
         let tokens = answer(question, conversation)
-        answerText = ""; answerFailed = false; renderAnswer()
+        answerText = ""; answerFailed = false; stream = TokenStream(); renderAnswer()
         answeredText = nil; badge.caption = .thinking
         shimmer.start(); animate()
         answerTask = Task { [weak self] in
@@ -554,6 +559,8 @@ final class FindInputCell: NSTextFieldCell {
         // A replaced question must not inherit the previous response’s pending Done dismissal.
         doneTask?.cancel(); doneTask = nil
         answerTask?.cancel(); answerTask = nil; shimmer.cancel()
+        // A cut-off answer is as long as it gets, so its highlight fades.
+        stream.finish()
         if badge.caption == .thinking { resetSend() }
     }
     /// Edited questions get Send back; the answered question keeps its close X.
@@ -563,20 +570,54 @@ final class FindInputCell: NSTextFieldCell {
         guard caption != badge.caption else { return }
         badge.caption = caption; animate()
     }
+    /// Lays out what has arrived; the display link shows its words.
     private func showAnswer(_ text: String) {
-        answerText = text; renderAnswer()
+        stream.receive(text); layOutStream(); animate()
+    }
+    private func layOutStream() {
+        let text = stream.text
+        if text != answerText { answerText = text; renderAnswer() }
     }
     private func finishAnswer(question: String, asked: String, answer: String) {
-        answerTask = nil; shimmer.finish()
+        answerTask = nil; shimmer.finish(); stream.finish(); layOutStream()
         if !answer.isEmpty { conversation.append(Turn(question: question, answer: answer)) }
-        else { resetSend(); answerText = "No answer came back."; answerFailed = true; renderAnswer() }
+        else { resetSend(); stream = TokenStream(); answerText = "No answer came back."; answerFailed = true; renderAnswer() }
         animate()
     }
     private func failAnswer(_ error: Error, partial: String) {
-        answerTask = nil; shimmer.finish(); resetSend()
+        answerTask = nil; shimmer.finish(); resetSend(); stream = TokenStream()
         let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         answerText = partial.isEmpty ? message : partial+"\n\n"+message; answerFailed = partial.isEmpty
         renderAnswer(); animate()
+    }
+    /// Shows the whole answer so far, for a bar that isn't animating.
+    private func revealAllTokens() {
+        guard !stream.isEmpty else { return }
+        stream.revealAll(at: CACurrentMediaTime()); paintTokens(); followAnswer()
+    }
+    /// Colors the words still fading in or highlighted, and hides the ones not shown yet.
+    /// Temporary attributes redraw them without restyling the answer every frame.
+    private func paintTokens() {
+        guard let manager = answerView.layoutManager else { return }
+        let length = answerView.textStorage?.length ?? 0
+        if paintedFrom < length {
+            manager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: paintedFrom, length: length-paintedFrom))
+        }
+        paintedFrom = length
+        if let hidden = stream.hiddenFrom, hidden < length {
+            manager.addTemporaryAttribute(.foregroundColor, value: NSColor.clear, forCharacterRange: NSRange(location: hidden, length: length-hidden))
+            paintedFrom = hidden
+        }
+        for tint in stream.tints where NSMaxRange(tint.range) <= length {
+            manager.addTemporaryAttribute(.foregroundColor, value: tint.color.color, forCharacterRange: tint.range)
+            paintedFrom = min(paintedFrom, tint.range.location)
+        }
+    }
+    /// Keeps the newest shown word in view once the panel has stopped growing, then the end of the answer.
+    private func followAnswer() {
+        guard height.target < contentHeight else { return }
+        if !stream.isRevealing { answerView.scrollToEndOfDocument(nil) }
+        else if let newest = stream.newest { answerView.scrollRangeToVisible(newest) }
     }
     private var showsAnswer: Bool { mode == .ask && !answerText.isEmpty }
     private var showsFooter: Bool { showsAnswer && !answerFailed }
@@ -585,9 +626,11 @@ final class FindInputCell: NSTextFieldCell {
         // A touch softer than the question above it.
         let color = answerFailed ? theme.muted : theme.text.blended(withFraction: 0.1, of: theme.popup) ?? theme.text
         answerView.textStorage?.setAttributedString(Self.styled(answerText, color: color))
+        stream.base = OKLab(color)
+        if !stream.isEmpty { stream.place(in: answerView.string as NSString, at: CACurrentMediaTime()) }
+        paintedFrom = 0; paintTokens()
         retarget()
-        // Follow a long answer as it streams once the panel has stopped growing.
-        if answerTask != nil, height.target < contentHeight { answerView.scrollToEndOfDocument(nil) }
+        if answerTask != nil || stream.isRevealing { followAnswer() }
     }
 
     /// Renders the model's light Markdown: bold, italics, code and links.
@@ -669,7 +712,7 @@ final class FindInputCell: NSTextFieldCell {
         footerLabel.frame = NSRect(x: footerIcon.frame.maxX+4, y: Self.footerMid-labelSize.height/2, width: moreButton.frame.minX-footerIcon.frame.maxX-8, height: labelSize.height)
     }
     private func animate() {
-        guard window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { settle(); return }
+        guard window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { revealAllTokens(); settle(); return }
         guard link == nil else { return }
         lastTick = CACurrentMediaTime()
         let link = displayLink(target: self, selector: #selector(tick(_:)))
@@ -684,8 +727,11 @@ final class FindInputCell: NSTextFieldCell {
         let now = CACurrentMediaTime(), dt = min(0.05, now-(lastTick ?? now)); lastTick = now
         slide.step(dt); height.step(dt); badge.step(dt); inputColor.step(dt)
         findText.step(dt); askText.step(dt); controls.step(dt); badgeItem.step(dt)
+        if stream.step(at: now) { followAnswer() }
+        paintTokens()
         let resting = slide.isResting(within: 0.001) && height.isResting(within: 0.05) && badge.isResting
             && findText.isResting && askText.isResting && controls.isResting && badgeItem.isResting && inputColor.isResting(within: 0.002)
+            && !stream.needsFrames
         if resting { link.invalidate(); self.link = nil; settle() } else { render() }
     }
     private func finishIfIdle() {
