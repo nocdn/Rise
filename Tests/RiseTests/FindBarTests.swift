@@ -39,14 +39,14 @@ import AppKit
         _ = bar.control(bar.input, textView: NSTextView(), doCommandBy: #selector(NSResponder.insertBacktab(_:)))
         XCTAssertEqual(bar.mode, .find)
     }
-    func testToolResponseShowsDoneAndReplacementCancelsItsDismissal() async throws {
+    func testFirstResponseShowsDoneAndReplacementCancelsItsDismissal() async throws {
         let bar = FindBar()
         var streams: [AsyncThrowingStream<String, Error>.Continuation] = []
         bar.answer = { _, _ in AsyncThrowingStream { streams.append($0) } }
         bar.toggleMode()
         bar.input.stringValue = "First question"
         bar.send()
-        streams[0].yield("") // A tool call arrives before answer text.
+        streams[0].yield("") // Snippet metadata arrives before visible answer text.
         try await Task.sleep(for: .milliseconds(20))
         XCTAssertEqual(bar.badge.caption, .done)
         XCTAssertTrue(bar.conversation.isEmpty)
@@ -65,26 +65,27 @@ import AppKit
         XCTAssertEqual(bar.conversation.last?.answer, "Current answer")
         bar.closeInstantly()
     }
-    func testResetClearsAnswerAndCancelsRemainingStream() async throws {
+    func testAnswerCloseDismissesAndCancelsRemainingStream() async throws {
         let bar = FindBar()
         var stream: AsyncThrowingStream<String, Error>.Continuation!
-        var cleared = false
-        bar.clearHighlights = { cleared = true }
+        bar.dismiss = { bar.hide() }
+        bar.present()
         bar.answer = { _, _ in AsyncThrowingStream { stream = $0 } }
         bar.toggleMode(); bar.input.stringValue = "Question"; bar.send()
         stream.yield("Partial answer")
         try await Task.sleep(for: .seconds(FindMotion.doneHold+0.1))
-        XCTAssertEqual(bar.badge.caption, .reset)
+        XCTAssertEqual(bar.badge.caption, .close)
         XCTAssertTrue(bar.isAnswering)
-        bar.badge.resetButton.performClick(nil)
+        bar.badge.closeButton.performClick(nil)
         stream.yield("Late answer"); stream.finish()
         try await Task.sleep(for: .milliseconds(20))
-        XCTAssertTrue(cleared)
-        XCTAssertEqual(bar.mode, .find)
-        XCTAssertEqual(bar.input.stringValue, "")
+        XCTAssertFalse(bar.isPresented)
+        XCTAssertEqual(bar.mode, .ask)
+        XCTAssertEqual(bar.input.stringValue, "Question")
         XCTAssertTrue(bar.conversation.isEmpty)
         XCTAssertFalse(bar.isAnswering)
-        bar.toggleMode()
+        bar.present()
+        XCTAssertEqual(bar.mode, .find)
         XCTAssertEqual(bar.badge.caption, .send)
         bar.regenerate()
         XCTAssertFalse(bar.isAnswering)
@@ -120,10 +121,19 @@ import AppKit
         try await Task.sleep(for: .milliseconds(20))
         bar.handleEscape()
         XCTAssertEqual(dismissals, 2)
-        bar.resetToFind(); bar.toggleMode(); bar.handleEscape()
+        bar.present(); bar.toggleMode(); bar.handleEscape()
         XCTAssertEqual(bar.mode, .find)
         XCTAssertEqual(dismissals, 2)
         bar.closeInstantly()
+    }
+    func testHiddenAnswerCloseDoesNotKeepStaleHoverBackground() {
+        let badge = SendBadge()
+        badge.caption = .close; badge.settle()
+        badge.closeButton.hover = true
+        badge.closeButton.layer?.backgroundColor = badge.closeButton.hoverColor.cgColor
+        badge.renderContents()
+        XCTAssertFalse(badge.closeButton.hover)
+        XCTAssertEqual(badge.closeButton.layer?.backgroundColor?.alpha, 0)
     }
     func testStyledAnswerRendersInlineMarkdown() {
         let text = FindBar.styled("It ships **March 3** with `rise`.", color: .black)

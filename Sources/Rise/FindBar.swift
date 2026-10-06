@@ -25,7 +25,7 @@ enum FindMotion {
     }()
     /// Leaving is a little quicker than the tray's own exit.
     static let outResponse = 0.2
-    /// How long "Done" shows before swapping to the reset X.
+    /// How long "Done" shows before swapping to the close X.
     static let doneHold = 0.4
     /// `initial={{ y: -15 }}` and `exit={{ y: 15 }}`: content enters from above and leaves downward.
     static let swapTravel = 15.0
@@ -69,17 +69,17 @@ struct PresenceItem {
     }
 }
 
-/// Ask mode's action at the right edge. Captions, including the reset X, use the
+/// Ask mode's action at the right edge. Captions, including the close X, use the
 /// same keyed spring swap as the placeholders.
 @MainActor final class SendBadge: FlippedView {
-    enum Caption: CaseIterable { case send, thinking, done, reset }
+    enum Caption: CaseIterable { case send, thinking, done, close }
     static let iconSize: CGFloat = 12, iconGap: CGFloat = 4
     private let sendView = FlippedView()
     private let returnIcon = NSImageView(image: TablerIcon.image(TablerIcon.enterKey, size: SendBadge.iconSize))
     private let send = label("Send", size: 13)
     private let thinking = label("Thinking", size: 13)
     private let done = label("Done", size: 13)
-    let resetButton = ChromeButton(symbol: "xmark", size: 11, title: "Clear answer and return to Find", action: {})
+    let closeButton = ChromeButton(symbol: "xmark", size: 11, title: "Close Find", action: {})
     private var items: [PresenceItem]
     private var widthSpring = MotionSpring(0), insetSpring = MotionSpring(14)
     private var theme = RiseTheme.neutral
@@ -92,25 +92,25 @@ struct PresenceItem {
             guard caption != oldValue else { return }
             for (index, kind) in Caption.allCases.enumerated() { items[index].set(kind == caption) }
             widthSpring.target = width(of: caption)
-            insetSpring.target = caption == .reset ? 8 : 14
-            resetButton.isEnabled = caption == .reset
-            setAccessibilityElement(caption != .reset)
+            insetSpring.target = caption == .close ? 8 : 14
+            closeButton.isEnabled = caption == .close
+            setAccessibilityElement(caption != .close)
             window?.invalidateCursorRects(for: self)
             updateColors()
-            setAccessibilityLabel(caption == .reset ? "Clear answer and return to Find" : caption == .thinking ? "Thinking" : caption == .done ? "Done" : "Send")
-            setAccessibilityEnabled(caption == .send || caption == .reset)
+            setAccessibilityLabel(caption == .close ? "Close Find" : caption == .thinking ? "Thinking" : caption == .done ? "Done" : "Send")
+            setAccessibilityEnabled(caption == .send || caption == .close)
         }
     }
     var isThinking: Bool { caption == .thinking }
     init() {
-        items = [PresenceItem(sendView, shown: true), PresenceItem(thinking, shown: false), PresenceItem(done, shown: false), PresenceItem(resetButton, shown: false)]
+        items = [PresenceItem(sendView, shown: true), PresenceItem(thinking, shown: false), PresenceItem(done, shown: false), PresenceItem(closeButton, shown: false)]
         super.init(frame: .zero)
         returnIcon.imageScaling = .scaleNone
-        resetButton.actionBlock = { [weak self] in self?.action?() }
+        closeButton.actionBlock = { [weak self] in self?.action?() }
         // Leave fractional-width slack on the left of the right-aligned captions.
         [send, thinking, done].forEach { $0.lineBreakMode = .byClipping; $0.alignment = .right }
         [returnIcon, send].forEach(sendView.addSubview)
-        [sendView, thinking, done, resetButton].forEach(addSubview)
+        [sendView, thinking, done, closeButton].forEach(addSubview)
         widthSpring.configure(response: FindMotion.swapResponse, bounce: 0)
         insetSpring.configure(response: FindMotion.swapResponse, bounce: 0)
         widthSpring.value = width(of: .send); widthSpring.target = widthSpring.value
@@ -127,18 +127,18 @@ struct PresenceItem {
         case .send: let text = Self.labelSize(send); return NSSize(width: Self.iconSize+Self.iconGap+text.width, height: text.height)
         case .thinking: return Self.labelSize(thinking)
         case .done: return Self.labelSize(done)
-        case .reset: return NSSize(width: 26, height: 28)
+        case .close: return NSSize(width: 26, height: 28)
         }
     }
-    private func width(of caption: Caption) -> CGFloat { size(of: caption).width-(caption == .reset ? 0 : 4) }
+    private func width(of caption: Caption) -> CGFloat { size(of: caption).width-(caption == .close ? 0 : 4) }
     func applyTheme(_ theme: RiseTheme) { self.theme = theme; updateColors() }
     private func updateColors() {
         // Assign directly: hovering changes the text color immediately, without a transition.
         let color = hovering && caption == .send ? theme.muted.blended(withFraction: 0.22, of: .white) ?? theme.muted : theme.muted
         send.textColor = color; returnIcon.contentTintColor = color
         [thinking, done].forEach { $0.textColor = theme.muted }
-        resetButton.contentTintColor = theme.muted
-        resetButton.hoverColor = theme.text.withAlphaComponent(0.07)
+        closeButton.contentTintColor = theme.muted
+        closeButton.hoverColor = theme.text.withAlphaComponent(0.07)
     }
     func step(_ dt: Double) {
         for index in items.indices { items[index].step(dt) }
@@ -149,8 +149,11 @@ struct PresenceItem {
     func renderContents() {
         for (index, kind) in Caption.allCases.enumerated() {
             let size = size(of: kind)
-            items[index].render(at: NSRect(x: bounds.width+(kind == .reset ? 0 : 4)-size.width, y: (bounds.height-size.height)/2, width: size.width, height: size.height))
+            items[index].render(at: NSRect(x: bounds.width+(kind == .close ? 0 : 4)-size.width, y: (bounds.height-size.height)/2, width: size.width, height: size.height))
         }
+        // Tracking enter/exit events can refer to its old frame while this button slides in.
+        // Reconcile against the current pointer even when no mouse movement occurs.
+        closeButton.refreshHoverState()
         let text = Self.labelSize(send)
         send.frame = NSRect(x: sendView.bounds.width-text.width, y: 0, width: text.width, height: text.height)
         returnIcon.frame = NSRect(x: 0, y: (text.height-Self.iconSize)/2, width: Self.iconSize, height: Self.iconSize)
@@ -163,15 +166,15 @@ struct PresenceItem {
     override func mouseEntered(with event: NSEvent) { hovering = true; updateColors() }
     override func mouseExited(with event: NSEvent) { hovering = false; updateColors() }
     override func resetCursorRects() {
-        if caption == .send || caption == .reset { addCursorRect(bounds, cursor: .pointingHand) }
+        if caption == .send || caption == .close { addCursorRect(bounds, cursor: .pointingHand) }
     }
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard !isHidden, alphaValue > 0.01, frame.contains(point) else { return nil }
-        return caption == .reset ? super.hitTest(point) : self
+        return caption == .close ? super.hitTest(point) : self
     }
-    override func mouseDown(with event: NSEvent) { if caption == .send || caption == .reset { action?() } }
+    override func mouseDown(with event: NSEvent) { if caption == .send || caption == .close { action?() } }
     override func accessibilityPerformPress() -> Bool {
-        guard caption == .send || caption == .reset else { return false }
+        guard caption == .send || caption == .close else { return false }
         action?(); return true
     }
 }
@@ -247,7 +250,6 @@ final class FindInputCell: NSTextFieldCell {
     var find: ((String, PageFind.Direction) async -> PageFind.Matches)?
     private var findGeneration = 0
     var dismiss: (() -> Void)?
-    var clearHighlights: (() async -> Void)?
     /// Streams an answer to a question about the page, given the conversation so far.
     var answer: ((String, [Turn]) -> AsyncThrowingStream<String, Error>)?
     private(set) var conversation: [Turn] = []
@@ -258,9 +260,9 @@ final class FindInputCell: NSTextFieldCell {
     private var lastMatches: PageFind.Matches?
     private var answerTask: Task<Void, Never>?
     var isAnswering: Bool { answerTask != nil }
-    /// The answered question shows reset; editing it restores Send.
+    /// The answered question shows Close; editing it restores Send.
     private var answeredText: String?
-    /// Holds "Done" for a moment before swapping to the reset button.
+    /// Holds "Done" for a moment before swapping to the close button.
     private var doneTask: Task<Void, Never>?
 
     init() {
@@ -298,7 +300,7 @@ final class FindInputCell: NSTextFieldCell {
         [count, previous, next, close].forEach(findControls.addSubview)
         badge.action = { [weak self] in
             guard let self else { return }
-            if self.badge.caption == .reset { self.resetToFind() } else { self.send() }
+            if self.badge.caption == .close { self.dismiss?() } else { self.send() }
         }
 
         answerScroll.drawsBackground = false; answerScroll.borderType = .noBorder
@@ -515,7 +517,7 @@ final class FindInputCell: NSTextFieldCell {
         answerTask = Task { [weak self] in
             var text = ""
             do {
-                // An empty token is the stream's sign that a tool call has started.
+                // An empty token signals the first model output, before visible answer text.
                 for try await token in tokens {
                     guard !Task.isCancelled else { return }
                     self?.responded(asked: asked)
@@ -530,7 +532,7 @@ final class FindInputCell: NSTextFieldCell {
             }
         }
     }
-    /// The model's first response of any kind, text or tool call: "Done", then a reset X a moment later.
+    /// The model's first output, including snippet metadata or reasoning: "Done", then a close X a moment later.
     private func responded(asked: String) {
         guard badge.caption == .thinking else { return }
         badge.caption = .done; animate()
@@ -538,7 +540,7 @@ final class FindInputCell: NSTextFieldCell {
             try? await Task.sleep(for: .seconds(FindMotion.doneHold))
             guard !Task.isCancelled, let self else { return }
             self.answeredText = asked
-            self.badge.caption = self.mode == .ask && self.input.stringValue == asked ? .reset : .send
+            self.badge.caption = self.mode == .ask && self.input.stringValue == asked ? .close : .send
             self.animate()
         }
     }
@@ -554,20 +556,12 @@ final class FindInputCell: NSTextFieldCell {
         answerTask?.cancel(); answerTask = nil; shimmer.cancel()
         if badge.caption == .thinking { resetSend() }
     }
-    /// Edited questions get Send back; the answered question keeps its reset X.
+    /// Edited questions get Send back; the answered question keeps its close X.
     private func updateSend() {
-        guard badge.caption == .send || badge.caption == .reset else { return }
-        let caption: SendBadge.Caption = mode == .ask && answeredText != nil && input.stringValue == answeredText ? .reset : .send
+        guard badge.caption == .send || badge.caption == .close else { return }
+        let caption: SendBadge.Caption = mode == .ask && answeredText != nil && input.stringValue == answeredText ? .close : .send
         guard caption != badge.caption else { return }
         badge.caption = caption; animate()
-    }
-    func resetToFind() {
-        cancelAnswer(); hasSubmittedQuestion = false
-        conversation = []; answerText = ""; answerFailed = false; lastQuestion = nil; answeredText = nil
-        input.stringValue = ""; placeholders.isHidden = false; badge.caption = .send
-        renderAnswer(); setMode(.find, animated: true)
-        if let clearHighlights { Task { await clearHighlights() } }
-        window?.makeFirstResponder(input)
     }
     private func showAnswer(_ text: String) {
         answerText = text; renderAnswer()
@@ -711,11 +705,6 @@ final class FindInputCell: NSTextFieldCell {
             return await PageFind.find(query, direction: direction, in: webView)
         }
         bar.dismiss = { [weak self] in self?.hideFind() }
-        bar.clearHighlights = { [weak tab] in
-            guard let webView = tab?.webView else { return }
-            await PageFind.clear(webView, selectingCurrent: false)
-            await PageFind.clearPassage(webView)
-        }
         configurePageAssistant(bar, for: tab)
         findBars[tab.id] = bar
         return bar

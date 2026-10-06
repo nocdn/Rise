@@ -84,9 +84,19 @@ class ChromeButton: NSButton {
     override func updateTrackingAreas() {
         super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+        refreshHoverState()
     }
-    override func mouseEntered(with event: NSEvent) { hover = true; layer?.backgroundColor = hoverColor.cgColor }
-    override func mouseExited(with event: NSEvent) { hover = false; layer?.backgroundColor = baseColor.cgColor }
+    /// Moving or revealing a button can leave its tracking state at the previous geometry.
+    func refreshHoverState() {
+        if let window, window.isVisible, !isHiddenOrHasHiddenAncestor, alphaValue > 0.01 {
+            hover = visibleRect.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
+        } else { hover = false }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        layer?.backgroundColor = (hover ? hoverColor : baseColor).cgColor
+        CATransaction.commit()
+    }
+    override func mouseEntered(with event: NSEvent) { refreshHoverState() }
+    override func mouseExited(with event: NSEvent) { refreshHoverState() }
 }
 final class SidebarGrip: FlippedView {
     var resize: ((CGFloat) -> Void)?

@@ -70,16 +70,38 @@ import WebKit
                 browser.window?.setContentSize(NSSize(width: 1100, height: 720)); browser.window?.center(); browser.showWindow(nil)
                 NSApp.activate(ignoringOtherApps: true)
                 let tab = browser.addTab(), web = tab.webView
+                if let source = ProcessInfo.processInfo.environment["RISE_FIND_PUBLIC_PAGE"], let url = URL(string: source) {
+                    web.load(URLRequest(url: url))
+                    try await Task.sleep(for: .milliseconds(250))
+                    let loading = Date()
+                    while web.isLoading && Date().timeIntervalSince(loading) < 20 { try await Task.sleep(for: .milliseconds(50)) }
+                    let page = try await PageAssistant.snapshot(of: web)
+                    var snippet = "", found = false, answer = "", highlightedAt: Date?, firstTextAt: Date?
+                    let stream = PageAssistant.answer("What is Jakub building?", history: [], page: { page }, highlight: { quote in
+                        snippet = quote; found = await PageFind.highlightPassage(quote, in: web)
+                        highlightedAt = Date(); return found
+                    })
+                    for try await token in stream {
+                        if !token.isEmpty && firstTextAt == nil { firstTextAt = Date() }
+                        answer += token
+                    }
+                    check(found, "The public page snippet matches: \(snippet)")
+                    check(answer.contains("self-healing"), "The public page answer streams correctly: \(answer)")
+                    if let highlightedAt, let firstTextAt { print("Highlight-to-answer gap: \(firstTextAt.timeIntervalSince(highlightedAt))s") }
+                    exit(failures == 0 ? 0 : 1)
+                }
                 let filler = String(repeating: "<p>Filler paragraph about browsers, tabs and the web.</p>", count: 60)
                 web.loadHTMLString("""
                 <html><head><title>Rise 2.0</title></head><body style="font: 16px -apple-system; padding: 40px">
                 <h1>Rise 2.0 is coming</h1><p>We've been testing Rise 2.0 with a small group since August. Each re<b>lease</b> gets a beta first.</p>
-                <p>The public release is planned for <b>March 3, 2027</b>, after a two-week beta that starts on February 15.</p>
+                <p>The public release is planned for <b>March 3, 2027<span style="position:absolute;clip:rect(0px,0px,0px,0px);width:1px;height:1px;overflow:hidden">release (opens in a new tab)</span></b>, after a two-week beta that starts on February 15.</p>
                 \(filler)<p id="last">Pricing stays free after the release.</p></body></html>
                 """, baseURL: URL(string: "https://rise.example/blog/2-0"))
                 try await Task.sleep(for: .milliseconds(900))
                 browser.update(); browser.root.layoutSubtreeIfNeeded()
                 let page = browser.findBar.frame, bar = browser.findBar
+                let snapshot = try await PageAssistant.snapshot(of: web)
+                check(snapshot.text.contains("March 3, 2027") && !snapshot.text.contains("opens in a new tab"), "Model context preserves visible text without clipped accessibility labels")
 
                 browser.showFind()
                 try await Task.sleep(for: .milliseconds(45))
@@ -174,16 +196,16 @@ import WebKit
                 check(abs(pressed-1) < 0.001, "Submitting does not scale Send: \(pressed)")
                 capture("05-thinking")
                 var grew = false, doneAt: Date?, resetting = false; let start = Date()
-                while (bar.isAnswering || bar.badge.caption != .reset) && Date().timeIntervalSince(start) < 60 {
+                while (bar.isAnswering || bar.badge.caption != .close) && Date().timeIntervalSince(start) < 60 {
                     try await Task.sleep(for: .milliseconds(20))
                     if bar.badge.caption == .done && doneAt == nil { doneAt = Date(); capture("05b-done") }
-                    if bar.badge.caption == .reset && !resetting { resetting = true; capture("06b-reset-entering") }
+                    if bar.badge.caption == .close && !resetting { resetting = true; capture("06b-reset-entering") }
                     if panel.height > FindBar.rowHeight+4 && !grew { grew = true; capture("06-streaming") }
                 }
                 while bar.isAnswering && Date().timeIntervalSince(start) < 60 { try await Task.sleep(for: .milliseconds(20)) }
                 let answeredAt = Date()
                 check(doneAt != nil, "Thinking turns to Done as soon as the model responds")
-                check(resetting && bar.badge.caption == .reset && !bar.badge.isHidden, "Done swaps into the reset X")
+                check(resetting && bar.badge.caption == .close && !bar.badge.isHidden, "Done swaps into the close X")
                 capture("07-answered")
                 var still = 0
                 while bar.shimmer.isRunning && Date().timeIntervalSince(answeredAt) < 3 {
@@ -203,7 +225,7 @@ import WebKit
                 type("When is this getting publicly released in Europe?")
                 try await Task.sleep(for: .milliseconds(60))
                 capture("07b-send-returning")
-                check(bar.badge.caption == .send && !bar.badge.isResting, "Editing swaps the reset X back to Send")
+                check(bar.badge.caption == .send && !bar.badge.isResting, "Editing swaps the close X back to Send")
                 try await Task.sleep(for: .milliseconds(400))
                 check(bar.badge.isResting && bar.badge.caption == .send && abs((bar.badge.layer?.transform.m11 ?? 0)-1) < 0.001, "Send is back at full size, reading Send")
                 browser.theme = .dark; browser.update()
@@ -234,26 +256,39 @@ import WebKit
                 check(!bar.isPresented, "Escape dismisses ask mode after an answer was received")
                 browser.showFind(); try await Task.sleep(for: .milliseconds(400))
                 bar.toggleMode()
-                // Reuse a controlled stream for the reset checks below.
+                // Reuse a controlled stream for the close checks below.
                 bar.answer = { _, _ in AsyncThrowingStream { continuation in
-                    continuation.yield("Reset verification answer"); continuation.finish()
+                    continuation.yield("Close verification answer"); continuation.finish()
                 } }
                 type("When is this getting publicly released?"); bar.send()
                 try await Task.sleep(for: .milliseconds(650))
                 _ = await PageFind.highlightPassage("March 3, 2027", in: web)
-                check(bar.badge.caption == .reset, "The answered question restores its reset X")
-                let resetFrame = bar.badge.resetButton.convert(bar.badge.resetButton.bounds, to: bar)
+                let closeReady = Date()
+                while (bar.badge.caption != .close || !bar.badge.isResting) && Date().timeIntervalSince(closeReady) < 2 {
+                    try await Task.sleep(for: .milliseconds(20))
+                }
+                check(bar.badge.caption == .close, "The answered question restores its close X")
+                let answerCloseFrame = bar.badge.closeButton.convert(bar.badge.closeButton.bounds, to: bar)
                 let closeFrame = bar.close.convert(bar.close.bounds, to: bar)
-                check(abs(resetFrame.minX-closeFrame.minX) < 0.1 && resetFrame.size == closeFrame.size && bar.badge.resetButton.hoverColor == bar.close.hoverColor, "The reset X matches the find X position, size and hover background")
-                let resetCenter = bar.badge.resetButton.convert(NSPoint(x: 13, y: 14), to: bar.superview)
-                check(bar.hitTest(resetCenter) === bar.badge.resetButton, "The reset X receives clicks through its native button")
-                bar.badge.resetButton.performClick(nil)
+                check(abs(answerCloseFrame.minX-closeFrame.minX) < 0.1 && answerCloseFrame.size == closeFrame.size && bar.badge.closeButton.hoverColor == bar.close.hoverColor, "The close X matches the find X position, size and hover background: \(answerCloseFrame) / \(closeFrame)")
+                let answerCloseCenter = bar.badge.closeButton.convert(NSPoint(x: 13, y: 14), to: bar.superview)
+                check(bar.hitTest(answerCloseCenter) === bar.badge.closeButton, "The close X receives clicks through its native button")
+                // Recreate a stale tracking-enter state, then verify the current pointer governs the background.
+                bar.badge.closeButton.hover = true
+                bar.badge.closeButton.layer?.backgroundColor = bar.badge.closeButton.hoverColor.cgColor
+                bar.badge.renderContents()
+                let button = bar.badge.closeButton
+                let underPointer = button.visibleRect.contains(button.convert(browser.window!.mouseLocationOutsideOfEventStream, from: nil))
+                check(button.hover == underPointer && (underPointer || button.layer?.backgroundColor?.alpha == 0), "The answer X has a hover background only when the pointer is over it")
+                bar.badge.closeButton.performClick(nil)
                 try await Task.sleep(for: .milliseconds(400))
-                let resetPassage = try await web.callAsyncJavaScript("return CSS.highlights.get('rise-passage')?.size ?? 0", contentWorld: PageFind.world) as? Int
-                let resetFind = await highlights(web)
-                check(bar.mode == .find && bar.input.stringValue.isEmpty && bar.conversation.isEmpty && abs(panel.height-FindBar.rowHeight) < 0.5, "Reset clears the question and answer, returning to Find")
-                check(resetPassage == 0 && resetFind == [0, 0], "Reset removes all page highlighting")
-                check(browser.window?.firstResponder === bar.input.currentEditor(), "Reset focuses the empty find input")
+                let closedPassage = try await web.callAsyncJavaScript("return CSS.highlights.get('rise-passage')?.size ?? 0", contentWorld: PageFind.world) as? Int
+                let closedFind = await highlights(web)
+                check(!bar.isPresented && bar.isHidden && bar.mode == .ask, "The answer X dismisses the whole dialog")
+                check(closedPassage == 0 && closedFind == [0, 0], "Closing removes all page highlighting")
+                check(browser.window?.firstResponder === web, "Closing returns keyboard focus to the page")
+                browser.showFind(); try await Task.sleep(for: .milliseconds(400))
+                check(bar.mode == .find && bar.conversation.isEmpty && abs(panel.height-FindBar.rowHeight) < 0.5, "Reopening returns to Find without the answer")
                 type("release")
                 try await Task.sleep(for: .milliseconds(500))
                 check(abs(panel.height-FindBar.rowHeight) < 0.5 && bar.count.stringValue.hasSuffix("/3"), "Find mode collapses the answer and finds again: \(panel.height), \(bar.count.stringValue)")

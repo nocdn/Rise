@@ -30,6 +30,12 @@ import WebKit
             return Matches(count: nil, index: -1)
         }
     }
+    /// Use the finder's own text extraction for model context so verbatim snippets map to
+    /// the same DOM nodes, including around inline links and hidden accessibility labels.
+    static func visibleText(in webView: WKWebView) async -> String? {
+        if case .success(let text as String) = await call("return __riseFind.sourceText()", [:], in: webView) { return text }
+        return nil
+    }
     /// Removes the find highlights and, on closing, selects the current match as browsers do.
     static func clear(_ webView: WKWebView, selectingCurrent: Bool) async {
         await clearNativeMarks(webView)
@@ -107,7 +113,7 @@ import WebKit
       }
       function collect() {
         const nodes = [], at = [], offsets = [], blocks = new Map();
-        let text = '', lastBlock = null;
+        let text = '', source = '', lastBlock = null;
         const blockOf = element => {
           for (let e = element; e && e !== document.body; e = e.parentElement) {
             let block = blocks.get(e);
@@ -116,11 +122,14 @@ import WebKit
           }
           return document.body;
         };
-        const space = () => { if (nodes.length && text.length && !text.endsWith(' ')) { text += ' '; at.push(nodes.length-1); offsets.push(nodes[nodes.length-1].length) } };
+        const space = () => { if (nodes.length && text.length && !text.endsWith(' ')) { text += ' '; source += ' '; at.push(nodes.length-1); offsets.push(nodes[nodes.length-1].length) } };
         const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
           acceptNode(node) {
             if (node.nodeType === Node.TEXT_NODE) return NodeFilter.FILTER_ACCEPT;
             if (SKIP.has(node.tagName)) return NodeFilter.FILTER_REJECT;
+            // Clipped screen-reader labels are in innerText but aren't visible passages.
+            const style = getComputedStyle(node);
+            if (style.clip.replace(/\s/g, '') === 'rect(0px,0px,0px,0px)' || style.clipPath === 'inset(50%)') return NodeFilter.FILTER_REJECT;
             if (node.tagName === 'BR') return NodeFilter.FILTER_ACCEPT;
             if (node.checkVisibility && !node.checkVisibility({ visibilityProperty: true })) return NodeFilter.FILTER_REJECT;
             return NodeFilter.FILTER_SKIP;
@@ -136,11 +145,11 @@ import WebKit
           nodes.push(node);
           for (let i = 0; i < value.length; i++) {
             const c = value[i];
-            if (/\s/.test(c)) { if (text.length && !text.endsWith(' ')) { text += ' '; at.push(nodes.length-1); offsets.push(i) } }
-            else { text += fold(c); at.push(nodes.length-1); offsets.push(i) }
+            if (/\s/.test(c)) { if (text.length && !text.endsWith(' ')) { text += ' '; source += ' '; at.push(nodes.length-1); offsets.push(i) } }
+            else { text += fold(c); source += c; at.push(nodes.length-1); offsets.push(i) }
           }
         }
-        return { text, range(start, end) {
+        return { text, source, range(start, end) {
           const range = document.createRange();
           const first = nodes[at[start]], last = nodes[at[end-1]];
           range.setStart(first, Math.min(offsets[start], first.length));
@@ -178,6 +187,7 @@ import WebKit
       }
       const stale = () => state.ranges.some(r => !r.startContainer.isConnected || !r.endContainer.isConnected);
       return {
+        sourceText() { return collect().source },
         find(query, direction) {
           if (!supported) return null;
           style();

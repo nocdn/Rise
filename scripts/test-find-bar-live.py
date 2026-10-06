@@ -12,7 +12,7 @@ sdk = subprocess.check_output(
 linker = ["-Xlinker", "-platform_version", "-Xlinker", "macos",
           "-Xlinker", "14.0", "-Xlinker", sdk]
 # Build the testable module and verify copy and shortcut mechanics.
-subprocess.run(["swift", "test", *linker, "--filter", "FindBarTests"],
+subprocess.run(["swift", "test", *linker, "--filter", "FindBarTests|PageAnswerStreamTests|PageAssistantTests"],
                cwd=root, check=True)
 products = root / ".build/debug"
 folders = list((root / ".build/out/Intermediates.noindex/Rise.build/Debug").glob(
