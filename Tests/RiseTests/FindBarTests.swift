@@ -125,6 +125,31 @@ import AppKit
         XCTAssertEqual(dismissals, 2)
         bar.closeInstantly()
     }
+    func testStreamHoldsBackOpenMarkdownAndPlaysWordsOutWithAFadingHighlight() {
+        var stream = TokenStream()
+        stream.base = OKLab(NSColor.black)
+        stream.receive("It ships **March 3")
+        XCTAssertEqual(stream.text, "It ships", "Words wait until they're whole and their Markdown has closed")
+        stream.place(in: "It ships", at: 0)
+        XCTAssertFalse(stream.step(at: 0.1))
+        XCTAssertEqual(stream.hiddenFrom, 0, "Laid-out words stay hidden while the buffer fills")
+        XCTAssertTrue(stream.step(at: 0.5))
+        XCTAssertNil(stream.hiddenFrom)
+        let tints = stream.tints
+        XCTAssertEqual(tints.map(\.range), [NSRange(location: 2, length: 6), NSRange(location: 0, length: 2)])
+        XCTAssertEqual(tints[0].color, TokenMotion.highlight(0))
+        XCTAssertEqual(tints[1].color.l, TokenMotion.highlight(1).l, accuracy: 0.0001)
+        XCTAssertFalse(stream.needsFrames, "A held highlight needs no frames")
+
+        stream.receive("It ships **March 3** with"); stream.finish()
+        XCTAssertEqual(stream.text, "It ships **March 3** with")
+        stream.place(in: "It ships March 3 with", at: 0.6)
+        XCTAssertFalse(stream.step(at: 0.6))
+        XCTAssertEqual(stream.hiddenFrom, 8)
+        XCTAssertTrue(stream.step(at: 2))
+        _ = stream.step(at: 2+TokenMotion.colorTransition)
+        XCTAssertTrue(stream.tints.isEmpty, "Every word settles into the text color once the answer is done")
+    }
     func testStyledAnswerRendersInlineMarkdown() {
         let text = FindBar.styled("It ships **March 3** with `rise`.", color: .black)
         XCTAssertEqual(text.string, "It ships March 3 with rise.")
