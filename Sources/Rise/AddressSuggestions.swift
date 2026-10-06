@@ -90,7 +90,7 @@ import RiseCore
                 let origin = SitePermissions.origin(suggestion.url)
                 let tab = suggestion.tabID.flatMap { id in tabs.first { $0.id == id } } ??
                     tabs.first { origin != nil && SitePermissions.origin($0.url) == origin && $0.favicon != nil }
-                suggestion.favicon = tab?.favicon ?? suggestionFavicons.image(for: suggestion.url, fetch: suggestion.fetchFavicon)
+                suggestion.favicon = tab?.favicon(for: theme) ?? suggestionFavicons.image(for: suggestion.url, fetch: suggestion.fetchFavicon, dark: theme == .dark)
             }
             return suggestion
         }

@@ -70,7 +70,7 @@ final class SuggestionFaviconsTests: XCTestCase {
         let deadline = Date().addingTimeInterval(3)
         while cache.image(for: url, fetch: false) == nil && Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertNotNil(cache.image(for: url, fetch: false))
-        XCTAssertEqual(IconProtocol.snapshotRequests(), [URL(string: "https://root-only.example/favicon.ico")!, URL(string: "https://root-only.example:443/")!, URL(string: "https://cdn.example/assets/calendar.png?x=1&y=2")!])
+        XCTAssertEqual(IconProtocol.snapshotRequests(), [URL(string: "https://root-only.example/favicon.ico")!, URL(string: "https://root-only.example:443/")!, URL(string: "https://cdn.example/assets/calendar.png?x=1&y=2")!, URL(string: "https://cdn.example/assets/icon.svg")!])
         let redirect = URL(string: "https://redirect-only.example")!
         _ = cache.image(for: redirect)
         let redirectDeadline = Date().addingTimeInterval(3)

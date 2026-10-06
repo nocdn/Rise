@@ -7,13 +7,18 @@ enum TokenMotion {
     static let fade = 0.2
     static let spread = 2
     static let colorTransition = 0.28
+    static let blur = 1.0, travel = 1.5
     /// Words play out `lead` behind the model, at the pace they arrived, so bursts and short
     /// stalls in the network come out as a steady stream. The first burst goes at the
-    /// exploration's 70 tok/s; any burst stays between `slowest` and `fastest`.
-    static let lead = 0.2, wordsPerSecond = 70.0, slowest = 30.0, fastest = 200.0
+    /// initial word cadence; any burst stays between `slowest` and `fastest`.
+    /// These are whole words, not model tokens: fast network chunks must not flash
+    /// a short response into view in a single frame or two.
+    static let lead = 0.2, wordsPerSecond = 30.0, slowest = 20.0, fastest = 40.0
+    /// Start promptly, then build the normal buffer as later words arrive.
+    static let initialLead = 0.03
     /// Buffer drift is corrected by playing up to this much slower or faster.
     static let drift = 0.25
-    /// The stream never trails the model by more than this.
+    /// Target maximum buffer delay, without exceeding the fastest reveal cadence.
     static let maxLag = 0.8
     /// A Markdown span held for its closing marker is given up on after this many characters.
     static let spanLimit = 300
@@ -70,6 +75,11 @@ struct OKLab: Equatable {
 /// exploration, `\s*\S+`. Everything that has arrived is laid out up front, so lines and the
 /// panel's height are settled before a word shows; words not shown yet are painted clear.
 struct TokenStream {
+    struct Entrance: Equatable {
+        let range: NSRange
+        /// Eased progress of the existing fade-in, from blurred/rightward to sharp/resting.
+        let progress: Double
+    }
     /// A laid-out word, shown from `due`. While highlighted, `tint` is its distance from the
     /// newest shown word, nil once it takes the text color; color changes transition from
     /// `from`, starting at `changed`.
@@ -115,8 +125,8 @@ struct TokenStream {
             // Keep about `lead` queued: a little slower while short of it, faster while over.
             start = scheduleEnd
             interval *= min(1+TokenMotion.drift, max(1-TokenMotion.drift, 1+(TokenMotion.lead-buffered)/(2*TokenMotion.lead)))
-        } else { start = now+TokenMotion.lead }
-        interval = min(interval, max(k/TokenMotion.fastest, now+TokenMotion.maxLag-start))
+        } else { start = now+(words.isEmpty ? TokenMotion.initialLead : TokenMotion.lead) }
+        interval = max(k/TokenMotion.fastest, min(interval, now+TokenMotion.maxLag-start))
         for index in 0..<count {
             words.append(Word(range: ranges[words.count], due: start+interval*Double(index)/k, from: base, tint: nil, changed: -.infinity))
         }
@@ -154,6 +164,11 @@ struct TokenStream {
             result.append((word.range, color))
         }
         return result
+    }
+    var entrances: [Entrance] {
+        words[..<shown].reversed().prefix { clock-$0.due < TokenMotion.fade }.map {
+            Entrance(range: $0.range, progress: TokenMotion.easing((clock-$0.due)/TokenMotion.fade))
+        }
     }
 
     // Older words were shown and took the text color first, so the first settled word from

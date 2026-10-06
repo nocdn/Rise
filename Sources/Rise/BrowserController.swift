@@ -141,11 +141,14 @@ import RiseCore
                   (self.palette.input.currentEditor() as? NSTextView)?.hasMarkedText() != true else { return }
             self.palette.replaceSuggestions(self.suggestions(for: query))
         }
-        suggestionFavicons.onLoad = { [weak self] origin, image in
+        suggestionFavicons.onVariantLoad = { [weak self] origin, image, dark in
             guard let self else { return }
-            self.palette.updateFavicon(image, origin: origin)
             for tab in self.tabs where SitePermissions.origin(tab.url) == origin {
-                tab.iconTask?.cancel(); tab.iconTask = nil; tab.iconOrigin = origin; tab.favicon = image
+                if dark { tab.darkFavicon = image }
+                else { tab.iconTask?.cancel(); tab.iconTask = nil; tab.iconOrigin = origin; tab.favicon = image }
+            }
+            if let icon = self.suggestionFavicons.image(for: URL(string: origin), fetch: false, dark: self.theme == .dark) {
+                self.palette.updateFavicon(icon, origin: origin)
             }
             self.update()
         }

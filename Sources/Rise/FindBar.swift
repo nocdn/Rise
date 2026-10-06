@@ -207,6 +207,7 @@ final class FindInputCell: NSTextFieldCell {
     static let width: CGFloat = 360, margin: CGFloat = 8, top: CGFloat = 8, bottom: CGFloat = 8
     static let rowHeight: CGFloat = 40, radius: CGFloat = 12
     static let answerInset = NSSize(width: 14, height: 10)
+    static let visibleAnswerLines = 8
     /// The "Answered by" row under an answer, which takes the place of its bottom inset.
     static let footerHeight: CGFloat = 34, footerMid: CGFloat = 18
     static var modelName: String { PageAssistant.model.split(separator: "/").last.map(String.init) ?? PageAssistant.model }
@@ -227,7 +228,7 @@ final class FindInputCell: NSTextFieldCell {
     private let separator = Surface()
     private let answerScroll = NSScrollView()
     // TextKit 1 from the start: the streaming effect paints with the layout manager.
-    private let answerView = NSTextView(usingTextLayoutManager: false)
+    private let answerView = TokenTextView()
     private let footer = FlippedView()
     private let footerIcon = NSImageView(image: TablerIcon.image(TablerIcon.searchWindow, size: 13))
     private let footerLabel = label("Answered by \(FindBar.modelName)", size: 11)
@@ -309,7 +310,8 @@ final class FindInputCell: NSTextFieldCell {
         }
 
         answerScroll.drawsBackground = false; answerScroll.borderType = .noBorder
-        answerScroll.hasVerticalScroller = true; answerScroll.autohidesScrollers = true; answerScroll.scrollerStyle = .overlay
+        answerScroll.hasVerticalScroller = false; answerScroll.autohidesScrollers = true; answerScroll.scrollerStyle = .overlay
+        answerScroll.verticalScrollElasticity = .none; answerScroll.horizontalScrollElasticity = .none
         answerView.isEditable = false; answerView.isSelectable = true; answerView.drawsBackground = false
         answerView.isRichText = true; answerView.textContainerInset = Self.answerInset
         answerView.textContainer?.lineFragmentPadding = 0; answerView.textContainer?.widthTracksTextView = false
@@ -336,7 +338,7 @@ final class FindInputCell: NSTextFieldCell {
         let hit = super.hitTest(point)
         return hit === self ? nil : hit
     }
-    override func layout() { super.layout(); render() }
+    override func layout() { super.layout(); retarget(); render() }
 
     func applyTheme(_ theme: RiseTheme) {
         self.theme = theme
@@ -612,6 +614,7 @@ final class FindInputCell: NSTextFieldCell {
             manager.addTemporaryAttribute(.foregroundColor, value: tint.color.color, forCharacterRange: tint.range)
             paintedFrom = min(paintedFrom, tint.range.location)
         }
+        answerView.tokenLayout.setEntrances(stream.entrances)
     }
     /// Keeps the newest shown word in view once the panel has stopped growing, then the end of the answer.
     private func followAnswer() {
@@ -663,10 +666,25 @@ final class FindInputCell: NSTextFieldCell {
         manager.ensureLayout(for: container)
         return ceil(manager.usedRect(for: container).height)+2*Self.answerInset.height
     }
+    /// Use rendered lines, including wrapping and their actual font heights.
+    private var eightLineAnswerHeight: CGFloat {
+        guard let container = answerView.textContainer, let manager = answerView.layoutManager else { return 0 }
+        manager.ensureLayout(for: container)
+        var lines = 0, bottom: CGFloat = 0
+        manager.enumerateLineFragments(forGlyphRange: manager.glyphRange(for: container)) { _, used, _, _, stop in
+            lines += 1; bottom = used.maxY
+            if lines == Self.visibleAnswerLines { stop.pointee = true }
+        }
+        return ceil(bottom)+2*Self.answerInset.height
+    }
     private var contentHeight: CGFloat { showsAnswer ? Self.rowHeight+1+answerHeight+footerRoom : Self.rowHeight }
     private var maxHeight: CGFloat { max(Self.rowHeight, bounds.height-topInset-Self.top-Self.bottom) }
     private func retarget() {
-        let target = min(contentHeight, maxHeight)
+        let answerLimit = Self.rowHeight+1+eightLineAnswerHeight+footerRoom
+        let target = min(contentHeight, answerLimit, maxHeight)
+        let scrollable = showsAnswer && target < contentHeight-0.5
+        answerScroll.hasVerticalScroller = scrollable
+        answerScroll.verticalScrollElasticity = scrollable ? .automatic : .none
         guard target != height.target else { return }
         height.target = target; animate()
     }
@@ -703,6 +721,10 @@ final class FindInputCell: NSTextFieldCell {
         separator.frame = NSRect(x: 12, y: Self.rowHeight, width: width-24, height: 1)
         separator.alphaValue = min(1, max(0, (height.value-Self.rowHeight)/12))
         answerScroll.frame = NSRect(x: 0, y: answerTop, width: width, height: max(0, height.target-answerTop-footerRoom))
+        if !answerScroll.hasVerticalScroller {
+            answerView.setFrameOrigin(.zero)
+            answerScroll.contentView.scroll(to: .zero)
+        }
         answerScroll.isHidden = !showsAnswer && height.value-Self.rowHeight < 0.5
         footer.isHidden = !showsFooter
         footer.frame = NSRect(x: 0, y: height.target-Self.footerHeight, width: width, height: Self.footerHeight)

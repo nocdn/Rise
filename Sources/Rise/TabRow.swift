@@ -57,7 +57,7 @@ import RiseCore
         if !animateDeveloperLayout && subtitleHideWork == nil {
             subtitle.alphaValue = developer ? 1 : 0; subtitle.isHidden = !developer
         }
-        if let favicon = tab.favicon { icon.image = favicon }
+        if let favicon = tab.favicon(for: theme) { icon.image = favicon }
         else if AddressResolver.isLocal(tab.url) {
             icon.image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
                 NSColor(hex: 0xEAA8B3).setFill(); NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: 3, yRadius: 3).fill(); return true

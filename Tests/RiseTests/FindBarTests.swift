@@ -141,8 +141,8 @@ import AppKit
         stream.receive("It ships **March 3")
         XCTAssertEqual(stream.text, "It ships", "Words wait until they're whole and their Markdown has closed")
         stream.place(in: "It ships", at: 0)
-        XCTAssertFalse(stream.step(at: 0.1))
-        XCTAssertEqual(stream.hiddenFrom, 0, "Laid-out words stay hidden while the buffer fills")
+        XCTAssertFalse(stream.step(at: 0.015))
+        XCTAssertEqual(stream.hiddenFrom, 0, "Laid-out words stay hidden until the brief initial delay")
         XCTAssertTrue(stream.step(at: 0.5))
         XCTAssertNil(stream.hiddenFrom)
         let tints = stream.tints
@@ -165,5 +165,77 @@ import AppKit
         XCTAssertEqual(text.string, "It ships March 3 with rise.")
         let bold = text.attribute(.font, at: 10, effectiveRange: nil) as? NSFont
         XCTAssertTrue(bold?.fontDescriptor.symbolicTraits.contains(.bold) ?? false)
+    }
+    func testShortBurstStillRevealsGraduallyAfterTheModelFinishes() {
+        var stream = TokenStream()
+        let answer = "He currently works at Cloudflare and previously interned at Objective."
+        stream.receive(answer); stream.finish(); stream.place(in: answer as NSString, at: 0)
+        _ = stream.step(at: TokenMotion.lead+0.1)
+        XCTAssertTrue(stream.isRevealing, "A short, completed response must not flash all its words at once")
+        XCTAssertNotNil(stream.hiddenFrom)
+        _ = stream.step(at: 1)
+        XCTAssertFalse(stream.isRevealing)
+        XCTAssertFalse(stream.needsFrames)
+    }
+    func testFirstWordStartsPromptlyWithoutRevealingTheRestOfTheBurst() {
+        var stream = TokenStream()
+        let answer = "First word followed by the rest of the answer."
+        stream.receive(answer); stream.finish(); stream.place(in: answer as NSString, at: 1)
+        XCTAssertFalse(stream.step(at: 1.015))
+        XCTAssertTrue(stream.step(at: 1.05), "The first word should begin within 50 ms of receiving displayable text")
+        XCTAssertEqual(stream.newest, NSRange(location: 0, length: 5))
+        XCTAssertNotNil(stream.hiddenFrom, "The remaining words retain their gradual cadence")
+        XCTAssertTrue(stream.tints.contains { $0.color.alpha > 0 }, "The first word is visibly fading in")
+    }
+    func testRapidChunksAndBufferCatchUpNeverExceedTheWordCadence() {
+        var stream = TokenStream()
+        var answer = ""
+        for (index, word) in ["He", "currently", "works", "at", "Cloudflare", "and", "previously", "interned", "at", "Objective."].enumerated() {
+            answer += word+" "
+            stream.receive(answer); stream.place(in: answer as NSString, at: Double(index)*0.001)
+        }
+        stream.finish(); stream.place(in: answer as NSString, at: 0.01)
+        var appearances: [Double] = []
+        for tick in 0..<1000 {
+            let time = Double(tick)*0.001
+            if stream.step(at: time) { appearances.append(time) }
+        }
+        XCTAssertEqual(appearances.count, 10, "Each word should have its own reveal rather than batching into one frame")
+        for (first, next) in zip(appearances, appearances.dropFirst()) {
+            XCTAssertGreaterThanOrEqual(next-first, 1/TokenMotion.fastest-0.001)
+        }
+    }
+    func testAnswerGrowsThroughEightRenderedLinesThenScrollsAndResetsForAShortAnswer() async throws {
+        let bar = FindBar(); bar.frame = NSRect(x: 0, y: 0, width: 700, height: 700)
+        bar.present(); bar.toggleMode(); bar.input.stringValue = "Question"
+        var continuation: AsyncThrowingStream<String, Error>.Continuation!
+        bar.answer = { _, _ in AsyncThrowingStream { continuation = $0 } }
+        func descendants(_ view: NSView) -> [NSView] { view.subviews.flatMap { [$0]+descendants($0) } }
+        let scroll = try XCTUnwrap(descendants(bar).compactMap { $0 as? NSScrollView }.first)
+        func answer(_ text: String) async throws {
+            bar.send(); continuation.yield(text); continuation.finish()
+            try await Task.sleep(for: .milliseconds(20)); bar.layoutSubtreeIfNeeded()
+        }
+        try await answer((1...8).map { "Line \($0)" }.joined(separator: "\n"))
+        XCTAssertFalse(scroll.hasVerticalScroller)
+        XCTAssertEqual(scroll.verticalScrollElasticity, .none, "Short answers should not bounce or scroll")
+        let eightLineHeight = scroll.frame.height
+        try await answer((1...12).map { "Line \($0)" }.joined(separator: "\n"))
+        XCTAssertTrue(scroll.hasVerticalScroller)
+        XCTAssertEqual(scroll.frame.height, eightLineHeight, accuracy: 2, "At most the trailing line gap differs at the eight-line boundary")
+        XCTAssertEqual(scroll.verticalScrollElasticity, .automatic)
+        let text = try XCTUnwrap(scroll.documentView as? NSTextView)
+        text.scrollToBeginningOfDocument(nil)
+        text.scrollToEndOfDocument(nil)
+        XCTAssertGreaterThan(scroll.contentView.bounds.minY, 0, "The bottom of a long answer remains reachable")
+        try await answer("A short replacement answer.")
+        XCTAssertFalse(scroll.hasVerticalScroller)
+        XCTAssertEqual(scroll.verticalScrollElasticity, .none)
+        XCTAssertLessThan(scroll.frame.height, eightLineHeight)
+        XCTAssertEqual(scroll.contentView.bounds.minY, 0, accuracy: 0.5)
+        try await answer(String(repeating: "This long paragraph wraps naturally into multiple lines. ", count: 20))
+        XCTAssertTrue(scroll.hasVerticalScroller, "Wrapped lines count even without explicit newlines")
+        XCTAssertEqual(scroll.frame.height, eightLineHeight, accuracy: 2)
+        bar.closeInstantly()
     }
 }

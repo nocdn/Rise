@@ -22,6 +22,9 @@ import RiseCore
     var needsBlockingReload = false
     var favicon: NSImage? { didSet { faviconData = FaviconSnapshot.encode(favicon) } }
     private(set) var faviconData: Data?
+    var darkFavicon: NSImage? { didSet { darkFaviconData = FaviconSnapshot.encode(darkFavicon) } }
+    private(set) var darkFaviconData: Data?
+    func favicon(for theme: RiseTheme) -> NSImage? { theme == .dark ? darkFavicon ?? favicon : favicon }
     var iconOrigin: String?
     var iconTask: URLSessionDataTask?
     var thumbnail: NSImage?
@@ -44,6 +47,10 @@ import RiseCore
            let origin = saved?.faviconOrigin, origin == SitePermissions.origin(requestedURL),
            let image = NSImage(data: data), image.isValid {
             iconOrigin = origin; favicon = image; faviconData = data
+            if let darkData = saved?.darkFaviconData, darkData.count <= FaviconSnapshot.maximumBytes,
+               let darkImage = NSImage(data: darkData), darkImage.isValid {
+                darkFavicon = darkImage; darkFaviconData = darkData
+            }
         }
         webView.isInspectable = true; webView.allowsBackForwardNavigationGestures = false
         webView.underPageBackgroundColor = NSColor(hex: 0xFDFCFC)
@@ -59,7 +66,8 @@ import RiseCore
         let origin = SitePermissions.origin(url)
         let data = origin != nil && origin == iconOrigin ? faviconData : nil
         return SavedTab(id: id, url: url?.absoluteString ?? "about:blank", title: title, pinned: pinned, developer: developer, customTitle: customTitle,
-                        faviconData: data, faviconOrigin: data == nil ? nil : origin, sessionState: sessionState)
+                        faviconData: data, darkFaviconData: data == nil ? nil : darkFaviconData,
+                        faviconOrigin: data == nil ? nil : origin, sessionState: sessionState)
     }
     /// The live history once the page has loaded; until then, the history it was restored with.
     var sessionState: Data? {
@@ -124,7 +132,7 @@ import RiseCore
     func updateIcon() {
         let origin = SitePermissions.origin(url)
         guard origin != iconOrigin else { return }
-        iconTask?.cancel(); iconTask = nil; iconOrigin = origin; favicon = nil
+        iconTask?.cancel(); iconTask = nil; iconOrigin = origin; favicon = nil; darkFavicon = nil
         guard let url, let origin, !AddressResolver.isLocal(url),
               var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
         parts.user = nil; parts.password = nil; parts.path = "/favicon.ico"; parts.query = nil; parts.fragment = nil

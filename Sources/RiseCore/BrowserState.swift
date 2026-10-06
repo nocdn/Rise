@@ -35,13 +35,14 @@ public struct SavedTab: Codable, Equatable {
     public var developer: Bool
     public var customTitle: String?
     public var faviconData: Data?
+    public var darkFaviconData: Data?
     public var faviconOrigin: String?
     /// WebKit's archived session for the tab, including its back/forward list.
     public var sessionState: Data?
-    public init(id: UUID = UUID(), url: String, title: String, pinned: Bool = false, developer: Bool = false, customTitle: String? = nil, faviconData: Data? = nil, faviconOrigin: String? = nil, sessionState: Data? = nil) {
+    public init(id: UUID = UUID(), url: String, title: String, pinned: Bool = false, developer: Bool = false, customTitle: String? = nil, faviconData: Data? = nil, darkFaviconData: Data? = nil, faviconOrigin: String? = nil, sessionState: Data? = nil) {
         self.id = id; self.url = url; self.title = title; self.pinned = pinned; self.developer = developer
         self.customTitle = customTitle
-        self.faviconData = faviconData; self.faviconOrigin = faviconOrigin
+        self.faviconData = faviconData; self.darkFaviconData = darkFaviconData; self.faviconOrigin = faviconOrigin
         self.sessionState = sessionState
     }
 }

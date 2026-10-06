@@ -4,19 +4,34 @@ import WebKit
     func discoverPageFavicon(_ web: WKWebView) {
         guard let pageURL = web.url else { return }
         // Read the real page's declared icon, including icons hosted on a CDN.
-        // Prefer raster icons that AppKit can decode, with /favicon.ico as fallback.
+        // Keep both appearances; an icon can use media links or SVG media rules.
         let script = """
         (() => {
           const icons = Array.from(document.querySelectorAll('link[rel]')).filter(link =>
             link.rel.toLowerCase().split(/\\s+/).includes('icon') || link.rel.toLowerCase() === 'apple-touch-icon');
-          icons.sort((a, b) => Number(/svg/i.test(a.type + a.href)) - Number(/svg/i.test(b.type + b.href)));
-          return icons.length ? icons[0].href : null;
+          function choose(dark) {
+            const eligible = icons.filter(link => {
+              const media = link.media.replace(/\\(\\s*prefers-color-scheme\\s*:\\s*(dark|light)\\s*\\)/gi,
+                (_, mode) => (mode.toLowerCase() === 'dark') === dark ? '(min-width: 0px)' : '(max-width: -1px)');
+              return !media || matchMedia(media).matches;
+            });
+            eligible.sort((a, b) => {
+              const themed = link => /prefers-color-scheme/i.test(link.media);
+              const svg = link => /svg/i.test(link.type + link.href);
+              return Number(themed(b))-Number(themed(a)) || (dark ? Number(svg(b))-Number(svg(a)) : Number(svg(a))-Number(svg(b)));
+            });
+            return eligible.length ? eligible[0].href : null;
+          }
+          return { light: choose(false), dark: choose(true) };
         })()
         """
         web.evaluateJavaScript(script) { [weak self, weak web] result, _ in
             guard let self, let web, web.url == pageURL, self.tabs.contains(where: { $0.webView === web }),
-                  let address = result as? String, let iconURL = URL(string: address) else { return }
-            self.suggestionFavicons.loadPageIcon(iconURL, for: pageURL)
+                  let icons = result as? [String: Any] else { return }
+            let light = FaviconDiscovery.lightIcon(for: pageURL) ?? (icons["light"] as? String).flatMap(URL.init(string:))
+            let dark = FaviconDiscovery.darkIcon(for: pageURL) ?? (icons["dark"] as? String).flatMap(URL.init(string:))
+            if let light { self.suggestionFavicons.loadPageIcon(light, for: pageURL) }
+            if let dark, dark != light { self.suggestionFavicons.loadPageIcon(dark, for: pageURL, dark: true) }
         }
     }
 }
