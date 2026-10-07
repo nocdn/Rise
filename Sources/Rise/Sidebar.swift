@@ -162,7 +162,7 @@ import RiseCore
         var y: CGFloat = 0; targetFrames = [:]
         let time = CACurrentMediaTime()
         for (index, row) in displayedRows.enumerated() {
-            let h: CGFloat = (row as? SplitTabRow)?.rowHeight ?? ((row as? TabRow)?.developer == true ? TabAppearance.developerHeight : TabAppearance.height)
+            let h: CGFloat = (row as? SplitTabRow)?.rowHeight ?? (row as? TabRow)?.rowHeight ?? TabAppearance.height
             let target = NSRect(x: TabAppearance.inset, y: y, width: w-2*TabAppearance.inset, height: h)
             targetFrames[orderedIDs[index]] = target
             if drag?.view !== row {

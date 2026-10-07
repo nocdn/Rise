@@ -10,6 +10,9 @@ import RiseCore
     let loadingBackground = TabLoadingBackground()
     var selected = false
     var developer = false
+    private(set) var repositorySubtitle: String?
+    var showsSubtitle: Bool { developer || repositorySubtitle != nil }
+    var rowHeight: CGFloat { repositorySubtitle != nil ? TabAppearance.repositoryHeight : developer ? TabAppearance.developerHeight : TabAppearance.height }
     var isSplitMember = false
     var theme = RiseTheme.neutral
     var onSelect: (() -> Void)?
@@ -26,7 +29,7 @@ import RiseCore
     private var originalTitle = ""
     private var hover = false
     private var hasLaidOut = false
-    private var animateDeveloperLayout = false
+    private var animateSubtitleLayout = false
     private var subtitleHideWork: DispatchWorkItem?
     init(tab: BrowserTab, onClose: @escaping () -> Void) {
         tabID = tab.id
@@ -45,19 +48,25 @@ import RiseCore
     override var isFlipped: Bool { true }
     @objc func selectTab() { onSelect?() }
     func update(tab: BrowserTab, selected: Bool, theme: RiseTheme) {
-        let changedDeveloper = developer != tab.developer
-        if changedDeveloper {
-            subtitleHideWork?.cancel(); subtitleHideWork = nil
-            animateDeveloperLayout = hasLaidOut && window?.isVisible == true && !isRenaming && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        }
+        let previouslyShowedSubtitle = showsSubtitle
+        if let request = PullRequest(url: tab.url), case .gitlab = request.forge { repositorySubtitle = request.project }
+        else { repositorySubtitle = nil }
         self.selected = selected; self.theme = theme; developer = tab.developer
+        if previouslyShowedSubtitle != showsSubtitle {
+            subtitleHideWork?.cancel(); subtitleHideWork = nil
+            animateSubtitleLayout = hasLaidOut && window?.isVisible == true && !isRenaming && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        }
         if !isRenaming { titleField.stringValue = tab.title }
         titleField.textColor = TabAppearance.text(theme, selected: selected)
-        subtitle.stringValue = AddressResolver.displayHost(tab.url) + (tab.url?.port.map { ":\($0)" } ?? "")
         subtitle.textColor = theme.muted
-        if developer { subtitle.isHidden = false }
-        if !animateDeveloperLayout && subtitleHideWork == nil {
-            subtitle.alphaValue = developer ? 1 : 0; subtitle.isHidden = !developer
+        if let repositorySubtitle {
+            subtitle.attributedStringValue = TabAppearance.repositorySubtitle(repositorySubtitle, font: subtitle.font ?? .systemFont(ofSize: 11), theme: theme)
+        } else {
+            subtitle.stringValue = AddressResolver.displayHost(tab.url) + (tab.url?.port.map { ":\($0)" } ?? "")
+        }
+        if showsSubtitle { subtitle.isHidden = false }
+        if !animateSubtitleLayout && subtitleHideWork == nil {
+            subtitle.alphaValue = showsSubtitle ? 1 : 0; subtitle.isHidden = !showsSubtitle
         }
         if let favicon = tab.favicon(for: theme) { icon.image = favicon }
         else if AddressResolver.isLocal(tab.url) {
@@ -74,7 +83,7 @@ import RiseCore
         icon.contentTintColor = theme.sidebarIcon
         close.contentTintColor = theme == .dark ? NSColor.white.withAlphaComponent(0.8) : theme.sidebarIcon
         close.hoverColor = theme == .dark ? NSColor.white.withAlphaComponent(0.08) : NSColor.black.withAlphaComponent(0.05)
-        setAccessibilityLabel(tab.title + (selected ? ", selected" : ""))
+        setAccessibilityLabel(tab.title + (repositorySubtitle.map { ", \($0)" } ?? "") + (selected ? ", selected" : ""))
         close.toolTip = "Close \(tab.title)"
         loadingBackground.update(loading: tab.isLoading, progress: tab.isPreparingNavigation ? 0.05 : tab.webView.estimatedProgress, theme: theme)
         style(); needsLayout = true; needsDisplay = true
@@ -92,29 +101,31 @@ import RiseCore
     }
     override func layout() {
         super.layout()
-        let animated = animateDeveloperLayout
-        animateDeveloperLayout = false; hasLaidOut = bounds.width > 0 && bounds.height > 0
+        let animated = animateSubtitleLayout
+        animateSubtitleLayout = false; hasLaidOut = bounds.width > 0 && bounds.height > 0
         let time = CACurrentMediaTime()
         let subtitleOpacity = subtitle.layer?.presentation()?.opacity ?? Float(subtitle.alphaValue)
         loadingBackground.frame = bounds
-        TabListMotion.move(icon, to: NSRect(x: isSplitMember ? 6 : 8, y: (bounds.height-16)/2, width: 16, height: 16), animated: animated, at: time)
         let titleHeight = ceil(titleField.intrinsicContentSize.height)
         let subtitleHeight = ceil(subtitle.intrinsicContentSize.height)
-        let textHeight = developer ? titleHeight + 1 + subtitleHeight : titleHeight
+        let textHeight = showsSubtitle ? titleHeight + 1 + subtitleHeight : titleHeight
         let textY = (bounds.height - textHeight) / 2
         let textX: CGFloat = isSplitMember ? 28 : 30
         let textWidth = max(0, bounds.width - textX - (close.isHidden ? 8 : 32))
         TabListMotion.move(titleField, to: NSRect(x: textX, y: textY, width: textWidth, height: titleHeight), animated: animated, at: time)
-        let subtitleY = developer ? textY + titleHeight + 1 : max(0, bounds.height-subtitleHeight-2)
+        let subtitleY = showsSubtitle ? textY + titleHeight + 1 : max(0, bounds.height-subtitleHeight-2)
+        let iconX: CGFloat = isSplitMember ? 6 : 8
+        let iconY = repositorySubtitle != nil ? textY + (titleHeight-16)/2 + 2 : (bounds.height-16)/2
+        TabListMotion.move(icon, to: NSRect(x: iconX, y: iconY, width: 16, height: 16), animated: animated, at: time)
         let subtitleFrame = NSRect(x: textX, y: subtitleY, width: textWidth, height: subtitleHeight)
-        if animated && developer && subtitleOpacity == 0 { subtitle.frame = subtitleFrame.offsetBy(dx: 0, dy: -2) }
+        if animated && showsSubtitle && subtitleOpacity == 0 { subtitle.frame = subtitleFrame.offsetBy(dx: 0, dy: -2) }
         TabListMotion.move(subtitle, to: subtitleFrame, animated: animated, at: time)
         if animated {
             subtitle.isHidden = false
-            DeveloperModeMotion.fade(subtitle, from: subtitleOpacity, to: developer ? 1 : 0, at: time)
-            if !developer {
+            DeveloperModeMotion.fade(subtitle, from: subtitleOpacity, to: showsSubtitle ? 1 : 0, at: time)
+            if !showsSubtitle {
                 let work = DispatchWorkItem { [weak self] in
-                    guard let self, !self.developer else { return }
+                    guard let self, !self.showsSubtitle else { return }
                     self.subtitle.isHidden = true; self.subtitleHideWork = nil
                 }
                 subtitleHideWork = work

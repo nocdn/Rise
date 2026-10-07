@@ -72,7 +72,8 @@ final class TabLoadingBackground: FlippedView {
         fillLayer.locations = [0, 0.65, 0.9, 1]
         CATransaction.commit()
         if loading {
-            if !self.loading {
+            let starting = !self.loading
+            if starting {
                 finishWork?.cancel(); finishWork = nil
                 fillLayer.removeAllAnimations(); fraction = 0
                 setWidth(0, animated: false)
@@ -80,7 +81,12 @@ final class TabLoadingBackground: FlippedView {
             }
             self.loading = true
             let next = max(fraction, min(0.97, max(0.07, CGFloat(progress))))
-            if next != fraction { fraction = next; setWidth(bounds.width * fraction, animated: true) }
+            if next != fraction {
+                fraction = next
+                // A removed animation's presentation layer can still show the last
+                // load for this transaction. A new load always grows from the left.
+                setWidth(bounds.width * fraction, animated: true, from: starting ? 0 : nil)
+            }
             if fraction >= 0.8, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
                fillLayer.animation(forKey: "waiting") == nil {
                 let pulse = CABasicAnimation(keyPath: "opacity")
@@ -107,8 +113,8 @@ final class TabLoadingBackground: FlippedView {
         super.layout()
         setWidth(bounds.width * fraction, animated: false)
     }
-    private func setWidth(_ width: CGFloat, animated: Bool) {
-        let old = fillLayer.presentation()?.bounds.width ?? fillLayer.bounds.width
+    private func setWidth(_ width: CGFloat, animated: Bool, from startWidth: CGFloat? = nil) {
+        let old = startWidth ?? fillLayer.presentation()?.bounds.width ?? fillLayer.bounds.width
         CATransaction.begin(); CATransaction.setDisableActions(true)
         fillLayer.position = .zero; fillLayer.bounds = CGRect(x: 0, y: 0, width: width, height: bounds.height)
         CATransaction.commit()

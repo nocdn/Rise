@@ -5,10 +5,24 @@ import AppKit
 @MainActor enum TabAppearance {
     static let height: CGFloat = 34
     static let developerHeight: CGFloat = 37
+    static let repositoryHeight: CGFloat = 44
     static let splitDeveloperHeight: CGFloat = 44
     static let spacing: CGFloat = 3
     static let inset: CGFloat = 6
     static let radius: CGFloat = 11
+    static func repositorySubtitle(_ repository: String, font: NSFont, theme: RiseTheme) -> NSAttributedString {
+        // FNV-1a gives the repo the same hue after every restart.
+        let seed = repository.utf8.reduce(UInt32(2_166_136_261)) { ($0 ^ UInt32($1)) &* 16_777_619 }
+        let hue = (seed % 360 + 120) % 360
+        let tint = NSColor(calibratedHue: CGFloat(hue)/360, saturation: 0.62,
+                           brightness: theme == .dark ? 0.8 : 0.58, alpha: 1)
+        let color = theme.muted.blended(withFraction: 0.8, of: tint) ?? theme.muted
+        let text = NSMutableAttributedString(string: repository, attributes: [.font: font, .foregroundColor: theme.muted])
+        let slash = (repository as NSString).range(of: "/", options: .backwards)
+        let start = slash.location == NSNotFound ? 0 : NSMaxRange(slash)
+        text.addAttribute(.foregroundColor, value: color, range: NSRange(location: start, length: text.length-start))
+        return text
+    }
     static func selectedFill(_ theme: RiseTheme) -> NSColor {
         theme == .neutral ? NSColor(hex: 0xFAFAFA) : theme.selectedTab
     }

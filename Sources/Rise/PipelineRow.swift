@@ -92,12 +92,14 @@ final class MergeCheckRow: StatusLinkRow {
     var mergeCheck: MergeCheck? {
         didSet {
             text = mergeCheck.map(Self.text)
-            setAccessibilityLabel(mergeCheck.map { $0.ready ? "Ready to merge" : "Can't merge yet: \($0.blockers.joined(separator: ", "))" })
+            setAccessibilityLabel(mergeCheck.map { $0.ready ? "Ready to merge" : "Can't merge yet: \(Self.text($0))" })
         }
     }
     /// The card's color, which the icon's glyph is cut out in.
     var cutout = NSColor.white { didSet { needsDisplay = true } }
-    static func text(_ check: MergeCheck) -> String { check.ready ? "Ready" : check.blockers.joined(separator: "; ") }
+    static func text(_ check: MergeCheck) -> String {
+        check.ready ? "Ready" : check.blockers.map { $0 == "Pipeline" ? "Pipeline success" : $0 }.joined(separator: " · ")
+    }
     override func drawIcon(in rect: NSRect) {
         if let mergeCheck { Self.drawMergeIcon(ready: mergeCheck.ready, dark: dark, cutout: cutout, in: rect) }
     }
