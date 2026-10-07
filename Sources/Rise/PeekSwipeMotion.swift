@@ -21,7 +21,8 @@ import AppKit
 
     var peekRecededPageScale: CGFloat {
         // The background grows at half the previous rate.
-        Self.peekPageScale + 0.005 * CGFloat(Self.peekVisualProgress(for: peekSwipePull))
+        // Behind a second Peek, the page sits a little further back.
+        (parkedPeek == nil ? Self.peekPageScale : Self.deepPageScale) + 0.005 * CGFloat(Self.peekVisualProgress(for: peekSwipePull))
     }
 
     func applyPeekSwipeTransform() {

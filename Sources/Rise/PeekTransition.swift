@@ -143,6 +143,12 @@ extension NSView {
             animation.toValue = NSValue(caTransform3D: target); animation.duration = animation.settlingDuration
             layer.add(animation, forKey: "peek.recede")
         }
+        // A first Peek under a second recedes the way the page does behind one: on the same
+        // spring, and easing forward as the top Peek is pulled away.
+        if let card = parkedPeek?.card {
+            let pull = CGFloat(Self.peekVisualProgress(for: peekSwipePull))
+            self.scale(card, to: receded ? Self.parkedPeekScale+0.005*pull : 1, along: spring)
+        }
     }
     var peekGhosts: [PeekGhost] { root.subviews.compactMap { $0 as? PeekGhost } }
     /// Stops every Peek animation at once, removing whatever it was moving.
@@ -206,6 +212,7 @@ extension NSView {
         recedePage(true, along: spring)
         NSAnimationContext.runAnimationGroup { context in
             context.duration = spring.perceptualDuration*0.7; peekBackdrop?.animator().alphaValue = 1
+            peekPageDim?.animator().alphaValue = 1
         }
         DispatchQueue.main.asyncAfter(deadline: .now()+spring.settlingDuration) { [weak self, weak ghost] in
             guard let self, let ghost, ghost.phase == .opening, ghost.superview != nil else { return }

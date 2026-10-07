@@ -28,7 +28,7 @@ final class PeekInteractionTests: XCTestCase {
         return BrowserController(sessionURL: file, restore: false)
     }
     @MainActor private func clean(_ browser: BrowserController) {
-        browser.closePeek(); browser.historySwipe.cancel(); browser.saveWork?.cancel()
+        browser.closeAllPeeks(); browser.historySwipe.cancel(); browser.saveWork?.cancel()
         browser.tabs.forEach { $0.cancelLoad() }; browser.suggestionFavicons.cancel()
         browser.window?.orderOut(nil)
     }
@@ -42,6 +42,53 @@ final class PeekInteractionTests: XCTestCase {
     @MainActor private func wait(_ condition: () -> Bool) async throws {
         for _ in 0..<500 where !condition() { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertTrue(condition())
+    }
+    @MainActor func testASecondPeekStacksOverTheFirstAndClosesOnItsOwn() async throws {
+        let browser = browser(); defer { clean(browser) }
+        browser.showWindow(nil)
+        let source = browser.addTab()
+        let scale = { (view: NSView) in view.layer?.transform.m11 ?? 1 }
+        func near(_ a: CGFloat, _ b: CGFloat) -> Bool { abs(a-b) < 0.0001 }
+        browser.showPeek(url: URL(string: "about:blank#first")!, from: source.webView)
+        let first = try XCTUnwrap(browser.peekTab), firstCard = try XCTUnwrap(browser.peekCard)
+        try await wait { near(scale(browser.pageShadow), BrowserController.peekPageScale) }
+        let covered = { (tab: BrowserTab) in (tab.webView as? LinkCursorWebView)?.isCovered == true }
+        XCTAssertTrue(covered(source), "The page under a Peek takes no hover"); XCTAssertFalse(covered(first))
+        XCTAssertTrue(source.webView.trackingAreas.isEmpty, "WebKit's hover tracking is set aside under a Peek")
+        XCTAssertFalse(first.webView.trackingAreas.isEmpty)
+
+        browser.showPeek(url: URL(string: "about:blank#second")!, from: first.webView)
+        let second = try XCTUnwrap(browser.peekTab)
+        XCTAssertFalse(second === first)
+        XCTAssertTrue(browser.parkedPeek?.tab === first, "The first Peek waits underneath")
+        XCTAssertNotNil(firstCard.superview)
+        try await wait { near(scale(firstCard), BrowserController.parkedPeekScale) && near(scale(browser.pageShadow), BrowserController.deepPageScale) }
+        let secondFrame = try XCTUnwrap(browser.peekCard).frame, firstFrame = firstCard.frame
+        XCTAssertGreaterThan(secondFrame.height, firstFrame.height*BrowserController.parkedPeekScale, "A tiny bit taller than the receded first Peek")
+        XCTAssertLessThan(secondFrame.height, firstFrame.height)
+        XCTAssertLessThan(secondFrame.width, firstFrame.width*BrowserController.parkedPeekScale, "And narrower")
+        XCTAssertTrue(covered(source) && covered(first)); XCTAssertFalse(covered(second))
+        XCTAssertTrue(browser.peekBackdrop?.superview?.isDescendant(of: firstCard) == true, "The first Peek dims under the second")
+        try await wait { browser.peekPageDim?.alphaValue == 1 }
+        try await wait { browser.parkedPeek?.controls.allSatisfy(\.isHidden) == true }
+
+        browser.showPeek(url: URL(string: "about:blank#third")!, from: second.webView)
+        XCTAssertTrue(browser.parkedPeek?.tab === first, "Two levels at most: a third replaces the second")
+
+        browser.closePeek(animated: true)
+        XCTAssertTrue(browser.peekTab === first, "Closing takes off only the top Peek")
+        XCTAssertNil(browser.parkedPeek); XCTAssertNil(browser.peekPageDim)
+        XCTAssertTrue(near(scale(firstCard), 1))
+        XCTAssertTrue(near(scale(browser.pageShadow), BrowserController.peekPageScale))
+        XCTAssertTrue(browser.peekControls.allSatisfy { !$0.isHidden })
+        XCTAssertFalse(covered(first), "The first Peek takes hover again")
+
+        browser.showPeek(url: URL(string: "about:blank#second")!, from: first.webView)
+        browser.closeAllPeeks()
+        XCTAssertNil(browser.peekTab); XCTAssertNil(browser.parkedPeek)
+        XCTAssertTrue(near(scale(browser.pageShadow), 1))
+        XCTAssertFalse(covered(source))
+        XCTAssertFalse(source.webView.trackingAreas.isEmpty, "Hover tracking comes back when the Peek closes")
     }
     @MainActor func testNormalExpandNavigatesSourceAndPreservesItsHistory() async throws {
         let browser = browser(); defer { clean(browser) }

@@ -99,6 +99,9 @@ import RiseCore
     var peekOrigin: PeekOrigin?
     var peekMotionToken: UUID?
     var peekLeftovers: [NSView] = []
+    /// The first Peek, while a second one is open over it.
+    var parkedPeek: ParkedPeek?
+    var peekPageDim: Surface?
     var peekStandby: (url: URL, tab: BrowserTab)?
     let peekStandbyView = PeekStandbyView()
     var peekStandbyWork: DispatchWorkItem?
@@ -402,7 +405,7 @@ import RiseCore
         siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel()
         if selectedID != id { selectedTab?.captureThumbnail() }
         hideLinkStatus()
-        hidePalette(); closePeek()
+        hidePalette(); closeAllPeeks()
         let previousID = selectedID
         selectedID = id
         swapFindBar(from: previousID)

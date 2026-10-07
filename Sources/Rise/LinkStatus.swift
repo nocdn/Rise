@@ -4,7 +4,9 @@ import WebKit
 @MainActor extension BrowserController {
     func showHoveredLink(_ url: URL?, in webView: WKWebView) {
         let visible = [selectedTab?.webView, splitTab?.webView, peekTab?.webView].compactMap { $0 }
-        guard visible.contains(where: { $0 === webView }), webView.superview != nil else { return }
+        // A page under a Peek can still report a hover it had; only the top page shows its links.
+        guard visible.contains(where: { $0 === webView }), webView.superview != nil,
+              (webView as? LinkCursorWebView)?.isCovered != true else { return }
         if url == nil, hoveredWebView !== webView { return }
         if hoveredWebView !== webView || url == nil { (hoveredWebView as? LinkCursorWebView)?.keepPeekCursor(at: nil) }
         hoveredWebView = url == nil ? nil : webView

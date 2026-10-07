@@ -24,6 +24,8 @@ final class PeekStandbyView: FlippedView {
     func renderPeekStandby(_ url: URL) {
         discardPeekStandby()
         let tab = configure(BrowserTab())
+        // It renders invisibly behind the page, so it mustn't take hover until it's shown.
+        (tab.webView as? LinkCursorWebView)?.isCovered = true
         peekStandbyView.alphaValue = 0; peekStandbyView.addSubview(tab.webView)
         if peekStandbyView.superview == nil { root.addSubview(peekStandbyView, positioned: .below, relativeTo: pageShadow) }
         peekStandby = (url, tab); layoutPeekStandby(); tab.load(url)
