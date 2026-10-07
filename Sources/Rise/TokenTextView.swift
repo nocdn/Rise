@@ -32,6 +32,8 @@ final class TokenLayoutManager: NSLayoutManager {
     override init() { super.init(); _ = Self.imageContext }
     required init?(coder: NSCoder) { super.init(coder: coder); _ = Self.imageContext }
     private(set) var entrances: [TokenStream.Entrance] = []
+    /// Whether entering words slide in from the right as they sharpen, or only sharpen in place.
+    var travels = true
 
     func setEntrances(_ next: [TokenStream.Entrance]) {
         guard next != entrances else { return }
@@ -79,7 +81,7 @@ final class TokenLayoutManager: NSLayoutManager {
         guard let image = entranceImage(glyphs, origin: origin, rect: rect, scale: scale, blur: CGFloat(TokenMotion.blur*(1-progress))) else {
             super.drawGlyphs(forGlyphRange: glyphs, at: origin); return
         }
-        image.draw(in: rect.offsetBy(dx: TokenMotion.travel*(1-progress), dy: 0), from: .zero,
+        image.draw(in: rect.offsetBy(dx: travels ? TokenMotion.travel*(1-progress) : 0, dy: 0), from: .zero,
                    operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
     }
 

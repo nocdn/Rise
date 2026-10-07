@@ -13,12 +13,14 @@ import RiseCore
         let handler = MenuAction(action); item.target = handler; item.representedObject = handler
         item.state = checked ? .on : .off; return item
     }
-    func themeMenu() {
-        let menu = NSMenu()
-        menu.addItem(menuItem("Light", checked: theme == .neutral) { [weak self] in self?.theme = .neutral; self?.update() })
-        menu.addItem(menuItem("Rose", checked: theme == .rose) { [weak self] in self?.theme = .rose; self?.update() })
-        menu.addItem(menuItem("Dark", checked: theme == .dark) { [weak self] in self?.theme = .dark; self?.update() })
-        menu.popUp(positioning: nil, at: NSPoint(x: 80, y: sidebar.bounds.height-42), in: sidebar)
+    func makeThemeMenu() -> NSMenuItem {
+        let item = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: "Theme")
+        for (title, choice) in [("Light", RiseTheme.neutral), ("Rose", .rose), ("Dark", .dark)] {
+            submenu.addItem(menuItem(title, checked: theme == choice) { [weak self] in self?.theme = choice; self?.update() })
+        }
+        item.submenu = submenu
+        return item
     }
     func siteMenu() {
         if siteControlsPopover.isShown { siteControlsPopover.close(); return }

@@ -8,7 +8,9 @@ import RiseCore
     }
     @discardableResult func openModifiedLink(_ url: URL, modifiers: NSEvent.ModifierFlags, from source: WKWebView? = nil, opensNewTab: Bool = false) -> Bool {
         if shouldPeek(modifiers: modifiers) { showPeek(url: url, from: source, opensNewTab: opensNewTab); return true }
-        if modifiers.contains(.command) { addTab(url: url); return true }
+        if modifiers.contains(.command) {
+            addTab(url: url, background: true, opener: tabs.first { $0.webView === source }?.id ?? selectedID); return true
+        }
         return false
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {

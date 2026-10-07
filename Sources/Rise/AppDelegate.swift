@@ -68,6 +68,7 @@ import AppKit
         item(history, "Forward", #selector(BrowserController.goForward), "]", target: browser)
         item(history, "Next Tab", #selector(BrowserController.nextTab), "]", modifiers: [.command, .shift], target: browser)
         item(history, "Previous Tab", #selector(BrowserController.previousTab), "[", modifiers: [.command, .shift], target: browser)
+        item(history, "Sort Tabs by Domain", #selector(BrowserController.cleanUpTabs), "k", modifiers: [.command, .shift], target: browser)
         item(history, "Copy Link", #selector(BrowserController.copyURL), "C", modifiers: [.command, .shift], target: browser)
         history.addItem(.separator())
         item(history, "Clear Browsing History…", #selector(BrowserController.confirmClearBrowsingHistory), target: browser)

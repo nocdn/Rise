@@ -19,7 +19,7 @@ import RiseCore
     let selectedTabShadow = Surface(radius: TabAppearance.radius)
     var selectedTabID: UUID?
     let archiveButton: ArchiveButton
-    let themeButton: ChromeButton
+    let cleanUpButton: HoverHintButton
     var rows: [UUID: TabRow] = [:]
     var splitRows: [UUID: SplitTabRow] = [:]
     var displayedRows: [NSView] = []
@@ -35,13 +35,15 @@ import RiseCore
     var onTabMenu: ((UUID, NSEvent) -> Void)?
     var onReorder: (([UUID]) -> Void)?
     var onRename: ((UUID, String) -> Void)?
-    init(copy: @escaping () -> Void, settings: @escaping () -> Void, archive: @escaping () -> Void, theme: @escaping () -> Void) {
+    var onTabHover: ((UUID, Bool) -> Void)?
+    var onTabPress: (() -> Void)?
+    init(copy: @escaping () -> Void, settings: @escaping () -> Void, archive: @escaping () -> Void, cleanUp: @escaping () -> Void) {
         copyButton = SidebarCopyButton(action: copy)
         settingsButton = SidebarHoverButton(symbol: "slider.horizontal.3", size: 14, title: "Site controls", action: settings)
         settingsButton.image = TablerIcon.image(TablerIcon.adjustments, size: 16, description: "Site controls")
         archiveButton = ArchiveButton(title: "Downloads", action: archive)
-        themeButton = ChromeButton(symbol: "paintbrush", size: 13, title: "Change theme", action: theme)
-        themeButton.image = TablerIcon.themeImage(size: 20)
+        cleanUpButton = HoverHintButton(image: TablerIcon.image(TablerIcon.tabCleanup, size: 20, description: "Sort tabs by domain"),
+                                        text: "Sort tabs by domain", shortcut: "⇧⌘K", action: cleanUp)
         super.init()
         address.isBordered = false; address.title = ""; address.wantsLayer = true
         address.layer?.cornerRadius = AddressAppearance.cornerRadius; address.layer?.cornerCurve = .continuous
@@ -59,7 +61,7 @@ import RiseCore
         selectedTabShadow.shadow = TabAppearance.shadow(.neutral)
         selectedTabShadow.isHidden = true
         addSubview(selectedTabShadow)
-        [address, copyButton, settingsButton, newTab, scroll, archiveButton, themeButton].forEach(addSubview)
+        [address, copyButton, settingsButton, newTab, scroll, archiveButton, cleanUpButton].forEach(addSubview)
         updateAddressControlVisibility(animated: false)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -76,11 +78,12 @@ import RiseCore
         addressText.textColor = blank ? theme.muted : theme.text.withAlphaComponent(theme == .dark ? 0.95 : 0.85)
         searchIcon.isHidden = !blank; hasAddress = !blank
         updateAddressControlVisibility()
-        [copyButton, settingsButton, archiveButton, themeButton].forEach {
-            $0.contentTintColor = $0 === archiveButton || $0 === themeButton ? theme.sidebarIcon : theme.muted
+        [copyButton, settingsButton, archiveButton, cleanUpButton].forEach {
+            $0.contentTintColor = $0 === archiveButton || $0 === cleanUpButton ? theme.sidebarIcon : theme.muted
             $0.hoverColor = theme.text.withAlphaComponent(0.07)
         }
         searchIcon.contentTintColor = theme.muted
+        cleanUpButton.hintAppearance = theme.appearance
         for id in Array(rows.keys) where !tabs.contains(where: { $0.id == id }) { rows.removeValue(forKey: id)?.removeFromSuperview() }
         for tab in tabs {
             let row: TabRow
@@ -94,6 +97,8 @@ import RiseCore
                 row.onDragStart = { [weak self] event in self?.beginTabDrag(id, event: event) }
                 row.onDragMove = { [weak self] event in self?.moveTabDrag(event) }
                 row.onDragEnd = { [weak self] in self?.endTabDrag() }
+                row.onHover = { [weak self] hovering in self?.onTabHover?(id, hovering) }
+                row.onPress = { [weak self] in self?.onTabPress?() }
                 rows[id] = row
             }
             let group = splits.first { $0.contains(tab.id) }
@@ -124,6 +129,13 @@ import RiseCore
         if bounds.width > 0 { layoutSubtreeIfNeeded() }
     }
     var orderedIDs: [UUID] = []
+    /// Rows glide to new places unless the change is meant to land at once.
+    private var animatesRows = true
+    func update(tabs: [BrowserTab], selected: BrowserTab?, theme: RiseTheme, splits: [SplitTabGroup] = [], animated: Bool) {
+        animatesRows = animated; defer { animatesRows = true }
+        update(tabs: tabs, selected: selected, theme: theme, splits: splits)
+        layoutSubtreeIfNeeded()
+    }
     func tabID(at point: NSPoint) -> UUID? {
         guard scroll.frame.contains(point) else { return nil }
         for row in displayedRows where row.convert(row.bounds, to: self).contains(point) {
@@ -154,13 +166,13 @@ import RiseCore
             let target = NSRect(x: TabAppearance.inset, y: y, width: w-2*TabAppearance.inset, height: h)
             targetFrames[orderedIDs[index]] = target
             if drag?.view !== row {
-                TabListMotion.move(row, to: target, animated: row.frame.width > 0, at: time)
+                TabListMotion.move(row, to: target, animated: animatesRows && row.frame.width > 0, at: time)
             }
             y += h+TabAppearance.spacing
         }
         rowsHost.frame = NSRect(x: 0, y: 0, width: w, height: max(y+8, scroll.bounds.height))
         archiveButton.frame = NSRect(x: w-37, y: bounds.height-39, width: 28, height: 28)
-        themeButton.frame = NSRect(x: 10, y: bounds.height-39, width: 28, height: 28)
+        cleanUpButton.frame = NSRect(x: 10, y: bounds.height-39, width: 28, height: 28)
         positionSelectedTabShadow()
     }
     @objc func positionSelectedTabShadow() {

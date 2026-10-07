@@ -114,15 +114,20 @@ final class BrowserLifecycleTests: XCTestCase {
         XCTAssertNil(browser.peekTab)
         XCTAssertNil(browser.peekCard)
     }
-    @MainActor func testUnmodifiedLinksKeepNavigatingAndCommandLinksOpenTabs() {
+    @MainActor func testUnmodifiedLinksKeepNavigatingAndCommandLinksOpenBackgroundTabs() {
         let browser = makeBrowser(); defer { clean(browser) }
-        browser.addTab()
+        let source = browser.addTab(), top = browser.addTab()
+        browser.select(source.id)
         let target = URL(string: "about:blank")!
         XCTAssertFalse(browser.openModifiedLink(target, modifiers: []))
         XCTAssertNil(browser.peekTab)
-        XCTAssertEqual(browser.tabs.count, 1)
-        XCTAssertTrue(browser.openModifiedLink(target, modifiers: .command))
         XCTAssertEqual(browser.tabs.count, 2)
+        XCTAssertTrue(browser.openModifiedLink(target, modifiers: .command))
+        XCTAssertEqual(browser.tabs.count, 3)
+        XCTAssertEqual(browser.selectedID, source.id, "The current tab stays in front")
+        XCTAssertEqual(browser.tabs.map(\.id).filter { $0 != browser.tabs[1].id }, [top.id, source.id])
+        XCTAssertEqual(browser.tabs[2].id, source.id, "The new tab sits right above the one it came from")
+        XCTAssertNotNil(browser.sidebar.rows[browser.tabs[1].id], "The new tab shows in the list")
         XCTAssertNil(browser.peekTab)
     }
     @MainActor func testHiddenSidebarFillsWindowAndRestoresNativeChromeImmediately() {

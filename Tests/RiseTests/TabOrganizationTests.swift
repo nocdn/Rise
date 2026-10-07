@@ -18,6 +18,26 @@ final class TabOrganizationTests: XCTestCase {
         NSEvent.mouseEvent(with: type, location: view.convert(point, to: nil), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
             windowNumber: view.window!.windowNumber, context: nil, eventNumber: 1, clickCount: clicks, pressure: type == .leftMouseUp ? 0 : 1)!
     }
+    @MainActor func testCleanUpBringsEachSitesTabsTogetherAndUndoes() throws {
+        let browser = browser(); defer { clean(browser) }
+        let urls = ["https://gitlab.com/a", "https://jira.example.com/1", "", "https://www.gitlab.com/b", "https://jira.example.com/2", "https://gitlab.com/c"]
+        let tabs = urls.map { url in
+            let tab = browser.addTab(); tab.requestedURL = URL(string: url); return tab
+        }
+        browser.reorderTabs(tabs.map(\.id)); browser.root.layoutSubtreeIfNeeded()
+        tabs.forEach { browser.sidebar.rows[$0.id]?.layer?.removeAllAnimations() }
+        let moving = { tabs.filter { browser.sidebar.rows[$0.id]?.layer?.animation(forKey: TabListMotion.movementKey) != nil } }
+        browser.cleanUpTabs()
+        let cleaned = [0, 3, 5, 1, 4, 2].map { tabs[$0].id }
+        XCTAssertEqual(browser.tabs.map(\.id), cleaned)
+        XCTAssertTrue(moving().isEmpty, "Sorting lands at once")
+        let undo = try XCTUnwrap(browser.window?.undoManager)
+        undo.undo()
+        XCTAssertEqual(browser.tabs.map(\.id), tabs.map(\.id), "Undo restores the order from before")
+        XCTAssertTrue(moving().isEmpty, "Undoing lands at once")
+        undo.redo()
+        XCTAssertEqual(browser.tabs.map(\.id), cleaned, "Redo cleans up again")
+    }
     @MainActor func testNewTabsAppearAtTopWhileExistingRowsMoveTogetherAndCloseCollapsesTogether() throws {
         let browser = browser(); defer { clean(browser) }
         let a = browser.addTab(), b = browser.addTab()

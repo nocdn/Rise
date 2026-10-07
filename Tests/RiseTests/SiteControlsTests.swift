@@ -41,7 +41,7 @@ final class SiteControlsTests: XCTestCase {
         XCTAssertFalse(content.view.subviews.contains { ($0 as? NSButton)?.title == "Secure" || ($0 as? NSButton)?.title == "Not Secure" })
         XCTAssertTrue(content.rows.values.allSatisfy { $0.subviews.filter { $0 is NSImageView }.count == 1 }, "Each row has only its status icon")
         XCTAssertEqual(content.view.frame.height, 374)
-        XCTAssertEqual(browser.makeMoreSiteMenu().items.filter { !$0.isSeparatorItem }.map(\.title), ["Copy URL", "Site Information", "Save Page Screenshot…", "Split View", "Search Engine", "Clear Browsing History…", "Camera Permissions…", "Microphone Permissions…", "Location Permissions…"])
+        XCTAssertEqual(browser.makeMoreSiteMenu().items.filter { !$0.isSeparatorItem }.map(\.title), ["Copy URL", "Site Information", "Save Page Screenshot…", "Split View", "Search Engine", "Theme", "Clear Browsing History…", "Camera Permissions…", "Microphone Permissions…", "Location Permissions…"])
         XCTAssertEqual(content.rows["Block Ads & Trackers"]?.state, .on)
         XCTAssertEqual(content.rows["Preload Links"]?.state, .off)
         content.rows["Preload Links"]?.performClick(nil)

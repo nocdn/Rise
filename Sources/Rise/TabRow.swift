@@ -18,6 +18,8 @@ import RiseCore
     var onDragStart: ((NSEvent) -> Void)?
     var onDragMove: ((NSEvent) -> Void)?
     var onDragEnd: (() -> Void)?
+    var onHover: ((Bool) -> Void)?
+    var onPress: (() -> Void)?
     private var pressEvent: NSEvent?
     private var dragging = false
     private(set) var isRenaming = false
@@ -135,8 +137,8 @@ import RiseCore
         super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
     }
-    override func mouseEntered(with event: NSEvent) { hover = true; style() }
-    override func mouseExited(with event: NSEvent) { if pressEvent == nil { hover = false; style() } }
+    override func mouseEntered(with event: NSEvent) { hover = true; style(); onHover?(true) }
+    override func mouseExited(with event: NSEvent) { if pressEvent == nil { hover = false; style() }; onHover?(false) }
     override func rightMouseDown(with event: NSEvent) { onMenu?(event) }
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard !isHidden else { return nil }
@@ -147,6 +149,7 @@ import RiseCore
         return self
     }
     override func mouseDown(with event: NSEvent) {
+        onPress?()
         guard event.clickCount < 2 else {
             cancelPress(); beginRename(); return
         }

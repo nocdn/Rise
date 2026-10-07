@@ -82,6 +82,11 @@ import RiseCore
     var sidebarWidth = SidebarWidth.ideal
     var sidebarVisible = true
     let sidebarPeek = SidebarPeek()
+    lazy var pullRequestHover: PullRequestHover = {
+        let hover = PullRequestHover(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("pr-summaries.json"))
+        hover.summaries.onChange = { [weak self] key in self?.pullRequestSummaryChanged(key) }
+        return hover
+    }()
     var paletteCreatesTab = false
     var splitGroups: [SplitTabGroup] = []
     var peekSourceTabID: UUID?
@@ -159,7 +164,7 @@ import RiseCore
         window.historyScrollEvent = { [weak self] event in self?.historySwipe.handle(event) ?? false }
         window.otherMouseEvent = { [weak self] event in self?.handleMiddleTabClick(event) ?? false }
         window.modifiersChanged = { [weak self] flags in self?.updateHoveredLinkModifiers(flags); self?.sidebarPeekModifiersChanged(flags) }
-        window.pointerMoved = { [weak self] event in self?.updateHoveredLinkCursor(event) }
+        window.pointerMoved = { [weak self] event in self?.updateHoveredLinkCursor(event); self?.pullRequestPointerMoved() }
         tabSwitcher.choose = { [weak self] id in self?.commitTabSwitch(id) }
         tabSwitchBackdrop.dismiss = { [weak self] in self?.cancelTabSwitch() }
         tabSwitchBackdrop.isHidden = true
@@ -209,7 +214,7 @@ import RiseCore
     }
     required init?(coder: NSCoder) { fatalError() }
     func buildChrome() {
-        sidebar = SidebarView(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() }, archive: { [weak self] in self?.showDownloads() }, theme: { [weak self] in self?.themeMenu() })
+        sidebar = SidebarView(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() }, archive: { [weak self] in self?.showDownloads() }, cleanUp: { [weak self] in self?.cleanUpTabs() })
         sidebar.onAddress = { [weak self] in self?.focusAddress() }
         // Recently closed tabs stay one right-click away on the downloads button.
         sidebar.archiveButton.secondaryAction = { [weak self] in self?.archiveMenu() }
@@ -219,6 +224,8 @@ import RiseCore
         sidebar.onTabMenu = { [weak self] id, event in self?.tabMenu(id, event: event) }
         sidebar.onReorder = { [weak self] in self?.reorderTabs($0) }
         sidebar.onRename = { [weak self] id, title in self?.renameTab(id, title: title) }
+        sidebar.onTabHover = { [weak self] id, hovering in self?.tabHoverChanged(id, hovering: hovering) }
+        sidebar.onTabPress = { [weak self] in self?.tabPressed() }
         pageShadow.layer?.cornerCurve = .continuous; pageClip.layer?.cornerCurve = .continuous
         pageShadow.shadow = chromeShadow(opacity: PageAppearance.shadowOpacity, blur: PageAppearance.shadowBlur, offset: PageAppearance.shadowOffset)
         pageClip.layer?.masksToBounds = true; pageClip.clipsToBounds = true
@@ -350,7 +357,7 @@ import RiseCore
     func windowDidResize(_ notification: Notification) { layoutChrome() }
     func windowWillClose(_ notification: Notification) { googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); saveNow() }
     func windowDidResignKey(_ notification: Notification) {
-        pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch(); endSidebarPeek()
+        pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch(); endSidebarPeek(); tabPressed()
         sidebar?.cancelTabInteractions()
         DispatchQueue.main.async { [weak self] in
             guard let self, !NSApp.isActive else { return }
@@ -379,8 +386,13 @@ import RiseCore
         tab.onThumbnailChange = { [weak self] in self?.refreshTabSwitcher() }
         return tab
     }
-    @discardableResult func addTab(url: URL? = nil, configuration: WKWebViewConfiguration? = nil) -> BrowserTab {
-        let tab = configure(BrowserTab(configuration: configuration)); tabs.insert(tab, at: 0); select(tab.id)
+    /// A background tab loads in the list without taking over the page, as ⌘-clicked links do.
+    /// Given an `opener`, it goes right above that tab (or its split pair), so the two stay together.
+    @discardableResult func addTab(url: URL? = nil, configuration: WKWebViewConfiguration? = nil, background: Bool = false, opener: UUID? = nil) -> BrowserTab {
+        let tab = configure(BrowserTab(configuration: configuration))
+        let members = opener.map { id in splitGroups.first { $0.contains(id) }.map { [$0.leftID, $0.rightID] } ?? [id] } ?? []
+        tabs.insert(tab, at: members.compactMap { id in tabs.firstIndex { $0.id == id } }.min() ?? 0)
+        if background { update() } else { select(tab.id) }
         if let url { tab.load(url) }; return tab
     }
     func select(_ id: UUID) {
@@ -405,6 +417,7 @@ import RiseCore
     func update() {
         applyTheme()
         sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: splitGroups)
+        refreshPullRequestTooltip()
         window?.title = (selectedTab?.title).map { "\($0) — Rise" } ?? "Rise"
         toolbarButtons[1].isEnabled = selectedTab?.webView.canGoBack ?? false
         toolbarButtons[2].isEnabled = selectedTab?.webView.canGoForward ?? false
@@ -476,6 +489,7 @@ import RiseCore
     @objc func retry() { errorWebView = nil; if let url = selectedTab?.url { selectedTab?.load(url) }; update() }
     @objc func toggleSidebar() {
         if keepPeekedSidebar() { return }
+        tabPressed()
         hidePalette()
         siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel()
         sidebarVisible.toggle()
