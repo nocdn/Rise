@@ -31,15 +31,30 @@ enum TablerIcon {
         return image
     }
 
-    /// Parses SVG path data (M, L, H, V, Q, A, Z and their relative forms).
+    /// Parses SVG path data (M, L, H, V, C, S, Q, A, Z and their relative forms).
     static func path(_ data: String) -> CGPath {
         var scanner = PathScanner(Array(data.utf8))
         let path = CGMutablePath()
         var current = CGPoint.zero, start = CGPoint.zero, command: UInt8 = 0
+        // A cubic's second control point, which a following S mirrors.
+        var lastControl: CGPoint?
         while let next = scanner.command() ?? (command == 0 ? nil : scanner.hasNumber ? implicit(after: command) : nil) {
             command = next
             let relative = command >= 97, origin = relative ? current : .zero
+            let mirrored = lastControl.map { CGPoint(x: 2*current.x-$0.x, y: 2*current.y-$0.y) } ?? current
+            lastControl = nil
             switch command | 0x20 {
+            case 99: // c
+                guard let x1 = scanner.number(), let y1 = scanner.number(), let x2 = scanner.number(), let y2 = scanner.number(),
+                      let x = scanner.number(), let y = scanner.number() else { return path }
+                let control = CGPoint(x: origin.x+x2, y: origin.y+y2)
+                current = CGPoint(x: origin.x+x, y: origin.y+y)
+                path.addCurve(to: current, control1: CGPoint(x: origin.x+x1, y: origin.y+y1), control2: control); lastControl = control
+            case 115: // s
+                guard let x2 = scanner.number(), let y2 = scanner.number(), let x = scanner.number(), let y = scanner.number() else { return path }
+                let control = CGPoint(x: origin.x+x2, y: origin.y+y2)
+                current = CGPoint(x: origin.x+x, y: origin.y+y)
+                path.addCurve(to: current, control1: mirrored, control2: control); lastControl = control
             case 109: // m
                 guard let x = scanner.number(), let y = scanner.number() else { return path }
                 current = CGPoint(x: origin.x+x, y: origin.y+y); start = current; path.move(to: current)

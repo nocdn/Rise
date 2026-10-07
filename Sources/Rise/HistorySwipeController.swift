@@ -170,6 +170,9 @@ import WebKit
         guard let hit = root.hitTest(point) else { return nil }
         let pages = [peekTab?.webView, selectedTab?.webView, splitTab?.webView].compactMap { $0 }
         guard let page = pages.first(where: { $0.superview != nil && (hit === $0 || hit.isDescendant(of: $0)) }) else { return nil }
+        // A Peek that has gone somewhere doesn't swipe: it neither goes back nor closes, so
+        // browsing inside it can't throw it away. Its history is on the toolbar arrows.
+        if page === peekTab?.webView, peekHasNavigated { return nil }
         if let tab = tabs.first(where: { $0.webView === page }), selectedID != tab.id { select(tab.id) }
         return page
     }

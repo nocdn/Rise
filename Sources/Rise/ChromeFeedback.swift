@@ -126,6 +126,8 @@ final class LinkStatusPill: Surface {
     let peekPrefix = label("Open ", size: 12, weight: .medium)
     let peekSuffix = label(" in Peek", size: 12, weight: .medium)
     private(set) var showsPeekHint = false
+    /// Inside a Peek, where another Peek can't open: the hint says so instead.
+    private(set) var peekBlocked = false
     private(set) var url: URL?
     private(set) var ready = false
     private var restingFrame = NSRect.zero
@@ -143,11 +145,12 @@ final class LinkStatusPill: Surface {
     }
     required init?(coder: NSCoder) { fatalError() }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    func show(_ url: URL?, theme: RiseTheme, peek: Bool = false) {
+    func show(_ url: URL?, theme: RiseTheme, peek: Bool = false, blocked: Bool = false) {
         if self.url != url { ready = false; text.stopShimmer() }
         let peek = url != nil && peek
         if showsPeekHint != peek { text.stopShimmer() }
         showsPeekHint = peek; peekPrefix.isHidden = !peek; peekSuffix.isHidden = !peek
+        peekBlocked = peek && blocked; peekPrefix.stringValue = peekBlocked ? "Cannot open " : "Open "
         self.url = url; isHidden = url == nil
         guard let url else { return }
         let value = peek ? url.absoluteString : url.absoluteString.replacingOccurrences(of: "^https?://", with: "", options: .regularExpression)
@@ -156,7 +159,7 @@ final class LinkStatusPill: Surface {
         text.shimmerColor = theme.linkShimmer
         fill = theme.status
         layer?.borderWidth = 0.75; layer?.borderColor = theme.text.withAlphaComponent(0.18).cgColor
-        setAccessibilityLabel(peek ? "Open \(url.absoluteString) in Peek" : url.absoluteString); toolTip = url.absoluteString
+        setAccessibilityLabel(peek ? "\(peekPrefix.stringValue)\(url.absoluteString) in Peek" : url.absoluteString); toolTip = url.absoluteString
     }
     func markReady(_ url: URL) {
         guard self.url == url, !ready else { return }
@@ -179,6 +182,15 @@ final class LinkStatusPill: Surface {
                             width: max(0, width - 24 - prefixWidth - suffixWidth + 2*hintInset), height: text.intrinsicContentSize.height)
         peekSuffix.frame = NSRect(x: text.frame.maxX - hintInset, y: (26-peekSuffix.intrinsicContentSize.height)/2, width: suffixWidth, height: peekSuffix.intrinsicContentSize.height)
         text.needsLayout = true
+    }
+    /// A quick side-to-side error shake, for a Peek asked for where one can't open.
+    func shake() {
+        guard !isHidden, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, let layer else { return }
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -5, 5, -4, 4, -2, 2, 0]
+        shake.duration = 0.32
+        shake.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        layer.add(shake, forKey: "shake")
     }
     private func applyPosition() {
         CATransaction.begin(); CATransaction.setDisableActions(true)

@@ -45,22 +45,30 @@ final class SkeletonLine: NSView {
 
 /// GitHub's colors for a pull request's status and diff size, in light and dark.
 enum PullRequestPalette {
-    static func badge(_ state: PullRequestDetails.State, dark: Bool) -> NSColor {
+    /// Each pill is one saturated color at low opacity. Over the light card it lands on the
+    /// soft tints the pills were designed with; over the dark card the same values give a
+    /// matching dark tint.
+    static func tint(_ state: PullRequestDetails.State) -> (color: NSColor, opacity: CGFloat) {
         switch state {
-        case .open: return NSColor(hex: dark ? 0x238636 : 0xE9FBF0)
-        case .draft: return NSColor(hex: dark ? 0x656C76 : 0x59636E)
-        case .merged: return NSColor(hex: dark ? 0x8957E5 : 0xEEEDFF)
-        case .closed: return NSColor(hex: dark ? 0xDA3633 : 0xFFE9E2)
+        case .open: return (NSColor(hex: 0x6CFFA7), 0.12)   // #E9FBF0 over #FAFAFA
+        case .closed: return (NSColor(hex: 0xFF895A), 0.15) // #FBE9E2, for #FFE9E2
+        case .merged: return (NSColor(hex: 0xAAA3FF), 0.15) // #EEEDFB, for #EEEDFF
+        case .draft: return (NSColor(hex: 0x8C959F), 0.18)
         }
     }
-    /// Light pills are soft tints with deep text; dark ones and Draft stay solid with white text.
+    static func badge(_ state: PullRequestDetails.State, dark: Bool) -> NSColor {
+        let tint = tint(state)
+        return tint.color.withAlphaComponent(tint.opacity)
+    }
+    /// Deep text on the light tints. On the dark ones deep text would all but vanish
+    /// (contrast under 2), so the pill's own color is the text there.
     static func badgeText(_ state: PullRequestDetails.State, dark: Bool) -> NSColor {
-        guard !dark else { return .white }
+        if dark { return state == .draft ? NSColor(hex: 0xAEB6BE) : tint(state).color }
         switch state {
         case .open: return NSColor(hex: 0x017C1E)
         case .merged: return NSColor(hex: 0x634BBE)
         case .closed: return NSColor(hex: 0xB02F07)
-        case .draft: return .white
+        case .draft: return NSColor(hex: 0x59636E)
         }
     }
     static func added(dark: Bool) -> NSColor { NSColor(hex: dark ? 0x3FB950 : 0x1A7F37) }
@@ -95,16 +103,16 @@ extension PullRequestDetails.State {
     }
 }
 
-/// The status badge, commit and file counts, lines added and removed, and diff squares.
-final class PullRequestMetaRow: FlippedView {
+/// The status badge, the number and file count, lines added and removed, and diff squares.
+/// The file count opens the changed files.
+final class PullRequestMetaRow: CardLinkRow {
     static let height: CGFloat = 20
     var details: PullRequestDetails? { didSet { needsDisplay = true } }
-    var number = 0 { didSet { needsDisplay = true } }
-    var dark = false { didSet { needsDisplay = true } }
-    var muted = NSColor.secondaryLabelColor { didSet { needsDisplay = true } }
+    /// "#12" on GitHub, "!12" on GitLab.
+    var reference = "" { didSet { needsDisplay = true } }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard let details else { return }
+        guard let details else { placeLink(.zero); return }
         let midY = Self.height/2
         let badgeFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
         let ink = PullRequestPalette.badgeText(details.state, dark: dark)
@@ -125,11 +133,15 @@ final class PullRequestMetaRow: FlippedView {
         let blocksWidth: CGFloat = 5*8+4*2
         // The diff size keeps to the right edge. When space runs out, the wording shortens
         // first, then the squares go.
-        var counts = NSAttributedString(string: "#\(number) · \(files) changed", attributes: [.font: font, .foregroundColor: muted])
-        func width(blocks: Bool) -> CGFloat { badgeWidth+8+counts.size().width+12+added.size().width+4+deleted.size().width+(blocks ? 6+blocksWidth : 0) }
-        if width(blocks: true) > bounds.width { counts = NSAttributedString(string: "#\(number) · \(files)", attributes: [.font: font, .foregroundColor: muted]) }
+        let number = NSAttributedString(string: "\(reference) · ", attributes: [.font: font, .foregroundColor: muted])
+        var link = NSAttributedString(string: "\(files) changed", attributes: [.font: font, .foregroundColor: linkColor])
+        func width(blocks: Bool) -> CGFloat { badgeWidth+8+number.size().width+link.size().width+12+added.size().width+4+deleted.size().width+(blocks ? 6+blocksWidth : 0) }
+        if width(blocks: true) > bounds.width { link = NSAttributedString(string: files, attributes: [.font: font, .foregroundColor: linkColor]) }
         let showsBlocks = width(blocks: true) <= bounds.width
-        counts.draw(at: NSPoint(x: badgeWidth+8, y: midY-counts.size().height/2))
+        number.draw(at: NSPoint(x: badgeWidth+8, y: midY-number.size().height/2))
+        let linkX = badgeWidth+8+number.size().width
+        link.draw(at: NSPoint(x: linkX, y: midY-link.size().height/2))
+        placeLink(NSRect(x: linkX, y: 0, width: ceil(link.size().width), height: Self.height))
         var x = bounds.width-(showsBlocks ? blocksWidth : 0)
         if showsBlocks {
             let blocks = PullRequestPalette.blocks(additions: details.additions, deletions: details.deletions)
@@ -154,21 +166,22 @@ final class PullRequestMetaRow: FlippedView {
     }
 }
 
-/// The hover card for a GitHub pull request tab: title, status and diff size, then a short
+/// The hover card for a GitHub pull request or GitLab merge request tab: title, status and diff size, then a short
 /// description that streams in like the find bar's answers. It shares the find bar's
 /// surface, its height spring and its word reveal.
 @MainActor final class PullRequestTooltip: FlippedView {
     struct Content {
         var title: String
-        var number: Int
+        var reference: String
         var details: PullRequestDetails?
         var summary: String
         var phase: PullRequestSummaries.Phase
     }
-    /// As wide as the find bar, so the status row fits on one line.
-    static let width = FindBar.width
+    /// As wide as the find bar, so the status row fits on one line; wider, up to the maximum,
+    /// when a merge request's pipeline and merge checks need it to stay on one line too.
+    static let width = FindBar.width, maximumWidth: CGFloat = 520
     static let inset = NSSize(width: 14, height: 12)
-    static let titleGap: CGFloat = 8, summaryGap: CGFloat = 10
+    static let titleGap: CGFloat = 8, summaryGap: CGFloat = 10, pipelineGap: CGFloat = 10, mergeGap: CGFloat = 6
     /// A pill reads as indented beside plain text; nudging its row left lines the badge up
     /// with the title and description optically.
     static let metaNudge: CGFloat = 3
@@ -180,6 +193,8 @@ final class PullRequestMetaRow: FlippedView {
     private let content = FlippedView()
     private let titleLabel = NSTextField(wrappingLabelWithString: "")
     private let meta = PullRequestMetaRow()
+    private let pipelineRow = PipelineRow()
+    private let mergeRow = MergeCheckRow()
     private var skeleton = SkeletonLine()
     private let summaryView = TokenTextView()
     private var stream = TokenStream(), paintedFrom = 0, laidOut = ""
@@ -191,8 +206,15 @@ final class PullRequestMetaRow: FlippedView {
     private(set) var key: String?
     /// The pointer went into the card, or left it.
     var onPointer: ((Bool) -> Void)?
+    /// The file count was clicked.
+    var onOpenFiles: (() -> Void)?
+    /// The pipeline's number was clicked.
+    var onOpenPipeline: ((Pipeline) -> Void)?
+    /// The merge status was clicked.
+    var onOpenMergeChecks: (() -> Void)?
 
-    private var textWidth: CGFloat { Self.width-2*Self.inset.width }
+    private(set) var cardWidth = PullRequestTooltip.width
+    private var textWidth: CGFloat { cardWidth-2*Self.inset.width }
     /// The selected tab's fill in the light themes, a touch lighter than the find bar.
     private var background: NSColor { theme == .dark ? theme.popup : TabAppearance.selectedFill(theme) }
     private var fadedTitle: NSColor { theme.muted.blended(withFraction: 0.2, of: background) ?? theme.muted }
@@ -223,7 +245,10 @@ final class PullRequestMetaRow: FlippedView {
         summaryView.isRichText = true; summaryView.textContainerInset = .zero
         summaryView.textContainer?.lineFragmentPadding = 0; summaryView.textContainer?.widthTracksTextView = false
         summaryView.textContainer?.containerSize = NSSize(width: textWidth, height: .greatestFiniteMagnitude)
-        [titleLabel, meta, skeleton, summaryView].forEach(content.addSubview)
+        [titleLabel, meta, pipelineRow, mergeRow, skeleton, summaryView].forEach(content.addSubview)
+        mergeRow.onOpen = { [weak self] in self?.onOpenMergeChecks?() }
+        meta.onOpen = { [weak self] in self?.onOpenFiles?() }
+        pipelineRow.onOpen = { [weak self] in if let pipeline = self?.current?.details?.pipeline { self?.onOpenPipeline?(pipeline) } }
         panel.addSubview(content); addSubview(panel)
         height.configure(response: FindMotion.swapResponse, bounce: 0)
         top.configure(response: FindMotion.swapResponse, bounce: 0)
@@ -238,7 +263,8 @@ final class PullRequestMetaRow: FlippedView {
     override func mouseExited(with event: NSEvent) { onPointer?(false) }
 
     /// Shows the card beside a tab at once, or glides an open one over to it.
-    func present(key: String, content next: Content, left: CGFloat, anchorTop: CGFloat, maxBottom: CGFloat, theme: RiseTheme) {
+    /// `glides` continues from where a card that just closed was, rather than appearing in place.
+    func present(key: String, content next: Content, left: CGFloat, anchorTop: CGFloat, maxBottom: CGFloat, theme: RiseTheme, glides: Bool = false) {
         let appearing = self.key == nil
         let switching = key != self.key
         self.key = key; self.theme = theme; isHidden = false
@@ -246,20 +272,28 @@ final class PullRequestMetaRow: FlippedView {
         applyTheme()
         if switching { resetSummary(next) }
         update(next)
-        if appearing { height.settle(); top.settle(); render() }
+        if appearing { height.settle(); if !glides { top.settle() }; render() }
         animate()
     }
     /// New details or more of the description for the card's pull request.
     func update(_ next: Content) {
         current = next
         titleLabel.attributedStringValue = Self.title(next.title, color: theme.text, muted: fadedTitle)
-        meta.details = next.details; meta.number = next.number
+        meta.details = next.details; meta.reference = next.reference; pipelineRow.pipeline = next.details?.pipeline; mergeRow.mergeCheck = next.details?.mergeCheck
+        fitWidth()
         if next.summary != laidOut || next.phase == .done {
             stream.receive(next.summary)
             if next.phase == .done { stream.finish() }
             layOutSummary()
         }
         retarget(); animate()
+    }
+    private func fitWidth() {
+        let row = max(StatusLinkRow.width(current?.details?.pipeline.map(PipelineRow.number)), StatusLinkRow.width(current?.details?.mergeCheck.map(MergeCheckRow.text)))
+        let width = max(Self.width, min(Self.maximumWidth, ceil(row)+2*Self.inset.width+1))
+        guard width != cardWidth else { return }
+        cardWidth = width
+        summaryView.textContainer?.containerSize = NSSize(width: textWidth, height: .greatestFiniteMagnitude)
     }
     /// Gone at once, like a tooltip.
     func dismiss() {
@@ -269,21 +303,33 @@ final class PullRequestMetaRow: FlippedView {
         height.settle(); top.settle(); isHidden = true
     }
     /// `type(`, scope, `):` (or `)!:`) at the start of a conventional commit title.
-    private static let conventionalPrefix = try! NSRegularExpression(pattern: #"^([A-Za-z]+\()([^()]+)(\)!?:)"#)
-    /// A conventional commit title's `type(` and `):` recede (lighter and a weight down) so the
-    /// scope and the change stand out.
+    private static let conventionalPrefix = try! NSRegularExpression(pattern: #"\G([A-Za-z]+\()([^()]+)(\)!?:)"#)
+    /// GitLab's draft markers (`Draft:`, `[Draft]`, `(Draft)`, `Draft -`) and the older `WIP:`.
+    private static let draftPrefix = try! NSRegularExpression(pattern: #"^\s*(?:\[(?:draft|wip)\]|\((?:draft|wip)\)|(?:draft|wip)\s*:|draft\s+-)\s*"#, options: .caseInsensitive)
+    /// A draft marker and a conventional commit title's `type(` and `):` recede (lighter and a
+    /// weight down) so the scope and the change stand out.
     static func title(_ title: String, color: NSColor, muted: NSColor) -> NSAttributedString {
         let font = NSFont.systemFont(ofSize: 14, weight: .medium), faded = NSFont.systemFont(ofSize: 14, weight: .regular)
         let result = NSMutableAttributedString(string: title, attributes: [.font: font, .foregroundColor: color])
-        if let match = conventionalPrefix.firstMatch(in: title, range: NSRange(location: 0, length: (title as NSString).length)) {
+        let all = NSRange(location: 0, length: (title as NSString).length)
+        // A draft marker recedes whole, and a conventional type right after it still fades.
+        var start = 0
+        if let draft = draftPrefix.firstMatch(in: title, range: all) {
+            result.addAttributes([.font: faded, .foregroundColor: muted], range: draft.range); start = NSMaxRange(draft.range)
+        }
+        if let match = conventionalPrefix.firstMatch(in: title, range: NSRange(location: start, length: all.length-start)) {
             for group in [1, 3] { result.addAttributes([.font: faded, .foregroundColor: muted], range: match.range(at: group)) }
         }
         return result
     }
     func applyTheme() {
         panel.fill = background; panel.layer?.borderColor = theme.border.cgColor
+        // A dark page swallows a light shadow; it needs more weight to read at all.
+        panel.layer?.shadowOpacity = theme == .dark ? 0.45 : 0.12
         titleLabel.textColor = theme.text
         meta.dark = theme == .dark; meta.muted = theme.muted
+        pipelineRow.dark = theme == .dark; pipelineRow.muted = theme.muted
+        mergeRow.dark = theme == .dark; mergeRow.muted = theme.muted; mergeRow.cutout = background
         skeleton.applyTheme(dark: theme == .dark)
     }
 
@@ -332,6 +378,16 @@ final class PullRequestMetaRow: FlippedView {
     // MARK: Layout and motion
 
     private var hasSummaryText: Bool { !laidOut.isEmpty }
+    /// The pipeline and merge checks come in under the description once it has finished playing out.
+    private var showsPipeline: Bool {
+        guard current?.details?.pipeline != nil || current?.details?.mergeCheck != nil else { return false }
+        switch current?.phase {
+        case .done: return stream.hiddenFrom == nil
+        case .failed: return true
+        default: return false
+        }
+    }
+    private var shownPipeline = false
     private var showsSkeleton: Bool { !hasSummaryText && (current?.phase == .idle || current?.phase == .generating) }
     private var titleHeight: CGFloat {
         ceil(titleLabel.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: textWidth+2*Self.labelPadding, height: 1000)).height ?? 18)
@@ -345,14 +401,19 @@ final class PullRequestMetaRow: FlippedView {
         var height = Self.inset.height+titleHeight
         if current?.details != nil { height += Self.titleGap+PullRequestMetaRow.height }
         if hasSummaryText { height += Self.summaryGap+summaryHeight } else if showsSkeleton { height += Self.summaryGap+lineHeight }
+        if showsPipeline {
+            let rows = [current?.details?.pipeline != nil, current?.details?.mergeCheck != nil].filter { $0 }.count
+            height += Self.pipelineGap+CGFloat(rows)*StatusLinkRow.height+CGFloat(rows-1)*Self.mergeGap
+        }
         return height+Self.inset.height
     }
     private func retarget() {
+        shownPipeline = showsPipeline
         height.target = contentHeight
         top.target = max(8, min(anchorTop, maxBottom-height.target))
     }
     private func render() {
-        frame = NSRect(x: frame.minX, y: top.value, width: Self.width, height: max(0, height.value))
+        frame = NSRect(x: frame.minX, y: top.value, width: cardWidth, height: max(0, height.value))
         panel.frame = bounds; content.frame = panel.bounds
         panel.layer?.shadowPath = PageOutline.path(in: panel.bounds, radius: FindBar.radius, continuous: true)
         // Laid out at full height and revealed as the card grows, like the find bar's answer.
@@ -371,6 +432,14 @@ final class PullRequestMetaRow: FlippedView {
         summaryView.isHidden = !hasSummaryText
         summaryView.selectedTextAttributes = [.backgroundColor: theme == .dark ? NSColor(hex: 0x2F2F2F) : NSColor(hex: 0xE0E0E0)]
         summaryView.frame = NSRect(x: Self.inset.width, y: y, width: textWidth, height: summaryHeight)
+        if hasSummaryText { y += summaryHeight } else if showsSkeleton { y += lineHeight }
+        // The pipeline, then the merge status under it. A ring reads a touch indented beside text.
+        y += Self.pipelineGap
+        pipelineRow.isHidden = !showsPipeline || current?.details?.pipeline == nil
+        pipelineRow.frame = NSRect(x: Self.inset.width-1, y: y, width: textWidth+1, height: StatusLinkRow.height)
+        if !pipelineRow.isHidden { y += StatusLinkRow.height+Self.mergeGap }
+        mergeRow.isHidden = !showsPipeline || current?.details?.mergeCheck == nil
+        mergeRow.frame = NSRect(x: Self.inset.width-1, y: y, width: textWidth+1, height: StatusLinkRow.height)
     }
     private func animate() {
         guard window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { settle(); return }
@@ -388,6 +457,7 @@ final class PullRequestMetaRow: FlippedView {
         let now = CACurrentMediaTime(), dt = min(0.05, now-(lastTick ?? now)); lastTick = now
         height.step(dt); top.step(dt)
         _ = stream.step(at: now); paint()
+        if showsPipeline != shownPipeline { retarget() }
         let resting = height.isResting(within: 0.05) && top.isResting(within: 0.05) && !stream.needsFrames
         if resting { link.invalidate(); self.link = nil; height.settle(); top.settle() }
         render()
@@ -422,7 +492,7 @@ final class PullRequestMetaRow: FlippedView {
         let hover = pullRequestHover
         if hovering {
             hover.timer?.invalidate()
-            guard sidebar.drag == nil, GitHubPullRequest(url: tabs.first(where: { $0.id == id })?.url) != nil else {
+            guard sidebar.drag == nil, PullRequest(url: tabs.first(where: { $0.id == id })?.url) != nil else {
                 hover.hoveredID = nil
                 // Crossing another tab on the way to the card doesn't close it.
                 if !pointerIsHeadingForCard() { hidePullRequestTooltip() }
@@ -458,46 +528,96 @@ final class PullRequestMetaRow: FlippedView {
     func showPullRequestTooltip(_ id: UUID) {
         let hover = pullRequestHover
         guard hover.hoveredID == id, sidebarVisible, window?.isVisible == true,
-              let tab = tabs.first(where: { $0.id == id }), let pr = GitHubPullRequest(url: tab.url),
+              let tab = tabs.first(where: { $0.id == id }), let pr = PullRequest(url: tab.url),
               let row = sidebar.rows[id], row.window != nil else { return }
         hover.shownID = id
-        let title = GitHubPullRequest.title(fromTab: tab.title)
+        let title = pr.title(fromTab: tab.title)
         hover.summaries.load(pr, title: title) { [weak tab] in
-            guard let webView = tab?.webView, GitHubPullRequest(url: webView.url) == pr else { return nil }
+            guard let webView = tab?.webView, PullRequest(url: webView.url) == pr else { return nil }
             return try? await PageAssistant.snapshot(of: webView).text
         }
+        hover.summaries.refreshStatus(pr)
         if hover.tooltip.superview !== root {
             root.addSubview(hover.tooltip, positioned: .below, relativeTo: dismissArea)
             hover.tooltip.onPointer = { [weak self] inside in self?.cardPointerChanged(inside) }
+            hover.tooltip.onOpenFiles = { [weak self] in self?.openFromPullRequestCard(.files) }
+            hover.tooltip.onOpenPipeline = { [weak self] pipeline in self?.openFromPullRequestCard(.pipeline(pipeline)) }
+            hover.tooltip.onOpenMergeChecks = { [weak self] in self?.openFromPullRequestCard(.mergeChecks) }
         }
         // The safe triangle needs every pointer move, not only those over tracked views.
         if !hover.tracksPointer, let window { hover.tracksPointer = !window.acceptsMouseMovedEvents; window.acceptsMouseMovedEvents = true }
         let anchor = row.convert(row.bounds, to: root)
         hover.tooltip.present(key: pr.key, content: tooltipContent(pr, title: title), left: sidebar.frame.maxX+6,
-                              anchorTop: anchor.minY, maxBottom: root.bounds.height-8, theme: theme)
+                              anchorTop: anchor.minY, maxBottom: root.bounds.height-8, theme: theme,
+                              glides: CACurrentMediaTime()-hover.hiddenAt < PullRequestHover.grace)
     }
     /// The card's tab closed, or stopped being a pull request.
     func refreshPullRequestTooltip() {
         guard let id = pullRequestHover.shownID else { return }
-        if GitHubPullRequest(url: tabs.first(where: { $0.id == id })?.url) == nil { hidePullRequestTooltip() }
+        if PullRequest(url: tabs.first(where: { $0.id == id })?.url) == nil { hidePullRequestTooltip() }
     }
     func hidePullRequestTooltip() {
         let hover = pullRequestHover
         hover.timer?.invalidate(); hover.safeOrigin = nil; hover.safeTarget = nil; hover.leftRow = nil; hover.insideCard = false
         guard hover.shownID != nil else { return }
         hover.shownID = nil; hover.hiddenAt = CACurrentMediaTime()
+        updatePeekCovers()
         if hover.tracksPointer { window?.acceptsMouseMovedEvents = false; hover.tracksPointer = false }
         hover.tooltip.dismiss()
     }
     func pullRequestSummaryChanged(_ key: String) {
         let hover = pullRequestHover
         guard hover.tooltip.key == key, let id = hover.shownID, let tab = tabs.first(where: { $0.id == id }),
-              let pr = GitHubPullRequest(url: tab.url), pr.key == key else { return }
-        hover.tooltip.update(tooltipContent(pr, title: GitHubPullRequest.title(fromTab: tab.title)))
+              let pr = PullRequest(url: tab.url), pr.key == key else { return }
+        hover.tooltip.update(tooltipContent(pr, title: pr.title(fromTab: tab.title)))
     }
+    enum PullRequestCardLink { case files, pipeline(Pipeline), mergeChecks }
+    /// Each goes to the card's tab: the file count on the changed files, the pipeline number
+    /// with the pipeline's jobs in a Peek over it, and the merge status scrolled to the merge checks.
+    private func openFromPullRequestCard(_ link: PullRequestCardLink) {
+        guard let id = pullRequestHover.shownID, let tab = tabs.first(where: { $0.id == id }), let pr = PullRequest(url: tab.url) else { return }
+        tabPressed()
+        if selectedID != id { select(id) }
+        switch link {
+        case .pipeline(let pipeline): if let url = pipeline.jobsURL { showPeek(url: url) }
+        case .files: if let url = pr.filesURL, tab.url != url { tab.load(url) }
+        case .mergeChecks:
+            guard let url = pr.overviewURL else { return }
+            let web = tab.webView
+            let onOverview = web.url.map { $0.path.trimmingCharacters(in: ["/"]) == url.path.trimmingCharacters(in: ["/"]) } ?? false
+            if !onOverview { tab.load(url) }
+            Task { [weak web] in
+                // Wait for the overview to be the page loaded, then let the page find its widget.
+                for _ in 0..<150 {
+                    guard let web else { return }
+                    if web.url.map({ $0.path.trimmingCharacters(in: ["/"]) == url.path.trimmingCharacters(in: ["/"]) }) == true, !web.isLoading { break }
+                    try? await Task.sleep(for: .milliseconds(100))
+                }
+                _ = try? await web?.evaluateJavaScript(Self.scrollToMergeChecks, contentWorld: .defaultClient)
+            }
+        }
+    }
+    /// GitLab draws its merge widget after the page loads; this waits up to 10 s for it, then
+    /// scrolls it into the middle of the page.
+    static let scrollToMergeChecks = """
+    (() => {
+      const selectors = ['[data-testid="merge-checks"]', '.mr-state-widget', '.mr-widget-section', '#js-vue-mr-widget'];
+      let tries = 0;
+      const find = () => {
+        const widget = selectors.map(s => document.querySelector(s)).find(e => e && e.getBoundingClientRect().height > 0);
+        if (widget) widget.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        else if (++tries < 50) setTimeout(find, 200);
+      };
+      find();
+    })();
+    """
     private func cardPointerChanged(_ inside: Bool) {
         let hover = pullRequestHover
         hover.insideCard = inside
+        // The pages under the card keep their hover tracking otherwise, and would take the
+        // card's pointer and cursor for their own links.
+        if inside { for tab in tabs { (tab.webView as? LinkCursorWebView)?.isCovered = true }; (peekTab?.webView as? LinkCursorWebView)?.isCovered = true }
+        else { updatePeekCovers() }
         if inside { hover.safeOrigin = nil; hover.safeTarget = nil; hover.leftRow = nil; return }
         // Heading back from the card to its tab crosses a gap first; a triangle toward the tab
         // keeps the card from blinking out on the way.
@@ -507,8 +627,16 @@ final class PullRequestMetaRow: FlippedView {
     }
     private func closeCardIfAbandoned() {
         let hover = pullRequestHover
-        guard hover.shownID != nil, hover.hoveredID == nil, !hover.insideCard, !pointerIsHeadingForCard() else { return }
+        guard hover.shownID != nil, hover.hoveredID == nil, !hover.insideCard, !pointerIsHeadingForCard(),
+              !pointerIsOverPullRequestTab else { return }
         hidePullRequestTooltip()
+    }
+    /// A quick move can land well inside the next row before its tracking area reports the
+    /// entry. Over another pull request tab, the card waits for that entry and glides over
+    /// instead of closing and popping back open.
+    private var pointerIsOverPullRequestTab: Bool {
+        guard let point = pointerInRoot, let id = sidebar.tabID(at: sidebar.convert(point, from: root)) else { return false }
+        return PullRequest(url: tabs.first(where: { $0.id == id })?.url) != nil
     }
     private var pointerInRoot: NSPoint? {
         guard let window else { return nil }
@@ -530,9 +658,9 @@ final class PullRequestMetaRow: FlippedView {
         let d1 = side(point, a, b), d2 = side(point, b, c), d3 = side(point, c, a)
         return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0))
     }
-    private func tooltipContent(_ pr: GitHubPullRequest, title: String) -> PullRequestTooltip.Content {
+    private func tooltipContent(_ pr: PullRequest, title: String) -> PullRequestTooltip.Content {
         let entry = pullRequestHover.summaries.entry(for: pr)
-        return PullRequestTooltip.Content(title: entry.details?.title ?? title, number: pr.number, details: entry.details,
+        return PullRequestTooltip.Content(title: entry.details?.title ?? title, reference: pr.reference, details: entry.details,
                                           summary: entry.summary, phase: entry.phase)
     }
 }

@@ -43,6 +43,7 @@ import RiseCore
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         pageCloth.remember(webView)
         pageCloth.destinationDidCommit(webView)
+        pagePaint.didFinish(webView)
         if let tab = tabs.first(where: { $0.webView === webView }), let url = tab.url, url.absoluteString != "about:blank" {
             tab.captureThumbnail()
             browsingHistory.record(url, title: webView.title ?? tab.title)

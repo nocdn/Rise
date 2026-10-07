@@ -71,29 +71,26 @@ import RiseCore
     }
     @objc func peekCurrentPage() { if let url = selectedTab?.url { showPeek(url: url) } }
     func showPeek(url: URL, from source: WKWebView? = nil, opensNewTab: Bool = false) {
+        // One Peek at a time: a Peek link inside the Peek shakes the pill's "Cannot open … in Peek".
+        if source != nil, source === peekTab?.webView { refusePeek(url); return }
         let sourceID = tabs.first { $0.webView === source }?.id ?? peekSourceTabID ?? selectedID
         cancelTabSwitch()
-        // A link inside a Peek opens a second one over it; otherwise the new Peek replaces the top one.
-        if opensNestedPeek(from: source) { parkPeek() } else { closePeek(replacing: true) }
-        hideLinkStatus()
+        closePeek(replacing: true); hideLinkStatus()
         peekSourceTabID = sourceID; peekOpensNewTab = opensNewTab
         let reveal = beginPeekReveal(from: source)
         // A page already rendering from a Shift-hover shows from the first frame.
         let standby = takePeekStandby(for: url)
         let tab = standby ?? configure(BrowserTab()); peekTab = tab
-        // Dimming lives inside what's behind the Peek, so it recedes with it and never covers its shadow.
-        let behind = parkedPeek?.card.subviews.first ?? pageClip
-        let backdrop = PeekBackdrop(color: theme.background.withAlphaComponent(parkedPeek == nil ? 0.72 : Self.parkedPeekDim))
-        backdrop.dismiss = { [weak self] in self?.closePeek(animated: true) }; backdrop.frame = behind.bounds
-        behind.addSubview(backdrop); peekBackdrop = backdrop
+        let backdrop = PeekBackdrop(color: theme.background.withAlphaComponent(0.72));
+        backdrop.dismiss = { [weak self] in self?.closePeek(animated: true) }; backdrop.frame = pageClip.bounds
+        // Dimming lives inside the page so it recedes with it and never covers the page's shadow.
+        pageClip.addSubview(backdrop); peekBackdrop = backdrop
         let card = PageSurface(color: theme.page, radius: 8); card.layer?.masksToBounds = false
         card.layer?.shadowColor = NSColor.black.cgColor; card.layer?.shadowOpacity = 0.25
         card.layer?.shadowRadius = 8; card.layer?.shadowOffset = NSSize(width: 0, height: -2)
         let clip = PageSurface(color: theme.page, radius: 8); clip.layer?.masksToBounds = true; clip.clipsToBounds = true; clip.autoresizingMask = [.width, .height]
         card.addSubview(clip); clip.addSubview(tab.webView)
-        if let parked = parkedPeek?.card { root.addSubview(card, positioned: .above, relativeTo: parked) }
-        else { root.addSubview(card, positioned: .below, relativeTo: dismissArea) }
-        peekCard = card
+        root.addSubview(card, positioned: .below, relativeTo: dismissArea); peekCard = card
         for (symbol, title, action) in [
             ("xmark", "Close Peek", { [weak self] in self?.closePeek(animated: true) }),
             ("arrow.up.left.and.arrow.down.right", "Expand Peek to tab", { [weak self] in self?.expandPeek() }),
@@ -109,21 +106,14 @@ import RiseCore
         updatePeekCovers()
         revealPeek(reveal)
     }
-    /// Where a first Peek rests.
-    var firstPeekFrame: NSRect {
+    var peekCardFrame: NSRect {
         let page = pageShadow.frame; let margin = min(120, page.width*0.1)
         return NSRect(x: page.minX+margin, y: 12, width: page.width-margin*2, height: root.bounds.height-24)
-    }
-    /// Where the open Peek rests. A second Peek sits a little inside the first, so the
-    /// receded, dimmed first Peek still shows around it.
-    var peekCardFrame: NSRect {
-        parkedPeek == nil ? firstPeekFrame : nestedPeekFrame
     }
     func layoutPeek() {
         layoutPeekStandby()
         guard let peekCard, let peekTab else { return }
-        layoutParkedPeek()
-        peekBackdrop?.frame = peekBackdrop?.superview?.bounds ?? pageClip.bounds
+        peekBackdrop?.frame = pageClip.bounds
         peekCard.frame = peekCardFrame
         // Keep a settled, receded page centered after the window resizes.
         if let layer = pageShadow.layer, layer.animation(forKey: "peek.recede") == nil, !CATransform3DIsIdentity(layer.transform) {
@@ -136,10 +126,8 @@ import RiseCore
     }
     /// Animated closes spring the Peek back into its link, reversing one that is still
     /// growing. State clears immediately either way. Replacing a Peek keeps the page
-    /// receded and lets the old dimming fade under the new one. Only the top Peek closes;
-    /// one underneath comes back to the front.
+    /// receded and lets the old dimming fade under the new one.
     func closePeek(animated: Bool = false, replacing: Bool = false) {
-        let restoring = !replacing && parkedPeek != nil
         if let web = peekTab?.webView { historySwipe.cancel(for: web) }
         let card = peekCard, backdrop = peekBackdrop, web = peekTab?.webView, origin = peekOrigin
         peekSourceTabID = nil; peekOpensNewTab = false; peekSwipePull = 0
@@ -153,7 +141,7 @@ import RiseCore
         peekTab?.cancelLoad(); peekTab = nil
         peekBackdrop = nil; peekCard = nil
         if motion, let card {
-            if !restoring { recedePage(false, along: Self.peekPageReturnSpring) }
+            recedePage(false, along: Self.peekPageReturnSpring)
             if let growing { card.removeFromSuperview(); shrinkPeek(growing, into: peekFrame(of: origin), backdrop: backdrop) }
             else if card.alphaValue == 1, let web { dismissPeek(card: card, backdrop: backdrop, page: web, origin: origin) }
             else { backdrop?.removeFromSuperview(); card.removeFromSuperview() }
@@ -163,11 +151,11 @@ import RiseCore
                 NSAnimationContext.runAnimationGroup({ $0.duration = 0.2; backdrop.animator().alphaValue = 0 },
                     completionHandler: { backdrop.removeFromSuperview() })
             } else { backdrop?.removeFromSuperview() }
-            if !replacing, !restoring, !peekGhosts.contains(where: { $0.phase == .closing }) { recedePage(false, along: nil) }
+            if !replacing, !peekGhosts.contains(where: { $0.phase == .closing }) { recedePage(false, along: nil) }
         }
         peekControls.forEach { $0.removeFromSuperview() }; peekControls = []
-        if restoring { unparkPeek(animated: motion) } else { window?.makeFirstResponder(selectedTab?.webView) }
-        updatePeekCovers()
+        window?.makeFirstResponder(selectedTab?.webView)
+        updatePeekCovers(); update()
     }
     func expandPeek(modifiers: NSEvent.ModifierFlags = NSEvent.modifierFlags) {
         guard let tab = peekTab else { return }

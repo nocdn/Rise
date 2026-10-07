@@ -23,6 +23,28 @@ final class AppearanceTests: XCTestCase {
         popup.hide()
         XCTAssertTrue(popup.isHidden)
     }
+    @MainActor func testAFreshPageInDarkShowsTheDarkSurfaceUntilItPaints() async throws {
+        _ = NSApplication.shared
+        let session = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json")
+        let browser = BrowserController(sessionURL: session, restore: false)
+        let page = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).html")
+        try "<title>Painted</title>Page".write(to: page, atomically: true, encoding: .utf8)
+        defer {
+            browser.saveWork?.cancel(); browser.tabs.forEach { $0.webView.stopLoading() }; browser.window?.orderOut(nil)
+            try? FileManager.default.removeItem(at: session.deletingLastPathComponent()); try? FileManager.default.removeItem(at: page)
+            NSApp.appearance = NSAppearance(named: .aqua)
+        }
+        browser.theme = .dark; browser.update(); browser.showWindow(nil)
+        let tab = browser.addTab()
+        XCTAssertFalse(PagePaintWatcher.drawsBackground(tab.webView), "No white before the page paints")
+        tab.load(page)
+        let deadline = Date().addingTimeInterval(10)
+        while !browser.pagePaint.hasPainted(tab.webView) && Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(tab.webView.title, "Painted")
+        XCTAssertTrue(PagePaintWatcher.drawsBackground(tab.webView), "Once painted, pages without a background get WebKit's white again")
+        browser.theme = .neutral; browser.update()
+        XCTAssertTrue(PagePaintWatcher.drawsBackground(browser.addTab().webView), "Light themes draw normally from the start")
+    }
     @MainActor func testDarkAppearanceRestoresAndWebKitReceivesColorScheme() async throws {
         _ = NSApplication.shared
         let session = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json")

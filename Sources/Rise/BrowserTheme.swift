@@ -15,6 +15,7 @@ import AppKit
         for tab in allTabs {
             if tab.webView.appearance?.name != appearance.name { tab.webView.appearance = appearance }
             if tab.webView.underPageBackgroundColor != theme.page { tab.webView.underPageBackgroundColor = theme.page }
+            pagePaint.applyTheme(dark: theme == .dark, to: tab.webView)
         }
         if theme == .dark {
             for tab in tabs where tab.darkFavicon == nil {

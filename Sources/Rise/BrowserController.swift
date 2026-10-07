@@ -20,6 +20,7 @@ import RiseCore
     var airDropHandler: ((URL) -> Void)?
     let sitePermissions: SitePermissions
     lazy var permissionCoordinator = PermissionCoordinator(browser: self)
+    let pagePaint = PagePaintWatcher()
     var sharingPicker: NSSharingServicePicker?
     let errorSurface = Surface(color: NSColor(hex: 0xFDFCFC))
     let errorTitle = label("This page couldn’t be opened", size: 23, weight: .semibold)
@@ -99,9 +100,8 @@ import RiseCore
     var peekOrigin: PeekOrigin?
     var peekMotionToken: UUID?
     var peekLeftovers: [NSView] = []
-    /// The first Peek, while a second one is open over it.
-    var parkedPeek: ParkedPeek?
-    var peekPageDim: Surface?
+    /// A pill hide held back while a Shift-click inside the Peek may still be refused.
+    var refusedPeekHide: DispatchWorkItem?
     var peekStandby: (url: URL, tab: BrowserTab)?
     let peekStandbyView = PeekStandbyView()
     var peekStandbyWork: DispatchWorkItem?
@@ -377,6 +377,7 @@ import RiseCore
         }
         linkPreloader.install(on: tab.webView)
         permissionCoordinator.install(on: tab.webView)
+        pagePaint.install(on: tab.webView, dark: theme == .dark)
         suggestionFavicons.remember(tab)
         tab.onChange = { [weak self, weak tab] in
             guard let self, let tab else { return }
@@ -405,7 +406,7 @@ import RiseCore
         siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel()
         if selectedID != id { selectedTab?.captureThumbnail() }
         hideLinkStatus()
-        hidePalette(); closeAllPeeks()
+        hidePalette(); closePeek()
         let previousID = selectedID
         selectedID = id
         swapFindBar(from: previousID)
@@ -422,8 +423,8 @@ import RiseCore
         sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: splitGroups)
         refreshPullRequestTooltip()
         window?.title = (selectedTab?.title).map { "\($0) — Rise" } ?? "Rise"
-        toolbarButtons[1].isEnabled = selectedTab?.webView.canGoBack ?? false
-        toolbarButtons[2].isEnabled = selectedTab?.webView.canGoForward ?? false
+        toolbarButtons[1].isEnabled = historyWebView?.canGoBack ?? false
+        toolbarButtons[2].isEnabled = historyWebView?.canGoForward ?? false
         toolbarButtons[3].image = selectedTab?.isLoading == true ? NavigationIcon.stop : NavigationIcon.reload
         developerAddress.updateURL(selectedTab?.url?.absoluteString ?? "")
         errorSurface.isHidden = errorWebView == nil || errorWebView !== selectedTab?.webView
@@ -482,7 +483,12 @@ import RiseCore
         developerMotion.cancel()
         toolbarButtons.compactMap { $0 as? HistoryArrowButton }.forEach { $0.restore() }
         errorWebView = nil
-        if let tab = selectedTab, direction == .back ? tab.webView.canGoBack : tab.webView.canGoForward {
+        if let peek = peekTab {
+            // Pages visited inside a Peek have their own history.
+            if direction == .back ? peek.webView.canGoBack : peek.webView.canGoForward {
+                if direction == .back { peek.webView.goBack() } else { peek.webView.goForward() }
+            }
+        } else if let tab = selectedTab, direction == .back ? tab.webView.canGoBack : tab.webView.canGoForward {
             tab.cancelLoad()
             if direction == .back { tab.webView.goBack() } else { tab.webView.goForward() }
         }

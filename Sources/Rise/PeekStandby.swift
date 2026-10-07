@@ -12,7 +12,7 @@ final class PeekStandbyView: FlippedView {
     /// A short dwell keeps sweeps across many links from loading each one.
     func updatePeekStandby(modifiers: NSEvent.ModifierFlags = NSEvent.modifierFlags) {
         peekStandbyWork?.cancel(); peekStandbyWork = nil
-        guard shouldPeek(modifiers: modifiers), let web = hoveredWebView, let url = linkStatus.url,
+        guard shouldPeek(modifiers: modifiers), let web = hoveredWebView, web !== peekTab?.webView, let url = linkStatus.url,
               LinkPreloader.isEligible(url, from: web.url), peekStandby?.url != url else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.linkStatus.url == url, self.shouldPeek(modifiers: NSEvent.modifierFlags) else { return }
