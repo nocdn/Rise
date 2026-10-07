@@ -79,8 +79,9 @@ import RiseCore
     let suggestionFavicons: SuggestionFavicons
     let googleSearchSuggestions: GoogleSearchSuggestions
     var theme: RiseTheme = .neutral
-    var sidebarWidth: CGFloat = 228
+    var sidebarWidth = SidebarWidth.ideal
     var sidebarVisible = true
+    let sidebarPeek = SidebarPeek()
     var paletteCreatesTab = false
     var splitGroups: [SplitTabGroup] = []
     var peekSourceTabID: UUID?
@@ -157,7 +158,7 @@ import RiseCore
         window.pageMouseDown = { [weak self] event in self?.focusSplitPage(at: event) }
         window.historyScrollEvent = { [weak self] event in self?.historySwipe.handle(event) ?? false }
         window.otherMouseEvent = { [weak self] event in self?.handleMiddleTabClick(event) ?? false }
-        window.modifiersChanged = { [weak self] flags in self?.updateHoveredLinkModifiers(flags) }
+        window.modifiersChanged = { [weak self] flags in self?.updateHoveredLinkModifiers(flags); self?.sidebarPeekModifiersChanged(flags) }
         window.pointerMoved = { [weak self] event in self?.updateHoveredLinkCursor(event) }
         tabSwitcher.choose = { [weak self] id in self?.commitTabSwitch(id) }
         tabSwitchBackdrop.dismiss = { [weak self] in self?.cancelTabSwitch() }
@@ -196,7 +197,7 @@ import RiseCore
         buildChrome()
         if restore, let saved = SessionStorage.read(from: self.sessionURL) {
             theme = RiseTheme(rawValue: saved.theme) ?? .neutral
-            sidebarWidth = min(360, max(200, saved.sidebarWidth))
+            sidebarWidth = min(SidebarWidth.range.upperBound, max(SidebarWidth.range.lowerBound, saved.sidebarWidth))
             tabs = saved.tabs.map { configure(BrowserTab(saved: $0)) }
             // Old sessions can fill their missing icons without loading every page.
             tabs.forEach { $0.updateIcon() }
@@ -224,7 +225,7 @@ import RiseCore
         root.addSubview(sidebar); root.addSubview(pageShadow); pageShadow.addSubview(pageClip)
         pageClip.addSubview(emptyPage); pageClip.addSubview(developerBar)
         root.addSubview(grip)
-        grip.resize = { [weak self] width in self?.sidebarWidth = min(360, max(200, width)); self?.layoutChrome(); self?.scheduleSave() }
+        grip.resize = { [weak self] x in self?.resizeSidebar(to: x) }
         let actions: [(String, String, () -> Void)] = [
             ("sidebar.left", "Toggle Sidebar (⌘B)", { [weak self] in self?.toggleSidebar() }),
             ("arrow.left", "Back (⌘[)", { [weak self] in self?.goBack() }),
@@ -295,8 +296,8 @@ import RiseCore
         // sidebar and titlebar controls have finished being constructed.
         guard let window, let sidebar else { return }; let b = root.bounds
         root.fill = theme.background; root.gradientColors = theme.backgroundGradient; window.backgroundColor = theme.background
-        let sw = sidebarVisible ? sidebarWidth : 0
-        sidebar.isHidden = !sidebarVisible; sidebar.frame = NSRect(x: 0, y: 0, width: sidebarWidth, height: b.height)
+        let width = displayedSidebarWidth, sw = sidebarVisible ? width : 0
+        sidebar.isHidden = !sidebarVisible; sidebar.frame = NSRect(x: 0, y: 0, width: width, height: b.height)
         // Keep the native titlebar hierarchy intact, but hide all of its chrome
         // for the edge-to-edge reading layout. No animator proxies are involved.
         if toolbarAccessory.isHidden == sidebarVisible { toolbarAccessory.isHidden = !sidebarVisible }
@@ -307,12 +308,13 @@ import RiseCore
         toolbarHost.isHidden = !sidebarVisible
         toolbarButtons.forEach { $0.isHidden = !sidebarVisible }
         let toolbarX = toolbarHost.convert(toolbarHost.bounds, to: root).minX
-        toolbarHost.frame.size.width = sidebarVisible ? max(112, sidebarWidth-toolbarX-8) : 28
+        toolbarHost.frame.size.width = sidebarVisible ? max(112, width-toolbarX-8) : 28
         toolbarHost.layout()
         pageShadow.frame = PageAppearance.frame(in: b, sidebarWidth: sw, sidebarVisible: sidebarVisible)
         pageShadow.refreshOutline()
         pageClip.frame = pageShadow.bounds
-        grip.frame = NSRect(x: sw-3, y: 44, width: 6, height: b.height-88); grip.isHidden = !sidebarVisible
+        // The peek width is temporary, so it can't be resized.
+        grip.frame = NSRect(x: sw-3, y: 44, width: 6, height: b.height-88); grip.isHidden = !sidebarVisible || sidebarPeek.progress > 0
         let cb = pageClip.bounds
         let devHeight = developerMotion.height(for: selectedID, enabled: selectedTab?.developer == true)
         developerBar.frame = NSRect(x: 0, y: devHeight-DeveloperModeMotion.headerHeight, width: cb.width, height: DeveloperModeMotion.headerHeight)
@@ -348,7 +350,7 @@ import RiseCore
     func windowDidResize(_ notification: Notification) { layoutChrome() }
     func windowWillClose(_ notification: Notification) { googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); saveNow() }
     func windowDidResignKey(_ notification: Notification) {
-        pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch()
+        pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch(); endSidebarPeek()
         sidebar?.cancelTabInteractions()
         DispatchQueue.main.async { [weak self] in
             guard let self, !NSApp.isActive else { return }
@@ -473,6 +475,7 @@ import RiseCore
     @objc func reload() { historySwipe.cancel(); errorWebView = nil; if selectedTab?.isLoading == true { selectedTab?.cancelLoad() } else if let tab = selectedTab, tab.webView.url == nil, let url = tab.requestedURL { tab.load(url) } else { selectedTab?.webView.reload() }; update() }
     @objc func retry() { errorWebView = nil; if let url = selectedTab?.url { selectedTab?.load(url) }; update() }
     @objc func toggleSidebar() {
+        if keepPeekedSidebar() { return }
         hidePalette()
         siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel()
         sidebarVisible.toggle()

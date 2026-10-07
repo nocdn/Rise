@@ -91,6 +91,27 @@ import AppKit
         XCTAssertFalse(bar.isAnswering)
         bar.closeInstantly()
     }
+    func testUnmatchedSearchSwitchesToAskBeforeItOutgrowsTheField() async throws {
+        let bar = FindBar()
+        bar.find = { _, _ in PageFind.Matches(count: 0, index: -1) }
+        func type(_ text: String) async throws {
+            bar.input.stringValue = text
+            bar.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: bar.input))
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try await type("missing words")
+        XCTAssertEqual(bar.mode, .find, "A short search stays a search")
+        try await type("what does this page say about the release")
+        XCTAssertEqual(bar.mode, .ask)
+        XCTAssertEqual(bar.input.stringValue, "what does this page say about the release")
+
+        bar.toggleMode()
+        try await type("what does this page say about the release date")
+        XCTAssertEqual(bar.mode, .find, "Going back to Find keeps it a search")
+        try await type("")
+        try await type("another long question that the page never mentions")
+        XCTAssertEqual(bar.mode, .ask, "Clearing the field lets a new search switch again")
+    }
     func testEmptyEnterAndEscapeKeepAnUnsentDraft() {
         let bar = FindBar()
         var dismissals = 0

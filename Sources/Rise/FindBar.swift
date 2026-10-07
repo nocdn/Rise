@@ -207,6 +207,10 @@ final class FindInputCell: NSTextFieldCell {
     static let width: CGFloat = 360, margin: CGFloat = 8, top: CGFloat = 8, bottom: CGFloat = 8
     static let rowHeight: CGFloat = 40, radius: CGFloat = 12
     static let answerInset = NSSize(width: 14, height: 10)
+    /// Find's input leaves room for the count and buttons.
+    static let findFieldWidth: CGFloat = width-12-140
+    /// A search with no matches switches to Ask this close to the find field's edge, before it's cut off.
+    static let askSlack: CGFloat = 40
     static let visibleAnswerLines = 8
     /// The "Answered by" row under an answer, which takes the place of its bottom inset.
     static let footerHeight: CGFloat = 34, footerMid: CGFloat = 18
@@ -264,6 +268,9 @@ final class FindInputCell: NSTextFieldCell {
     private var lastQuestion: (question: String, asked: String)?
     /// The last search's matches, so Enter on none can offer to ask instead.
     private var lastMatches: PageFind.Matches?
+    /// A search with no matches that outgrows the find field turns into a question. Going back
+    /// to Find keeps it a search until the field is cleared.
+    private var autoAsked = false, keepsFind = false
     private var answerTask: Task<Void, Never>?
     var isAnswering: Bool { answerTask != nil }
     /// The answered question shows Close; editing it restores Send.
@@ -362,7 +369,7 @@ final class FindInputCell: NSTextFieldCell {
             isPresented = true; isHidden = false
             cancelAnswer(); hasSubmittedQuestion = false; conversation = []; answerText = ""; answerFailed = false; stream = TokenStream(); lastQuestion = nil; renderAnswer()
             answeredText = nil; badge.caption = .send; badge.settle()
-            setMode(.find, animated: false)
+            setMode(.find, animated: false); keepsFind = false
             height.target = Self.rowHeight; height.settle()
             slide.configure(response: DownloadMotion.trayInResponse, bounce: DownloadMotion.trayInBounce)
             slide.target = 1; animate()
@@ -393,6 +400,8 @@ final class FindInputCell: NSTextFieldCell {
     private func setMode(_ new: Mode, animated: Bool) {
         mode = new
         let find = new == .find
+        if find && autoAsked { keepsFind = true }
+        autoAsked = false
         findText.set(find); askText.set(!find); controls.set(find); badgeItem.set(!find)
         if !animated { findText.settle(); askText.settle(); controls.settle(); badgeItem.settle() }
         input.setAccessibilityLabel(find ? "Find on page" : "Ask a model about the page")
@@ -424,7 +433,13 @@ final class FindInputCell: NSTextFieldCell {
             let matches = await find(query, query.isEmpty ? .restart : direction)
             guard generation == findGeneration, mode == .find else { return }
             show(query.isEmpty ? nil : matches)
+            if matches.count == 0 { askIfOutgrown(query) }
         }
+    }
+    private func askIfOutgrown(_ query: String) {
+        guard !keepsFind, let font = input.font,
+              (query as NSString).size(withAttributes: [.font: font]).width > Self.findFieldWidth-Self.askSlack else { return }
+        setMode(.ask, animated: true); autoAsked = true
     }
     /// The selected tab changed or reloaded; search it for the same text.
     func pageChanged() {
@@ -467,6 +482,7 @@ final class FindInputCell: NSTextFieldCell {
     }
     func controlTextDidChange(_ notification: Notification) {
         placeholders.isHidden = !input.stringValue.isEmpty
+        if input.stringValue.isEmpty { keepsFind = false }
         shimmer.needsDisplay = true; updateSend()
         if mode == .find { run(.restart) }
     }
@@ -703,7 +719,7 @@ final class FindInputCell: NSTextFieldCell {
         placeholders.frame = row.bounds
         let fieldHeight = ceil(input.intrinsicContentSize.height)
         // Find leaves room for the count and buttons; a question can run up to the badge.
-        let field = NSRect(x: 12, y: (Self.rowHeight-fieldHeight)/2, width: width-12-140, height: fieldHeight)
+        let field = NSRect(x: 12, y: (Self.rowHeight-fieldHeight)/2, width: Self.findFieldWidth, height: fieldHeight)
         input.frame = mode == .find ? field : NSRect(x: 12, y: field.minY, width: width-12-badge.rightInset-badge.width-10, height: fieldHeight)
         findText.render(at: field); askText.render(at: field)
         controls.render(at: NSRect(x: width-8-124, y: (Self.rowHeight-28)/2, width: 124, height: 28))
