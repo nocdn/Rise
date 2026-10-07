@@ -103,10 +103,14 @@ private final class AssistantStreamProtocol: URLProtocol {
 }
 
 @MainActor final class PageAssistantTests: XCTestCase {
-    private func session(contents: [String]) throws -> URLSession {
+    private func session(contents: [String], usage: [String: Any]? = nil) throws -> URLSession {
         var stream = ": keep-alive\n\n"
         for content in contents {
             let chunk: [String: Any] = ["choices": [["delta": ["content": content]]]]
+            stream += "data: "+String(decoding: try JSONSerialization.data(withJSONObject: chunk), as: UTF8.self)+"\n\n"
+        }
+        if let usage {
+            let chunk: [String: Any] = ["choices": [], "usage": usage]
             stream += "data: "+String(decoding: try JSONSerialization.data(withJSONObject: chunk), as: UTF8.self)+"\n\n"
         }
         stream += "data: [DONE]\n\n"
@@ -133,6 +137,20 @@ private final class AssistantStreamProtocol: URLProtocol {
             XCTAssertEqual(AssistantStreamProtocol.recordedRequests().count, 1)
         }
     }
+    func testUsageOnlyFinalChunkReportsInputTokensWithoutAddingThemToTheAnswer() async throws {
+        let session = try session(contents: ["{\"snippet\":\"\"}\nIt ships tomorrow."],
+                                  usage: ["prompt_tokens": 2452, "completion_tokens": 13, "total_tokens": 2465,
+                                          "prompt_tokens_details": ["cached_tokens": 2000]])
+        defer { session.invalidateAndCancel() }
+        var counts: [Int] = [], text = ""
+        let stream = PageAssistant.answer("When?", history: [], page: {
+            PageAssistant.Page(title: "Release", url: "https://example.test", selection: "", text: "Tomorrow")
+        }, highlight: { _ in false }, inputTokens: { counts.append($0) }, session: session)
+        for try await token in stream { text += token }
+        XCTAssertEqual(text, "It ships tomorrow.")
+        XCTAssertEqual(counts, [2452], "Use total prompt tokens, including cached input, without adding output tokens")
+        XCTAssertEqual(AssistantStreamProtocol.recordedRequests().count, 1)
+    }
     func testCancellationAtHighlightDoesNotDeliverLateAnswerText() async throws {
         let session = try session(contents: ["{\"snippet\":\"March 3\"}\nLate answer"])
         defer { session.invalidateAndCancel() }
@@ -155,7 +173,8 @@ private final class AssistantStreamProtocol: URLProtocol {
             defer { session.invalidateAndCancel() }
             let stream = PageAssistant.answer("When?", history: [], page: {
                 PageAssistant.Page(title: "Release", url: "https://example.test", selection: "", text: "No date yet")
-            }, highlight: { _ in XCTFail("No snippet should be highlighted"); return false }, session: session)
+            }, highlight: { _ in XCTFail("No snippet should be highlighted"); return false },
+               inputTokens: { _ in XCTFail("Missing usage must not invent a token count") }, session: session)
             var text = ""
             for try await token in stream { text += token }
             XCTAssertEqual(text, "The page does not say.")

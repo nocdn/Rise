@@ -8,8 +8,7 @@ import RiseCore
     let right: TabRow
     let divider = Surface()
     var rowHeight: CGFloat {
-        if left.repositorySubtitle != nil || right.repositorySubtitle != nil { return TabAppearance.repositoryHeight + 8 }
-        return left.developer || right.developer ? TabAppearance.splitDeveloperHeight : TabAppearance.height
+        left.showsSubtitle || right.showsSubtitle ? TabAppearance.subtitleRowHeight + 8 : TabAppearance.height
     }
     init(group: SplitTabGroup, left: TabRow, right: TabRow) {
         self.group = group; self.left = left; self.right = right

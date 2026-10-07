@@ -258,6 +258,8 @@ final class FindInputCell: NSTextFieldCell {
     var dismiss: (() -> Void)?
     /// Streams an answer to a question about the page, given the conversation so far.
     var answer: ((String, [Turn]) -> AsyncThrowingStream<String, Error>)?
+    private(set) var inputTokenCount: Int?
+    private(set) var answerGeneration = 0
     private(set) var conversation: [Turn] = []
     private var answerText = "", answerFailed = false
     /// The streamed answer, shown a word at a time; `answerText` is the part laid out so far.
@@ -519,12 +521,26 @@ final class FindInputCell: NSTextFieldCell {
     func copyAnswer() {
         pasteboard.clearContents(); pasteboard.setString(answerView.string, forType: .string)
     }
-    private func showMoreMenu() {
+    func makeMoreMenu() -> NSMenu {
         let menu = NSMenu()
         let regenerate = NSMenuItem(title: "Regenerate", action: #selector(regenerateFromMenu), keyEquivalent: "")
         let copy = NSMenuItem(title: "Copy", action: #selector(copyFromMenu), keyEquivalent: "")
         [regenerate, copy].forEach { $0.target = self; menu.addItem($0) }
+        if !isAnswering, let inputTokenCount {
+            menu.addItem(.separator())
+            let usage = NSMenuItem(title: inputTokenCount.formatted(.number.locale(Locale(identifier: "en_US"))) + " tok", action: nil, keyEquivalent: "")
+            usage.isEnabled = false
+            menu.addItem(usage)
+        }
+        return menu
+    }
+    private func showMoreMenu() {
+        let menu = makeMoreMenu()
         menu.popUp(positioning: nil, at: NSPoint(x: 0, y: moreButton.isFlipped ? moreButton.bounds.maxY+4 : -4), in: moreButton)
+    }
+    func recordInputTokens(_ count: Int, for generation: Int) {
+        guard generation == answerGeneration, count >= 0 else { return }
+        inputTokenCount = count
     }
     @objc private func regenerateFromMenu() { regenerate() }
     @objc private func copyFromMenu() { copyAnswer() }
@@ -574,6 +590,7 @@ final class FindInputCell: NSTextFieldCell {
         updateSend(); animate()
     }
     private func cancelAnswer() {
+        answerGeneration += 1; inputTokenCount = nil
         // A replaced question must not inherit the previous response’s pending Done dismissal.
         doneTask?.cancel(); doneTask = nil
         answerTask?.cancel(); answerTask = nil; shimmer.cancel()
@@ -603,7 +620,7 @@ final class FindInputCell: NSTextFieldCell {
         animate()
     }
     private func failAnswer(_ error: Error, partial: String) {
-        answerTask = nil; shimmer.finish(); resetSend(); stream = TokenStream()
+        answerTask = nil; inputTokenCount = nil; shimmer.finish(); resetSend(); stream = TokenStream()
         let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         answerText = partial.isEmpty ? message : partial+"\n\n"+message; answerFailed = partial.isEmpty
         renderAnswer(); animate()
@@ -806,8 +823,8 @@ final class FindInputCell: NSTextFieldCell {
         let bar = findBar
         if bar.superview !== root { root.addSubview(bar, positioned: .below, relativeTo: linkStatus) }
     }
-    /// ⌘F opens the bar, and closes it when it's already open.
-    @objc func showFind() { if findBar.isPresented { hideFind() } else { findBar.present() } }
+    /// ⌘F opens the bar or focuses and selects its input without losing an answer.
+    @objc func showFind() { findBar.present() }
     @objc func findNext() { findAgain(.next) }
     @objc func findPrevious() { findAgain(.previous) }
     /// ⌘G and ⇧⌘G reopen a closed bar on the last search; an open one steps through its matches.

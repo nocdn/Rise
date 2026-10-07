@@ -25,7 +25,7 @@ class FadingTextField: NSTextField {
     }
     /// Keep the text at its full size while moving only its clipping/fade edge.
     /// Presentation values make a quick hover reversal continue smoothly.
-    func setFadeBoundary(_ width: CGFloat, duration: CFTimeInterval = 0) {
+    func setFadeBoundary(_ width: CGFloat?, duration: CFTimeInterval = 0) {
         guard fadeBoundary != width else { return }
         let old = fade.presentation()?.locations ?? fade.locations
         fadeBoundary = width

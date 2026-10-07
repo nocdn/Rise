@@ -56,6 +56,7 @@ enum PageAssistant {
     static func answer(_ question: String, history: [FindBar.Turn],
                        page: @escaping @MainActor () async throws -> Page,
                        highlight: @escaping @MainActor (String) async -> Bool,
+                       inputTokens: @escaping @MainActor (Int) -> Void = { _ in },
                        session: URLSession = .shared) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -64,7 +65,7 @@ enum PageAssistant {
                     try Task.checkCancellation()
                     let body: [String: Any] = ["model": model, "stream": true,
                                               "reasoning": ["effort": reasoningEffort], "messages": messages]
-                    try await streamAnswer(body, session: session, highlight: highlight) { continuation.yield($0) }
+                    try await streamAnswer(body, session: session, highlight: highlight, inputTokens: inputTokens) { continuation.yield($0) }
                     continuation.finish()
                 } catch { continuation.finish(throwing: error) }
             }
@@ -74,6 +75,7 @@ enum PageAssistant {
 
     private static func streamAnswer(_ body: [String: Any], session: URLSession,
                                      highlight: @escaping @MainActor (String) async -> Bool,
+                                     inputTokens: @escaping @MainActor (Int) -> Void,
                                      yield: (String) -> Void) async throws {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
@@ -97,6 +99,11 @@ enum PageAssistant {
             let data = Data(payload.utf8)
             if let message = errorMessage(in: data) { throw Failure.service(message) }
             let chunk = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            // Usage can arrive without a content delta, after the last answer token.
+            if let count = (chunk?["usage"] as? [String: Any])?["prompt_tokens"] as? Int, count >= 0 {
+                try Task.checkCancellation()
+                await inputTokens(count)
+            }
             guard let delta = (chunk?["choices"] as? [[String: Any]])?.first?["delta"] as? [String: Any] else { continue }
             let content = delta["content"] as? String ?? ""
             if !responded && (!content.isEmpty || !(delta["reasoning"] as? String ?? "").isEmpty
@@ -127,8 +134,9 @@ enum PageAssistant {
 @MainActor extension BrowserController {
     /// Answers about the page in the bar's own tab.
     func configurePageAssistant(_ bar: FindBar, for tab: BrowserTab) {
-        bar.answer = { [weak tab] question, history in
+        bar.answer = { [weak tab, weak bar] question, history in
             let webView = tab?.webView
+            let generation = bar?.answerGeneration
             return PageAssistant.answer(question, history: history, page: {
                 guard let webView else { throw PageAssistant.Failure.service("There’s no page to ask about.") }
                 // Clear before generation starts so it cannot race a fast new snippet.
@@ -138,6 +146,9 @@ enum PageAssistant {
             }, highlight: { quote in
                 guard !Task.isCancelled, let webView else { return false }
                 return await PageFind.highlightPassage(quote, in: webView)
+            }, inputTokens: { [weak bar] count in
+                guard let generation else { return }
+                bar?.recordInputTokens(count, for: generation)
             })
         }
     }

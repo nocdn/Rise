@@ -7,12 +7,12 @@ import RiseCore
     let titleField = TabTitleField(frame: .zero)
     let subtitle = label("", size: 11, color: .secondaryLabelColor)
     let close: ChromeButton
+    let subtitleAccessory = NSImageView(frame: .zero)
     let loadingBackground = TabLoadingBackground()
     var selected = false
-    var developer = false
-    private(set) var repositorySubtitle: String?
-    var showsSubtitle: Bool { developer || repositorySubtitle != nil }
-    var rowHeight: CGFloat { repositorySubtitle != nil ? TabAppearance.repositoryHeight : developer ? TabAppearance.developerHeight : TabAppearance.height }
+    private(set) var configuration = TabRowConfiguration()
+    var showsSubtitle: Bool { configuration.subtitle != nil }
+    var rowHeight: CGFloat { showsSubtitle ? TabAppearance.subtitleRowHeight : TabAppearance.height }
     var isSplitMember = false
     var theme = RiseTheme.neutral
     var onSelect: (() -> Void)?
@@ -38,7 +38,9 @@ import RiseCore
         isBordered = false; title = ""; wantsLayer = true; clipsToBounds = false
         layer?.cornerRadius = TabAppearance.radius; layer?.cornerCurve = .continuous
         target = self; action = #selector(selectTab)
-        addSubview(loadingBackground); addSubview(icon); addSubview(titleField); addSubview(subtitle); addSubview(close)
+        addSubview(loadingBackground); addSubview(icon); addSubview(titleField); addSubview(subtitle); addSubview(subtitleAccessory); addSubview(close)
+        subtitleAccessory.imageScaling = .scaleNone; subtitleAccessory.isHidden = true
+        subtitleAccessory.setAccessibilityElement(false)
         icon.wantsLayer = true; subtitle.wantsLayer = true; subtitle.alphaValue = 0
         titleField.delegate = self; titleField.focusRingType = .none
         titleField.cell?.usesSingleLineMode = true
@@ -47,11 +49,9 @@ import RiseCore
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
     @objc func selectTab() { onSelect?() }
-    func update(tab: BrowserTab, selected: Bool, theme: RiseTheme) {
+    func update(tab: BrowserTab, selected: Bool, theme: RiseTheme, configuration: TabRowConfiguration) {
         let previouslyShowedSubtitle = showsSubtitle
-        if let request = PullRequest(url: tab.url), case .gitlab = request.forge { repositorySubtitle = request.project }
-        else { repositorySubtitle = nil }
-        self.selected = selected; self.theme = theme; developer = tab.developer
+        self.selected = selected; self.theme = theme; self.configuration = configuration
         if previouslyShowedSubtitle != showsSubtitle {
             subtitleHideWork?.cancel(); subtitleHideWork = nil
             animateSubtitleLayout = hasLaidOut && window?.isVisible == true && !isRenaming && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -59,10 +59,8 @@ import RiseCore
         if !isRenaming { titleField.stringValue = tab.title }
         titleField.textColor = TabAppearance.text(theme, selected: selected)
         subtitle.textColor = theme.muted
-        if let repositorySubtitle {
-            subtitle.attributedStringValue = TabAppearance.repositorySubtitle(repositorySubtitle, font: subtitle.font ?? .systemFont(ofSize: 11), theme: theme)
-        } else {
-            subtitle.stringValue = AddressResolver.displayHost(tab.url) + (tab.url?.port.map { ":\($0)" } ?? "")
+        if let detail = configuration.subtitle {
+            subtitle.attributedStringValue = detail.attributedString(font: subtitle.font ?? .systemFont(ofSize: 11), defaultColor: theme.muted)
         }
         if showsSubtitle { subtitle.isHidden = false }
         if !animateSubtitleLayout && subtitleHideWork == nil {
@@ -81,9 +79,11 @@ import RiseCore
             }; icon.image = image
         } else { icon.image = NSImage(systemSymbolName: tab.pinned ? "pin.fill" : "globe", accessibilityDescription: nil) }
         icon.contentTintColor = theme.sidebarIcon
+        subtitleAccessory.image = configuration.subtitleAccessory
+        subtitleAccessory.contentTintColor = theme.sidebarIcon
         close.contentTintColor = theme == .dark ? NSColor.white.withAlphaComponent(0.8) : theme.sidebarIcon
         close.hoverColor = theme == .dark ? NSColor.white.withAlphaComponent(0.08) : NSColor.black.withAlphaComponent(0.05)
-        setAccessibilityLabel(tab.title + (repositorySubtitle.map { ", \($0)" } ?? "") + (selected ? ", selected" : ""))
+        setAccessibilityLabel(tab.title + (configuration.subtitle.map { ", \($0.text)" } ?? "") + (selected ? ", selected" : ""))
         close.toolTip = "Close \(tab.title)"
         loadingBackground.update(loading: tab.isLoading, progress: tab.isPreparingNavigation ? 0.05 : tab.webView.estimatedProgress, theme: theme)
         style(); needsLayout = true; needsDisplay = true
@@ -97,6 +97,7 @@ import RiseCore
         layer?.borderColor = NSColor.white.withAlphaComponent(theme == .dark ? 0.08 : 0.7).cgColor
         layer?.borderWidth = selected && !isSplitMember ? 0.5 : 0
         close.isHidden = !hover || isSplitMember
+        subtitleAccessory.isHidden = !showsSubtitle || configuration.subtitleAccessory == nil || hover || isSplitMember
         needsLayout = true
     }
     override func layout() {
@@ -113,11 +114,13 @@ import RiseCore
         let textX: CGFloat = isSplitMember ? 28 : 30
         let textWidth = max(0, bounds.width - textX - (close.isHidden ? 8 : 32))
         TabListMotion.move(titleField, to: NSRect(x: textX, y: textY, width: textWidth, height: titleHeight), animated: animated, at: time)
+        let subtitleWidth = max(0, textWidth - (subtitleAccessory.isHidden ? 0 : 24))
+        titleField.setFadeBoundary(subtitleAccessory.isHidden ? nil : subtitleWidth)
         let subtitleY = showsSubtitle ? textY + titleHeight + 1 : max(0, bounds.height-subtitleHeight-2)
         let iconX: CGFloat = isSplitMember ? 6 : 8
-        let iconY = repositorySubtitle != nil ? textY + (titleHeight-16)/2 + 2 : (bounds.height-16)/2
+        let iconY = showsSubtitle ? textY + (titleHeight-16)/2 + 2 : (bounds.height-16)/2
         TabListMotion.move(icon, to: NSRect(x: iconX, y: iconY, width: 16, height: 16), animated: animated, at: time)
-        let subtitleFrame = NSRect(x: textX, y: subtitleY, width: textWidth, height: subtitleHeight)
+        let subtitleFrame = NSRect(x: textX, y: subtitleY, width: subtitleWidth, height: subtitleHeight)
         if animated && showsSubtitle && subtitleOpacity == 0 { subtitle.frame = subtitleFrame.offsetBy(dx: 0, dy: -2) }
         TabListMotion.move(subtitle, to: subtitleFrame, animated: animated, at: time)
         if animated {
@@ -133,10 +136,13 @@ import RiseCore
             }
         }
         close.frame = NSRect(x: bounds.width-28.5, y: (bounds.height-24)/2-0.5, width: 24, height: 24)
+        let accessorySize = subtitleAccessory.image?.size ?? .zero
+        subtitleAccessory.frame = NSRect(x: close.frame.midX - accessorySize.width/2,
+            y: close.frame.midY - accessorySize.height/2, width: accessorySize.width, height: accessorySize.height)
     }
     override func draw(_ dirtyRect: NSRect) {
         // The layer and child views draw this custom row, without a button bezel.
-        if selected && developer {
+        if selected && configuration.constructionBorder {
             let radius: CGFloat = isSplitMember ? 8 : TabAppearance.radius
             let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.8, dy: 0.8), xRadius: radius, yRadius: radius)
             let scale = TabAppearance.height / 37

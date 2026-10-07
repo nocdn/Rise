@@ -73,12 +73,12 @@ final class DarkFaviconTests: XCTestCase {
         XCTAssertGreaterThan(try color(XCTUnwrap(restored.image(for: tab.url, fetch: false, dark: true))).redComponent, 0.95)
         XCTAssertLessThan(try color(XCTUnwrap(restored.image(for: tab.url, fetch: false))).redComponent, 0.2)
         let row = TabRow(tab: tab, onClose: {})
-        row.update(tab: tab, selected: true, theme: .dark)
+        row.update(tab: tab, selected: true, theme: .dark, configuration: .forTab(tab, theme: .dark))
         XCTAssertTrue(row.icon.image === tab.darkFavicon)
-        row.update(tab: tab, selected: true, theme: .neutral)
+        row.update(tab: tab, selected: true, theme: .neutral, configuration: .forTab(tab, theme: .neutral))
         XCTAssertTrue(row.icon.image === tab.favicon)
         tab.darkFavicon = nil
-        row.update(tab: tab, selected: true, theme: .dark)
+        row.update(tab: tab, selected: true, theme: .dark, configuration: .forTab(tab, theme: .dark))
         XCTAssertTrue(row.icon.image === tab.favicon, "Sites with no variant keep their original favicon")
     }
     @MainActor func testOneAdaptiveSVGDownloadProducesBothAppearancesWithoutOverwritingLight() async throws {

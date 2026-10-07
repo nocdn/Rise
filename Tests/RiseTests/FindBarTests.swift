@@ -91,6 +91,79 @@ import AppKit
         XCTAssertFalse(bar.isAnswering)
         bar.closeInstantly()
     }
+    func testCommandFindRefocusesAndSelectsTheQuestionWithoutDismissingItsAnswer() async throws {
+        _ = NSApplication.shared
+        let session = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json")
+        let browser = BrowserController(sessionURL: session, restore: false)
+        defer {
+            browser.findBars.values.forEach { $0.discard() }; browser.saveWork?.cancel()
+            browser.tabs.forEach { $0.cancelLoad() }; browser.window?.orderOut(nil)
+            try? FileManager.default.removeItem(at: session.deletingLastPathComponent())
+        }
+        let tab = browser.addTab()
+        browser.window?.setFrameAutosaveName("")
+        browser.window?.setFrameOrigin(NSPoint(x: -10000, y: -10000))
+        browser.showWindow(nil); browser.showFind()
+        let bar = browser.findBar, question = "Tell me about café 🐈"
+        bar.answer = { _, _ in AsyncThrowingStream { $0.yield("The completed answer."); $0.finish() } }
+        bar.toggleMode(); bar.input.stringValue = question; bar.send()
+        let deadline = Date().addingTimeInterval(5)
+        while bar.isAnswering && Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertFalse(bar.isAnswering)
+        browser.window?.makeFirstResponder(tab.webView)
+
+        browser.showFind()
+        XCTAssertTrue(bar.isPresented)
+        XCTAssertEqual(bar.mode, .ask)
+        XCTAssertEqual(bar.input.stringValue, question)
+        XCTAssertEqual(bar.conversation.count, 1)
+        XCTAssertEqual(bar.conversation.last?.answer, "The completed answer.")
+        let editor = try XCTUnwrap(bar.input.currentEditor() as? NSTextView)
+        XCTAssertTrue(browser.window?.firstResponder === editor)
+        XCTAssertEqual(editor.selectedRange(), NSRange(location: 0, length: question.utf16.count))
+        editor.setSelectedRange(NSRange(location: 2, length: 0))
+        browser.showFind()
+        XCTAssertEqual(editor.selectedRange(), NSRange(location: 0, length: question.utf16.count))
+        XCTAssertTrue(bar.isPresented)
+
+        bar.handleEscape()
+        XCTAssertFalse(bar.isPresented)
+        XCTAssertTrue(browser.window?.firstResponder === tab.webView)
+    }
+    func testInputTokenMenuWaitsForCompletionAndDoesNotReuseReplacedOrFailedUsage() async throws {
+        let bar = FindBar()
+        defer { bar.discard() }
+        var streams: [AsyncThrowingStream<String, Error>.Continuation] = []
+        bar.answer = { _, _ in AsyncThrowingStream { streams.append($0) } }
+        bar.present(); bar.toggleMode(); bar.input.stringValue = "Question"; bar.send()
+        let firstGeneration = bar.answerGeneration
+        bar.recordInputTokens(2452, for: firstGeneration)
+        streams[0].yield("First answer")
+        XCTAssertEqual(bar.makeMoreMenu().items.map(\.title), ["Regenerate", "Copy"], "Usage stays out of the menu while streaming")
+        streams[0].finish()
+        try await Task.sleep(for: .milliseconds(20))
+        let menu = bar.makeMoreMenu()
+        XCTAssertEqual(menu.items.map(\.title), ["Regenerate", "Copy", "", "2,452 tok"])
+        XCTAssertFalse(try XCTUnwrap(menu.items.last).isEnabled)
+
+        bar.regenerate()
+        XCTAssertNil(bar.inputTokenCount)
+        bar.recordInputTokens(9999, for: firstGeneration)
+        XCTAssertNil(bar.inputTokenCount, "A cancelled request cannot set the new answer's usage")
+        bar.recordInputTokens(824, for: bar.answerGeneration)
+        streams[1].yield("Replacement answer"); streams[1].finish()
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(bar.makeMoreMenu().items.last?.title, "824 tok")
+
+        bar.regenerate()
+        bar.recordInputTokens(1000, for: bar.answerGeneration)
+        streams[2].finish(throwing: URLError(.networkConnectionLost))
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertNil(bar.inputTokenCount)
+        XCTAssertEqual(bar.makeMoreMenu().items.map(\.title), ["Regenerate", "Copy"])
+        bar.hide(); bar.present()
+        XCTAssertNil(bar.inputTokenCount)
+    }
     func testUnmatchedSearchSwitchesToAskBeforeItOutgrowsTheField() async throws {
         let bar = FindBar()
         bar.find = { _, _ in PageFind.Matches(count: 0, index: -1) }

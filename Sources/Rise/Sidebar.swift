@@ -104,7 +104,7 @@ import RiseCore
             let group = splits.first { $0.contains(tab.id) }
             row.isSplitMember = group != nil
             let isSelected = group.map { group in selected.map { group.contains($0.id) } ?? false } ?? (tab.id == selected?.id)
-            row.update(tab: tab, selected: isSelected, theme: theme)
+            row.update(tab: tab, selected: isSelected, theme: theme, configuration: .forTab(tab, theme: theme))
             if group == nil && row.superview !== rowsHost { rowsHost.addSubview(row) }
         }
         for id in Array(splitRows.keys) where !splits.contains(where: { $0.id == id }) { splitRows.removeValue(forKey: id)?.removeFromSuperview() }
