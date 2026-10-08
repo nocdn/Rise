@@ -87,6 +87,7 @@ import RiseCore
     lazy var pullRequestHover: PullRequestHover = {
         let hover = PullRequestHover(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("pr-summaries.json"))
         hover.summaries.onChange = { [weak self] key in self?.pullRequestSummaryChanged(key) }
+        hover.summaries.provider = { [weak self] in self?.aiProvider ?? .openRouter }
         return hover
     }()
     var paletteCreatesTab = false
@@ -380,6 +381,7 @@ import RiseCore
     func configure(_ tab: BrowserTab) -> BrowserTab {
         tab.webView.navigationDelegate = self; tab.webView.uiDelegate = self
         tab.hidesYouTubeNotificationCount = hidesYouTubeNotificationCount
+        tab.showsRepositorySubtitle = showsRepositorySubtitle
         tab.webView.appearance = theme.appearance; tab.webView.underPageBackgroundColor = theme.page
         adBlocker.install(on: tab.webView)
         tab.prepareForLoad = { [weak self] web in try await self?.adBlocker.prepare(web) }

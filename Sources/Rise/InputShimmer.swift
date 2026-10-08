@@ -25,12 +25,13 @@ import CoreText
     var bandColor = NSColor.labelColor { didSet { needsDisplay = true } }
     private(set) var isRunning = false
     private var started: CFTimeInterval = 0, stopAt: CFTimeInterval?, restoring: CFTimeInterval?
-    private var progress: CGFloat = 0
+    /// How far the band is through its sweep; set directly only by tests.
+    var progress: CGFloat = 0
     private var link: CADisplayLink?
     private var fieldColor: NSColor?
 
     // Hidden until it runs, so it never draws over the field's own colors (such as no-match red).
-    override init(frame frameRect: NSRect) { super.init(frame: frameRect); isHidden = true }
+    override init(frame frameRect: NSRect) { super.init(frame: frameRect); isHidden = true; clipsToBounds = true }
     required init?(coder: NSCoder) { fatalError() }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
@@ -101,16 +102,21 @@ import CoreText
               let context = NSGraphicsContext.current?.cgContext else { return }
         let attributes: [NSAttributedString.Key: Any] = [.font: font, NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true]
         let line = CTLineCreateWithAttributedString(NSAttributedString(string: field.stringValue, attributes: attributes))
-        let width = CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
         let origin = baseline(of: field, font: font)
+        // A long question runs past the field; only its visible part shimmers, so the band
+        // never draws over the badge beside the field.
+        let visible = convert(field.cell?.titleRect(forBounds: field.bounds) ?? field.bounds, from: field)
+        let start = max(origin.x, visible.minX)
+        let width = max(0, min(origin.x+CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)), visible.maxX)-start)
         context.saveGState()
+        context.clip(to: CGRect(x: visible.minX, y: bounds.minY, width: visible.width, height: bounds.height))
         context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
         // The text in the bright color, kept only under the moving gradient. (CTLineDraw ignores
         // clip text drawing modes, so the gradient masks a transparency layer instead.)
         context.beginTransparencyLayer(auxiliaryInfo: nil)
         context.setFillColor(bandColor.cgColor); context.textPosition = origin; CTLineDraw(line, context)
         context.setBlendMode(.destinationIn)
-        let x = origin.x-Self.band+progress*(width+Self.band)
+        let x = start-Self.band+progress*(width+Self.band)
         let colors = [NSColor.black.withAlphaComponent(0), .black, NSColor.black.withAlphaComponent(0)].map(\.cgColor) as CFArray
         if let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors, locations: [0, 0.5, 1]) {
             // Extended past both ends so the clear edges also erase the text outside the band.

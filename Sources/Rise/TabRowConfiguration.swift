@@ -35,7 +35,7 @@ import RiseCore
             configuration.constructionBorder = true
             configuration.subtitleAccessory = hammer
         }
-        if let request = PullRequest(url: tab.url), case .gitlab = request.forge {
+        if tab.showsRepositorySubtitle, let request = PullRequest(url: tab.url), case .gitlab = request.forge {
             let repository = request.project as NSString
             let slash = repository.range(of: "/", options: .backwards)
             let start = slash.location == NSNotFound ? 0 : NSMaxRange(slash)

@@ -9,6 +9,8 @@ import RiseCore
     var customTitle: String?
     /// Leaves YouTube's notification count out of the title.
     var hidesYouTubeNotificationCount = true
+    /// Shows a merge request's project under its title in the tab list.
+    var showsRepositorySubtitle = true
     var pinned: Bool
     var developer: Bool
     var requestedURL: URL?

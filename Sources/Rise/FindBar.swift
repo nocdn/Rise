@@ -215,6 +215,9 @@ final class FindInputCell: NSTextFieldCell {
     /// The "Answered by" row under an answer, which takes the place of its bottom inset.
     static let footerHeight: CGFloat = 34, footerMid: CGFloat = 18
     static var modelName: String { PageAssistant.model.split(separator: "/").last.map(String.init) ?? PageAssistant.model }
+    static func answeredBy(_ provider: AIProvider) -> String {
+        "Answered by \(modelName)" + (provider == .openCode ? " via OpenCode" : "")
+    }
 
     let panel = Surface(radius: radius)
     private let content = FlippedView(), row = FlippedView()
@@ -235,7 +238,7 @@ final class FindInputCell: NSTextFieldCell {
     private let answerView = TokenTextView()
     private let footer = FlippedView()
     private let footerIcon = NSImageView(image: TablerIcon.image(TablerIcon.searchWindow, size: 13))
-    private let footerLabel = label("Answered by \(FindBar.modelName)", size: 11)
+    let footerLabel = label(FindBar.answeredBy(.openRouter), size: 11)
     let moreButton: ChromeButton
     /// Where Copy puts the answer.
     var pasteboard = NSPasteboard.general
@@ -258,6 +261,8 @@ final class FindInputCell: NSTextFieldCell {
     var dismiss: (() -> Void)?
     /// Streams an answer to a question about the page, given the conversation so far.
     var answer: ((String, [Turn]) -> AsyncThrowingStream<String, Error>)?
+    /// Which service answers, named in the footer.
+    var provider: () -> AIProvider = { .openRouter }
     private(set) var inputTokenCount: Int?
     private(set) var answerGeneration = 0
     private(set) var conversation: [Turn] = []
@@ -554,6 +559,7 @@ final class FindInputCell: NSTextFieldCell {
         hasSubmittedQuestion = true; finishInputColorTransition()
         cancelAnswer()
         lastQuestion = (question, asked)
+        footerLabel.stringValue = Self.answeredBy(provider())
         let tokens = answer(question, conversation)
         answerText = ""; answerFailed = false; stream = TokenStream(); renderAnswer()
         answeredText = nil; badge.caption = .thinking

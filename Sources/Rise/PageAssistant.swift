@@ -1,7 +1,7 @@
-import Foundation
+import AppKit
 import WebKit
 
-/// Answers questions about the open page through OpenRouter, streamed token by token.
+/// Answers questions about the open page through the chosen AI provider, streamed token by token.
 enum PageAssistant {
     // Temporary test key, hardcoded on purpose until it is rotated and moved to settings.
     static let apiKey = "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"
@@ -57,15 +57,14 @@ enum PageAssistant {
                        page: @escaping @MainActor () async throws -> Page,
                        highlight: @escaping @MainActor (String) async -> Bool,
                        inputTokens: @escaping @MainActor (Int) -> Void = { _ in },
+                       provider: AIProvider = .openRouter,
                        session: URLSession = .shared) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     let messages = messages(question: question, history: history, page: try await page())
                     try Task.checkCancellation()
-                    let body: [String: Any] = ["model": model, "stream": true,
-                                              "reasoning": ["effort": reasoningEffort], "messages": messages]
-                    try await streamAnswer(body, session: session, highlight: highlight, inputTokens: inputTokens) { continuation.yield($0) }
+                    try await streamAnswer(messages, provider: provider, session: session, highlight: highlight, inputTokens: inputTokens) { continuation.yield($0) }
                     continuation.finish()
                 } catch { continuation.finish(throwing: error) }
             }
@@ -73,44 +72,21 @@ enum PageAssistant {
         }
     }
 
-    private static func streamAnswer(_ body: [String: Any], session: URLSession,
+    private static func streamAnswer(_ messages: [[String: Any]], provider: AIProvider, session: URLSession,
                                      highlight: @escaping @MainActor (String) async -> Bool,
                                      inputTokens: @escaping @MainActor (Int) -> Void,
                                      yield: (String) -> Void) async throws {
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("Rise", forHTTPHeaderField: "X-Title")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (bytes, response) = try await session.bytes(for: request)
-        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            var data = Data()
-            for try await byte in bytes { data.append(byte) }
-            throw Failure.service(errorMessage(in: data) ?? "The model couldn’t answer (HTTP \(http.statusCode)).")
-        }
         var decoder = PageAnswerStream(), responded = false
-        // SSE content tokens may split anywhere inside the JSON header or its escaped strings.
-        for try await line in bytes.lines {
+        // Content tokens may split anywhere inside the JSON header or its escaped strings.
+        try await ModelService.run(messages, provider: provider, session: session) { event in
             try Task.checkCancellation()
-            guard line.hasPrefix("data:") else { continue }
-            let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
-            if payload == "[DONE]" { break }
-            let data = Data(payload.utf8)
-            if let message = errorMessage(in: data) { throw Failure.service(message) }
-            let chunk = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            // Usage can arrive without a content delta, after the last answer token.
-            if let count = (chunk?["usage"] as? [String: Any])?["prompt_tokens"] as? Int, count >= 0 {
-                try Task.checkCancellation()
+            switch event {
+            case .inputTokens(let count):
                 await inputTokens(count)
-            }
-            guard let delta = (chunk?["choices"] as? [[String: Any]])?.first?["delta"] as? [String: Any] else { continue }
-            let content = delta["content"] as? String ?? ""
-            if !responded && (!content.isEmpty || !(delta["reasoning"] as? String ?? "").isEmpty
-                || !(delta["reasoning_details"] as? [[String: Any]] ?? []).isEmpty) {
-                responded = true; yield("") // End Thinking on first output, before the snippet is complete.
-            }
-            if !content.isEmpty {
+            case .responded:
+                if !responded { responded = true; yield("") } // End Thinking on first output, before the snippet is complete.
+            case .text(let content):
+                if !responded { responded = true; yield("") }
                 let output = try decoder.append(content)
                 try Task.checkCancellation()
                 if let snippet = output.snippet, !snippet.isEmpty { _ = await highlight(snippet) }
@@ -123,11 +99,6 @@ enum PageAssistant {
         if let snippet = output.snippet, !snippet.isEmpty { _ = await highlight(snippet) }
         try Task.checkCancellation()
         if !output.text.isEmpty { yield(output.text) }
-    }
-
-    private static func errorMessage(in data: Data) -> String? {
-        let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        return (object?["error"] as? [String: Any])?["message"] as? String
     }
 }
 
@@ -149,7 +120,25 @@ enum PageAssistant {
             }, inputTokens: { [weak bar] count in
                 guard let generation else { return }
                 bar?.recordInputTokens(count, for: generation)
+            }, provider: self.aiProvider)
+        }
+        bar.provider = { [weak self] in self?.aiProvider ?? .openRouter }
+    }
+
+    /// OpenRouter unless OpenCode is picked in the site controls' More menu.
+    var aiProvider: AIProvider { AIProvider(rawValue: preferences.string(forKey: AIProvider.preferenceKey) ?? "") ?? .openRouter }
+    func selectAIProvider(_ provider: AIProvider) {
+        preferences.set(provider.rawValue, forKey: AIProvider.preferenceKey)
+    }
+    func makeAIProviderMenu() -> NSMenuItem {
+        let item = NSMenuItem(title: "AI Provider", action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: "AI Provider")
+        for provider in AIProvider.allCases {
+            submenu.addItem(menuItem(provider.title, checked: aiProvider == provider) { [weak self] in
+                self?.selectAIProvider(provider)
             })
         }
+        item.submenu = submenu
+        return item
     }
 }

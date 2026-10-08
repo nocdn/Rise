@@ -259,29 +259,13 @@ enum PullRequestSummarizer {
         if !page.isEmpty { context += "\nPull request page:\n\(page.prefix(20_000))\n" }
         return [["role": "system", "content": systemPrompt], ["role": "user", "content": context]]
     }
-    static func summarize(_ messages: [[String: Any]], session: URLSession = .shared) -> AsyncThrowingStream<String, Error> {
+    static func summarize(_ messages: [[String: Any]], provider: AIProvider = .openRouter,
+                          session: URLSession = .shared) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    var request = URLRequest(url: PageAssistant.endpoint)
-                    request.httpMethod = "POST"
-                    request.setValue("Bearer \(PageAssistant.apiKey)", forHTTPHeaderField: "Authorization")
-                    request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    request.setValue("Rise", forHTTPHeaderField: "X-Title")
-                    request.httpBody = try JSONSerialization.data(withJSONObject: [
-                        "model": PageAssistant.model, "stream": true,
-                        "reasoning": ["effort": PageAssistant.reasoningEffort], "messages": messages])
-                    let (bytes, response) = try await session.bytes(for: request)
-                    guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
-                    for try await line in bytes.lines {
-                        try Task.checkCancellation()
-                        guard line.hasPrefix("data:") else { continue }
-                        let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
-                        if payload == "[DONE]" { break }
-                        let chunk = try? JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any]
-                        if chunk?["error"] != nil { throw URLError(.badServerResponse) }
-                        let delta = (chunk?["choices"] as? [[String: Any]])?.first?["delta"] as? [String: Any]
-                        if let content = delta?["content"] as? String, !content.isEmpty { continuation.yield(content) }
+                    try await ModelService.run(messages, provider: provider, session: session) { event in
+                        if case .text(let content) = event { continuation.yield(content) }
                     }
                     continuation.finish()
                 } catch { continuation.finish(throwing: error) }
@@ -309,6 +293,8 @@ enum PullRequestSummarizer {
     static let statusRefresh: TimeInterval = 10
     private let storageURL: URL
     var onChange: ((String) -> Void)?
+    /// Which service writes descriptions.
+    var provider: () -> AIProvider = { .openRouter }
 
     init(storageURL: URL) {
         self.storageURL = storageURL
@@ -346,7 +332,7 @@ enum PullRequestSummarizer {
             do {
                 guard details != nil || !pageText.isEmpty else { throw URLError(.resourceUnavailable) }
                 let messages = PullRequestSummarizer.messages(title: details?.title ?? title, body: details?.body ?? "", diff: diff, page: pageText)
-                for try await chunk in PullRequestSummarizer.summarize(messages) {
+                for try await chunk in PullRequestSummarizer.summarize(messages, provider: self.provider()) {
                     text += chunk
                     self.update(key) { $0.summary = text }
                 }

@@ -66,6 +66,10 @@ import WebKit
     func applicationDidFinishLaunching(_ notification: Notification) {
         Task { [self] in
             do {
+                // RISE_FIND_PROVIDER=openCode answers through the OpenCode service on this Mac.
+                if let provider = ProcessInfo.processInfo.environment["RISE_FIND_PROVIDER"] {
+                    UserDefaults.standard.register(defaults: [AIProvider.preferenceKey: provider])
+                }
                 browser = BrowserController(sessionURL: URL(fileURLWithPath: ProcessInfo.processInfo.environment["RISE_BENCHMARK_SESSION"]!), restore: false)
                 browser.window?.setContentSize(NSSize(width: 1100, height: 720)); browser.window?.center(); browser.showWindow(nil)
                 NSApp.activate(ignoringOtherApps: true)
@@ -248,6 +252,7 @@ import WebKit
                 print("Answer: \(answer)")
                 check(grew && panel.height > FindBar.rowHeight+10, "Panel grows to fit the streamed answer: \(panel.height)")
                 check(answer.contains("March 3") || answer.contains("3 March"), "The model answers from the page")
+                check(bar.footerLabel.stringValue == FindBar.answeredBy(browser.aiProvider), "The footer names who answered: \(bar.footerLabel.stringValue)")
                 let passage = try await web.callAsyncJavaScript("const h = CSS.highlights.get('rise-passage'); return h ? [...h][0].toString() : ''", contentWorld: PageFind.world) as? String ?? ""
                 print("Highlighted: \(passage)")
                 check(passage.contains("March 3, 2027"), "The model highlights the passage that answers the question")

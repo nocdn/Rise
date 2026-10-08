@@ -604,6 +604,24 @@ final class YouTubePictureInPictureTests: XCTestCase {
         XCTAssertEqual(browser.makeMoreSiteMenu().items.first { $0.title == "Hide YouTube Notification Count" }?.state, .on)
     }
 
+    @MainActor func testTheRepositorySubtitleSettingIsOnByDefaultAndCanBeTurnedOff() throws {
+        let browser = browser(); defer { clean(browser) }
+        let title = "Show Repository Under Merge Request Tabs"
+        XCTAssertTrue(browser.showsRepositorySubtitle)
+        let tab = browser.addTab()
+        tab.requestedURL = URL(string: "https://gitlab.com/group/project/-/merge_requests/7")
+        browser.update()
+        let row = try XCTUnwrap(browser.sidebar.rows[tab.id])
+        XCTAssertTrue(row.showsSubtitle)
+        browser.setShowsRepositorySubtitle(false)
+        XCTAssertFalse(row.showsSubtitle)
+        XCTAssertEqual(browser.makeMoreSiteMenu().items.first { $0.title == title }?.state, .off)
+        XCTAssertFalse(browser.addTab().showsRepositorySubtitle, "New tabs follow the setting")
+        browser.setShowsRepositorySubtitle(true)
+        XCTAssertTrue(row.showsSubtitle)
+        XCTAssertEqual(browser.makeMoreSiteMenu().items.first { $0.title == title }?.state, .on)
+    }
+
     @MainActor func testUnclippedButtonsOnlyHoverOverThemselves() {
         // Popover buttons draw their shadow outside, so their visibleRect spans the whole popover.
         let content = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 200))

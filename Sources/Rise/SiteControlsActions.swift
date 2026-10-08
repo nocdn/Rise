@@ -32,8 +32,12 @@ import Vision
         menu.addItem(.separator())
         menu.addItem(makeSearchEngineMenu())
         menu.addItem(makeThemeMenu())
+        menu.addItem(makeAIProviderMenu())
         menu.addItem(menuItem("Hide YouTube Notification Count", checked: hidesYouTubeNotificationCount) { [weak self] in
             self?.setHidesYouTubeNotificationCount(!(self?.hidesYouTubeNotificationCount ?? true))
+        })
+        menu.addItem(menuItem("Show Repository Under Merge Request Tabs", checked: showsRepositorySubtitle) { [weak self] in
+            self?.setShowsRepositorySubtitle(!(self?.showsRepositorySubtitle ?? true))
         })
         menu.addItem(menuItem("Clear Browsing History…") { [weak self] in self?.confirmClearBrowsingHistory() })
         let visibleRows = (siteControlsPopover.contentViewController as? SiteControlsController)?.rows ?? [:]
@@ -50,6 +54,14 @@ import Vision
     func setHidesYouTubeNotificationCount(_ value: Bool) {
         preferences.set(value, forKey: Self.youTubeNotificationCountKey)
         for tab in tabs + (peekTab.map { [$0] } ?? []) { tab.hidesYouTubeNotificationCount = value; tab.changed() }
+    }
+    static let repositorySubtitleKey = "Rise.ShowRepositorySubtitle"
+    /// On unless turned off in the site controls' More menu.
+    var showsRepositorySubtitle: Bool { preferences.object(forKey: Self.repositorySubtitleKey) as? Bool ?? true }
+    func setShowsRepositorySubtitle(_ value: Bool) {
+        preferences.set(value, forKey: Self.repositorySubtitleKey)
+        for tab in tabs + (peekTab.map { [$0] } ?? []) { tab.showsRepositorySubtitle = value }
+        update()
     }
     func permissionSettingMenu(_ capability: SiteCapability) {
         guard let origin = SitePermissions.origin(selectedTab?.url), let view = siteControlsPopover.contentViewController?.view else { return }

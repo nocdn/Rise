@@ -354,4 +354,32 @@ import AppKit
         XCTAssertEqual(scroll.frame.height, eightLineHeight, accuracy: 2)
         bar.closeInstantly()
     }
+
+    func testShimmerOnALongQuestionStaysInsideTheField() throws {
+        _ = NSApplication.shared
+        let container = FlippedView(frame: NSRect(x: 0, y: 0, width: 320, height: 30))
+        let field = NSTextField(string: String(repeating: "what is happening in this very big merge request? ", count: 3))
+        field.isBordered = false; field.drawsBackground = false; field.font = .systemFont(ofSize: 13)
+        field.frame = NSRect(x: 10, y: 6, width: 160, height: 18)
+        let shimmer = InputShimmer(); shimmer.field = field; shimmer.bandColor = .black
+        container.addSubview(field); container.addSubview(shimmer)
+        shimmer.frame = field.frame.insetBy(dx: 0, dy: -3)
+        shimmer.start(); defer { shimmer.cancel() }
+        field.isHidden = true // Only the band shows in the image.
+        func inked(_ progress: CGFloat, x: ClosedRange<Int>) throws -> Int {
+            shimmer.progress = progress
+            let bitmap = try XCTUnwrap(container.bitmapImageRepForCachingDisplay(in: container.bounds))
+            container.cacheDisplay(in: container.bounds, to: bitmap)
+            let scale = CGFloat(bitmap.pixelsWide)/container.bounds.width
+            var count = 0
+            for px in Int(CGFloat(x.lowerBound)*scale)..<Int(CGFloat(x.upperBound)*scale) {
+                for py in 0..<bitmap.pixelsHigh where (bitmap.colorAt(x: px, y: py)?.alphaComponent ?? 0) > 0.05 { count += 1 }
+            }
+            return count
+        }
+        for progress: CGFloat in [0.3, 0.6, 0.9] {
+            XCTAssertEqual(try inked(progress, x: 172...320), 0, "The band never draws past the field, over the badge: \(progress)")
+        }
+        XCTAssertGreaterThan(try inked(0.9, x: 10...170), 0, "The band still sweeps the visible text, ending at its right edge")
+    }
 }
