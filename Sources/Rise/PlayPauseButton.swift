@@ -90,7 +90,8 @@ import AppKit
     /// Revealing or moving the button can leave its tracking state at the previous geometry.
     func refreshHover() {
         if let window, window.isVisible, !isHiddenOrHasHiddenAncestor, hoverColor != nil {
-            hovering = visibleRect.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
+            // Without clipping, visibleRect alone can span the whole window.
+            hovering = visibleRect.intersection(bounds).contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
         } else { hovering = false }
         CATransaction.begin(); CATransaction.setDisableActions(true)
         layer?.backgroundColor = hovering ? hoverColor?.cgColor : nil

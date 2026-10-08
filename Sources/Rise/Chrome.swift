@@ -86,10 +86,13 @@ class ChromeButton: NSButton {
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
         refreshHoverState()
     }
+    /// The visible part of the button. Without clipping, visibleRect alone
+    /// can span its whole window, which would put every button under the pointer.
+    var hoverRect: NSRect { visibleRect.intersection(bounds) }
     /// Moving or revealing a button can leave its tracking state at the previous geometry.
     func refreshHoverState() {
         if let window, window.isVisible, !isHiddenOrHasHiddenAncestor, alphaValue > 0.01 {
-            hover = visibleRect.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
+            hover = hoverRect.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
         } else { hover = false }
         CATransaction.begin(); CATransaction.setDisableActions(true)
         layer?.backgroundColor = (hover ? hoverColor : baseColor).cgColor

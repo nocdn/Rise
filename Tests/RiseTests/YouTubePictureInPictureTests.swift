@@ -351,13 +351,13 @@ final class YouTubePictureInPictureTests: XCTestCase {
     @MainActor func testAbandonedTwoFingerDragSettlesWithoutItsLiftOff() async throws {
         _ = NSApplication.shared
         let panel = FloatingVideoWindow(aspectRatio: 16.0/9, screen: try XCTUnwrap(NSScreen.main)); defer { panel.closeImmediately() }
-        panel.orderFrontRegardless(); panel.alphaValue = 1; panel.abandonedDragTimeout = 0.2
+        panel.orderFrontRegardless(); panel.alphaValue = 1; panel.abandonedDragTimeout = 0.6
         panel.handleGesture(.init(phase: .began, timestamp: 10))
         panel.handleGesture(.init(phase: .changed, translation: CGVector(dx: 40, dy: 40), timestamp: 10.01))
         XCTAssertTrue(panel.isDragging)
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertTrue(panel.isDragging, "Resting fingers keep the drag")
-        try await Task.sleep(for: .milliseconds(1400))
+        try await Task.sleep(for: .milliseconds(1800))
         XCTAssertFalse(panel.isDragging)
         let screen = try XCTUnwrap(panel.screen ?? NSScreen.main)
         let limits = FloatingVideoMotion.originBounds(size: panel.frame.size, visibleFrame: screen.visibleFrame, contentInset: FloatingVideoWindow.shadowInset)
@@ -567,6 +567,43 @@ final class YouTubePictureInPictureTests: XCTestCase {
         let plain = try XCTUnwrap(browser.sidebar.rows[other.id])
         plain.mouseEntered(with: hover)
         XCTAssertFalse(plain.close.isHidden); XCTAssertTrue(plain.playback.isHidden, "Tabs without a video have no play button")
+    }
+
+    func testYouTubeTitlesLoseOnlyTheirNotificationCount() {
+        let youtube = URL(string: "https://www.youtube.com/watch?v=abc")
+        XCTAssertEqual(YouTubeVideoPage.removingNotificationCount(from: "(7) It's Finally Happened - YouTube", url: youtube), "It's Finally Happened - YouTube")
+        XCTAssertEqual(YouTubeVideoPage.removingNotificationCount(from: "(9+) YouTube", url: URL(string: "https://youtube.com/")), "YouTube")
+        XCTAssertEqual(YouTubeVideoPage.removingNotificationCount(from: "(2024) Film - YouTube", url: youtube), "(2024) Film - YouTube")
+        XCTAssertEqual(YouTubeVideoPage.removingNotificationCount(from: "(7) ", url: youtube), "(7) ")
+        XCTAssertEqual(YouTubeVideoPage.removingNotificationCount(from: "(7) Inbox", url: URL(string: "https://mail.example.com/")), "(7) Inbox")
+    }
+
+    @MainActor func testTheYouTubeNotificationCountSettingIsOnByDefaultAndCanBeTurnedOff() async throws {
+        let browser = browser(); defer { clean(browser) }
+        XCTAssertTrue(browser.hidesYouTubeNotificationCount)
+        let tab = browser.addTab()
+        tab.webView.loadHTMLString("<title>(7) Some Video - YouTube</title>", baseURL: URL(string: "https://www.youtube.com/watch?v=abc"))
+        try await wait("title") { tab.webView.title == "(7) Some Video - YouTube" }
+        tab.changed()
+        XCTAssertEqual(tab.title, "Some Video - YouTube")
+        browser.setHidesYouTubeNotificationCount(false)
+        XCTAssertFalse(browser.hidesYouTubeNotificationCount)
+        XCTAssertEqual(tab.title, "(7) Some Video - YouTube")
+        XCTAssertEqual(browser.makeMoreSiteMenu().items.first { $0.title == "Hide YouTube Notification Count" }?.state, .off)
+        browser.setHidesYouTubeNotificationCount(true)
+        XCTAssertEqual(tab.title, "Some Video - YouTube")
+        XCTAssertEqual(browser.makeMoreSiteMenu().items.first { $0.title == "Hide YouTube Notification Count" }?.state, .on)
+    }
+
+    @MainActor func testUnclippedButtonsOnlyHoverOverThemselves() {
+        // Popover buttons draw their shadow outside, so their visibleRect spans the whole popover.
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 200))
+        let window = NSWindow(contentRect: content.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = content
+        let button = PopoverActionButton(symbol: "ellipsis", title: "More", theme: .neutral) {}
+        button.frame = NSRect(x: 180, y: 160, width: 50, height: 32); content.addSubview(button)
+        XCTAssertGreaterThan(button.visibleRect.width, 4*button.bounds.width, "visibleRect alone spans the window")
+        XCTAssertEqual(button.hoverRect, button.bounds)
     }
 
     @MainActor func testProgressFollowsPlaybackSeeksAndThePlayButtonFollowsThePage() async throws {

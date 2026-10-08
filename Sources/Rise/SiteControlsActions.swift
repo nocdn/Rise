@@ -32,6 +32,9 @@ import Vision
         menu.addItem(.separator())
         menu.addItem(makeSearchEngineMenu())
         menu.addItem(makeThemeMenu())
+        menu.addItem(menuItem("Hide YouTube Notification Count", checked: hidesYouTubeNotificationCount) { [weak self] in
+            self?.setHidesYouTubeNotificationCount(!(self?.hidesYouTubeNotificationCount ?? true))
+        })
         menu.addItem(menuItem("Clear Browsing History…") { [weak self] in self?.confirmClearBrowsingHistory() })
         let visibleRows = (siteControlsPopover.contentViewController as? SiteControlsController)?.rows ?? [:]
         let capabilities = [SiteCapability.camera, .microphone, .location].filter { visibleRows[$0.title] == nil }
@@ -40,6 +43,13 @@ import Vision
             menu.addItem(menuItem("\(capability.title) Permissions…") { [weak self] in self?.permissionSettingMenu(capability) })
         }
         return menu
+    }
+    static let youTubeNotificationCountKey = "Rise.HideYouTubeNotificationCount"
+    /// On unless turned off in the site controls' More menu.
+    var hidesYouTubeNotificationCount: Bool { preferences.object(forKey: Self.youTubeNotificationCountKey) as? Bool ?? true }
+    func setHidesYouTubeNotificationCount(_ value: Bool) {
+        preferences.set(value, forKey: Self.youTubeNotificationCountKey)
+        for tab in tabs + (peekTab.map { [$0] } ?? []) { tab.hidesYouTubeNotificationCount = value; tab.changed() }
     }
     func permissionSettingMenu(_ capability: SiteCapability) {
         guard let origin = SitePermissions.origin(selectedTab?.url), let view = siteControlsPopover.contentViewController?.view else { return }

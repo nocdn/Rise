@@ -7,6 +7,8 @@ import RiseCore
     let webView: WKWebView
     var title: String
     var customTitle: String?
+    /// Leaves YouTube's notification count out of the title.
+    var hidesYouTubeNotificationCount = true
     var pinned: Bool
     var developer: Bool
     var requestedURL: URL?
@@ -112,7 +114,9 @@ import RiseCore
     func changed() {
         if AddressResolver.isLocal(url) { developer = true }
         if let customTitle { title = customTitle }
-        else if let value = webView.title, !value.isEmpty { title = value }
+        else if let value = webView.title, !value.isEmpty {
+            title = hidesYouTubeNotificationCount ? YouTubeVideoPage.removingNotificationCount(from: value, url: url) : value
+        }
         else if let url, url.absoluteString != "about:blank" { title = AddressResolver.displayHost(url) }
         updateIcon(); onChange?()
     }

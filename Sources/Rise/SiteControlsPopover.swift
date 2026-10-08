@@ -31,7 +31,7 @@ final class SiteSettingRow: NSButton {
     let icon = NSImageView()
     private let perform: () -> Void
     override var isFlipped: Bool { true }
-    init(title: String, subtitle: String, symbol: String, active: Bool, checked: Bool? = nil, theme: RiseTheme, action: @escaping () -> Void) {
+    init(title: String, subtitle: String, symbol: String, image: NSImage? = nil, active: Bool, checked: Bool? = nil, theme: RiseTheme, action: @escaping () -> Void) {
         perform = action
         let scale = SiteControlsLayout.scale
         name = label(title, size: 14*scale, weight: .semibold, color: theme.text)
@@ -39,7 +39,8 @@ final class SiteSettingRow: NSButton {
         super.init(frame: .zero)
         isBordered = false; self.title = ""; target = self; self.action = #selector(invoke)
         wantsLayer = true; layer?.cornerRadius = 8; layer?.cornerCurve = .continuous
-        icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 15*scale, weight: .semibold))
+        icon.image = image ?? NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(.init(pointSize: 15*scale, weight: .semibold))
+        icon.imageScaling = .scaleNone
         icon.contentTintColor = .white; icon.wantsLayer = true; icon.layer?.cornerRadius = 16*scale
         icon.layer?.backgroundColor = NSColor(hex: active ? 0x915439 : theme == .dark ? 0x685957 : 0xD9C5BF).cgColor
         if let checked { state = checked ? .on : .off }
@@ -47,6 +48,20 @@ final class SiteSettingRow: NSButton {
         setAccessibilityLabel(title); setAccessibilityValue(subtitle)
     }
     required init?(coder: NSCoder) { fatalError() }
+    /// The developer tabs' hammer and Tabler's bell, filled to match the symbols beside them.
+    static let hammer = TablerIcon.image(LucideIcon.hammer, size: 17*SiteControlsLayout.scale, filled: true, centered: true)
+    static let bell: NSImage = {
+        let size = 18*SiteControlsLayout.scale
+        let body = TablerIcon.image(TablerIcon.bell, size: size, filled: true)
+        let clapper = TablerIcon.image(TablerIcon.bellClapper, size: size, filled: true)
+        // Its ink spans y 2 to 23 of the 24-unit box; this centers it.
+        let image = NSImage(size: NSSize(width: size, height: size), flipped: true) { rect in
+            let offset = rect.offsetBy(dx: 0, dy: -0.5*size/24)
+            body.draw(in: offset); clapper.draw(in: offset); return true
+        }
+        image.isTemplate = true
+        return image
+    }()
     @objc func invoke() { perform() }
     override func layout() {
         super.layout()
@@ -98,14 +113,14 @@ final class SiteSettingRow: NSButton {
         add.toolTip = "Extension support"; add.setAccessibilityLabel("Extensions"); view.addSubview(add)
         heading("Settings", y: 125)
         var y: CGFloat = 151
-        func row(_ title: String, subtitle: String, symbol: String, active: Bool, checked: Bool? = nil, action: @escaping () -> Void) {
-            let row = SiteSettingRow(title: title, subtitle: subtitle, symbol: symbol, active: active, checked: checked, theme: theme, action: action)
+        func row(_ title: String, subtitle: String, symbol: String, image: NSImage? = nil, active: Bool, checked: Bool? = nil, action: @escaping () -> Void) {
+            let row = SiteSettingRow(title: title, subtitle: subtitle, symbol: symbol, image: image, active: active, checked: checked, theme: theme, action: action)
             row.frame = NSRect(x: 14, y: y, width: 216, height: 43); view.addSubview(row); rows[title] = row; y += 43
         }
         let origin = SitePermissions.origin(browser.selectedTab?.url)
         let notification = browser.sitePermissions.permission(.notifications, origin: origin)
-        row("Notifications", subtitle: notification.subtitle, symbol: "gearshape.fill", active: notification == .allow) { [weak browser] in browser?.permissionSettingMenu(.notifications) }
-        row("Developer Mode", subtitle: browser.selectedTab?.developer == true ? "On" : "Off", symbol: "hammer.fill", active: browser.selectedTab?.developer == true) { [weak browser] in browser?.toggleDeveloper(); browser?.refreshSiteControls() }
+        row("Notifications", subtitle: notification.subtitle, symbol: "gearshape.fill", image: SiteSettingRow.bell, active: notification == .allow) { [weak browser] in browser?.permissionSettingMenu(.notifications) }
+        row("Developer Mode", subtitle: browser.selectedTab?.developer == true ? "On" : "Off", symbol: "hammer.fill", image: SiteSettingRow.hammer, active: browser.selectedTab?.developer == true) { [weak browser] in browser?.toggleDeveloper(); browser?.refreshSiteControls() }
         row("Block Ads & Trackers", subtitle: browser.adBlocker.enabled ? "On" : "Off", symbol: "shield.fill", active: browser.adBlocker.enabled, checked: browser.adBlocker.enabled) { [weak browser] in browser?.toggleAdBlocking(); browser?.refreshSiteControls() }
         let pip = browser.sitePermissions.automaticPictureInPicture(origin: origin)
         row("Automatic Picture-In-Picture", subtitle: pip ? "Allowed" : "Blocked", symbol: "gearshape.fill", active: pip) { [weak browser] in browser?.toggleAutomaticPictureInPicture(); browser?.refreshSiteControls() }

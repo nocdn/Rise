@@ -17,12 +17,23 @@ enum TablerIcon {
     static let enterKey = "m9 11l-4 4l4 4m-4-4h11a4 4 0 0 0 0-8h-1"
     static let linkCopied = "M17 22v-2m-8-5l6-6m-4-3l.463-.536a5 5 0 0 1 7.071 7.072L18 13m-5 5l-.397.534a5.07 5.07 0 0 1-7.127 0a4.97 4.97 0 0 1 0-7.071L6 11m14 6h2M2 7h2m3-5v2"
 
+    static let bell = "M10 5a2 2 0 1 1 4 0a7 7 0 0 1 4 6v3a4 4 0 0 0 2 3H4a4 4 0 0 0 2-3v-3a7 7 0 0 1 4-6"
+    /// Tabler's clapper, lowered a unit so the filled bell keeps a gap above it.
+    static let bellClapper = "M10 20h4a2 2 0 0 1-4 0"
+
     /// A `size`-point template image of the 24-unit icon, stroked 2 units wide like the original.
-    static func image(_ data: String, size: CGFloat, description: String? = nil) -> NSImage {
+    /// `filled` also fills each outline's enclosed area. `centered` centers the
+    /// drawn shape itself, rather than the 24-unit box it sits in.
+    static func image(_ data: String, size: CGFloat, filled: Bool = false, centered: Bool = false, description: String? = nil) -> NSImage {
         let path = self.path(data)
         let image = NSImage(size: NSSize(width: size, height: size), flipped: true) { _ in
             guard let context = NSGraphicsContext.current?.cgContext else { return false }
             context.scaleBy(x: size/24, y: size/24)
+            if centered {
+                let ink = path.boundingBoxOfPath
+                context.translateBy(x: 12-ink.midX, y: 12-ink.midY)
+            }
+            if filled { context.addPath(path); context.setFillColor(NSColor.black.cgColor); context.fillPath() }
             context.addPath(path); context.setStrokeColor(NSColor.black.cgColor); context.setLineWidth(2)
             context.setLineCap(.round); context.setLineJoin(.round); context.strokePath()
             return true

@@ -376,6 +376,7 @@ import RiseCore
     }
     func configure(_ tab: BrowserTab) -> BrowserTab {
         tab.webView.navigationDelegate = self; tab.webView.uiDelegate = self
+        tab.hidesYouTubeNotificationCount = hidesYouTubeNotificationCount
         tab.webView.appearance = theme.appearance; tab.webView.underPageBackgroundColor = theme.page
         adBlocker.install(on: tab.webView)
         tab.prepareForLoad = { [weak self] web in try await self?.adBlocker.prepare(web) }
