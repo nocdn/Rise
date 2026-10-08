@@ -110,10 +110,7 @@ struct FloatingVideoScrollInput {
         overlay.minimizeAction = { [weak self] in self?.onMinimize?() }
         overlay.seek = { [weak self] fraction, final in self?.onSeek?(fraction, final) }
         overlay.mouseDrag = { [weak self] event in self?.handleMouse(event) }
-        overlay.pinch = { [weak self] event in
-            self?.pinchLog("overlay.magnify phase=\(event.phase.rawValue) magnification=\(String(format: "%.4f", event.magnification))")
-            self?.handleMagnification(event.magnification, phase: event.phase)
-        }
+        overlay.pinch = { [weak self] event in self?.handleMagnification(event.magnification, phase: event.phase) }
         observeScreenChanges()
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -143,12 +140,16 @@ struct FloatingVideoScrollInput {
         setFrame(aligned, display: true)
         if let content = contentView {
             surface.frame = content.bounds.insetBy(dx: Self.shadowInset, dy: Self.shadowInset)
+            // Stretches the page's last picture to the new size until it redraws.
+            videoHost.frame = surface.bounds; videoHost.bounds = NSRect(origin: canvasOrigin, size: canvasSize ?? surface.bounds.size)
             overlay.frame = surface.bounds
             overlay.needsLayout = true; overlay.layoutSubtreeIfNeeded()
             content.layer?.shadowPath = CGPath(roundedRect: surface.frame, cornerWidth: 16, cornerHeight: 16, transform: nil)
         }
         CATransaction.commit()
-        onVideoSizeChange?(surface.bounds.size, backingScaleFactor)
+        // Redrawing at every step of a pinch would show each new size before
+        // the page paints it, so the picture stretches until the size settles.
+        if resizeMotion.map({ $0.phase == .idle }) ?? true { onVideoSizeChange?(surface.bounds.size, backingScaleFactor) }
     }
 
     func attach(_ webView: WKWebView) {
@@ -162,10 +163,16 @@ struct FloatingVideoScrollInput {
         videoHost.addSubview(webView); sourceViewport = viewport
     }
 
-    /// The page's canvas reached this size, so the video host may show it.
-    func didResizeVideo(to size: NSSize) {
+    /// The size the page's canvas draws the picture at, in the page's points.
+    /// The video host scales it to fill the window.
+    private(set) var canvasSize: NSSize?
+    /// Where in the page the picture is drawn, in the page's points.
+    private(set) var canvasOrigin = NSPoint.zero
+    /// The page painted the picture at this size and place, so the video host shows it.
+    func didResizeVideo(to size: NSSize, at origin: NSPoint = .zero) {
+        canvasSize = size; canvasOrigin = origin
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        videoHost.frame = NSRect(origin: .zero, size: size); videoHost.bounds = NSRect(origin: .zero, size: size)
+        videoHost.frame = surface.bounds; videoHost.bounds = NSRect(origin: origin, size: size)
         CATransaction.commit()
     }
 
@@ -236,8 +243,6 @@ struct FloatingVideoScrollInput {
     }
 
     override func sendEvent(_ event: NSEvent) {
-        // TEMPORARY pinch diagnostics.
-        if ![.mouseMoved, .scrollWheel, .cursorUpdate, .mouseEntered, .mouseExited, .gesture].contains(event.type) { pinchTrace("panel.sendEvent", event) }
         if event.type == .magnify {
             handleMagnification(event.magnification, phase: event.phase); return
         }
@@ -253,22 +258,18 @@ struct FloatingVideoScrollInput {
     /// Rise in the background, the global monitor sees it (without consuming it).
     private func installEventMonitors() {
         guard localPinchMonitor == nil else { return }
-        Self.pinchLog.notice("pinch monitors installed for panel \(self.windowNumber)")
-        localPinchMonitor = NSEvent.addLocalMonitorForEvents(matching: Self.gestureTypes) { [weak self] event in
+        localPinchMonitor = NSEvent.addLocalMonitorForEvents(matching: Self.pinchTypes) { [weak self] event in
             // Not `self?.routePinch(event) ?? event`: that turns "handled" (nil) back into the event.
             guard let self else { return event }
-            self.pinchTrace("local monitor", event)
-            guard event.type == .magnify else { return event }
-            let routed = self.routePinch(event)
-            self.pinchLog(routed == nil ? "  -> handled by PiP" : "  -> passed on")
-            return routed
+            return self.routePinch(event)
         }
-        globalPinchMonitor = NSEvent.addGlobalMonitorForEvents(matching: Self.gestureTypes) { [weak self] event in
+        // A trackpad pinch travels as a raw gesture event (type 29) that only
+        // the receiving app turns into magnify, so a global monitor for magnify
+        // alone never fires; watching raw gestures catches it.
+        globalPinchMonitor = NSEvent.addGlobalMonitorForEvents(matching: Self.pinchTypes.union(.gesture)) { [weak self] event in
             MainActor.assumeIsolated {
-                self?.pinchTrace("global monitor (another app)", event)
-                guard event.type == .magnify else { return }
-                let routed = self?.routePinch(event)
-                self?.pinchLog(routed == nil ? "  -> handled by PiP" : "  -> passed on")
+                let event = event.type == .gesture ? event.cgEvent.flatMap(NSEvent.init(cgEvent:)) ?? event : event
+                _ = self?.routePinch(event)
             }
         }
         // The panel never takes keyboard focus, so Space reaches Rise's key window.
@@ -301,18 +302,8 @@ struct FloatingVideoScrollInput {
         // Tracking areas miss the crossing that happened while the panel ignored the mouse.
         overlay.refreshHover()
     }
-    // TEMPORARY pinch diagnostics: `log show --predicate 'subsystem == "Rise" && category == "PiPPinch"' --last 5m`
-    private static let pinchLog = Logger(subsystem: "Rise", category: "PiPPinch")
-    private static let gestureTypes: NSEvent.EventTypeMask = [.magnify, .beginGesture, .endGesture, .smartMagnify, .rotate, .swipe]
-    private func pinchLog(_ message: String) { Self.pinchLog.notice("\(message, privacy: .public)") }
-    private func pinchTrace(_ source: String, _ event: NSEvent) {
-        let window = event.window.map { $0 === self ? "PiP panel" : "\(type(of: $0))" } ?? "none"
-        let pointer = NSEvent.mouseLocation
-        var detail = ""
-        if event.type == .magnify { detail = " magnification=\(String(format: "%.4f", event.magnification))" }
-        if [.magnify, .gesture, .rotate, .smartMagnify, .swipe, .beginGesture, .endGesture].contains(event.type) { detail += " phase=\(event.phase.rawValue)" }
-        pinchLog("\(source): type=\(event.type.rawValue)\(detail) window=\(window) pointerOverVideo=\(videoFrame.contains(pointer)) keyWindow=\(NSApp.keyWindow.map { "\(type(of: $0))" } ?? "none") active=\(NSApp.isActive) dismissing=\(isDismissing) acceptsMouse=\(acceptsMouse) ignoresMouse=\(ignoresMouseEvents) pinching=\(resizeMotion?.phase == .pinching)")
-    }
+    /// A pinch arrives as magnify events, bracketed by the gesture's begin and end.
+    private static let pinchTypes: NSEvent.EventTypeMask = [.magnify, .beginGesture, .endGesture]
 
     private func removeEventMonitors() {
         if let localPointerMonitor { NSEvent.removeMonitor(localPointerMonitor); self.localPointerMonitor = nil }
@@ -323,11 +314,12 @@ struct FloatingVideoScrollInput {
     }
     /// Returns nil when the pinch resized this window.
     func routePinch(_ event: NSEvent) -> NSEvent? {
-        // Even one addressed to this panel goes to the key window, so take it here.
-        guard event.type == .magnify, !isDismissing, isVisible, acceptsMouse else {
-            if event.type == .magnify { pinchLog("  routePinch rejected: dismissing=\(isDismissing) visible=\(isVisible) acceptsMouse=\(acceptsMouse)") }
-            return event
+        // A pinch whose last magnify went elsewhere still ends with the gesture.
+        if event.type == .endGesture, resizeMotion?.phase == .pinching, !isDismissing {
+            handleMagnification(0, phase: .ended); return event
         }
+        // Even one addressed to this panel goes to the key window, so take it here.
+        guard event.type == .magnify, !isDismissing, isVisible, acceptsMouse else { return event }
         if resizeMotion?.phase != .pinching {
             let point = event.window.map { $0.convertPoint(toScreen: event.locationInWindow) } ?? event.locationInWindow
             guard event.phase.contains(.began) || event.phase.contains(.changed),
@@ -379,8 +371,6 @@ struct FloatingVideoScrollInput {
     }
 
     func handleMagnification(_ magnification: CGFloat, phase: NSEvent.Phase) {
-        let widthBefore = videoFrame.width
-        defer { pinchLog("  handleMagnification phase=\(phase.rawValue) magnification=\(String(format: "%.4f", magnification)) width \(Int(widthBefore)) -> \(Int(videoFrame.width)) resize=\(String(describing: resizeMotion?.phase))") }
         guard !isDismissing, magnification.isFinite else { return }
         if phase.contains(.began) || (phase.contains(.changed) || phase.isEmpty) && resizeMotion?.phase != .pinching {
             guard let screen = screen ?? NSScreen.main else { return }
@@ -415,8 +405,7 @@ struct FloatingVideoScrollInput {
     private func beginDrag(at timestamp: TimeInterval) {
         guard !isDismissing else { return }
         guard let screen = self.screen ?? NSScreen.main ?? NSScreen.screens.first else { return }
-        if var resize = resizeMotion { resize.finish(); applyVideoFrame(resize.videoFrame) }
-        resizeMotion = nil
+        if var resize = resizeMotion { resize.finish(); resizeMotion = nil; applyVideoFrame(resize.videoFrame) }
         motion = FloatingVideoMotion(frame: frame, visibleFrame: placementArea(on: screen), contentInset: Self.shadowInset)
         motion.begin(at: timestamp)
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
@@ -485,7 +474,7 @@ struct FloatingVideoScrollInput {
         guard !isDismissing, let screen = screen ?? NSScreen.main else { return }
         stopMotion()
         var resize = resizing(on: screen)
-        resize.finish(); applyVideoFrame(resize.videoFrame); resizeMotion = nil
+        resize.finish(); resizeMotion = nil; applyVideoFrame(resize.videoFrame)
         motion = FloatingVideoMotion(frame: frame, visibleFrame: placementArea(on: screen), contentInset: Self.shadowInset)
     }
 }

@@ -53,6 +53,7 @@ import AppKit
         let legacySidebarShortcut = item(view, "Toggle Sidebar", #selector(BrowserController.toggleSidebar), "s", target: browser)
         legacySidebarShortcut.isHidden = true; legacySidebarShortcut.allowsKeyEquivalentWhenHidden = true
         item(view, "Reload", #selector(BrowserController.reload), "r", target: browser)
+        item(view, "Hard Reload", #selector(BrowserController.hardReload), "r", modifiers: [.command, .shift], target: browser)
         item(view, "Toggle Developer Mode", #selector(BrowserController.toggleDeveloper), "d", modifiers: .control, target: browser)
         item(view, "Change Theme", #selector(BrowserController.toggleTheme), target: browser)
         item(view, "Show Downloads", #selector(BrowserController.toggleDownloads), "l", modifiers: [.command, .option], target: browser)

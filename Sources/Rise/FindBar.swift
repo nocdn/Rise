@@ -293,9 +293,12 @@ final class FindInputCell: NSTextFieldCell {
         isHidden = true
 
         panel.layer?.cornerCurve = .continuous; panel.layer?.borderWidth = 0.5
-        panel.layer?.shadowColor = NSColor.black.cgColor; panel.layer?.shadowOpacity = 0.16
-        panel.layer?.shadowRadius = 8; panel.layer?.shadowOffset = NSSize(width: 0, height: -2)
-        // The panel keeps its shadow, so an inner view does the clipping.
+        // The same shadow as the pull request card.
+        panel.layer?.shadowColor = NSColor.black.cgColor; panel.layer?.shadowOpacity = 0.12
+        panel.layer?.shadowRadius = 10; panel.layer?.shadowOffset = NSSize(width: 0, height: -3)
+        // Giving a layer a corner radius turns clipping back on, which would cut the shadow
+        // off; the inner content view does the clipping instead.
+        panel.clipsToBounds = false
         content.wantsLayer = true; content.layer?.masksToBounds = true
         content.layer?.cornerRadius = Self.radius; content.layer?.cornerCurve = .continuous
         // Swapped content travels 15 pt; keep it inside the input row, not over the answer.
@@ -352,6 +355,8 @@ final class FindInputCell: NSTextFieldCell {
     func applyTheme(_ theme: RiseTheme) {
         self.theme = theme
         panel.fill = theme.popup; panel.layer?.borderColor = theme.border.cgColor
+        // A dark page swallows a light shadow; it needs more weight to read at all.
+        panel.layer?.shadowOpacity = theme == .dark ? 0.45 : 0.12
         separator.fill = theme.text.withAlphaComponent(theme == .dark ? 0.06 : 0.045)
         [findPlaceholder, askPlaceholder, count].forEach { $0.textColor = theme.muted }
         shimmer.baseColor = theme.muted; shimmer.bandColor = theme.selectedText; badge.applyTheme(theme)

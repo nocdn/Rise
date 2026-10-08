@@ -39,3 +39,27 @@ import AppKit
     }
     override func accessibilityPerformPress() -> Bool { action?(); return true }
 }
+
+/// Shrinks a button's layer while it is pressed: quickly down on press, then a
+/// slightly springy return on release.
+@MainActor enum PressScale {
+    static func set(_ layer: CALayer, to scale: CGFloat) {
+        let current = layer.presentation()?.value(forKeyPath: "transform.scale") as? CGFloat ?? 1
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        layer.removeAnimation(forKey: "press")
+        layer.transform = CATransform3DMakeScale(scale, scale, 1)
+        CATransaction.commit()
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        let animation: CABasicAnimation
+        if scale < 1 {
+            animation = CABasicAnimation(keyPath: "transform.scale")
+            animation.duration = 0.08; animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        } else {
+            let spring = CASpringAnimation(keyPath: "transform.scale")
+            spring.mass = 1; spring.stiffness = 520; spring.damping = 2*0.6*sqrt(520)
+            spring.duration = spring.settlingDuration; animation = spring
+        }
+        animation.fromValue = current; animation.toValue = scale
+        layer.add(animation, forKey: "press")
+    }
+}

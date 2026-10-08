@@ -63,7 +63,8 @@ final class YouTubePictureInPictureTests: XCTestCase {
 
     @MainActor private func picture(in tab: BrowserTab, panel: FloatingVideoWindow) async throws -> CGImage {
         let configuration = WKSnapshotConfiguration()
-        configuration.rect = CGRect(origin: .zero, size: panel.videoFrame.size)
+        // Where the page draws the picture the window shows.
+        configuration.rect = panel.videoHost.bounds
         let image = try await tab.webView.takeSnapshot(configuration: configuration)
         return try XCTUnwrap(image.cgImage(forProposedRect: nil, context: nil, hints: nil))
     }
@@ -80,6 +81,14 @@ final class YouTubePictureInPictureTests: XCTestCase {
     private func hasVisibleColor(_ pixels: Data) -> Bool {
         // Ignore alpha: opaque black contains 255-valued alpha bytes too.
         pixels.enumerated().contains { $0.offset % 4 != 3 && $0.element > 40 }
+    }
+
+    func testCornerButtonsScaleOnlySlightlyWithTheWindow() {
+        XCTAssertEqual(FloatingVideoOverlay.controlScale(width: 360), 1, accuracy: 0.001)
+        // Twice the width: about a fifth larger, far less than the window grew.
+        XCTAssertEqual(FloatingVideoOverlay.controlScale(width: 720), pow(2, 0.25), accuracy: 0.001)
+        XCTAssertEqual(FloatingVideoOverlay.controlScale(width: 2000), 1.2)
+        XCTAssertEqual(FloatingVideoOverlay.controlScale(width: 100), 0.85)
     }
 
     @MainActor func testOriginalVideoKeepsPlayingThroughPiPAndReturnWithoutReload() async throws {
@@ -300,10 +309,10 @@ final class YouTubePictureInPictureTests: XCTestCase {
         _ = browser.addTab()
         try await wait("zoomed PiP") { browser.pictureInPicture.panel?.alphaValue == 1 }
         let panel = try XCTUnwrap(browser.pictureInPicture.panel)
-        try await wait("canvas reaches the picture size") {
-            let width = try await self.value("parseFloat(document.querySelector('html > canvas[aria-hidden]')?.style.width)", in: source) as? Double
-            return abs((width ?? 0)*1.5-Double(panel.videoFrame.width)) < 0.5
-        }
+        try await wait("canvas draws the picture size") { panel.canvasSize == panel.videoFrame.size }
+        // Zoomed CSS pixels still cover the whole viewport, so the page never shows around the picture.
+        let width = try await self.value("parseFloat(document.querySelector('html > canvas[aria-hidden]')?.style.width)", in: source) as? Double
+        XCTAssertGreaterThanOrEqual((width ?? 0)*1.5, Double(source.webView.frame.width)-0.5)
         browser.pictureInPicture.returnToTab()
         XCTAssertTrue(source.webView.window === panel, "Still fading back")
         browser.pictureInPicture.navigationStarted(in: source.webView)
@@ -679,17 +688,51 @@ final class YouTubePictureInPictureTests: XCTestCase {
         // Some devices include a changed phase in momentum events. This must
         // not start another drag or replace the custom corner spring.
         panel.handleGesture(.init(phase: .changed, momentumPhase: .changed, translation: CGVector(dx: 10000, dy: -10000), timestamp: 10.08))
-        try await Task.sleep(for: .milliseconds(1600))
-        XCTAssertNotEqual(panel.frame.origin, original.origin)
         let visible = try XCTUnwrap(panel.screen).visibleFrame
         let area = FloatingVideoMotion.placementArea(visibleFrame: visible, browserFrame: browser.window?.frame)
         let limits = FloatingVideoMotion.originBounds(size: panel.frame.size, visibleFrame: area, contentInset: FloatingVideoWindow.shadowInset)
+        // A busy machine can stretch the spring's frames, so wait for it to land.
+        try await wait("flick settles in a corner", timeout: 5) {
+            (abs(panel.frame.minX-limits.minX) < 0.5 || abs(panel.frame.minX-limits.maxX) < 0.5)
+                && (abs(panel.frame.minY-limits.minY) < 0.5 || abs(panel.frame.minY-limits.maxY) < 0.5)
+        }
+        XCTAssertNotEqual(panel.frame.origin, original.origin)
         XCTAssertTrue(visible.contains(panel.videoFrame))
-        XCTAssertTrue(abs(panel.frame.minX-limits.minX) < 0.5 || abs(panel.frame.minX-limits.maxX) < 0.5)
-        XCTAssertTrue(abs(panel.frame.minY-limits.minY) < 0.5 || abs(panel.frame.minY-limits.maxY) < 0.5)
         XCTAssertTrue(panel.isVisible); XCTAssertFalse(panel.isDismissing)
         XCTAssertTrue(source.webView.window === panel)
         try await assertValue("document.querySelector('video').paused", in: source, equals: false)
+    }
+
+    @MainActor func testPinchingStretchesThePictureUntilItSettlesAndNeverShowsThePage() async throws {
+        let browser = browser(); defer { clean(browser) }
+        let source = try await fixture(in: browser)
+        _ = browser.addTab()
+        try await wait("PiP") { browser.pictureInPicture.panel?.alphaValue == 1 }
+        let panel = try XCTUnwrap(browser.pictureInPicture.panel)
+        let canvas = "[...document.documentElement.children].find(e => e.tagName === 'CANVAS')"
+        let coversViewport = "(() => { const r = \(canvas).getBoundingClientRect(); return r.left === 0 && r.top === 0 && r.width >= innerWidth && r.height >= innerHeight })()"
+        try await assertValue(coversViewport, in: source, equals: true)
+        let before = try XCTUnwrap(panel.canvasSize), beforeOrigin = panel.canvasOrigin
+        panel.handleMagnification(0, phase: .began)
+        panel.handleMagnification(0.25, phase: .changed)
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(panel.canvasSize, before, "Mid-pinch, the page keeps its picture")
+        XCTAssertEqual(panel.videoHost.frame.size, panel.videoFrame.size, "and the window stretches it")
+        XCTAssertEqual(panel.videoHost.bounds.size, before)
+        panel.handleMagnification(0, phase: .ended)
+        try await wait("page redraws at the settled size") { panel.canvasSize == panel.videoFrame.size }
+        XCTAssertEqual(panel.videoHost.bounds.size, panel.videoHost.frame.size)
+        XCTAssertNotEqual(panel.canvasOrigin, beforeOrigin, "The new size is drawn beside the old picture, which stays intact until the switch")
+        XCTAssertEqual(panel.videoHost.bounds.origin, panel.canvasOrigin)
+        try await assertValue(coversViewport, in: source, equals: true)
+        // The page itself (#905040) never shows around the picture.
+        let image = try await picture(in: source, panel: panel)
+        let bytes = try pixels(image)
+        func near(_ value: UInt8, _ target: Int) -> Bool { abs(Int(value)-target) < 12 }
+        let brown = stride(from: 0, to: bytes.count, by: 4).contains { (i: Int) -> Bool in
+            near(bytes[i], 0x90) && near(bytes[i+1], 0x50) && near(bytes[i+2], 0x40)
+        }
+        XCTAssertFalse(brown, "Only the canvas shows inside the picture")
     }
 
     @MainActor func testPinchResizesTheRealWindowAndRestoresBothLimitsWithoutChangingPlayback() async throws {

@@ -66,11 +66,17 @@ final class TabLoadingBackground: FlippedView {
     }
     required init?(coder: NSCoder) { fatalError() }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    func update(loading: Bool, progress: Double, theme: RiseTheme) {
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        fillLayer.colors = [0.07, 0.11, 0.16, 0].map { theme.accent.withAlphaComponent($0).cgColor }
-        fillLayer.locations = [0, 0.65, 0.9, 1]
-        CATransaction.commit()
+    /// A hard reload's progress is red-pink rather than the accent, with the same fade.
+    static let hardReloadColor = NSColor(hex: 0xF03C64)
+    func update(loading: Bool, progress: Double, theme: RiseTheme, hard: Bool = false) {
+        // The finished sweep keeps its color while it fades, though the tab is no longer hard reloading.
+        if loading || fillLayer.colors == nil {
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            let color = hard ? Self.hardReloadColor : theme.accent
+            fillLayer.colors = [0.07, 0.11, 0.16, 0].map { color.withAlphaComponent($0).cgColor }
+            fillLayer.locations = [0, 0.65, 0.9, 1]
+            CATransaction.commit()
+        }
         if loading {
             let starting = !self.loading
             if starting {

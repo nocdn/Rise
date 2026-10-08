@@ -108,7 +108,8 @@ import RiseCore
         setAudio(playing: tab.isPlayingAudio, muted: tab.isAudioMuted)
         setAccessibilityLabel(tab.title + (configuration.subtitle.map { ", \($0.text)" } ?? "") + (selected ? ", selected" : ""))
         close.toolTip = "Close \(tab.title)"
-        loadingBackground.update(loading: tab.isLoading, progress: tab.isPreparingNavigation ? 0.05 : tab.webView.estimatedProgress, theme: theme)
+        loadingBackground.update(loading: tab.isLoading, progress: tab.isPreparingNavigation ? 0.05 : tab.webView.estimatedProgress,
+                                 theme: theme, hard: tab.isHardReloading)
         style(); needsLayout = true; needsDisplay = true
     }
     /// Shows the button while the tab plays sound or is muted. It stays a

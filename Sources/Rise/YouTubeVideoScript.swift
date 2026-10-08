@@ -6,7 +6,7 @@ import WebKit
       if (window.riseYouTubeVideo || !/(^|\.)youtube\.com$/.test(location.hostname) || location.protocol !== 'https:') return;
       let selected = null, active = false, token = '', scheduled = false, previous = '';
       let frameCount = 0, lastDraw = 0, frameInterval = 0;
-      let width = 360, height = 202.5, pixelRatio = 2;
+      let width = 360, height = 202.5, pixelRatio = 2, originX = 0, originY = 0, placed = false;
       const canvas = document.createElement('canvas');
       canvas.setAttribute('aria-hidden', 'true');
       const context = canvas.getContext('2d', {alpha:false});
@@ -37,26 +37,42 @@ import WebKit
         // Release the backing store while the player is inline.
         canvas.width = 0; canvas.height = 0; schedule();
       };
+      // The canvas covers the whole viewport, so a new size never shows the
+      // page around it while it paints. Each new size is drawn in the opposite
+      // corner where it fits beside the last one, which stays intact until
+      // Rise has switched to the new picture. Returns where it is drawn.
       const resize = (w, h, ratio) => {
-        if (![w,h,ratio].every(Number.isFinite) || w <= 0 || h <= 0) return;
+        if (![w,h,ratio].every(Number.isFinite) || w <= 0 || h <= 0) return null;
+        const previous = {x: originX, y: originY, w: width, h: height};
         width = w; height = h; pixelRatio = Math.min(3, Math.max(1, ratio));
-        if (!active) return;
-        canvas.style.setProperty('width', `${width}px`, 'important');
-        canvas.style.setProperty('height', `${height}px`, 'important');
-        const pixelsWide = Math.max(1, Math.round(width*pixelRatio));
-        const pixelsHigh = Math.max(1, Math.round(height*pixelRatio));
+        if (!active) return null;
+        const viewWidth = Math.max(width, innerWidth), viewHeight = Math.max(height, innerHeight);
+        canvas.style.setProperty('width', `${viewWidth}px`, 'important');
+        canvas.style.setProperty('height', `${viewHeight}px`, 'important');
+        const pixelsWide = Math.max(1, Math.round(viewWidth*pixelRatio));
+        const pixelsHigh = Math.max(1, Math.round(viewHeight*pixelRatio));
+        let cleared = false;
         if (canvas.width !== pixelsWide || canvas.height !== pixelsHigh) {
-          canvas.width = pixelsWide; canvas.height = pixelsHigh;
+          canvas.width = pixelsWide; canvas.height = pixelsHigh; cleared = true;
         }
+        const apart = (x, y) => x >= previous.x+previous.w || x+width <= previous.x || y >= previous.y+previous.h || y+height <= previous.y;
+        const corners = [{x:0, y:0}, {x:viewWidth-width, y:viewHeight-height}];
+        const other = corners.find(c => (c.x !== previous.x || c.y !== previous.y) && apart(c.x, c.y));
+        const next = !placed || cleared ? corners[0] : other || corners[0];
+        originX = next.x; originY = next.y; placed = true;
         draw(performance.now());
+        return {x: originX, y: originY};
       };
       const draw = now => {
         if (!active || !selected || selected.readyState < 2 || !selected.videoWidth) return;
         try {
-          const scale = Math.min(canvas.width/selected.videoWidth, canvas.height/selected.videoHeight);
+          const left = Math.round(originX*pixelRatio), top = Math.round(originY*pixelRatio);
+          const areaWidth = Math.min(canvas.width-left, Math.round(width*pixelRatio));
+          const areaHeight = Math.min(canvas.height-top, Math.round(height*pixelRatio));
+          const scale = Math.min(areaWidth/selected.videoWidth, areaHeight/selected.videoHeight);
           const w = selected.videoWidth*scale, h = selected.videoHeight*scale;
-          context.fillStyle = 'black'; context.fillRect(0, 0, canvas.width, canvas.height);
-          context.drawImage(selected, (canvas.width-w)/2, (canvas.height-h)/2, w, h);
+          context.fillStyle = 'black'; context.fillRect(left, top, areaWidth, areaHeight);
+          context.drawImage(selected, left+(areaWidth-w)/2, top+(areaHeight-h)/2, w, h);
           frameCount++;
           frameInterval = lastDraw ? Math.max(0, now-lastDraw) : 0;
           lastDraw = now;
@@ -67,7 +83,7 @@ import WebKit
         if (!videoPage()) return false;
         const video = choose();
         if (!video || document.fullscreenElement || (video.webkitPresentationMode && video.webkitPresentationMode !== 'inline')) return false;
-        exit(); selected = video; active = true; token = id;
+        exit(); selected = video; active = true; token = id; placed = false; originX = 0; originY = 0;
         // Overlay only the visible portion of the original viewport. Do not
         // resize or restyle YouTube's player, its ancestors, or the page.
         canvas.style.cssText = 'all:initial!important;display:block!important;position:fixed!important;left:0!important;top:0!important;margin:0!important;padding:0!important;border:0!important;background:black!important;pointer-events:none!important;z-index:2147483647!important;';

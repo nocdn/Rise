@@ -10,13 +10,18 @@ import AppKit
     var pointSize: CGFloat? { didSet { needsLayout = true } }
     var weight: NSFont.Weight = .bold { didSet { renderedKey = nil; needsLayout = true } }
     var color: NSColor = .white { didSet { if color != oldValue { renderedKey = nil; needsLayout = true } } }
+    /// Holds both symbols and shrinks slightly while pressed.
+    private let glyph = CALayer()
     private let playLayer = CALayer()
     private let pauseLayer = CALayer()
     private var renderedKey: (size: CGFloat, scale: CGFloat)?
     static let hiddenScale: CGFloat = 0.25
+    static let pressedScale: CGFloat = 0.86
+    private var pressed = false
     override init(frame: NSRect) {
         super.init(frame: frame)
-        [playLayer, pauseLayer].forEach { layer?.addSublayer($0) }
+        layer?.addSublayer(glyph)
+        [playLayer, pauseLayer].forEach { glyph.addSublayer($0) }
         show(animated: false)
         setAccessibilityElement(true); setAccessibilityRole(.button); setAccessibilityLabel("Pause")
     }
@@ -25,14 +30,15 @@ import AppKit
         super.layout()
         let size = pointSize ?? (bounds.height*0.62).rounded(), scale = window?.backingScaleFactor ?? 2
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        for (glyph, symbol) in [(playLayer, "play.fill"), (pauseLayer, "pause.fill")] {
+        glyph.bounds = bounds; glyph.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        for (symbolLayer, symbol) in [(playLayer, "play.fill"), (pauseLayer, "pause.fill")] {
             if renderedKey?.size != size || renderedKey?.scale != scale,
                let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(
                    NSImage.SymbolConfiguration(pointSize: size, weight: weight).applying(.init(paletteColors: [color]))) {
-                glyph.contentsScale = scale; glyph.contents = image.layerContents(forContentsScale: scale)
-                glyph.bounds = CGRect(origin: .zero, size: image.size)
+                symbolLayer.contentsScale = scale; symbolLayer.contents = image.layerContents(forContentsScale: scale)
+                symbolLayer.bounds = CGRect(origin: .zero, size: image.size)
             }
-            glyph.position = CGPoint(x: bounds.midX, y: bounds.midY)
+            symbolLayer.position = CGPoint(x: bounds.midX, y: bounds.midY)
         }
         renderedKey = (size, scale)
         CATransaction.commit()
@@ -73,6 +79,17 @@ import AppKit
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = from; fade.toValue = to; fade.duration = duration
         return fade
+    }
+    private func setPressed(_ pressed: Bool) {
+        guard pressed != self.pressed else { return }
+        self.pressed = pressed
+        PressScale.set(glyph, to: pressed ? Self.pressedScale : 1)
+    }
+    override func mouseDown(with event: NSEvent) { setPressed(true) }
+    override func mouseDragged(with event: NSEvent) { setPressed(bounds.contains(convert(event.locationInWindow, from: nil))) }
+    override func mouseUp(with event: NSEvent) {
+        setPressed(false)
+        super.mouseUp(with: event)
     }
     // A pinch over the floating player's button resizes the player.
     override func magnify(with event: NSEvent) { superview?.magnify(with: event) }

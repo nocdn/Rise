@@ -113,7 +113,8 @@ import WebKit
       }
       function collect() {
         const nodes = [], at = [], offsets = [], blocks = new Map();
-        let text = '', source = '', lastBlock = null;
+        // `context` is `source` plus text the find can't highlight, for the page assistant.
+        let text = '', source = '', context = '', lastBlock = null;
         const blockOf = element => {
           for (let e = element; e && e !== document.body; e = e.parentElement) {
             let block = blocks.get(e);
@@ -122,15 +123,21 @@ import WebKit
           }
           return document.body;
         };
-        const space = () => { if (nodes.length && text.length && !text.endsWith(' ')) { text += ' '; source += ' '; at.push(nodes.length-1); offsets.push(nodes[nodes.length-1].length) } };
+        const space = () => { if (nodes.length && text.length && !text.endsWith(' ')) { text += ' '; source += ' '; context += ' '; at.push(nodes.length-1); offsets.push(nodes[nodes.length-1].length) } };
         const walker = document.createTreeWalker(document.body || document.documentElement, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
           acceptNode(node) {
             if (node.nodeType === Node.TEXT_NODE) return NodeFilter.FILTER_ACCEPT;
+            // GitHub's file view draws each code line from an attribute, so the lines hold no
+            // text; the whole file is in a transparent read-only text area over them.
+            if (node.tagName === 'TEXTAREA' && (node.readOnly || node.getAttribute('aria-readonly') === 'true') && node.value.trim()
+                && (!node.checkVisibility || node.checkVisibility({ visibilityProperty: true }))) context += '\n'+node.value+'\n';
             if (SKIP.has(node.tagName)) return NodeFilter.FILTER_REJECT;
             // Clipped screen-reader labels are in innerText but aren't visible passages.
             const style = getComputedStyle(node);
             if (style.clip.replace(/\s/g, '') === 'rect(0px,0px,0px,0px)' || style.clipPath === 'inset(50%)') return NodeFilter.FILTER_REJECT;
             if (node.tagName === 'BR') return NodeFilter.FILTER_ACCEPT;
+            // A display: contents wrapper has no box, so checkVisibility calls it hidden; its children are checked themselves.
+            if (style.display === 'contents') return NodeFilter.FILTER_SKIP;
             if (node.checkVisibility && !node.checkVisibility({ visibilityProperty: true })) return NodeFilter.FILTER_REJECT;
             return NodeFilter.FILTER_SKIP;
           }
@@ -145,11 +152,11 @@ import WebKit
           nodes.push(node);
           for (let i = 0; i < value.length; i++) {
             const c = value[i];
-            if (/\s/.test(c)) { if (text.length && !text.endsWith(' ')) { text += ' '; source += ' '; at.push(nodes.length-1); offsets.push(i) } }
-            else { text += fold(c); source += c; at.push(nodes.length-1); offsets.push(i) }
+            if (/\s/.test(c)) { if (text.length && !text.endsWith(' ')) { text += ' '; source += ' '; context += ' '; at.push(nodes.length-1); offsets.push(i) } }
+            else { text += fold(c); source += c; context += c; at.push(nodes.length-1); offsets.push(i) }
           }
         }
-        return { text, source, range(start, end) {
+        return { text, source, context, range(start, end) {
           const range = document.createRange();
           const first = nodes[at[start]], last = nodes[at[end-1]];
           range.setStart(first, Math.min(offsets[start], first.length));
@@ -187,7 +194,7 @@ import WebKit
       }
       const stale = () => state.ranges.some(r => !r.startContainer.isConnected || !r.endContainer.isConnected);
       return {
-        sourceText() { return collect().source },
+        sourceText() { return collect().context },
         find(query, direction) {
           if (!supported) return null;
           style();

@@ -27,6 +27,8 @@ import RiseCore
     var isPreparingNavigation: Bool { navigationTask != nil }
     var isLoading: Bool { isPreparingNavigation || webView.isLoading }
     var needsBlockingReload = false
+    /// Set by a hard reload until the tab stops loading, so its progress shows in red.
+    var isHardReloading = false
     var favicon: NSImage? { didSet { faviconData = FaviconSnapshot.encode(favicon) } }
     private(set) var faviconData: Data?
     var darkFavicon: NSImage? { didSet { darkFaviconData = FaviconSnapshot.encode(darkFavicon) } }
@@ -65,7 +67,13 @@ import RiseCore
         observations.append(webView.observe(\.title, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.changed() } })
         observations.append(webView.observe(\.url, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.changed() } })
         observations.append(webView.observe(\.estimatedProgress, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.onChange?() } })
-        observations.append(webView.observe(\.isLoading, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.onChange?() } })
+        observations.append(webView.observe(\.isLoading, options: [.new]) { [weak self] _, _ in
+            Task { @MainActor in
+                // Checked when the task runs, so the end of a load the hard reload replaced doesn't clear it.
+                if self?.isLoading == false { self?.isHardReloading = false }
+                self?.onChange?()
+            }
+        })
         observations.append(webView.observe(\.canGoBack, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.onChange?() } })
         observations.append(webView.observe(\.canGoForward, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.onChange?() } })
     }

@@ -92,24 +92,7 @@ import AppKit
     private func setPressed(_ pressed: Bool) {
         guard pressed != self.pressed else { return }
         self.pressed = pressed
-        let scale: CGFloat = pressed ? Self.pressedScale : 1
-        let current = glyph.presentation()?.value(forKeyPath: "transform.scale") as? CGFloat ?? 1
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        glyph.removeAnimation(forKey: "press")
-        glyph.transform = CATransform3DMakeScale(scale, scale, 1)
-        CATransaction.commit()
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
-        let animation: CABasicAnimation
-        if pressed {
-            animation = CABasicAnimation(keyPath: "transform.scale")
-            animation.duration = 0.08; animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        } else {
-            let spring = CASpringAnimation(keyPath: "transform.scale")
-            spring.mass = 1; spring.stiffness = 520; spring.damping = 2*0.6*sqrt(520)
-            spring.duration = spring.settlingDuration; animation = spring
-        }
-        animation.fromValue = current; animation.toValue = scale
-        glyph.add(animation, forKey: "press")
+        PressScale.set(glyph, to: pressed ? Self.pressedScale : 1)
     }
     override func mouseDown(with event: NSEvent) { setPressed(true) }
     override func mouseDragged(with event: NSEvent) { setPressed(bounds.contains(convert(event.locationInWindow, from: nil))) }

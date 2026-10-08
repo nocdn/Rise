@@ -54,6 +54,9 @@ import WebKit
         var firstFrameTimeout: Task<Void, Never>?
         var playbackLink: CADisplayLink?
         var pendingFrameID: UUID?
+        /// A new canvas size, shown once a later paint proves it reached the screen.
+        var pendingCanvas: (id: UUID, size: NSSize, origin: NSPoint, afterPaint: Int)?
+        var paintsIssued = 0
         /// One seek in flight; a scrub's newer positions replace the queued one.
         var seeking = false
         var queuedSeek: (fraction: Double, final: Bool)?
@@ -207,8 +210,18 @@ import WebKit
         }
         session.panel.onVideoSizeChange = { [weak self, weak session] size, ratio in
             guard let self, let session, self.current === session, !session.leaving, let web = session.tab?.webView else { return }
-            Self.call("window.riseYouTubeVideo?.resize(\(Self.canvasArguments(size, ratio, in: web)))", in: web) { [weak session] _, error in
-                if error == nil { session?.panel.didResizeVideo(to: size) }
+            let zoom = web.pageZoom > 0 ? web.pageZoom : 1
+            Self.call("return window.riseYouTubeVideo?.resize(\(Self.canvasArguments(size, ratio, in: web))) ?? null", in: web) { [weak self, weak session] value, error in
+                guard let self, let session, error == nil, let place = value as? [String: Any],
+                      let x = place["x"] as? Double, let y = place["y"] as? Double else { return }
+                // The old picture stays intact while the new one reaches the screen.
+                let id = UUID()
+                session.pendingCanvas = (id, size, NSPoint(x: x*zoom, y: y*zoom), session.paintsIssued)
+                if session.playbackLink == nil {
+                    DispatchQueue.main.asyncAfter(deadline: .now()+0.05) { [weak self, weak session] in
+                        if let self, let session, session.pendingCanvas?.id == id { self.showPendingCanvas(session) }
+                    }
+                }
             }
         }
         prepare(session)
@@ -258,9 +271,12 @@ import WebKit
         guard let session = current, session.playbackLink === link, !session.leaving,
               session.pendingFrameID == nil, let web = session.tab?.webView else { return }
         let frameID = UUID(); session.pendingFrameID = frameID
+        session.paintsIssued += 1
+        let paint = session.paintsIssued
         Self.call("return window.riseYouTubeVideo?.paint() ?? null", in: web) { [weak self, weak session] value, _ in
             guard let self, let session, session.pendingFrameID == frameID else { return }
             session.pendingFrameID = nil
+            if let pending = session.pendingCanvas, paint > pending.afterPaint { self.showPendingCanvas(session) }
             guard self.current === session, !session.leaving, session.panel.hasVideoFrame,
                   let stats = value as? [String: Any], let frames = stats["frames"] as? Int else { return }
             session.panel.didRenderVideo(frames: frames, interval: stats["interval"] as? Double ?? 0)
@@ -270,6 +286,13 @@ import WebKit
             // A frame painted after this one was requested, so the canvas shows.
             session.panel.clearFrozenFrame()
         }
+    }
+
+    private func showPendingCanvas(_ session: Session) {
+        guard let pending = session.pendingCanvas else { return }
+        session.pendingCanvas = nil
+        guard current === session, !session.leaving else { return }
+        session.panel.didResizeVideo(to: pending.size, at: pending.origin)
     }
 
     func returnToTab() {
@@ -326,7 +349,7 @@ import WebKit
         if animated, session.panel.hasVideoFrame, let web, web.window === session.panel {
             waiting += 1
             let configuration = WKSnapshotConfiguration()
-            configuration.rect = CGRect(origin: .zero, size: session.panel.videoHost.frame.size)
+            configuration.rect = CGRect(origin: .zero, size: session.panel.videoHost.bounds.size)
             web.takeSnapshot(with: configuration) { image, _ in frozen = image; finish() }
         }
         Self.call("window.riseYouTubeVideo?.exit()", in: web) { _, _ in finish() }

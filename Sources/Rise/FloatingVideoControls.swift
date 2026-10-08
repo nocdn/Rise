@@ -35,15 +35,22 @@ import AppKit
     required init?(coder: NSCoder) { fatalError() }
     override func layout() {
         super.layout()
-        let side: CGFloat = 30, inset: CGFloat = 10
+        let scale = Self.controlScale(width: bounds.width)
+        let side = 30*scale, inset = 10*scale
         scrim.frame = bounds
         closeControl.frame = NSRect(x: inset, y: inset, width: side, height: side)
-        minimizeControl.frame = NSRect(x: inset+side+6, y: inset, width: side, height: side)
+        minimizeControl.frame = NSRect(x: inset+side+6*scale, y: inset, width: side, height: side)
         returnControl.frame = NSRect(x: bounds.width-inset-side, y: inset, width: side, height: side)
         let play = min(72, max(44, bounds.height*0.3))
         playButton.frame = NSRect(x: (bounds.width-play)/2, y: (bounds.height-play)/2, width: play, height: play)
         // The bar's centerline sits 17pt above the bottom; it thickens around it.
         progress.frame = NSRect(x: 12, y: bounds.height-17-12, width: bounds.width-24, height: 24)
+    }
+    /// The corner buttons follow the window's size only faintly: the fourth
+    /// root of its width, so a window twice as wide has buttons about a fifth
+    /// larger, within 85–120% of their size at the default 360pt.
+    nonisolated static func controlScale(width: CGFloat) -> CGFloat {
+        min(1.2, max(0.85, pow(max(width, 1)/360, 0.25)))
     }
     // The panel never becomes key, so every click is a first click.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -94,9 +101,16 @@ import AppKit
     enum Glyph { case cross, dash, arrows }
     var action: (() -> Void)?
     private let glyph: Glyph
+    /// Holds the background and glyph, so the whole button shrinks slightly while pressed.
+    private let body = CALayer()
     private let background = CALayer()
     private var hovering = false { didSet { updateBackground(); updateGlyph() } }
-    private var pressed = false { didSet { updateBackground() } }
+    private var pressed = false {
+        didSet {
+            updateBackground()
+            if pressed != oldValue { PressScale.set(body, to: pressed ? 0.88 : 1) }
+        }
+    }
     /// Symbol pieces and the direction each moves on hover. The arrows are
     /// the symbol split along its diagonal, one arrow per layer; at rest the
     /// pieces draw the whole symbol.
@@ -104,7 +118,9 @@ import AppKit
     /// The cross is drawn, so its arms can grow without thickening.
     private let strokes = [CAShapeLayer(), CAShapeLayer()]
     private var renderedScale: CGFloat = 0
-    private static let configuration = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold)
+    private var renderedPointSize: CGFloat = 0
+    /// The glyphs are sized for a 30pt button and grow or shrink with it.
+    private var sizeScale: CGFloat { max(bounds.width, 1)/30 }
     /// Matches the 13pt semibold xmark: ink 10 wide and 10.6 tall, strokes 1.9pt.
     private static let crossArm = CGVector(dx: 4.05, dy: 4.36), crossWidth: CGFloat = 1.9
     init(glyph: Glyph, title: String) {
@@ -112,13 +128,13 @@ import AppKit
         super.init(frame: NSRect(x: 0, y: 0, width: 30, height: 30))
         wantsLayer = true
         background.cornerRadius = 8; background.cornerCurve = .continuous
-        layer?.addSublayer(background)
+        layer?.addSublayer(body); body.addSublayer(background)
         switch glyph {
         case .cross:
             for stroke in strokes {
                 stroke.strokeColor = NSColor.white.cgColor; stroke.fillColor = nil
-                stroke.lineWidth = Self.crossWidth; stroke.lineCap = .round
-                layer?.addSublayer(stroke)
+                stroke.lineCap = .round
+                body.addSublayer(stroke)
             }
         case .dash: pieces = [(CALayer(), CGVector(dx: 0, dy: -1))]
         case .arrows:
@@ -127,7 +143,7 @@ import AppKit
             pieces = [CGVector(dx: -1, dy: 1), CGVector(dx: 1, dy: -1)].map { (CALayer(), $0) }
             pieces.forEach { $0.layer.mask = CAShapeLayer() }
         }
-        pieces.forEach { layer?.addSublayer($0.layer) }
+        pieces.forEach { body.addSublayer($0.layer) }
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
         toolTip = title
         setAccessibilityElement(true); setAccessibilityRole(.button); setAccessibilityLabel(title)
@@ -138,12 +154,15 @@ import AppKit
     override func layout() {
         super.layout()
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        background.frame = bounds
+        body.bounds = bounds; body.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        background.frame = bounds; background.cornerRadius = 8*sizeScale
         let scale = window?.backingScaleFactor ?? 2
-        if !pieces.isEmpty, scale != renderedScale,
+        // Redrawn in quarter-point steps, so a pinch doesn't redraw it every frame.
+        let pointSize = (13*sizeScale*4).rounded()/4
+        if !pieces.isEmpty, scale != renderedScale || pointSize != renderedPointSize,
            let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(
-               Self.configuration.applying(.init(paletteColors: [.white]))) {
-            renderedScale = scale
+               NSImage.SymbolConfiguration(pointSize: pointSize, weight: .semibold).applying(.init(paletteColors: [.white]))) {
+            renderedScale = scale; renderedPointSize = pointSize
             let size = image.size
             for (piece, direction) in pieces {
                 piece.contentsScale = scale; piece.contents = image.layerContents(forContentsScale: scale)
@@ -158,7 +177,7 @@ import AppKit
         }
         pieces.forEach { $0.layer.position = CGPoint(x: bounds.midX, y: bounds.midY) }
         for (index, stroke) in strokes.enumerated() where glyph == .cross {
-            stroke.frame = bounds; stroke.removeAnimation(forKey: "hover")
+            stroke.frame = bounds; stroke.lineWidth = Self.crossWidth*sizeScale; stroke.removeAnimation(forKey: "hover")
             stroke.path = crossArm(index, extended: hovering && !Self.reduceMotion)
         }
         CATransaction.commit()
@@ -167,7 +186,7 @@ import AppKit
     private static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     /// One arm of the cross through the center; on hover each end reaches 1pt further.
     private func crossArm(_ index: Int, extended: Bool) -> CGPath {
-        let arm = Self.crossArm, length = hypot(arm.dx, arm.dy)
+        let arm = CGVector(dx: Self.crossArm.dx*sizeScale, dy: Self.crossArm.dy*sizeScale), length = hypot(arm.dx, arm.dy)
         let reach = extended ? (length+1)/length : 1
         let dx = arm.dx*reach, dy = (index == 0 ? arm.dy : -arm.dy)*reach
         let path = CGMutablePath()

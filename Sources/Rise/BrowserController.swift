@@ -507,6 +507,13 @@ import RiseCore
         }
         update()
     }
+    /// Reloads without the cache, refetching the page and everything it loads.
+    @objc func hardReload() {
+        historySwipe.cancel(); errorWebView = nil
+        selectedTab?.isHardReloading = true
+        if let tab = selectedTab, tab.webView.url == nil, let url = tab.requestedURL { tab.load(url) } else { selectedTab?.webView.reloadFromOrigin() }
+        update()
+    }
     @objc func reload() { historySwipe.cancel(); errorWebView = nil; if selectedTab?.isLoading == true { selectedTab?.cancelLoad() } else if let tab = selectedTab, tab.webView.url == nil, let url = tab.requestedURL { tab.load(url) } else { selectedTab?.webView.reload() }; update() }
     @objc func retry() { errorWebView = nil; if let url = selectedTab?.url { selectedTab?.load(url) }; update() }
     @objc func toggleSidebar() {
