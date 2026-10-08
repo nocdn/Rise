@@ -13,6 +13,11 @@ import RiseCore
     var developer: Bool
     var requestedURL: URL?
     var observations: [NSKeyValueObservation] = []
+    /// Whether the page is making sound. WebKit only reports this privately.
+    private(set) var isPlayingAudio = false
+    /// The page keeps playing, but without sound.
+    private(set) var isAudioMuted = false
+    private var audioObserver: PrivateKeyObserver?
     var onChange: (() -> Void)?
     var prepareForLoad: ((WKWebView) async throws -> Void)?
     var onLoadError: ((Error) -> Void)?
@@ -56,6 +61,7 @@ import RiseCore
         }
         webView.isInspectable = true; webView.allowsBackForwardNavigationGestures = false
         webView.underPageBackgroundColor = NSColor(hex: 0xFDFCFC)
+        audioObserver = PrivateKeyObserver(webView, key: Self.playingAudioKey) { [weak self] in Task { @MainActor in self?.audioChanged() } }
         observations.append(webView.observe(\.title, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.changed() } })
         observations.append(webView.observe(\.url, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.changed() } })
         observations.append(webView.observe(\.estimatedProgress, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.onChange?() } })
@@ -109,6 +115,20 @@ import RiseCore
             }
         }
         onChange?()
+    }
+    private static let playingAudioKey = "_isPlayingAudio"
+    private func audioChanged() {
+        let playing = webView.responds(to: NSSelectorFromString(Self.playingAudioKey)) && webView.value(forKey: Self.playingAudioKey) as? Bool == true
+        guard playing != isPlayingAudio else { return }
+        isPlayingAudio = playing; onChange?()
+    }
+    func setAudioMuted(_ muted: Bool) {
+        // _WKMediaMutedState: 1 mutes audio and leaves capture devices alone.
+        let selector = NSSelectorFromString("_setPageMuted:")
+        guard webView.responds(to: selector) else { return }
+        typealias SetPageMuted = @convention(c) (AnyObject, Selector, UInt) -> Void
+        unsafeBitCast(webView.method(for: selector), to: SetPageMuted.self)(webView, selector, muted ? 1 : 0)
+        isAudioMuted = muted; onChange?()
     }
     func cancelLoad() { loadGeneration += 1; navigationTask?.cancel(); navigationTask = nil; webView.stopLoading() }
     func changed() {

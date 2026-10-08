@@ -39,6 +39,7 @@ import RiseCore
     /// Whether a tab's video is paused, or nil when it shows none.
     var playbackState: ((UUID) -> Bool?)?
     var onTogglePlayback: ((UUID) -> Void)?
+    var onToggleMute: ((UUID) -> Void)?
     var onTabPress: (() -> Void)?
     init(copy: @escaping () -> Void, settings: @escaping () -> Void, archive: @escaping () -> Void, cleanUp: @escaping () -> Void) {
         copyButton = SidebarCopyButton(action: copy)
@@ -103,6 +104,7 @@ import RiseCore
                 row.onHover = { [weak self] hovering in self?.onTabHover?(id, hovering) }
                 row.onPress = { [weak self] in self?.onTabPress?() }
                 row.onTogglePlayback = { [weak self] in self?.onTogglePlayback?(id) }
+                row.onToggleMute = { [weak self] in self?.onToggleMute?(id) }
                 rows[id] = row
             }
             let group = splits.first { $0.contains(tab.id) }

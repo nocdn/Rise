@@ -12,6 +12,12 @@ import RiseCore
     /// Whether the tab's video is paused; nil when the tab shows no video.
     private(set) var playbackPaused: Bool?
     var onTogglePlayback: (() -> Void)?
+    /// Between the favicon and the title while the tab plays sound or is muted.
+    let audio = TabAudioButton()
+    private(set) var showsAudio = false
+    var onToggleMute: (() -> Void)?
+    private var audioHideWork: DispatchWorkItem?
+    private var slideText = false
     private var toggleConfirmationDeadline: CFTimeInterval = 0
     let subtitleAccessory = NSImageView(frame: .zero)
     let loadingBackground = TabLoadingBackground()
@@ -44,7 +50,12 @@ import RiseCore
         isBordered = false; title = ""; wantsLayer = true; clipsToBounds = false
         layer?.cornerRadius = TabAppearance.radius; layer?.cornerCurve = .continuous
         target = self; action = #selector(selectTab)
-        addSubview(loadingBackground); addSubview(icon); addSubview(titleField); addSubview(subtitle); addSubview(subtitleAccessory); addSubview(close); addSubview(playback)
+        addSubview(loadingBackground); addSubview(icon); addSubview(titleField); addSubview(subtitle); addSubview(subtitleAccessory); addSubview(close); addSubview(playback); addSubview(audio)
+        audio.acceptsFirstClick = false; audio.isHidden = true; audio.alphaValue = 0
+        audio.action = { [weak self] in
+            guard let self else { return }
+            self.audio.setMuted(!self.audio.muted, animated: true); self.onToggleMute?()
+        }
         playback.pointSize = 11; playback.weight = .regular; playback.acceptsFirstClick = false; playback.isHidden = true
         playback.action = { [weak self] in
             guard let self, let paused = self.playbackPaused else { return }
@@ -93,10 +104,41 @@ import RiseCore
         close.contentTintColor = theme == .dark ? NSColor.white.withAlphaComponent(0.8) : theme.sidebarIcon
         close.hoverColor = theme == .dark ? NSColor.white.withAlphaComponent(0.08) : NSColor.black.withAlphaComponent(0.05)
         playback.color = close.contentTintColor ?? theme.sidebarIcon; playback.hoverColor = close.hoverColor
+        audio.color = playback.color; audio.hoverColor = close.hoverColor
+        setAudio(playing: tab.isPlayingAudio, muted: tab.isAudioMuted)
         setAccessibilityLabel(tab.title + (configuration.subtitle.map { ", \($0.text)" } ?? "") + (selected ? ", selected" : ""))
         close.toolTip = "Close \(tab.title)"
         loadingBackground.update(loading: tab.isLoading, progress: tab.isPreparingNavigation ? 0.05 : tab.webView.estimatedProgress, theme: theme)
         style(); needsLayout = true; needsDisplay = true
+    }
+    /// Shows the button while the tab plays sound or is muted. It stays a
+    /// moment after the sound stops, so a brief pause does not move the title.
+    func setAudio(playing: Bool, muted: Bool) {
+        audio.setMuted(muted, animated: showsAudio)
+        if playing || muted {
+            audioHideWork?.cancel(); audioHideWork = nil
+            setShowsAudio(true)
+        } else if showsAudio, audioHideWork == nil {
+            let work = DispatchWorkItem { [weak self] in self?.audioHideWork = nil; self?.setShowsAudio(false) }
+            audioHideWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now()+Self.audioHideDelay, execute: work)
+        }
+    }
+    static let audioHideDelay: TimeInterval = 1.5
+    private func setShowsAudio(_ shows: Bool) {
+        guard shows != showsAudio else { return }
+        showsAudio = shows
+        let animated = hasLaidOut && window?.isVisible == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        slideText = animated
+        if shows { audio.isHidden = isSplitMember }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = animated ? (shows ? 0.18 : 0.12) : 0
+            audio.animator().alphaValue = shows ? 1 : 0
+        } completionHandler: { [weak self] in
+            MainActor.assumeIsolated { if let self, !self.showsAudio { self.audio.isHidden = true } }
+        }
+        needsLayout = true
+        if shows { audio.refreshHover() }
     }
     /// The page's state. After a press, only its answer (`confirmed`) replaces
     /// the button's new state for a moment, so an earlier report cannot undo it.
@@ -134,9 +176,15 @@ import RiseCore
         let subtitleHeight = ceil(subtitle.intrinsicContentSize.height)
         let textHeight = showsSubtitle ? titleHeight + 1 + subtitleHeight : titleHeight
         let textY = (bounds.height - textHeight) / 2
-        let textX: CGFloat = isSplitMember ? 28 : 30
+        let slide = slideText; slideText = false
+        // The audio button takes the 24 points after the favicon; split rows have no room for it.
+        let audioWidth: CGFloat = showsAudio && !isSplitMember ? 24 : 0
+        let textX: CGFloat = (isSplitMember ? 28 : 30) + audioWidth
+        func place(_ view: NSView, _ frame: NSRect) {
+            if slide { TabListMotion.slide(view, to: frame) } else { TabListMotion.move(view, to: frame, animated: animated, at: time) }
+        }
         let textWidth = max(0, bounds.width - textX - (close.isHidden ? 8 : playback.isHidden ? 32 : 58))
-        TabListMotion.move(titleField, to: NSRect(x: textX, y: textY, width: textWidth, height: titleHeight), animated: animated, at: time)
+        place(titleField, NSRect(x: textX, y: textY, width: textWidth, height: titleHeight))
         let subtitleWidth = max(0, textWidth - (subtitleAccessory.isHidden ? 0 : 24))
         titleField.setFadeBoundary(subtitleAccessory.isHidden ? nil : subtitleWidth)
         let subtitleY = showsSubtitle ? textY + titleHeight + 1 : max(0, bounds.height-subtitleHeight-2)
@@ -145,7 +193,7 @@ import RiseCore
         TabListMotion.move(icon, to: NSRect(x: iconX, y: iconY, width: 16, height: 16), animated: animated, at: time)
         let subtitleFrame = NSRect(x: textX, y: subtitleY, width: subtitleWidth, height: subtitleHeight)
         if animated && showsSubtitle && subtitleOpacity == 0 { subtitle.frame = subtitleFrame.offsetBy(dx: 0, dy: -2) }
-        TabListMotion.move(subtitle, to: subtitleFrame, animated: animated, at: time)
+        place(subtitle, subtitleFrame)
         if animated {
             subtitle.isHidden = false
             DeveloperModeMotion.fade(subtitle, from: subtitleOpacity, to: showsSubtitle ? 1 : 0, at: time)
@@ -160,6 +208,7 @@ import RiseCore
         }
         close.frame = NSRect(x: bounds.width-28.5, y: (bounds.height-24)/2-0.5, width: 24, height: 24)
         playback.frame = close.frame.offsetBy(dx: -26, dy: 0)
+        audio.frame = NSRect(x: iconX+21, y: (iconY+8-12).rounded(), width: 24, height: 24)
         let accessorySize = subtitleAccessory.image?.size ?? .zero
         subtitleAccessory.frame = NSRect(x: close.frame.midX - accessorySize.width/2,
             y: close.frame.midY - accessorySize.height/2, width: accessorySize.width, height: accessorySize.height)
@@ -187,6 +236,7 @@ import RiseCore
         guard bounds.contains(local) else { return nil }
         if !close.isHidden && close.frame.contains(local) { return close.hitTest(local) }
         if !playback.isHidden && playback.frame.contains(local) { return playback }
+        if showsAudio && !audio.isHidden && audio.frame.contains(local) { return audio }
         if isRenaming && titleField.frame.contains(local) { return titleField.hitTest(local) }
         return self
     }

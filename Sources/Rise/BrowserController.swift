@@ -231,6 +231,9 @@ import RiseCore
         sidebar.onTabHover = { [weak self] id, hovering in self?.tabHoverChanged(id, hovering: hovering) }
         sidebar.playbackState = { [weak self] id in self?.pictureInPicture.playbackPaused(id) }
         sidebar.onTogglePlayback = { [weak self] id in self?.pictureInPicture.togglePlayback(id) }
+        sidebar.onToggleMute = { [weak self] id in
+            if let tab = self?.tabs.first(where: { $0.id == id }) { tab.setAudioMuted(!tab.isAudioMuted) }
+        }
         sidebar.onTabPress = { [weak self] in self?.tabPressed() }
         pageShadow.layer?.cornerCurve = .continuous; pageClip.layer?.cornerCurve = .continuous
         pageShadow.shadow = chromeShadow(opacity: PageAppearance.shadowOpacity, blur: PageAppearance.shadowBlur, offset: PageAppearance.shadowOffset)

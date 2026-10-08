@@ -24,7 +24,7 @@ import AppKit
     }
     static func text(_ theme: RiseTheme, selected: Bool) -> NSColor {
         if theme == .rose { return selected ? theme.selectedText : theme.text }
-        return (theme == .dark ? NSColor.white : .black).withAlphaComponent(selected ? 1 : theme == .dark ? 0.89 : 0.84)
+        return (theme == .dark ? NSColor.white : .black).withAlphaComponent(selected ? 1 : theme == .dark ? 0.835 : 0.76)
     }
     static func shadow(_ theme: RiseTheme) -> NSShadow {
         chromeShadow(opacity: theme == .dark ? 0.15 : 0.12, blur: 16, offset: 0, color: theme == .dark ? .white : .black)

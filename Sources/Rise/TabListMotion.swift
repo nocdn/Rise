@@ -21,6 +21,23 @@ import QuartzCore
         movement.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
         layer.add(movement, forKey: movementKey)
     }
+    static let slideKey = "Rise.TabSlide"
+    /// Moves a view sideways at once and animates its picture from where it
+    /// was shown, so a resize never makes it jump.
+    static func slide(_ view: NSView, to frame: NSRect) {
+        guard view.frame != frame, let layer = view.layer else { view.frame = frame; return }
+        let offset = layer.presentation()?.value(forKeyPath: "transform.translation.x") as? CGFloat ?? 0
+        let shownX = view.frame.minX + offset
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        view.frame = frame
+        CATransaction.commit()
+        layer.removeAnimation(forKey: slideKey)
+        guard shownX != frame.minX else { return }
+        let slide = CASpringAnimation(keyPath: "transform.translation.x")
+        slide.mass = 1; slide.stiffness = 420; slide.damping = 2*0.9*sqrt(420)
+        slide.fromValue = shownX-frame.minX; slide.toValue = 0; slide.duration = slide.settlingDuration
+        layer.add(slide, forKey: slideKey)
+    }
 
 }
 
