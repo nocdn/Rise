@@ -71,6 +71,7 @@ import Vision
         guard let origin = SitePermissions.origin(selectedTab?.url) else { return }
         sitePermissions.setAutomaticPictureInPicture(!sitePermissions.automaticPictureInPicture(origin: origin), origin: origin)
         refreshPermissionScripts()
+        pictureInPicture.reconcile(visibleIDs: Set(visibleTabIDs))
     }
     func refreshPermissionScripts() {
         for tab in tabs + (peekTab.map { [$0] } ?? []) {

@@ -36,6 +36,9 @@ import RiseCore
     var onReorder: (([UUID]) -> Void)?
     var onRename: ((UUID, String) -> Void)?
     var onTabHover: ((UUID, Bool) -> Void)?
+    /// Whether a tab's video is paused, or nil when it shows none.
+    var playbackState: ((UUID) -> Bool?)?
+    var onTogglePlayback: ((UUID) -> Void)?
     var onTabPress: (() -> Void)?
     init(copy: @escaping () -> Void, settings: @escaping () -> Void, archive: @escaping () -> Void, cleanUp: @escaping () -> Void) {
         copyButton = SidebarCopyButton(action: copy)
@@ -99,12 +102,14 @@ import RiseCore
                 row.onDragEnd = { [weak self] in self?.endTabDrag() }
                 row.onHover = { [weak self] hovering in self?.onTabHover?(id, hovering) }
                 row.onPress = { [weak self] in self?.onTabPress?() }
+                row.onTogglePlayback = { [weak self] in self?.onTogglePlayback?(id) }
                 rows[id] = row
             }
             let group = splits.first { $0.contains(tab.id) }
             row.isSplitMember = group != nil
             let isSelected = group.map { group in selected.map { group.contains($0.id) } ?? false } ?? (tab.id == selected?.id)
             row.update(tab: tab, selected: isSelected, theme: theme, configuration: .forTab(tab, theme: theme))
+            row.setPlayback(paused: playbackState?(tab.id))
             if group == nil && row.superview !== rowsHost { rowsHost.addSubview(row) }
         }
         for id in Array(splitRows.keys) where !splits.contains(where: { $0.id == id }) { splitRows.removeValue(forKey: id)?.removeFromSuperview() }

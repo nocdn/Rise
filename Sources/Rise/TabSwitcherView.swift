@@ -32,8 +32,9 @@ final class TabPreviewCard: NSButton {
     @objc private func openTab() { choose?(tabID) }
     func update(_ tab: BrowserTab, selected: Bool) {
         titleField.stringValue = tab.title
-        icon.image = tab.favicon ?? NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
-        icon.contentTintColor = tab.favicon == nil ? NSColor(hex: 0xB5B5B5) : nil
+        if let favicon = tab.favicon { icon.image = favicon }
+        else { icon.showEmptyPlaceholder(theme: .neutral) }
+        icon.contentTintColor = nil
         if tab.url?.host == "news.ycombinator.com", tab.favicon == nil {
             icon.image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
                 NSColor(hex: 0xFF6600).setFill(); NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3).fill()

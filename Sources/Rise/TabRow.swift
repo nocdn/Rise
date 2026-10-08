@@ -7,6 +7,12 @@ import RiseCore
     let titleField = TabTitleField(frame: .zero)
     let subtitle = label("", size: 11, color: .secondaryLabelColor)
     let close: ChromeButton
+    /// Plays or pauses the tab's YouTube video, beside the close button on hover.
+    let playback = PlayPauseButton()
+    /// Whether the tab's video is paused; nil when the tab shows no video.
+    private(set) var playbackPaused: Bool?
+    var onTogglePlayback: (() -> Void)?
+    private var toggleConfirmationDeadline: CFTimeInterval = 0
     let subtitleAccessory = NSImageView(frame: .zero)
     let loadingBackground = TabLoadingBackground()
     var selected = false
@@ -38,7 +44,15 @@ import RiseCore
         isBordered = false; title = ""; wantsLayer = true; clipsToBounds = false
         layer?.cornerRadius = TabAppearance.radius; layer?.cornerCurve = .continuous
         target = self; action = #selector(selectTab)
-        addSubview(loadingBackground); addSubview(icon); addSubview(titleField); addSubview(subtitle); addSubview(subtitleAccessory); addSubview(close)
+        addSubview(loadingBackground); addSubview(icon); addSubview(titleField); addSubview(subtitle); addSubview(subtitleAccessory); addSubview(close); addSubview(playback)
+        playback.pointSize = 11; playback.weight = .regular; playback.acceptsFirstClick = false; playback.isHidden = true
+        playback.action = { [weak self] in
+            guard let self, let paused = self.playbackPaused else { return }
+            // Shows the new state at once; the page's report confirms or corrects it.
+            self.setPlayback(paused: !paused, confirmed: true)
+            self.toggleConfirmationDeadline = CACurrentMediaTime()+1
+            self.onTogglePlayback?()
+        }
         subtitleAccessory.imageScaling = .scaleNone; subtitleAccessory.isHidden = true
         subtitleAccessory.setAccessibilityElement(false)
         icon.wantsLayer = true; subtitle.wantsLayer = true; subtitle.alphaValue = 0
@@ -67,26 +81,33 @@ import RiseCore
             subtitle.alphaValue = showsSubtitle ? 1 : 0; subtitle.isHidden = !showsSubtitle
         }
         if let favicon = tab.favicon(for: theme) { icon.image = favicon }
-        else if AddressResolver.isLocal(tab.url) {
-            icon.image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
-                NSColor(hex: 0xEAA8B3).setFill(); NSBezierPath(roundedRect: rect.insetBy(dx: 1, dy: 1), xRadius: 3, yRadius: 3).fill(); return true
-            }
-        }
         else if tab.url?.host == "news.ycombinator.com" {
             let image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in
                 NSColor(hex: 0xFF6600).setFill(); NSBezierPath(roundedRect: rect, xRadius: 3, yRadius: 3).fill()
                 ("Y" as NSString).draw(at: NSPoint(x: 4, y: 1), withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: NSColor.white]); return true
             }; icon.image = image
-        } else { icon.image = NSImage(systemSymbolName: tab.pinned ? "pin.fill" : "globe", accessibilityDescription: nil) }
+        } else { icon.showEmptyPlaceholder(theme: theme) }
         icon.contentTintColor = theme.sidebarIcon
         subtitleAccessory.image = configuration.subtitleAccessory
         subtitleAccessory.contentTintColor = theme.sidebarIcon
         close.contentTintColor = theme == .dark ? NSColor.white.withAlphaComponent(0.8) : theme.sidebarIcon
         close.hoverColor = theme == .dark ? NSColor.white.withAlphaComponent(0.08) : NSColor.black.withAlphaComponent(0.05)
+        playback.color = close.contentTintColor ?? theme.sidebarIcon; playback.hoverColor = close.hoverColor
         setAccessibilityLabel(tab.title + (configuration.subtitle.map { ", \($0.text)" } ?? "") + (selected ? ", selected" : ""))
         close.toolTip = "Close \(tab.title)"
         loadingBackground.update(loading: tab.isLoading, progress: tab.isPreparingNavigation ? 0.05 : tab.webView.estimatedProgress, theme: theme)
         style(); needsLayout = true; needsDisplay = true
+    }
+    /// The page's state. After a press, only its answer (`confirmed`) replaces
+    /// the button's new state for a moment, so an earlier report cannot undo it.
+    func setPlayback(paused: Bool?, confirmed: Bool = false) {
+        if confirmed { toggleConfirmationDeadline = 0 }
+        else if paused != nil, CACurrentMediaTime() < toggleConfirmationDeadline { return }
+        let wasShown = playbackPaused != nil
+        playbackPaused = paused
+        if let paused { playback.setPaused(paused, animated: !playback.isHidden) }
+        playback.setAccessibilityLabel(paused == true ? "Play video" : "Pause video")
+        if wasShown != (paused != nil) { style() }
     }
     func style() {
         layer?.cornerRadius = isSplitMember ? 8 : TabAppearance.radius
@@ -97,6 +118,8 @@ import RiseCore
         layer?.borderColor = NSColor.white.withAlphaComponent(theme == .dark ? 0.08 : 0.7).cgColor
         layer?.borderWidth = selected && !isSplitMember ? 0.5 : 0
         close.isHidden = !hover || isSplitMember
+        playback.isHidden = close.isHidden || playbackPaused == nil
+        if !playback.isHidden { playback.refreshHover() }
         subtitleAccessory.isHidden = !showsSubtitle || configuration.subtitleAccessory == nil || hover || isSplitMember
         needsLayout = true
     }
@@ -112,7 +135,7 @@ import RiseCore
         let textHeight = showsSubtitle ? titleHeight + 1 + subtitleHeight : titleHeight
         let textY = (bounds.height - textHeight) / 2
         let textX: CGFloat = isSplitMember ? 28 : 30
-        let textWidth = max(0, bounds.width - textX - (close.isHidden ? 8 : 32))
+        let textWidth = max(0, bounds.width - textX - (close.isHidden ? 8 : playback.isHidden ? 32 : 58))
         TabListMotion.move(titleField, to: NSRect(x: textX, y: textY, width: textWidth, height: titleHeight), animated: animated, at: time)
         let subtitleWidth = max(0, textWidth - (subtitleAccessory.isHidden ? 0 : 24))
         titleField.setFadeBoundary(subtitleAccessory.isHidden ? nil : subtitleWidth)
@@ -136,6 +159,7 @@ import RiseCore
             }
         }
         close.frame = NSRect(x: bounds.width-28.5, y: (bounds.height-24)/2-0.5, width: 24, height: 24)
+        playback.frame = close.frame.offsetBy(dx: -26, dy: 0)
         let accessorySize = subtitleAccessory.image?.size ?? .zero
         subtitleAccessory.frame = NSRect(x: close.frame.midX - accessorySize.width/2,
             y: close.frame.midY - accessorySize.height/2, width: accessorySize.width, height: accessorySize.height)
@@ -162,6 +186,7 @@ import RiseCore
         let local = convert(point, from: superview)
         guard bounds.contains(local) else { return nil }
         if !close.isHidden && close.frame.contains(local) { return close.hitTest(local) }
+        if !playback.isHidden && playback.frame.contains(local) { return playback }
         if isRenaming && titleField.frame.contains(local) { return titleField.hitTest(local) }
         return self
     }

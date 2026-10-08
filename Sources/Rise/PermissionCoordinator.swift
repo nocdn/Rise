@@ -122,6 +122,9 @@ import UserNotifications
       const refresh = () => send({kind:'status'}).then(value => { permission = value.notifications; pip = value.pip; }).catch(() => {});
       window.riseSiteControls = { refresh, autoPiP() {
         if (!pip) return;
+        // Rise owns YouTube's floating player and its original web view.
+        // Do not also start WebKit's separate native PiP on a visibility change.
+        if (/(^|\.)youtube\.com$/.test(location.hostname)) return;
         const video = [...document.querySelectorAll('video')].find(v => !v.paused && !v.ended && v.readyState >= 2);
         if (!video) return;
         try {

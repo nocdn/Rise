@@ -60,7 +60,7 @@ final class TabOrganizationTests: XCTestCase {
         browser.closeTab(c.id); browser.root.layoutSubtreeIfNeeded()
         XCTAssertEqual(aRow.frame,aFrame); XCTAssertEqual(bRow.frame,bFrame)
         XCTAssertNotNil(aRow.layer?.animation(forKey:TabListMotion.movementKey)); XCTAssertNotNil(bRow.layer?.animation(forKey:TabListMotion.movementKey))
-        XCTAssertEqual(bRow.frame.height,37, "Developer tabs scale proportionally with regular tabs")
+        XCTAssertEqual(bRow.frame.height,TabAppearance.subtitleRowHeight, "Developer tabs use the shared subtitle layout")
         XCTAssertTrue(browser.sidebar.rows[a.id] === aRow)
     }
     @MainActor func testVerticalDragCrossesBothWaysWithOneHapticPerNeighborAndPreservesEverything() throws {
@@ -74,7 +74,7 @@ final class TabOrganizationTests: XCTestCase {
         XCTAssertEqual(row.layer?.affineTransform().a,1)
         browser.window!.sendEvent(event(.leftMouseDragged,at:NSPoint(x:700,y:10),in:browser.sidebar.rowsHost))
         XCTAssertEqual(browser.tabs.map(\.id),[b.id,d.id,c.id,a.id]); XCTAssertEqual(clicks,2)
-        XCTAssertEqual(row.frame.minX,6); XCTAssertEqual(row.frame.height,37)
+        XCTAssertEqual(row.frame.minX,6); XCTAssertEqual(row.frame.height,TabAppearance.subtitleRowHeight)
         XCTAssertTrue(browser.sidebar.rows[b.id] === row); XCTAssertTrue(b.webView === web); XCTAssertTrue(row.loadingBackground === loading)
         XCTAssertTrue(row.icon.image === icon); XCTAssertTrue(b.developer && b.pinned)
         XCTAssertEqual(browser.selectedID,d.id, "Dragging an inactive tab must preserve its selected styling")

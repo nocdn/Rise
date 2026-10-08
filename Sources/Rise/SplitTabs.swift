@@ -16,7 +16,9 @@ import RiseCore
     }
     func attachVisiblePages() {
         let visible = Set(visibleTabIDs)
+        pictureInPicture.reconcile(visibleIDs: visible)
         for tab in tabs {
+            if pictureInPicture.owns(tab) { continue }
             if !visible.contains(tab.id) { tab.webView.removeFromSuperview(); continue }
             if tab.needsBlockingReload, tab.webView.url != nil { tab.needsBlockingReload = false; tab.webView.reloadFromOrigin() }
             if tab.webView.url == nil, !tab.hasAttemptedNavigation, !tab.webView.isLoading, let url = tab.requestedURL { tab.load(url) }

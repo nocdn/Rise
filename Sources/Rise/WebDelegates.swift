@@ -33,6 +33,7 @@ import RiseCore
         decisionHandler(response.canShowMIMEType ? .allow : .download)
     }
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        pictureInPicture.navigationStarted(in: webView)
         permissionCoordinator.cancel(for: webView)
         if selectedTab?.webView === webView { siteControlsPopover.close(); copiedLinkPopover.close() }
         historySwipe.cancel(for: webView)
@@ -58,7 +59,7 @@ import RiseCore
         pageCloth.cancel(for: webView)
         errorWebView = webView; errorMessage.stringValue = error.localizedDescription; update()
     }
-    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { webView.reload() }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { pictureInPicture.navigationStarted(in: webView); webView.reload() }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         guard action.targetFrame == nil else { return nil }
         if shouldPeek(modifiers: action.modifierFlags), let url = action.request.url {

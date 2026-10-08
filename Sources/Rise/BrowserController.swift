@@ -20,6 +20,7 @@ import RiseCore
     var airDropHandler: ((URL) -> Void)?
     let sitePermissions: SitePermissions
     lazy var permissionCoordinator = PermissionCoordinator(browser: self)
+    lazy var pictureInPicture = YouTubePictureInPicture(browser: self)
     let pagePaint = PagePaintWatcher()
     var sharingPicker: NSSharingServicePicker?
     let errorSurface = Surface(color: NSColor(hex: 0xFDFCFC))
@@ -228,6 +229,8 @@ import RiseCore
         sidebar.onReorder = { [weak self] in self?.reorderTabs($0) }
         sidebar.onRename = { [weak self] id, title in self?.renameTab(id, title: title) }
         sidebar.onTabHover = { [weak self] id, hovering in self?.tabHoverChanged(id, hovering: hovering) }
+        sidebar.playbackState = { [weak self] id in self?.pictureInPicture.playbackPaused(id) }
+        sidebar.onTogglePlayback = { [weak self] id in self?.pictureInPicture.togglePlayback(id) }
         sidebar.onTabPress = { [weak self] in self?.tabPressed() }
         pageShadow.layer?.cornerCurve = .continuous; pageClip.layer?.cornerCurve = .continuous
         pageShadow.shadow = chromeShadow(opacity: PageAppearance.shadowOpacity, blur: PageAppearance.shadowBlur, offset: PageAppearance.shadowOffset)
@@ -335,9 +338,13 @@ import RiseCore
         let body = NSRect(x: 0, y: devHeight, width: cb.width, height: cb.height-devHeight)
         emptyPage.frame = body
         if let group = activeSplitGroup {
-            tabs.first { $0.id == group.leftID }?.webView.frame = NSRect(x: 0, y: devHeight, width: (body.width-6)/2, height: body.height)
-            tabs.first { $0.id == group.rightID }?.webView.frame = NSRect(x: (body.width+6)/2, y: devHeight, width: (body.width-6)/2, height: body.height)
-        } else { selectedTab?.webView.frame = body }
+            if let tab = tabs.first(where: { $0.id == group.leftID }), !pictureInPicture.owns(tab) {
+                tab.webView.frame = NSRect(x: 0, y: devHeight, width: (body.width-6)/2, height: body.height)
+            }
+            if let tab = tabs.first(where: { $0.id == group.rightID }), !pictureInPicture.owns(tab) {
+                tab.webView.frame = NSRect(x: (body.width+6)/2, y: devHeight, width: (body.width-6)/2, height: body.height)
+            }
+        } else if let tab = selectedTab, !pictureInPicture.owns(tab) { tab.webView.frame = body }
         errorSurface.frame = body
         errorTitle.frame = NSRect(x: 40, y: body.height/2-60, width: body.width-80, height: 34)
         errorMessage.frame = NSRect(x: 60, y: body.height/2-12, width: body.width-120, height: 56)
@@ -358,7 +365,7 @@ import RiseCore
         if !tabSwitcher.isHidden { tabSwitcher.place(in: b) }
     }
     func windowDidResize(_ notification: Notification) { layoutChrome() }
-    func windowWillClose(_ notification: Notification) { googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); saveNow() }
+    func windowWillClose(_ notification: Notification) { pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); saveNow() }
     func windowDidResignKey(_ notification: Notification) {
         pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch(); endSidebarPeek(); tabPressed()
         sidebar?.cancelTabInteractions()
@@ -377,6 +384,7 @@ import RiseCore
         }
         linkPreloader.install(on: tab.webView)
         permissionCoordinator.install(on: tab.webView)
+        pictureInPicture.install(on: tab.webView)
         pagePaint.install(on: tab.webView, dark: theme == .dark)
         suggestionFavicons.remember(tab)
         tab.onChange = { [weak self, weak tab] in
@@ -457,6 +465,7 @@ import RiseCore
         historySwipe.cancel()
         cancelTabSwitch()
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
+        pictureInPicture.remove(tabs[index])
         let partner = splitGroups.first { $0.contains(id) }.map { $0.leftID == id ? $0.rightID : $0.leftID }
         splitGroups.removeAll { $0.contains(id) }
         if selectedID == id { copiedLinkPopover.close() }

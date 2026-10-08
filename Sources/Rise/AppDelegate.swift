@@ -7,7 +7,7 @@ import AppKit
         browser.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
-    func applicationWillTerminate(_ notification: Notification) { browser?.saveNow() }
+    func applicationWillTerminate(_ notification: Notification) { browser?.pictureInPicture.tearDown(); browser?.saveNow() }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func application(_ application: NSApplication, open urls: [URL]) {
         if browser == nil { browser = BrowserController(); buildMenu(); browser.showWindow(nil) }
