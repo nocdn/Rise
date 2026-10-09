@@ -74,7 +74,8 @@ struct FloatingVideoScrollInput {
         let shadowInset = Self.shadowInset
         size.width += shadowInset*2; size.height += shadowInset*2
         let limits = FloatingVideoMotion.originBounds(size: size, visibleFrame: available, contentInset: shadowInset)
-        let frame = NSRect(origin: limits.origin, size: size)
+        // Opens in the bottom-right corner.
+        let frame = NSRect(origin: NSPoint(x: limits.maxX, y: limits.minY), size: size)
         motion = FloatingVideoMotion(frame: frame, visibleFrame: available, contentInset: shadowInset)
         super.init(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         title = "YouTube Picture in Picture"
@@ -84,7 +85,7 @@ struct FloatingVideoScrollInput {
         backgroundColor = .clear; isOpaque = false; hasShadow = false
         animationBehavior = .utilityWindow; ignoresMouseEvents = true
         let content = NSView(frame: NSRect(origin: .zero, size: size))
-        content.wantsLayer = true
+        content.wantsLayer = true; content.layerUsesCoreImageFilters = true
         contentView = content
         surface.frame = content.bounds.insetBy(dx: shadowInset, dy: shadowInset)
         surface.wantsLayer = true
@@ -207,16 +208,69 @@ struct FloatingVideoScrollInput {
         observeScreenChanges(); orderFrontRegardless()
         fitToScreen(); acceptsMouse = true; overlay.refreshHover()
         NSApp.addWindowsItem(self, title: title, filename: false)
+        // A window that isn't showing yet grows in; one called back mid-dismissal springs back to full size.
+        if alphaValue < 0.05 { springIn() } else { scale(to: 1) }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.18
             animator().alphaValue = 1
         }
     }
 
+    /// The window grows from slightly smaller with a light bounce, while a
+    /// quick blur clears to sharp.
+    private func springIn() {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, let layer = contentView?.layer else { return }
+        scale(to: 1, from: 0.9)
+
+        guard let blur = CIFilter(name: "CIGaussianBlur") else { return }
+        blur.name = "springInBlur"; blur.setValue(0, forKey: kCIInputRadiusKey)
+        let unblur = CABasicAnimation(keyPath: "filters.springInBlur.inputRadius")
+        unblur.fromValue = 1*backingScaleFactor; unblur.toValue = 0
+        unblur.duration = 0.16; unblur.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak layer] in
+            // A resting zero-radius blur still costs a filter pass every frame.
+            MainActor.assumeIsolated { if layer?.animation(forKey: "springInBlur") == nil { layer?.filters = nil } }
+        }
+        layer.filters = [blur]; layer.add(unblur, forKey: "springInBlur")
+        CATransaction.commit()
+    }
+
+    /// Scales the window about its center: springing up to full size with a
+    /// light bounce, or quickly down as it leaves.
+    private func scale(to scale: CGFloat, from start: CGFloat? = nil) {
+        guard let layer = contentView?.layer else { return }
+        let center = CGPoint(x: layer.bounds.midX, y: layer.bounds.midY)
+        func scaled(_ scale: CGFloat) -> CATransform3D {
+            var transform = CATransform3DMakeTranslation(center.x, center.y, 0)
+            transform = CATransform3DScale(transform, scale, scale, 1)
+            return CATransform3DTranslate(transform, -center.x, -center.y, 0)
+        }
+        let current = start.map(scaled) ?? layer.presentation()?.transform ?? layer.transform
+        let target = scale == 1 ? CATransform3DIdentity : scaled(scale)
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        layer.removeAnimation(forKey: "scale"); layer.transform = target
+        CATransaction.commit()
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, !CATransform3DEqualToTransform(current, target) else { return }
+        let animation: CABasicAnimation
+        if scale == 1 {
+            let spring = CASpringAnimation(keyPath: "transform")
+            spring.mass = 1; spring.stiffness = 420; spring.damping = 2*0.62*sqrt(420)
+            spring.duration = spring.settlingDuration; animation = spring
+        } else {
+            animation = CABasicAnimation(keyPath: "transform")
+            animation.duration = 0.18; animation.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
+        }
+        animation.fromValue = current; animation.toValue = target
+        layer.add(animation, forKey: "scale")
+    }
+
     func dismiss(animated: Bool, completion: @escaping () -> Void) {
         guard !isDismissing else { return }
         isDismissing = true; stopMotion(); acceptsMouse = false; removeEventMonitors()
         let token = UUID(); dismissalID = token
+        // Shrinks a touch as it fades.
+        if animated { scale(to: 0.95) }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0.18 : 0
             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)

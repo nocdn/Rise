@@ -122,10 +122,12 @@ import UserNotifications
       const refresh = () => send({kind:'status'}).then(value => { permission = value.notifications; pip = value.pip; }).catch(() => {});
       window.riseSiteControls = { refresh, autoPiP() {
         if (!pip) return;
-        // Rise owns YouTube's floating player and its original web view.
-        // Do not also start WebKit's separate native PiP on a visibility change.
+        // Runs when Rise leaves the foreground. Leaving a tab floats its video in
+        // Rise's own player instead, on every site. Rise owns YouTube's player and
+        // its original web view, so WebKit's separate native PiP never starts there.
         if (/(^|\.)youtube\.com$/.test(location.hostname)) return;
-        const video = [...document.querySelectorAll('video')].find(v => !v.paused && !v.ended && v.readyState >= 2);
+        // Only video with sound, so muted previews and background loops stay put.
+        const video = [...document.querySelectorAll('video')].find(v => !v.paused && !v.ended && v.readyState >= 2 && !v.muted && v.volume > 0);
         if (!video) return;
         try {
           if (video.webkitSupportsPresentationMode?.('picture-in-picture')) video.webkitSetPresentationMode('picture-in-picture');
@@ -133,7 +135,6 @@ import UserNotifications
         } catch {}
       }};
       refresh();
-      document.addEventListener('visibilitychange', () => { if (document.hidden) window.riseSiteControls.autoPiP(); });
       // WKWebView can expose Notification without a public permission delegate.
       // Own the page-open API so every request uses the same native site prompt.
       class RiseNotification extends EventTarget {

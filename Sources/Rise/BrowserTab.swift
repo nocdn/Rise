@@ -43,6 +43,9 @@ import RiseCore
     private var restoredState: (url: String, data: Data)?
     static let maximumSessionState = 2_000_000
     var onThumbnailChange: (() -> Void)?
+    var onFullscreenChange: (() -> Void)?
+    /// WebKit's own fullscreen has the web view in its window.
+    var isInNativeFullscreen: Bool { webView.fullscreenState != .notInFullscreen }
     private var thumbnailCaptureInFlight = false
     init(saved: SavedTab? = nil, configuration: WKWebViewConfiguration? = nil) {
         id = saved?.id ?? UUID(); customTitle = saved?.customTitle; title = saved?.customTitle ?? saved?.title ?? "New Tab"
@@ -52,6 +55,15 @@ import RiseCore
         let configuration = configuration ?? WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
         configuration.applicationNameForUserAgent = BrowserIdentity.applicationName
+        // Simulated fullscreen falls back to WebKit's, and is off unless chosen.
+        configuration.preferences.isElementFullscreenEnabled = true
+        // WebKit's own picture in picture is off unless asked for privately. Encrypted video
+        // floats there, since Rise's window can't draw it, and sites' own buttons use it.
+        let allowPictureInPicture = NSSelectorFromString("_setAllowsPictureInPictureMediaPlayback:")
+        if configuration.preferences.responds(to: allowPictureInPicture) {
+            typealias SetBool = @convention(c) (AnyObject, Selector, Bool) -> Void
+            unsafeBitCast(configuration.preferences.method(for: allowPictureInPicture), to: SetBool.self)(configuration.preferences, allowPictureInPicture, true)
+        }
         webView = LinkCursorWebView(frame: .zero, configuration: configuration)
         super.init()
         if let data = saved?.faviconData, data.count <= FaviconSnapshot.maximumBytes,
@@ -76,6 +88,7 @@ import RiseCore
                 self?.onChange?()
             }
         })
+        observations.append(webView.observe(\.fullscreenState, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.onFullscreenChange?() } })
         observations.append(webView.observe(\.canGoBack, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.onChange?() } })
         observations.append(webView.observe(\.canGoForward, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.onChange?() } })
     }

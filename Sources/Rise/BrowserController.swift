@@ -20,7 +20,12 @@ import RiseCore
     var airDropHandler: ((URL) -> Void)?
     let sitePermissions: SitePermissions
     lazy var permissionCoordinator = PermissionCoordinator(browser: self)
-    lazy var pictureInPicture = YouTubePictureInPicture(browser: self)
+    lazy var pictureInPicture = VideoPictureInPicture(browser: self)
+    lazy var tabMedia: TabMedia = {
+        let media = TabMedia(browser: self)
+        media.onChange = { [weak self] id in self?.refreshPlayback(id) }
+        return media
+    }()
     let pagePaint = PagePaintWatcher()
     var sharingPicker: NSSharingServicePicker?
     let errorSurface = Surface(color: NSColor(hex: 0xFDFCFC))
@@ -34,6 +39,7 @@ import RiseCore
     var findBars: [UUID: FindBar] = [:]
     /// Stands in while no tab is selected.
     let tablessFindBar = FindBar()
+    let infoPlaque = InfoPlaque()
     var sidebar: SidebarView!
     let toolbarHost = NativeTitlebarControls()
     let toolbarAccessory = NSTitlebarAccessoryViewController()
@@ -126,6 +132,7 @@ import RiseCore
     let adBlocker: AdBlocker
     var blockingChangeGeneration = 0
     let linkPreloader: LinkPreloader
+    let pageFullscreen: PageFullscreen
     let tabSwitcher = TabSwitcherView()
     let tabSwitchBackdrop = PeekBackdrop(color: NSColor.black.withAlphaComponent(0.08))
     var recentTabIDs: [UUID] = []
@@ -141,6 +148,7 @@ import RiseCore
         sitePermissions = SitePermissions(preferences: preferences)
         adBlocker = AdBlocker(preferences: preferences)
         linkPreloader = LinkPreloader(preferences: preferences)
+        pageFullscreen = PageFullscreen(preferences: preferences)
         let sessionURL = sessionURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Rise/session.json")
         self.sessionURL = sessionURL
         browsingHistory = BrowsingHistory(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("history.json"))
@@ -230,8 +238,8 @@ import RiseCore
         sidebar.onReorder = { [weak self] in self?.reorderTabs($0) }
         sidebar.onRename = { [weak self] id, title in self?.renameTab(id, title: title) }
         sidebar.onTabHover = { [weak self] id, hovering in self?.tabHoverChanged(id, hovering: hovering) }
-        sidebar.playbackState = { [weak self] id in self?.pictureInPicture.playbackPaused(id) }
-        sidebar.onTogglePlayback = { [weak self] id in self?.pictureInPicture.togglePlayback(id) }
+        sidebar.playbackState = { [weak self] id in self?.playbackPaused(id) }
+        sidebar.onTogglePlayback = { [weak self] id in self?.togglePlayback(id) }
         sidebar.onToggleMute = { [weak self] id in
             if let tab = self?.tabs.first(where: { $0.id == id }) { tab.setAudioMuted(!tab.isAudioMuted) }
         }
@@ -342,18 +350,19 @@ import RiseCore
         let body = NSRect(x: 0, y: devHeight, width: cb.width, height: cb.height-devHeight)
         emptyPage.frame = body
         if let group = activeSplitGroup {
-            if let tab = tabs.first(where: { $0.id == group.leftID }), !pictureInPicture.owns(tab) {
+            if let tab = tabs.first(where: { $0.id == group.leftID }), !pictureInPicture.owns(tab), !tab.isInNativeFullscreen {
                 tab.webView.frame = NSRect(x: 0, y: devHeight, width: (body.width-6)/2, height: body.height)
             }
-            if let tab = tabs.first(where: { $0.id == group.rightID }), !pictureInPicture.owns(tab) {
+            if let tab = tabs.first(where: { $0.id == group.rightID }), !pictureInPicture.owns(tab), !tab.isInNativeFullscreen {
                 tab.webView.frame = NSRect(x: (body.width+6)/2, y: devHeight, width: (body.width-6)/2, height: body.height)
             }
-        } else if let tab = selectedTab, !pictureInPicture.owns(tab) { tab.webView.frame = body }
+        } else if let tab = selectedTab, !pictureInPicture.owns(tab), !tab.isInNativeFullscreen { tab.webView.frame = body }
         errorSurface.frame = body
         errorTitle.frame = NSRect(x: 40, y: body.height/2-60, width: body.width-80, height: 34)
         errorMessage.frame = NSRect(x: 60, y: body.height/2-12, width: body.width-120, height: 56)
         retryButton.frame = NSRect(x: body.width/2-55, y: body.height/2+55, width: 110, height: 32)
         findBar.frame = pageShadow.frame; findBar.topInset = devHeight
+        infoPlaque.frame = pageShadow.frame; infoPlaque.topInset = devHeight
         dismissArea.frame = b
         let paletteWidth: CGFloat = paletteCreatesTab ? 520 : 600
         if sidebarVisible {
@@ -390,7 +399,9 @@ import RiseCore
         }
         linkPreloader.install(on: tab.webView)
         permissionCoordinator.install(on: tab.webView)
+        pageFullscreen.install(on: tab.webView)
         pictureInPicture.install(on: tab.webView)
+        tabMedia.install(on: tab.webView)
         pagePaint.install(on: tab.webView, dark: theme == .dark)
         suggestionFavicons.remember(tab)
         tab.onChange = { [weak self, weak tab] in
@@ -402,6 +413,11 @@ import RiseCore
             self.update()
         }
         tab.onThumbnailChange = { [weak self] in self?.refreshTabSwitcher() }
+        // WebKit's fullscreen hands the web view back where it took it from, even if its tab is no longer shown.
+        tab.onFullscreenChange = { [weak self, weak tab] in
+            if let state = tab?.webView.fullscreenState { PageFullscreen.log.notice("WebKit fullscreen state \(state.rawValue, privacy: .public) for \(tab?.url?.host ?? "", privacy: .public)") }
+            self?.attachVisiblePages(); self?.update()
+        }
         return tab
     }
     /// A background tab loads in the list without taking over the page, as ⌘-clicked links do.
@@ -471,7 +487,7 @@ import RiseCore
         historySwipe.cancel()
         cancelTabSwitch()
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
-        pictureInPicture.remove(tabs[index])
+        pictureInPicture.remove(tabs[index]); tabMedia.remove(id)
         let partner = splitGroups.first { $0.contains(id) }.map { $0.leftID == id ? $0.rightID : $0.leftID }
         splitGroups.removeAll { $0.contains(id) }
         if selectedID == id { copiedLinkPopover.close() }
@@ -569,4 +585,14 @@ import RiseCore
         do { try SessionStorage.write(state, to: sessionURL); lastSaved = state }
         catch { NSLog("Rise session save failed: %@", error.localizedDescription) }
     }
+}
+
+@MainActor extension BrowserController {
+    /// Whether a tab's media is paused, or nil when it has none. A YouTube video
+    /// page answers for its video; any other tab, for whatever it last played with sound.
+    func playbackPaused(_ id: UUID) -> Bool? { pictureInPicture.playbackPaused(id) ?? tabMedia.paused(id) }
+    func togglePlayback(_ id: UUID) {
+        if pictureInPicture.playbackPaused(id) != nil { pictureInPicture.togglePlayback(id) } else { tabMedia.togglePlayback(id) }
+    }
+    func refreshPlayback(_ id: UUID) { sidebar.rows[id]?.setPlayback(paused: playbackPaused(id)) }
 }

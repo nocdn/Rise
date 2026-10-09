@@ -64,6 +64,7 @@ import AppKit
         item(view, "Zoom Out", #selector(BrowserController.zoomOut), "-", target: browser)
         item(view, "Actual Size", #selector(BrowserController.actualSize), "0", target: browser)
         item(view, "Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", modifiers: [.command, .control], target: browser.window)
+        item(view, "Toggle Simulated Full Screen", #selector(BrowserController.toggleSimulatedFullscreen), "f", modifiers: [.command, .shift], target: browser)
         let history = addMenu("History")
         item(history, "Back", #selector(BrowserController.goBack), "[", target: browser)
         item(history, "Forward", #selector(BrowserController.goForward), "]", target: browser)

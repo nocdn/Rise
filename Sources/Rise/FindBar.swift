@@ -297,15 +297,7 @@ final class FindInputCell: NSTextFieldCell {
         layer?.cornerRadius = PageAppearance.radius; layer?.cornerCurve = .continuous
         isHidden = true
 
-        panel.layer?.cornerCurve = .continuous; panel.layer?.borderWidth = 0.5
-        // The same shadow as the pull request card.
-        panel.layer?.shadowColor = NSColor.black.cgColor; panel.layer?.shadowOpacity = 0.12
-        panel.layer?.shadowRadius = 10; panel.layer?.shadowOffset = NSSize(width: 0, height: -3)
-        // Giving a layer a corner radius turns clipping back on, which would cut the shadow
-        // off; the inner content view does the clipping instead.
-        panel.clipsToBounds = false
-        content.wantsLayer = true; content.layer?.masksToBounds = true
-        content.layer?.cornerRadius = Self.radius; content.layer?.cornerCurve = .continuous
+        Self.stylePanel(panel, content: content)
         // Swapped content travels 15 pt; keep it inside the input row, not over the answer.
         row.wantsLayer = true; row.layer?.masksToBounds = true
 
@@ -357,11 +349,33 @@ final class FindInputCell: NSTextFieldCell {
     }
     override func layout() { super.layout(); retarget(); render() }
 
-    func applyTheme(_ theme: RiseTheme) {
-        self.theme = theme
+    /// The panel's border and shadow, shared with ``InfoPlaque``. `content` clips to its corners.
+    static func stylePanel(_ panel: Surface, content: NSView) {
+        panel.layer?.cornerCurve = .continuous; panel.layer?.borderWidth = 0.5
+        // The same shadow as the pull request card.
+        panel.layer?.shadowColor = NSColor.black.cgColor; panel.layer?.shadowOpacity = 0.12
+        panel.layer?.shadowRadius = 10; panel.layer?.shadowOffset = NSSize(width: 0, height: -3)
+        // Giving a layer a corner radius turns clipping back on, which would cut the shadow
+        // off; the inner content view does the clipping instead.
+        panel.clipsToBounds = false
+        content.wantsLayer = true; content.layer?.masksToBounds = true
+        content.layer?.cornerRadius = radius; content.layer?.cornerCurve = .continuous
+    }
+    static func applyPanelTheme(_ panel: Surface, theme: RiseTheme) {
         panel.fill = theme.popup; panel.layer?.borderColor = theme.border.cgColor
         // A dark page swallows a light shadow; it needs more weight to read at all.
         panel.layer?.shadowOpacity = theme == .dark ? 0.45 : 0.12
+    }
+    /// Where a panel `height` tall sits at `slide` (0 above the page's top edge, 1 in place):
+    /// it drops straight down into the page's top-right corner.
+    static func panelOrigin(in bounds: NSRect, width: CGFloat, height: CGFloat, slide: CGFloat, topInset: CGFloat) -> NSPoint {
+        let travel = (1-slide)*(topInset+top+height+12)
+        return NSPoint(x: bounds.width-margin-width, y: topInset+top-travel)
+    }
+
+    func applyTheme(_ theme: RiseTheme) {
+        self.theme = theme
+        Self.applyPanelTheme(panel, theme: theme)
         separator.fill = theme.text.withAlphaComponent(theme == .dark ? 0.06 : 0.045)
         [findPlaceholder, askPlaceholder, count].forEach { $0.textColor = theme.muted }
         shimmer.baseColor = theme.muted; shimmer.bandColor = theme.selectedText; badge.applyTheme(theme)
@@ -733,9 +747,7 @@ final class FindInputCell: NSTextFieldCell {
         height.target = target; animate()
     }
     private var panelOrigin: NSPoint {
-        // Above the page's top edge while hidden; it drops straight down into its corner.
-        let travel = (1-slide.value)*(topInset+Self.top+height.value+12)
-        return NSPoint(x: bounds.width-Self.margin-Self.width, y: topInset+Self.top-travel)
+        Self.panelOrigin(in: bounds, width: Self.width, height: height.value, slide: slide.value, topInset: topInset)
     }
     private func render() {
         renderInputColor()

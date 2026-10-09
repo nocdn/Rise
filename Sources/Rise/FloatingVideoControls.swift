@@ -95,8 +95,8 @@ import AppKit
 }
 
 /// A rounded-square button on a faint white background, brighter on hover.
-/// Each glyph also moves slightly on hover: the arrows spread apart, the dash
-/// drops, and the cross's arms lengthen. The motion springs in and returns quickly.
+/// The arrows spread apart and the dash drops slightly on hover; the cross
+/// stays still. The motion springs in and returns quickly.
 @MainActor final class FloatingVideoControl: NSView {
     enum Glyph { case cross, dash, arrows }
     var action: (() -> Void)?
@@ -115,7 +115,7 @@ import AppKit
     /// the symbol split along its diagonal, one arrow per layer; at rest the
     /// pieces draw the whole symbol.
     private var pieces: [(layer: CALayer, direction: CGVector)] = []
-    /// The cross is drawn, so its arms can grow without thickening.
+    /// The cross is drawn, so it keeps the xmark's proportions at any button size.
     private let strokes = [CAShapeLayer(), CAShapeLayer()]
     private var renderedScale: CGFloat = 0
     private var renderedPointSize: CGFloat = 0
@@ -177,18 +177,16 @@ import AppKit
         }
         pieces.forEach { $0.layer.position = CGPoint(x: bounds.midX, y: bounds.midY) }
         for (index, stroke) in strokes.enumerated() where glyph == .cross {
-            stroke.frame = bounds; stroke.lineWidth = Self.crossWidth*sizeScale; stroke.removeAnimation(forKey: "hover")
-            stroke.path = crossArm(index, extended: hovering && !Self.reduceMotion)
+            stroke.frame = bounds; stroke.lineWidth = Self.crossWidth*sizeScale
+            stroke.path = crossArm(index)
         }
         CATransaction.commit()
     }
     override func viewDidChangeBackingProperties() { super.viewDidChangeBackingProperties(); renderedScale = 0; needsLayout = true }
     private static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
-    /// One arm of the cross through the center; on hover each end reaches 1pt further.
-    private func crossArm(_ index: Int, extended: Bool) -> CGPath {
-        let arm = CGVector(dx: Self.crossArm.dx*sizeScale, dy: Self.crossArm.dy*sizeScale), length = hypot(arm.dx, arm.dy)
-        let reach = extended ? (length+1)/length : 1
-        let dx = arm.dx*reach, dy = (index == 0 ? arm.dy : -arm.dy)*reach
+    /// One arm of the cross through the center.
+    private func crossArm(_ index: Int) -> CGPath {
+        let dx = Self.crossArm.dx*sizeScale, dy = (index == 0 ? 1 : -1)*Self.crossArm.dy*sizeScale
         let path = CGMutablePath()
         path.move(to: CGPoint(x: bounds.midX-dx, y: bounds.midY-dy))
         path.addLine(to: CGPoint(x: bounds.midX+dx, y: bounds.midY+dy))
@@ -205,13 +203,6 @@ import AppKit
             piece.transform = CATransform3DMakeTranslation(target.width, target.height, 0)
             CATransaction.commit()
             animate(piece, "transform.translation", from: NSValue(size: current), to: NSValue(size: target))
-        }
-        for (index, stroke) in strokes.enumerated() where glyph == .cross {
-            let current = stroke.presentation()?.path ?? stroke.path, target = crossArm(index, extended: moved)
-            CATransaction.begin(); CATransaction.setDisableActions(true)
-            stroke.removeAnimation(forKey: "hover"); stroke.path = target
-            CATransaction.commit()
-            animate(stroke, "path", from: current, to: target)
         }
     }
     /// Hover springs in with a slight overshoot (ζ 0.6); leaving returns in 0.1s.

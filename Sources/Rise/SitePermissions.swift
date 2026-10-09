@@ -41,6 +41,9 @@ enum SitePermission: String, CaseIterable {
         return "\(scheme)://\(host):\(port)"
     }
     static func origin(_ origin: WKSecurityOrigin) -> String? {
+        // Pages without an origin, such as loaded HTML, report an empty scheme, which
+        // URLComponents refuses with a crash.
+        guard ["http", "https"].contains(origin.protocol.lowercased()) else { return nil }
         var parts = URLComponents(); parts.scheme = origin.protocol; parts.host = origin.host
         if origin.port > 0 { parts.port = origin.port }
         return Self.origin(parts.url)

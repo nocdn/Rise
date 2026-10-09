@@ -101,8 +101,8 @@ final class YouTubePictureInPictureTests: XCTestCase {
         try await wait("floating player appears") { browser.pictureInPicture.panel?.alphaValue == 1 }
         let panel = try XCTUnwrap(browser.pictureInPicture.panel)
         XCTAssertEqual(browser.selectedID, other.id)
-        let visible = try XCTUnwrap(panel.screen).visibleFrame
-        XCTAssertEqual(panel.videoFrame.minX-visible.minX, panel.videoFrame.minY-visible.minY, accuracy: 0.5, "Left and bottom gaps must match")
+        let visible = FloatingVideoMotion.placementArea(visibleFrame: try XCTUnwrap(panel.screen).visibleFrame, browserFrame: browser.window?.frame)
+        XCTAssertEqual(visible.maxX-panel.videoFrame.maxX, panel.videoFrame.minY-visible.minY, accuracy: 0.5, "Opens bottom right, with equal right and bottom gaps")
         XCTAssertTrue(source.webView.window === panel)
         XCTAssertTrue(source.webView.superview === panel.videoHost)
         XCTAssertEqual(source.webView.frame.size, originalViewport, "The page viewport must stay stable throughout PiP")
@@ -158,8 +158,8 @@ final class YouTubePictureInPictureTests: XCTestCase {
         XCTAssertGreaterThan(panel.renderedFrameCount-count, 90)
         XCTAssertGreaterThan(after-before, 0, "The original video decoder must keep advancing")
         XCTAssertLessThan(percentile95, 1.0/30, "Frame pacing must remain smooth rather than periodically halving the cadence")
-        let screen = try XCTUnwrap(panel.screen)
-        XCTAssertEqual(panel.videoFrame.minX-screen.visibleFrame.minX, panel.videoFrame.minY-screen.visibleFrame.minY, accuracy: 0.5)
+        let area = FloatingVideoMotion.placementArea(visibleFrame: try XCTUnwrap(panel.screen).visibleFrame, browserFrame: browser.window?.frame)
+        XCTAssertEqual(area.maxX-panel.videoFrame.maxX, panel.videoFrame.minY-area.minY, accuracy: 0.5)
         let beforeImage = try pixels(await picture(in: source, panel: panel))
         try await Task.sleep(for: .milliseconds(100))
         let afterImage = try pixels(await picture(in: source, panel: panel))
@@ -370,7 +370,7 @@ final class YouTubePictureInPictureTests: XCTestCase {
         XCTAssertFalse(panel.isDragging)
         let screen = try XCTUnwrap(panel.screen ?? NSScreen.main)
         let limits = FloatingVideoMotion.originBounds(size: panel.frame.size, visibleFrame: screen.visibleFrame, contentInset: FloatingVideoWindow.shadowInset)
-        XCTAssertEqual(panel.frame.minX, limits.minX, accuracy: 0.5, "Without lift-off momentum it settles to the nearest corner")
+        XCTAssertEqual(panel.frame.minX, limits.maxX, accuracy: 0.5, "Without lift-off momentum it settles to the nearest corner")
         XCTAssertEqual(panel.frame.minY, limits.minY, accuracy: 0.5)
     }
 
@@ -764,7 +764,7 @@ final class YouTubePictureInPictureTests: XCTestCase {
         panel.handleMagnification(0, phase: .began)
         panel.handleMagnification(0.3, phase: .changed)
         XCTAssertEqual(panel.videoFrame.width, original.width*1.3, accuracy: 0.01)
-        XCTAssertEqual(panel.videoFrame.minX, original.minX, accuracy: 0.01)
+        XCTAssertEqual(panel.videoFrame.maxX, original.maxX, accuracy: 0.01, "Grows from its bottom-right corner")
         XCTAssertEqual(panel.videoFrame.minY, original.minY, accuracy: 0.01)
         panel.handleMagnification(0, phase: .ended)
         let visible = try XCTUnwrap(panel.screen).visibleFrame

@@ -23,6 +23,7 @@ import AppKit
             }
         }
         (Array(findBars.values)+[tablessFindBar]).forEach { $0.applyTheme(theme) }
+        infoPlaque.applyTheme(theme)
         if palette.theme != theme {
             palette.applyTheme(theme)
             for suggestion in palette.suggestions {

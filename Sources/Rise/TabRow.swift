@@ -7,9 +7,9 @@ import RiseCore
     let titleField = TabTitleField(frame: .zero)
     let subtitle = label("", size: 11, color: .secondaryLabelColor)
     let close: ChromeButton
-    /// Plays or pauses the tab's YouTube video, beside the close button on hover.
+    /// Plays or pauses the tab's media, beside the close button on hover.
     let playback = PlayPauseButton()
-    /// Whether the tab's video is paused; nil when the tab shows no video.
+    /// Whether the tab's media is paused; nil when the tab has none.
     private(set) var playbackPaused: Bool?
     var onTogglePlayback: (() -> Void)?
     /// Between the favicon and the title while the tab plays sound or is muted.
@@ -149,7 +149,7 @@ import RiseCore
         let wasShown = playbackPaused != nil
         playbackPaused = paused
         if let paused { playback.setPaused(paused, animated: !playback.isHidden) }
-        playback.setAccessibilityLabel(paused == true ? "Play video" : "Pause video")
+        playback.setAccessibilityLabel(paused == true ? "Play" : "Pause")
         if wasShown != (paused != nil) { style() }
     }
     func style() {

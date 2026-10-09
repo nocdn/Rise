@@ -59,7 +59,11 @@ import RiseCore
         pageCloth.cancel(for: webView)
         errorWebView = webView; errorMessage.stringValue = error.localizedDescription; update()
     }
-    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { pictureInPicture.navigationStarted(in: webView); webView.reload() }
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        pictureInPicture.navigationStarted(in: webView)
+        if let tab = tabs.first(where: { $0.webView === webView }) { tabMedia.remove(tab.id) }
+        webView.reload()
+    }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         guard action.targetFrame == nil else { return nil }
         if shouldPeek(modifiers: action.modifierFlags), let url = action.request.url {
