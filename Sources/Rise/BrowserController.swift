@@ -221,7 +221,7 @@ import RiseCore
         if restore, let saved = SessionStorage.read(from: self.sessionURL) {
             if saved.theme == Self.automaticThemeName { automaticTheme = true; theme = systemTheme() }
             else { theme = RiseTheme(rawValue: saved.theme) ?? .neutral }
-            sidebarWidth = saved.sidebarWidth == SidebarWidth.previousIdeal ? SidebarWidth.ideal
+            sidebarWidth = SidebarWidth.previousIdeals.contains(saved.sidebarWidth) ? SidebarWidth.ideal
                 : min(SidebarWidth.range.upperBound, max(SidebarWidth.range.lowerBound, saved.sidebarWidth))
             tabs = saved.tabs.map { configure(BrowserTab(saved: $0)) }
             // Old sessions can fill their missing icons without loading every page.
