@@ -6,6 +6,9 @@ struct PeekOrigin {
     weak var webView: WKWebView?
     var rect: NSRect
     var image: NSImage?
+    /// A whole page the Peek shrinks back out of, as ⌘Z after expanding does, in root coordinates.
+    /// It's only where the Peek opens from; closing still goes back into its link.
+    var rootFrame: NSRect? = nil
 }
 
 /// Stands in for the Peek card while it travels between the clicked link and its
@@ -76,6 +79,8 @@ extension NSView {
 @MainActor extension BrowserController {
     // A subtle overshoot on the way out; a little less settling back into the link.
     static var peekOpenSpring: CASpringAnimation { CASpringAnimation(perceptualDuration: 0.3, bounce: 0.12) }
+    /// ⌘Z shrinking a page back into its Peek: the opening's timing, with the expand's bounce as it lands.
+    static var peekUnexpandSpring: CASpringAnimation { CASpringAnimation(perceptualDuration: 0.3, bounce: 0.25) }
     static var peekCloseSpring: CASpringAnimation { CASpringAnimation(perceptualDuration: 0.22, bounce: 0.11) }
     // The page travels under 2% back to full size, so it needs a bouncier spring for
     // its overshoot to be visible at all: about 1 point past its frame per side.
@@ -97,6 +102,16 @@ extension NSView {
     return r.width >= 1 && r.height >= 1 ? [r.left, r.top, r.width, r.height] : null;
     """
 
+    /// The controls start sliding out this far into the card's opening spring.
+    static let peekControlsLead = 0.7
+    static let peekControlStagger = 0.02
+    /// Sends the controls back behind the closing card, the bottom one first, then removes them.
+    func tuckPeekControls(_ controls: [PeekControl], animated: Bool) {
+        guard animated, peekMotionAllowed else { controls.forEach { $0.removeFromSuperview() }; return }
+        for (index, control) in controls.reversed().enumerated() { control.slideIn(after: Double(index)*Self.peekControlStagger) }
+        let done = Double(controls.count)*Self.peekControlStagger+PeekControl.tuckDuration+0.02
+        DispatchQueue.main.asyncAfter(deadline: .now()+done) { controls.forEach { $0.removeFromSuperview() } }
+    }
     /// Arc insets the page behind a Peek by about 9 points per side.
     static let peekPageScale: CGFloat = 0.982
     var peekMotionAllowed: Bool { window?.isVisible == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
@@ -124,6 +139,7 @@ extension NSView {
     }
     /// The origin's rect in root coordinates, if its page is still on screen.
     func peekFrame(of origin: PeekOrigin?) -> NSRect? {
+        if let frame = origin?.rootFrame { return frame }
         guard let origin, let web = origin.webView, web.window === window, !web.isHiddenOrHasHiddenAncestor else { return nil }
         return web.convert(origin.rect, to: root)
     }
@@ -173,24 +189,30 @@ extension NSView {
 
     /// Starts locating the clicked link before the Peek's own page begins loading;
     /// a new page's startup otherwise delays the lookup by well over 100 ms.
-    func beginPeekReveal(from source: WKWebView?) -> UUID? {
+    func beginPeekReveal(from source: WKWebView?, standIn: PeekOrigin? = nil) -> UUID? {
         guard peekMotionAllowed else { return nil }
         let token = UUID(); peekMotionToken = token
-        if let source { peekLink(in: source, locate: true) { [weak self] in self?.playPeekOpen($0, token: token) } }
+        if let standIn { DispatchQueue.main.async { [weak self] in self?.playPeekOpen(standIn, token: token) } }
+        else if let source { peekLink(in: source, locate: true) { [weak self] in self?.playPeekOpen($0, token: token) } }
         else { DispatchQueue.main.async { [weak self] in self?.playPeekOpen(nil, token: token) } }
         return token
     }
     /// Hides the new Peek until its link is located, then grows it out of the link.
     func revealPeek(_ token: UUID?) {
         guard let token, token == peekMotionToken, let card = peekCard else { return }
-        ([peekBackdrop, card] + peekControls).forEach { $0?.alphaValue = 0 }
+        [peekBackdrop, card].forEach { $0?.alphaValue = 0 }
+        // The controls wait behind the card's edge and slide out as it lands.
+        peekControls.forEach { $0.tuckBehindCard() }
         // A slow page must not hold the Peek back; open from the center instead.
         DispatchQueue.main.asyncAfter(deadline: .now()+0.15) { [weak self] in self?.playPeekOpen(nil, token: token) }
     }
     func playPeekOpen(_ origin: PeekOrigin?, token: UUID) {
         guard token == peekMotionToken, let card = peekCard, let web = peekTab?.webView else { return }
-        peekMotionToken = nil; peekOrigin = origin
+        peekMotionToken = nil
+        // A whole page shrinking back into a Peek isn't where it closes to; its link is, set by ⌘Z.
+        if origin?.rootFrame == nil { peekOrigin = origin }
         let target = card.frame, start = peekFrame(of: origin)
+        if livePeekResize, let start, origin?.rootFrame != nil { shrinkIntoPeekLive(card: card, web: web, from: start); return }
         let ghost = PeekGhost(color: theme.page); ghost.linkImage = origin?.image
         ghost.pageAspect = target.height/max(1, target.width); ghost.page.alphaValue = 0
         root.addSubview(ghost, positioned: .above, relativeTo: card)
@@ -199,7 +221,7 @@ extension NSView {
         // The link hands over to the page early, while the card is still growing.
         fadePeekView(ghost.link, to: 0, delay: 0.01, duration: 0.09)
         streamPeekPage(into: ghost, from: web)
-        let spring = Self.peekOpenSpring
+        let spring = origin?.rootFrame == nil ? Self.peekOpenSpring : Self.peekUnexpandSpring
         ghost.layer?.shadowOpacity = 0; ghost.fadeShadow(to: 0.25, duration: spring.perceptualDuration*0.6)
         ghost.place(target, spring: spring)
         if peekSwipePull > 0 { applyPeekSwipeTransform() }
@@ -207,23 +229,26 @@ extension NSView {
         NSAnimationContext.runAnimationGroup { context in
             context.duration = spring.perceptualDuration*0.7; peekBackdrop?.animator().alphaValue = 1
         }
+        // Once the card has all but landed, each control follows 20 ms after the one above it.
+        for (index, control) in peekControls.enumerated() {
+            control.slideOut(after: spring.perceptualDuration*Self.peekControlsLead+Double(index)*Self.peekControlStagger)
+        }
         DispatchQueue.main.asyncAfter(deadline: .now()+spring.settlingDuration) { [weak self, weak ghost] in
             guard let self, let ghost, ghost.phase == .opening, ghost.superview != nil else { return }
             ghost.removeFromSuperview()
             guard card === self.peekCard else { return }
             card.alphaValue = 1
-            NSAnimationContext.runAnimationGroup { context in
-                context.duration = 0.12; self.peekControls.forEach { $0.animator().alphaValue = 1 }
-            }
         }
     }
 
     /// Snapshots the closing Peek, then shrinks it back into the link it came from.
-    func dismissPeek(card: Surface, backdrop: Surface?, page web: WKWebView, origin: PeekOrigin?) {
+    /// `hold` gives the controls a head start going back in before the card moves away.
+    func dismissPeek(card: Surface, backdrop: Surface?, page web: WKWebView, origin: PeekOrigin?, hold: TimeInterval = 0) {
         peekLeftovers = [backdrop, card].compactMap { $0 }
         let token = UUID(); peekMotionToken = token
+        let earliest = CACurrentMediaTime()+hold
         // Closing should feel immediate; never wait long for the snapshots.
-        DispatchQueue.main.asyncAfter(deadline: .now()+0.08) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now()+max(0.08, hold)) { [weak self] in
             self?.playPeekClose(card: card, backdrop: backdrop, page: nil, origin: origin, token: token)
         }
         Task { @MainActor [weak self] in
@@ -233,9 +258,13 @@ extension NSView {
             // The source may have scrolled since opening; find the link again.
             async let link = origin?.webView.asyncFlatMap { await self.peekLink(in: $0, locate: false) }
             let (image, found) = await (page, link)
+            let wait = earliest-CACurrentMediaTime()
+            if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
             self.playPeekClose(card: card, backdrop: backdrop, page: image, origin: found ?? origin, token: token)
         }
     }
+    /// How long a closing card waits for its controls to start going back in.
+    static let peekCloseHold: TimeInterval = 0.05
     func playPeekClose(card: Surface, backdrop: Surface?, page: NSImage?, origin: PeekOrigin?, token: UUID) {
         guard token == peekMotionToken else { return }
         peekMotionToken = nil; peekLeftovers = []

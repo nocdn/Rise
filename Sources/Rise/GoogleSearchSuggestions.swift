@@ -6,15 +6,20 @@ import RiseCore
     private let session: URLSession
     private let delay: TimeInterval
     private var timer: Timer?
-    private var task: URLSessionDataTask?
+    /// Requests stay in flight while typing continues, oldest first; an answer for an
+    /// earlier prefix still narrows the list until the current one arrives.
+    private var tasks: [(query: String, task: URLSessionDataTask)] = []
+    private static let maximumInFlight = 6
     private var token = UUID()
     private var query: String?
     private var values: [String] = []
     private var cache: [String: [String]] = [:]
     private var order: [String] = []
+    private var warmedAt: Date?
     var onLoad: ((String) -> Void)?
 
-    init(session: URLSession? = nil, delay: TimeInterval = 0.18) {
+    /// The delay only merges keystrokes that land together, as when pasting.
+    init(session: URLSession? = nil, delay: TimeInterval = 0.02) {
         if let session { self.session = session }
         else {
             let config = URLSessionConfiguration.ephemeral
@@ -24,28 +29,53 @@ import RiseCore
         }
         self.delay = delay
     }
-    deinit { timer?.invalidate(); task?.cancel() }
+    deinit { timer?.invalidate(); tasks.forEach { $0.task.cancel() } }
 
     func suggestions(for text: String) -> [String] {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard Self.isSearchQuery(text) else { cancel(); return [] }
         if query == text { return values }
-        cancel(); query = text
+        timer?.invalidate(); timer = nil
+        let shown = values
+        query = text
         if let cached = cache[text] { values = cached; return cached }
+        // The rows already showing stay until this query's own answer replaces them, so the
+        // list keeps its height instead of collapsing to the direct search while Google answers.
+        values = shown
+        if values.isEmpty, let prefix = cachedPrefix(of: text) { values = Self.narrow(cache[prefix] ?? [], to: text) }
+        guard !tasks.contains(where: { $0.query == text }) else { return values }
         let requestToken = token
         let pending = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.fetch(text, token: requestToken) }
         }
         timer = pending; RunLoop.main.add(pending, forMode: .common)
-        return []
+        return values
     }
     func cancel() {
-        token = UUID(); timer?.invalidate(); timer = nil; task?.cancel(); task = nil
+        token = UUID(); timer?.invalidate(); timer = nil
+        tasks.forEach { $0.task.cancel() }; tasks = []
         query = nil; values = []
+    }
+    /// Opens the connection to Google before the first keystroke, so the first
+    /// suggestions skip the TLS handshake. The request carries no typed text.
+    func warmUp() {
+        guard tasks.isEmpty, Date().timeIntervalSince(warmedAt ?? .distantPast) > 20 else { return }
+        warmedAt = Date()
+        var request = URLRequest(url: URL(string: "https://www.google.com/complete/search?client=chrome&q=")!, cachePolicy: .reloadIgnoringLocalCacheData)
+        request.httpMethod = "HEAD"; request.httpShouldHandleCookies = false
+        session.dataTask(with: request).resume()
+    }
+    nonisolated static func narrow(_ terms: [String], to text: String) -> [String] {
+        let typed = text.lowercased()
+        return terms.filter { $0.lowercased().hasPrefix(typed) && $0.lowercased() != typed }
+    }
+    private func cachedPrefix(of text: String) -> String? {
+        order.last { $0.count < text.count && text.lowercased().hasPrefix($0.lowercased()) }
     }
     private func fetch(_ text: String, token requestToken: UUID) {
         guard token == requestToken, query == text else { return }
         timer = nil
+        while tasks.count >= Self.maximumInFlight { tasks.removeFirst().task.cancel() }
         var endpoint = URLComponents(string: "https://www.google.com/complete/search")!
         endpoint.queryItems = [URLQueryItem(name: "client", value: "chrome"), URLQueryItem(name: "ie", value: "UTF-8"),
                                URLQueryItem(name: "hl", value: Locale.current.language.languageCode?.identifier ?? "en"),
@@ -53,22 +83,36 @@ import RiseCore
         var request = URLRequest(url: endpoint.url!, cachePolicy: .reloadIgnoringLocalCacheData)
         request.httpShouldHandleCookies = false
         request.setValue("application/json", forHTTPHeaderField: "Accept")
-        task = session.dataTask(with: request) { [weak self] data, response, error in
+        let task = session.dataTask(with: request) { [weak self] data, response, error in
             let results: [String]?
             if error == nil, (response as? HTTPURLResponse)?.statusCode == 200, let data {
                 results = Self.parse(data, query: text)
             } else { results = nil }
             Task { @MainActor [weak self] in
-                guard let self, self.token == requestToken, self.query == text else { return }
-                self.task = nil
-                guard let results else { return }
-                self.values = results; self.cache[text] = results
+                guard let self, self.token == requestToken else { return }
+                self.tasks.removeAll { $0.query == text }
+                guard let current = self.query else { return }
+                guard let results else {
+                    // No answer is coming for what's typed, so the held rows go.
+                    if current == text, !self.values.isEmpty { self.values = []; self.onLoad?(current) }
+                    return
+                }
+                self.cache[text] = results
                 self.order.removeAll { $0 == text }; self.order.append(text)
                 while self.order.count > 32 { self.cache.removeValue(forKey: self.order.removeFirst()) }
-                self.onLoad?(text)
+                if current == text {
+                    self.values = results; self.onLoad?(current)
+                } else if self.cache[current] == nil, current.lowercased().hasPrefix(text.lowercased()) {
+                    // An earlier prefix answered first: show what still fits until the current answer
+                    // lands, unless that would shorten the list in the meantime.
+                    let narrowed = Self.narrow(results, to: current)
+                    guard !narrowed.isEmpty, narrowed.count >= self.values.count, narrowed != self.values else { return }
+                    self.values = narrowed; self.onLoad?(current)
+                }
             }
         }
-        task?.resume()
+        tasks.append((text, task))
+        task.resume()
     }
     nonisolated static func isSearchQuery(_ text: String) -> Bool {
         guard (2...256).contains(text.count), !text.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),

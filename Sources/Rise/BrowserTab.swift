@@ -4,7 +4,12 @@ import RiseCore
 
 @MainActor final class BrowserTab: NSObject {
     let id: UUID
-    let webView: WKWebView
+    /// The page on show. A Peek growing into the tab trades pages with it rather than loading again.
+    private(set) var webView: WKWebView
+    /// Earlier live pages, oldest first, that Back reaches once this page's own history runs out;
+    /// and later ones Forward reaches. Each holder only keeps a page; it isn't a tab in the list.
+    var backPages: [BrowserTab] = []
+    var forwardPages: [BrowserTab] = []
     var title: String
     var customTitle: String?
     /// Leaves YouTube's notification count out of the title.
@@ -77,6 +82,10 @@ import RiseCore
         }
         webView.isInspectable = true; webView.allowsBackForwardNavigationGestures = false
         webView.underPageBackgroundColor = NSColor(hex: 0xFDFCFC)
+        observeWebView()
+    }
+    private func observeWebView() {
+        observations = []
         audioObserver = PrivateKeyObserver(webView, key: Self.playingAudioKey) { [weak self] in Task { @MainActor in self?.audioChanged() } }
         observations.append(webView.observe(\.title, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.changed() } })
         observations.append(webView.observe(\.url, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.changed() } })
@@ -91,6 +100,24 @@ import RiseCore
         observations.append(webView.observe(\.fullscreenState, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.onFullscreenChange?() } })
         observations.append(webView.observe(\.canGoBack, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.onChange?() } })
         observations.append(webView.observe(\.canGoForward, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.onChange?() } })
+    }
+    /// Trades live pages with `other`: each takes the other's page with its history, title and
+    /// icon, and nothing loads. The tab itself keeps its id, place, pin and name.
+    func exchangePages(with other: BrowserTab) {
+        for tab in [self, other] { tab.loadGeneration += 1; tab.navigationTask?.cancel(); tab.navigationTask = nil }
+        swap(&webView, &other.webView)
+        swap(&title, &other.title); swap(&requestedURL, &other.requestedURL)
+        swap(&favicon, &other.favicon); swap(&darkFavicon, &other.darkFavicon); swap(&iconOrigin, &other.iconOrigin)
+        swap(&thumbnail, &other.thumbnail); swap(&hasAttemptedNavigation, &other.hasAttemptedNavigation)
+        swap(&isPlayingAudio, &other.isPlayingAudio); swap(&isAudioMuted, &other.isAudioMuted)
+        restoredState = nil; other.restoredState = nil
+        // An icon still on its way belongs to the page that's gone; fetch the new page's again.
+        for tab in [self, other] {
+            tab.iconTask?.cancel(); tab.iconTask = nil
+            if tab.favicon == nil { tab.iconOrigin = nil }
+        }
+        observeWebView(); other.observeWebView()
+        changed(); other.changed()
     }
     var url: URL? { webView.url ?? requestedURL }
     var saved: SavedTab {

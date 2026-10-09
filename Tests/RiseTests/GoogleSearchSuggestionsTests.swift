@@ -8,7 +8,9 @@ private final class SearchProtocol: URLProtocol, @unchecked Sendable {
     private static var requests: [URLRequest] = []
     private let stateLock = NSLock()
     private var stopped = false
-    static func snapshot() -> [URLRequest] { lock.lock(); defer { lock.unlock() }; return requests }
+    /// Searches only; connection warm-ups carry no text.
+    static func snapshot() -> [URLRequest] { lock.lock(); defer { lock.unlock() }; return requests.filter { $0.httpMethod != "HEAD" } }
+    static func warmUps() -> [URLRequest] { lock.lock(); defer { lock.unlock() }; return requests.filter { $0.httpMethod == "HEAD" } }
     static func reset() { lock.lock(); defer { lock.unlock() }; requests = [] }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
@@ -72,6 +74,71 @@ final class GoogleSearchSuggestionsTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(20)); provider.cancel()
         try await Task.sleep(for: .milliseconds(110))
         XCTAssertEqual(delivered, ["new query"])
+    }
+    @MainActor func testTypingOnKeepsFittingResultsAndAnEarlierAnswerFillsInBeforeTheCurrentOne() async throws {
+        let session = session(); defer { session.invalidateAndCancel() }
+        let provider = GoogleSearchSuggestions(session: session, delay: 0.005); defer { provider.cancel() }
+        var delivered: [(String, [String])] = []
+        provider.onLoad = { delivered.append(($0, provider.suggestions(for: $0))) }
+        _ = provider.suggestions(for: "cof")
+        try await Task.sleep(for: .milliseconds(30))
+        _ = provider.suggestions(for: "cof c")
+        for _ in 0..<50 where delivered.count < 2 { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(SearchProtocol.snapshot().count, 2, "Typing on doesn't cancel the earlier request")
+        XCTAssertEqual(delivered.first?.0, "cof c")
+        XCTAssertEqual(delivered.first?.1, ["cof cake"], "The earlier answer shows what still fits until the current one arrives")
+        XCTAssertEqual(delivered.last?.1.first, "cof c beans", "Then the current answer replaces it")
+        let shown = provider.suggestions(for: "cof c")
+        XCTAssertEqual(provider.suggestions(for: "cof c xyz"), shown, "The rows already showing stay until the new answer arrives")
+    }
+    @MainActor func testTheAddressBarKeepsItsRowsWhileGoogleAnswersAndOnlyShortensWhenNothingCameBack() async throws {
+        _ = NSApplication.shared
+        let session = session(); defer { session.invalidateAndCancel() }
+        let provider = GoogleSearchSuggestions(session: session, delay: 0.005)
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json")
+        let browser = BrowserController(sessionURL: file, restore: false, searchSuggestions: provider)
+        defer {
+            browser.hidePalette(); browser.suggestionFavicons.cancel(); browser.saveWork?.cancel(); browser.window?.orderOut(nil)
+            try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+        }
+        browser.showWindow(nil); browser.newTab()
+        let palette = browser.palette, editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
+        func type(_ text: String) { editor.selectAll(nil); editor.insertText(text, replacementRange: editor.selectedRange()) }
+        func titles() -> [String] { palette.suggestions.map(\.title) }
+        type("coffee")
+        for _ in 0..<50 where !titles().contains("coffee beans") { try await Task.sleep(for: .milliseconds(10)) }
+        let rows = palette.suggestions.count, height = palette.frame.height
+        XCTAssertGreaterThan(rows, 2)
+        type("tea time")
+        XCTAssertEqual(palette.suggestions.count, rows, "Nothing matches the new text yet, but the list keeps its rows")
+        XCTAssertEqual(palette.frame.height, height)
+        XCTAssertTrue(titles().contains("coffee beans"))
+        for _ in 0..<50 where !titles().contains("tea time beans") { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(palette.suggestions.count, rows, "The new answer replaces the rows in place")
+        XCTAssertFalse(titles().contains("coffee beans"))
+        type("offline query")
+        XCTAssertEqual(palette.suggestions.count, rows)
+        for _ in 0..<50 where palette.suggestions.count != 1 { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(titles(), ["Search Google for “offline query”"], "With no answer coming, the held rows go")
+    }
+    @MainActor func testOpeningTheAddressBarWarmsTheConnectionWithoutAnyTypedText() async throws {
+        _ = NSApplication.shared
+        let session = session(); defer { session.invalidateAndCancel() }
+        let provider = GoogleSearchSuggestions(session: session, delay: 0.005)
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json")
+        let browser = BrowserController(sessionURL: file, restore: false, searchSuggestions: provider)
+        defer {
+            browser.hidePalette(); browser.suggestionFavicons.cancel(); browser.saveWork?.cancel(); browser.window?.orderOut(nil)
+            try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+        }
+        browser.showWindow(nil); browser.newTab(); browser.hidePalette(); browser.newTab()
+        for _ in 0..<50 where SearchProtocol.warmUps().isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+        let warmUps = SearchProtocol.warmUps()
+        XCTAssertEqual(warmUps.count, 1, "Reopening right away doesn't warm again")
+        XCTAssertEqual(warmUps.first?.url?.host, "www.google.com")
+        XCTAssertEqual(URLComponents(url: try XCTUnwrap(warmUps.first?.url), resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "q" }?.value, "")
+        XCTAssertFalse(try XCTUnwrap(warmUps.first).httpShouldHandleCookies)
+        XCTAssertTrue(SearchProtocol.snapshot().isEmpty)
     }
     func testJSONValidationDeduplicationAndUntrustedTextRemainPlainStrings() throws {
         let bytes = try JSONSerialization.data(withJSONObject: ["coffee", ["coffee", "coffee beans", "COFFEE BEANS", "", " coffee cake ", "<b>coffee</b>", "bad\nterm"]])

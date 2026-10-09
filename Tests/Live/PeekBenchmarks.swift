@@ -18,6 +18,8 @@ import WebKit
                     print("Reduce Motion is on; Peek opens without motion."); NSApp.terminate(nil); return
                 }
                 browser = BrowserController(sessionURL: URL(fileURLWithPath: ProcessInfo.processInfo.environment["RISE_BENCHMARK_SESSION"]!), restore: false)
+                // The checks before the live section are for the still-based motion.
+                browser.setLivePeekResize(false)
                 browser.window?.setContentSize(NSSize(width: 1100, height: 760)); browser.window?.center(); browser.showWindow(nil)
                 NSApp.activate(ignoringOtherApps: true)
                 let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -213,6 +215,159 @@ import WebKit
                 check(browser.peekGhosts.isEmpty && browser.peekLeftovers.isEmpty, "Swipe dismissal leaves no views behind")
                 check(abs(browser.pageShadow.layer!.presentation()!.transform.m11-1) < 0.0001,
                       "Dismissal restores the background to full size")
+                // The controls wait behind the card's right edge and slide out as it lands, 20 ms apart.
+                browser.showPeek(url: target, from: tab.webView)
+                let controls = browser.peekControls, hidden = PeekControl.tuckedOffset
+                let opened = CACurrentMediaTime()
+                check(controls.allSatisfy { abs($0.shownSlide-hidden) < 0.5 }, "Each control starts tucked behind the card: \(controls.map(\.shownSlide))")
+                try await waitUntil { controls.allSatisfy { $0.slideStart != nil } }
+                let starts = controls.map { $0.slideStart! }
+                // Underdamped, so it carries a little past its end and settles back, as the sidebar does.
+                check(controls.allSatisfy { control in control.slideAnimation.map { $0.damping < 2*sqrt($0.mass*$0.stiffness) } == true },
+                      "Each control slides out on an overshooting spring")
+                let gaps = zip(starts.dropFirst(), starts).map { $0-$1 }
+                check(gaps.allSatisfy { abs($0-BrowserController.peekControlStagger) < 0.002 }, "The controls follow each other 20 ms apart: \(gaps)")
+                check(starts[0]-opened > 0.1, "They come out once the card has nearly landed: \(starts[0]-opened) s")
+                var slides: [[CGFloat]] = controls.map { _ in [] }
+                while CACurrentMediaTime() < starts.last!+0.6 {
+                    for (index, control) in controls.enumerated() { slides[index].append(control.shownSlide) }
+                    try await Task.sleep(for: .milliseconds(2))
+                }
+                check(slides.allSatisfy { abs($0.last!) < 0.1 }, "Each control ends out beside the card: \(slides.map { $0.last! })")
+                let peaks = slides.map { $0.max()! }
+                check(peaks.allSatisfy { $0 < 6 }, "Any overshoot stays subtle: \(peaks)")
+
+                // Expanding grows the Peek into the page while the page behind returns to full size.
+                try await Task.sleep(for: .milliseconds(500))
+                let peekCardFrame = browser.peekCard!.frame, peekPage = browser.peekTab!, openedFrom = browser.peekOrigin
+                let livePeek = peekPage.webView
+                _ = try await livePeek.evaluateJavaScript("window.riseMark = 5")
+                browser.expandPeek(modifiers: [])
+                var grown: [NSRect] = [], scales: [CGFloat] = [], reloaded = false
+                let pressed = CACurrentMediaTime(); var widestAt = pressed
+                for _ in 0..<200 {
+                    reloaded = reloaded || livePeek.isLoading
+                    if let ghost = browser.peekPromotion?.ghost, ghost.layer?.presentation() != nil,
+                       presentedFrame(ghost).width > (grown.map(\.width).max() ?? 0) { widestAt = CACurrentMediaTime() }
+                    // Until its animation is committed, a layer has no presentation copy to sample.
+                    if let ghost = browser.peekPromotion?.ghost, ghost.layer?.presentation() != nil { grown.append(presentedFrame(ghost)) }
+                    scales.append((browser.pageShadow.layer!.presentation() ?? browser.pageShadow.layer!).transform.m11)
+                    if !grown.isEmpty, browser.peekPromotion == nil, !browser.root.subviews.contains(where: { $0 is PeekGhost }) { break }
+                    try await Task.sleep(for: .milliseconds(8))
+                }
+                let pageFrame = tab.webView.convert(tab.webView.bounds, to: browser.root)
+                check(grown.count > 5, "A stand-in for the Peek grows into the page: \(grown.count) samples")
+                check(abs(grown.first!.width-peekCardFrame.width) < peekCardFrame.width*0.08, "It starts as the Peek card: \(grown.first!.width) vs \(peekCardFrame.width)")
+                check(grown.contains { $0.width > peekCardFrame.width+20 && $0.width < pageFrame.width-20 }, "It passes through sizes in between: \(grown.map(\.width))")
+                let widest = grown.map(\.width).max()!
+                check(widest > pageFrame.width+0.3 && widest < pageFrame.width*1.03, "It springs subtly past the page: \(widest) vs \(pageFrame.width)")
+                check(abs(grown.last!.width-pageFrame.width) < 2 && abs(grown.last!.midX-pageFrame.midX) < 2 && abs(grown.last!.height-pageFrame.height) < 2,
+                      "It settles into the page: \(grown.last!) vs \(pageFrame)")
+                check(scales.contains { $0 > BrowserController.peekPageScale+0.003 && $0 < 0.999 } && abs(scales.last!-1) < 0.0005, "The page behind springs back to full size: \(scales.last!)")
+                check(browser.peekTab == nil && browser.peekCard == nil && browser.peekControls.isEmpty && !browser.pageClip.subviews.contains { $0 is PeekBackdrop },
+                      "Expanding leaves no Peek views behind")
+                check(tab.webView.url == target && browser.selectedID == tab.id, "The tab underneath now shows the Peek's page")
+                let kept = try await livePeek.evaluateJavaScript("window.riseMark") as? Int
+                check(tab.webView === livePeek && kept == 5 && !reloaded, "The Peek's live page moved into the tab without loading again: mark \(String(describing: kept)), reloaded \(reloaded)")
+                check(widestAt-pressed < 0.45, "It reaches the page quickly: widest after \(Int((widestAt-pressed)*1000)) ms")
+                check(isBlue(try await tab.webView.takeSnapshot(configuration: nil)), "The page had drawn before the stand-in left")
+                // ⌘Z shrinks the page back into the same live Peek, the way it grew.
+                // PEEK_RECORD=<file.mov> records the screen through ⌘Z and the close after it.
+                if let movie = ProcessInfo.processInfo.environment["PEEK_RECORD"] {
+                    NSApp.activate(ignoringOtherApps: true); browser.window?.orderFrontRegardless()
+                    let recorder = Process(); recorder.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                    recorder.arguments = ["-v", "-V", "3", "-x", movie]; try recorder.run()
+                    try await Task.sleep(for: .milliseconds(900))
+                }
+                check(browser.undoPeekPromotion(), "⌘Z puts the Peek back")
+                var shrunk: [NSRect] = [], shrinkSpring: CASpringAnimation?
+                for _ in 0..<200 {
+                    if let ghost = browser.peekGhosts.last, ghost.layer?.presentation() != nil {
+                        shrunk.append(presentedFrame(ghost))
+                        shrinkSpring = shrinkSpring ?? ghost.layer?.animation(forKey: "peek.bounds") as? CASpringAnimation
+                    }
+                    if !shrunk.isEmpty, browser.peekGhosts.isEmpty { break }
+                    try await Task.sleep(for: .milliseconds(8))
+                }
+                let restoredCard = browser.peekCard!.frame
+                check(browser.peekTab === peekPage, "The same live Peek comes back")
+                check(shrunk.count > 2 && abs(shrunk.first!.width-pageFrame.width) < pageFrame.width*0.08, "It starts as the whole page: \(shrunk.count) samples, \(shrunk.first?.width ?? 0) vs \(pageFrame.width)")
+                check(shrunk.contains { $0.width < pageFrame.width-20 && $0.width > restoredCard.width+20 }, "It passes through sizes in between: \(shrunk.map(\.width))")
+                check(abs(shrunk.last!.width-restoredCard.width) < 2 && abs(shrunk.last!.midX-restoredCard.midX) < 2, "It shrinks into the Peek card: \(shrunk.last!) vs \(restoredCard)")
+                let open = BrowserController.peekOpenSpring
+                check(shrinkSpring.map { abs($0.perceptualDuration-open.perceptualDuration) < 0.001 && $0.damping < open.damping*0.9 } == true,
+                      "It springs into the card, more bouncily than a plain open but just as quick: damping \(shrinkSpring?.damping ?? 0) vs \(open.damping)")
+                check(browser.peekOrigin?.rect == openedFrom?.rect && browser.peekOrigin?.webView === tab.webView, "It still knows the link it came from")
+                try await waitUntil { tab.webView.url == source && !tab.webView.isLoading && browser.peekPromotion == nil }
+                check(!browser.pageClip.subviews.contains { $0 is PeekStandbyView }, "The old page's still goes once the tab is back on it")
+                try await Task.sleep(for: .milliseconds(300))
+                let rest = PeekControl.gap+PeekControl.side/2
+                check(browser.peekControls.allSatisfy { $0.superview != nil && $0.alphaValue == 1 && abs($0.shownSlide) < 0.1 && abs($0.restingCenter.x-rest) < 0.5 },
+                      "The brought-back Peek's controls are out and in place: \(browser.peekControls.map { ($0.shownSlide, $0.restingCenter.x) })")
+
+                // Closing tucks the controls back in, the bottom one first, as the card shrinks into its link.
+                let closingControls = browser.peekControls
+                browser.closePeek(animated: true)
+                let tucks = closingControls.compactMap(\.slideStart)
+                check(tucks.count == 3 && tucks[2] < tucks[1] && tucks[1] < tucks[0] && abs(tucks[0]-tucks[1]-BrowserController.peekControlStagger) < 0.002,
+                      "The controls go back in bottom first, 20 ms apart: \(tucks)")
+                let closedBack = try await sampleGhost()
+                check(!closedBack.isEmpty && abs(closedBack.last!.frame.midX-link.midX) < 12 && abs(closedBack.last!.frame.midY-link.midY) < 12,
+                      "After ⌘Z, closing still shrinks back into the link: \(closedBack.last?.frame ?? .zero) vs \(link)")
+                try await Task.sleep(for: .milliseconds(150))
+                check(closingControls.allSatisfy { $0.superview == nil && $0.isTucked }, "The tucked controls go once they're in")
+
+                // ⌘-expanding makes the Peek's own page a tab, with no reload.
+                browser.showPeek(url: target, from: tab.webView)
+                try await Task.sleep(for: .milliseconds(600))
+                let own = browser.peekTab!, ownWeb = own.webView
+                _ = try await ownWeb.evaluateJavaScript("window.riseMark = 7")
+                browser.expandPeek(modifiers: .command)
+                try await waitUntil { browser.peekTab == nil && browser.peekPromotion == nil && !browser.root.subviews.contains { $0 is PeekGhost } }
+                let mark = try await ownWeb.evaluateJavaScript("window.riseMark") as? Int
+                check(browser.selectedTab === own && own.webView === ownWeb && mark == 7, "The Peek's own page becomes the tab without loading again: selected \(browser.selectedTab === own), mark \(String(describing: mark))")
+                check(ownWeb.convert(ownWeb.bounds, to: browser.root).width == pageFrame.width, "It fills the page")
+                // Live Peek Resize: the card moves from the first frame with the live page laying out inside it.
+                browser.select(tab.id)
+                browser.showPeek(url: target, from: tab.webView)
+                try await Task.sleep(for: .milliseconds(700))
+                browser.setLivePeekResize(true)
+                let liveCard = browser.peekCard!, livePage = browser.peekTab!.webView, liveFrom = liveCard.frame
+                _ = try await livePage.evaluateJavaScript("window.riseMark = 9")
+                var live: [(time: Double, card: CGFloat, page: CGFloat)] = [], liveReloaded = false
+                let livePressed = CACurrentMediaTime()
+                browser.expandPeek(modifiers: [])
+                while browser.peekLiveMotion != nil || live.isEmpty {
+                    live.append((CACurrentMediaTime()-livePressed, liveCard.frame.width, livePage.frame.width))
+                    liveReloaded = liveReloaded || livePage.isLoading
+                    try await Task.sleep(for: .milliseconds(4))
+                }
+                let firstMove = live.first { abs($0.card-liveFrom.width) > 0.5 }?.time ?? 1
+                check(firstMove < 0.03, "Live: the card moves straight away: \(Int(firstMove*1000)) ms")
+                check(live.contains { $0.card > liveFrom.width+20 && $0.card < pageFrame.width-20 && abs($0.page-$0.card) < 0.5 },
+                      "Live: the page itself resizes with the card: \(live.map { Int($0.page) })")
+                let liveWidest = live.map(\.card).max()!
+                check(liveWidest > pageFrame.width+0.3 && liveWidest < pageFrame.width*1.03, "Live: it springs subtly past the page: \(liveWidest)")
+                let liveKept = try await livePage.evaluateJavaScript("window.riseMark") as? Int
+                check(tab.webView === livePage && livePage.convert(livePage.bounds, to: browser.root) == pageFrame && liveKept == 9 && !liveReloaded && browser.peekTab == nil,
+                      "Live: the page moves into the tab where it ended, without loading again")
+                // ⌘Z shrinks the live page back into the card.
+                try await Task.sleep(for: .milliseconds(300))
+                var shrinking: [(time: Double, card: CGFloat)] = []
+                let undone = CACurrentMediaTime()
+                check(browser.undoPeekPromotion(), "Live: ⌘Z puts the Peek back")
+                let backCard = browser.peekCard!
+                while browser.peekLiveMotion != nil || shrinking.isEmpty {
+                    shrinking.append((CACurrentMediaTime()-undone, backCard.frame.width)); try await Task.sleep(for: .milliseconds(4))
+                }
+                let restingWidth = backCard.frame.width
+                check(abs(shrinking.first!.card-pageFrame.width) < 2, "Live: ⌘Z starts from the whole page: \(shrinking.first!.card)")
+                check(shrinking.contains { $0.card < pageFrame.width-20 && $0.card > restingWidth+20 }, "Live: it passes through sizes in between: \(shrinking.map { Int($0.card) })")
+                check(shrinking.map(\.card).min()! < restingWidth-0.3, "Live: it springs just past the card: \(shrinking.map(\.card).min()!) vs \(restingWidth)")
+                check(browser.peekTab?.webView === livePage && livePage.frame.width == restingWidth && backCard.alphaValue == 1, "Live: the same page settles in the card")
+                browser.closePeek()
+                print("Live Peek verified: first move after \(Int(firstMove*1000)) ms, \(live.count) expand samples (widest \(liveWidest)), \(shrinking.count) ⌘Z samples.")
+                print("Peek controls and expand verified: slides \(gaps.map { Int($0*1000) }) ms apart, expand \(grown.count) samples (widest \(widest) vs page \(pageFrame.width) after \(Int((widestAt-pressed)*1000)) ms).")
                 print("Peek motion verified: open \(opening.count) samples (peak \(Int(peak)) vs card \(Int(card.frame.width))), close \(closing.count) samples (smallest \(smallest) vs \(link.width+6), page \(pageReturn)), shadow \(recededShadow)/\(restingShadow).")
                 NSApp.terminate(nil)
             } catch { fputs("PEEK VERIFICATION FAILED: \(error)\n", stderr); exit(1) }
@@ -276,9 +431,9 @@ import WebKit
         let x = link.midX+(card.midX-link.midX)*progress, y = link.midY+(card.midY-link.midY)*progress
         return progress < limit && abs(frame.midX-x) < 12 && abs(frame.midY-y) < 12
     }
-    func waitUntil(_ condition: () -> Bool) async throws {
+    func waitUntil(line: Int = #line, _ condition: () -> Bool) async throws {
         for _ in 0..<500 where !condition() { try await Task.sleep(for: .milliseconds(10)) }
-        check(condition(), "Timed out waiting for the page")
+        check(condition(), "Timed out waiting at line \(line)")
     }
     func check(_ value: Bool, _ message: String) { if !value { fputs("FAIL: \(message)\n", stderr); exit(1) } }
 }

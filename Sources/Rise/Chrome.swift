@@ -129,7 +129,10 @@ final class BrowserWindow: NSWindow {
     var historyScrollEvent: ((NSEvent) -> Bool)?
     var modifiersChanged: ((NSEvent.ModifierFlags) -> Void)?
     var pointerMoved: ((NSEvent) -> Void)?
+    /// Sees ⌘Z before the page or the Edit menu does.
+    var undoEvent: ((NSEvent) -> Bool)?
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if undoEvent?(event) == true { return true }
         if addressPaletteEvent?(event) == true { return true }
         if tabSwitchEvent?(event) == true { return true }
         return super.performKeyEquivalent(with: event)

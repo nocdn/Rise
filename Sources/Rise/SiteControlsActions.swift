@@ -39,6 +39,9 @@ import Vision
         menu.addItem(menuItem("Show Repository Under Merge Request Tabs", checked: showsRepositorySubtitle) { [weak self] in
             self?.setShowsRepositorySubtitle(!(self?.showsRepositorySubtitle ?? true))
         })
+        menu.addItem(menuItem("Live Page While Expanding Peek", checked: livePeekResize) { [weak self] in
+            self?.setLivePeekResize(!(self?.livePeekResize ?? true))
+        })
         menu.addItem(menuItem("Simulated Full Screen", checked: pageFullscreen.isSimulated) { [weak self] in self?.toggleSimulatedFullscreen() })
         menu.addItem(menuItem("Clear Browsing History…") { [weak self] in self?.confirmClearBrowsingHistory() })
         let visibleRows = (siteControlsPopover.contentViewController as? SiteControlsController)?.rows ?? [:]

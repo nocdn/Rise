@@ -14,6 +14,9 @@ import WebKit
     var releaseCloth: ((Double, Bool, Bool) -> Void)?
     var cancelCloth: (() -> Void)?
     var isPeekPage: ((WKWebView) -> Bool)?
+    /// Whether a page can go that way, which can include pages the browser holds beyond its own history.
+    var canNavigate: (WKWebView, HistoryDirection) -> Bool = { page, direction in direction == .back ? page.canGoBack : page.canGoForward }
+    var navigate: (WKWebView, HistoryDirection) -> Void = { page, direction in if direction == .back { page.goBack() } else { page.goForward() } }
     var dragPeek: ((Double) -> Void)?
     var releasePeek: ((Bool) -> Void)?
     var cancelPeek: (() -> Void)?
@@ -44,7 +47,7 @@ import WebKit
             cancel()
             guard let page = pageAt(event) else { return false }
             peekGesture = isPeekPage?(page) == true
-            guard peekGesture || page.canGoBack || page.canGoForward else { return false }
+            guard peekGesture || canNavigate(page, .back) || canNavigate(page, .forward) else { return false }
             self.page = page; probing = true; pending = [event]
             if !peekGesture, abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) * 1.2 {
                 prepareCloth?(page); clothPrepared = true
@@ -102,7 +105,7 @@ import WebKit
         // Undo the user's scroll preference: physical right = back, left = forward.
         let dx = event.scrollingDeltaX * (event.isDirectionInvertedFromDevice ? 1 : -1)
         if gesture.move(dx: Double(dx), dy: Double(event.scrollingDeltaY),
-                        canBack: peekGesture || page.canGoBack, canForward: page.canGoForward) { thresholdClick() }
+                        canBack: peekGesture || canNavigate(page, .back), canForward: canNavigate(page, .forward)) { thresholdClick() }
         if gesture.consumesScroll {
             feedback(gesture.direction, gesture.arrowPull, gesture.isArmed, nil)
             if let direction = gesture.direction {
@@ -125,7 +128,7 @@ import WebKit
         else if consumed { releaseCloth?(distance, committed != nil, cancelled) }
         else { cancelCloth?() }
         if !dismissesPeek, let committed, let page {
-            if committed == .back { page.goBack() } else { page.goForward() }
+            navigate(page, committed)
         }
         return consumed
     }

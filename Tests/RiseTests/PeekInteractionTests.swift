@@ -115,26 +115,48 @@ final class PeekInteractionTests: XCTestCase {
         XCTAssertFalse((source.webView as? LinkCursorWebView)?.isCovered == true)
         XCTAssertFalse(source.webView.trackingAreas.isEmpty, "Hover tracking comes back when the Peek closes")
     }
-    @MainActor func testNormalExpandNavigatesSourceAndPreservesItsHistory() async throws {
+    @MainActor private func mark(_ web: WKWebView) async throws -> Int? {
+        try await web.evaluateJavaScript("window.riseMark ?? 0") as? Int
+    }
+    @MainActor func testNormalExpandHandsTheLivePageToTheTabAndBackReturnsWithoutReloading() async throws {
         let browser = browser(); defer { clean(browser) }
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
-        let sourceURL = folder.appendingPathComponent("source.html"), targetURL = folder.appendingPathComponent("target.html")
-        try "<title>Source</title>Source".write(to: sourceURL, atomically: true, encoding: .utf8)
-        try "<title>Target</title>Target".write(to: targetURL, atomically: true, encoding: .utf8)
-        let source = browser.addTab(url: sourceURL)
-        try await wait { source.webView.title == "Source" && !source.webView.isLoading }
+        let urls = ["source", "target", "other"].map { folder.appendingPathComponent("\($0).html") }
+        for url in urls { try "<title>\(url.lastPathComponent)</title>Page".write(to: url, atomically: true, encoding: .utf8) }
+        let source = browser.addTab(url: urls[0])
+        try await wait { source.webView.title == "source.html" && !source.webView.isLoading }
+        let sourcePage = source.webView
+        _ = try await sourcePage.evaluateJavaScript("window.riseMark = 1")
         let count = browser.tabs.count
-        browser.showPeek(url: targetURL, from: source.webView)
-        let peek = try XCTUnwrap(browser.peekTab)
-        try await wait { peek.webView.title == "Target" && !peek.webView.isLoading }
+        browser.showPeek(url: urls[1], from: source.webView)
+        let peekPage = try XCTUnwrap(browser.peekTab).webView
+        try await wait { peekPage.title == "target.html" && !peekPage.isLoading }
+        _ = try await peekPage.evaluateJavaScript("window.riseMark = 2")
+
         browser.expandPeek(modifiers: [])
-        try await wait { source.webView.title == "Target" && !source.webView.isLoading }
-        XCTAssertEqual(browser.tabs.count, count); XCTAssertEqual(browser.selectedID, source.id)
-        XCTAssertNil(browser.peekTab); XCTAssertTrue(source.webView.canGoBack)
-        source.webView.goBack()
-        try await wait { source.webView.title == "Source" && !source.webView.isLoading }
+        XCTAssertTrue(source.webView === peekPage, "The Peek's own page moves into the tab")
+        XCTAssertFalse(peekPage.isLoading); let expanded = try await mark(peekPage); XCTAssertEqual(expanded, 2, "Not loaded again")
+        XCTAssertEqual(browser.tabs.count, count); XCTAssertEqual(browser.selectedID, source.id); XCTAssertNil(browser.peekTab)
+        XCTAssertTrue(peekPage.superview === browser.pageClip); XCTAssertNil(sourcePage.superview, "The page from before is held off screen")
+        XCTAssertTrue(browser.toolbarButtons[1].isEnabled, "Back reaches the page from before")
+
+        browser.goBack()
+        XCTAssertTrue(source.webView === sourcePage); XCTAssertEqual(source.title, "source.html")
+        let back = try await mark(sourcePage); XCTAssertEqual(back, 1, "Back shows the held page as it was, without reloading")
+        XCTAssertTrue(browser.toolbarButtons[2].isEnabled)
+        browser.goForward()
+        XCTAssertTrue(source.webView === peekPage)
+        let forward = try await mark(peekPage); XCTAssertEqual(forward, 2)
+
+        // Somewhere new from the page from before leaves the expanded page behind, as forward history goes.
+        browser.goBack()
+        source.load(urls[2])
+        try await wait { source.webView.title == "other.html" && !source.webView.isLoading }
+        XCTAssertTrue(source.forwardPages.isEmpty)
+        browser.closeTab(source.id)
+        XCTAssertTrue(source.backPages.isEmpty, "A closing tab lets go of the pages it held")
     }
     @MainActor func testCommandExpandInsertsLivePeekImmediatelyAboveItsSource() throws {
         let browser = browser(); defer { clean(browser) }
@@ -190,5 +212,133 @@ final class PeekInteractionTests: XCTestCase {
         XCTAssertTrue(router.handle(event([], x: 300, momentum: 3)))
         XCTAssertEqual(releases.count, 3); XCTAssertEqual(cloth, 0); XCTAssertEqual(clicks, 4)
         XCTAssertEqual(web.title, "Peek"); XCTAssertFalse(web.canGoBack)
+    }
+
+    @MainActor private func commandZEvent(_ browser: BrowserController) -> NSEvent {
+        NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+                         windowNumber: browser.window!.windowNumber, context: nil, characters: "z",
+                         charactersIgnoringModifiers: "z", isARepeat: false, keyCode: 6)!
+    }
+    /// ⌘Z through the window, as a real key press goes.
+    @MainActor private func commandZ(_ browser: BrowserController) -> Bool {
+        (browser.window as! BrowserWindow).performKeyEquivalent(with: commandZEvent(browser))
+    }
+    /// Whether Rise takes ⌘Z for a Peek rather than leaving it to the page.
+    @MainActor private func takesCommandZ(_ browser: BrowserController) -> Bool { browser.handlePeekUndoKey(commandZEvent(browser)) }
+    @MainActor func testCommandZPutsAnExpandedPeekBackLiveAndReturnsTheTabToItsPage() async throws {
+        let browser = browser(); defer { clean(browser) }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let sourceURL = folder.appendingPathComponent("source.html"), targetURL = folder.appendingPathComponent("target.html")
+        try "<title>Source</title>Source".write(to: sourceURL, atomically: true, encoding: .utf8)
+        try "<title>Target</title>Target".write(to: targetURL, atomically: true, encoding: .utf8)
+        let source = browser.addTab(url: sourceURL)
+        try await wait { source.webView.title == "Source" && !source.webView.isLoading }
+        browser.showPeek(url: targetURL, from: source.webView)
+        let peek = try XCTUnwrap(browser.peekTab)
+        try await wait { peek.webView.title == "Target" && !peek.webView.isLoading }
+        let sourcePage = source.webView, peekPage = peek.webView
+        _ = try await sourcePage.evaluateJavaScript("window.riseMark = 3")
+        _ = try await peekPage.evaluateJavaScript("window.riseMark = 7")
+        browser.expandPeek(modifiers: [])
+        XCTAssertTrue(source.webView === peekPage); XCTAssertNil(browser.peekTab)
+
+        XCTAssertTrue(commandZ(browser))
+        XCTAssertTrue(browser.peekTab === peek && peek.webView === peekPage, "The Peek comes back")
+        let peekMark = try await mark(peekPage); XCTAssertEqual(peekMark, 7, "It's the same page, not loaded again")
+        XCTAssertTrue(source.webView === sourcePage); XCTAssertEqual(source.title, "Source")
+        let sourceMark = try await mark(sourcePage); XCTAssertEqual(sourceMark, 3, "The tab is back on its page at once, not reloaded")
+        XCTAssertTrue(source.backPages.isEmpty && source.forwardPages.isEmpty, "Nothing is left held")
+        XCTAssertEqual(browser.selectedID, source.id)
+        XCTAssertFalse(takesCommandZ(browser), "There's only one step to undo")
+    }
+    @MainActor func testCommandZUndoesANewTabExpandAndASplitOnlyForAShortWhile() async throws {
+        let browser = browser(); defer { clean(browser); BrowserController.peekUndoDuration = 30 }
+        _ = browser.addTab(); let source = browser.addTab()
+        browser.select(source.id)
+        let ids = browser.tabs.map(\.id)
+        XCTAssertFalse(takesCommandZ(browser), "Nothing to undo yet, so ⌘Z goes on to the page")
+        browser.showPeek(url: URL(string: "about:blank")!, from: source.webView)
+        let peek = try XCTUnwrap(browser.peekTab)
+
+        browser.expandPeek(modifiers: .command)
+        XCTAssertEqual(browser.selectedID, peek.id)
+        XCTAssertTrue(commandZ(browser))
+        XCTAssertEqual(browser.tabs.map(\.id), ids); XCTAssertEqual(browser.selectedID, source.id)
+        XCTAssertTrue(browser.peekTab === peek); XCTAssertNotNil(browser.peekCard)
+
+        browser.splitPeek()
+        XCTAssertEqual(browser.splitGroups.count, 1)
+        XCTAssertTrue(commandZ(browser))
+        XCTAssertTrue(browser.splitGroups.isEmpty); XCTAssertEqual(browser.tabs.map(\.id), ids)
+        XCTAssertTrue(browser.peekTab === peek)
+
+        BrowserController.peekUndoDuration = 0.05
+        browser.splitPeek()
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertFalse(takesCommandZ(browser), "The chance to undo runs out")
+        XCTAssertEqual(browser.splitGroups.count, 1)
+    }
+    @MainActor func testPeekControlsHoverSubtlyShrinkOnPressAndSlideOutFromBehindTheCard() throws {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 200), styleMask: [.borderless], backing: .buffered, defer: false)
+        let content = FlippedView(frame: NSRect(x: 0, y: 0, width: 200, height: 200)); window.contentView = content
+        let split = PeekControl(glyph: .split, title: "Split"), arrows = PeekControl(glyph: .arrows, title: "Expand")
+        var pressed = 0; split.action = { pressed += 1 }
+        for (index, control) in [split, arrows].enumerated() {
+            control.frame = PeekControl.frame(cardMaxX: 50, top: 20+CGFloat(index)*44); control.applyTheme(.neutral)
+            content.addSubview(control)
+        }
+        content.layoutSubtreeIfNeeded()
+        let center = NSPoint(x: split.frame.minX+PeekControl.gap+PeekControl.side/2, y: split.frame.midY)
+        XCTAssertTrue(split.hitTest(center) === split)
+        XCTAssertNil(split.hitTest(NSPoint(x: split.frame.minX+4, y: split.frame.midY)), "The room beside the button takes no clicks")
+
+        split.mouseEntered(with: NSEvent())
+        XCTAssertEqual(split.washAlpha, 0.04, accuracy: 0.001, "A faint hover wash")
+        XCTAssertTrue(split.isSwaying, "The divider sways on hover")
+        arrows.mouseEntered(with: NSEvent())
+        XCTAssertEqual(arrows.arrowSpread, 1.5, accuracy: 0.01, "The arrows spread like Picture in Picture's")
+
+        func mouse(_ type: NSEvent.EventType) -> NSEvent {
+            NSEvent.mouseEvent(with: type, location: content.convert(center, to: nil), modifierFlags: [], timestamp: 0,
+                               windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+        }
+        split.mouseDown(with: mouse(.leftMouseDown))
+        XCTAssertEqual(split.pressScale, PeekControl.pressedScale, accuracy: 0.001)
+        split.mouseUp(with: mouse(.leftMouseUp))
+        XCTAssertEqual(split.pressScale, 1, accuracy: 0.001); XCTAssertEqual(pressed, 1)
+
+        split.tuckBehindCard()
+        XCTAssertTrue(split.isTucked)
+        split.slideOut(after: 0.02)
+        XCTAssertFalse(split.isTucked)
+    }
+
+    @MainActor func testTuckedControlsHideTheirShadowAndAlwaysComeBackWhereTheyRest() throws {
+        let control = PeekControl(glyph: .cross, title: "Close")
+        control.frame = PeekControl.frame(cardMaxX: 0, top: 20); control.layoutSubtreeIfNeeded()
+        let rest = control.restingCenter
+        XCTAssertEqual(rest.x, PeekControl.gap+PeekControl.side/2, accuracy: 0.01)
+        control.tuckBehindCard()
+        XCTAssertLessThan(PeekControl.gap+PeekControl.side+PeekControl.shadowReach+PeekControl.tuckedOffset, 0,
+                          "Tucked, the shadow is past the clipping edge too, so no sliver of it shows")
+        // Laying out mid-slide used to move where the button rests, leaving it out of sight once out.
+        control.frame = PeekControl.frame(cardMaxX: 10, top: 20); control.needsLayout = true; control.layoutSubtreeIfNeeded()
+        control.slideOut(after: 0)
+        XCTAssertEqual(control.restingCenter.x, rest.x, accuracy: 0.01)
+        XCTAssertFalse(control.isTucked)
+        control.slideIn(after: 0)
+        XCTAssertTrue(control.isTucked); XCTAssertNil(control.action, "A control going away takes no more clicks")
+    }
+
+    @MainActor func testLiveResizeFollowsTheSameBouncySpring() {
+        let spring = BrowserController.peekPromoteSpring
+        let samples = stride(from: 0.0, through: spring.perceptualDuration*1.5, by: 0.004).map { PeekLiveMotion.progress(at: $0, along: spring) }
+        XCTAssertEqual(samples.first!, 0, accuracy: 0.0001)
+        XCTAssertGreaterThan(samples.max()!, 1.01, "It carries a little past the end")
+        XCTAssertLessThan(samples.max()!, 1.06, "Only a little")
+        XCTAssertEqual(samples.last!, 1, accuracy: 0.002, "And has all but settled when the motion ends")
     }
 }

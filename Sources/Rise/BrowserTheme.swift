@@ -66,9 +66,6 @@ import AppKit
         }
         peekBackdrop?.fill = theme.background.withAlphaComponent(0.72)
         peekCard?.fill = theme.page; (peekCard?.subviews.first as? Surface)?.fill = theme.page
-        for button in peekControls {
-            button.baseColor = theme.popup; button.layer?.backgroundColor = theme.popup.cgColor
-            button.hoverColor = theme.text.withAlphaComponent(0.07)
-        }
+        peekControls.forEach { $0.applyTheme(theme) }
     }
 }

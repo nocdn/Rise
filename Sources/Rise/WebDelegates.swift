@@ -20,6 +20,9 @@ import RiseCore
         if action.navigationType == .linkActivated, let url = action.request.url {
             if openModifiedLink(url, modifiers: action.modifierFlags, from: webView, opensNewTab: action.targetFrame == nil) { decisionHandler(.cancel); return }
         }
+        // Going somewhere new, not back or forward, leaves the tab's later held pages behind.
+        if action.targetFrame?.isMainFrame == true, action.navigationType != .backForward, action.navigationType != .reload,
+           let tab = tabs.first(where: { $0.webView === webView }), !tab.forwardPages.isEmpty { dropForwardPages(of: tab) }
         if let scheme = action.request.url?.scheme?.lowercased(), !["http", "https", "file", "about", "data", "blob"].contains(scheme) {
             // External schemes require a deliberate choice; never silently run them.
             let alert = NSAlert(); alert.messageText = "Open in another app?"; alert.informativeText = action.request.url?.absoluteString ?? ""

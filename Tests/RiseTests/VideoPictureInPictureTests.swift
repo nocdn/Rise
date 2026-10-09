@@ -71,7 +71,8 @@ final class VideoPictureInPictureTests: XCTestCase {
     /// The window shows the moving video, not the page around it.
     @MainActor private func assertShowsVideo(_ tab: BrowserTab, _ panel: FloatingVideoWindow, file: StaticString = #filePath, line: UInt = #line) async throws {
         let first = try await picture(in: tab, panel: panel)
-        let pageColor = stride(from: 0, to: first.count, by: 4).filter { abs(Int(first[$0])-144) < 6 && abs(Int(first[$0+1])-80) < 6 && abs(Int(first[$0+2])-64) < 6 }
+        func near(_ index: Int, _ value: Int) -> Bool { abs(Int(first[index])-value) < 6 }
+        let pageColor = stride(from: 0, to: first.count, by: 4).filter { (i: Int) -> Bool in near(i, 144) && near(i+1, 80) && near(i+2, 64) }
         XCTAssertLessThan(pageColor.count, 8, "The page's own background shows in the picture", file: file, line: line)
         let frames = panel.renderedFrameCount
         try await wait("the picture advances") { panel.renderedFrameCount > frames+2 }

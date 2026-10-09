@@ -59,6 +59,8 @@ import RiseCore
             if let committed = release { arrow.release(committed: committed) }
             else { arrow.drag(pull: pull, armed: armed) }
         })
+        controller.canNavigate = { [weak self] page, direction in self?.canNavigate(page, direction) ?? false }
+        controller.navigate = { [weak self] page, direction in self?.navigate(page, direction) }
         controller.prepareCloth = { [weak self] web in
             guard let self else { return }
             self.developerMotion.cancel(); self.layoutChrome()
@@ -109,7 +111,14 @@ import RiseCore
     var peekTab: BrowserTab?
     var peekBackdrop: Surface?
     var peekCard: Surface?
-    var peekControls: [ChromeButton] = []
+    var peekControls: [PeekControl] = []
+    /// ⌘Z puts a Peek that became a tab or a split back, for a short while.
+    var peekUndo: PeekUndo?
+    /// Waiting for the Peek's snapshot before it grows into the page.
+    var isPromotingPeek = false
+    var peekPromotion: PeekPromotion?
+    /// The Peek card moving frame by frame with its live page inside, when Live Peek Resize is on.
+    var peekLiveMotion: PeekLiveMotion?
     var peekOrigin: PeekOrigin?
     var peekMotionToken: UUID?
     var peekLeftovers: [NSView] = []
@@ -178,6 +187,7 @@ import RiseCore
         }
         window.tabSwitchEvent = { [weak self] event in self?.handleTabSwitchEvent(event) ?? false }
         window.addressPaletteEvent = { [weak self] event in self?.palette.handleKeyEquivalent(event) ?? false }
+        window.undoEvent = { [weak self] event in self?.handlePeekUndoKey(event) ?? false }
         window.pageMouseDown = { [weak self] event in self?.focusSplitPage(at: event) }
         window.historyScrollEvent = { [weak self] event in self?.historySwipe.handle(event) ?? false }
         window.otherMouseEvent = { [weak self] event in self?.handleMiddleTabClick(event) ?? false }
@@ -450,6 +460,8 @@ import RiseCore
         if let url { tab.load(url) }; return tab
     }
     func select(_ id: UUID) {
+        // A Peek's stand-ins belong to the page they cover.
+        finishPeekPromotion()
         historySwipe.cancel()
         cancelTabSwitch()
         siteInfoPopover.close()
@@ -473,8 +485,8 @@ import RiseCore
         sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: splitGroups)
         refreshPullRequestTooltip()
         window?.title = (selectedTab?.title).map { "\($0) — Rise" } ?? "Rise"
-        toolbarButtons[1].isEnabled = historyWebView?.canGoBack ?? false
-        toolbarButtons[2].isEnabled = historyWebView?.canGoForward ?? false
+        toolbarButtons[1].isEnabled = historyWebView.map { canNavigate($0, .back) } ?? false
+        toolbarButtons[2].isEnabled = historyWebView.map { canNavigate($0, .forward) } ?? false
         toolbarButtons[3].image = selectedTab?.isLoading == true ? NavigationIcon.stop : NavigationIcon.reload
         developerAddress.updateURL(selectedTab?.url?.absoluteString ?? "")
         errorSurface.isHidden = errorWebView == nil || errorWebView !== selectedTab?.webView
@@ -482,7 +494,7 @@ import RiseCore
     }
     @objc func newTab() { paletteCreatesTab = true; showPalette(text: "") }
     @objc func focusAddress() { paletteCreatesTab = false; showPalette(text: selectedTab?.url?.absoluteString == "about:blank" ? "" : selectedTab?.url?.absoluteString ?? "") }
-    func showPalette(text: String) { historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel(); dismissArea.isHidden = false; palette.show(text: text, theme: theme, createsTab: paletteCreatesTab); layoutChrome() }
+    func showPalette(text: String) { if searchEngine == .google { googleSearchSuggestions.warmUp() }; historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel(); dismissArea.isHidden = false; palette.show(text: text, theme: theme, createsTab: paletteCreatesTab); layoutChrome() }
     func hidePalette() { googleSearchSuggestions.cancel(); suggestionFavicons.cancelPreview(); guard palette.isPresented else { return }; palette.hide(); dismissArea.isHidden = true; window?.makeFirstResponder(selectedTab?.webView) }
     func submitAddress(_ text: String, suggestion: AddressSuggestion?) {
         hidePalette()
@@ -515,6 +527,7 @@ import RiseCore
         splitGroups.removeAll { $0.contains(id) }
         if selectedID == id { copiedLinkPopover.close() }
         let tab = tabs.remove(at: index); closedTabs.append(tab.saved)
+        releaseHeldPages(of: tab)
         permissionCoordinator.cancel(for: tab.webView)
         recentTabIDs.removeAll { $0 == id }
         if closedTabs.count > 50 { closedTabs.removeFirst() }
@@ -545,6 +558,9 @@ import RiseCore
         } else if let tab = selectedTab, direction == .back ? tab.webView.canGoBack : tab.webView.canGoForward {
             tab.cancelLoad()
             if direction == .back { tab.webView.goBack() } else { tab.webView.goForward() }
+        } else if let tab = selectedTab {
+            // Past the page's own history: a page held from before a Peek grew into the tab.
+            goThroughHeldPages(direction, in: tab)
         }
         update()
     }
