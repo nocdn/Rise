@@ -36,6 +36,9 @@ struct PeekUndo {
     static var peekPromoteSpring: CASpringAnimation { CASpringAnimation(perceptualDuration: 0.24, bounce: 0.25) }
     /// Splitting: the expand's timing without its bounce, so both pages settle straight into their halves.
     static var peekSplitSpring: CASpringAnimation { CASpringAnimation(perceptualDuration: 0.24, bounce: 0) }
+    /// The page behind widening back on ⌘Z after a split. Quick, so its right edge catches up with
+    /// the card's retreating one early, and without an overshoot, so it eases into the window's edge.
+    static var peekWidenSpring: CASpringAnimation { CASpringAnimation(perceptualDuration: 0.14, bounce: 0) }
 
     /// Grows the Peek into the page, its live page moving in without loading again. In the same
     /// tab, the tab's page from before is held for Back; ⌘ or a link that opens a new tab makes
@@ -227,6 +230,7 @@ struct PeekUndo {
         return true
     }
     private func restorePeek(_ undo: PeekUndo, source: BrowserTab?, from standIn: PeekOrigin?) {
+        var widening: NSRect?
         switch undo.kind {
         case .sameTab:
             guard let source, let index = source.backPages.lastIndex(where: { $0 === undo.tab }) else { return }
@@ -240,8 +244,7 @@ struct PeekUndo {
             undo.tab.webView.setAllMediaPlaybackSuspended(false)
             settle(source, recordsVisit: false)
         case .newTab, .split:
-            // The page beside a split is whole again at once, under the Peek shrinking out of the right
-            // half, so the card uncovers it as it goes and it settles back with the same spring on both sides.
+            if case .split = undo.kind, let source, source.webView.superview === pageClip { widening = source.webView.frame }
             detachTab(undo.tab)
             if case .split(let previous) = undo.kind {
                 splitGroups = previous.filter { group in
@@ -255,6 +258,19 @@ struct PeekUndo {
                  standIn: standIn?.image == nil && !live ? nil : standIn)
         // Start at once, so the page never shows without its card for a frame.
         if live, let standIn, let token = peekMotionToken { playPeekOpen(standIn, token: token) }
+        if live, let from = widening, let source, activeSplitGroup == nil, let motion = peekLiveMotion {
+            // The real page beside the split widens back on a spring of its own, every frame, ahead
+            // of the card shrinking off it; it eases into the window's edge rather than past it.
+            let to = pageBody, spring = Self.peekWidenSpring
+            pageLayoutHeld = true
+            source.webView.frame = from; shapePage(around: [from])
+            motion.alongside = { [weak self, weak source] elapsed in
+                guard let self, let source else { return }
+                let page = from.interpolated(to: to, by: PeekLiveMotion.settledProgress(at: elapsed, along: spring)).limited(to: to, edges: .windowSides)
+                source.webView.frame = page; self.shapePage(around: [page])
+            }
+            motion.afterwards = { [weak self] in self?.pageLayoutHeld = false; self?.layoutChrome() }
+        }
         // It closes back into the link it first grew out of, which is on the page again.
         peekOrigin = undo.origin
     }

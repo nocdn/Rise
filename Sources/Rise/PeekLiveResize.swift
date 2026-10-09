@@ -8,6 +8,10 @@ import WebKit
     private let spring: CASpringAnimation
     private let step: (CGFloat) -> Void
     private let completion: () -> Void
+    /// Something else moving with it on a spring of its own, given the time since it began (infinite
+    /// once it ends), and what to do once it does.
+    var alongside: ((TimeInterval) -> Void)?
+    var afterwards: (() -> Void)?
     private var link: CADisplayLink?
     private let start = CACurrentMediaTime()
     init(on view: NSView, spring: CASpringAnimation, step: @escaping (CGFloat) -> Void, completion: @escaping () -> Void) {
@@ -23,12 +27,16 @@ import WebKit
     var duration: TimeInterval { spring.perceptualDuration*1.5 }
     @objc private func tick(_ link: CADisplayLink) {
         let elapsed = link.targetTimestamp-start
-        if elapsed >= duration { finish() } else { step(Self.progress(at: elapsed, along: spring)) }
+        if elapsed >= duration { finish() } else { step(Self.progress(at: elapsed, along: spring)); alongside?(elapsed) }
     }
     /// Jumps to the end and hands over.
     func finish() {
         guard link != nil else { return }
-        stop(); step(1); completion()
+        stop(); step(1); alongside?(.infinity); completion(); afterwards?()
+    }
+    /// `progress(at:along:)`, done once the spring has all but settled.
+    nonisolated static func settledProgress(at time: TimeInterval, along spring: CASpringAnimation) -> CGFloat {
+        time >= spring.perceptualDuration*1.5 ? 1 : progress(at: time, along: spring)
     }
     /// Leaves things where they are, for whatever interrupted.
     func stop() { link?.invalidate(); link = nil }

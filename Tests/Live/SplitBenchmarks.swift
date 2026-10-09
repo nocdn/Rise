@@ -32,6 +32,7 @@ import WebKit
                 try await waitUntil { !tab.webView.isLoading && tab.webView.url == source }
                 browser.showPeek(url: target, from: tab.webView)
                 try await Task.sleep(for: .milliseconds(800))
+                var widestGap: CGFloat = 0
                 let card = browser.peekCard!, peek = browser.peekTab!, peekPage = peek.webView, sourcePage = tab.webView
                 _ = try await peekPage.evaluateJavaScript("window.riseMark = 4")
                 let cardFrom = card.frame, pageFrom = sourcePage.frame
@@ -69,19 +70,29 @@ import WebKit
                 try await shot("split")
 
                 // ⌘Z: the right half shrinks back into the Peek, live, over the page behind, whole again.
-                var undoing: [(card: CGFloat, cardPage: CGFloat, outline: CGFloat, page: CGFloat)] = []
+                var undoing: [(time: Double, card: CGFloat, cardPage: CGFloat, outline: CGFloat, page: CGFloat, gap: CGFloat)] = []
+                let undone = CACurrentMediaTime()
                 check(browser.undoPeekPromotion(), "⌘Z puts the Peek back")
                 let backCard = browser.peekCard!, cardTo = browser.peekCardFrame.width
                 while browser.peekLiveMotion != nil || undoing.isEmpty {
-                    undoing.append((backCard.frame.width, peekPage.frame.width, browser.pageClip.restingOutline?.boundingBoxOfPath.width ?? pageFrom.width, sourcePage.frame.width))
+                    // What shows at the far right: neither the card nor the page behind, but the window.
+                    let gap = pageRight-max(backCard.frame.maxX, browser.pageClip.convert(sourcePage.frame, to: browser.root).maxX)
+                    undoing.append((CACurrentMediaTime()-undone, backCard.frame.width, peekPage.frame.width,
+                                    browser.pageClip.restingOutline?.boundingBoxOfPath.width ?? pageFrom.width, sourcePage.frame.width, gap))
                     try await Task.sleep(for: .milliseconds(4))
                 }
-                check(abs(undoing.first!.card-final.right.width) < 2, "⌘Z starts from the right half: \(undoing.first!)")
+                check(abs(undoing.first!.card-final.right.width) < 2 && abs(undoing.first!.page-final.left.width) < 2, "⌘Z starts from the split: \(undoing.first!)")
                 check(undoing.contains { $0.card > final.right.width+20 && $0.card < cardTo-20 }, "The card grows back through sizes in between: \(undoing.map { Int($0.card) })")
-                // The Peek's real page resizes with its card every frame. The page behind is whole at once,
-                // under the card, so the card uncovers it as it shrinks, with no gap at the right.
-                check(undoing.allSatisfy { abs($0.cardPage-$0.card) < 0.5 }, "The Peek's real page resizes live: \(undoing.map { (Int($0.card), Int($0.cardPage)) })")
-                check(undoing.allSatisfy { abs($0.page-pageFrom.width) < 0.5 && abs($0.outline-pageFrom.width) < 0.5 }, "The page behind is whole from the first frame: \(undoing.map { Int($0.page) })")
+                // Both real pages resize every frame: the Peek's with its card, the one behind with its outline,
+                // widening on a quicker spring of its own so it's whole well before the card has settled.
+                check(undoing.allSatisfy { abs($0.cardPage-$0.card) < 0.5 && abs($0.page-$0.outline) < 0.5 },
+                      "Both real pages resize live: \(undoing.map { (Int($0.card), Int($0.cardPage), Int($0.page)) })")
+                check(undoing.contains { $0.page > final.left.width+20 && $0.page < pageFrom.width-20 }, "The page behind widens through sizes in between: \(undoing.map { Int($0.page) })")
+                check(undoing.allSatisfy { $0.page <= pageFrom.width+0.01 } && zip(undoing, undoing.dropFirst()).allSatisfy { $1.page >= $0.page-0.01 },
+                      "It eases into the window's edge, never past it or back")
+                let whole = undoing.first { abs($0.page-pageFrom.width) < 1 }?.time ?? 1
+                check(whole < 0.25, "It's whole well before the card settles: \(Int(whole*1000)) ms")
+                widestGap = undoing.map(\.gap).max()!
                 check(sourcePage.frame == browser.pageBody && browser.splitGroups.isEmpty && browser.peekTab === peek && peekPage.frame == backCard.bounds,
                       "The page is whole again with the same Peek over it")
                 check(browser.pageClip.restingOutline == nil && browser.splitHandle.isHidden, "And the page is one card again")
@@ -115,6 +126,7 @@ import WebKit
                 browser.chooseTheme(.dark)
                 try await Task.sleep(for: .milliseconds(400))
                 try await shot("dark")
+                print("Unsplit: the page behind was whole after \(Int(whole*1000)) ms; the widest gap at the right was \(Int(widestGap)) pt.")
                 print("Split verified: first move after \(Int(firstMove*1000)) ms, \(samples.count) split samples (narrowest \(narrowest) vs \(final.right.width)), \(undoing.count) ⌘Z samples.")
                 NSApp.terminate(nil)
             } catch { fputs("SPLIT VERIFICATION FAILED: \(error)\n", stderr); exit(1) }
