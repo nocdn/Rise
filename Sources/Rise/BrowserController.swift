@@ -119,6 +119,14 @@ import RiseCore
     var peekPromotion: PeekPromotion?
     /// The Peek card moving frame by frame with its live page inside, when Live Peek Resize is on.
     var peekLiveMotion: PeekLiveMotion?
+    /// The pill between split pages, which drags the split.
+    let splitHandle = SplitHandle()
+    /// The split springing back to the middle after a double click on its handle.
+    var splitMotion: PeekLiveMotion?
+    /// The page area below the developer bar, as last laid out.
+    var pageBody = NSRect.zero
+    /// An animation is placing the pages itself, so layout leaves them where it put them.
+    var pageLayoutHeld = false
     var peekOrigin: PeekOrigin?
     var peekMotionToken: UUID?
     var peekLeftovers: [NSView] = []
@@ -264,7 +272,7 @@ import RiseCore
         pageShadow.layer?.cornerCurve = .continuous; pageClip.layer?.cornerCurve = .continuous
         pageShadow.shadow = chromeShadow(opacity: PageAppearance.shadowOpacity, blur: PageAppearance.shadowBlur, offset: PageAppearance.shadowOffset)
         pageClip.layer?.masksToBounds = true; pageClip.clipsToBounds = true
-        root.addSubview(sidebar); root.addSubview(pageShadow); pageShadow.addSubview(pageClip)
+        root.addSubview(sidebar); root.addSubview(pageShadow); pageShadow.addSubview(pageClip); installSplitHandle()
         pageClip.addSubview(emptyPage); pageClip.addSubview(developerBar)
         installSidebarEdge()
         root.addSubview(grip)
@@ -377,15 +385,20 @@ import RiseCore
         developerAddress.frame = NSRect(x: 18, y: (DeveloperModeMotion.headerHeight-addressHeight)/2, width: max(100, cb.width-270), height: addressHeight)
         devButtons.enumerated().forEach { i, button in button.frame = NSRect(x: cb.width-240+CGFloat(i)*38, y: 6, width: 30, height: 28) }
         let body = NSRect(x: 0, y: devHeight, width: cb.width, height: cb.height-devHeight)
-        emptyPage.frame = body
-        if let group = activeSplitGroup {
-            if let tab = tabs.first(where: { $0.id == group.leftID }), !pictureInPicture.owns(tab), !tab.isInNativeFullscreen {
-                tab.webView.frame = NSRect(x: 0, y: devHeight, width: (body.width-6)/2, height: body.height)
+        emptyPage.frame = body; pageBody = body
+        if pageLayoutHeld {
+            // An animation is placing the pages.
+        } else if let group = activeSplitGroup {
+            let frames = splitFrames(in: body, fraction: group.fraction)
+            for (id, frame) in [(group.leftID, frames.left), (group.rightID, frames.right)] {
+                if let tab = tabs.first(where: { $0.id == id }), !pictureInPicture.owns(tab), !tab.isInNativeFullscreen { tab.webView.frame = frame }
             }
-            if let tab = tabs.first(where: { $0.id == group.rightID }), !pictureInPicture.owns(tab), !tab.isInNativeFullscreen {
-                tab.webView.frame = NSRect(x: (body.width+6)/2, y: devHeight, width: (body.width-6)/2, height: body.height)
-            }
-        } else if let tab = selectedTab, !pictureInPicture.owns(tab), !tab.isInNativeFullscreen { tab.webView.frame = body }
+            shapePage(around: [frames.left, frames.right])
+        } else {
+            if let tab = selectedTab, !pictureInPicture.owns(tab), !tab.isInNativeFullscreen { tab.webView.frame = body }
+            shapePage(around: [])
+        }
+        layoutSplitHandle()
         errorSurface.frame = body
         errorTitle.frame = NSRect(x: 40, y: body.height/2-60, width: body.width-80, height: 34)
         errorMessage.frame = NSRect(x: 60, y: body.height/2-12, width: body.width-120, height: 56)

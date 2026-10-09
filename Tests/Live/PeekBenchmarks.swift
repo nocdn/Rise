@@ -334,18 +334,20 @@ import WebKit
                 browser.setLivePeekResize(true)
                 let liveCard = browser.peekCard!, livePage = browser.peekTab!.webView, liveFrom = liveCard.frame
                 _ = try await livePage.evaluateJavaScript("window.riseMark = 9")
-                var live: [(time: Double, card: CGFloat, page: CGFloat)] = [], liveReloaded = false
+                var live: [(time: Double, card: CGFloat, page: CGFloat, maxX: CGFloat)] = [], liveReloaded = false
                 let livePressed = CACurrentMediaTime()
                 browser.expandPeek(modifiers: [])
                 while browser.peekLiveMotion != nil || live.isEmpty {
-                    live.append((CACurrentMediaTime()-livePressed, liveCard.frame.width, livePage.frame.width))
+                    live.append((CACurrentMediaTime()-livePressed, liveCard.frame.width, livePage.frame.width, liveCard.frame.maxX))
                     liveReloaded = liveReloaded || livePage.isLoading
                     try await Task.sleep(for: .milliseconds(4))
                 }
                 let firstMove = live.first { abs($0.card-liveFrom.width) > 0.5 }?.time ?? 1
                 check(firstMove < 0.03, "Live: the card moves straight away: \(Int(firstMove*1000)) ms")
-                check(live.contains { $0.card > liveFrom.width+20 && $0.card < pageFrame.width-20 && abs($0.page-$0.card) < 0.5 },
-                      "Live: the page itself resizes with the card: \(live.map { Int($0.page) })")
+                check(live.contains { $0.card > liveFrom.width+20 && $0.card < pageFrame.width-20 },
+                      "Live: the card grows through sizes in between: \(live.map { Int($0.card) })")
+                check(live.allSatisfy { abs($0.page-$0.card) < 0.5 }, "Live: the real page resizes with the card every frame: \(live.map { (Int($0.card), Int($0.page)) })")
+                check(live.allSatisfy { $0.maxX <= pageFrame.maxX+0.01 }, "Live: its bounce never carries it past the window's edge: \(live.map(\.maxX).max()!) vs \(pageFrame.maxX)")
                 let liveWidest = live.map(\.card).max()!
                 check(liveWidest > pageFrame.width+0.3 && liveWidest < pageFrame.width*1.03, "Live: it springs subtly past the page: \(liveWidest)")
                 let liveKept = try await livePage.evaluateJavaScript("window.riseMark") as? Int

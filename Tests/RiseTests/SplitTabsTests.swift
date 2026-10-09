@@ -89,4 +89,89 @@ final class SplitTabsTests: XCTestCase {
         XCTAssertFalse(browser.sidebar.rows[b.id]!.isSplitMember)
         XCTAssertFalse(browser.sidebar.rows[d.id]!.isSplitMember)
     }
+
+    @MainActor private func mouse(_ type: NSEvent.EventType, at view: NSView, dx: CGFloat = 0, clicks: Int = 1) -> NSEvent {
+        let point = view.convert(NSPoint(x: view.bounds.midX+dx, y: view.bounds.midY), to: nil)
+        return NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: 0, windowNumber: view.window!.windowNumber,
+                                  context: nil, eventNumber: 1, clickCount: clicks, pressure: 1)!
+    }
+    @MainActor func testSplitPagesAreRoundedCardsWithTheHandleInTheGapBetweenThem() throws {
+        let browser = browser(); defer { clean(browser) }
+        let left = browser.addTab(), right = browser.addTab()
+        browser.select(left.id); browser.showSplit(right)
+        let gap = BrowserController.splitGap, l = left.webView.frame, r = right.webView.frame
+        XCTAssertEqual(r.minX-l.maxX, gap); XCTAssertEqual(l.width, r.width, accuracy: 1)
+        let outline = try XCTUnwrap(browser.pageClip.restingOutline), height = browser.pageClip.bounds.height
+        XCTAssertTrue(outline.contains(CGPoint(x: l.midX, y: height/2)) && outline.contains(CGPoint(x: r.midX, y: height/2)))
+        XCTAssertFalse(outline.contains(CGPoint(x: l.maxX+gap/2, y: height/2)), "The window shows between the pages")
+        for corner in [CGPoint(x: l.maxX-1, y: 1), CGPoint(x: l.maxX-1, y: height-1), CGPoint(x: r.minX+1, y: 1), CGPoint(x: r.minX+1, y: height-1)] {
+            XCTAssertFalse(outline.contains(corner), "The inner corners are rounded too: \(corner)")
+        }
+        XCTAssertTrue(browser.pageShadow.restingOutline === outline, "Each page casts its own shadow")
+        let handle = browser.splitHandle
+        XCTAssertFalse(handle.isHidden); XCTAssertTrue(handle.superview === browser.pageShadow)
+        XCTAssertEqual(handle.frame.minX, l.maxX); XCTAssertEqual(handle.frame.width, gap)
+
+        // A history swipe on the right page squeezes only its card, then the split's shape comes back.
+        browser.updateClothFrame(for: right.webView, pull: 1, forward: false)
+        let swiped = try XCTUnwrap(browser.pageClip.clothOutline).boundingBoxOfPath
+        XCTAssertEqual(swiped.minX, 0, accuracy: 0.5, "The left page stays put")
+        XCTAssertTrue(browser.pageClip.clothOutline!.contains(CGPoint(x: l.midX, y: height/2)))
+        XCTAssertFalse(browser.pageClip.clothOutline!.contains(CGPoint(x: r.minX+r.width*0.03, y: height/2)), "The right page gives way at its edge")
+        browser.resetClothFrame()
+        XCTAssertNil(browser.pageClip.clothOutline); XCTAssertTrue(browser.pageClip.restingOutline === outline)
+
+        browser.separateSplit(containing: left.id); browser.root.layoutSubtreeIfNeeded()
+        XCTAssertNil(browser.pageClip.restingOutline); XCTAssertTrue(handle.isHidden)
+    }
+    @MainActor func testDraggingTheHandleResizesBothPagesWithinLimitsAndADoubleClickCentersIt() throws {
+        let browser = browser(); defer { clean(browser) }
+        let left = browser.addTab(), right = browser.addTab()
+        browser.select(left.id); browser.showSplit(right)
+        let handle = browser.splitHandle, room = browser.pageBody.width-BrowserController.splitGap, start = left.webView.frame.width
+        handle.mouseDown(with: mouse(.leftMouseDown, at: handle))
+        handle.mouseDragged(with: mouse(.leftMouseDragged, at: handle, dx: 100))
+        XCTAssertEqual(left.webView.frame.width, start+100, accuracy: 1)
+        XCTAssertEqual(right.webView.frame.minX, left.webView.frame.maxX+BrowserController.splitGap)
+        XCTAssertEqual(handle.frame.minX, left.webView.frame.maxX, "The handle follows the split")
+        XCTAssertEqual(browser.pageClip.restingOutline?.contains(CGPoint(x: start+BrowserController.splitGap/2, y: 50)), true, "So do the pages' corners")
+        // Further than the limit, the right page keeps a fifth of the room.
+        handle.mouseDragged(with: mouse(.leftMouseDragged, at: handle, dx: 5000))
+        handle.mouseUp(with: mouse(.leftMouseUp, at: handle))
+        XCTAssertEqual(browser.activeSplitGroup?.fraction, SplitTabGroup.fractionRange.upperBound)
+        XCTAssertEqual(right.webView.frame.width, (room*0.2).rounded(), accuracy: 1)
+        handle.mouseDown(with: mouse(.leftMouseDown, at: handle, clicks: 2))
+        XCTAssertEqual(browser.activeSplitGroup?.fraction, 0.5)
+        XCTAssertEqual(left.webView.frame.width, start, accuracy: 1)
+    }
+    @MainActor func testTheHandleGrowsAndDarkensOnHoverAndDarkensAndShrinksWhilePressed() throws {
+        let browser = browser(); defer { clean(browser) }
+        let left = browser.addTab(), right = browser.addTab()
+        browser.select(left.id); browser.showSplit(right)
+        let handle = browser.splitHandle
+        let resting = (handle.pillLength, handle.pillAlpha)
+        XCTAssertEqual(resting.0, SplitHandle.restingLength)
+        handle.mouseEntered(with: NSEvent())
+        XCTAssertEqual(handle.pillLength, SplitHandle.hoverLength); XCTAssertGreaterThan(handle.pillAlpha, resting.1)
+        let spring = try XCTUnwrap(handle.lengthSpring)
+        XCTAssertLessThan(spring.damping, 2*sqrt(spring.mass*spring.stiffness), "It springs a little past its new length")
+        let hovered = handle.pillAlpha
+        handle.mouseDown(with: mouse(.leftMouseDown, at: handle))
+        XCTAssertGreaterThan(handle.pillAlpha, hovered); XCTAssertEqual(handle.pressScale, SplitHandle.pressedScale, accuracy: 0.001)
+        handle.mouseUp(with: mouse(.leftMouseUp, at: handle))
+        XCTAssertEqual(handle.pressScale, 1, accuracy: 0.001)
+    }
+    @MainActor func testSeparateTabsSitsJustAboveCloseTab() throws {
+        let browser = browser(); defer { clean(browser) }
+        let left = browser.addTab(), right = browser.addTab(), other = browser.addTab()
+        browser.select(left.id); browser.showSplit(right)
+        func lastSection(_ id: UUID) throws -> [String] {
+            let items = try XCTUnwrap(browser.makeTabMenu(id)).items
+            let separator = try XCTUnwrap(items.lastIndex { $0.isSeparatorItem })
+            return items[(separator+1)...].map(\.title)
+        }
+        XCTAssertEqual(try lastSection(right.id), ["Separate Tabs", "Close Tab"])
+        XCTAssertEqual(try lastSection(other.id), ["Close Tab"])
+        XCTAssertFalse(try XCTUnwrap(browser.makeTabMenu(left.id)).items.contains { $0.title.contains("Split Tabs") })
+    }
 }

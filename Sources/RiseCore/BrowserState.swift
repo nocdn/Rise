@@ -50,7 +50,19 @@ public struct SplitTabGroup: Codable, Equatable {
     public var id: UUID
     public var leftID: UUID
     public var rightID: UUID
-    public init(id: UUID = UUID(), leftID: UUID, rightID: UUID) { self.id = id; self.leftID = leftID; self.rightID = rightID }
+    /// The left page's share of the room for both, set by dragging the handle between them.
+    public var fraction: Double
+    public static let fractionRange: ClosedRange<Double> = 0.2...0.8
+    public init(id: UUID = UUID(), leftID: UUID, rightID: UUID, fraction: Double = 0.5) {
+        self.id = id; self.leftID = leftID; self.rightID = rightID
+        self.fraction = min(max(fraction, Self.fractionRange.lowerBound), Self.fractionRange.upperBound)
+    }
+    // Sessions saved before the handle existed have no fraction, so they split down the middle.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: try container.decode(UUID.self, forKey: .id), leftID: try container.decode(UUID.self, forKey: .leftID),
+                  rightID: try container.decode(UUID.self, forKey: .rightID), fraction: try container.decodeIfPresent(Double.self, forKey: .fraction) ?? 0.5)
+    }
     public func contains(_ id: UUID) -> Bool { leftID == id || rightID == id }
     public static func valid(_ groups: [SplitTabGroup], tabIDs: [UUID]) -> [SplitTabGroup] {
         let available = Set(tabIDs)

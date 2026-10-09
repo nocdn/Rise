@@ -212,7 +212,9 @@ extension NSView {
         // A whole page shrinking back into a Peek isn't where it closes to; its link is, set by ⌘Z.
         if origin?.rootFrame == nil { peekOrigin = origin }
         let target = card.frame, start = peekFrame(of: origin)
-        if livePeekResize, let start, origin?.rootFrame != nil { shrinkIntoPeekLive(card: card, web: web, from: start); return }
+        if livePeekResize, let start, origin?.rootFrame != nil {
+            shrinkIntoPeekLive(card: card, web: web, from: start); return
+        }
         let ghost = PeekGhost(color: theme.page); ghost.linkImage = origin?.image
         ghost.pageAspect = target.height/max(1, target.width); ghost.page.alphaValue = 0
         root.addSubview(ghost, positioned: .above, relativeTo: card)

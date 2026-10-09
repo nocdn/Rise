@@ -8,6 +8,8 @@ import WebKit
         let peek = peekTab?.webView
         for tab in tabs { (tab.webView as? LinkCursorWebView)?.isCovered = peek != nil }
         (peek as? LinkCursorWebView)?.isCovered = false
+        // The split's handle isn't for a page under a Peek.
+        layoutSplitHandle()
     }
     /// Pressing the link already ended its hover and hid the pill, so bring back its
     /// "Cannot open … in Peek" for that link, then shake it.

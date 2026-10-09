@@ -16,6 +16,8 @@ import WebKit
         step(0)
         link = view.displayLink(target: self, selector: #selector(tick(_:)))
         link?.add(to: .main, forMode: .common)
+        // The display pauses for a hidden window; the motion still ends, so layout isn't held up.
+        DispatchQueue.main.asyncAfter(deadline: .now()+duration+0.25) { [weak self] in self?.finish() }
     }
     /// By then the bounce is under a fifth of a point; the rest would only hold the hand-over up.
     var duration: TimeInterval { spring.perceptualDuration*1.5 }
@@ -51,6 +53,7 @@ import WebKit
     /// Grows the Peek card into the page with its live page inside, laying out at every size,
     /// then hands the page over as the still-based expand does, with nothing left to animate.
     func expandPeekLive(_ tab: BrowserTab, card: Surface, modifiers: NSEvent.ModifierFlags) {
+        finishPeekLiveMotion()
         isPromotingPeek = true
         let spring = Self.peekPromoteSpring
         let source = tabs.first { $0.id == peekSourceTabID } ?? selectedTab
@@ -66,9 +69,11 @@ import WebKit
         tuckPeekControls(controls, animated: true)
         recedePage(false, along: spring)
         fadeLiveCardShadow(card, to: 0, duration: spring.perceptualDuration)
+        // It bounces a little past the page on the sidebar's side only, never past the window's edges.
+        let edges = windowSides
         peekLiveMotion = PeekLiveMotion(on: card, spring: spring, step: { [weak self, weak card, weak tab] progress in
             guard let self, let card, let tab else { return }
-            self.placeLivePeek(card, web: tab.webView, at: from.interpolated(to: target, by: progress))
+            self.placeLivePeek(card, web: tab.webView, at: from.interpolated(to: target, by: progress).limited(to: target, edges: edges))
         }, completion: { [weak self, weak tab] in
             guard let self else { return }
             self.peekLiveMotion = nil; self.isPromotingPeek = false
@@ -78,6 +83,7 @@ import WebKit
     }
     /// ⌘Z: the page shrinks back into the Peek card live, the way it grew.
     func shrinkIntoPeekLive(card: Surface, web: WKWebView, from start: NSRect) {
+        finishPeekLiveMotion()
         let spring = Self.peekUnexpandSpring, target = card.frame
         card.alphaValue = 1
         fadeLiveCardShadow(card, to: 0.25, from: 0, duration: spring.perceptualDuration*0.6)
@@ -95,7 +101,10 @@ import WebKit
             self?.peekLiveMotion = nil; self?.layoutPeek()
         })
     }
-    private func placeLivePeek(_ card: Surface, web: WKWebView, at frame: NSRect) {
+    /// Ends a live resize still under way, as if it had run its course, before another starts.
+    func finishPeekLiveMotion() { if let motion = peekLiveMotion, motion.isRunning { motion.finish() } }
+    /// Places the card with its real page filling it, laid out again at every size.
+    func placeLivePeek(_ card: Surface, web: WKWebView, at frame: NSRect) {
         CATransaction.begin(); CATransaction.setDisableActions(true)
         card.frame = frame
         card.subviews.first?.frame = card.bounds
@@ -112,7 +121,29 @@ import WebKit
     }
 }
 
+/// The edges of the page area that meet the window's edge rather than the sidebar.
+struct PageEdges: OptionSet {
+    let rawValue: Int
+    static let left = PageEdges(rawValue: 1), right = PageEdges(rawValue: 2), top = PageEdges(rawValue: 4), bottom = PageEdges(rawValue: 8)
+    static let windowSides: PageEdges = [.right, .top, .bottom]
+}
+
+@MainActor extension BrowserController {
+    /// The page area's edges that face the window, where a bounce mustn't carry anything past;
+    /// its left too when the sidebar isn't beside it.
+    var windowSides: PageEdges { sidebarVisible || sidebarFloat.isVisible ? .windowSides : [.windowSides, .left] }
+}
+
 extension NSRect {
+    /// Kept within `limit` on those `edges`, so a spring's bounce can't carry it past them.
+    func limited(to limit: NSRect, edges: PageEdges) -> NSRect {
+        var minX = self.minX, maxX = self.maxX, minY = self.minY, maxY = self.maxY
+        if edges.contains(.left) { minX = max(minX, limit.minX) }
+        if edges.contains(.right) { maxX = min(maxX, limit.maxX) }
+        // Both vertical edges face the window, so which one is up doesn't matter.
+        if edges.contains(.top) || edges.contains(.bottom) { minY = max(minY, limit.minY); maxY = min(maxY, limit.maxY) }
+        return NSRect(x: minX, y: minY, width: max(0, maxX-minX), height: max(0, maxY-minY))
+    }
     /// Part way from this rect to `other`; past 1 carries on beyond it, as a spring's bounce does.
     func interpolated(to other: NSRect, by progress: CGFloat) -> NSRect {
         NSRect(x: minX+(other.minX-minX)*progress, y: minY+(other.minY-minY)*progress,

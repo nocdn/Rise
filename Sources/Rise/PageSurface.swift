@@ -10,6 +10,11 @@ final class PageSurface: Surface {
     private let radius: CGFloat
     private(set) var clothOutline: CGPath?
     private var clipsContents = false
+    /// The resting shape when it isn't one rounded rectangle, such as two pages side by side.
+    /// A history swipe's outline takes over from it while the swipe lasts.
+    private(set) var restingOutline: CGPath?
+    private var restingClips = false
+    private var outline: CGPath? { clothOutline ?? restingOutline }
 
     override var fill: NSColor {
         get { pageColor }
@@ -17,7 +22,7 @@ final class PageSurface: Surface {
             pageColor = newValue
             CATransaction.begin(); CATransaction.setDisableActions(true)
             shapedFill.fillColor = newValue.cgColor
-            super.fill = clothOutline == nil ? newValue : .clear
+            super.fill = outline == nil ? newValue : .clear
             CATransaction.commit()
         }
     }
@@ -32,14 +37,18 @@ final class PageSurface: Surface {
     func setClothOutline(_ path: CGPath?, clipContents: Bool = false) {
         clothOutline = path; clipsContents = clipContents; refreshOutline()
     }
+    func setRestingOutline(_ path: CGPath?, clipContents: Bool = false) {
+        restingOutline = path; restingClips = clipContents; refreshOutline()
+    }
     func refreshOutline() {
         CATransaction.begin(); CATransaction.setDisableActions(true)
         shapedFill.frame = bounds; shapedMask.frame = bounds
-        shapedFill.path = clothOutline; shapedFill.isHidden = clothOutline == nil
-        super.fill = clothOutline == nil ? pageColor : .clear
-        shapedMask.path = clothOutline
-        layer?.mask = clipsContents && clothOutline != nil ? shapedMask : nil
-        layer?.shadowPath = clothOutline ?? PageOutline.path(in: bounds, radius: radius, continuous: layer?.cornerCurve == .continuous)
+        let outline = outline, clips = clothOutline != nil ? clipsContents : restingClips
+        shapedFill.path = outline; shapedFill.isHidden = outline == nil
+        super.fill = outline == nil ? pageColor : .clear
+        shapedMask.path = outline
+        layer?.mask = clips && outline != nil ? shapedMask : nil
+        layer?.shadowPath = outline ?? PageOutline.path(in: bounds, radius: radius, continuous: layer?.cornerCurve == .continuous)
         CATransaction.commit()
     }
     override func layout() { super.layout(); refreshOutline() }
@@ -53,6 +62,19 @@ final class PageSurface: Surface {
         } else if let card = peekCard as? PageSurface, let inner = web.superview as? PageSurface, inner.superview === card {
             shadow = card; clip = inner
         } else { return }
+        // Side by side, only the swiped page's card gives way at its leading edge; the other stays put.
+        if clip === pageClip, let group = activeSplitGroup {
+            let split = splitFrames(in: pageBody, fraction: group.fraction)
+            var frames = [split.left, split.right]
+            if let index = frames.firstIndex(where: { abs($0.minX-web.frame.minX) < 0.5 }) {
+                let depth = frames[index].width*0.05*pull
+                if !forward { frames[index].origin.x += depth }
+                frames[index].size.width -= depth
+            }
+            let path = pageOutline(around: frames)
+            shadow.setClothOutline(path); clip.setClothOutline(path, clipContents: true)
+            return
+        }
         let path = ClothMotion.frameOutline(size: clip.bounds.size, sheet: web.frame, pull: pull, forward: forward,
             corner: clip.layer?.cornerRadius ?? 7, continuous: clip.layer?.cornerCurve == .continuous)
         shadow.setClothOutline(path)

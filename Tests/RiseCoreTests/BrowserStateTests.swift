@@ -20,6 +20,14 @@ final class BrowserStateTests: XCTestCase {
         let restored = try JSONDecoder().decode(BrowserSession.self, from: JSONEncoder().encode(session))
         XCTAssertEqual(restored.splitGroups, [valid])
     }
+    func testSplitsKeepTheirDraggedWidthAndOlderOnesSplitDownTheMiddle() throws {
+        let a = UUID(), b = UUID()
+        let older = try JSONDecoder().decode(SplitTabGroup.self, from: Data("{\"id\":\"\(UUID())\",\"leftID\":\"\(a)\",\"rightID\":\"\(b)\"}".utf8))
+        XCTAssertEqual(older.fraction, 0.5)
+        let dragged = SplitTabGroup(leftID: a, rightID: b, fraction: 0.3)
+        XCTAssertEqual(try JSONDecoder().decode(SplitTabGroup.self, from: JSONEncoder().encode(dragged)).fraction, 0.3)
+        XCTAssertEqual(SplitTabGroup(leftID: a, rightID: b, fraction: 0.99).fraction, SplitTabGroup.fractionRange.upperBound, "Neither page can be squeezed away")
+    }
     func testHTTPSAndPaths() {
         XCTAssertEqual(AddressResolver.resolve("example.com/a?x=1")?.absoluteString, "https://example.com/a?x=1")
         XCTAssertEqual(AddressResolver.resolve(" https://example.com ")?.absoluteString, "https://example.com")

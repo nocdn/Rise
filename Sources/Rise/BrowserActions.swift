@@ -56,20 +56,24 @@ import RiseCore
         menu.popUp(positioning: nil, at: NSPoint(x: 12, y: sidebar.bounds.height-42), in: sidebar)
     }
     func tabMenu(_ id: UUID, event: NSEvent) {
-        guard let tab = tabs.first(where: { $0.id == id }), let row = sidebar.rows[id] else { return }
+        guard let menu = makeTabMenu(id), let row = sidebar.rows[id] else { return }
+        NSMenu.popUpContextMenu(menu, with: event, for: row)
+    }
+    func makeTabMenu(_ id: UUID) -> NSMenu? {
+        guard let tab = tabs.first(where: { $0.id == id }) else { return nil }
         let menu = NSMenu()
         menu.addItem(menuItem(tab.pinned ? "Unpin Tab" : "Pin Tab") { [weak self, weak tab] in tab?.pinned.toggle(); self?.update() })
         menu.addItem(menuItem("Duplicate Tab") { [weak self, weak tab] in if let url = tab?.url { self?.addTab(url: url) } })
         menu.addItem(menuItem("Open in Split View") { [weak self, weak tab] in if let tab { self?.showSplit(tab) } })
-        if splitGroups.contains(where: { $0.contains(id) }) {
-            menu.addItem(menuItem("Separate Split Tabs") { [weak self] in self?.separateSplit(containing: id) })
-        }
         menu.addItem(menuItem("Developer Mode", checked: tab.developer) { [weak self, weak tab] in
             if let tab { self?.toggleDeveloperMode(for: tab) }
         })
         menu.addItem(.separator())
+        if splitGroups.contains(where: { $0.contains(id) }) {
+            menu.addItem(menuItem("Separate Tabs") { [weak self] in self?.separateSplit(containing: id) })
+        }
         menu.addItem(menuItem("Close Tab") { [weak self] in self?.closeTab(id) })
-        NSMenu.popUpContextMenu(menu, with: event, for: row)
+        return menu
     }
     @objc func peekCurrentPage() { if let url = selectedTab?.url { showPeek(url: url) } }
     /// `existing` brings back a page that was a Peek before, as ⌘Z does, without loading it again,
@@ -123,7 +127,8 @@ import RiseCore
             recedePage(true, along: nil)
         }
         (peekCard as? PageSurface)?.refreshOutline()
-        peekCard.subviews.first?.frame = peekCard.bounds; peekTab.webView.frame = peekCard.bounds
+        peekCard.subviews.first?.frame = peekCard.bounds
+        peekTab.webView.frame = peekCard.bounds
         for (i, button) in peekControls.enumerated() { button.frame = PeekControl.frame(cardMaxX: peekCard.frame.maxX, top: 20+CGFloat(i)*44) }
         if peekSwipePull > 0 { applyPeekSwipeTransform() }
     }
@@ -132,7 +137,9 @@ import RiseCore
     /// receded and lets the old dimming fade under the new one.
     func closePeek(animated: Bool = false, replacing: Bool = false) {
         if let web = peekTab?.webView { historySwipe.cancel(for: web) }
-        peekLiveMotion?.stop(); peekLiveMotion = nil; isPromotingPeek = false
+        // An interrupted live resize leaves the pages for layout to put back.
+        let interrupted = peekLiveMotion?.isRunning == true
+        peekLiveMotion?.stop(); peekLiveMotion = nil; isPromotingPeek = false; pageLayoutHeld = false
         let card = peekCard, backdrop = peekBackdrop, web = peekTab?.webView, origin = peekOrigin
         peekSourceTabID = nil; peekOpensNewTab = false; peekSwipePull = 0
         let motion = animated && peekMotionAllowed, growing = peekGhosts.first { $0.phase == .opening }
@@ -163,6 +170,7 @@ import RiseCore
         tuckPeekControls(controls, animated: motion && card != nil)
         window?.makeFirstResponder(selectedTab?.webView)
         updatePeekCovers(); update()
+        if interrupted { layoutChrome() }
     }
     func showMessage(_ title: String, _ message: String) {
         let alert = NSAlert(); alert.messageText = title; alert.informativeText = message

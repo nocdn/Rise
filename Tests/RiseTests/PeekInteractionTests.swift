@@ -341,4 +341,13 @@ final class PeekInteractionTests: XCTestCase {
         XCTAssertLessThan(samples.max()!, 1.06, "Only a little")
         XCTAssertEqual(samples.last!, 1, accuracy: 0.002, "And has all but settled when the motion ends")
     }
+
+    func testABounceNeverCarriesPastTheWindowsEdgesOnlyTowardTheSidebar() {
+        let page = NSRect(x: 200, y: 6, width: 800, height: 600)
+        // Overshooting by 4 on every side: only the left, beside the sidebar, may go past.
+        let bounced = page.insetBy(dx: -4, dy: -4).limited(to: page, edges: .windowSides)
+        XCTAssertEqual(bounced, NSRect(x: 196, y: 6, width: 804, height: 600))
+        XCTAssertEqual(page.insetBy(dx: -4, dy: -4).limited(to: page, edges: [.windowSides, .left]), page, "With no sidebar beside it, the left stops too")
+        XCTAssertEqual(page.insetBy(dx: 50, dy: 50).limited(to: page, edges: .windowSides), page.insetBy(dx: 50, dy: 50), "Anything inside is left alone")
+    }
 }

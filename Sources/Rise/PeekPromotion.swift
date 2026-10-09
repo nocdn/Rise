@@ -34,6 +34,8 @@ struct PeekUndo {
     static var peekUndoDuration: TimeInterval = 30
     /// Quicker than the Peek's opening, with a little more bounce as it lands.
     static var peekPromoteSpring: CASpringAnimation { CASpringAnimation(perceptualDuration: 0.24, bounce: 0.25) }
+    /// Splitting: the expand's timing without its bounce, so both pages settle straight into their halves.
+    static var peekSplitSpring: CASpringAnimation { CASpringAnimation(perceptualDuration: 0.24, bounce: 0) }
 
     /// Grows the Peek into the page, its live page moving in without loading again. In the same
     /// tab, the tab's page from before is held for Back; ⌘ or a link that opens a new tab makes
@@ -62,11 +64,15 @@ struct PeekUndo {
     }
 
     func splitPeek() {
-        guard let tab = peekTab else { return }
+        guard let tab = peekTab, !isPromotingPeek else { return }
         let previous = splitGroups, sourceID = peekSourceTabID ?? selectedID, opensNewTab = peekOpensNewTab, origin = peekOrigin
-        tab.webView.removeFromSuperview()
-        peekTab = nil; closePeek(); tabs.insert(tab, at: 0); showSplit(tab)
-        registerPeekUndo(.split(previous: previous), tab: tab, sourceID: sourceID, opensNewTab: opensNewTab, origin: origin)
+        let finish = { [weak self] in
+            guard let self, tab === self.peekTab else { return }
+            tab.webView.removeFromSuperview()
+            self.peekTab = nil; self.closePeek(); self.tabs.insert(tab, at: 0); self.showSplit(tab)
+            self.registerPeekUndo(.split(previous: previous), tab: tab, sourceID: sourceID, opensNewTab: opensNewTab, origin: origin)
+        }
+        if livePeekResize, peekMotionAllowed, let card = peekCard { splitPeekLive(tab, card: card, finish: finish) } else { finish() }
     }
 
     func promotePeek(_ tab: BrowserTab, modifiers: NSEvent.ModifierFlags, snapshots: (peek: NSImage?, under: NSImage?)) {
@@ -234,6 +240,8 @@ struct PeekUndo {
             undo.tab.webView.setAllMediaPlaybackSuspended(false)
             settle(source, recordsVisit: false)
         case .newTab, .split:
+            // The page beside a split is whole again at once, under the Peek shrinking out of the right
+            // half, so the card uncovers it as it goes and it settles back with the same spring on both sides.
             detachTab(undo.tab)
             if case .split(let previous) = undo.kind {
                 splitGroups = previous.filter { group in
