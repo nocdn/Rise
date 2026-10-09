@@ -20,7 +20,8 @@ final class PopoverActionButton: ChromeButton {
         clipsToBounds = false; layer?.masksToBounds = false
         layer?.shadowColor = NSColor.black.cgColor; layer?.shadowOpacity = 0.14
         layer?.shadowRadius = 1.5*scale; layer?.shadowOffset = NSSize(width: 0, height: -0.5*scale)
-        hoverColor = theme.hoveredTab
+        // A shade off the resting bezel, rather than the tab list's much darker hover.
+        hoverColor = theme == .dark ? NSColor(hex: 0x464646) : NSColor(hex: 0xF1F0EF)
     }
     required init?(coder: NSCoder) { fatalError() }
 }

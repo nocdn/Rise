@@ -17,8 +17,10 @@ import RiseCore
         let item = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
         let submenu = NSMenu(title: "Theme")
         for (title, choice) in [("Light", RiseTheme.neutral), ("Rose", .rose), ("Dark", .dark)] {
-            submenu.addItem(menuItem(title, checked: theme == choice) { [weak self] in self?.theme = choice; self?.update() })
+            submenu.addItem(menuItem(title, checked: !automaticTheme && theme == choice) { [weak self] in self?.chooseTheme(choice) })
         }
+        submenu.addItem(.separator())
+        submenu.addItem(menuItem("Automatic", checked: automaticTheme) { [weak self] in self?.chooseTheme(nil) })
         item.submenu = submenu
         return item
     }
@@ -186,7 +188,7 @@ import RiseCore
         content.view.appearance = theme.appearance
         siteInfoPopover.contentViewController = content
         siteInfoPopover.contentSize = content.view.fittingSize
-        let anchor: NSView = selectedTab?.developer == true ? devButtons[4] : sidebarVisible ? sidebar.address : pageClip
+        let anchor: NSView = selectedTab?.developer == true ? devButtons[4] : isSidebarShown ? sidebar.address : pageClip
         let rect = anchor === pageClip ? NSRect(x: 16, y: 8, width: 1, height: 1) : anchor === sidebar.address ? sidebar.settingsAnchorRect : anchor.bounds
         siteInfoPopover.show(relativeTo: rect, of: anchor, preferredEdge: .minY)
     }

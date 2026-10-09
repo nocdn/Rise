@@ -47,7 +47,7 @@ import UserNotifications
         guard reply == nil else { completion(false); return }
         browser.siteControlsPopover.close(); browser.siteInfoPopover.close()
         browser.copiedLinkPopover.close()
-        if !browser.sidebarVisible { browser.toggleSidebar() }
+        browser.showSidebarAtOnce()
         requestingWebView = web
         let documentURL = web.url
         reply = { [weak self, weak browser, weak web] allowed in

@@ -2,7 +2,9 @@ import AppKit
 
 enum SidebarWidth {
     /// The width the sidebar is designed around. Resizing snaps to it with a haptic tick.
-    static let ideal: CGFloat = 228
+    static let ideal: CGFloat = 220
+    /// The ideal width before it narrowed; a sidebar saved there moves with it.
+    static let previousIdeal: CGFloat = 228
     static let range: ClosedRange<CGFloat> = 200...360
     /// How close a resize has to come to `ideal` to snap to it.
     static let snap: CGFloat = 8
@@ -61,7 +63,7 @@ enum SidebarWidth {
         guard !peek.isActive, !isSwitchingTabs else { return }
         peek.isActive = true
         if sidebarVisible { animateSidebarPeek(to: 1); return }
-        // A collapsed sidebar opens at once, as ⌘B shows it, already wide.
+        // A collapsed sidebar opens as ⌘B shows it, already wide.
         peek.spring.target = 1; peek.spring.settle()
         toggleSidebar(); peek.openedSidebar = true
     }

@@ -68,7 +68,7 @@ public struct BrowserSession: Codable, Equatable {
     public var theme: String
     public var sidebarWidth: Double
     public var splitGroups: [SplitTabGroup]
-    public init(tabs: [SavedTab] = [], selectedID: UUID? = nil, theme: String = "neutral", sidebarWidth: Double = 228, splitGroups: [SplitTabGroup] = []) {
+    public init(tabs: [SavedTab] = [], selectedID: UUID? = nil, theme: String = "neutral", sidebarWidth: Double = 220, splitGroups: [SplitTabGroup] = []) {
         self.tabs = tabs; self.selectedID = selectedID; self.theme = theme; self.sidebarWidth = sidebarWidth; self.splitGroups = splitGroups
     }
     private enum CodingKeys: String, CodingKey { case tabs, selectedID, theme, sidebarWidth, splitGroups }

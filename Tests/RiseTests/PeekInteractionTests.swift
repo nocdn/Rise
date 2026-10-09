@@ -43,6 +43,32 @@ final class PeekInteractionTests: XCTestCase {
         for _ in 0..<500 where !condition() { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertTrue(condition())
     }
+    @MainActor func testCommandWClosesPeekBeforeClosingSelectedTab() throws {
+        let browser = browser(); defer { clean(browser) }
+        let oldMenu = NSApp.mainMenu; defer { NSApp.mainMenu = oldMenu }
+        let delegate = AppDelegate(); delegate.browser = browser; delegate.buildMenu()
+        let other = browser.addTab(), source = browser.addTab()
+        let tabIDs = browser.tabs.map(\.id), closedTabIDs = browser.closedTabs.map(\.id)
+        browser.showPeek(url: URL(string: "about:blank")!, from: source.webView)
+        XCTAssertNotNil(browser.peekTab)
+        let key = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
+            timestamp: 0, windowNumber: browser.window!.windowNumber, context: nil, characters: "w",
+            charactersIgnoringModifiers: "w", isARepeat: false, keyCode: 13))
+
+        XCTAssertTrue(NSApp.mainMenu!.performKeyEquivalent(with: key))
+        XCTAssertNil(browser.peekTab)
+        XCTAssertNil(browser.peekCard)
+        XCTAssertEqual(browser.tabs.map(\.id), tabIDs)
+        XCTAssertEqual(browser.closedTabs.map(\.id), closedTabIDs)
+        XCTAssertEqual(browser.selectedID, source.id)
+        XCTAssertTrue(browser.window?.firstResponder === source.webView)
+        XCTAssertFalse((source.webView as? LinkCursorWebView)?.isCovered == true)
+
+        XCTAssertTrue(NSApp.mainMenu!.performKeyEquivalent(with: key))
+        XCTAssertFalse(browser.tabs.contains { $0.id == source.id })
+        XCTAssertEqual(browser.closedTabs.last?.id, source.id)
+        XCTAssertEqual(browser.selectedID, other.id)
+    }
     @MainActor func testAPeekLinkInsideThePeekShakesThePillAndHistoryMovesThroughThePeek() async throws {
         let browser = browser(); defer { clean(browser) }
         browser.showWindow(nil)

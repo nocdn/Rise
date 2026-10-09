@@ -199,7 +199,7 @@ private final class DownloadsListView: NSView {
         downloadsPopover.delegate = controller
         if let id { controller.focus(id) }
         let button = sidebar.archiveButton
-        if sidebarVisible && !sidebar.isHidden && button.window != nil {
+        if isSidebarShown && !sidebar.isHidden && button.window != nil {
             downloadsPopover.show(relativeTo: button.bounds, of: button, preferredEdge: button.isFlipped ? .minY : .maxY)
         } else {
             // With the sidebar collapsed, point at the corner where downloads land on their tile.

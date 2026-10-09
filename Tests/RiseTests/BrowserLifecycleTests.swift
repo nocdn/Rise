@@ -83,6 +83,22 @@ final class BrowserLifecycleTests: XCTestCase {
         XCTAssertEqual(restored.theme, .rose)
         XCTAssertEqual(restored.sidebarWidth, 260)
     }
+    @MainActor func testAutomaticThemeFollowsMacOSAndIsRestored() {
+        let browser = makeBrowser(); defer { clean(browser); NSApp.appearance = nil }
+        browser.chooseTheme(nil)
+        XCTAssertTrue(browser.automaticTheme)
+        XCTAssertNil(NSApp.appearance, "Automatic leaves the appearance to macOS")
+        let system = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? RiseTheme.dark : .neutral
+        XCTAssertEqual(browser.theme, system)
+        browser.saveNow()
+        let restored = BrowserController(sessionURL: browser.sessionURL)
+        defer { clean(restored) }
+        XCTAssertTrue(restored.automaticTheme)
+        XCTAssertEqual(restored.theme, system)
+        restored.chooseTheme(.rose)
+        XCTAssertFalse(restored.automaticTheme)
+        XCTAssertEqual(NSApp.appearance?.name, .aqua, "A chosen theme sets the appearance again")
+    }
     @MainActor func testSystemTrafficLightsRemainInTitlebarAndAlignWithNavigation() {
         let browser = makeBrowser(); defer { clean(browser) }
         let window = browser.window!

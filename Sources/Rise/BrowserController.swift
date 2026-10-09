@@ -87,9 +87,14 @@ import RiseCore
     let suggestionFavicons: SuggestionFavicons
     let googleSearchSuggestions: GoogleSearchSuggestions
     var theme: RiseTheme = .neutral
+    /// Follows macOS's appearance, Light by day and Dark by night when macOS
+    /// itself is set to Auto, instead of keeping one chosen theme.
+    var automaticTheme = false
+    var systemAppearanceObservation: NSKeyValueObservation?
     var sidebarWidth = SidebarWidth.ideal
     var sidebarVisible = true
     let sidebarPeek = SidebarPeek()
+    let sidebarFloat = SidebarFloat()
     lazy var pullRequestHover: PullRequestHover = {
         let hover = PullRequestHover(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("pr-summaries.json"))
         hover.summaries.onChange = { [weak self] key in self?.pullRequestSummaryChanged(key) }
@@ -214,8 +219,10 @@ import RiseCore
         }
         buildChrome()
         if restore, let saved = SessionStorage.read(from: self.sessionURL) {
-            theme = RiseTheme(rawValue: saved.theme) ?? .neutral
-            sidebarWidth = min(SidebarWidth.range.upperBound, max(SidebarWidth.range.lowerBound, saved.sidebarWidth))
+            if saved.theme == Self.automaticThemeName { automaticTheme = true; theme = systemTheme() }
+            else { theme = RiseTheme(rawValue: saved.theme) ?? .neutral }
+            sidebarWidth = saved.sidebarWidth == SidebarWidth.previousIdeal ? SidebarWidth.ideal
+                : min(SidebarWidth.range.upperBound, max(SidebarWidth.range.lowerBound, saved.sidebarWidth))
             tabs = saved.tabs.map { configure(BrowserTab(saved: $0)) }
             // Old sessions can fill their missing icons without loading every page.
             tabs.forEach { $0.updateIcon() }
@@ -249,6 +256,7 @@ import RiseCore
         pageClip.layer?.masksToBounds = true; pageClip.clipsToBounds = true
         root.addSubview(sidebar); root.addSubview(pageShadow); pageShadow.addSubview(pageClip)
         pageClip.addSubview(emptyPage); pageClip.addSubview(developerBar)
+        installSidebarEdge()
         root.addSubview(grip)
         grip.resize = { [weak self] x in self?.resizeSidebar(to: x) }
         let actions: [(String, String, () -> Void)] = [
@@ -321,25 +329,36 @@ import RiseCore
         // sidebar and titlebar controls have finished being constructed.
         guard let window, let sidebar else { return }; let b = root.bounds
         root.fill = theme.background; root.gradientColors = theme.backgroundGradient; window.backgroundColor = theme.background
-        let width = displayedSidebarWidth, sw = sidebarVisible ? width : 0
-        sidebar.isHidden = !sidebarVisible; sidebar.frame = NSRect(x: 0, y: 0, width: width, height: b.height)
+        let width = displayedSidebarWidth, shown = sidebarVisible || sidebarFloat.isVisible
+        sidebar.isHidden = !shown
+        let pageLeft = layoutFloatingSidebar(in: b, width: width)
         // Keep the native titlebar hierarchy intact, but hide all of its chrome
         // for the edge-to-edge reading layout. No animator proxies are involved.
-        if toolbarAccessory.isHidden == sidebarVisible { toolbarAccessory.isHidden = !sidebarVisible }
-        if window.toolbar?.isVisible != sidebarVisible { window.toolbar?.isVisible = sidebarVisible }
-        for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
-            window.standardWindowButton(kind)?.isHidden = !sidebarVisible
+        if toolbarAccessory.isHidden == shown { toolbarAccessory.isHidden = !shown }
+        if window.toolbar?.isVisible != shown {
+            // Let AppKit place the traffic lights for the new titlebar now, before they're carried.
+            window.toolbar?.isVisible = shown; window.contentView?.superview?.layoutSubtreeIfNeeded()
         }
-        toolbarHost.isHidden = !sidebarVisible
-        toolbarButtons.forEach { $0.isHidden = !sidebarVisible }
+        for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            window.standardWindowButton(kind)?.isHidden = !shown
+        }
+        toolbarHost.isHidden = !shown
+        toolbarButtons.forEach { $0.isHidden = !shown }
+        // A floating sidebar carries the traffic lights and navigation with it, as one block.
+        let carry = shown ? sidebar.frame.origin : .zero
         let toolbarX = toolbarHost.convert(toolbarHost.bounds, to: root).minX
-        toolbarHost.frame.size.width = sidebarVisible ? max(112, width-toolbarX-8) : 28
+        // Room for the carried buttons, held steady while floating so the titlebar isn't resized every frame.
+        let room = sidebarVisible && sidebarFloat.dockProgress == 1 ? 0 : SidebarFloatAppearance.inset
+        toolbarHost.shift = carry.x; toolbarHost.room = room
+        toolbarHost.frame.size.width = shown ? max(112, sidebar.frame.width-toolbarX-8)+room : 28
+        carryTitlebarControls(by: carry)
         toolbarHost.layout()
-        pageShadow.frame = PageAppearance.frame(in: b, sidebarWidth: sw, sidebarVisible: sidebarVisible)
+        pageShadow.frame = PageAppearance.frame(in: b, sidebarWidth: pageLeft, sidebarVisible: true)
         pageShadow.refreshOutline()
         pageClip.frame = pageShadow.bounds
-        // The peek width is temporary, so it can't be resized.
-        grip.frame = NSRect(x: sw-3, y: 44, width: 6, height: b.height-88); grip.isHidden = !sidebarVisible || sidebarPeek.progress > 0
+        // The peek width is temporary, and a floating sidebar is never resized.
+        grip.frame = NSRect(x: width-3, y: 44, width: 6, height: b.height-88)
+        grip.isHidden = !sidebarVisible || sidebarPeek.progress > 0 || sidebarFloat.dockProgress < 1
         let cb = pageClip.bounds
         let devHeight = developerMotion.height(for: selectedID, enabled: selectedTab?.developer == true)
         developerBar.frame = NSRect(x: 0, y: devHeight-DeveloperModeMotion.headerHeight, width: cb.width, height: DeveloperModeMotion.headerHeight)
@@ -365,8 +384,9 @@ import RiseCore
         infoPlaque.frame = pageShadow.frame; infoPlaque.topInset = devHeight
         dismissArea.frame = b
         let paletteWidth: CGFloat = paletteCreatesTab ? 520 : 600
-        if sidebarVisible {
-            let paletteOrigin = NSPoint(x: sidebar.address.frame.minX, y: sidebar.address.frame.minY-2)
+        if isSidebarShown {
+            let address = root.convert(sidebar.address.frame, from: sidebar)
+            let paletteOrigin = NSPoint(x: address.minX, y: address.minY-2)
             palette.place(at: paletteOrigin, width: min(paletteWidth, b.width-paletteOrigin.x-8))
         } else {
             let centeredWidth: CGFloat = paletteCreatesTab ? 640 : paletteWidth
@@ -378,7 +398,7 @@ import RiseCore
         if !tabSwitcher.isHidden { tabSwitcher.place(in: b) }
     }
     func windowDidResize(_ notification: Notification) { layoutChrome() }
-    func windowWillClose(_ notification: Notification) { pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); saveNow() }
+    func windowWillClose(_ notification: Notification) { settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); saveNow() }
     func windowDidResignKey(_ notification: Notification) {
         pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch(); endSidebarPeek(); tabPressed()
         sidebar?.cancelTabInteractions()
@@ -482,7 +502,10 @@ import RiseCore
         if paletteCreatesTab || selectedTab == nil { addTab(url: url) }
         else { errorWebView = nil; selectedTab?.load(url) }
     }
-    @objc func closeCurrentTab() { if let id = selectedID { closeTab(id) } }
+    @objc func closeCurrentTab() {
+        if peekTab != nil { closePeek(animated: true); return }
+        if let id = selectedID { closeTab(id) }
+    }
     func closeTab(_ id: UUID) {
         historySwipe.cancel()
         cancelTabSwitch()
@@ -539,8 +562,10 @@ import RiseCore
         tabPressed()
         hidePalette()
         siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel()
+        let floating = isSidebarFloating
         sidebarVisible.toggle()
         if !sidebarVisible { sidebar.newTab.resetHover() }
+        settleSidebarFloat(docking: floating)
         CATransaction.begin(); CATransaction.setDisableActions(true)
         layoutChrome(); root.layoutSubtreeIfNeeded()
         CATransaction.commit()
@@ -564,6 +589,7 @@ import RiseCore
     }
     @objc func toggleTheme() {
         let themes = RiseTheme.allCases
+        automaticTheme = false
         theme = themes[((themes.firstIndex(of: theme) ?? 0) + 1) % themes.count]; update()
     }
     @objc func nextTab() { cycleTab(1) }
@@ -580,7 +606,7 @@ import RiseCore
         suggestionFavicons.save()
         do { try browsingHistory.save() }
         catch { NSLog("Rise history save failed: %@", error.localizedDescription) }
-        let state = BrowserSession(tabs: tabs.map(\.saved), selectedID: selectedID, theme: theme.rawValue, sidebarWidth: sidebarWidth, splitGroups: splitGroups)
+        let state = BrowserSession(tabs: tabs.map(\.saved), selectedID: selectedID, theme: automaticTheme ? Self.automaticThemeName : theme.rawValue, sidebarWidth: sidebarWidth, splitGroups: splitGroups)
         guard state != lastSaved else { return }
         do { try SessionStorage.write(state, to: sessionURL); lastSaved = state }
         catch { NSLog("Rise session save failed: %@", error.localizedDescription) }

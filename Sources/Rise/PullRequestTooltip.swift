@@ -472,7 +472,8 @@ final class PullRequestMetaRow: CardLinkRow {
     static let delay = 0.5, grace = 0.35
     let tooltip = PullRequestTooltip()
     let summaries: PullRequestSummaries
-    fileprivate var hoveredID: UUID?, shownID: UUID?
+    fileprivate var hoveredID: UUID?
+    fileprivate(set) var shownID: UUID?
     fileprivate var timer: Timer?
     fileprivate var hiddenAt = -Double.infinity
     /// Where the pointer left the tab, while it heads for the card.
@@ -527,7 +528,7 @@ final class PullRequestMetaRow: CardLinkRow {
     }
     func showPullRequestTooltip(_ id: UUID) {
         let hover = pullRequestHover
-        guard hover.hoveredID == id, sidebarVisible, window?.isVisible == true,
+        guard hover.hoveredID == id, isSidebarShown, window?.isVisible == true,
               let tab = tabs.first(where: { $0.id == id }), let pr = PullRequest(url: tab.url),
               let row = sidebar.rows[id], row.window != nil else { return }
         hover.shownID = id

@@ -51,6 +51,17 @@ class Surface: FlippedView {
     }
     required init?(coder: NSCoder) { fatalError() }
     var fill: NSColor { get { .clear } set { layer?.backgroundColor = newValue.cgColor } }
+    /// Rounds the gradient along with the fill.
+    var cornerRadius: CGFloat {
+        get { layer?.cornerRadius ?? 0 }
+        set {
+            guard newValue != cornerRadius else { return }
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            layer?.cornerRadius = newValue; gradient.cornerRadius = newValue
+            gradient.cornerCurve = layer?.cornerCurve ?? .circular
+            CATransaction.commit()
+        }
+    }
     override func layout() {
         super.layout()
         CATransaction.begin(); CATransaction.setDisableActions(true)
@@ -162,6 +173,10 @@ final class DeveloperHeader: Surface {
 /// Only navigation controls are custom; traffic lights stay owned by NSWindow.
 final class NativeTitlebarControls: NSView {
     var buttons: [ChromeButton] = []
+    /// Moves the buttons sideways with a floating sidebar, leaving their spacing alone.
+    var shift: CGFloat = 0
+    /// Extra width beyond the buttons' span, for them to be carried into.
+    var room: CGFloat = 0
     override func layout() {
         super.layout()
         let centerY: CGFloat
@@ -171,9 +186,10 @@ final class NativeTitlebarControls: NSView {
             centerY = bounds.midY
         }
         let visible = buttons.filter { !$0.isHidden }
-        let gap = visible.count > 1 ? max(0, (bounds.width-CGFloat(visible.count)*28)/CGFloat(visible.count-1)) : 0
+        let span = bounds.width-room
+        let gap = visible.count > 1 ? max(0, (span-CGFloat(visible.count)*28)/CGFloat(visible.count-1)) : 0
         for (index, button) in visible.enumerated() {
-            button.frame = NSRect(x: CGFloat(index)*(28+gap), y: centerY-15, width: 28, height: 30)
+            button.frame = NSRect(x: shift+CGFloat(index)*(28+gap), y: centerY-15, width: 28, height: 30)
         }
     }
 }

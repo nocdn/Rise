@@ -1,9 +1,39 @@
 import AppKit
 
 @MainActor extension BrowserController {
+    static let automaticThemeName = "automatic"
+
+    /// Picks a theme, or nil to follow macOS's light or dark appearance.
+    func chooseTheme(_ choice: RiseTheme?) {
+        automaticTheme = choice == nil
+        theme = choice ?? systemTheme(); update()
+    }
+
+    /// Light or Dark, matching macOS's current appearance.
+    func systemTheme() -> RiseTheme {
+        // In Automatic, the app leaves its appearance to macOS, so its
+        // effective appearance is the system's rather than a chosen theme's.
+        if NSApp.appearance != nil { NSApp.appearance = nil }
+        observeSystemAppearance()
+        return NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .dark : .neutral
+    }
+
+    private func observeSystemAppearance() {
+        guard systemAppearanceObservation == nil else { return }
+        systemAppearanceObservation = NSApp.observe(\.effectiveAppearance) { [weak self] _, _ in
+            Task { @MainActor in
+                guard let self, self.automaticTheme else { return }
+                let theme = self.systemTheme()
+                if theme != self.theme { self.theme = theme; self.update() }
+            }
+        }
+    }
+
     func applyTheme() {
         let appearance = theme.appearance
-        if NSApp.appearance?.name != appearance.name { NSApp.appearance = appearance }
+        // In Automatic, the app keeps macOS's appearance so it can see it change.
+        let appAppearance = automaticTheme ? nil : appearance
+        if NSApp.appearance?.name != appAppearance?.name { NSApp.appearance = appAppearance }
         if window?.appearance?.name != appearance.name { window?.appearance = appearance }
         [pageShadow, pageClip, emptyPage, errorSurface].forEach { $0.fill = theme.page }
         errorTitle.textColor = theme.text; errorMessage.textColor = theme.muted

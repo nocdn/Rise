@@ -165,7 +165,9 @@ import WebKit
         const previous = {x: originX, y: originY, w: width, h: height};
         width = w; height = h; pixelRatio = Math.min(3, Math.max(1, ratio));
         if (!active) return null;
-        const viewWidth = Math.max(width, innerWidth), viewHeight = Math.max(height, innerHeight);
+        // innerWidth drops a zoomed viewport's fraction of a pixel, which the visual viewport keeps.
+        const view = visualViewport ?? {width: innerWidth, height: innerHeight};
+        const viewWidth = Math.max(width, innerWidth, view.width), viewHeight = Math.max(height, innerHeight, view.height);
         canvas.style.setProperty('width', `${viewWidth}px`, 'important');
         canvas.style.setProperty('height', `${viewHeight}px`, 'important');
         const pixelsWide = Math.max(1, Math.round(viewWidth*pixelRatio));

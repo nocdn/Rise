@@ -68,7 +68,7 @@ final class CopyConfirmationView: FlippedView {
         sidebar.copyButton.showCopied()
         siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); hidePalette()
         (copiedLinkPopover.contentViewController as? CopiedLinkController)?.cancelDismissal()
-        if !sidebarVisible { toggleSidebar() }
+        if !isSidebarShown { showSidebarAtOnce() }
         root.layoutSubtreeIfNeeded()
         let content = CopiedLinkController(url: url, theme: theme) { [weak self] url in self?.sendLinkViaAirDrop(url) }
         copiedLinkPopover.contentViewController = content
