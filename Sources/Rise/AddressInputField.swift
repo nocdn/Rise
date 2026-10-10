@@ -4,6 +4,13 @@ import QuartzCore
 /// Keep the native field editor's horizontal scrolling, fading only text that
 /// continues beyond the right edge rather than truncating the stored value.
 final class AddressInputField: NSTextField {
+    // Its own field editor, as the find bar's, so its selection (an autofilled address
+    // included) can be a quiet gray without restyling every other field's.
+    override class var cellClass: AnyClass? { get { AddressInputCell.self } set {} }
+    var selectionColor: NSColor {
+        get { (cell as? AddressInputCell)?.selectionColor ?? .selectedTextBackgroundColor }
+        set { (cell as? AddressInputCell)?.selectionColor = newValue }
+    }
     private let fade = CAGradientLayer()
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -39,5 +46,18 @@ final class AddressInputField: NSTextField {
         fade.locations = [0, NSNumber(value: Double(max(0, bounds.width-18)/max(1, bounds.width))), 1]
         layer?.mask = overflowing ? fade : nil
         CATransaction.commit()
+    }
+}
+
+/// AppKit restyles a field editor each time editing starts, selection color included, so the
+/// gray goes back on after that.
+final class AddressInputCell: FindInputCell {
+    var selectionColor = NSColor.selectedTextBackgroundColor {
+        didSet { editor.selectedTextAttributes = [.backgroundColor: selectionColor] }
+    }
+    override func setUpFieldEditorAttributes(_ textObj: NSText) -> NSText {
+        let text = super.setUpFieldEditorAttributes(textObj)
+        (text as? NSTextView)?.selectedTextAttributes = [.backgroundColor: selectionColor]
+        return text
     }
 }

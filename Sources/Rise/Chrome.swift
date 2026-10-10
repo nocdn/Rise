@@ -8,7 +8,7 @@ enum RiseTheme: String, CaseIterable {
     var background: NSColor { NSColor(hex: self == .dark ? 0x363636 : self == .rose ? 0xF3D4D8 : 0xE0E0E0) }
     /// Top to bottom.
     var backgroundGradient: [NSColor]? {
-        self == .neutral ? [NSColor(hex: 0xE8E8E8), NSColor(hex: 0xFAFAFA)] : self == .dark ? [NSColor(hex: 0x363636), NSColor(hex: 0x2B2B2B)] : nil
+        self == .neutral ? [NSColor(hex: 0xEDEDED), NSColor(hex: 0xFAFAFA)] : self == .dark ? [NSColor(hex: 0x363636), NSColor(hex: 0x2B2B2B)] : nil
     }
     var pill: NSColor { NSColor(hex: self == .dark ? 0x404040 : self == .rose ? 0xE9CACE : 0xDEDEDE) }
     var addressFill: NSColor {
@@ -131,8 +131,11 @@ final class BrowserWindow: NSWindow {
     var pointerMoved: ((NSEvent) -> Void)?
     /// Sees ⌘Z before the page or the Edit menu does.
     var undoEvent: ((NSEvent) -> Bool)?
+    /// Sees ⌃R before the page does, for the tab under the pointer.
+    var smartRenameEvent: ((NSEvent) -> Bool)?
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if undoEvent?(event) == true { return true }
+        if smartRenameEvent?(event) == true { return true }
         if addressPaletteEvent?(event) == true { return true }
         if tabSwitchEvent?(event) == true { return true }
         return super.performKeyEquivalent(with: event)

@@ -11,45 +11,60 @@ import RiseCore
             return BrowsingHistory.key(candidate) == key && candidate.fragment == url.fragment
         }
     }
+    /// The address field still holds the current page's address, unchanged.
+    func isEditingCurrentAddress(_ text: String) -> Bool {
+        !paletteCreatesTab && !text.isEmpty && text.trimmingCharacters(in: .whitespacesAndNewlines) == selectedTab?.url?.absoluteString
+    }
     func suggestions(for text: String) -> [AddressSuggestion] {
         let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
         var result: [AddressSuggestion] = [], seen = Set<String>()
         var typedURL: URL?
         let ranked = browsingHistory.ranked(for: query, limit: AddressAppearance.maximumSuggestions)
-        func appendSite(title: String, url: URL, tabID: UUID? = nil, learned: Bool = false, fetchFavicon: Bool = true) {
+        func appendSite(title: String, url: URL, tabID: UUID? = nil, learned: Bool = false, fetchFavicon: Bool = true, typed: Bool = false) {
             guard let key = BrowsingHistory.key(url), seen.insert(key).inserted else { return }
             let completion = learned ? BrowsingHistory.completion(for: query, url: url) : nil
             let destinationTab = tabID ?? openTab(for: url)?.id
             result.append(AddressSuggestion(title: title, subtitle: url.absoluteString, symbol: "globe", url: url,
-                                            tabID: destinationTab, command: nil, completion: completion, fetchFavicon: fetchFavicon))
+                                            tabID: destinationTab, command: nil, completion: completion, fetchFavicon: fetchFavicon, isTypedAction: typed))
         }
-        func appendHistory(_ entry: HistoryEntry) {
+        func appendHistory(_ entry: HistoryEntry, typed: Bool = false) {
             guard let url = URL(string: entry.url) else { return }
             let tab = openTab(for: url)
-            appendSite(title: tab?.title ?? entry.title, url: url, tabID: tab?.id, learned: true)
+            appendSite(title: tab?.title ?? entry.title, url: url, tabID: tab?.id, learned: true, typed: typed)
         }
+        // Editing the current page's own address, a row for that page would only repeat the field
+        // (which shows its icon instead), so neither its typed row nor its tab is offered.
+        if isEditingCurrentAddress(query), let url = selectedTab?.url, let key = BrowsingHistory.key(url) { seen.insert(key) }
         // A learned literal URL prefix takes Enter/autocomplete priority.
         if !query.isEmpty, let first = ranked.first, let url = URL(string: first.url),
            BrowsingHistory.completion(for: query, url: url) != nil {
-            appendHistory(first)
+            appendHistory(first, typed: true)
+        }
+        // Otherwise a well-known site whose address this starts fills in, as in other browsers.
+        if result.first?.completion == nil, let popular = PopularSites.completion(for: query),
+           let key = BrowsingHistory.key(popular.site.homeURL), seen.insert(key).inserted {
+            let url = popular.site.homeURL
+            result.append(AddressSuggestion(title: popular.site.name, subtitle: url.absoluteString, symbol: "globe", url: url,
+                                            tabID: openTab(for: url)?.id, command: nil, completion: popular.completed, isTypedAction: true, isAutofill: true))
         }
         if !query.isEmpty, let url = AddressResolver.resolve(query, searchEngine: searchEngine) {
             let search = url == searchEngine.searchURL(for: query)
             if search {
-                result.append(AddressSuggestion(title: "Search \(searchEngine.title) for “\(query)”", subtitle: "", symbol: "magnifyingglass", url: url, tabID: nil, command: nil))
-            } else { typedURL = url; appendSite(title: query, url: url, fetchFavicon: false) }
+                result.append(AddressSuggestion(title: "Search \(searchEngine.title) for “\(query)”", subtitle: "", symbol: "magnifyingglass", url: url, tabID: nil,
+                                                command: nil, isTypedAction: true))
+            } else { typedURL = url; appendSite(title: query, url: url, fetchFavicon: false, typed: true) }
         }
         // On an empty query, the most useful learned sites come first.
-        if query.isEmpty { ranked.forEach(appendHistory) }
+        if query.isEmpty { ranked.forEach { appendHistory($0) } }
         let words = query.split(whereSeparator: { $0.isWhitespace }).map(String.init)
         for tab in tabs where words.allSatisfy({ (tab.title + " " + (tab.url?.absoluteString ?? "")).localizedCaseInsensitiveContains($0) }) {
             if let url = tab.url { appendSite(title: tab.title, url: url, tabID: tab.id) }
         }
-        if !query.isEmpty { ranked.forEach(appendHistory) }
+        if !query.isEmpty { ranked.forEach { appendHistory($0) } }
         // Opening the current address also offers recent destinations, while
         // retaining that exact address as the default Enter action.
         if !query.isEmpty, query == selectedTab?.url?.absoluteString {
-            browsingHistory.ranked(for: "", limit: AddressAppearance.maximumSuggestions).forEach(appendHistory)
+            browsingHistory.ranked(for: "", limit: AddressAppearance.maximumSuggestions).forEach { appendHistory($0) }
             for tab in tabs {
                 if let url = tab.url { appendSite(title: tab.title, url: url, tabID: tab.id) }
             }

@@ -195,7 +195,11 @@ import RiseCore
         }
         window.tabSwitchEvent = { [weak self] event in self?.handleTabSwitchEvent(event) ?? false }
         window.addressPaletteEvent = { [weak self] event in self?.palette.handleKeyEquivalent(event) ?? false }
-        window.undoEvent = { [weak self] event in self?.handlePeekUndoKey(event) ?? false }
+        window.undoEvent = { [weak self] event in
+            guard let self else { return false }
+            return self.palette.handleUndoKey(event) || self.handlePeekUndoKey(event)
+        }
+        window.smartRenameEvent = { [weak self] event in self?.handleSmartRenameKey(event) ?? false }
         window.pageMouseDown = { [weak self] event in self?.focusSplitPage(at: event) }
         window.historyScrollEvent = { [weak self] event in self?.historySwipe.handle(event) ?? false }
         window.otherMouseEvent = { [weak self] event in self?.handleMiddleTabClick(event) ?? false }
@@ -230,7 +234,12 @@ import RiseCore
             guard let self else { return false }
             if self.sidebar.drag != nil { self.sidebar.cancelTabInteractions(); return true }
             if self.isSwitchingTabs { self.cancelTabSwitch(); return true }
-            if !self.palette.isHidden { self.hidePalette(); return true }
+            if !self.palette.isHidden {
+                // Out of a site's search first, back to the address.
+                if self.palette.siteSearch != nil { self.palette.leaveSiteSearch(); self.window?.makeFirstResponder(self.palette.input) }
+                else { self.hidePalette() }
+                return true
+            }
             if self.findBar.isPresented { self.findBar.handleEscape(); return true }
             if self.peekTab != nil { self.closePeek(animated: true); return true }
             return false
@@ -324,6 +333,10 @@ import RiseCore
         palette.dismiss = { [weak self] in self?.hidePalette() }
         palette.queryChanged = { [weak self] text in self?.suggestions(for: text) ?? [] }
         palette.submit = { [weak self] text, suggestion in self?.submitAddress(text, suggestion: suggestion) }
+        palette.siteFavicon = { [weak self] url in
+            guard let self else { return nil }
+            return self.suggestionFavicons.image(for: url, dark: self.theme == .dark)
+        }
         palette.switchToTab = { [weak self] id in
             guard let self, self.tabs.contains(where: { $0.id == id }) else { return }
             self.hidePalette(); self.select(id)
@@ -507,7 +520,7 @@ import RiseCore
     }
     @objc func newTab() { paletteCreatesTab = true; showPalette(text: "") }
     @objc func focusAddress() { paletteCreatesTab = false; showPalette(text: selectedTab?.url?.absoluteString == "about:blank" ? "" : selectedTab?.url?.absoluteString ?? "") }
-    func showPalette(text: String) { if searchEngine == .google { googleSearchSuggestions.warmUp() }; historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel(); dismissArea.isHidden = false; palette.show(text: text, theme: theme, createsTab: paletteCreatesTab); layoutChrome() }
+    func showPalette(text: String) { if searchEngine == .google { googleSearchSuggestions.warmUp() }; historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel(); dismissArea.isHidden = false; palette.currentPage = selectedTab.flatMap { tab in tab.url.map { ($0.absoluteString, tab.favicon(for: theme)) } }; palette.show(text: text, theme: theme, createsTab: paletteCreatesTab); layoutChrome() }
     func hidePalette() { googleSearchSuggestions.cancel(); suggestionFavicons.cancelPreview(); guard palette.isPresented else { return }; palette.hide(); dismissArea.isHidden = true; window?.makeFirstResponder(selectedTab?.webView) }
     func submitAddress(_ text: String, suggestion: AddressSuggestion?) {
         hidePalette()

@@ -187,7 +187,7 @@ final class FindInput: NSTextField {
         didSet { (cell as? FindInputCell)?.editor.selectedTextAttributes = [.backgroundColor: selectionColor] }
     }
 }
-final class FindInputCell: NSTextFieldCell {
+class FindInputCell: NSTextFieldCell {
     // TextKit 1 from the start: the shimmer reads the editor's layout manager.
     let editor: NSTextView = {
         let editor = NSTextView(usingTextLayoutManager: false)

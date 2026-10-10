@@ -17,6 +17,10 @@ enum AddressAppearance {
     static func background(_ theme: RiseTheme) -> NSColor {
         NSColor(hex: theme == .dark ? 0x2D2D2D : 0xF8F8F8)
     }
+    /// Selected text in the address, an autofilled address among it: a light gray, not blue.
+    static func textSelection(_ theme: RiseTheme) -> NSColor {
+        NSColor(hex: theme == .dark ? 0x4B4B4A : 0xDCDCDC)
+    }
     static func selection(_ theme: RiseTheme) -> NSColor {
         NSColor(hex: theme == .dark ? 0x4B4B4A : 0xE5E5E5)
     }

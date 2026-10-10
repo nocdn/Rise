@@ -99,7 +99,7 @@ final class SuggestionFaviconsTests: XCTestCase {
         while palette.suggestions[0].favicon == nil && Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
         XCTAssertNotNil(palette.suggestions[0].favicon)
         XCTAssertTrue(palette.buttons[0] === button, "An arriving icon must not rebuild rows or reset selection/input")
-        XCTAssertEqual(palette.input.stringValue, "draft"); XCTAssertEqual(palette.selectedIndex, 0)
+        XCTAssertEqual(palette.input.stringValue, "draft"); XCTAssertEqual(palette.selectedIndex, -1)
         XCTAssertNil((button.subviews.first as? NSImageView)?.contentTintColor)
         XCTAssertEqual(IconProtocol.snapshotRequests().count, 1)
         cache.save()

@@ -174,4 +174,23 @@ final class SplitTabsTests: XCTestCase {
         XCTAssertEqual(try lastSection(other.id), ["Close Tab"])
         XCTAssertFalse(try XCTUnwrap(browser.makeTabMenu(left.id)).items.contains { $0.title.contains("Split Tabs") })
     }
+
+    @MainActor func testEachSplitHalfShowsItsOwnSmallerCloseButtonOnHover() throws {
+        let browser = browser(); defer { clean(browser) }
+        let left = browser.addTab(), right = browser.addTab(), other = browser.addTab()
+        browser.select(left.id); browser.showSplit(right); browser.root.layoutSubtreeIfNeeded()
+        let half = try XCTUnwrap(browser.sidebar.rows[right.id]), whole = try XCTUnwrap(browser.sidebar.rows[other.id])
+        XCTAssertTrue(half.close.isHidden)
+        half.mouseEntered(with: NSEvent()); half.layoutSubtreeIfNeeded()
+        whole.mouseEntered(with: NSEvent()); whole.layoutSubtreeIfNeeded()
+        XCTAssertFalse(half.close.isHidden, "Hovering a half shows its close button")
+        XCTAssertTrue(browser.sidebar.rows[left.id]!.close.isHidden, "Only on the half being hovered")
+        XCTAssertLessThan(half.close.frame.width, whole.close.frame.width, "Smaller than a whole tab's")
+        XCTAssertLessThanOrEqual(half.close.frame.maxX, half.bounds.width)
+        XCTAssertLessThanOrEqual(half.titleField.frame.maxX, half.close.frame.minX, "The title makes room for it")
+        XCTAssertTrue(half.playback.isHidden)
+        half.close.performClick(nil)
+        XCTAssertFalse(browser.tabs.contains { $0.id == right.id }, "It closes that half")
+        XCTAssertTrue(browser.tabs.contains { $0.id == left.id }); XCTAssertTrue(browser.splitGroups.isEmpty)
+    }
 }

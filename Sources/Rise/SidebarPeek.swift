@@ -2,9 +2,9 @@ import AppKit
 
 enum SidebarWidth {
     /// The width the sidebar is designed around. Resizing snaps to it with a haptic tick.
-    static let ideal: CGFloat = 210
-    /// Ideal widths before it narrowed; a sidebar saved at one moves with it.
-    static let previousIdeals: Set<CGFloat> = [228, 220]
+    static let ideal: CGFloat = 215
+    /// Earlier ideal widths; a sidebar saved at one moves with it.
+    static let previousIdeals: Set<CGFloat> = [228, 220, 210]
     static let range: ClosedRange<CGFloat> = 200...360
     /// How close a resize has to come to `ideal` to snap to it.
     static let snap: CGFloat = 8

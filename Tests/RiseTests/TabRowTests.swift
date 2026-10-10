@@ -122,4 +122,40 @@ final class TabRowTests: XCTestCase {
         XCTAssertFalse(split.left.subtitle.isHidden)
         XCTAssertTrue(split.right.subtitle.isHidden)
     }
+
+    @MainActor func testARowSlideStartsWhenItsFrameIsShownSoWorkBeforeThenCannotEatIt() throws {
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 34)); view.wantsLayer = true
+        TabListMotion.move(view, to: NSRect(x: 0, y: 40, width: 200, height: 34), animated: true)
+        let slide = try XCTUnwrap(view.layer?.animation(forKey: TabListMotion.movementKey))
+        // Stamped with the time of the layout, a slow page switch before the frame goes out
+        // used to use up the whole slide, so rows jumped to their new places after ⌘W.
+        XCTAssertEqual(slide.beginTime, 0, "It starts when the frame reaches the screen")
+    }
+
+    @MainActor func testControlROverAHoveredTabAndSmartRenameShimmerItsTitle() async throws {
+        _ = NSApplication.shared
+        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"), restore: false)
+        defer { browser.saveWork?.cancel(); browser.tabs.forEach { $0.cancelLoad() }; browser.window?.orderOut(nil) }
+        let first = browser.addTab(), second = browser.addTab()
+        browser.showWindow(nil); browser.root.layoutSubtreeIfNeeded()
+        let key = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .control, timestamp: 0,
+            windowNumber: browser.window!.windowNumber, context: nil, characters: "\u{12}", charactersIgnoringModifiers: "r", isARepeat: false, keyCode: 15))
+        let window = try XCTUnwrap(browser.window as? BrowserWindow)
+        XCTAssertFalse(window.smartRenameEvent?(key) ?? true, "With no tab under the pointer, ⌃R goes on to the page")
+        let row = try XCTUnwrap(browser.sidebar.rows[first.id])
+        row.mouseEntered(with: NSEvent())
+        XCTAssertTrue(window.performKeyEquivalent(with: key))
+        XCTAssertTrue(row.titleShimmer.isRunning, "The hovered tab's title shimmers")
+        XCTAssertNotEqual(row.titleField.textColor, browser.theme.muted, "Its text eases down to muted rather than jumping")
+        try await Task.sleep(for: .milliseconds(InputShimmer.fade*1000+150))
+        XCTAssertEqual(row.titleField.textColor, browser.theme.muted, "Then it's muted under the band")
+        XCTAssertTrue(row.titleField.subviews.last === row.titleShimmer, "The band draws over the label AppKit adds for the title's own text")
+        browser.update()
+        XCTAssertEqual(row.titleField.textColor, browser.theme.muted, "Updating the row mid-shimmer doesn't bring the text back at once")
+        let other = try XCTUnwrap(browser.sidebar.rows[second.id])
+        XCTAssertFalse(other.titleShimmer.isRunning)
+        let item = try XCTUnwrap(browser.makeTabMenu(second.id)?.items.first { $0.title == "Smart Rename" })
+        _ = item.target?.perform(item.action, with: item)
+        XCTAssertTrue(other.titleShimmer.isRunning, "Smart Rename in the tab's menu does the same")
+    }
 }

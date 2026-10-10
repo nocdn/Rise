@@ -167,13 +167,12 @@ import RiseCore
         let scrollY = newTab.frame.maxY+TabAppearance.spacing
         scroll.frame = NSRect(x: 0, y: scrollY, width: w, height: max(0, bounds.height-scrollY-44))
         var y: CGFloat = 0; targetFrames = [:]
-        let time = CACurrentMediaTime()
         for (index, row) in displayedRows.enumerated() {
             let h: CGFloat = (row as? SplitTabRow)?.rowHeight ?? (row as? TabRow)?.rowHeight ?? TabAppearance.height
             let target = NSRect(x: TabAppearance.inset, y: y, width: w-2*TabAppearance.inset, height: h)
             targetFrames[orderedIDs[index]] = target
             if drag?.view !== row {
-                TabListMotion.move(row, to: target, animated: animatesRows && row.frame.width > 0, at: time)
+                TabListMotion.move(row, to: target, animated: animatesRows && row.frame.width > 0)
             }
             y += h+TabAppearance.spacing
         }
@@ -199,7 +198,8 @@ import RiseCore
             let offset = NSPoint(x: from.pointValue.x-source.position.x, y: from.pointValue.y-source.position.y)
             copy.fromValue = NSPoint(x: destination.position.x+offset.x, y: destination.position.y+offset.y)
             copy.toValue = destination.position
-            copy.beginTime = destination.convertTime(source.convertTime(movement.beginTime, to: nil), from: nil)
+            // Unset, it starts with the row's, when the frame reaches the screen.
+            if movement.beginTime != 0 { copy.beginTime = destination.convertTime(source.convertTime(movement.beginTime, to: nil), from: nil) }
             destination.add(copy, forKey: TabListMotion.movementKey)
         } else { selectedTabShadow.layer?.removeAnimation(forKey: TabListMotion.movementKey) }
         // Let the rounded layer outline supply the shadow shape as well.

@@ -44,7 +44,7 @@ final class AddressSuggestionsTests: XCTestCase {
         XCTAssertFalse(browser.suggestions(for: "news missingword").contains { $0.tabID == tab.id })
         XCTAssertNil(browser.suggestions(for: "news.ycombinator.com/newest").first?.tabID, "Sharing an origin does not make a different page a switch target")
         browser.paletteCreatesTab = false
-        XCTAssertEqual(browser.suggestions(for: tab.url!.absoluteString).first?.tabID, tab.id)
+        XCTAssertFalse(browser.suggestions(for: tab.url!.absoluteString).contains { $0.tabID == tab.id }, "Editing its own address, the page isn't offered again")
     }
     @MainActor func testCompletedAddressEnterAndClickReuseTheOpenTabWithoutABadge() throws {
         let browser = browser(); defer { browser.hidePalette(); clean(browser) }
@@ -178,9 +178,9 @@ final class AddressSuggestionsTests: XCTestCase {
         XCTAssertTrue(suggestions.contains { $0.url?.absoluteString == "https://example.com/docs/" && $0.tabID == nil })
         let tab = browser.addTab(); tab.requestedURL = URL(string: "https://example.com/docs/0")!
         let focused = browser.suggestions(for: tab.url!.absoluteString)
-        XCTAssertEqual(focused.count, 8)
-        XCTAssertEqual(focused.first?.url, tab.url, "Opening the current URL must keep Enter pointed at that page")
-        XCTAssertEqual(focused.first?.tabID, tab.id)
+        XCTAssertEqual(focused.count, 8, "Other destinations fill the list")
+        XCTAssertFalse(focused.contains { $0.url == tab.url }, "Not the page whose address is being edited")
+        XCTAssertFalse(focused.contains { $0.isTypedAction }, "Unchanged, the address has nothing for Enter to open but itself")
     }
     @MainActor func testTypedAddressReusesTheFaviconOfAnOpenPageOnTheSameOrigin() throws {
         let browser = browser(); defer { clean(browser) }
@@ -239,7 +239,7 @@ final class AddressSuggestionsTests: XCTestCase {
         XCTAssertEqual(editor.string, "example.com/docs")
         editor.doCommand(by: #selector(NSResponder.moveDown(_:)))
         XCTAssertEqual(editor.string, "exa")
-        XCTAssertEqual(palette.selectedIndex, 1)
+        XCTAssertEqual(palette.selectedIndex, 0, "Down from the field picks the first row")
         editor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
         XCTAssertFalse(palette.isPresented)
     }
@@ -276,6 +276,129 @@ final class AddressSuggestionsTests: XCTestCase {
         XCTAssertEqual(submitted, palette.suggestions[1].url)
         palette.hide(); palette.mouseMoved(with: event)
         XCTAssertEqual(palette.selectedIndex, 1, "Hidden results ignore pointer events")
+    }
+    @MainActor func testAPopularSiteFillsInAndTabSearchesItThroughItsOwnSearch() throws {
+        let region = PopularSites.region; PopularSites.region = "GB"; defer { PopularSites.region = region }
+        let browser = browser(); defer { browser.hidePalette(); clean(browser) }
+        browser.showWindow(nil); browser.newTab()
+        let palette = browser.palette, editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
+        let icon = NSImage(size: NSSize(width: 16, height: 16))
+        palette.siteFavicon = { $0.host == "amazon.co.uk" ? icon : nil }
+        for letter in "ama" { editor.insertText(String(letter), replacementRange: editor.selectedRange()) }
+        editor.insertText("z", replacementRange: editor.selectedRange())
+        XCTAssertEqual(palette.input.stringValue, "amazon.co.uk")
+        XCTAssertTrue(palette.leadingIcon.image === icon, "Filling in Amazon, Amazon's icon leads the field")
+        XCTAssertFalse(palette.suggestions.contains { $0.url?.host == "amazon.co.uk" }, "No row repeats what the field fills in")
+        XCTAssertEqual(editor.selectedRange(), NSRange(location: 4, length: 8), "The filled-in part is selected, to type over")
+        XCTAssertEqual(editor.selectedTextAttributes[.backgroundColor] as? NSColor, AddressAppearance.textSelection(browser.theme), "In gray, not blue")
+        XCTAssertEqual(palette.offeredSite?.name, "Amazon", "The site's search is offered")
+
+        let rowsBeforeTab = palette.suggestions.map(\.title)
+        editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
+        XCTAssertEqual(palette.siteSearch?.name, "Amazon")
+        XCTAssertTrue(palette.leadingIcon.image === icon)
+        XCTAssertNil(palette.offeredSite); XCTAssertEqual(palette.input.stringValue, "")
+        XCTAssertEqual(palette.siteLabel.stringValue, "Amazon")
+        XCTAssertTrue(palette.suggestions.isEmpty, "A site's search doesn't match addresses")
+        XCTAssertEqual(palette.frame.height, AddressAppearance.newTabHeaderHeight, "With no rows, as much room below the field as above")
+        editor.insertText("usb c", replacementRange: editor.selectedRange())
+        XCTAssertTrue(palette.suggestions.isEmpty)
+        var submitted: AddressSuggestion?
+        let original = palette.submit
+        palette.submit = { submitted = $1 }
+        editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        XCTAssertEqual(submitted?.url?.absoluteString, "https://www.amazon.co.uk/s?k=usb%20c")
+        palette.submit = original
+
+        // Escape goes back to the address just as it was, rather than closing.
+        editor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        XCTAssertNil(palette.siteSearch); XCTAssertTrue(palette.isPresented)
+        XCTAssertEqual(palette.input.stringValue, "amazon.co.uk")
+        XCTAssertEqual(editor.selectedRange(), NSRange(location: 4, length: 8), "Still filled in, as before Tab")
+        XCTAssertEqual(palette.suggestions.map(\.title), rowsBeforeTab, "With the same rows")
+        // ⌘Z steps back too: the query first, then out of the site's search.
+        editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
+        editor.insertText("cable", replacementRange: editor.selectedRange())
+        let window = try XCTUnwrap(browser.window as? BrowserWindow)
+        let undo = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: window.windowNumber,
+                                                  context: nil, characters: "z", charactersIgnoringModifiers: "z", isARepeat: false, keyCode: 6))
+        XCTAssertTrue(window.performKeyEquivalent(with: undo))
+        XCTAssertEqual(palette.siteSearch?.name, "Amazon"); XCTAssertEqual(palette.input.stringValue, "")
+        XCTAssertTrue(window.performKeyEquivalent(with: undo))
+        XCTAssertNil(palette.siteSearch); XCTAssertEqual(palette.input.stringValue, "amazon.co.uk")
+        editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
+        XCTAssertEqual(palette.siteSearch?.name, "Amazon")
+        // Deleting past the start of the search goes back to the address, offering it again.
+        editor.selectAll(nil); editor.insertText("", replacementRange: editor.selectedRange())
+        editor.doCommand(by: #selector(NSResponder.deleteBackward(_:)))
+        XCTAssertNil(palette.siteSearch)
+        XCTAssertEqual(palette.input.stringValue, "amazon.co.uk"); XCTAssertEqual(palette.offeredSite?.name, "Amazon")
+
+        // A deleted autofill no longer stands for what's typed: Enter searches the letters.
+        editor.selectAll(nil); editor.insertText("amaz", replacementRange: editor.selectedRange())
+        editor.doCommand(by: #selector(NSResponder.deleteBackward(_:)))
+        XCTAssertEqual(palette.input.stringValue, "amaz")
+        XCTAssertNil(palette.offeredSite, "Not a site's address any more")
+        XCTAssertFalse(palette.leadingIcon.image === icon, "Its icon goes with it")
+        XCTAssertEqual(palette.chosenSuggestion?.url, browser.searchEngine.searchURL(for: "amaz"))
+        // ⌘⌫ over a fill-in clears the whole field, without filling it back in.
+        editor.insertText("o", replacementRange: editor.selectedRange())
+        XCTAssertEqual(palette.input.stringValue, "amazon.co.uk")
+        editor.doCommand(by: #selector(NSResponder.deleteToBeginningOfLine(_:)))
+        XCTAssertEqual(palette.input.stringValue, ""); XCTAssertNil(palette.offeredSite)
+    }
+    @MainActor func testEditingTheCurrentAddressShowsThePageIconAndEnterOnlyOpensWhatIsPicked() throws {
+        let browser = browser(); defer { browser.hidePalette(); clean(browser) }
+        browser.browsingHistory.record(URL(string: "https://example.com/other")!, title: "Other")
+        let tab = browser.addTab(); tab.requestedURL = URL(string: "https://example.com/page")!
+        tab.favicon = NSImage(size: NSSize(width: 16, height: 16))
+        browser.showWindow(nil); browser.focusAddress()
+        let palette = browser.palette
+        XCTAssertEqual(palette.input.stringValue, "https://example.com/page")
+        XCTAssertTrue(palette.leadingIcon.image === tab.favicon, "The page's icon stands in for the magnifying glass")
+        XCTAssertFalse(palette.suggestions.contains { $0.url == tab.url }, "No row repeats the address being edited")
+        XCTAssertEqual(palette.selectedIndex, -1)
+        var submitted: (String, AddressSuggestion?)?
+        let original = palette.submit
+        palette.submit = { submitted = ($0, $1) }
+        palette.chooseSelected()
+        XCTAssertNil(submitted?.1, "With nothing picked, Enter opens the field's own text, the page it's already on")
+        palette.submit = original
+        // Typing a command's name and pressing Enter searches for it; the command needs picking.
+        palette.input.currentEditor()?.selectAll(nil)
+        (palette.input.currentEditor() as? NSTextView)?.insertText("split", replacementRange: NSRange(location: 0, length: palette.input.stringValue.utf16.count))
+        XCTAssertTrue(palette.suggestions.contains { $0.command == "Split View" })
+        XCTAssertNotEqual(palette.leadingIcon.image, tab.favicon, "Changed, it's a search or address again")
+        palette.submit = { submitted = ($0, $1) }
+        palette.chooseSelected()
+        XCTAssertNil(submitted?.1?.command); XCTAssertEqual(submitted?.1?.isTypedAction, true)
+    }
+    @MainActor func testMovingThePointerOffTheResultsPutsBackTheSelectionItHadTakenOver() throws {
+        let browser = browser(); defer { clean(browser) }
+        for index in 0..<3 { browser.browsingHistory.record(URL(string: "https://example.com/docs/\(index)")!, title: "Document \(index)") }
+        browser.showWindow(nil); browser.newTab()
+        let palette = browser.palette, editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
+        editor.insertText("ex", replacementRange: editor.selectedRange())
+        func move(_ point: NSPoint) throws {
+            palette.mouseMoved(with: try XCTUnwrap(NSEvent.mouseEvent(with: .mouseMoved, location: palette.convert(point, to: nil), modifierFlags: [],
+                timestamp: 0, windowNumber: browser.window!.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0)))
+        }
+        let last = palette.buttons.count-1, row = palette.buttons[last].frame
+        try move(NSPoint(x: row.midX, y: row.midY))
+        XCTAssertEqual(palette.selectedIndex, last)
+        palette.mouseExited(with: NSEvent())
+        XCTAssertEqual(palette.selectedIndex, -1, "Leaving the results, the hovered row lets go and none is picked")
+        try move(NSPoint(x: row.midX, y: row.midY))
+        // Over the address at the top of the palette counts as off the results too.
+        let field = palette.input.convert(palette.input.bounds, to: palette)
+        try move(NSPoint(x: field.midX, y: field.midY))
+        XCTAssertEqual(palette.selectedIndex, -1)
+        // A row picked with the arrow keys is the one to go back to.
+        editor.doCommand(by: #selector(NSResponder.moveDown(_:)))
+        try move(NSPoint(x: row.midX, y: row.midY)); palette.mouseExited(with: NSEvent())
+        XCTAssertEqual(palette.selectedIndex, 0)
+        XCTAssertTrue(palette.buttons.enumerated().allSatisfy { ($0.offset == 0) == ($0.element.layer?.backgroundColor != NSColor.clear.cgColor) },
+                      "Only the row picked with the keys is highlighted")
     }
     @MainActor func testActualWebKitFinishRecordsVisitsButTypingPrefetchAndFailuresDoNotAndResetPersists() async throws {
         let browser = browser(); defer { clean(browser) }

@@ -21,11 +21,26 @@ import RiseCore
     private var toggleConfirmationDeadline: CFTimeInterval = 0
     let subtitleAccessory = NSImageView(frame: .zero)
     let loadingBackground = TabLoadingBackground()
+    /// The find bar's shimmer over the title, for Smart Rename.
+    let titleShimmer = InputShimmer()
+    private var shimmerFinish: DispatchWorkItem?
+    /// Four quick sweeps of the shimmer (about 3 s), then the title eases back.
+    static let smartRenameSweeps = 4.0
     var selected = false
     private(set) var configuration = TabRowConfiguration()
     var showsSubtitle: Bool { configuration.subtitle != nil }
     var rowHeight: CGFloat { showsSubtitle ? TabAppearance.subtitleRowHeight : TabAppearance.height }
-    var isSplitMember = false
+    var isSplitMember = false {
+        didSet {
+            guard isSplitMember != oldValue else { return }
+            // Half a row is narrower, so its close button is smaller too.
+            close.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: close.toolTip)?
+                .withSymbolConfiguration(.init(pointSize: isSplitMember ? Self.splitCloseSymbol : 13, weight: .regular))
+            close.layer?.cornerRadius = isSplitMember ? 5 : 6
+            style()
+        }
+    }
+    static let splitCloseSize: CGFloat = 20, splitCloseSymbol: CGFloat = 11
     var theme = RiseTheme.neutral
     var onSelect: (() -> Void)?
     var onMenu: ((NSEvent) -> Void)?
@@ -69,11 +84,28 @@ import RiseCore
         icon.wantsLayer = true; subtitle.wantsLayer = true; subtitle.alphaValue = 0
         titleField.delegate = self; titleField.focusRingType = .none
         titleField.cell?.usesSingleLineMode = true
+        // Inside the title, so its fading edge fades the shimmer too.
+        titleShimmer.field = titleField; titleShimmer.autoresizingMask = [.width, .height]
+        // A short title in small type: a quicker band with a bright middle easing softly to its edges.
+        titleShimmer.bandWidth = 80; titleShimmer.plateau = 0.3; titleShimmer.softEdges = true; titleShimmer.sweep = 0.7
+        titleField.addSubview(titleShimmer)
         setAccessibilityLabel(tab.title)
     }
     required init?(coder: NSCoder) { fatalError() }
     override var isFlipped: Bool { true }
     @objc func selectTab() { onSelect?() }
+    var isHovered: Bool { hover }
+    /// Shimmers the title for a few sweeps, then eases it back to its own color.
+    func shimmerTitle() {
+        guard !isRenaming else { return }
+        shimmerFinish?.cancel()
+        titleShimmer.frame = titleField.bounds
+        titleShimmer.start()
+        // Stops at the end of the sweep under way, so it finishes the last one before easing back.
+        let finish = DispatchWorkItem { [weak self] in self?.titleShimmer.finish(); self?.shimmerFinish = nil }
+        shimmerFinish = finish
+        DispatchQueue.main.asyncAfter(deadline: .now()+(Self.smartRenameSweeps-1)*titleShimmer.sweep+0.05, execute: finish)
+    }
     func update(tab: BrowserTab, selected: Bool, theme: RiseTheme, configuration: TabRowConfiguration) {
         let previouslyShowedSubtitle = showsSubtitle
         self.selected = selected; self.theme = theme; self.configuration = configuration
@@ -82,7 +114,9 @@ import RiseCore
             animateSubtitleLayout = hasLaidOut && window?.isVisible == true && !isRenaming && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         }
         if !isRenaming { titleField.stringValue = tab.title }
-        titleField.textColor = TabAppearance.text(theme, selected: selected)
+        let titleColor = TabAppearance.text(theme, selected: selected)
+        if titleShimmer.isRunning { titleShimmer.setRestingColor(titleColor) } else { titleField.textColor = titleColor }
+        titleShimmer.baseColor = theme.muted; titleShimmer.bandColor = theme.selectedText
         subtitle.textColor = theme.muted
         if let detail = configuration.subtitle {
             subtitle.attributedStringValue = detail.attributedString(font: subtitle.font ?? .systemFont(ofSize: 11), defaultColor: theme.muted)
@@ -160,8 +194,9 @@ import RiseCore
         // The border follows the same continuous contour as the background.
         layer?.borderColor = NSColor.white.withAlphaComponent(theme == .dark ? 0.08 : 0.7).cgColor
         layer?.borderWidth = selected && !isSplitMember ? 0.5 : 0
-        close.isHidden = !hover || isSplitMember
-        playback.isHidden = close.isHidden || playbackPaused == nil
+        close.isHidden = !hover
+        // A split half has room for its close button only.
+        playback.isHidden = close.isHidden || playbackPaused == nil || isSplitMember
         if !playback.isHidden { playback.refreshHover() }
         subtitleAccessory.isHidden = !showsSubtitle || configuration.subtitleAccessory == nil || hover || isSplitMember
         needsLayout = true
@@ -182,16 +217,17 @@ import RiseCore
         let audioWidth: CGFloat = showsAudio && !isSplitMember ? 24 : 0
         let textX: CGFloat = (isSplitMember ? 28 : 30) + audioWidth
         func place(_ view: NSView, _ frame: NSRect) {
-            if slide { TabListMotion.slide(view, to: frame) } else { TabListMotion.move(view, to: frame, animated: animated, at: time) }
+            if slide { TabListMotion.slide(view, to: frame) } else { TabListMotion.move(view, to: frame, animated: animated) }
         }
-        let textWidth = max(0, bounds.width - textX - (close.isHidden ? 8 : playback.isHidden ? 32 : 58))
+        let closeRoom: CGFloat = isSplitMember ? Self.splitCloseSize+6 : 32
+        let textWidth = max(0, bounds.width - textX - (close.isHidden ? 8 : playback.isHidden ? closeRoom : 58))
         place(titleField, NSRect(x: textX, y: textY, width: textWidth, height: titleHeight))
         let subtitleWidth = max(0, textWidth - (subtitleAccessory.isHidden ? 0 : 24))
         titleField.setFadeBoundary(subtitleAccessory.isHidden ? nil : subtitleWidth)
         let subtitleY = showsSubtitle ? textY + titleHeight + 1 : max(0, bounds.height-subtitleHeight-2)
         let iconX: CGFloat = isSplitMember ? 6 : 8
         let iconY = showsSubtitle ? textY + (titleHeight-16)/2 + 2 : (bounds.height-16)/2
-        TabListMotion.move(icon, to: NSRect(x: iconX, y: iconY, width: 16, height: 16), animated: animated, at: time)
+        TabListMotion.move(icon, to: NSRect(x: iconX, y: iconY, width: 16, height: 16), animated: animated)
         let subtitleFrame = NSRect(x: textX, y: subtitleY, width: subtitleWidth, height: subtitleHeight)
         if animated && showsSubtitle && subtitleOpacity == 0 { subtitle.frame = subtitleFrame.offsetBy(dx: 0, dy: -2) }
         place(subtitle, subtitleFrame)
@@ -207,7 +243,9 @@ import RiseCore
                 DispatchQueue.main.asyncAfter(deadline: .now()+DeveloperModeMotion.duration, execute: work)
             }
         }
-        close.frame = NSRect(x: bounds.width-28.5, y: (bounds.height-24)/2-0.5, width: 24, height: 24)
+        close.frame = isSplitMember
+            ? NSRect(x: bounds.width-Self.splitCloseSize-4, y: (bounds.height-Self.splitCloseSize)/2, width: Self.splitCloseSize, height: Self.splitCloseSize)
+            : NSRect(x: bounds.width-28.5, y: (bounds.height-24)/2-0.5, width: 24, height: 24)
         playback.frame = close.frame.offsetBy(dx: -26, dy: 0)
         audio.frame = NSRect(x: iconX+21, y: (iconY+8-12).rounded(), width: 24, height: 24)
         let accessorySize = subtitleAccessory.image?.size ?? .zero
@@ -270,6 +308,7 @@ import RiseCore
     func beginRename() {
         guard !isRenaming else { return }
         onSelect?()
+        shimmerFinish?.cancel(); shimmerFinish = nil; titleShimmer.cancel()
         titleField.layer?.removeAnimation(forKey: TabListMotion.movementKey)
         originalTitle = titleField.stringValue; isRenaming = true
         titleField.isEditable = true; titleField.isSelectable = true

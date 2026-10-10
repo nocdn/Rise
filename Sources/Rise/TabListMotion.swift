@@ -4,7 +4,10 @@ import QuartzCore
 @MainActor enum TabListMotion {
     static let duration = 0.18
     static let movementKey = "Rise.TabMovement"
-    static func move(_ view: NSView, to frame: NSRect, animated: Bool, at time: CFTimeInterval) {
+    /// Slides `view` to `frame`. It starts when the frame it's in reaches the screen, so work done
+    /// before then, such as showing the next tab's page after a close, can't eat into the slide;
+    /// everything moved in the same frame still starts together.
+    static func move(_ view: NSView, to frame: NSRect, animated: Bool) {
         guard view.frame != frame else { return }
         let canAnimate = animated && view.frame.size == frame.size && view.frame.minX == frame.minX
         let layer = view.layer
@@ -17,7 +20,7 @@ import QuartzCore
         }
         let movement = CABasicAnimation(keyPath: "position")
         movement.fromValue = old; movement.toValue = layer.position
-        movement.duration = duration; movement.beginTime = layer.convertTime(time, from: nil)
+        movement.duration = duration
         movement.timingFunction = CAMediaTimingFunction(controlPoints: 0.2, 0.8, 0.2, 1)
         layer.add(movement, forKey: movementKey)
     }

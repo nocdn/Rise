@@ -12,7 +12,7 @@ import AppKit
         // Continue from a row's visible position if it was still settling.
         if let layer = row.layer, let position = layer.presentation()?.position {
             var frame = row.frame; frame.origin.y = position.y-layer.anchorPoint.y*row.bounds.height
-            TabListMotion.move(row, to: frame, animated: false, at: CACurrentMediaTime())
+            TabListMotion.move(row, to: frame, animated: false)
         }
         row.layer?.removeAnimation(forKey: TabListMotion.movementKey)
         let point = rowsHost.convert(event.locationInWindow, from: nil)
@@ -32,7 +32,7 @@ import AppKit
         let minimum = max(0,scroll.contentView.bounds.minY)
         let maximum = max(minimum,min(maxY,scroll.contentView.bounds.maxY-frame.height))
         frame.origin.y = min(max(minimum, point.y-drag.grabOffset),maximum)
-        TabListMotion.move(drag.view, to: frame, animated: false, at: CACurrentMediaTime())
+        TabListMotion.move(drag.view, to: frame, animated: false)
         guard var index = orderedIDs.firstIndex(of: drag.id) else { return }
         var crossed = false
         while index > 0, let neighbor = targetFrames[orderedIDs[index-1]], frame.minY <= neighbor.minY {
@@ -48,7 +48,7 @@ import AppKit
             // Different row heights can change the last slot after crossing.
             // Keep the held row inside its new range without changing its size.
             frame.origin.y = min(frame.minY, targetFrames.values.map(\.minY).max() ?? frame.minY)
-            TabListMotion.move(drag.view, to: frame, animated: false, at: CACurrentMediaTime())
+            TabListMotion.move(drag.view, to: frame, animated: false)
         }
         positionSelectedTabShadow()
     }

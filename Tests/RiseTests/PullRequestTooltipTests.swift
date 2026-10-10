@@ -54,6 +54,15 @@ final class PullRequestTooltipTests: XCTestCase {
         XCTAssertEqual(bracket.attribute(.foregroundColor, at: 8, effectiveRange: nil) as? NSColor, .black)
         let plain = PullRequestTooltip.title("Fix the build (again)", color: .black, muted: .gray)
         XCTAssertEqual(plain.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor, .black)
+        // Without a scope, the whole type and its colon fade, `!` included; other words before a colon don't.
+        for (text, faded) in [("fix: treg user agent", "fix:"), ("feat!: drop the old API", "feat!:"), ("Draft: chore: bump", "chore:")] {
+            let styled = PullRequestTooltip.title(text, color: .black, muted: .gray), range = (text as NSString).range(of: faded)
+            XCTAssertEqual(styled.attribute(.foregroundColor, at: range.location, effectiveRange: nil) as? NSColor, .gray, text)
+            XCTAssertEqual(styled.attribute(.foregroundColor, at: NSMaxRange(range)-1, effectiveRange: nil) as? NSColor, .gray, text)
+            XCTAssertEqual(styled.attribute(.foregroundColor, at: NSMaxRange(range)+1, effectiveRange: nil) as? NSColor, .black, text)
+        }
+        let word = PullRequestTooltip.title("Update: readme", color: .black, muted: .gray)
+        XCTAssertEqual(word.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor, .black)
     }
     @MainActor func testSavedCardsComeBackWithTheirDetailsAndDescription() throws {
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString+".json")

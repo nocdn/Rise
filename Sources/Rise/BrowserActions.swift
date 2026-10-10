@@ -55,6 +55,18 @@ import RiseCore
         }
         menu.popUp(positioning: nil, at: NSPoint(x: 12, y: sidebar.bounds.height-42), in: sidebar)
     }
+    /// For now only the title's shimmer, standing in for the rename to come.
+    func smartRename(_ id: UUID) { sidebar.rows[id]?.shimmerTitle() }
+    /// ⌃R over a tab in the sidebar, an easy reach for the left hand. With no tab under the
+    /// pointer, the keys go on to the page.
+    func handleSmartRenameKey(_ event: NSEvent) -> Bool {
+        guard event.type == .keyDown, event.modifierFlags.intersection([.command, .shift, .option, .control]) == .control,
+              event.charactersIgnoringModifiers?.lowercased() == "r", let id = hoveredSidebarTabID else { return false }
+        smartRename(id); return true
+    }
+    var hoveredSidebarTabID: UUID? {
+        sidebar.rows.first { $0.value.isHovered && !$0.value.isHiddenOrHasHiddenAncestor && $0.value.window != nil }?.key
+    }
     func tabMenu(_ id: UUID, event: NSEvent) {
         guard let menu = makeTabMenu(id), let row = sidebar.rows[id] else { return }
         NSMenu.popUpContextMenu(menu, with: event, for: row)
@@ -64,6 +76,7 @@ import RiseCore
         let menu = NSMenu()
         menu.addItem(menuItem(tab.pinned ? "Unpin Tab" : "Pin Tab") { [weak self, weak tab] in tab?.pinned.toggle(); self?.update() })
         menu.addItem(menuItem("Duplicate Tab") { [weak self, weak tab] in if let url = tab?.url { self?.addTab(url: url) } })
+        menu.addItem(menuItem("Smart Rename") { [weak self] in self?.smartRename(id) })
         menu.addItem(menuItem("Open in Split View") { [weak self, weak tab] in if let tab { self?.showSplit(tab) } })
         menu.addItem(menuItem("Developer Mode", checked: tab.developer) { [weak self, weak tab] in
             if let tab { self?.toggleDeveloperMode(for: tab) }

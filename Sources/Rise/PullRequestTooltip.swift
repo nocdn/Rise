@@ -304,10 +304,13 @@ final class PullRequestMetaRow: CardLinkRow {
     }
     /// `type(`, scope, `):` (or `)!:`) at the start of a conventional commit title.
     private static let conventionalPrefix = try! NSRegularExpression(pattern: #"\G([A-Za-z]+\()([^()]+)(\)!?:)"#)
+    /// `type:` (or `type!:`) with no scope. Only the usual types, so a title such as "Update: …" stays as it is.
+    private static let scopelessPrefix = try! NSRegularExpression(
+        pattern: #"\G(?:feat|fix|chore|docs|style|refactor|perf|test|tests|build|ci|revert|deps|release|hotfix)!?:"#, options: .caseInsensitive)
     /// GitLab's draft markers (`Draft:`, `[Draft]`, `(Draft)`, `Draft -`) and the older `WIP:`.
     private static let draftPrefix = try! NSRegularExpression(pattern: #"^\s*(?:\[(?:draft|wip)\]|\((?:draft|wip)\)|(?:draft|wip)\s*:|draft\s+-)\s*"#, options: .caseInsensitive)
-    /// A draft marker and a conventional commit title's `type(` and `):` recede (lighter and a
-    /// weight down) so the scope and the change stand out.
+    /// A draft marker and a conventional commit title's `type(` and `):`, or its whole `type:` when
+    /// it has no scope, recede (lighter and a weight down) so the scope and the change stand out.
     static func title(_ title: String, color: NSColor, muted: NSColor) -> NSAttributedString {
         let font = NSFont.systemFont(ofSize: 14, weight: .medium), faded = NSFont.systemFont(ofSize: 14, weight: .regular)
         let result = NSMutableAttributedString(string: title, attributes: [.font: font, .foregroundColor: color])
@@ -317,8 +320,11 @@ final class PullRequestMetaRow: CardLinkRow {
         if let draft = draftPrefix.firstMatch(in: title, range: all) {
             result.addAttributes([.font: faded, .foregroundColor: muted], range: draft.range); start = NSMaxRange(draft.range)
         }
-        if let match = conventionalPrefix.firstMatch(in: title, range: NSRange(location: start, length: all.length-start)) {
+        let rest = NSRange(location: start, length: all.length-start)
+        if let match = conventionalPrefix.firstMatch(in: title, range: rest) {
             for group in [1, 3] { result.addAttributes([.font: faded, .foregroundColor: muted], range: match.range(at: group)) }
+        } else if let match = scopelessPrefix.firstMatch(in: title, range: rest) {
+            result.addAttributes([.font: faded, .foregroundColor: muted], range: match.range)
         }
         return result
     }
