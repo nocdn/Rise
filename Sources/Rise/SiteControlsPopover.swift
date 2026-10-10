@@ -9,8 +9,12 @@ private enum SiteControlsLayout {
 
 /// Shared Arc-style action bezel used by settings and copy confirmation.
 final class PopoverActionButton: ChromeButton {
-    init(symbol: String, size: CGFloat = 18, scale: CGFloat = 1, title: String, theme: RiseTheme, action: @escaping () -> Void) {
+    /// The share symbol's box sits low in its frame, so it's drawn higher: a little in the
+    /// notices' small buttons, a little more in the settings popover's wide ones.
+    static let shareSymbol = "square.and.arrow.up", shareLift: CGFloat = 1.5, popoverShareLift: CGFloat = 2
+    init(symbol: String, size: CGFloat = 18, scale: CGFloat = 1, title: String, theme: RiseTheme, shareLift: CGFloat = PopoverActionButton.shareLift, action: @escaping () -> Void) {
         super.init(symbol: symbol, size: size*scale, title: title, action: action)
+        if symbol == Self.shareSymbol { image = image?.raised(by: shareLift*scale) }
         contentTintColor = theme.text
         baseColor = theme == .dark ? NSColor(hex: 0x3D3D3D) : .white.withAlphaComponent(0.75)
         layer?.backgroundColor = baseColor.cgColor
@@ -90,13 +94,14 @@ final class SiteSettingRow: NSButton {
         let scale = SiteControlsLayout.scale
         view = PopoverContentView(frame: NSRect(x: 0, y: 0, width: 240, height: 440))
         let actions: [(String, String, () -> Void)] = [
-            ("square.and.arrow.up", "Share Page", { [weak browser] in browser?.shareCurrentPage() }),
+            (PopoverActionButton.shareSymbol, "Share Page", { [weak browser] in browser?.shareCurrentPage() }),
             ("camera", "Save Page Screenshot", { [weak browser] in browser?.siteControlsPopover.close(); browser?.capturePage() }),
             ("text.viewfinder", "Copy Text from Page Image", { [weak browser] in browser?.siteControlsPopover.close(); browser?.copyTextFromPageImage() }),
             ("ellipsis", "More Site Controls", { [weak browser] in browser?.moreSiteControls() })
         ]
         for (index, action) in actions.enumerated() {
-            let button = PopoverActionButton(symbol: action.0, size: action.0 == "ellipsis" ? 18 : 17, scale: scale, title: action.1, theme: theme, action: action.2)
+            let button = PopoverActionButton(symbol: action.0, size: action.0 == "ellipsis" ? 18 : 17, scale: scale, title: action.1, theme: theme,
+                                             shareLift: PopoverActionButton.popoverShareLift, action: action.2)
             button.frame = NSRect(x: 10+CGFloat(index)*56+(52-52*scale)/2, y: 10+(34-34*scale)/2, width: 52*scale, height: 34*scale)
             view.addSubview(button); quickActions.append(button)
         }
@@ -184,4 +189,15 @@ final class PermissionPromptController: NSViewController {
     }
     @objc private func decline() { reply(false) }
     @objc private func allow() { reply(true) }
+}
+
+extension NSImage {
+    /// The same image, drawn `lift` points higher wherever it's centered.
+    func raised(by lift: CGFloat) -> NSImage {
+        let raised = NSImage(size: NSSize(width: size.width, height: size.height+2*lift), flipped: false) { [self] _ in
+            draw(in: NSRect(x: 0, y: 2*lift, width: size.width, height: size.height)); return true
+        }
+        raised.isTemplate = isTemplate; raised.accessibilityDescription = accessibilityDescription
+        return raised
+    }
 }

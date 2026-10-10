@@ -3,7 +3,9 @@ import WebKit
 
 /// Routes precise trackpad events only over visible pages. WebKit's large native
 /// history slide is disabled; ordinary wheel/vertical/page horizontal scrolling
-/// still goes to WebKit. A short isolated DOM probe protects carousels/editors.
+/// still goes to WebKit. A short isolated DOM probe protects carousels/editors, and,
+/// as in Safari, pages that take the wheel themselves, like a drawing canvas that pans:
+/// a gesture's first events reach the page at once, and only swipe if it lets them be.
 @MainActor final class HistorySwipeController {
     static let world = WKContentWorld.world(name: "Rise.HistorySwipe")
     private weak var window: BrowserWindow?
@@ -40,7 +42,7 @@ import WebKit
         let terminal = event.phase.contains(.ended) || event.phase.contains(.cancelled)
         guard event.hasPreciseScrollingDeltas || terminal || !event.momentumPhase.isEmpty else { return false }
         if !event.momentumPhase.isEmpty {
-            if probing { pending.append(event); return true }
+            if probing { hold(event); return true }
             return handleMomentum(event)
         }
         if event.phase.contains(.began) {
@@ -48,23 +50,29 @@ import WebKit
             guard let page = pageAt(event) else { return false }
             peekGesture = isPeekPage?(page) == true
             guard peekGesture || canNavigate(page, .back) || canNavigate(page, .forward) else { return false }
-            self.page = page; probing = true; pending = [event]
+            self.page = page; probing = true; pending = []
             if !peekGesture, abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) * 1.2 {
                 prepareCloth?(page); clothPrepared = true
             }
+            hold(event)
             probe(page, at: event)
             return true
         }
-        if probing { pending.append(event); return true }
+        if probing { hold(event); return true }
         return permitted ? route(event) : false
+    }
+    /// While the probe decides, the page already gets the event, so it scrolls without
+    /// waiting and can show whether it takes the wheel; a swipe replays it afterwards.
+    private func hold(_ event: NSEvent) {
+        pending.append(event); window?.deliverPageScroll(event)
     }
     private func probe(_ page: WKWebView, at event: NSEvent) {
         let token = generation
         let point = page.convert(event.locationInWindow, from: nil)
         let timeout = DispatchWorkItem { [weak self] in self?.resolveProbe(false, token: token) }
         probeTimeout = timeout
-        // A busy web process must not hold up normal scrolling.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: timeout)
+        // A busy web process doesn't swipe; scrolling never waits for it.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: timeout)
         Task { [weak self, weak page] in
             guard let page else { self?.resolveProbe(false, token: token); return }
             let result = try? await page.callAsyncJavaScript(Self.scrollProbe,
@@ -77,10 +85,9 @@ import WebKit
         guard generation == token, probing else { return }
         probing = false; permitted = allows; probeTimeout?.cancel(); probeTimeout = nil
         let events = pending; pending.removeAll()
-        if allows { gesture.begin() } else { cancelCloth?(); clothPrepared = false }
-        for event in events {
-            if !handleResolved(event) { window?.deliverPageScroll(event) }
-        }
+        // The page has had these already; a swipe takes over their travel.
+        if allows { gesture.begin(); events.forEach { _ = handleResolved($0) } }
+        else { cancelCloth?(); clothPrepared = false }
     }
     private func handleResolved(_ event: NSEvent) -> Bool {
         if !event.momentumPhase.isEmpty {
@@ -143,8 +150,27 @@ import WebKit
         cancelCloth?()
         if let direction { feedback(direction, 0, false, false) }
     }
+    /// Notes when the page cancels a wheel event, which a page that pans or zooms with the
+    /// trackpad does, from Rise's own world so pages never see it.
+    static let wheelWatch = #"""
+    (() => {
+      const wheel = window.riseWheel = { prevented: -Infinity };
+      addEventListener('wheel', event => {
+        setTimeout(() => { if (event.defaultPrevented) wheel.prevented = performance.now(); }, 0);
+      }, { capture: true, passive: true });
+    })();
+    """#
+    private static let watched = NSHashTable<WKUserContentController>.weakObjects()
+    static func install(on webView: WKWebView) {
+        let controller = webView.configuration.userContentController
+        // window.open can supply a configuration sharing the opener's controller.
+        guard !watched.contains(controller) else { return }
+        watched.add(controller)
+        controller.addUserScript(WKUserScript(source: wheelWatch, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: world))
+    }
     // CSS coordinates account for WKWebView.pageZoom. Shadow DOM is traversed;
     // iframe contents are conservatively left alone, including cross-origin ones.
+    // A page that cancelled the gesture's first wheel events keeps the gesture.
     static let scrollProbe = #"""
     let node = document.elementFromPoint(x * innerWidth / width, y * innerHeight / height);
     while (node?.shadowRoot) {
@@ -160,8 +186,14 @@ import WebKit
         node = node.parentElement || node.getRootNode()?.host;
     }
     const root = document.scrollingElement;
-    return !root || root.scrollWidth <= root.clientWidth + 1 ||
-        /^(hidden|clip)$/.test(getComputedStyle(root).overflowX);
+    if (root && root.scrollWidth > root.clientWidth + 1 &&
+        !/^(hidden|clip)$/.test(getComputedStyle(root).overflowX)) return false;
+    const wheel = window.riseWheel;
+    if (!wheel) return true;
+    const takesWheel = () => performance.now() - wheel.prevented < 300;
+    if (takesWheel()) return false;
+    await new Promise(resolve => setTimeout(resolve, 50));
+    return !takesWheel();
     """#
 }
 

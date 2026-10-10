@@ -117,8 +117,8 @@ final class HistorySwipeTests: XCTestCase {
             feedback: { _, pull, _, release in if let release { releases.append(release) } else { pulls.append(pull) } })
         router.thresholdClick = { clicks += 1 }
         XCTAssertTrue(router.handle(event(.began, fingerX: 10)))
-        // Give the real isolated DOM probe time to resolve, then reach 120 pt.
-        try await Task.sleep(for: .milliseconds(25))
+        // Let the real isolated DOM probe resolve, then reach 120 pt.
+        try await waitUntil("Probe permits the swipe") { router.gesture.isTracking }
         XCTAssertTrue(router.handle(event(.changed, fingerX: 110)))
         XCTAssertEqual(clicks, 1); XCTAssertEqual(web.title, "three")
         XCTAssertEqual(pulls.last, 1)
@@ -131,13 +131,12 @@ final class HistorySwipeTests: XCTestCase {
         XCTAssertTrue(router.handle(event([], fingerX: 250, momentum: 3)))
         XCTAssertEqual(clicks, 1); XCTAssertEqual(web.title, "two")
         XCTAssertTrue(router.handle(event(.began, fingerX: -120)))
-        try await Task.sleep(for: .milliseconds(25))
-        XCTAssertEqual(clicks, 2); XCTAssertEqual(web.title, "two")
+        try await waitUntil("Forward swipe arms") { clicks == 2 }
+        XCTAssertEqual(web.title, "two")
         XCTAssertTrue(router.handle(event(.cancelled)))
         XCTAssertEqual(releases.last, false); XCTAssertEqual(web.title, "two")
         XCTAssertTrue(router.handle(event(.began, fingerX: -140)))
-        try await Task.sleep(for: .milliseconds(25))
-        XCTAssertTrue(router.gesture.isArmed)
+        try await waitUntil("Forward swipe arms") { router.gesture.isArmed }
         XCTAssertTrue(router.handle(event(.changed, fingerX: 21)))
         XCTAssertFalse(router.gesture.isArmed)
         XCTAssertTrue(router.handle(event(.ended)))
@@ -145,7 +144,7 @@ final class HistorySwipeTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(40))
         XCTAssertEqual(web.title, "two", "A reversed swipe must not navigate on release")
         XCTAssertTrue(router.handle(event(.began, fingerX: -120)))
-        try await Task.sleep(for: .milliseconds(25))
+        try await waitUntil("Forward swipe arms") { router.gesture.isArmed }
         XCTAssertTrue(router.handle(event(.ended)))
         try await waitUntil("Released forward swipe navigates") { web.title == "three" && !web.isLoading }
         XCTAssertEqual(clicks, 4)
@@ -167,6 +166,32 @@ final class HistorySwipeTests: XCTestCase {
         XCTAssertTrue(router.handle(event(.ended)))
         try await waitUntil("Busy-page swipe navigates") { web.title == "two" && !web.isLoading }
         router.cancel()
+        // A canvas that pans with the trackpad keeps the gesture, as in Excalidraw.
+        let canvas = directory.appendingPathComponent("canvas.html")
+        try """
+        <!doctype html><title>canvas</title><style>body{margin:0} canvas{display:block;width:100vw;height:100vh}</style>
+        <canvas></canvas><script>window.pans = 0; addEventListener('wheel', e => { e.preventDefault(); pans++ }, {passive: false})</script>
+        """.write(to: canvas, atomically: true, encoding: .utf8)
+        web.loadFileURL(canvas, allowingReadAccessTo: directory)
+        try await waitUntil("Loaded canvas") { web.title == "canvas" && !web.isLoading }
+        browser.window?.makeKeyAndOrderFront(nil)
+        let center = web.convert(NSPoint(x: web.bounds.midX, y: web.bounds.midY), to: nil)
+        func located(_ event: NSEvent) -> NSEvent {
+            let cg = event.cgEvent!
+            cg.location = NSPoint(x: browser.window!.frame.minX + center.x, y: NSScreen.screens[0].frame.maxY - browser.window!.frame.minY - center.y)
+            return NSEvent(cgEvent: cg)!
+        }
+        let clicksBefore = clicks
+        XCTAssertTrue(router.handle(located(event(.began, fingerX: 30))))
+        for _ in 0..<4 { _ = router.handle(located(event(.changed, fingerX: 40))); try await Task.sleep(for: .milliseconds(16)) }
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertFalse(router.handle(located(event(.changed, fingerX: 40))), "The canvas gets the rest of the pan")
+        XCTAssertFalse(router.gesture.isTracking)
+        XCTAssertEqual(clicks, clicksBefore)
+        let pans = try await web.evaluateJavaScript("pans") as? Int ?? 0
+        XCTAssertGreaterThanOrEqual(pans, 3, "The canvas saw the pan from its first events; WebKit may coalesce some")
+        _ = router.handle(located(event(.ended)))
+        XCTAssertEqual(web.title, "canvas")
     }
     @MainActor func testDOMProbePreservesHorizontalContainersShadowDOMIframesAndZoom() async throws {
         _ = NSApplication.shared
@@ -192,6 +217,37 @@ final class HistorySwipeTests: XCTestCase {
             arguments: ["x": 40, "y": 30, "width": 800, "height": 600],
             in: nil, contentWorld: HistorySwipeController.world)
         XCTAssertEqual(result as? Bool, false)
+        web.stopLoading()
+    }
+    @MainActor func testPagesThatTakeTheWheelKeepTheGesture() async throws {
+        _ = NSApplication.shared
+        let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        HistorySwipeController.install(on: web)
+        // Like Excalidraw, a canvas pans by cancelling wheel events instead of scrolling.
+        web.loadHTMLString("""
+        <!doctype html><style>body{margin:0} canvas{display:block;width:100vw;height:100vh}</style>
+        <canvas></canvas><script>window.pans = 0; document.querySelector('canvas').addEventListener('wheel',
+        e => { e.preventDefault(); pans++ }, {passive: false})</script>
+        """, baseURL: nil)
+        try await waitUntil("Fixture ready") { !web.isLoading }
+        func probe() async throws -> Bool? {
+            try await web.callAsyncJavaScript(HistorySwipeController.scrollProbe,
+                arguments: ["x": 400, "y": 300, "width": 800, "height": 600],
+                in: nil, contentWorld: HistorySwipeController.world) as? Bool
+        }
+        let permitted = try await probe()
+        XCTAssertEqual(permitted, true, "A page that hasn't cancelled any wheel still swipes")
+        let wheel = "document.querySelector('canvas').dispatchEvent(new WheelEvent('wheel', {deltaX: -40, bubbles: true, cancelable: true}))"
+        _ = try await web.evaluateJavaScript(wheel)
+        let panning = try await probe()
+        XCTAssertEqual(panning, false, "The page cancelled the gesture's wheel, so it pans instead")
+        let pans = try await web.evaluateJavaScript("pans") as? Int
+        XCTAssertEqual(pans, 1)
+        let hidden = try await web.evaluateJavaScript("typeof window.riseWheel") as? String
+        XCTAssertEqual(hidden, "undefined", "Rise's watcher stays out of the page's world")
+        try await Task.sleep(for: .milliseconds(350))
+        let later = try await probe()
+        XCTAssertEqual(later, true, "An old pan doesn't hold back a later swipe")
         web.stopLoading()
     }
     @MainActor func testArrowheadShortensAndReversedReleaseStillSpringsWithoutCommitting() async throws {

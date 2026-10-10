@@ -466,6 +466,7 @@ import RiseCore
         tab.showsRepositorySubtitle = showsRepositorySubtitle
         tab.webView.appearance = theme.appearance; tab.webView.underPageBackgroundColor = theme.page
         adBlocker.install(on: tab.webView)
+        HistorySwipeController.install(on: tab.webView)
         tab.prepareForLoad = { [weak self] web in try await self?.adBlocker.prepare(web) }
         tab.onLoadError = { [weak self, weak tab] error in
             if let tab { self?.showNavigationError(error, in: tab.webView) }

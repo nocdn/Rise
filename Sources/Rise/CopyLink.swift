@@ -11,7 +11,7 @@ import AppKit
         sidebar.copyButton.showCopied()
         siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); hidePalette()
         showInfo("Link copied", image: InfoPlaque.linkCopiedIcon,
-                 action: .init(symbol: "square.and.arrow.up", title: "Send Link via AirDrop") { [weak self] in self?.sendLinkViaAirDrop(url) }, kind: "link")
+                 action: .init(symbol: PopoverActionButton.shareSymbol, title: "Send Link via AirDrop") { [weak self] in self?.sendLinkViaAirDrop(url) }, kind: "link")
     }
     func sendLinkViaAirDrop(_ url: URL) {
         if let airDropHandler { airDropHandler(url); return }
