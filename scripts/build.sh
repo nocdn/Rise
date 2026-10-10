@@ -13,6 +13,10 @@ cp .build/release/Rise "$APP/Contents/MacOS/Rise"
 cp -R .build/release/Rise_Rise.bundle "$APP/Contents/Resources/"
 cp scripts/Info.plist "$APP/Contents/Info.plist"
 cp THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/THIRD_PARTY_NOTICES.md"
-if [[ -f scripts/Rise.icns ]]; then cp scripts/Rise.icns "$APP/Contents/Resources/"; fi
+# The icon is an Icon Composer document of the square artwork: macOS 26 and later round and light
+# it themselves, and actool prerenders the rounded icon earlier versions show (Assets.car, Rise.icns).
+xcrun actool scripts/Rise.icon --compile "$APP/Contents/Resources" --app-icon Rise --include-all-app-icons \
+  --output-partial-info-plist .build/icon-info.plist --target-device mac --platform macosx \
+  --minimum-deployment-target 14.0 --output-format human-readable-text --errors > /dev/null
 python3 scripts/sign-app.py "$APP"
 echo "Built $APP"
