@@ -578,30 +578,40 @@ final class YouTubePictureInPictureTests: XCTestCase {
         XCTAssertFalse(plain.close.isHidden); XCTAssertTrue(plain.playback.isHidden, "Tabs without a video have no play button")
     }
 
-    func testYouTubeTitlesLoseOnlyTheirNotificationCount() {
+    func testYouTubeXAndGmailTitlesLoseOnlyTheirNotificationCount() {
         let youtube = URL(string: "https://www.youtube.com/watch?v=abc")
-        XCTAssertEqual(YouTubeVideoPage.removingNotificationCount(from: "(7) It's Finally Happened - YouTube", url: youtube), "It's Finally Happened - YouTube")
-        XCTAssertEqual(YouTubeVideoPage.removingNotificationCount(from: "(9+) YouTube", url: URL(string: "https://youtube.com/")), "YouTube")
-        XCTAssertEqual(YouTubeVideoPage.removingNotificationCount(from: "(2024) Film - YouTube", url: youtube), "(2024) Film - YouTube")
-        XCTAssertEqual(YouTubeVideoPage.removingNotificationCount(from: "(7) ", url: youtube), "(7) ")
-        XCTAssertEqual(YouTubeVideoPage.removingNotificationCount(from: "(7) Inbox", url: URL(string: "https://mail.example.com/")), "(7) Inbox")
+        XCTAssertEqual(TitleNotificationCount.removing(from: "(7) It's Finally Happened - YouTube", url: youtube), "It's Finally Happened - YouTube")
+        XCTAssertEqual(TitleNotificationCount.removing(from: "(9+) YouTube", url: URL(string: "https://youtube.com/")), "YouTube")
+        XCTAssertEqual(TitleNotificationCount.removing(from: "(2024) Film - YouTube", url: youtube), "(2024) Film - YouTube")
+        XCTAssertEqual(TitleNotificationCount.removing(from: "(7) ", url: youtube), "(7) ")
+        XCTAssertEqual(TitleNotificationCount.removing(from: "(7) Inbox", url: URL(string: "https://mail.example.com/")), "(7) Inbox")
+        let x = URL(string: "https://x.com/SebCornelius/status/1")
+        XCTAssertEqual(TitleNotificationCount.removing(from: "(7) Seb Cornelius on X: \"Building\"", url: x), "Seb Cornelius on X: \"Building\"")
+        XCTAssertEqual(TitleNotificationCount.removing(from: "(20+) Home / X", url: URL(string: "https://twitter.com/home")), "Home / X")
+        let gmail = URL(string: "https://mail.google.com/mail/u/0/#inbox")
+        XCTAssertEqual(TitleNotificationCount.removing(from: "Inbox (49) - name@gmail.com - Gmail", url: gmail), "Inbox - name@gmail.com - Gmail")
+        XCTAssertEqual(TitleNotificationCount.removing(from: "Updates (1,234) - name@gmail.com - Gmail", url: gmail), "Updates - name@gmail.com - Gmail")
+        XCTAssertEqual(TitleNotificationCount.removing(from: "(1,582) - name@gmail.com - Gmail", url: gmail), "name@gmail.com - Gmail")
+        XCTAssertEqual(TitleNotificationCount.removing(from: "Re: Budget (2024) - name@gmail.com - Gmail", url: gmail), "Re: Budget (2024) - name@gmail.com - Gmail",
+                       "A number in an email's subject is the subject's")
+        XCTAssertEqual(TitleNotificationCount.removing(from: "Inbox - name@gmail.com - Gmail", url: gmail), "Inbox - name@gmail.com - Gmail")
     }
 
     @MainActor func testTheYouTubeNotificationCountSettingIsOnByDefaultAndCanBeTurnedOff() async throws {
         let browser = browser(); defer { clean(browser) }
-        XCTAssertTrue(browser.hidesYouTubeNotificationCount)
+        XCTAssertTrue(browser.hidesNotificationCounts)
         let tab = browser.addTab()
         tab.webView.loadHTMLString("<title>(7) Some Video - YouTube</title>", baseURL: URL(string: "https://www.youtube.com/watch?v=abc"))
         try await wait("title") { tab.webView.title == "(7) Some Video - YouTube" }
         tab.changed()
         XCTAssertEqual(tab.title, "Some Video - YouTube")
-        browser.setHidesYouTubeNotificationCount(false)
-        XCTAssertFalse(browser.hidesYouTubeNotificationCount)
+        browser.setHidesNotificationCounts(false)
+        XCTAssertFalse(browser.hidesNotificationCounts)
         XCTAssertEqual(tab.title, "(7) Some Video - YouTube")
-        XCTAssertEqual(browser.makeMoreSiteMenu().items.first { $0.title == "Hide YouTube Notification Count" }?.state, .off)
-        browser.setHidesYouTubeNotificationCount(true)
+        XCTAssertEqual(browser.makeMoreSiteMenu().items.first { $0.title == "Hide Notification Counts" }?.state, .off)
+        browser.setHidesNotificationCounts(true)
         XCTAssertEqual(tab.title, "Some Video - YouTube")
-        XCTAssertEqual(browser.makeMoreSiteMenu().items.first { $0.title == "Hide YouTube Notification Count" }?.state, .on)
+        XCTAssertEqual(browser.makeMoreSiteMenu().items.first { $0.title == "Hide Notification Counts" }?.state, .on)
     }
 
     @MainActor func testTheRepositorySubtitleSettingIsOnByDefaultAndCanBeTurnedOff() throws {

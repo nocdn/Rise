@@ -50,7 +50,7 @@ import RiseCore
         pagePaint.didFinish(webView)
         if let tab = tabs.first(where: { $0.webView === webView }), let url = tab.url, url.absoluteString != "about:blank" {
             tab.captureThumbnail()
-            browsingHistory.record(url, title: webView.title ?? tab.title)
+            browsingHistory.record(url, title: historyTitle(webView.title ?? tab.title, url: url))
             discoverPageFavicon(webView)
         }; update()
         if let tab = tabs.first(where: { $0.webView === webView }) { findBars[tab.id]?.pageChanged() }

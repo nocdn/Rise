@@ -69,7 +69,7 @@ import WebKit
         attachVisiblePages(); updatePeekCovers(); layoutChrome()
         findBars[tab.id]?.pageChanged()
         if recordsVisit, let url = tab.url, url.absoluteString != "about:blank" {
-            browsingHistory.record(url, title: tab.webView.title ?? tab.title)
+            browsingHistory.record(url, title: historyTitle(tab.webView.title ?? tab.title, url: url))
             discoverPageFavicon(tab.webView)
         }
         if tab.id == selectedID { window?.makeFirstResponder(tab.webView) }

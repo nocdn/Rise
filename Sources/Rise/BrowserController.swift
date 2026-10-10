@@ -466,7 +466,7 @@ import RiseCore
             }
             web.openInPeek = { [weak self, weak web] url in self?.showPeek(url: url, from: web) }
         }
-        tab.hidesYouTubeNotificationCount = hidesYouTubeNotificationCount
+        tab.hidesNotificationCounts = hidesNotificationCounts
         tab.showsRepositorySubtitle = showsRepositorySubtitle
         tab.webView.appearance = theme.appearance; tab.webView.underPageBackgroundColor = theme.page
         adBlocker.install(on: tab.webView)
@@ -488,7 +488,7 @@ import RiseCore
             self.suggestionFavicons.remember(tab)
             self.siteSearchLearner.addressChanged(tab.webView)
             if !tab.webView.isLoading, let url = tab.webView.url, let title = tab.webView.title {
-                self.browsingHistory.updateTitle(title, for: url)
+                self.browsingHistory.updateTitle(self.historyTitle(title, url: url), for: url)
             }
             self.update()
         }

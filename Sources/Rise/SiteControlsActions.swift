@@ -34,8 +34,8 @@ import Vision
         menu.addItem(makeThemeMenu())
         menu.addItem(makeAIProviderMenu())
         menu.addItem(makeGmailCategoryMenu())
-        menu.addItem(menuItem("Hide YouTube Notification Count", checked: hidesYouTubeNotificationCount) { [weak self] in
-            self?.setHidesYouTubeNotificationCount(!(self?.hidesYouTubeNotificationCount ?? true))
+        menu.addItem(menuItem("Hide Notification Counts", checked: hidesNotificationCounts) { [weak self] in
+            self?.setHidesNotificationCounts(!(self?.hidesNotificationCounts ?? true))
         })
         menu.addItem(menuItem("Show Repository Under Merge Request Tabs", checked: showsRepositorySubtitle) { [weak self] in
             self?.setShowsRepositorySubtitle(!(self?.showsRepositorySubtitle ?? true))
@@ -53,12 +53,17 @@ import Vision
         }
         return menu
     }
-    static let youTubeNotificationCountKey = "Rise.HideYouTubeNotificationCount"
+    /// Named for YouTube, the first site it covered, so the setting carries over.
+    static let notificationCountsKey = "Rise.HideYouTubeNotificationCount"
     /// On unless turned off in the site controls' More menu.
-    var hidesYouTubeNotificationCount: Bool { preferences.object(forKey: Self.youTubeNotificationCountKey) as? Bool ?? true }
-    func setHidesYouTubeNotificationCount(_ value: Bool) {
-        preferences.set(value, forKey: Self.youTubeNotificationCountKey)
-        for tab in tabs + (peekTab.map { [$0] } ?? []) { tab.hidesYouTubeNotificationCount = value; tab.changed() }
+    var hidesNotificationCounts: Bool { preferences.object(forKey: Self.notificationCountsKey) as? Bool ?? true }
+    /// A page's title as history keeps it: a count of the moment isn't worth remembering.
+    func historyTitle(_ title: String, url: URL) -> String {
+        hidesNotificationCounts ? TitleNotificationCount.removing(from: title, url: url) : title
+    }
+    func setHidesNotificationCounts(_ value: Bool) {
+        preferences.set(value, forKey: Self.notificationCountsKey)
+        for tab in tabs + (peekTab.map { [$0] } ?? []) { tab.hidesNotificationCounts = value; tab.changed() }
     }
     static let repositorySubtitleKey = "Rise.ShowRepositorySubtitle"
     /// On unless turned off in the site controls' More menu.

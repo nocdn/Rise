@@ -13,7 +13,7 @@ import RiseCore
     var title: String
     var customTitle: String?
     /// Leaves YouTube's notification count out of the title.
-    var hidesYouTubeNotificationCount = true
+    var hidesNotificationCounts = true
     /// Shows a merge request's project under its title in the tab list.
     var showsRepositorySubtitle = true
     var pinned: Bool
@@ -185,7 +185,7 @@ import RiseCore
         if AddressResolver.isLocal(url) { developer = true }
         if let customTitle { title = customTitle }
         else if let value = webView.title, !value.isEmpty {
-            title = hidesYouTubeNotificationCount ? YouTubeVideoPage.removingNotificationCount(from: value, url: url) : value
+            title = hidesNotificationCounts ? TitleNotificationCount.removing(from: value, url: url) : value
         }
         else if let url, url.absoluteString != "about:blank" { title = AddressResolver.displayHost(url) }
         updateIcon(); onChange?()
