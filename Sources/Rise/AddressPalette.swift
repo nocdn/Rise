@@ -58,6 +58,8 @@ struct AddressSuggestion {
     private var swapLink: CADisplayLink?, lastSwapTick: CFTimeInterval = 0
     /// A site's icon, from what's been loaded for the address suggestions.
     var siteFavicon: ((URL) -> NSImage?)?
+    /// A site whose search was learned from searching on it.
+    var learnedSite: ((String) -> PopularSite?)?
     /// The site the field fills in, behind the rows rather than among them.
     private(set) var autofill: AddressSuggestion?
     /// Everything the address showed before Tab, to step straight back to.
@@ -135,7 +137,13 @@ struct AddressSuggestion {
         return list.filter { !$0.isAutofill }
     }
     /// The site the field holds, or is filling in, or is searching: its icon leads the field.
-    private var fieldSite: PopularSite? { siteSearch ?? PopularSites.site(forAddress: input.stringValue) }
+    private var fieldSite: PopularSite? { siteSearch ?? site(forAddress: input.stringValue) }
+    /// A well-known site Rise searches itself, or else one whose search it learned.
+    private func site(forAddress text: String) -> PopularSite? {
+        let popular = PopularSites.site(forAddress: text)
+        if popular?.isSearchable == true { return popular }
+        return learnedSite?(text) ?? popular
+    }
     private func updateLeadingIcon() {
         let address = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if let site = fieldSite, let favicon = siteFavicon?(site.homeURL) {
@@ -386,7 +394,7 @@ struct AddressSuggestion {
     }
     /// Offers the site's search while the address is a site that has one.
     private func updateOffer() {
-        let site = siteSearch == nil ? PopularSites.site(forAddress: input.stringValue).flatMap { $0.isSearchable ? $0 : nil } : nil
+        let site = siteSearch == nil ? site(forAddress: input.stringValue).flatMap { $0.isSearchable ? $0 : nil } : nil
         guard site != offeredSite else { return }
         offeredSite = site
         if let site { siteHint.configure(site: site.name, theme: theme) }

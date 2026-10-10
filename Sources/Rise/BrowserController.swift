@@ -85,6 +85,7 @@ import RiseCore
     var selectedTab: BrowserTab? { tabs.first { $0.id == selectedID } }
     var closedTabs: [SavedTab] = []
     let browsingHistory: BrowsingHistory
+    let siteSearchLearner: SiteSearchLearner
     let suggestionFavicons: SuggestionFavicons
     let googleSearchSuggestions: GoogleSearchSuggestions
     var theme: RiseTheme = .neutral
@@ -178,6 +179,7 @@ import RiseCore
         let sessionURL = sessionURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Rise/session.json")
         self.sessionURL = sessionURL
         browsingHistory = BrowsingHistory(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("history.json"))
+        siteSearchLearner = SiteSearchLearner(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("searches.json"))
         suggestionFavicons = SuggestionFavicons(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("suggestion-icons.json"))
         let window = BrowserWindow(contentRect: NSRect(x: 0, y: 0, width: 1496, height: 944), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         super.init(window: window)
@@ -342,6 +344,8 @@ import RiseCore
         palette.dismiss = { [weak self] in self?.hidePalette() }
         palette.queryChanged = { [weak self] text in self?.suggestions(for: text) ?? [] }
         palette.submit = { [weak self] text, suggestion in self?.submitAddress(text, suggestion: suggestion) }
+        palette.learnedSite = { [weak self] text in self?.siteSearchLearner.searches.site(forAddress: text) }
+        siteSearchLearner.onLearn = { [weak self] in self?.scheduleSave() }
         palette.siteFavicon = { [weak self] url in
             guard let self else { return nil }
             return self.suggestionFavicons.image(for: url, dark: self.theme == .dark)
@@ -467,6 +471,7 @@ import RiseCore
         tab.webView.appearance = theme.appearance; tab.webView.underPageBackgroundColor = theme.page
         adBlocker.install(on: tab.webView)
         HistorySwipeController.install(on: tab.webView)
+        siteSearchLearner.install(on: tab.webView)
         tab.prepareForLoad = { [weak self] web in try await self?.adBlocker.prepare(web) }
         tab.onLoadError = { [weak self, weak tab] error in
             if let tab { self?.showNavigationError(error, in: tab.webView) }
@@ -481,6 +486,7 @@ import RiseCore
         tab.onChange = { [weak self, weak tab] in
             guard let self, let tab else { return }
             self.suggestionFavicons.remember(tab)
+            self.siteSearchLearner.addressChanged(tab.webView)
             if !tab.webView.isLoading, let url = tab.webView.url, let title = tab.webView.title {
                 self.browsingHistory.updateTitle(title, for: url)
             }
@@ -663,7 +669,7 @@ import RiseCore
     }
     func saveNow() {
         suggestionFavicons.save()
-        do { try browsingHistory.save() }
+        do { try browsingHistory.save(); try siteSearchLearner.searches.save() }
         catch { NSLog("Rise history save failed: %@", error.localizedDescription) }
         let state = BrowserSession(tabs: tabs.map(\.saved), selectedID: selectedID, theme: automaticTheme ? Self.automaticThemeName : theme.rawValue, sidebarWidth: sidebarWidth, splitGroups: splitGroups)
         guard state != lastSaved else { return }

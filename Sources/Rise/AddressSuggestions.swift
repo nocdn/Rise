@@ -35,10 +35,16 @@ import RiseCore
         // Editing the current page's own address, a row for that page would only repeat the field
         // (which shows its icon instead), so neither its typed row nor its tab is offered.
         if isEditingCurrentAddress(query), let url = selectedTab?.url, let key = BrowsingHistory.key(url) { seen.insert(key) }
-        // A learned literal URL prefix takes Enter/autocomplete priority.
+        // A learned literal URL prefix takes Enter/autocomplete priority. Typing a site's name
+        // fills in the site, not the page last visited on it.
         if !query.isEmpty, let first = ranked.first, let url = URL(string: first.url),
-           BrowsingHistory.completion(for: query, url: url) != nil {
-            appendHistory(first, typed: true)
+           let completion = BrowsingHistory.completion(for: query, url: url) {
+            if let site = BrowsingHistory.site(of: url), BrowsingHistory.completion(for: query, url: site) == completion {
+                let key = BrowsingHistory.key(site), saved = browsingHistory.entries.first { $0.url == key }
+                let domain = PopularSites.domain(ofAddress: site.absoluteString)
+                let title = PopularSites.site(forAddress: domain)?.name ?? openTab(for: site)?.title ?? saved?.title ?? domain
+                appendSite(title: title, url: site, learned: true, typed: true)
+            } else { appendHistory(first, typed: true) }
         }
         // Otherwise a well-known site whose address this starts fills in, as in other browsers.
         if result.first?.completion == nil, let popular = PopularSites.completion(for: query),
@@ -127,7 +133,7 @@ import RiseCore
         }
     }
     func clearBrowsingHistory() throws {
-        try browsingHistory.clear()
+        try browsingHistory.clear(); try siteSearchLearner.searches.clear()
         palette.removeInlineCompletion(); palette.refresh()
     }
 }

@@ -80,15 +80,32 @@ public final class BrowsingHistory {
 
     /// Only complete a literal URL prefix, never a title/search substring.
     /// Keep the user's prefix/casing and select only the appended suffix in UI.
+    /// Typing a site's name fills in only the site, as in other browsers; its
+    /// pages are filled in once the address goes on past the site.
     public static func completion(for query: String, url: URL) -> String? {
         guard query.count >= 2, !query.contains(where: { $0.isWhitespace }),
               let key = key(url) else { return nil }
-        for candidate in forms(key) where candidate.lowercased().hasPrefix(query.lowercased()) {
+        for var candidate in forms(key) where candidate.lowercased().hasPrefix(query.lowercased()) {
+            let site = siteEnd(candidate)
+            if query.utf16.count <= site { candidate = (candidate as NSString).substring(to: site) }
             guard candidate.utf16.count > query.utf16.count else { return nil }
             let suffix = (candidate as NSString).substring(from: query.utf16.count)
             return query + suffix
         }
         return nil
+    }
+    /// The site a page is on: its address with only "/" for a path.
+    public static func site(of url: URL) -> URL? {
+        guard let key = key(url), var parts = URLComponents(string: key) else { return nil }
+        parts.percentEncodedPath = "/"; parts.percentEncodedQuery = nil
+        return parts.url
+    }
+    /// Where an address's site ends: the first "/" after its scheme, or its end.
+    private static func siteEnd(_ address: String) -> Int {
+        let text = address as NSString
+        let scheme = text.range(of: "://"), start = scheme.location == NSNotFound ? 0 : NSMaxRange(scheme)
+        let slash = text.range(of: "/", range: NSRange(location: start, length: text.length-start))
+        return slash.location == NSNotFound ? text.length : slash.location
     }
     private static func forms(_ address: String) -> [String] {
         guard let separator = address.range(of: "://") else { return [address] }

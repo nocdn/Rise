@@ -10,6 +10,9 @@ public struct PopularSite: Equatable {
     /// The brand color, for when its icon hasn't loaded; nil for black-and-white brands.
     public let color: UInt32?
 
+    public init(name: String, domain: String, search: String?, color: UInt32?) {
+        self.name = name; self.domain = domain; self.search = search; self.color = color
+    }
     public var homeURL: URL { URL(string: "https://" + domain)! }
     public var isSearchable: Bool { search != nil }
     public func searchURL(for query: String) -> URL? {
@@ -156,11 +159,16 @@ public enum PopularSites {
         return nil
     }
 
-    /// The site whose address `text` is exactly, in any region's form: its search goes to that domain.
-    public static func site(forAddress text: String, in region: String? = region) -> PopularSite? {
+    /// An address as a bare domain: no scheme, "www." or trailing slash, in lowercase.
+    public static func domain(ofAddress text: String) -> String {
         var address = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         for prefix in ["https://", "http://", "www."] where address.hasPrefix(prefix) { address.removeFirst(prefix.count) }
         if address.hasSuffix("/") { address.removeLast() }
+        return address
+    }
+    /// The site whose address `text` is exactly, in any region's form: its search goes to that domain.
+    public static func site(forAddress text: String, in region: String? = region) -> PopularSite? {
+        let address = domain(ofAddress: text)
         guard !address.isEmpty else { return nil }
         for entry in entries {
             if let domain = entry.domains.first(where: { $0 == address }) {

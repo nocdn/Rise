@@ -39,8 +39,12 @@ final class BrowsingHistoryTests: XCTestCase {
     }
     func testCompletionIsALiteralPrefixAndRetainsSchemePortPathQueryAndUserCasing() {
         let url = URL(string: "https://www.example.com:8443/docs?section=swift")!
-        XCTAssertEqual(BrowsingHistory.completion(for: "EXam", url: url), "EXample.com:8443/docs?section=swift")
-        XCTAssertEqual(BrowsingHistory.completion(for: "https://www.ex", url: url), url.absoluteString)
+        XCTAssertEqual(BrowsingHistory.completion(for: "EXam", url: url), "EXample.com:8443", "A site's name fills in only the site")
+        XCTAssertEqual(BrowsingHistory.completion(for: "https://www.ex", url: url), "https://www.example.com:8443")
+        XCTAssertNil(BrowsingHistory.completion(for: "example.com:8443", url: url), "The whole site typed has nothing to fill in")
+        XCTAssertEqual(BrowsingHistory.completion(for: "example.com:8443/", url: url), "example.com:8443/docs?section=swift")
+        XCTAssertEqual(BrowsingHistory.completion(for: "https://www.example.com:8443/d", url: url), url.absoluteString)
+        XCTAssertEqual(BrowsingHistory.site(of: url), URL(string: "https://www.example.com:8443/"))
         XCTAssertNil(BrowsingHistory.completion(for: "docs", url: url))
         XCTAssertNil(BrowsingHistory.completion(for: "example swift", url: url))
         XCTAssertNil(BrowsingHistory.completion(for: "e", url: url))
