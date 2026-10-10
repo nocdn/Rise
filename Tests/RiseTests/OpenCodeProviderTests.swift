@@ -159,7 +159,7 @@ private final class OpenCodeProtocol: URLProtocol {
         XCTAssertEqual(browser.aiProvider, .openCode)
         XCTAssertEqual(checked(), ["OpenCode"])
         XCTAssertEqual(FindBar.answeredBy(browser.aiProvider), "Answered by gpt-6-luna via OpenCode")
-        XCTAssertEqual(browser.pullRequestHover.summaries.provider(), .openCode)
+        XCTAssertEqual(browser.tabHoverCards.summaries.provider(), .openCode)
     }
 }
 

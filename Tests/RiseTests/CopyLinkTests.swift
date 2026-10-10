@@ -13,8 +13,7 @@ final class CopyLinkTests: XCTestCase {
         return browser
     }
     @MainActor private func clean(_ browser: BrowserController) {
-        browser.copiedLinkPopover.animates = false; browser.siteControlsPopover.animates = false
-        browser.copiedLinkPopover.close(); browser.siteControlsPopover.close()
+        browser.siteControlsPopover.animates = false; browser.siteControlsPopover.close(); browser.infoPlaque.hide()
         browser.saveWork?.cancel(); browser.tabs.forEach { $0.cancelLoad() }; browser.window?.orderOut(nil)
         browser.linkPasteboard.releaseGlobally()
         try? FileManager.default.removeItem(at: browser.sessionURL.deletingLastPathComponent())
@@ -25,22 +24,35 @@ final class CopyLinkTests: XCTestCase {
         browser.copyURL()
         XCTAssertEqual(browser.linkPasteboard.string(forType: .string), url.absoluteString)
         XCTAssertTrue(browser.sidebar.copyButton.isShowingConfirmation)
-        let content = try XCTUnwrap(browser.copiedLinkPopover.contentViewController as? CopiedLinkController)
-        XCTAssertEqual(content.message.stringValue, "Link copied")
-        XCTAssertEqual(content.url, url)
-        XCTAssertEqual(browser.copiedLinkPopover.behavior, .transient)
+        let notice = browser.infoPlaque
+        XCTAssertTrue(notice.isPresented); XCTAssertEqual(notice.text, "Link copied")
+        let share = try XCTUnwrap(notice.actionButton)
+        XCTAssertEqual(share.accessibilityLabel(), "Send Link via AirDrop")
+        notice.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThanOrEqual(share.frame.minX, InfoPlaque.inset+InfoPlaque.iconSize+InfoPlaque.iconGap+InfoPlaque.width(of: "Link copied"),
+                                    "The share button comes after the text")
+        let center = notice.convert(NSPoint(x: share.bounds.midX, y: share.bounds.midY), from: share)
+        XCTAssertTrue(notice.hitTest(notice.convert(center, to: notice.superview)) === share, "The share button takes clicks")
+        XCTAssertNil(notice.hitTest(notice.convert(NSPoint(x: notice.panel.frame.minX+4, y: notice.panel.frame.midY), to: notice.superview)),
+                     "The rest of the notice leaves clicks to the page")
         var shared: URL?
         browser.airDropHandler = { shared = $0 }
         browser.selectedTab?.requestedURL = URL(string: "https://different.example")
-        // XCTest has no NSApplication.run animation loop. The native-window
-        // harness separately verifies animated opening and dismissal.
-        browser.copiedLinkPopover.animates = false
-        content.shareButton.performClick(nil)
-        XCTAssertEqual(shared, url)
-        try await Task.sleep(for: .milliseconds(350))
-        XCTAssertFalse(browser.copiedLinkPopover.isShown)
-        try await Task.sleep(for: .milliseconds(800))
+        share.performClick(nil)
+        XCTAssertEqual(shared, url); XCTAssertFalse(notice.isPresented, "Sharing puts the notice away")
+        try await Task.sleep(for: .milliseconds(1100))
         XCTAssertFalse(browser.sidebar.copyButton.isShowingConfirmation, "Restore the link glyph after one second")
+        // The pointer over a notice with a button holds it until it leaves.
+        browser.selectedTab?.requestedURL = url; browser.copyURL()
+        notice.setHovered(true)
+        try await Task.sleep(for: .milliseconds(1300))
+        XCTAssertTrue(notice.isPresented)
+        notice.setHovered(false)
+        try await Task.sleep(for: .milliseconds(1200))
+        XCTAssertFalse(notice.isPresented)
+        // Other notices have no button and never wait for the pointer.
+        browser.showInfo("Simulated full screen enabled", image: InfoPlaque.fullScreenIcon)
+        XCTAssertNil(notice.actionButton)
     }
     @MainActor func testShortcutAndHiddenSidebarCopy() async throws {
         let browser = browser(); defer { clean(browser) }
@@ -51,12 +63,20 @@ final class CopyLinkTests: XCTestCase {
         browser.toggleSidebar(); XCTAssertFalse(browser.sidebarVisible)
         let key = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command,.shift], timestamp: 0, windowNumber: browser.window!.windowNumber, context: nil, characters: "C", charactersIgnoringModifiers: "C", isARepeat: false, keyCode: 8)!
         XCTAssertTrue(NSApp.mainMenu!.performKeyEquivalent(with: key))
-        XCTAssertTrue(browser.sidebarVisible)
+        XCTAssertFalse(browser.sidebarVisible, "The notice needs no sidebar to point from")
         XCTAssertEqual(browser.linkPasteboard.string(forType: .string), browser.selectedTab!.url!.absoluteString)
-        browser.copiedLinkPopover.animates = false
-        browser.addTab(); try await Task.sleep(for: .milliseconds(350)); XCTAssertFalse(browser.copiedLinkPopover.isShown)
+        XCTAssertTrue(browser.infoPlaque.isPresented); XCTAssertEqual(browser.infoPlaque.text, "Link copied")
+        // Each press holds the notice for another full second.
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertTrue(NSApp.mainMenu!.performKeyEquivalent(with: key))
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertTrue(browser.infoPlaque.isPresented, "Pressing again restarts the dismiss timer")
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertFalse(browser.infoPlaque.isPresented)
+        browser.addTab()
         browser.linkPasteboard.clearContents(); browser.copyURL()
         XCTAssertNil(browser.linkPasteboard.string(forType: .string), "Blank tabs have no link to copy")
+        XCTAssertFalse(browser.infoPlaque.isPresented)
     }
     @MainActor func testSidebarHoverAndOpenSettingsPreserveControlVisibilityGeometryAndAnchor() async throws {
         let browser = browser(); defer { clean(browser) }

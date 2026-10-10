@@ -10,7 +10,6 @@ import AppKit
 }
 @MainActor final class CopyLinkVerification: NSObject, NSApplicationDelegate {
     var browser: BrowserController!
-    var closingTime: TimeInterval?
     func applicationDidFinishLaunching(_ notification: Notification) {
         Task { [self] in
             do {
@@ -35,18 +34,14 @@ import AppKit
                 check(browser.siteControlsPopover.isShown, "Settings remain open after hovering out of the sidebar")
                 check(browser.sidebar.settingsButton.alphaValue == 1 && browser.sidebar.copyButton.alphaValue == 1, "URL controls stay visible while settings is open")
                 browser.copyURL(); try await Task.sleep(for: .milliseconds(350))
-                check(browser.copiedLinkPopover.isShown, "Native copy confirmation opens")
-                check(browser.copiedLinkPopover.animates == !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, "Native popover animations respect Reduce Motion")
-                let content = browser.copiedLinkPopover.contentViewController as! CopiedLinkController
-                check(content.view is CopyConfirmationView && !content.view.subviews.contains { $0 is NSVisualEffectView }, "Native popover material is not covered by a second material")
-                check(abs(content.shareButton.frame.minX-content.message.frame.maxX-8) < 0.1, "Text/button spacing is tightened to 8 points")
-                let rect = content.view.window!.convertToScreen(content.view.convert(content.view.bounds, to: nil))
-                let bar = browser.sidebar.address
-                let anchor = browser.window!.convertToScreen(bar.convert(bar.bounds, to: nil))
-                check(rect.minX >= anchor.maxX-2 && abs(rect.midY-anchor.midY) < 12, "Popover points sideways into URL bar: \(rect), \(anchor)")
+                let notice = browser.infoPlaque
+                check(notice.isPresented && notice.text == "Link copied", "Copying shows the blue notice")
+                let share = notice.actionButton!
+                let label = notice.panel.frame.minX+InfoPlaque.inset+InfoPlaque.iconSize+InfoPlaque.iconGap+InfoPlaque.width(of: "Link copied")
+                check(abs(notice.convert(share.frame, from: share.superview).minX-label-InfoPlaque.buttonGap) < 0.5, "The share button sits 8 points after the text")
                 check(browser.linkPasteboard.string(forType: .string) == tab.url!.absoluteString, "Full URL is copied")
                 if let folder = ProcessInfo.processInfo.environment["RISE_POPOVER_FRAMES"] {
-                    let view = content.view.window!.contentView!.superview!
+                    let view = browser.root
                     let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
                     view.cacheDisplay(in: view.bounds, to: bitmap)
                     try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: folder).appendingPathComponent("copied-link.png"))
@@ -54,35 +49,48 @@ import AppKit
                 let copied = tab.url!; var sent: URL?
                 browser.airDropHandler = { sent = $0 }
                 tab.requestedURL = URL(string: "https://changed.example")
-                content.shareButton.performClick(nil)
+                share.performClick(nil)
                 try await Task.sleep(for: .milliseconds(900))
-                check(sent == copied && !browser.copiedLinkPopover.isShown, "Share button uses the copied link and closes confirmation: sent=\(String(describing: sent)), shown=\(browser.copiedLinkPopover.isShown)")
+                check(sent == copied && !notice.isPresented, "Share button uses the copied link and puts the notice away: sent=\(String(describing: sent)), shown=\(notice.isPresented)")
+                tab.requestedURL = copied
                 browser.toggleSidebar(); browser.copyURL()
                 try await Task.sleep(for: .milliseconds(80))
-                check(browser.sidebarVisible && browser.copiedLinkPopover.isShown, "Copying with a hidden sidebar restores the anchor instantly")
-                let timed = browser.copiedLinkPopover.contentViewController as! CopiedLinkController
-                let observer = NotificationCenter.default.addObserver(forName: NSPopover.willCloseNotification, object: browser.copiedLinkPopover, queue: .main) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.closingTime = ProcessInfo.processInfo.systemUptime }
-                }
-                defer { NotificationCenter.default.removeObserver(observer) }
-                let started = ProcessInfo.processInfo.systemUptime
-                timed.setHovered(false)
-                try await Task.sleep(for: .milliseconds(1250))
-                check(browser.copiedLinkPopover.isShown, "Popover stays visible until the 1.5 second timeout")
-                try await Task.sleep(for: .milliseconds(1100))
-                check(abs((closingTime ?? 0)-started-1.5) < 0.15, "Native dismissal starts at 1.5 seconds")
-                check(!browser.copiedLinkPopover.isShown, "Popover dismisses automatically after 1.5 seconds with native closing animation")
-                browser.theme = .dark; browser.update(); browser.copyURL()
-                let hovered = browser.copiedLinkPopover.contentViewController as! CopiedLinkController
-                let event = NSEvent.mouseEvent(with: .mouseMoved, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: hovered.view.window!.windowNumber, context: nil, eventNumber: 1, clickCount: 0, pressure: 0)!
-                hovered.view.mouseEntered(with: event)
+                check(!browser.sidebarVisible && notice.isPresented, "Copying with a hidden sidebar shows the notice without the sidebar")
+                try await Task.sleep(for: .milliseconds(700)); browser.copyURL()
+                try await Task.sleep(for: .milliseconds(700))
+                check(notice.isPresented, "Copying again holds the notice for another second")
+                try await Task.sleep(for: .milliseconds(1000))
+                check(!notice.isPresented, "The notice goes back up a second after the last copy")
+                browser.toggleSidebar(); browser.theme = .dark; browser.update(); browser.copyURL()
+                notice.setHovered(true)
                 try await Task.sleep(for: .milliseconds(1750))
-                check(browser.copiedLinkPopover.isShown, "Hovering retains the popover beyond its timeout")
-                hovered.view.mouseExited(with: event)
-                try await Task.sleep(for: .milliseconds(2400))
-                check(!browser.copiedLinkPopover.isShown, "Leaving the popover restarts its 1.5 second dismissal timer")
-                browser.copiedLinkPopover.close(); browser.linkPasteboard.releaseGlobally(); browser.saveWork?.cancel(); browser.window?.orderOut(nil)
-                print("PASS: native material/animation, tighter spacing, 1.5 second dismissal, hover retention, AirDrop routing, stable anchors and hover fades")
+                check(notice.isPresented, "Hovering holds the notice beyond its timeout")
+                notice.setHovered(false)
+                try await Task.sleep(for: .milliseconds(1400))
+                check(!notice.isPresented, "Leaving the notice restarts its one second hold")
+                // Another kind of notice sits beside the copied link, and moves over as it leaves.
+                browser.theme = .neutral; browser.update(); browser.copyURL(); try await Task.sleep(for: .milliseconds(400))
+                browser.showInfo("Simulated full screen enabled", image: InfoPlaque.fullScreenIcon, kind: "fullscreen")
+                try await Task.sleep(for: .milliseconds(400))
+                check(notice.notices.count == 2, "Both notices show: \(notice.notices.map(\.kind))")
+                let first = notice.notices[0], second = notice.notices[1]
+                let corner = first.panel.frame.maxX
+                check(abs(second.panel.frame.maxX-(first.panel.frame.minX-InfoPlaque.spacing)) < 0.5, "The second sits to the left of the first")
+                if let folder = ProcessInfo.processInfo.environment["RISE_POPOVER_FRAMES"] {
+                    let view = browser.root
+                    let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+                    view.cacheDisplay(in: view.bounds, to: bitmap)
+                    try bitmap.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: folder).appendingPathComponent("side-by-side.png"))
+                }
+                while first.isPresented { try await Task.sleep(for: .milliseconds(5)) }
+                let leftAt = second.panel.frame.maxX
+                try await Task.sleep(for: .milliseconds(70))
+                check(first.slide.value > 0.05 && second.panel.frame.maxX > leftAt+8,
+                      "The second moves right while the first is still leaving: slide \(first.slide.value), moved \(second.panel.frame.maxX-leftAt)")
+                try await Task.sleep(for: .milliseconds(600))
+                check(abs(second.panel.frame.maxX-corner) < 0.5, "...and takes the corner")
+                browser.linkPasteboard.releaseGlobally(); browser.saveWork?.cancel(); browser.window?.orderOut(nil)
+                print("PASS: blue notice with share button, held by repeat copies and hover, side by side with another notice, AirDrop routing and hover fades")
                 NSApp.terminate(nil)
             } catch { fputs("COPY LINK VERIFICATION FAILED: \(error)\n", stderr); exit(1) }
         }

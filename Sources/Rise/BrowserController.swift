@@ -14,7 +14,6 @@ import RiseCore
     lazy var developerMotion = DeveloperModeMotion { [weak self] in self?.layoutChrome() }
     let siteInfoPopover = NSPopover()
     let siteControlsPopover = NSPopover()
-    let copiedLinkPopover = NSPopover()
     var linkPasteboard: NSPasteboard = .general
     var airDropService: NSSharingService?
     var airDropHandler: ((URL) -> Void)?
@@ -97,11 +96,16 @@ import RiseCore
     var sidebarVisible = true
     let sidebarPeek = SidebarPeek()
     let sidebarFloat = SidebarFloat()
-    lazy var pullRequestHover: PullRequestHover = {
-        let hover = PullRequestHover(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("pr-summaries.json"))
+    lazy var tabHoverCards: TabHoverCards = {
+        let hover = TabHoverCards(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("pr-summaries.json"))
         hover.summaries.onChange = { [weak self] key in self?.pullRequestSummaryChanged(key) }
         hover.summaries.provider = { [weak self] in self?.aiProvider ?? .openRouter }
         return hover
+    }()
+    lazy var gmailInbox: GmailInbox = {
+        let inbox = GmailInbox()
+        inbox.onChange = { [weak self] in self?.gmailInboxChanged() }
+        return inbox
     }()
     var paletteCreatesTab = false
     var splitGroups: [SplitTabGroup] = []
@@ -204,7 +208,7 @@ import RiseCore
         window.historyScrollEvent = { [weak self] event in self?.historySwipe.handle(event) ?? false }
         window.otherMouseEvent = { [weak self] event in self?.handleMiddleTabClick(event) ?? false }
         window.modifiersChanged = { [weak self] flags in self?.updateHoveredLinkModifiers(flags); self?.sidebarPeekModifiersChanged(flags) }
-        window.pointerMoved = { [weak self] event in self?.updateHoveredLinkCursor(event); self?.pullRequestPointerMoved() }
+        window.pointerMoved = { [weak self] event in self?.updateHoveredLinkCursor(event); self?.tabHoverPointerMoved() }
         tabSwitcher.choose = { [weak self] id in self?.commitTabSwitch(id) }
         tabSwitchBackdrop.dismiss = { [weak self] in self?.cancelTabSwitch() }
         tabSwitchBackdrop.isHidden = true
@@ -308,7 +312,12 @@ import RiseCore
         downloadsPopover.behavior = .transient
         siteControlsPopover.behavior = .transient
         siteControlsPopover.delegate = self
-        copiedLinkPopover.behavior = .transient
+        // The pages under the notice would take its button's pointer and cursor for their own links.
+        infoPlaque.onPointer = { [weak self] over in
+            guard let self else { return }
+            if over { (tabs.map(\.webView) + [peekTab?.webView].compactMap { $0 }).forEach { ($0 as? LinkCursorWebView)?.isCovered = true } }
+            else { updatePeekCovers() }
+        }
         let devActions: [(String, String, () -> Void)] = [
             ("link", "Copy URL", { [weak self] in self?.copyURL() }),
             ("camera", "Save page screenshot", { [weak self] in self?.capturePage() }),
@@ -434,7 +443,7 @@ import RiseCore
         if !tabSwitcher.isHidden { tabSwitcher.place(in: b) }
     }
     func windowDidResize(_ notification: Notification) { layoutChrome() }
-    func windowWillClose(_ notification: Notification) { settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); saveNow() }
+    func windowWillClose(_ notification: Notification) { tabPressed(); gmailInbox.tearDown(); settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); saveNow() }
     func windowDidResignKey(_ notification: Notification) {
         pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch(); endSidebarPeek(); tabPressed()
         sidebar?.cancelTabInteractions()
@@ -445,6 +454,14 @@ import RiseCore
     }
     func configure(_ tab: BrowserTab) -> BrowserTab {
         tab.webView.navigationDelegate = self; tab.webView.uiDelegate = self
+        if let web = tab.webView as? LinkCursorWebView {
+            // A Peek's own links can't open another Peek.
+            web.peekableLink = { [weak self, weak web] in
+                guard let self, let web, hoveredWebView === web, web !== peekTab?.webView else { return nil }
+                return linkStatus.url
+            }
+            web.openInPeek = { [weak self, weak web] url in self?.showPeek(url: url, from: web) }
+        }
         tab.hidesYouTubeNotificationCount = hidesYouTubeNotificationCount
         tab.showsRepositorySubtitle = showsRepositorySubtitle
         tab.webView.appearance = theme.appearance; tab.webView.underPageBackgroundColor = theme.page
@@ -491,7 +508,7 @@ import RiseCore
         historySwipe.cancel()
         cancelTabSwitch()
         siteInfoPopover.close()
-        siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel()
+        siteControlsPopover.close(); permissionCoordinator.cancel()
         if selectedID != id { selectedTab?.captureThumbnail() }
         hideLinkStatus()
         hidePalette(); closePeek()
@@ -509,7 +526,7 @@ import RiseCore
     func update() {
         applyTheme()
         sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: splitGroups)
-        refreshPullRequestTooltip()
+        refreshTabHoverCard(); preloadGmailInbox()
         window?.title = (selectedTab?.title).map { "\($0) — Rise" } ?? "Rise"
         toolbarButtons[1].isEnabled = historyWebView.map { canNavigate($0, .back) } ?? false
         toolbarButtons[2].isEnabled = historyWebView.map { canNavigate($0, .forward) } ?? false
@@ -520,7 +537,7 @@ import RiseCore
     }
     @objc func newTab() { paletteCreatesTab = true; showPalette(text: "") }
     @objc func focusAddress() { paletteCreatesTab = false; showPalette(text: selectedTab?.url?.absoluteString == "about:blank" ? "" : selectedTab?.url?.absoluteString ?? "") }
-    func showPalette(text: String) { if searchEngine == .google { googleSearchSuggestions.warmUp() }; historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel(); dismissArea.isHidden = false; palette.currentPage = selectedTab.flatMap { tab in tab.url.map { ($0.absoluteString, tab.favicon(for: theme)) } }; palette.show(text: text, theme: theme, createsTab: paletteCreatesTab); layoutChrome() }
+    func showPalette(text: String) { if searchEngine == .google { googleSearchSuggestions.warmUp() }; historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); permissionCoordinator.cancel(); dismissArea.isHidden = false; palette.currentPage = selectedTab.flatMap { tab in tab.url.map { ($0.absoluteString, tab.favicon(for: theme)) } }; palette.show(text: text, theme: theme, createsTab: paletteCreatesTab); layoutChrome() }
     func hidePalette() { googleSearchSuggestions.cancel(); suggestionFavicons.cancelPreview(); guard palette.isPresented else { return }; palette.hide(); dismissArea.isHidden = true; window?.makeFirstResponder(selectedTab?.webView) }
     func submitAddress(_ text: String, suggestion: AddressSuggestion?) {
         hidePalette()
@@ -551,7 +568,6 @@ import RiseCore
         pictureInPicture.remove(tabs[index]); tabMedia.remove(id)
         let partner = splitGroups.first { $0.contains(id) }.map { $0.leftID == id ? $0.rightID : $0.leftID }
         splitGroups.removeAll { $0.contains(id) }
-        if selectedID == id { copiedLinkPopover.close() }
         let tab = tabs.remove(at: index); closedTabs.append(tab.saved)
         releaseHeldPages(of: tab)
         permissionCoordinator.cancel(for: tab.webView)
@@ -603,7 +619,7 @@ import RiseCore
         if keepPeekedSidebar() { return }
         tabPressed()
         hidePalette()
-        siteControlsPopover.close(); copiedLinkPopover.close(); permissionCoordinator.cancel()
+        siteControlsPopover.close(); permissionCoordinator.cancel()
         let floating = isSidebarFloating
         sidebarVisible.toggle()
         if !sidebarVisible { sidebar.newTab.resetHover() }

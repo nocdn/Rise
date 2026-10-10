@@ -27,7 +27,6 @@ import RiseCore
     func siteMenu() {
         if siteControlsPopover.isShown { siteControlsPopover.close(); return }
         guard selectedTab != nil else { return }
-        copiedLinkPopover.close()
         permissionCoordinator.cancel(); siteInfoPopover.close(); historySwipe.cancel()
         let controller = SiteControlsController(browser: self)
         siteControlsPopover.appearance = theme.appearance

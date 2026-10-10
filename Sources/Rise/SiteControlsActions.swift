@@ -33,6 +33,7 @@ import Vision
         menu.addItem(makeSearchEngineMenu())
         menu.addItem(makeThemeMenu())
         menu.addItem(makeAIProviderMenu())
+        menu.addItem(makeGmailCategoryMenu())
         menu.addItem(menuItem("Hide YouTube Notification Count", checked: hidesYouTubeNotificationCount) { [weak self] in
             self?.setHidesYouTubeNotificationCount(!(self?.hidesYouTubeNotificationCount ?? true))
         })

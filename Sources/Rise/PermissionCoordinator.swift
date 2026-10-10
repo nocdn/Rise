@@ -46,7 +46,6 @@ import UserNotifications
         if decisions.allSatisfy({ $0 == .allow }) { completion(true); return }
         guard reply == nil else { completion(false); return }
         browser.siteControlsPopover.close(); browser.siteInfoPopover.close()
-        browser.copiedLinkPopover.close()
         browser.showSidebarAtOnce()
         requestingWebView = web
         let documentURL = web.url

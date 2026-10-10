@@ -38,7 +38,7 @@ import RiseCore
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         pictureInPicture.navigationStarted(in: webView)
         permissionCoordinator.cancel(for: webView)
-        if selectedTab?.webView === webView { siteControlsPopover.close(); copiedLinkPopover.close() }
+        if selectedTab?.webView === webView { siteControlsPopover.close() }
         historySwipe.cancel(for: webView)
         if hoveredWebView === webView { hideLinkStatus() }
         if errorWebView === webView { errorWebView = nil }; update()
@@ -69,6 +69,14 @@ import RiseCore
     }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         guard action.targetFrame == nil else { return nil }
+        // Gmail draws a popped-out conversation from the page that opened it, so it can only
+        // show in the web view handed back here, never in one that loads its address.
+        if let url = action.request.url, GmailAccount.isPopout(url),
+           tabHoverCards.popoutSource === webView || shouldPeek(modifiers: action.modifierFlags) {
+            tabHoverCards.popoutSource = nil; discardPeekUndo()
+            let tab = configure(BrowserTab(configuration: configuration))
+            showPeek(url: url, existing: tab); return tab.webView
+        }
         if shouldPeek(modifiers: action.modifierFlags), let url = action.request.url {
             showPeek(url: url, from: webView, opensNewTab: true); return nil
         }

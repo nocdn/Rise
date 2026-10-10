@@ -31,6 +31,30 @@ final class LinkCursorWebView: WKWebView {
         }
     }
     private var suspendedAreas: [NSTrackingArea] = []
+    /// The link under the pointer that a Peek can open, and opening it, for the link's menu.
+    var peekableLink: (() -> URL?)?
+    var openInPeek: ((URL) -> Void)?
+    /// Pressing a link ends its hover before WebKit builds the menu, so the link is kept from the press.
+    private var menuLink: URL?
+    override func rightMouseDown(with event: NSEvent) { menuLink = peekableLink?(); super.rightMouseDown(with: event) }
+    override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control) { menuLink = peekableLink?() }
+        super.mouseDown(with: event)
+    }
+    /// "Open Link in Peek" follows WebKit's "Open Link in New Window".
+    override func willOpenMenu(_ menu: NSMenu, with event: NSEvent) {
+        super.willOpenMenu(menu, with: event)
+        defer { menuLink = nil }
+        guard let url = menuLink ?? peekableLink?(),
+              let open = menu.items.firstIndex(where: { $0.identifier?.rawValue == "WKMenuItemIdentifierOpenLink" }) else { return }
+        let after = menu.items.firstIndex { $0.identifier?.rawValue == "WKMenuItemIdentifierOpenLinkInNewWindow" } ?? open
+        let item = NSMenuItem(title: "Open Link in Peek", action: #selector(openLinkInPeek(_:)), keyEquivalent: "")
+        item.target = self; item.representedObject = url
+        menu.insertItem(item, at: after+1)
+    }
+    @objc private func openLinkInPeek(_ item: NSMenuItem) {
+        if let url = item.representedObject as? URL { openInPeek?(url) }
+    }
     private func suspendTrackingAreas() {
         let areas = trackingAreas
         areas.forEach(removeTrackingArea); suspendedAreas += areas

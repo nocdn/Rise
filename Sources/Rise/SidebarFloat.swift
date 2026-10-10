@@ -234,8 +234,8 @@ final class SidebarShadowView: NSView {
     var holdsFloatingSidebar: Bool {
         guard let window else { return false }
         if RunLoop.current.currentMode == .eventTracking || NSEvent.pressedMouseButtons != 0 { return true }
-        if palette.isPresented || sidebar.drag != nil || pullRequestHover.shownID != nil { return true }
-        if [siteControlsPopover, downloadsPopover, copiedLinkPopover, siteInfoPopover].contains(where: \.isShown) { return true }
+        if palette.isPresented || sidebar.drag != nil || tabHoverCards.shownID != nil { return true }
+        if [siteControlsPopover, downloadsPopover, siteInfoPopover].contains(where: \.isShown) { return true }
         var responder = window.firstResponder as? NSView
         if let editor = responder as? NSTextView, editor.isFieldEditor { responder = editor.delegate as? NSView }
         if responder?.isDescendant(of: sidebar) == true { return true }
