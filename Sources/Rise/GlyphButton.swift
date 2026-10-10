@@ -6,6 +6,7 @@ import AppKit
     var action: (() -> Void)?
     var hoverColor: NSColor? { didSet { refreshHover() } }
     var acceptsFirstClick = true
+    var isEnabled = true { didSet { setAccessibilityEnabled(isEnabled) } }
     private var hovering = false
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -34,10 +35,10 @@ import AppKit
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { acceptsFirstClick }
     override func mouseDown(with event: NSEvent) {}
     override func mouseUp(with event: NSEvent) {
-        guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        guard isEnabled, bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
         action?()
     }
-    override func accessibilityPerformPress() -> Bool { action?(); return true }
+    override func accessibilityPerformPress() -> Bool { guard isEnabled else { return false }; action?(); return true }
 }
 
 /// Shrinks a button's layer while it is pressed: quickly down on press, then a

@@ -23,9 +23,6 @@ import RiseCore
     let loadingBackground = TabLoadingBackground()
     /// The find bar's shimmer over the title, for Smart Rename.
     let titleShimmer = InputShimmer()
-    private var shimmerFinish: DispatchWorkItem?
-    /// Four quick sweeps of the shimmer (about 3 s), then the title eases back.
-    static let smartRenameSweeps = 4.0
     var selected = false
     private(set) var configuration = TabRowConfiguration()
     var showsSubtitle: Bool { configuration.subtitle != nil }
@@ -85,10 +82,7 @@ import RiseCore
         titleField.delegate = self; titleField.focusRingType = .none
         titleField.cell?.usesSingleLineMode = true
         // Inside the title, so its fading edge fades the shimmer too.
-        titleShimmer.field = titleField; titleShimmer.autoresizingMask = [.width, .height]
-        // A short title in small type: a quicker band with a bright middle easing softly to its edges.
-        titleShimmer.bandWidth = 80; titleShimmer.plateau = 0.3; titleShimmer.softEdges = true; titleShimmer.sweep = 0.7
-        titleField.addSubview(titleShimmer)
+        titleShimmer.configureForSmartRename(field: titleField)
         setAccessibilityLabel(tab.title)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -98,13 +92,7 @@ import RiseCore
     /// Shimmers the title for a few sweeps, then eases it back to its own color.
     func shimmerTitle() {
         guard !isRenaming else { return }
-        shimmerFinish?.cancel()
-        titleShimmer.frame = titleField.bounds
-        titleShimmer.start()
-        // Stops at the end of the sweep under way, so it finishes the last one before easing back.
-        let finish = DispatchWorkItem { [weak self] in self?.titleShimmer.finish(); self?.shimmerFinish = nil }
-        shimmerFinish = finish
-        DispatchQueue.main.asyncAfter(deadline: .now()+(Self.smartRenameSweeps-1)*titleShimmer.sweep+0.05, execute: finish)
+        titleShimmer.startSmartRename()
     }
     func update(tab: BrowserTab, selected: Bool, theme: RiseTheme, configuration: TabRowConfiguration) {
         let previouslyShowedSubtitle = showsSubtitle
@@ -308,7 +296,7 @@ import RiseCore
     func beginRename() {
         guard !isRenaming else { return }
         onSelect?()
-        shimmerFinish?.cancel(); shimmerFinish = nil; titleShimmer.cancel()
+        titleShimmer.cancel()
         titleField.layer?.removeAnimation(forKey: TabListMotion.movementKey)
         originalTitle = titleField.stringValue; isRenaming = true
         titleField.isEditable = true; titleField.isSelectable = true

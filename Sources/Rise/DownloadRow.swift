@@ -2,18 +2,19 @@ import AppKit
 import QuartzCore
 import UniformTypeIdentifiers
 
-/// One download: the file's icon beside its name, with its size (or progress) below.
+/// One download: the file's thumbnail or icon beside its name, with its size (or progress) below.
 /// Clicking a finished download opens it in its default app. While highlighted (by the
 /// pointer or the arrow keys), an eye previews it in Quick Look, for files Quick Look can
 /// show, and an X clears it from the list.
 final class DownloadRow: NSView {
     enum Pointer { case entered, exited, pressed }
     let item: DownloadList.Item
-    private let icon = NSImageView(), title = NSTextField(labelWithString: ""), detail = NSTextField(labelWithString: "")
+    private let icon = DownloadFileIcon(), title = NSTextField(labelWithString: ""), detail = NSTextField(labelWithString: "")
     let progressRing = DownloadProgressRing()
     private let upper = RowFill(edge: .top), lower = RowFill(edge: .bottom)
     private(set) var previewButton: ChromeButton!, removeButton: ChromeButton!
-    private(set) var pauseButton: DownloadPauseButton!
+    let pauseButton = PlayPauseButton()
+    let titleShimmer = InputShimmer()
     private var pressing = false
     var isHighlighted = false { didSet { if isHighlighted != oldValue { restyle() } } }
     /// Corner radii; the list's first and last rows follow the popover's rounder corners.
@@ -30,11 +31,14 @@ final class DownloadRow: NSView {
         super.init(frame: .zero)
         previewButton = ChromeButton(symbol: "eye", title: "Quick Look") { [weak self] in self?.performPreview() }
         previewButton.image = TablerIcon.image(TablerIcon.eye, size: 18, description: "Quick Look")
-        pauseButton = DownloadPauseButton { [weak self] in self?.performPause() }
+        pauseButton.pointSize = 13; pauseButton.weight = .regular
+        pauseButton.action = { [weak self] in self?.performPause() }
         removeButton = ChromeButton(symbol: "xmark", size: 15, title: "Remove from List") { [weak self] in self?.performRemove() }
-        for button in [previewButton!, removeButton!, pauseButton!] { button.layer?.cornerRadius = 7; button.layer?.cornerCurve = .continuous }
+        for button in [previewButton!, removeButton!, pauseButton] as [NSView] { button.layer?.cornerRadius = 7; button.layer?.cornerCurve = .continuous }
         icon.imageScaling = .scaleProportionallyUpOrDown
         title.font = .systemFont(ofSize: 13); title.textColor = .labelColor; title.lineBreakMode = .byTruncatingMiddle
+        titleShimmer.configureForSmartRename(field: title)
+        titleShimmer.baseColor = .secondaryLabelColor; titleShimmer.bandColor = .labelColor
         detail.font = .systemFont(ofSize: 11); detail.textColor = .secondaryLabelColor
         detail.lineBreakMode = .byTruncatingMiddle
         [upper, lower, icon, progressRing, title, detail, previewButton, pauseButton, removeButton].forEach(addSubview)
@@ -60,10 +64,7 @@ final class DownloadRow: NSView {
     func update() {
         let url = item.record.url
         title.stringValue = url.lastPathComponent
-        if isFinished, icon.image == nil {
-            if FileManager.default.fileExists(atPath: url.path) { icon.image = NSWorkspace.shared.icon(forFile: url.path) }
-            else { icon.image = NSWorkspace.shared.icon(for: UTType(filenameExtension: url.pathExtension) ?? .data) }
-        }
+        if isFinished { icon.showFile(url) }
         icon.isHidden = !isFinished; progressRing.isHidden = isFinished
         progressRing.update(fraction: item.fraction, paused: item.state != .downloading)
         if isFinished { detail.stringValue = Self.detail(for: url, progress: nil) }
@@ -79,7 +80,10 @@ final class DownloadRow: NSView {
             }
             detail.stringValue = "\(size) · \(status)"
         }
-        pauseButton.update(paused: item.showsResume); pauseButton.isEnabled = item.canTogglePause
+        pauseButton.setPaused(item.showsResume, animated: !pauseButton.isHidden && window != nil)
+        pauseButton.toolTip = item.showsResume ? "Resume Download" : "Pause Download"
+        pauseButton.setAccessibilityLabel(pauseButton.toolTip)
+        pauseButton.isEnabled = item.canTogglePause
         let removeTitle = isFinished ? "Remove from List" : "Cancel Download"
         removeButton.toolTip = removeTitle; removeButton.setAccessibilityLabel(removeTitle)
         removeButton.isEnabled = item.state != .cancelling
@@ -108,13 +112,13 @@ final class DownloadRow: NSView {
         upper.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height/2); upper.radius = topRadius
         lower.frame = NSRect(x: 0, y: bounds.height/2, width: bounds.width, height: bounds.height/2); lower.radius = bottomRadius
         icon.frame = NSRect(x: 8, y: (bounds.height-32)/2, width: 32, height: 32)
-        progressRing.frame = icon.frame
+        progressRing.frame = icon.frame.insetBy(dx: 2, dy: 2)
         let side = Self.buttonSize, y = (bounds.height-side)/2
         removeButton.frame = NSRect(x: bounds.width-side-6, y: y, width: side, height: side)
         previewButton.frame = NSRect(x: removeButton.frame.minX-(canPreview ? side : 0), y: y, width: side, height: side)
         pauseButton.frame = NSRect(x: removeButton.frame.minX-side, y: y, width: side, height: side)
         let x: CGFloat = 45
-        let firstControl = !pauseButton.isHidden ? pauseButton! : previewButton.isHidden ? removeButton! : previewButton!
+        let firstControl: NSView = !pauseButton.isHidden ? pauseButton : previewButton.isHidden ? removeButton! : previewButton!
         let trailing = removeButton.isHidden ? 10 : bounds.width-firstControl.frame.minX+2
         let width = max(0, bounds.width-x-trailing)
         title.frame = NSRect(x: x, y: 6, width: width, height: 17)
@@ -145,10 +149,12 @@ final class DownloadRow: NSView {
             buttonHover = NSColor.labelColor.withAlphaComponent(0.08).cgColor
         }
         upper.color = background; lower.color = background
-        for button in [previewButton!, removeButton!, pauseButton!] {
+        for button in [previewButton!, removeButton!] {
             button.contentTintColor = .secondaryLabelColor
             button.hoverColor = buttonHover.flatMap(NSColor.init(cgColor:)) ?? button.hoverColor
         }
+        pauseButton.color = .secondaryLabelColor
+        pauseButton.hoverColor = buttonHover.flatMap(NSColor.init(cgColor:))
         let showsControls = isHighlighted || (!isFinished && item.showsResume)
         removeButton.isHidden = !showsControls
         previewButton.isHidden = !isFinished || removeButton.isHidden || !canPreview
@@ -173,7 +179,7 @@ final class DownloadRow: NSView {
     }
     @objc private func revealFile() { reveal?(item.record.url) }
     @objc private func deleteFile() { performDeleteFromDisk() }
-    @objc private func smartRename() {}
+    @objc private func smartRename() { titleShimmer.startSmartRename() }
 }
 
 /// Half of a row's highlight. Its rounded rectangle overhangs the hidden edge so only the

@@ -30,20 +30,55 @@ import AppKit
         super.layout()
         let size = pointSize ?? (bounds.height*0.62).rounded(), scale = window?.backingScaleFactor ?? 2
         CATransaction.begin(); CATransaction.setDisableActions(true)
+        // Transform animations flatten the grouping layer into a temporary
+        // surface. Pin its rasterization resolution too, so it never falls back
+        // to a soft intermediate surface while either spring is active.
+        glyph.contentsScale = scale; glyph.allowsGroupOpacity = false
+        glyph.shouldRasterize = true; glyph.rasterizationScale = scale*4
         glyph.bounds = bounds; glyph.position = CGPoint(x: bounds.midX, y: bounds.midY)
         for (symbolLayer, symbol) in [(playLayer, "play.fill"), (pauseLayer, "pause.fill")] {
             if renderedKey?.size != size || renderedKey?.scale != scale,
                let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(
                    NSImage.SymbolConfiguration(pointSize: size, weight: weight).applying(.init(paletteColors: [color]))) {
-                symbolLayer.contentsScale = scale; symbolLayer.contents = image.layerContents(forContentsScale: scale)
-                symbolLayer.bounds = CGRect(origin: .zero, size: image.size)
+                let rasterScale = scale*2
+                let imageSize = NSSize(width: image.size.width, height: image.size.height*(symbol == "pause.fill" ? 1.06 : 1))
+                symbolLayer.contentsScale = rasterScale
+                effectiveAppearance.performAsCurrentDrawingAppearance {
+                    symbolLayer.contents = Self.rasterize(image, size: imageSize, scale: rasterScale, pause: symbol == "pause.fill")
+                }
+                symbolLayer.bounds = CGRect(origin: .zero, size: imageSize)
             }
             symbolLayer.position = CGPoint(x: bounds.midX, y: bounds.midY)
         }
         renderedKey = (size, scale)
         CATransaction.commit()
     }
+    private static func rasterize(_ image: NSImage, size: NSSize, scale: CGFloat, pause: Bool) -> CGImage? {
+        guard let context = CGContext(data: nil, width: Int(ceil(size.width*scale)), height: Int(ceil(size.height*scale)),
+                                      bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.scaleBy(x: scale, y: scale)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        let rect = CGRect(origin: .zero, size: size)
+        if pause {
+            // Narrow each bar independently, keeping their centers and the gap.
+            for x in [CGFloat.zero, size.width/2] {
+                context.saveGState()
+                context.clip(to: CGRect(x: x, y: 0, width: size.width/2, height: size.height))
+                let center = x+size.width/4
+                context.translateBy(x: center, y: 0); context.scaleBy(x: 0.92, y: 1); context.translateBy(x: -center, y: 0)
+                image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
+                context.restoreGState()
+            }
+        } else { image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1) }
+        return context.makeImage()
+    }
     override func viewDidChangeBackingProperties() { super.viewDidChangeBackingProperties(); needsLayout = true }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance(); renderedKey = nil; needsLayout = true
+    }
     func setPaused(_ paused: Bool, animated: Bool) {
         guard paused != self.paused else { return }
         self.paused = paused
@@ -85,7 +120,7 @@ import AppKit
         self.pressed = pressed
         PressScale.set(glyph, to: pressed ? Self.pressedScale : 1)
     }
-    override func mouseDown(with event: NSEvent) { setPressed(true) }
+    override func mouseDown(with event: NSEvent) { if isEnabled { setPressed(true) } }
     override func mouseDragged(with event: NSEvent) { setPressed(bounds.contains(convert(event.locationInWindow, from: nil))) }
     override func mouseUp(with event: NSEvent) {
         setPressed(false)

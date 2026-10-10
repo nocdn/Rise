@@ -41,6 +41,24 @@ import CoreText
     var progress: CGFloat = 0
     private var link: CADisplayLink?
     private var fieldColor: NSColor?
+    private var smartRenameFinish: DispatchWorkItem?
+
+    /// Shared by tab and download titles, including the smooth entrance and exit.
+    func configureForSmartRename(field: NSTextField) {
+        self.field = field; autoresizingMask = [.width, .height]
+        bandWidth = 80; plateau = 0.3; softEdges = true; sweep = 0.7
+        field.addSubview(self)
+    }
+    func startSmartRename() {
+        smartRenameFinish?.cancel()
+        frame = field?.bounds ?? .zero
+        start()
+        guard isRunning else { return }
+        // Four sweeps (~2.8 s), followed by the existing smooth color restore.
+        let finish = DispatchWorkItem { [weak self] in self?.finish(); self?.smartRenameFinish = nil }
+        smartRenameFinish = finish
+        DispatchQueue.main.asyncAfter(deadline: .now()+3*sweep+0.05, execute: finish)
+    }
 
     // Hidden until it runs, so it never draws over the field's own colors (such as no-match red).
     override init(frame frameRect: NSRect) { super.init(frame: frameRect); isHidden = true; clipsToBounds = true }
@@ -128,6 +146,7 @@ import CoreText
         } else { field.textColor = color }
     }
     private func end() {
+        smartRenameFinish?.cancel(); smartRenameFinish = nil
         link?.invalidate(); link = nil; isRunning = false; stopAt = nil; restoring = nil; fadingIn = nil
         field?.textColor = fieldColor ?? .labelColor
         if let editor = field?.currentEditor() as? NSTextView, let manager = editor.layoutManager {
