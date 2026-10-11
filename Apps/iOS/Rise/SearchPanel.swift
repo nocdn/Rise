@@ -71,8 +71,13 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     private var fetch: Task<Void, Never>?
     /// One soft click for clearing; two in quick succession for opening a page.
     private let click = UIImpactFeedbackGenerator(style: .rigid)
-    /// Where the clear button would be, while a held New Page's speech is transcribed.
+    /// The address editor's X, always at the field's end: it clears the field, or once it's empty
+    /// closes the panel.
+    let clearButton = AnimatedSymbolButton(symbol: "xmark", pointSize: 14, weight: .bold)
+    /// Stands in for the X while a held New Page's speech is transcribed.
     let transcribing = UIActivityIndicatorView(style: .medium)
+    /// Closes the panel, as X does on an empty field.
+    var onClose: @MainActor () -> Void = {}
     /// Counts openings, so a transcription lands only in the opening it was said for.
     private var opening = 0
     /// Opens a page the person chose.
@@ -88,7 +93,6 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         field.adjustsFontForContentSizeCategory = true
         field.leftView = UIView(frame: CGRect(x: 0, y: 0, width: 18, height: 1))
         field.leftViewMode = .always
-        field.clearButtonMode = .whileEditing
         field.keyboardType = .webSearch
         field.returnKeyType = .go
         field.autocorrectionType = .no
@@ -97,10 +101,31 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         field.delegate = self
         field.addAction(UIAction { [weak self] _ in self?.queryChanged() }, for: .editingChanged)
         addSubview(field)
+        useClearButton()
+        clearButton.accessibilityLabel = "Clear"
+        clearButton.shrinksWhenPressed(to: AddressBar.pressedScale)
+        clearButton.addAction(UIAction { [weak self] _ in self?.clearOrClose() }, for: .primaryActionTriggered)
+        addSubview(clearButton)
         transcribing.hidesWhenStopped = true
         transcribing.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
         transcribing.accessibilityLabel = "Transcribing"
-        field.addSubview(transcribing)
+        addSubview(transcribing)
+    }
+
+    /// The field's own clear button gives way to the X, with room kept for it.
+    private func useClearButton() {
+        field.clearButtonMode = .never
+        field.rightView = UIView(frame: CGRect(x: 0, y: 0, width: 44, height: Self.fieldHeight))
+        field.rightViewMode = .always
+        clearButton.isHidden = transcribing.isAnimating
+    }
+
+    /// Clears what's typed, as the address editor's X does, or closes the panel if there's nothing.
+    private func clearOrClose() {
+        guard !(field.text ?? "").isEmpty else { onClose(); return }
+        field.text = ""
+        queryChanged()
+        click.impactOccurred(intensity: 0.5)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -113,8 +138,10 @@ final class SearchPanel: UIView, UITextFieldDelegate {
             editingAddress.frame = frame
             editingAddress.layoutIfNeeded()
         } else { field.frame = frame }
-        let clear = field.clearButtonRect(forBounds: field.bounds)
-        transcribing.center = CGPoint(x: clear.midX, y: clear.midY)
+        // Where the address editor's X sits. By bounds and center, as it shrinks while pressed.
+        clearButton.bounds = CGRect(x: 0, y: 0, width: AddressBar.buttonWidth, height: Self.fieldHeight)
+        clearButton.center = CGPoint(x: frame.maxX-AddressBar.outerCentre, y: frame.midY)
+        transcribing.center = clearButton.center
         for (index, row) in rows.enumerated() {
             // By bounds and center, as a pressed row is scaled.
             row.bounds = CGRect(x: 0, y: 0, width: width, height: Self.rowHeight)
@@ -136,7 +163,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     /// Shows a small spinner where the clear button would be until `finishTranscribing`, which
     /// is ignored if the panel has since closed or opened again.
     func beginTranscribing() -> Int {
-        field.clearButtonMode = .never
+        clearButton.isHidden = true
         transcribing.startAnimating()
         return opening
     }
@@ -156,7 +183,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     private func stopTranscribing() {
         guard transcribing.isAnimating else { return }
         transcribing.stopAnimating()
-        field.clearButtonMode = .whileEditing
+        clearButton.isHidden = editingAddress != nil
     }
 
     /// The address is carried into this panel, rather than crossfading to a duplicate field.
@@ -169,6 +196,8 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         addSubview(address)
         field.text = url?.absoluteString ?? ""
         address.prepareEditing(field, url: url)
+        // The address has its own X.
+        clearButton.isHidden = true
         click.prepare()
     }
 
@@ -187,10 +216,10 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         editingAddress = nil
         address.endEditingAddress()
         addSubview(field)
+        bringSubviewToFront(clearButton)
+        bringSubviewToFront(transcribing)
         field.backgroundColor = Self.fill
-        field.clearButtonMode = .whileEditing
-        field.rightView = nil
-        field.rightViewMode = .never
+        useClearButton()
         field.alpha = 1
         field.isUserInteractionEnabled = true
         setNeedsLayout()

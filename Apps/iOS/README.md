@@ -34,7 +34,8 @@ suggestions appear under it as you type, the latest query's only, each shrinking
 while pressed. They're set in [Open Runde](https://github.com/lauridskern/open-runde) Medium,
 bundled with its SIL Open Font License in `Rise/Fonts`, beside a grey magnifying glass drawn
 like the system's bold one, its handle as thick as its ring and about as long.
-Clearing the field clicks once; Go or choosing a suggestion clicks twice in quick succession. Choosing one searches
+At the field's end, the address editor's bold X is always there: it clears the
+field, clicking once, and on an empty field closes the panel. Clearing clicks once; Go or choosing a suggestion clicks twice in quick succession. Choosing one searches
 Google for it; Go opens what was typed as an address when it looks like one
 (`example.com`, `https://…`), and searches Google otherwise. Either way the panel quickly grows
 up to fill the window as the search fades out and the new page appears inside it,
@@ -79,7 +80,9 @@ make room for Send, then back to the right to return to Find. The inline SwiftUI
 counter ignore window safe-area insets, keeping them centered inside the field. Ask changes
 the placeholder to "Ask about the Page". Send stays grey until the question contains text;
 while a response is running its icon changes to `stop.circle.fill` with a 0.3-second blur,
-fade and scale transition. Return or the send button submits the question, which shimmers while
+fade and scale transition. Once an answer finishes, Send stays grey until the question is
+edited, as sending it again would repeat the answer, and tapping the field selects the question
+to replace; a failed answer can be retried at once. Return or the send button submits the question, which shimmers while
 the answer streams underneath in the same panel. The panel grows as each visible line appears,
 without reserving space for queued words; longer answers scroll within the capped height.
 The desktop's shared OpenRouter client uses

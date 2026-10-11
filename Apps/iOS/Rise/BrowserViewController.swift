@@ -361,6 +361,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         newPageHold.delegate = self
         bottomBar.newPageButton.addGestureRecognizer(newPageHold)
         bottomBar.search.onOpen = { [weak self] url in self?.openFromPanel(url) }
+        bottomBar.search.onClose = { [weak self] in self?.closePanel() }
         bottomBar.moreButton.addAction(UIAction { [weak self] _ in self?.openPanel(.menu) }, for: .primaryActionTriggered)
         bottomBar.find.find = { [weak self] query, direction in
             await self?.find(query, direction: direction) ?? PageFind.Matches(count: 0, index: -1)

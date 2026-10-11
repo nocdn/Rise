@@ -792,8 +792,21 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertTrue(bar.search.field.superview === bar.search)
         XCTAssertEqual(bar.search.field.text, "")
         XCTAssertEqual(bar.search.field.backgroundColor, SearchPanel.fill)
-        XCTAssertEqual(bar.search.field.clearButtonMode, .whileEditing)
-        browser.closePanel()
+        // New Page has the address editor's X: it clears what's typed, then closes the sheet.
+        let clear = bar.search.clearButton
+        XCTAssertEqual(bar.search.field.clearButtonMode, .never)
+        XCTAssertFalse(clear.isHidden, "Always there, even empty")
+        XCTAssertEqual(clear.symbolName, "xmark")
+        XCTAssertEqual(clear.center.x, bar.search.field.frame.maxX-AddressBar.outerCentre, accuracy: 0.5)
+        bar.search.field.text = "rise"
+        bar.search.field.sendActions(for: .editingChanged)
+        clear.sendActions(for: .primaryActionTriggered)
+        XCTAssertEqual(bar.search.field.text, "")
+        XCTAssertTrue(browser.isPanelOpen, "Clearing leaves the sheet open")
+        clear.sendActions(for: .primaryActionTriggered)
+        XCTAssertFalse(browser.isPanelOpen, "X on an empty field closes the sheet")
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertTrue(browser.webView === original)
     }
 
     @MainActor func testEditingAnAddressNavigatesItsTabAndAnInterruptedExpansionDoesNotFocusLater() async throws {
@@ -823,6 +836,7 @@ final class WebKitBehaviorTests: XCTestCase {
         let caret = try XCTUnwrap(bar.search.field.selectedTextRange)
         XCTAssertTrue(caret.isEmpty)
         XCTAssertEqual(bar.search.field.offset(from: bar.search.field.beginningOfDocument, to: caret.start), "https://example.com/".utf16.count)
+
         XCTAssertFalse(bar.search.textFieldShouldReturn(bar.search.field))
         XCTAssertFalse(browser.isPanelOpen)
         XCTAssertFalse(bar.search.field.isFirstResponder)
@@ -1252,6 +1266,46 @@ final class WebKitBehaviorTests: XCTestCase {
         browser.closePanel()
     }
 
+    @MainActor func testAnAnsweredQuestionDisablesSendUntilEditedAndIsSelectedOnTap() async throws {
+        let browser = BrowserViewController(startURL: nil)
+        let window = try host(browser)
+        defer { window.isHidden = true }
+        let find = browser.bottomBar.find
+        var asked = 0
+        find.answer = { _, _ in
+            asked += 1
+            return AsyncThrowingStream { $0.yield("An answer."); $0.finish() }
+        }
+        browser.openPanel(.find)
+        try await Task.sleep(for: .milliseconds(400))
+        find.enterAsk()
+        find.field.text = "What is this page?"
+        find.field.sendActions(for: .editingChanged)
+        XCTAssertTrue(find.sendButton.isEnabled)
+        find.submitQuestion()
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertFalse(find.isAnswering)
+        XCTAssertEqual(find.sendButton.symbolName, "arrow.up.circle.fill")
+        XCTAssertFalse(find.sendButton.isEnabled, "The same question again would repeat the answer")
+        XCTAssertFalse(find.textFieldShouldReturn(find.field))
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(asked, 1, "Return doesn't send it again either")
+
+        // Tapping the field selects the question, ready to replace.
+        XCTAssertTrue(find.field.becomeFirstResponder())
+        try await Task.sleep(for: .milliseconds(100))
+        let selected = try XCTUnwrap(find.field.selectedTextRange)
+        XCTAssertEqual(find.field.text(in: selected), "What is this page?")
+
+        // Any change makes it sendable again.
+        find.field.text = "What is this page about?"
+        find.field.sendActions(for: .editingChanged)
+        XCTAssertTrue(find.sendButton.isEnabled)
+        XCTAssertTrue(find.field.becomeFirstResponder())
+        browser.closePanel()
+        try await Task.sleep(for: .milliseconds(400))
+    }
+
     @MainActor func testHoldingNewPageShowsAWaveformAndFillsTheSearchWithWhatWasSaid() async throws {
         let browser = BrowserViewController(startURL: nil)
         let window = try host(browser)
@@ -1283,13 +1337,13 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertTrue(browser.isPanelOpen)
         let opening = search.beginTranscribing()
         XCTAssertTrue(search.transcribing.isAnimating)
-        let clear = search.field.clearButtonRect(forBounds: search.field.bounds)
         search.layoutIfNeeded()
-        XCTAssertEqual(search.transcribing.center.x, clear.midX, accuracy: 1)
+        XCTAssertEqual(search.transcribing.center.x, search.clearButton.center.x, accuracy: 1, "Where the X is")
+        XCTAssertTrue(search.clearButton.isHidden)
         search.finishTranscribing("swift concurrency", for: opening)
         XCTAssertFalse(search.transcribing.isAnimating)
         XCTAssertEqual(search.field.text, "swift concurrency")
-        XCTAssertEqual(search.field.clearButtonMode, .whileEditing)
+        XCTAssertFalse(search.clearButton.isHidden, "The X comes back")
 
         // A transcription for an earlier opening doesn't land in a later one.
         browser.closePanel()
@@ -1319,8 +1373,11 @@ final class WebKitBehaviorTests: XCTestCase {
         defer { page.removeFromSuperview() }
         try await load("<html><body style='background:#111;color:#eee'>Dark page</body></html>", in: page,
                        baseURL: URL(string: "https://example.com/dark")!)
-        for _ in 0..<100 where watcher.isTransparent(page) { try await Task.sleep(for: .milliseconds(50)) }
-        XCTAssertFalse(watcher.isTransparent(page), "Its first paint is reported")
+        for _ in 0..<40 where watcher.isTransparent(page) { try await Task.sleep(for: .milliseconds(50)) }
+        // The first frame is reported from the page, or, if that's late, when the load finishes,
+        // as the browser's navigation delegate does.
+        watcher.didFinish(page)
+        XCTAssertFalse(watcher.isTransparent(page), "Painted by its first frame or its finished load")
         XCTAssertTrue(page.isOpaque, "Opaque again once painted, so pages without a background get white")
         XCTAssertNotEqual(page.backgroundColor, .clear)
 

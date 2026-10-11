@@ -133,7 +133,7 @@ final class BottomBar: UIView {
         }
 
         for button in [tabsButton, newPageButton, moreButton] { row.addSubview(button) }
-        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+menu.tiles+find.buttons+[find.modeButton, find.sendButton] {
+        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton]+menu.tiles+find.buttons+[find.modeButton, find.sendButton] {
             // A light, crisp tap as the finger lands, rather than a soft thud; actions wait for it to lift.
             button.addAction(UIAction { [weak self] _ in self?.tap.impactOccurred(intensity: 0.5) }, for: .touchDown)
         }

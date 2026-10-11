@@ -18,6 +18,9 @@ final class FindPanel: UIView, UITextFieldDelegate {
     private let counterHost: UIHostingController<FindCountView>
     private var answerTask: Task<Void, Never>?
     private(set) var isAnswering = false
+    /// The question in the field has been answered, and not edited since: sending it again would
+    /// repeat the answer, so Send waits for a change, and tapping the field selects it to replace.
+    private(set) var isAnswered = false
     private var conversation: [PageAssistant.Turn] = []
     var answer: ((String, [PageAssistant.Turn]) -> AsyncThrowingStream<String, Error>)?
     var clearPassage: (() -> Void)?
@@ -270,15 +273,26 @@ final class FindPanel: UIView, UITextFieldDelegate {
     }
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-        if mode == .ask { if !isAnswering { submitQuestion() } }
+        if mode == .ask { if !isAnswering, !isAnswered { submitQuestion() } }
         else if (count.total ?? 0) > 0 { search(.next) }
         else if queryHasNoMatches { enterAsk() }
         return false
     }
 
     private func edited() {
+        isAnswered = false
         if mode == .find { search(.restart) }
         else { cancelAnswer(); updateSend() }
+    }
+
+    /// After an answer, a tap on the field selects the question, ready to type the next one.
+    func textFieldDidBeginEditing(_ textField: UITextField) {
+        guard mode == .ask, isAnswered else { return }
+        // After the tap has placed its caret.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, isAnswered, field.isFirstResponder else { return }
+            field.selectedTextRange = field.textRange(from: field.beginningOfDocument, to: field.endOfDocument)
+        }
     }
 
     func enterAsk() {
@@ -303,6 +317,7 @@ final class FindPanel: UIView, UITextFieldDelegate {
     }
 
     private func resetAsk() {
+        isAnswered = false
         cancelAnswer()
         conversation = []
         answerView.reset()
@@ -312,7 +327,8 @@ final class FindPanel: UIView, UITextFieldDelegate {
     }
 
     private func updateSend() {
-        sendButton.isEnabled = mode == .ask && (isAnswering || !(field.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        sendButton.isEnabled = mode == .ask && (isAnswering || (!isAnswered
+            && !(field.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
         sendButton.setSymbol(isAnswering ? "stop.circle.fill" : "arrow.up.circle.fill")
         sendButton.accessibilityLabel = isAnswering ? "Stop Answer" : "Ask about the Page"
     }
@@ -329,6 +345,7 @@ final class FindPanel: UIView, UITextFieldDelegate {
     func submitQuestion() {
         let question = (field.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard mode == .ask, !question.isEmpty, let answer else { return }
+        isAnswered = false
         cancelAnswer()
         let request = generation
         answerView.reset()
@@ -346,22 +363,25 @@ final class FindPanel: UIView, UITextFieldDelegate {
                     if !token.isEmpty { answerView.show(text) }
                 }
                 guard !Task.isCancelled, let self, self.generation == request else { return }
+                let answered = !text.isEmpty
                 if text.isEmpty { text = "No answer came back. Try asking again." }
                 else { conversation.append(PageAssistant.Turn(question: question, answer: text)) }
                 answerView.show(text, finished: true)
-                finishQuestion()
+                finishQuestion(answered: answered)
             } catch {
                 guard !Task.isCancelled, let self, self.generation == request else { return }
                 let message = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                 answerView.show(text.isEmpty ? message : text+"\n\n"+message, finished: true)
-                finishQuestion()
+                finishQuestion(answered: false)
             }
         }
     }
 
-    private func finishQuestion() {
+    /// A failed or empty answer leaves Send ready to try the same question again.
+    private func finishQuestion(answered: Bool) {
         answerTask = nil
         isAnswering = false
+        isAnswered = answered
         shimmer.finish()
         updateSend()
     }
