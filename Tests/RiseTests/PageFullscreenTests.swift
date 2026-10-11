@@ -4,11 +4,12 @@ import XCTest
 @testable import Rise
 
 @MainActor final class PageFullscreenTests: XCTestCase {
-    private func page(simulated: Bool) async throws -> (WKWebView, NSWindow) {
+    private func page(simulated: Bool, fullscreen: PageFullscreen? = nil) async throws -> (WKWebView, NSWindow) {
         let configuration = WKWebViewConfiguration()
         configuration.preferences.isElementFullscreenEnabled = true
-        configuration.userContentController.addUserScript(PageFullscreen.userScript(simulated: simulated))
+        if fullscreen == nil { configuration.userContentController.addUserScript(PageFullscreen.userScript(simulated: simulated)) }
         let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600), configuration: configuration)
+        fullscreen?.install(on: web)
         let window = NSWindow(contentRect: NSRect(x: -3000, y: 0, width: 800, height: 600), styleMask: [.borderless], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false; window.contentView = web; window.orderBack(nil)
         web.loadHTMLString("""
@@ -59,6 +60,33 @@ import XCTest
         XCTAssertEqual(refused, "TypeError", "WebKit's own requestFullscreen answered")
         let pinned = try await value(web, "document.querySelectorAll('[data-rise-fullscreen]').length")
         XCTAssertEqual(pinned, "0", "Native mode never pins the element itself")
+    }
+
+    func testScriptReportsEntryReplacementExitAndElementRemovalToTheBrowser() async throws {
+        let suite = "PageFullscreenTests.\(UUID().uuidString)"
+        let preferences = UserDefaults(suiteName: suite)!
+        defer { preferences.removePersistentDomain(forName: suite) }
+        preferences.set(true, forKey: PageFullscreen.simulatedKey)
+        let fullscreen = PageFullscreen(preferences: preferences)
+        let (web, window) = try await page(simulated: true, fullscreen: fullscreen)
+        defer { window.close() }
+        var changes: [Bool] = []
+        fullscreen.onChange = { changes.append(fullscreen.isActive(in: web)) }
+        defer { fullscreen.onChange = nil }
+        _ = try await web.evaluateJavaScript("box.requestFullscreen(); 0")
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertTrue(fullscreen.isActive(in: web))
+        _ = try await web.evaluateJavaScript("const next = document.createElement('div'); next.id = 'next'; document.body.append(next); next.requestFullscreen(); 0")
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(changes, [true], "Replacing the element must not briefly reopen the sidebar")
+        _ = try await web.evaluateJavaScript("document.exitFullscreen(); 0")
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(changes, [true, false])
+        _ = try await web.evaluateJavaScript("box.requestFullscreen(); 0")
+        try await Task.sleep(for: .milliseconds(300))
+        _ = try await web.evaluateJavaScript("box.remove(); 0")
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertEqual(changes, [true, false, true, false])
     }
 
     func testSwitchingModesRewritesTheScriptForLaterPages() async throws {

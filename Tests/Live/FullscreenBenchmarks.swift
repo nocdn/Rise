@@ -126,12 +126,14 @@ final class FrameCollector: NSObject, WKScriptMessageHandler {
             let suite = "RiseFullscreenLive.\(ProcessInfo.processInfo.processIdentifier)"
             let preferences = UserDefaults(suiteName: suite)!
             preferences.set(ProcessInfo.processInfo.environment["RISE_FULLSCREEN_NATIVE"] == nil, forKey: PageFullscreen.simulatedKey)
+            preferences.set(true, forKey: BrowserController.fullscreenSidebarKey)
             browser = BrowserController(sessionURL: URL(fileURLWithPath: ProcessInfo.processInfo.environment["RISE_BENCHMARK_SESSION"]!), restore: false, preferences: preferences)
             browser.window?.setContentSize(NSSize(width: 1280, height: 800)); browser.window?.center(); browser.showWindow(nil)
             NSApp.activate(ignoringOtherApps: true)
             check(browser.pageFullscreen.isSimulated, "Simulated fullscreen is on from the preference")
 
             if shouldRun("fixtures") { await fixtures() }
+            if shouldRun("sidebar") { await sidebarFixtures() }
             if shouldRun("frames") { await frameFixtures() }
             if shouldRun("modes") { await modes() }
             if shouldRun("plaque") { await plaque() }
@@ -213,6 +215,7 @@ final class FrameCollector: NSObject, WKScriptMessageHandler {
         check(state["fe"] as? String == "div#box" && state["covers"] as? Bool == true, "The box inside a transformed, clipped wrapper covers the page: \(state)")
         check(state["onTop"] as? Bool == true, "The top layer puts it over a z-index 2147483647 banner (hit \(state["hit"] ?? "nil"))")
         check(web.fullscreenState == .notInFullscreen, "WebKit's own fullscreen stays out of it")
+        check(!browser.sidebarVisible && browser.sidebar.isHidden, "The docked sidebar collapses for simulated fullscreen")
         check(await string(web, "getComputedStyle(box).backgroundColor") == "rgb(0, 128, 0)", "The page's :fullscreen rule applies")
         check(await string(web, "getComputedStyle(box.querySelector('.inner')).color") == "rgb(255, 0, 0)", "A :-webkit-full-screen rule inside @media applies")
         check(await string(web, "events.join()") == "fullscreenchange:box", "One fullscreenchange, unprefixed, for an unprefixed request: \(await string(web, "events.join()"))")
@@ -224,6 +227,7 @@ final class FrameCollector: NSObject, WKScriptMessageHandler {
         check(await string(web, "events.join()") == "fullscreenchange:box,fullscreenchange:null", "Leaving fires fullscreenchange once more")
         let restored = await string(web, "JSON.stringify(box.getBoundingClientRect())"), popover = await js(web, "box.hasAttribute('popover')") as? Bool
         check(restored == original && popover == false, "The box is back where it was, without a popover attribute")
+        check(browser.sidebarVisible && !browser.sidebar.isHidden, "Escape restores the docked sidebar")
 
         // The legacy API, as older players call it.
         await js(web, "events = []; legacy.webkitRequestFullscreen(); 0"); await wait(400)
@@ -261,12 +265,50 @@ final class FrameCollector: NSObject, WKScriptMessageHandler {
         await js(web, "events = []; stubborn.requestFullscreen(); 0")
         let fellBack = await waitForNative(web, .inFullscreen, timeout: 6)
         check(fellBack, "A squeezed element falls back to WebKit's fullscreen")
+        check(browser.sidebarVisible, "Falling back to native fullscreen releases the automatic sidebar collapse")
         check(await string(web, "document.fullscreenElement?.id") == "stubborn", "...for the same element")
         capture("fixture-fallback")
         await js(web, "document.exitFullscreen(); 0")
         check(await waitForNative(web, .notInFullscreen, timeout: 6), "WebKit's fullscreen exits")
         await wait(500)
         browser.closeTab(browser.selectedID!)
+    }
+
+    func sidebarFixtures() async {
+        print("\nFullscreen sidebar")
+        let web = await load("http://127.0.0.1:\(fixturePort)/index.html")
+        let dockedPage = browser.pageShadow.frame, width = browser.sidebarWidth
+        for round in 1...3 {
+            await js(web, "box.requestFullscreen(); 0"); await wait(500)
+            let state = await pageState(web)
+            check(browser.sidebar.isHidden && !browser.sidebarVisible, "Round \(round): sidebar finishes collapsing")
+            check(browser.pageShadow.frame.width > dockedPage.width && state["covers"] as? Bool == true,
+                  "Round \(round): fullscreen follows the expanding viewport")
+            capture("sidebar-fullscreen-\(round)")
+            if round == 2 { escape() } else { await js(web, "document.exitFullscreen(); 0") }
+            await wait(500)
+            check(browser.sidebarVisible && browser.pageShadow.frame == dockedPage && browser.sidebarWidth == width,
+                  "Round \(round): exiting restores the sidebar and page layout")
+        }
+        browser.setCollapsesSidebarInSimulatedFullscreen(false)
+        await js(web, "box.requestFullscreen(); 0"); await wait(500)
+        check(browser.sidebarVisible, "Turning the option off preserves the open sidebar")
+        browser.setCollapsesSidebarInSimulatedFullscreen(true); await wait(500)
+        check(browser.sidebar.isHidden, "Turning the option on during fullscreen collapses immediately")
+        await js(web, "document.exitFullscreen(); 0"); await wait(500)
+
+        browser.toggleSidebar(); await wait(500)
+        await js(web, "box.requestFullscreen(); 0"); await wait(500)
+        await js(web, "document.exitFullscreen(); 0"); await wait(500)
+        check(!browser.sidebarVisible && browser.sidebar.isHidden, "An initially collapsed sidebar stays collapsed after exit")
+        browser.toggleSidebar(); await wait(500)
+
+        await js(web, "box.requestFullscreen(); 0"); await wait(500)
+        browser.reload(); await wait(1500)
+        check(browser.sidebarVisible && !browser.pageFullscreen.isActive(in: web), "Reloading a fullscreen page restores the sidebar")
+        await js(web, "box.requestFullscreen(); 0"); await wait(500)
+        browser.closeTab(browser.selectedID!); await wait(500)
+        check(browser.sidebarVisible, "Closing a fullscreen tab restores the sidebar")
     }
 
     func frameFixtures() async {
@@ -287,12 +329,14 @@ final class FrameCollector: NSObject, WKScriptMessageHandler {
         check(await string(web, "result", frame: allowed) == "ok", "The frame's request resolves")
         check(top["fe"] as? String == "iframe#allowed" && top["covers"] as? Bool == true, "The parent lifts the frame over the page: \(top)")
         check(inner["fe"] as? String == "div#player" && inner["covers"] as? Bool == true, "The frame's element covers the frame: \(inner)")
+        check(!browser.sidebarVisible && browser.sidebar.isHidden, "An embedded player's fullscreen collapses the sidebar")
         check(await string(web, "getComputedStyle(player).backgroundColor", frame: allowed) == "rgb(0, 0, 255)", "The frame's :fullscreen rule applies")
         check(await string(web, "events.join()") == "fullscreenchange:allowed", "The parent fires its own change: \(await string(web, "events.join()"))")
         capture("frame-in")
         await js(web, "document.exitFullscreen(); 0", frame: allowed); await wait(700)
         top = await pageState(web); inner = await pageState(web, frame: allowed)
         check(top["fe"] is NSNull && top["attributes"] as? Int == 0 && inner["fe"] is NSNull, "The frame leaving releases the parent: \(top) \(inner)")
+        check(browser.sidebarVisible, "An embedded player exiting restores the sidebar")
 
         await js(web, "player.requestFullscreen(); 0", frame: allowed); await wait(800)
         escape(); await wait(700)

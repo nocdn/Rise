@@ -43,7 +43,10 @@ import RiseCore
         if hoveredWebView === webView { hideLinkStatus() }
         if errorWebView === webView { errorWebView = nil }; update()
     }
-    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) { pageCloth.destinationDidCommit(webView) }
+    func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+        pageFullscreen.setActive(false, in: webView)
+        pageCloth.destinationDidCommit(webView)
+    }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         pageCloth.remember(webView)
         pageCloth.destinationDidCommit(webView)
@@ -63,6 +66,7 @@ import RiseCore
         errorWebView = webView; errorMessage.stringValue = error.localizedDescription; update()
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        pageFullscreen.setActive(false, in: webView)
         pictureInPicture.navigationStarted(in: webView)
         if let tab = tabs.first(where: { $0.webView === webView }) { tabMedia.remove(tab.id) }
         webView.reload()

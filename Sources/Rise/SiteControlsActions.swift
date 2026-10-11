@@ -44,6 +44,12 @@ import Vision
             self?.setLivePeekResize(!(self?.livePeekResize ?? true))
         })
         menu.addItem(menuItem("Simulated Full Screen", checked: pageFullscreen.isSimulated) { [weak self] in self?.toggleSimulatedFullscreen() })
+        if pageFullscreen.isSimulated {
+            menu.addItem(menuItem("Collapse Sidebar in Simulated Full Screen", checked: collapsesSidebarInSimulatedFullscreen) { [weak self] in
+                guard let self else { return }
+                self.setCollapsesSidebarInSimulatedFullscreen(!self.collapsesSidebarInSimulatedFullscreen)
+            })
+        }
         menu.addItem(menuItem("Clear Browsing History…") { [weak self] in self?.confirmClearBrowsingHistory() })
         let visibleRows = (siteControlsPopover.contentViewController as? SiteControlsController)?.rows ?? [:]
         let capabilities = [SiteCapability.camera, .microphone, .location].filter { visibleRows[$0.title] == nil }

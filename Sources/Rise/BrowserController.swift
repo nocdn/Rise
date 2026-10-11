@@ -162,6 +162,8 @@ import RiseCore
     var blockingChangeGeneration = 0
     let linkPreloader: LinkPreloader
     let pageFullscreen: PageFullscreen
+    /// The docked sidebar's state before the visible page entered simulated fullscreen.
+    var fullscreenSidebarWasVisible: Bool?
     let tabSwitcher = TabSwitcherView()
     let tabSwitchBackdrop = PeekBackdrop(color: NSColor.black.withAlphaComponent(0.08))
     var recentTabIDs: [UUID] = []
@@ -185,6 +187,7 @@ import RiseCore
         suggestionFavicons = SuggestionFavicons(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("suggestion-icons.json"))
         let window = BrowserWindow(contentRect: NSRect(x: 0, y: 0, width: 1496, height: 944), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         super.init(window: window)
+        pageFullscreen.onChange = { [weak self] in self?.reconcileFullscreenSidebar() }
         googleSearchSuggestions.onLoad = { [weak self] query in
             guard let self, self.palette.isPresented, self.palette.query.trimmingCharacters(in: .whitespacesAndNewlines) == query,
                   (self.palette.input.currentEditor() as? NSTextView)?.hasMarkedText() != true else { return }
@@ -536,6 +539,7 @@ import RiseCore
         findBar.reattached()
     }
     func update() {
+        reconcileFullscreenSidebar()
         splitPeekReturns = splitPeekReturns.filter { id, undo in
             splitGroups.contains { $0.id == id && $0.contains(undo.tab.id) } && tabs.contains { $0 === undo.tab }
         }
@@ -584,6 +588,7 @@ import RiseCore
         let partner = splitGroups.first { $0.contains(id) }.map { $0.leftID == id ? $0.rightID : $0.leftID }
         splitGroups.removeAll { $0.contains(id) }
         let tab = tabs.remove(at: index); closedTabs.append(tab.saved)
+        pageFullscreen.setActive(false, in: tab.webView)
         releaseHeldPages(of: tab)
         permissionCoordinator.cancel(for: tab.webView)
         recentTabIDs.removeAll { $0 == id }
@@ -632,11 +637,17 @@ import RiseCore
     @objc func retry() { errorWebView = nil; if let url = selectedTab?.url { selectedTab?.load(url) }; update() }
     @objc func toggleSidebar() {
         if keepPeekedSidebar() { return }
+        // An explicit sidebar choice takes precedence over automatic restoration.
+        if fullscreenSidebarWasVisible != nil { fullscreenSidebarWasVisible = false }
+        setSidebarVisible(!sidebarVisible)
+    }
+    func setSidebarVisible(_ visible: Bool) {
+        guard sidebarVisible != visible else { return }
         tabPressed()
         hidePalette()
         siteControlsPopover.close(); permissionCoordinator.cancel()
         let floating = isSidebarFloating
-        sidebarVisible.toggle()
+        sidebarVisible = visible
         if !sidebarVisible { sidebar.newTab.resetHover() }
         settleSidebarFloat(docking: floating)
         CATransaction.begin(); CATransaction.setDisableActions(true)
