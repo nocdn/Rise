@@ -7,14 +7,10 @@ final class PeekPresentationController: UIPresentationController, UIGestureRecog
     static let heightFraction: CGFloat = 0.8
     static let margin: CGFloat = 10
     static let cornerRadius: CGFloat = 40
-    /// Whether the page behind recedes. Off for now; the recede is kept for reuse.
+    /// Whether the page behind recedes. Off for now; the bar's panel recedes the page instead.
     static let recedesPage = false
-    /// Insets the page about 20 points per side on an iPhone, and lowers it a little.
-    static let recededScale: CGFloat = 0.9
-    static let recededDrop: CGFloat = 16
-    static let recededCornerRadius: CGFloat = 32
     /// Quick, with the slight overshoot of Rise's other springs on the Mac.
-    static let openSpring = (duration: 0.3, bounce: 0.15)
+    static let openSpring = (duration: 0.24, bounce: 0.15)
     /// The card leaves without overshoot; the page's bigger bounce makes its return visible.
     static let closeSpring = (duration: 0.26, bounce: 0.0)
     static let pageReturnSpring = (duration: 0.3, bounce: 0.3)
@@ -121,10 +117,7 @@ final class PeekPresentationController: UIPresentationController, UIGestureRecog
     /// Recedes the page: 0 is fully receded behind the card, 1 is back at full size.
     func setPage(_ progress: CGFloat) {
         guard Self.recedesPage else { return }
-        let left = motion ? 1-min(1, max(0, progress)) : 0
-        let scale = 1-(1-Self.recededScale)*left
-        page.transform = CGAffineTransform(translationX: 0, y: Self.recededDrop*left).scaledBy(x: scale, y: scale)
-        page.layer.cornerRadius = Self.recededCornerRadius*left
+        PageRecede.apply(1-progress, to: page)
     }
 
     /// Follows the finger: down moves the card and restores the page; up grows the card.
@@ -170,7 +163,7 @@ final class PeekPresentationController: UIPresentationController, UIGestureRecog
         else { return }
         isExpanding = true
         pan.isEnabled = false
-        peek?.prepareToFill()
+        peek?.prepareToFill(statusBarHeight: containerView?.safeAreaInsets.top ?? 0)
         let remaining = max(1, cardFrame(expansion: expansion).minY-(containerView?.bounds.minY ?? 0))
         let finish = { [weak self] in
             guard let self else { return }

@@ -12,13 +12,15 @@ final class PeekViewController: UIViewController, UIViewControllerTransitioningD
     let browser: BrowserViewController
     let handle = PeekHandle()
     let header = UIView()
-    private let onExpand: @MainActor (WKWebView) -> Void
+    private let onExpand: @MainActor (WKWebView, UIColor?) -> Void
     private var headerHeight = PeekViewController.headerHeight
-    private var observations: [NSKeyValueObservation] = []
-    private var sampling = false, sampleAgain = false
+    private lazy var tint = PageEdgeTint { [weak self] color in self?.setHeaderColor(color) }
+    /// The colour of the strip above the page, which continues the page's top edge.
+    var topColor: UIColor? { tint.color }
 
-    /// `onExpand` receives the live page once the card has grown to fill the window.
-    init(url: URL, onExpand: @escaping @MainActor (WKWebView) -> Void) {
+    /// `onExpand` receives the live page once the card has grown to fill the window, with the
+    /// colour of its top edge.
+    init(url: URL, onExpand: @escaping @MainActor (WKWebView, UIColor?) -> Void) {
         browser = BrowserViewController(startURL: url, allowsPeek: false)
         self.onExpand = onExpand
         super.init(nibName: nil, bundle: nil)
@@ -42,27 +44,7 @@ final class PeekViewController: UIViewController, UIViewControllerTransitioningD
             UIAccessibilityCustomAction(name: "Open as page") { [weak self] _ in self?.openInMainPage(); return true },
         ]
 
-        let webView = browser.webView
-        // Whatever can change the page's top edge: loading, scrolling, and the page's own colours.
-        observations = [
-            webView.observe(\.estimatedProgress) { [weak self] webView, _ in
-                MainActor.assumeIsolated {
-                    self?.sampleHeaderColor()
-                    // Late paints, such as web fonts and images, can still change the top edge.
-                    guard webView.estimatedProgress >= 1 else { return }
-                    for delay in [0.3, 1.0] {
-                        DispatchQueue.main.asyncAfter(deadline: .now()+delay) { [weak self] in self?.sampleHeaderColor() }
-                    }
-                }
-            },
-            webView.observe(\.themeColor) { [weak self] _, _ in MainActor.assumeIsolated { self?.sampleHeaderColor() } },
-            webView.observe(\.underPageBackgroundColor) { [weak self] _, _ in
-                MainActor.assumeIsolated { self?.sampleHeaderColor() }
-            },
-            webView.scrollView.observe(\.contentOffset) { [weak self] _, _ in
-                MainActor.assumeIsolated { self?.sampleHeaderColor() }
-            },
-        ]
+        tint.track(browser.webView)
     }
 
     override func viewDidLayoutSubviews() {
@@ -81,11 +63,12 @@ final class PeekViewController: UIViewController, UIViewControllerTransitioningD
         header.frame.contains(point) || handle.frame.contains(point)
     }
 
-    /// Folds the handle's strip away as the card grows to fill the window. The page resizes
+    /// As the card grows to fill the window, its strip becomes the strip behind the status bar
+    /// that the main page shows, so the page lands exactly where it will stay. The page resizes
     /// inside the animation, so WebKit sizes and paints it for where the card will end up.
     /// Call `layoutIfNeeded` inside the animation.
-    func prepareToFill() {
-        headerHeight = 0
+    func prepareToFill(statusBarHeight: CGFloat) {
+        headerHeight = statusBarHeight
         view.setNeedsLayout()
     }
 
@@ -97,7 +80,7 @@ final class PeekViewController: UIViewController, UIViewControllerTransitioningD
     /// Hands the live page to the page underneath, then leaves without animating: the card is
     /// already covering the window, so the switch is invisible.
     func becomePage() {
-        onExpand(browser.webView)
+        onExpand(browser.webView, topColor)
         dismiss(animated: false)
     }
 
@@ -106,25 +89,13 @@ final class PeekViewController: UIViewController, UIViewControllerTransitioningD
         return true
     }
 
-    /// Samples again once the current sample finishes, so bursts of changes cost one snapshot each.
-    private func sampleHeaderColor() {
-        guard !sampling else { sampleAgain = true; return }
-        sampling = true
-        PageTopColor.sample(browser.webView) { [weak self] color in
-            guard let self else { return }
-            sampling = false
-            if let color { setHeaderColor(color) }
-            if sampleAgain { sampleAgain = false; sampleHeaderColor() }
-        }
-    }
-
     private func setHeaderColor(_ color: UIColor) {
         guard color != header.backgroundColor else { return }
         UIView.animate(withDuration: 0.15, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
             self.header.backgroundColor = color
             self.view.backgroundColor = color
         }
-        handle.onDarkBackground = PageTopColor.isDark(color)
+        handle.onDarkBackground = PageEdgeColor.isDark(color)
     }
 
     func presentationController(forPresented presented: UIViewController, presenting: UIViewController?,
