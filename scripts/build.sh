@@ -15,8 +15,8 @@ cp scripts/Info.plist "$APP/Contents/Info.plist"
 cp THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/THIRD_PARTY_NOTICES.md"
 # The icon is an Icon Composer document of the square artwork: macOS 26 and later round and light
 # it themselves, and actool prerenders the rounded icon earlier versions show (Assets.car, Rise.icns).
-xcrun actool Assets/AppIcon/Rise.icon --compile "$APP/Contents/Resources" --app-icon Rise --include-all-app-icons \
-  --output-partial-info-plist .build/icon-info.plist --target-device mac --platform macosx \
+xcrun actool "$PWD/Assets/AppIcon/Rise.icon" --compile "$APP/Contents/Resources" --app-icon Rise --include-all-app-icons \
+  --output-partial-info-plist "$PWD/.build/icon-info.plist" --target-device mac --platform macosx \
   --minimum-deployment-target 14.0 --output-format human-readable-text --errors > /dev/null
 python3 scripts/sign-app.py "$APP"
 echo "Built $APP"

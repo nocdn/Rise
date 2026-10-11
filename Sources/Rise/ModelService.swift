@@ -3,12 +3,17 @@ import Foundation
 /// Where Rise's model requests go: OpenRouter with the built-in key, or the signed-in
 /// OpenCode service on this Mac, which runs the same model through the user's own account.
 enum AIProvider: String, CaseIterable {
-    case openRouter, openCode
+    case openRouter
+    #if os(macOS)
+    case openCode
+    #endif
     static let preferenceKey = "Rise.AIProvider"
     var title: String {
         switch self {
         case .openRouter: return "OpenRouter (Hardcoded)"
+        #if os(macOS)
         case .openCode: return "OpenCode"
+        #endif
         }
     }
 }
@@ -24,17 +29,19 @@ enum ModelEvent: Equatable {
 enum ModelService {
     /// Streams one chat-style request. The handler runs before the next event is read,
     /// so a slow handler holds the stream back instead of buffering it.
-    static func run(_ messages: [[String: Any]], provider: AIProvider, session: URLSession = .shared,
+    @MainActor static func run(_ messages: [[String: Any]], provider: AIProvider, session: URLSession = .shared,
                     handle: (ModelEvent) async throws -> Void) async throws {
         switch provider {
         case .openRouter: try await OpenRouterClient.run(messages, session: session, handle: handle)
+        #if os(macOS)
         case .openCode: try await OpenCodeClient.run(messages, session: session, handle: handle)
+        #endif
         }
     }
 }
 
 enum OpenRouterClient {
-    static func run(_ messages: [[String: Any]], session: URLSession,
+    @MainActor static func run(_ messages: [[String: Any]], session: URLSession,
                     handle: (ModelEvent) async throws -> Void) async throws {
         var request = URLRequest(url: PageAssistant.endpoint)
         request.httpMethod = "POST"
@@ -79,6 +86,7 @@ enum OpenRouterClient {
 /// Talks to the OpenCode background service that the OpenCode apps and CLI share. Each
 /// request is a short-lived session with every tool denied, so page text can't make the
 /// model act on this Mac; the session is deleted once the answer ends.
+#if os(macOS)
 enum OpenCodeClient {
     struct Endpoint: Equatable {
         let url: URL
@@ -263,3 +271,5 @@ struct OpenCodeEvents {
         }
     }
 }
+
+#endif

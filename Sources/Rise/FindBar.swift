@@ -202,7 +202,7 @@ class FindInputCell: NSTextFieldCell {
 /// panel takes clicks.
 @MainActor final class FindBar: FlippedView, NSTextFieldDelegate {
     enum Mode { case find, ask }
-    struct Turn { let question: String, answer: String }
+    typealias Turn = PageAssistant.Turn
     /// The panel sits as far from the page's side as from its top.
     static let width: CGFloat = 360, margin: CGFloat = 8, top: CGFloat = 8, bottom: CGFloat = 8
     static let rowHeight: CGFloat = 40, radius: CGFloat = 12

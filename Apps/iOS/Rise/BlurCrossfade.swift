@@ -16,28 +16,39 @@ import UIKit
     static let scale: CGFloat = 0.96
     /// The blur's radius at its most, in points (CSS pixels): 1 at most.
     static let radius: CGFloat = 1
+    @MainActor struct Style {
+        let duration: TimeInterval
+        let exitFadeDuration: TimeInterval
+        let scale: CGFloat
+        let radius: CGFloat
+        let spring: Bool
+        static let panel = Style(duration: BlurCrossfade.duration, exitFadeDuration: BlurCrossfade.exitFadeDuration,
+                                 scale: BlurCrossfade.scale, radius: BlurCrossfade.radius, spring: false)
+        // Motion's opacity + scale(.25) + blur(4), spring(duration: .3, bounce: 0).
+        static let symbol = Style(duration: 0.3, exitFadeDuration: 0.3, scale: 0.25, radius: 4, spring: true)
+    }
     private static let context = CIContext()
-    private static var running: [UIViewPropertyAnimator] = []
+    /// The swaps under way, by the views' superview, so swaps elsewhere don't cut them short.
+    private static var running: [ObjectIdentifier: [UIViewPropertyAnimator]] = [:]
 
     /// Both views keep their place in their superview as it animates; lay them out by bounds and
     /// center, as they're scaled.
-    static func swap(from previous: UIView?, to next: UIView?) {
+    static func swap(from previous: UIView?, to next: UIView?, style: Style = .panel,
+                     completion: (() -> Void)? = nil) {
+        guard let container = (next ?? previous)?.superview else { return }
         // Carries on from wherever an interrupted swap had got to.
-        for animator in running where animator.state == .active {
-            animator.stopAnimation(false)
-            animator.finishAnimation(at: .current)
-        }
-        running = []
-        let shrunk = CGAffineTransform(scaleX: scale, y: scale)
-        let outgoing = previous.flatMap(blurredCopy)
-        let incoming = next.flatMap(blurredCopy)
+        stop(in: container)
+        let shrunk = CGAffineTransform(scaleX: style.scale, y: style.scale)
+        let outgoing = previous.flatMap { blurredCopy(of: $0, radius: style.radius) }
+        let incoming = next.flatMap { blurredCopy(of: $0, radius: style.radius) }
         if let next {
             if next.alpha == 0 { next.transform = shrunk }
             incoming?.alpha = next.alpha == 0 ? 1 : 0
         }
         outgoing?.alpha = 0
 
-        let move = UIViewPropertyAnimator(duration: duration, timingParameters: timing)
+        let curve: UITimingCurveProvider = style.spring ? UISpringTimingParameters(dampingRatio: 1) : timing
+        let move = UIViewPropertyAnimator(duration: style.duration, timingParameters: curve)
         move.addAnimations {
             next?.alpha = 1
             next?.transform = .identity
@@ -50,19 +61,31 @@ import UIKit
             outgoing?.removeFromSuperview()
             // Hidden now, so it can be put back for the next time it shows.
             if let previous, previous.alpha == 0 { previous.transform = .identity }
+            completion?()
         }
-        let fade = UIViewPropertyAnimator(duration: exitFadeDuration, timingParameters: timing)
+        let fade = UIViewPropertyAnimator(duration: style.exitFadeDuration, timingParameters: curve)
         fade.addAnimations { previous?.alpha = 0 }
-        running = [move, fade]
+        running[ObjectIdentifier(container)] = [move, fade]
         move.startAnimation()
         fade.startAnimation()
     }
 
+    /// Leaves a swap under way in the container where it has got to.
+    static func stop(in container: UIView) {
+        let key = ObjectIdentifier(container)
+        for animator in running[key] ?? [] where animator.state == .active {
+            animator.stopAnimation(false)
+            animator.finishAnimation(at: .current)
+        }
+        running[key] = nil
+    }
+
     /// Lays a blurred copy of the view, as it looks fully shown, over it, hidden for now.
-    private static func blurredCopy(of view: UIView) -> UIImageView? {
+    private static func blurredCopy(of view: UIView, radius: CGFloat) -> UIImageView? {
         view.layoutIfNeeded()
         let size = view.bounds.size
-        guard size.width > 0, size.height > 0 else { return nil }
+        // Very tall views, such as a long grid of tabs, fade and grow without the blur.
+        guard size.width > 0, size.height > 0, size.height < 2400 else { return nil }
         let alpha = view.alpha
         view.alpha = 1
         let format = UIGraphicsImageRendererFormat(for: view.traitCollection)

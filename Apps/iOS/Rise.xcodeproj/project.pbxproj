@@ -4,6 +4,21 @@
     classes = {};
     objectVersion = 77;
     objects = {
+        A00000000000000000000068 /* CubicEasing.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = CubicEasing.swift; path = ../../Sources/Rise/CubicEasing.swift; sourceTree = "<group>"; };
+        A00000000000000000000069 /* CubicEasing.swift in Sources */ = { isa = PBXBuildFile; fileRef = A00000000000000000000068; };
+
+        A00000000000000000000066 /* TokenStream.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = TokenStream.swift; path = ../../Sources/Rise/TokenStream.swift; sourceTree = "<group>"; };
+        A00000000000000000000067 /* TokenStream.swift in Sources */ = { isa = PBXBuildFile; fileRef = A00000000000000000000066; };
+
+        A00000000000000000000064 /* PageAnswerStream.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PageAnswerStream.swift; path = ../../Sources/Rise/PageAnswerStream.swift; sourceTree = "<group>"; };
+        A00000000000000000000065 /* PageAnswerStream.swift in Sources */ = { isa = PBXBuildFile; fileRef = A00000000000000000000064; };
+
+        A00000000000000000000062 /* ModelService.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ModelService.swift; path = ../../Sources/Rise/ModelService.swift; sourceTree = "<group>"; };
+        A00000000000000000000063 /* ModelService.swift in Sources */ = { isa = PBXBuildFile; fileRef = A00000000000000000000062; };
+
+        A00000000000000000000060 /* PageAssistant.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PageAssistant.swift; path = ../../Sources/Rise/PageAssistant.swift; sourceTree = "<group>"; };
+        A00000000000000000000061 /* PageAssistant.swift in Sources */ = { isa = PBXBuildFile; fileRef = A00000000000000000000060; };
+
         A00000000000000000000001 /* Rise.icon in Resources */ = {
             isa = PBXBuildFile;
             fileRef = A00000000000000000000002 /* Rise.icon */;
@@ -14,6 +29,17 @@
             name = Rise.icon;
             path = ../../Assets/AppIcon/Rise.icon;
             sourceTree = "<group>";
+        };
+        A0000000000000000000000C /* PageFind.swift */ = {
+            isa = PBXFileReference;
+            lastKnownFileType = sourcecode.swift;
+            name = PageFind.swift;
+            path = ../../Sources/Rise/PageFind.swift;
+            sourceTree = "<group>";
+        };
+        A0000000000000000000000D /* PageFind.swift in Sources */ = {
+            isa = PBXBuildFile;
+            fileRef = A0000000000000000000000C /* PageFind.swift */;
         };
         A00000000000000000000003 /* RiseiOS.app */ = {
             isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0;
@@ -46,7 +72,7 @@
         A00000000000000000000009 /* Main group */ = {
             isa = PBXGroup;
             children = (A00000000000000000000007, A00000000000000000000008,
-                        A0000000000000000000000A, A00000000000000000000002, A0000000000000000000000B,);
+                        A0000000000000000000000A, A00000000000000000000002, A0000000000000000000000C, A00000000000000000000060, A00000000000000000000062, A00000000000000000000064, A00000000000000000000066, A00000000000000000000068, A0000000000000000000000B,);
             sourceTree = "<group>";
         };
         A0000000000000000000000A /* Configuration */ = {
@@ -89,7 +115,7 @@
             remoteGlobalIDString = A00000000000000000000010;
             remoteInfo = RiseiOS;
         };
-        A00000000000000000000020 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        A00000000000000000000020 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A0000000000000000000000D, A00000000000000000000061, A00000000000000000000063, A00000000000000000000065, A00000000000000000000067, A00000000000000000000069,); runOnlyForDeploymentPostprocessing = 0; };
         A00000000000000000000021 = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
         A00000000000000000000022 = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001,); runOnlyForDeploymentPostprocessing = 0; };
         A00000000000000000000023 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };

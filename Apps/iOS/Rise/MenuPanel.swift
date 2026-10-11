@@ -99,10 +99,10 @@ final class MenuPanel: UIView {
 
     let address = AddressBar()
     let shareTile = MenuTile(symbol: "square.and.arrow.up", title: "Share")
-    let pinTile = MenuTile(symbol: "pin", title: "Pin")
+    let summariseTile = MenuTile(symbol: "text.line.3.summary", title: "Summarise")
     let findTile = MenuTile(symbol: "doc.text.magnifyingglass", title: "Find", label: "Find on Page")
     let copyTile = MenuTile(symbol: "link", title: "Copy", label: "Copy Link")
-    var tiles: [MenuTile] { [shareTile, pinTile, findTile, copyTile] }
+    var tiles: [MenuTile] { [shareTile, summariseTile, findTile, copyTile] }
 
     /// Four square tiles across the panel.
     static func tileSide(width: CGFloat) -> CGFloat {

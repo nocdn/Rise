@@ -1,4 +1,10 @@
+#if os(macOS)
 import AppKit
+typealias TokenColor = NSColor
+#else
+import UIKit
+typealias TokenColor = UIColor
+#endif
 
 /// The streamed answer's effect, from the token generation exploration (fade-in duration
 /// 200 ms, color spread 2 tokens, color transition 280 ms): each word fades in rose-500,
@@ -38,22 +44,28 @@ struct OKLab: Equatable {
     var l, a, b, alpha: Double
     init(l: Double, a: Double, b: Double, alpha: Double = 1) { self.l = l; self.a = a; self.b = b; self.alpha = alpha }
     init(l: Double, c: Double, h: Double) { self.init(l: l, a: c*cos(h * .pi/180), b: c*sin(h * .pi/180)) }
-    init(_ color: NSColor) {
+    init(_ color: TokenColor) {
+        #if os(macOS)
         let color = color.usingColorSpace(.extendedSRGB) ?? color
+        let red = color.redComponent, green = color.greenComponent, blue = color.blueComponent, alpha = color.alphaComponent
+        #else
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 1
+        color.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        #endif
         func linear(_ value: CGFloat) -> Double {
             let x = abs(Double(value))
             return (x <= 0.04045 ? x/12.92 : pow((x+0.055)/1.055, 2.4)) * (value < 0 ? -1 : 1)
         }
-        let r = linear(color.redComponent), g = linear(color.greenComponent), b = linear(color.blueComponent)
+        let r = linear(red), g = linear(green), b = linear(blue)
         let l = cbrt(0.4122214708*r + 0.5363325363*g + 0.0514459929*b)
         let m = cbrt(0.2119034982*r + 0.6806995451*g + 0.1073969566*b)
         let s = cbrt(0.0883024619*r + 0.2817188376*g + 0.6299787005*b)
         self.init(l: 0.2104542553*l + 0.7936177850*m - 0.0040720468*s,
                   a: 1.9779984951*l - 2.4285922050*m + 0.4505937099*s,
-                  b: 0.0259040371*l + 0.7827717662*m - 0.8086757660*s, alpha: Double(color.alphaComponent))
+                  b: 0.0259040371*l + 0.7827717662*m - 0.8086757660*s, alpha: Double(alpha))
     }
     /// Extended sRGB, so rose-500's wide-gamut red survives on P3 displays.
-    var color: NSColor {
+    var color: TokenColor {
         let l = pow(self.l + 0.3963377774*a + 0.2158037573*b, 3)
         let m = pow(self.l - 0.1055613458*a - 0.0638541728*b, 3)
         let s = pow(self.l - 0.0894841775*a - 1.2914855480*b, 3)
@@ -64,7 +76,12 @@ struct OKLab: Equatable {
         var components = [encoded(4.0767416621*l - 3.3077115913*m + 0.2309699292*s),
                           encoded(-1.2684380046*l + 2.6097574011*m - 0.3413193965*s),
                           encoded(-0.0041960863*l - 0.7034186147*m + 1.7076147010*s), CGFloat(alpha)]
+        #if os(macOS)
         return NSColor(colorSpace: .extendedSRGB, components: &components, count: 4)
+        #else
+        let space = CGColorSpace(name: CGColorSpace.extendedSRGB)!
+        return UIColor(cgColor: CGColor(colorSpace: space, components: components)!)
+        #endif
     }
     func mixed(with other: OKLab, _ t: Double) -> OKLab {
         OKLab(l: l+(other.l-l)*t, a: a+(other.a-a)*t, b: b+(other.b-b)*t, alpha: alpha+(other.alpha-alpha)*t)
@@ -72,8 +89,9 @@ struct OKLab: Equatable {
 }
 
 /// A streamed answer played out a word at a time with ``TokenMotion``. Words split as in the
-/// exploration, `\s*\S+`. Everything that has arrived is laid out up front, so lines and the
-/// panel's height are settled before a word shows; words not shown yet are painted clear.
+/// exploration, `\s*\S+`. Everything that has arrived is laid out up front to keep wrapping
+/// stable; words not shown yet are painted clear. The mobile sheet sizes to `newest` instead
+/// of reserving space for every queued word.
 struct TokenStream {
     struct Entrance: Equatable {
         let range: NSRange

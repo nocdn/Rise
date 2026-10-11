@@ -1,16 +1,34 @@
 import UIKit
 import WebKit
 
-/// The iOS shell: one page at a time under a status bar strip and above a bottom bar.
-/// Pages that a Peek replaced are held for Back.
+/// The iOS shell: a tab's page under a status bar strip and above a bottom bar, with the other
+/// tabs in a switcher. Pages that a Peek replaced in a tab are held for Back.
 final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, UIGestureRecognizerDelegate {
     static let homeURL = URL(string: "https://news.ycombinator.com/")!
-    private(set) var webView: WKWebView
-    /// Pages an expanded Peek replaced, most recent last, held for Back as on the Mac.
-    private(set) var previousPages: [WKWebView] = []
+    /// The open tabs, in the switcher's order.
+    private(set) var tabs: [BrowserTab]
+    private(set) var tabIndex = 0
+    private var currentTab: BrowserTab { tabs[tabIndex] }
+    /// The current tab's page.
+    private(set) var webView: WKWebView {
+        get { currentTab.webView }
+        set { currentTab.webView = newValue }
+    }
+    /// Pages an expanded Peek replaced in this tab, most recent last, held for Back as on the Mac.
+    private(set) var previousPages: [WKWebView] {
+        get { currentTab.previousPages }
+        set { currentTab.previousPages = newValue }
+    }
+    /// The tabs as cards, over the page and under the bottom bar, which stays.
+    let tabSwitcher = TabSwitcherView()
+    private(set) var isTabSwitcherOpen = false
+    /// A swipe up anywhere on the bottom bar shrinks the page into the tab switcher.
+    private lazy var tabSwipe = UIPanGestureRecognizer(target: self, action: #selector(swipeToTabs))
+    private var isSwipingToTabs = false
     private lazy var backSwipe = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(swipeBack))
     private let startURL: URL?
     private let allowsPeek: Bool
+    private var opensSearchOnFirstAppearance: Bool
     /// Fills the area behind the status bar with the colour along the page's top edge, as Arc
     /// does, so the page seems to reach the top of the screen. Peek pages have their own strip.
     let topStrip = UIView()
@@ -35,12 +53,16 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     static let panelFillSpring = (duration: 0.16, bounce: 0.0)
     /// How far the bar has grown into its panel: 0 is the bar and 1 the open panel.
     private(set) var panelExpansion: CGFloat = 0
-    private lazy var panelPan = UIPanGestureRecognizer(target: self, action: #selector(dragPanel))
+    /// How much of the window the keyboard covers, which Find's panel sits above.
+    private var keyboardHeight: CGFloat = 0
+    private lazy var panelPan = UIPanGestureRecognizer(target: self, action: #selector(dragPanel(_:)))
 
-    init(startURL: URL? = BrowserViewController.homeURL, allowsPeek: Bool = true) {
+    init(startURL: URL? = BrowserViewController.homeURL, allowsPeek: Bool = true,
+         opensSearchOnFirstAppearance: Bool = false) {
         self.startURL = startURL
         self.allowsPeek = allowsPeek
-        webView = Self.makeWebView()
+        self.opensSearchOnFirstAppearance = opensSearchOnFirstAppearance
+        tabs = [BrowserTab(webView: Self.makeWebView())]
         super.init(nibName: nil, bundle: nil)
         adoptDelegates(of: webView)
     }
@@ -86,13 +108,22 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     func showPeek(_ url: URL) {
         guard allowsPeek, Self.canPeek(url), viewIfLoaded?.window != nil,
-              presentedViewController == nil, !isPanelOpen else { return }
+              presentedViewController == nil, !isPanelOpen, !isTabSwitcherOpen else { return }
         let peek = PeekViewController(url: url) { [weak self] page, color in self?.adopt(page, topColor: color) }
         UIImpactFeedbackGenerator(style: .soft).impactOccurred()
         present(peek, animated: true)
     }
 
     required init?(coder: NSCoder) { fatalError("Use init(startURL:)") }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        // Only a freshly created scene opts in. Consume it once, so returning to the app or
+        // dismissing a presented controller preserves whatever the person was doing.
+        guard opensSearchOnFirstAppearance else { return }
+        opensSearchOnFirstAppearance = false
+        openPanel()
+    }
 
     override func loadView() {
         view = UIView()
@@ -105,7 +136,11 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         content.addSubview(pullToReload.overlay)
         install(webView)
         content.addSubview(topStrip)
-        if allowsPeek { setUpBottomBar() }
+        if allowsPeek {
+            // In the content, so it recedes with the page behind the bar's panels.
+            content.addSubview(tabSwitcher)
+            setUpBottomBar()
+        }
         backSwipe.edges = .left
         backSwipe.delegate = self
         view.addGestureRecognizer(backSwipe)
@@ -138,7 +173,16 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             page.center = CGPoint(x: pageFrame.midX, y: pageFrame.midY)
         }
         pullToReload.layoutGap()
+        bottomBar.find.maximumAnswerHeight = max(80, min(300, view.bounds.height-keyboardHeight-160))
         layoutBottomBar()
+        if tabSwitcher.superview === content {
+            tabSwitcher.frame = content.bounds
+            tabSwitcher.pageSize = content.bounds.size
+            tabSwitcher.stripHeight = stripHeight
+            tabSwitcher.topInset = view.safeAreaInsets.top+8
+            let safeBottom = view.window?.safeAreaInsets.bottom ?? 0
+            tabSwitcher.bottomInset = BottomBar.height(collapsed: false, safeBottom: safeBottom)+12
+        }
     }
 
     private(set) var topColor: UIColor?
@@ -165,13 +209,14 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         // Over the dark backdrop around the receded page. Behind More's panel, the page recedes
         // too little to clear the clock.
         if isPanelOpen, bottomBar.panel == .search, !UIAccessibility.isReduceMotionEnabled { return .lightContent }
+        // Over the switcher's blur, which follows the appearance.
+        if isTabSwitcherOpen { return .default }
         guard let topColor else { return .default }
         return PageEdgeColor.isDark(topColor) ? .lightContent : .darkContent
     }
 
     /// Makes an expanded Peek's live page this page, without loading it again. `topColor`, the
-    /// Peek strip's colour, carries over so the strip doesn't change as the page moves in, and
-    /// `bottomColor` likewise for the bar.
+    /// Peek strip's colour, carries over so the strip doesn't change as the page moves in.
     func adopt(_ page: WKWebView, topColor: UIColor? = nil) {
         guard page !== webView else { return }
         page.transform = .identity
@@ -197,6 +242,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         }
         setBottomBarCollapsed(false, animated: false)
         updateTabsPreview()
+        currentTab.loadFavicon()
         addressObservations = [
             webView.observe(\.url) { [weak self] _, _ in MainActor.assumeIsolated { self?.updateAddress() } },
             webView.observe(\.canGoBack) { [weak self] _, _ in MainActor.assumeIsolated { self?.updateAddress() } },
@@ -226,7 +272,21 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         // WebKit's own swipe handles Back within the page's history.
         if gestureRecognizer === panelPan { return isPanelOpen }
-        return gestureRecognizer !== backSwipe || (!previousPages.isEmpty && !webView.canGoBack && !isPanelOpen)
+        if gestureRecognizer === tabSwipe {
+            // Only upwards, more up than sideways.
+            let velocity = tabSwipe.velocity(in: view)
+            return canShowTabSwitcher && velocity.y < 0 && abs(velocity.y) > abs(velocity.x)
+        }
+        return gestureRecognizer !== backSwipe
+            || (!previousPages.isEmpty && !webView.canGoBack && !isPanelOpen && !isTabSwitcherOpen)
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        // Editing and selection belong to the field; answer scrolling belongs to TextKit.
+        if gestureRecognizer === panelPan, bottomBar.panel == .find, let touched = touch.view,
+           touched.isDescendant(of: bottomBar.find.field)
+            || touched.isDescendant(of: bottomBar.find.answerView) { return false }
+        return true
     }
 
     /// Slides the page off to the right over the previous one, as WebKit's Back swipe does.
@@ -267,12 +327,70 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         dimming.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(closePanelOnTap)))
         view.addSubview(dimming)
         view.addSubview(bottomBar)
+        bottomBar.find.attachHosts(to: self)
         bottomBar.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(openCollapsedBar)))
         panelPan.delegate = self
         bottomBar.addGestureRecognizer(panelPan)
+        tabSwipe.delegate = self
+        bottomBar.addGestureRecognizer(tabSwipe)
+        bottomBar.tabsButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            if isTabSwitcherOpen { selectTab(tabIndex) } else { showTabSwitcher() }
+        }, for: .primaryActionTriggered)
+        bottomBar.tabsButton.count = tabs.count
+        tabSwitcher.onSelect = { [weak self] index in self?.selectTab(index) }
+        tabSwitcher.onClose = { [weak self] index in self?.closeTab(index) }
         bottomBar.newPageButton.addAction(UIAction { [weak self] _ in self?.openPanel() }, for: .primaryActionTriggered)
         bottomBar.search.onOpen = { [weak self] url in self?.openFromPanel(url) }
         bottomBar.moreButton.addAction(UIAction { [weak self] _ in self?.openPanel(.menu) }, for: .primaryActionTriggered)
+        bottomBar.find.find = { [weak self] query, direction in
+            await self?.find(query, direction: direction) ?? PageFind.Matches(count: 0, index: -1)
+        }
+        bottomBar.find.clear = { [weak self] in
+            guard let page = self?.webView else { return }
+            Task { await PageFind.clear(page, selectingCurrent: false) }
+        }
+        bottomBar.find.answer = { [weak self] question, history in
+            let page = self?.webView
+            let url = page?.url
+            return PageAssistant.answer(question, history: history, page: {
+                guard let page else { throw PageAssistant.Failure.service("There’s no page to ask about.") }
+                await PageFind.clear(page, selectingCurrent: false)
+                await PageFind.clearPassage(page)
+                try Task.checkCancellation()
+                return try await PageAssistant.snapshot(of: page)
+            }, highlight: { [weak self] quote in
+                guard !Task.isCancelled, let self, let page, page === self.webView, page.url == url,
+                      self.isPanelOpen, self.bottomBar.find.mode == .ask else { return false }
+                let found = await PageFind.highlightPassage(quote, in: page)
+                guard !Task.isCancelled, page === self.webView, page.url == url,
+                      self.isPanelOpen, self.bottomBar.find.mode == .ask else {
+                    await PageFind.clearPassage(page)
+                    return false
+                }
+                if found { await self.revealPassage(in: page) }
+                return found
+            })
+        }
+        bottomBar.find.clearPassage = { [weak self] in
+            guard let page = self?.webView else { return }
+            Task { await PageFind.clearPassage(page) }
+        }
+        bottomBar.find.onHeightChanged = { [weak self] in
+            guard let self, isPanelOpen, bottomBar.panel == .find else { return }
+            bottomBar.find.maximumAnswerHeight = max(80, min(300, view.bounds.height-keyboardHeight-160))
+            UIView.animate(withDuration: 0.18, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+                self.layoutBottomBar(); self.bottomBar.layoutIfNeeded()
+            }
+            if bottomBar.find.mode == .ask {
+                Task { [weak self] in
+                    guard let self else { return }
+                    await revealPassage(in: webView)
+                }
+            }
+        }
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChange),
+                                               name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
         // Back and Forward leave More's panel open, to go on through the history; the rest close it.
         let address = bottomBar.menu.address, menu = bottomBar.menu
         let actions: [(UIControl, @MainActor (BrowserViewController) -> Void)] = [
@@ -280,9 +398,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             (address.forwardButton, { $0.webView.goForward() }),
             (address.reloadButton, { $0.closePanel(); $0.webView.reload() }),
             (menu.shareTile, { $0.closePanel(); $0.share() }),
-            // Nothing to pin to yet.
-            (menu.pinTile, { _ in }),
-            (menu.findTile, { $0.closePanel(); $0.findOnPage() }),
+            // Nothing to summarise with yet.
+            (menu.summariseTile, { _ in }),
+            (menu.findTile, { $0.openFind() }),
             (menu.copyTile, { $0.closePanel(); $0.copyLink() }),
         ]
         for (control, action) in actions {
@@ -341,19 +459,23 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let height = switch panel {
         case .search: (view.bounds.height*Self.panelHeightFraction).rounded()
         case .menu: BottomBar.menuHeight(width: view.bounds.width, safeBottom: safeBottom)
+        case .find: BottomBar.findHeight(keyboard: keyboardHeight, safeBottom: safeBottom, answer: bottomBar.find.answerHeight)
         }
         return max(1, height-open)
     }
 
     /// How far the page recedes behind the open panel: fully behind New Page's, and behind smaller
-    /// panels as far as the same rate of growth takes it.
-    private var panelRecede: CGFloat { panelTravel/travel(of: .search) }
+    /// panels as far as the same rate of growth takes it. Find leaves the page where it is, to show
+    /// its matches.
+    private var panelRecede: CGFloat { bottomBar.panel == .find ? 0 : panelTravel/travel(of: .search) }
 
     /// Grows the bar and rounds its top corners as its buttons fade, setting the page back behind it.
     private func setPanel(_ expansion: CGFloat, recedingPage: Bool = true) {
         panelExpansion = expansion
         bottomBar.panelExpansion = expansion
         dimming.alpha = min(1, max(0, expansion))
+        // Find's page stays clear, though a tap on it still closes the panel.
+        dimming.backgroundColor = UIColor.black.withAlphaComponent(bottomBar.panel == .find ? 0 : 0.2)
         layoutBottomBar()
         bottomBar.layoutIfNeeded()
         if recedingPage { PageRecede.apply(expansion*panelRecede, to: content) }
@@ -386,6 +508,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         guard isPanelOpen else { return }
         isPanelOpen = false
         bottomBar.search.end()
+        bottomBar.find.end()
         dimming.isUserInteractionEnabled = false
         bottomBar.accessibilityViewIsModal = false
         guard !UIAccessibility.isReduceMotionEnabled else {
@@ -409,6 +532,84 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
 
     @objc private func closePanelOnTap() { closePanel() }
+
+    /// More's Find turns its panel into a find field, the panel moving to just above the keyboard
+    /// as its contents swap, and the page coming forward to show its matches.
+    func openFind() {
+        guard isPanelOpen, bottomBar.panel == .menu else { return }
+        bottomBar.panel = .find
+        bottomBar.showContents(of: .find)
+        bottomBar.find.begin()
+        settlePanelOpen()
+        let back = PeekPresentationController.pageReturnSpring
+        UIView.animate(springDuration: back.duration, bounce: back.bounce, initialSpringVelocity: 0, delay: 0,
+                       options: [.beginFromCurrentState, .allowUserInteraction]) {
+            PageRecede.apply(0, to: self.content)
+        }
+    }
+
+    /// Find's panel follows the keyboard up and down.
+    @objc private func keyboardWillChange(_ note: Notification) {
+        guard let end = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue,
+              let screen = view.window?.screen else { return }
+        let frame = view.convert(end, from: screen.coordinateSpace)
+        keyboardHeight = frame.minY < view.bounds.maxY ? view.bounds.maxY-frame.minY : 0
+        guard isPanelOpen, bottomBar.panel == .find else { return }
+        let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
+        let curve = note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt ?? 7
+        UIView.animate(withDuration: duration, delay: 0, options: [UIView.AnimationOptions(rawValue: curve << 16),
+                                                                  .beginFromCurrentState, .allowUserInteraction]) {
+            self.bottomBar.find.maximumAnswerHeight = max(80, min(300, self.view.bounds.height-self.keyboardHeight-160))
+            self.layoutBottomBar()
+            self.bottomBar.layoutIfNeeded()
+        }
+    }
+
+    /// Finds in the page, then brings the current match out from under Find's panel and the
+    /// keyboard, into the middle of what shows of the page.
+    private func find(_ query: String, direction: PageFind.Direction) async -> PageFind.Matches {
+        let page = webView
+        let matches = await PageFind.find(query, direction: direction, in: page)
+        guard matches.index >= 0, direction != .refresh, page === webView else { return matches }
+        let script = """
+        const current = CSS.highlights.get('rise-find-current');
+        for (const range of current || []) { const rect = range.getBoundingClientRect(); return [rect.top, rect.bottom] }
+        return null
+        """
+        guard let rect = try? await page.callAsyncJavaScript(script, arguments: [:], in: nil, contentWorld: PageFind.world) as? [Double],
+              rect.count == 2, page === webView, isPanelOpen, bottomBar.panel == .find else { return matches }
+        let scroll = page.scrollView, zoom = scroll.zoomScale, margin: CGFloat = 24
+        let panelTop = bottomBar.frame.minY
+        let shownTop = margin, shownBottom = view.convert(CGPoint(x: 0, y: panelTop), to: page).y-margin
+        let top = CGFloat(rect[0])*zoom, bottom = CGFloat(rect[1])*zoom
+        guard shownBottom > shownTop, top < shownTop || bottom > shownBottom else { return matches }
+        let lowest = -scroll.adjustedContentInset.top
+        let highest = max(lowest, scroll.contentSize.height+scroll.adjustedContentInset.bottom-scroll.bounds.height)
+        let y = scroll.contentOffset.y+(top+bottom)/2-(shownTop+shownBottom)/2
+        scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: min(highest, max(lowest, y))), animated: true)
+        return matches
+    }
+
+    /// A supporting passage is kept above the answer sheet, as find matches are.
+    private func revealPassage(in page: WKWebView) async {
+        let script = """
+        for (const range of CSS.highlights.get('rise-passage') || []) {
+            const r = range.getBoundingClientRect(); return [r.top, r.bottom];
+        }
+        return null;
+        """
+        guard let rect = try? await page.callAsyncJavaScript(script, arguments: [:], in: nil,
+                contentWorld: PageFind.world) as? [Double], rect.count == 2, page === webView,
+              isPanelOpen, bottomBar.find.mode == .ask else { return }
+        let scroll = page.scrollView, zoom = scroll.zoomScale
+        let visibleBottom = view.convert(CGPoint(x: 0, y: bottomBar.frame.minY), to: page).y-24
+        let top = CGFloat(rect[0])*zoom, bottom = CGFloat(rect[1])*zoom
+        guard top < 24 || bottom > visibleBottom else { return }
+        let low = -scroll.adjustedContentInset.top
+        let high = max(low, scroll.contentSize.height+scroll.adjustedContentInset.bottom-scroll.bounds.height)
+        let target = scroll.contentOffset.y+(top+bottom)/2-(24+visibleBottom)/2
+        scroll.setContentOffset(CGPoint(x: scroll.contentOffset.x, y: min(high, max(low, target))), animated: true)
+    }
 
     /// Opens a page chosen in the panel. The panel grows up to fill the window as its search fades
     /// out and the new page appears inside it; the page then stays, the previous one held for Back.
@@ -451,7 +652,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             guard let self else { return }
             PageRecede.apply(0, to: content)
             setPanel(0, recedingPage: false)
-            adopt(page, topColor: color)
+            openInNewTab(page, topColor: color)
             arrival.removeFromSuperview()
             view.isUserInteractionEnabled = true
             bottomBar.showContents(of: nil)
@@ -467,26 +668,176 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// Dragging the panel down shrinks it with the finger; up stretches it a little, with resistance.
     @objc private func dragPanel(_ pan: UIPanGestureRecognizer) {
         guard isPanelOpen else { return }
-        let travel = panelTravel, distance = pan.translation(in: view).y
+        let distance = pan.translation(in: view).y
         switch pan.state {
         case .began, .changed:
-            let stretch = 40*(1-1/(1+max(0, -distance)/160))
-            setPanel(distance >= 0 ? max(0, 1-distance/travel) : 1+stretch/travel)
+            dragPanel(to: distance)
         case .ended, .cancelled, .failed:
             let velocity = pan.state == .ended ? pan.velocity(in: view).y : 0
-            if velocity > 600 || (distance > travel*0.3 && velocity > -200) {
-                closePanel(velocity: velocity)
-            } else {
-                settlePanelOpen(velocity: distance > 0 ? -velocity/distance : 0)
-            }
+            finishPanelDrag(at: distance, velocity: velocity)
         default: break
         }
     }
 
+    func dragPanel(to distance: CGFloat) {
+        guard isPanelOpen else { return }
+        let travel = panelTravel
+        let stretch = 40*(1-1/(1+max(0, -distance)/160))
+        setPanel(distance >= 0 ? max(0, 1-distance/travel) : 1+stretch/travel)
+    }
+
+    func finishPanelDrag(at distance: CGFloat, velocity: CGFloat = 0) {
+        guard isPanelOpen else { return }
+        let travel = panelTravel
+        if velocity > 600 || (distance > travel*0.3 && velocity > -200) {
+            closePanel(velocity: velocity)
+        } else {
+            settlePanelOpen(velocity: distance > 0 ? -velocity/distance : 0)
+        }
+    }
+
     override func accessibilityPerformEscape() -> Bool {
+        if !isPanelOpen, isTabSwitcherOpen { selectTab(tabIndex); return true }
         guard isPanelOpen else { return super.accessibilityPerformEscape() }
         closePanel()
         return true
+    }
+
+    // MARK: Tabs
+
+    /// Opens a page chosen in New Page's panel in a new tab after this one.
+    private func openInNewTab(_ page: WKWebView, topColor: UIColor?) {
+        if !tabSwitcher.isHidden { closeTabSwitcherAtOnce() } else { currentTab.snapshot = snapshotPage() }
+        let previous = webView
+        tabs.insert(BrowserTab(webView: page), at: tabIndex+1)
+        tabIndex += 1
+        bottomBar.tabsButton.count = tabs.count
+        page.transform = .identity
+        install(page)
+        previous.removeFromSuperview()
+        adoptDelegates(of: page)
+        if let topColor { setTopColor(topColor, animated: false) }
+        pageChanged(from: topColor)
+    }
+
+    /// How the page looks now, strip included, for its tab's card.
+    private func snapshotPage() -> UIImage {
+        let bounds = content.bounds
+        return UIGraphicsImageRenderer(bounds: bounds).image { _ in content.drawHierarchy(in: bounds, afterScreenUpdates: false) }
+    }
+
+    /// Also while a card is still growing back into its page, which turns it around.
+    private var canShowTabSwitcher: Bool {
+        allowsPeek && !isTabSwitcherOpen && !isPanelOpen && presentedViewController == nil && view.window != nil
+    }
+
+    /// Shrinks the page into its card among the other tabs', over a blur of it, or back into it as
+    /// it grows out.
+    func showTabSwitcher() {
+        guard canShowTabSwitcher else { return }
+        prepareTabSwitcher()
+        tabSwitcher.present()
+    }
+
+    private func prepareTabSwitcher() {
+        if tabSwitcher.isHidden {
+            setBottomBarCollapsed(false)
+            let snapshot = snapshotPage()
+            currentTab.snapshot = snapshot
+            tabSwitcher.load(tabs, current: tabIndex)
+            tabSwitcher.prepare(backdrop: snapshot)
+        }
+        isTabSwitcherOpen = true
+        bottomBar.tabsButton.setShowsSwitcher(true, animated: true)
+        UIView.animate(withDuration: 0.25) { self.setNeedsStatusBarAppearanceUpdate() }
+    }
+
+    /// Grows a tab's card back into the page, making it the current tab.
+    func selectTab(_ index: Int) {
+        guard isTabSwitcherOpen, !isSwipingToTabs, tabs.indices.contains(index) else { return }
+        if index != tabIndex { switchTab(to: index) }
+        isTabSwitcherOpen = false
+        bottomBar.tabsButton.setShowsSwitcher(false, animated: true)
+        tabSwitcher.dismiss(to: index) { [weak self] in self?.updateTabsPreview() }
+        UIView.animate(withDuration: 0.25) { self.setNeedsStatusBarAppearanceUpdate() }
+    }
+
+    private func closeTabSwitcherAtOnce() {
+        tabSwitcher.hide()
+        isTabSwitcherOpen = false
+        bottomBar.tabsButton.setShowsSwitcher(false, animated: true)
+        setNeedsStatusBarAppearanceUpdate()
+    }
+
+    /// Puts a tab's page in place, under the switcher.
+    private func switchTab(to index: Int) {
+        let previous = webView
+        tabIndex = index
+        webView.transform = .identity
+        install(webView)
+        if previous !== webView { previous.removeFromSuperview() }
+        pageChanged()
+    }
+
+    /// Closes a tab from its card; the last one stays.
+    private func closeTab(_ index: Int) {
+        guard isTabSwitcherOpen, tabs.count > 1, tabs.indices.contains(index) else { return }
+        let closing = tabs.remove(at: index)
+        if index < tabIndex {
+            tabIndex -= 1
+        } else if index == tabIndex {
+            tabIndex = min(index, tabs.count-1)
+            install(webView)
+            closing.webView.removeFromSuperview()
+            pageChanged()
+        }
+        tabSwitcher.remove(at: index, current: tabIndex)
+        bottomBar.tabsButton.count = tabs.count
+    }
+
+    @objc private func swipeToTabs(_ pan: UIPanGestureRecognizer) {
+        let translation = pan.translation(in: view)
+        switch pan.state {
+        case .began:
+            beginTabSwipe()
+            updateTabSwipe(translation)
+        case .changed:
+            updateTabSwipe(translation)
+        case .ended, .cancelled, .failed:
+            endTabSwipe(velocity: pan.state == .ended ? pan.velocity(in: view) : .zero, cancelled: pan.state != .ended)
+        default: break
+        }
+    }
+
+    /// The swipe up the bottom bar, in steps: the page follows the finger, shrinking, and when let
+    /// go past a quarter of the way, or flicked up, drops into its card.
+    /// A swipe as a card grows back into its page catches it there.
+    func beginTabSwipe() {
+        guard canShowTabSwitcher else { return }
+        isSwipingToTabs = true
+        let growing = !tabSwitcher.isHidden
+        prepareTabSwitcher()
+        if growing { tabSwitcher.catchPage() }
+    }
+
+    func updateTabSwipe(_ translation: CGPoint) {
+        guard isSwipingToTabs else { return }
+        tabSwitcher.update(swipe: translation)
+    }
+
+    func endTabSwipe(velocity: CGPoint, cancelled: Bool = false) {
+        guard isSwipingToTabs else { return }
+        isSwipingToTabs = false
+        let progress = tabSwitcher.swipeProgress
+        let commit = !cancelled && (velocity.y < -400 || (progress > 0.25 && velocity.y < 400))
+        if commit {
+            UIImpactFeedbackGenerator(style: .rigid).impactOccurred(intensity: 0.5)
+        } else {
+            isTabSwitcherOpen = false
+            bottomBar.tabsButton.setShowsSwitcher(false, animated: true)
+            UIView.animate(withDuration: 0.25) { self.setNeedsStatusBarAppearanceUpdate() }
+        }
+        tabSwitcher.finishSwipe(commit: commit)
     }
 
     /// The current page, small, as the top card of the Tabs button.
@@ -524,10 +875,6 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         present(share, animated: true)
     }
 
-    private func findOnPage() {
-        webView.isFindInteractionEnabled = true
-        webView.findInteraction?.presentFindNavigator(showingReplace: false)
-    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -547,6 +894,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        tabs.first { $0.webView === webView }?.loadFavicon()
         guard webView === self.webView else { return }
         updateTabsPreview()
         // Images and late layout land after the load finishes.

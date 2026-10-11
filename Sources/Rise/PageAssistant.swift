@@ -1,8 +1,12 @@
+import Foundation
+#if os(macOS)
 import AppKit
+#endif
 import WebKit
 
 /// Answers questions about the open page through the chosen AI provider, streamed token by token.
 enum PageAssistant {
+    struct Turn: Sendable { let question: String, answer: String }
     // Temporary test key, hardcoded on purpose until it is rotated and moved to settings.
     static let apiKey = "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"
     static let model = "openai/gpt-6-luna"
@@ -22,7 +26,7 @@ enum PageAssistant {
     It is planned for **March 3, 2027**.
     """
 
-    struct Page { let title: String, url: String, selection: String, text: String }
+    struct Page: Sendable { let title: String, url: String, selection: String, text: String }
 
     enum Failure: LocalizedError {
         case service(String)
@@ -38,7 +42,7 @@ enum PageAssistant {
                     selection: parts.count > 1 ? parts[1] : "", text: String((source ?? parts.first ?? "").prefix(pageCharacterLimit)))
     }
 
-    static func messages(question: String, history: [FindBar.Turn], page: Page) -> [[String: Any]] {
+    static func messages(question: String, history: [Turn], page: Page) -> [[String: Any]] {
         var context = "Title: \(page.title)\nURL: \(page.url)\n"
         if !page.selection.isEmpty { context += "Selected text: \(page.selection)\n" }
         context += "\n<page>\n\(page.text)\n</page>"
@@ -53,7 +57,7 @@ enum PageAssistant {
 
     /// One request emits a snippet header followed by answer text. Highlight locally as soon
     /// as the header completes; no tool-result round trip is needed before the answer streams.
-    static func answer(_ question: String, history: [FindBar.Turn],
+    @MainActor static func answer(_ question: String, history: [Turn],
                        page: @escaping @MainActor () async throws -> Page,
                        highlight: @escaping @MainActor (String) async -> Bool,
                        inputTokens: @escaping @MainActor (Int) -> Void = { _ in },
@@ -72,7 +76,7 @@ enum PageAssistant {
         }
     }
 
-    private static func streamAnswer(_ messages: [[String: Any]], provider: AIProvider, session: URLSession,
+    @MainActor private static func streamAnswer(_ messages: [[String: Any]], provider: AIProvider, session: URLSession,
                                      highlight: @escaping @MainActor (String) async -> Bool,
                                      inputTokens: @escaping @MainActor (Int) -> Void,
                                      yield: (String) -> Void) async throws {
@@ -82,7 +86,7 @@ enum PageAssistant {
             try Task.checkCancellation()
             switch event {
             case .inputTokens(let count):
-                await inputTokens(count)
+                inputTokens(count)
             case .responded:
                 if !responded { responded = true; yield("") } // End Thinking on first output, before the snippet is complete.
             case .text(let content):
@@ -102,6 +106,7 @@ enum PageAssistant {
     }
 }
 
+#if os(macOS)
 @MainActor extension BrowserController {
     /// Answers about the page in the bar's own tab.
     func configurePageAssistant(_ bar: FindBar, for tab: BrowserTab) {
@@ -142,3 +147,4 @@ enum PageAssistant {
         return item
     }
 }
+#endif

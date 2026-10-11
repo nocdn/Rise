@@ -1,7 +1,10 @@
 # Rise for iOS
 
-This first version opens `https://news.ycombinator.com/` in a persistent `WKWebView`.
-There is no browser chrome. Web links navigate normally; new-window links use the
+On a fresh launch, New Page's plus dialog opens and focuses its search field while
+`https://news.ycombinator.com/` loads behind it in a persistent `WKWebView`. This happens
+once for a newly created scene, including relaunching after the process was killed.
+Returning to the app while it's still in memory preserves the existing page and panel.
+Web links navigate normally; new-window links use the
 same page, and WebKit's native back/forward gestures remain available. UIKit and
 WebKit manage safe areas, rotation, the keyboard and scrolling.
 
@@ -41,13 +44,54 @@ circle on the right, grows the bar the same way into a panel about a third as ta
 behind receding only as far as that growth takes it at the same rate. The bar's buttons
 swap the same way for the page's address, styled like the search field: Back and Forward
 close together, each only if there's a page that way, the host behind a green padlock on HTTPS pages, then Reload. Under it,
-square buttons Share, Pin, Find (on page) and Copy (the link), labelled in rounded type. Back and Forward keep the
-panel open (Back also returns to a page a Peek or search replaced); Reload, Share, Find and
-Copy close it. Pin
-and tapping the address do nothing yet. Each button taps with a light, crisp haptic as the
-finger lands, and acts as it lifts. Tabs doesn't do anything yet. Scrolling down collapses the bar to a thin empty strip; scrolling up,
+square buttons Share, Summarise, Find (on page) and Copy (the link), labelled in rounded type. Back and Forward keep the
+panel open (Back also returns to a page a Peek or search replaced); Reload, Share and
+Copy close it. Summarise
+and tapping the address do nothing yet. Find swaps the panel's contents, with the same blurred
+crossfade and spring, for a single "Find on Page" field styled like the search field, the panel
+moving to sit just above the keyboard as the page comes forward again, undimmed, to show its
+matches. It's laid out like the Mac's find bar: the current match and the count ("4/5") at the
+field's right end, with a little air either side of the slash, then, a little apart, Previous
+and Next chevrons, which shrink while pressed like the other buttons. Typing highlights every match in the page, the count changing at once; Next, Return
+and Previous step through them, the current match's number rolling over with SwiftUI's numeric
+text transition, and the page scrolling the match into what shows above the panel. No matches
+turns the text red; Return switches a completed search with no matches into Ask, retaining the query
+without submitting it. An empty field replaces the counter and chevrons with Ask; clearing a search immediately
+restores that empty state and removes the page highlights. The compact filled Ask/Find button
+switches its title immediately while its width and position spring: left to
+make room for Send, then back to the right to return to Find. The inline SwiftUI titles and
+counter ignore window safe-area insets, keeping them centered inside the field. Ask changes
+the placeholder to "Ask about the Page". Send stays grey until the question contains text;
+while a response is running its icon changes to `stop.circle.fill` with a 0.3-second blur,
+fade and scale transition. Return or the send button submits the question, which shimmers while
+the answer streams underneath in the same panel. The panel grows as each visible line appears,
+without reserving space for queued words; longer answers scroll within the capped height.
+The desktop's shared OpenRouter client uses
+`gpt-6-luna` and the existing development key; its word scheduler and color transitions also
+drive the mobile answer, with light Markdown and no model attribution. Supporting passages
+are highlighted in the page and kept above the panel. Stop cancels a request; Find returns to
+page search. Closing clears the answer, conversation and passage highlight.
+Tapping the page closes it and takes the highlights off, leaving the page
+where it was scrolled to. The highlighting, counting and stepping run in the page, through
+the Mac's `PageFind` (`Sources/Rise/PageFind.swift`, shared into the iOS target). Each button taps with a light, crisp haptic as the
+finger lands, and acts as it lifts. Scrolling down collapses the bar to a thin empty strip; scrolling up,
 reaching either end of the page or tapping the strip opens it again. Pages scroll clear
 of the open bar through extra safe area.
+
+New Page opens what's chosen in a new tab after the current one. Tabs shrinks the page into a
+Safari-style tab switcher over a blur of it: the page springs into its card in a two-column
+grid as the system material blurs in behind and the other cards fade, grow and sharpen in
+around it, their titles revealed last, each with the page's favicon in line with it. As on the
+Mac, the icon's corners are clipped a little (4 points in 16), so square icons round off, and a
+page without one shows a blank grey square. Icons are the first bitmap the page declares that
+loads (SVGs can't be drawn here), else the site's `favicon.ico`. The bottom bar stays, with New
+Page and More, and Tabs becomes a rounded square filled like them that shows how many tabs there
+are. Tapping a card grows it back into the page; its close button closes the tab (the last one
+stays). A swipe up anywhere on the bottom bar, even starting on New Page, shrinks the page with
+the finger and drops it into its card when let go past a quarter of the way or flicked; a short
+one springs back. Every move turns around from wherever it has got to, so Tabs can be pressed as
+quickly as wanted: a page landing in its card can be tapped to grow it back, and a swipe up as a
+card grows back catches the page where it is.
 
 Pull down from the top of the page to reload. An eight-spoke spinner charges up one
 spoke at a time in the gap, complete at 115 points, while light haptic ticks every

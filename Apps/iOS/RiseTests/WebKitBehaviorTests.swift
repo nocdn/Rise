@@ -34,6 +34,44 @@ final class WebKitBehaviorTests: XCTestCase {
     </head><body><input id="tiny" aria-label="Small input"></body></html>
     """
 
+    @MainActor func testFreshLaunchOpensNewPageOnceAndLoadingBehindItPreservesThePanel() async throws {
+        let browser = BrowserViewController(startURL: nil, opensSearchOnFirstAppearance: true)
+        let window = try host(browser)
+        defer { window.isHidden = true }
+        try await Task.sleep(for: .milliseconds(600))
+        let bar = browser.bottomBar
+        XCTAssertTrue(browser.isPanelOpen)
+        XCTAssertEqual(bar.panel, .search)
+        XCTAssertTrue(bar.shown === bar.search)
+        XCTAssertTrue(bar.search.field.isFirstResponder)
+        XCTAssertEqual(bar.search.field.text, "")
+        XCTAssertEqual(browser.tabs.count, 1, "Opening the dialog does not create another tab")
+        XCTAssertEqual(bar.frame.height, (window.bounds.height*BrowserViewController.panelHeightFraction).rounded(), accuracy: 1)
+
+        // The page can finish loading behind the search without taking focus or closing it.
+        let original = browser.webView
+        try await load("<html><body>The home page loaded behind New Page.</body></html>", in: original)
+        XCTAssertTrue(browser.webView === original)
+        XCTAssertTrue(browser.isPanelOpen)
+        XCTAssertTrue(bar.search.field.isFirstResponder)
+        let text = try await original.evaluateJavaScript("document.body.textContent") as? String
+        XCTAssertEqual(text, "The home page loaded behind New Page.")
+        browser.closePanel()
+        try await Task.sleep(for: .milliseconds(400))
+        browser.beginAppearanceTransition(false, animated: false); browser.endAppearanceTransition()
+        browser.beginAppearanceTransition(true, animated: false); browser.endAppearanceTransition()
+        XCTAssertFalse(browser.isPanelOpen, "A later appearance does not reopen New Page")
+
+        // Returning with an open dialog also preserves its draft.
+        bar.newPageButton.sendActions(for: .primaryActionTriggered)
+        bar.search.field.text = "Keep this draft"
+        browser.beginAppearanceTransition(false, animated: false); browser.endAppearanceTransition()
+        browser.beginAppearanceTransition(true, animated: false); browser.endAppearanceTransition()
+        XCTAssertTrue(browser.isPanelOpen)
+        XCTAssertEqual(bar.search.field.text, "Keep this draft")
+        browser.closePanel()
+    }
+
     @MainActor func testPeekDismissalPreservesTheOriginalPageAndCanBeRepeated() async throws {
         let browser = BrowserViewController(startURL: nil)
         let window = try host(browser)
@@ -397,7 +435,7 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertEqual(bar.search.alpha, 0)
 
         // Choosing a suggestion grows the panel to fill the window with a new page searching Google
-        // for it, which then becomes the page, the previous one held for Back.
+        // for it, which then becomes the page, in a new tab after the previous one.
         bar.newPageButton.sendActions(for: .primaryActionTriggered)
         try await Task.sleep(for: .milliseconds(400))
         bar.search.field.text = "swift"
@@ -411,7 +449,10 @@ final class WebKitBehaviorTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(600))
         let arrived = browser.webView
         XCTAssertFalse(arrived === original)
-        XCTAssertTrue(browser.previousPages.last === original, "held for Back")
+        XCTAssertEqual(browser.tabs.count, 2)
+        XCTAssertTrue(browser.tabs[0].webView === original, "The previous page stays in its tab")
+        XCTAssertEqual(browser.tabIndex, 1)
+        XCTAssertTrue(browser.previousPages.isEmpty)
         XCTAssertTrue(arrived.superview === browser.content)
         XCTAssertEqual(arrived.frame.minY, browser.topStrip.frame.maxY)
         XCTAssertEqual(arrived.frame.maxY, bounds.maxY)
@@ -463,19 +504,20 @@ final class WebKitBehaviorTests: XCTestCase {
         if host.hasPrefix("www.") { host.removeFirst(4) }
         XCTAssertEqual(address.host.text, host)
         XCTAssertFalse(address.lock.isHidden, "A padlock on HTTPS pages")
-        XCTAssertFalse(address.backButton.isHidden, "Back to the page it replaced")
+        XCTAssertTrue(address.backButton.isHidden, "Nowhere to go back in a new tab")
         XCTAssertTrue(address.forwardButton.isHidden, "Nowhere to go forward")
         XCTAssertEqual(bar.hitTest(CGPoint(x: grown.midX, y: grown.maxY-3), with: nil)?.isDescendant(of: bar.menu.address), true,
                        "Tapping the address doesn't make a new page")
-        XCTAssertTrue(bar.hitTest(bar.convert(CGPoint(x: 20, y: 24), from: address), with: nil) === bar.menu.address.backButton)
+        XCTAssertTrue(bar.hitTest(bar.convert(CGPoint(x: address.bounds.width-22, y: 24), from: address), with: nil)
+                      === address.reloadButton)
         XCTAssertEqual(bar.menu.transform, .identity)
         XCTAssertEqual(bar.moreButton.backgroundColor, SearchPanel.fill)
         XCTAssertTrue(bar.menu.tiles.allSatisfy { $0.backgroundColor == SearchPanel.fill })
-        bar.menu.pinTile.sendActions(for: .touchDown)
-        XCTAssertEqual(bar.menu.pinTile.backgroundColor, SearchPanel.pressedFill, "Darker while pressed")
-        bar.menu.pinTile.sendActions(for: .touchUpOutside)
-        XCTAssertEqual(bar.menu.pinTile.backgroundColor, SearchPanel.fill)
-        XCTAssertEqual(bar.menu.tiles.map(\.accessibilityLabel), ["Share", "Pin", "Find on Page", "Copy Link"])
+        bar.menu.summariseTile.sendActions(for: .touchDown)
+        XCTAssertEqual(bar.menu.summariseTile.backgroundColor, SearchPanel.pressedFill, "Darker while pressed")
+        bar.menu.summariseTile.sendActions(for: .touchUpOutside)
+        XCTAssertEqual(bar.menu.summariseTile.backgroundColor, SearchPanel.fill)
+        XCTAssertEqual(bar.menu.tiles.map(\.accessibilityLabel), ["Share", "Summarise", "Find on Page", "Copy Link"])
         for tile in bar.menu.tiles {
             let frame = bar.convert(tile.frame, from: tile.superview)
             XCTAssertEqual(frame.width, frame.height, "Square")
@@ -485,7 +527,7 @@ final class WebKitBehaviorTests: XCTestCase {
 
         // Back and Forward leave it open; Reload closes it, the bar's buttons returning.
         bar.menu.address.forwardButton.sendActions(for: .primaryActionTriggered)
-        bar.menu.pinTile.sendActions(for: .primaryActionTriggered)
+        bar.menu.summariseTile.sendActions(for: .primaryActionTriggered)
         XCTAssertTrue(browser.isPanelOpen)
         bar.menu.address.reloadButton.sendActions(for: .primaryActionTriggered)
         XCTAssertFalse(browser.isPanelOpen)
@@ -501,6 +543,572 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertEqual(bar.home.transform, .identity)
         XCTAssertEqual(bar.menu.transform, .identity)
         XCTAssertEqual(browser.content.transform, .identity)
+    }
+
+    @MainActor func testTabsShrinkIntoCardsUnderTheBarAndASwipeUpDropsThePageIn() async throws {
+        let browser = BrowserViewController(startURL: nil)
+        let window = try host(browser)
+        defer { window.isHidden = true }
+        let bar = browser.bottomBar, switcher = browser.tabSwitcher
+        // A 2-pixel PNG as the page's icon.
+        let icon = UIGraphicsImageRenderer(size: CGSize(width: 2, height: 2)).pngData { context in
+            UIColor.systemBlue.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 2, height: 2))
+        }.base64EncodedString()
+        try await load("<html><head><title>One</title><link rel='icon' href='data:image/png;base64,\(icon)'></head><body style='background:#c33'><h1>One</h1></body></html>",
+                       in: browser.webView, baseURL: URL(string: "https://example.com/one")!)
+        let first = browser.webView
+        browser.tabs[0].loadFavicon()
+        XCTAssertEqual(bar.tabsButton.count, 1)
+
+        // New Page opens what's chosen in a new tab, after this one.
+        bar.newPageButton.sendActions(for: .primaryActionTriggered)
+        try await Task.sleep(for: .milliseconds(400))
+        browser.openFromPanel(URL(string: "about:blank")!)
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertEqual(browser.tabs.count, 2)
+        XCTAssertEqual(browser.tabIndex, 1)
+        XCTAssertTrue(browser.tabs[0].webView === first)
+        XCTAssertNotNil(browser.tabs[0].snapshot, "The previous tab's card shows how it was left")
+        XCTAssertEqual(bar.tabsButton.count, 2, "Tabs counts the tabs")
+        XCTAssertEqual(bar.tabsButton.countLabel.text, "2")
+        XCTAssertNotNil(browser.tabs[0].favicon, "The page's declared icon")
+        XCTAssertNil(browser.tabs[1].favicon, "A blank page has none")
+
+        // Tabs shrinks the page into its card over a blur of it, and the bar stays.
+        bar.tabsButton.sendActions(for: .primaryActionTriggered)
+        XCTAssertTrue(browser.isTabSwitcherOpen)
+        XCTAssertFalse(switcher.isHidden)
+        try await Task.sleep(for: .milliseconds(80))
+        let shrinking = try XCTUnwrap(switcher.subviews.last as? TabCard, "The page on its way into its card")
+        XCTAssertLessThan(try XCTUnwrap(shrinking.layer.presentation()).frame.width, browser.view.bounds.width)
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertFalse(switcher.subviews.contains { $0 is TabCard }, "The page has landed in its card")
+        XCTAssertEqual(switcher.cells.count, 2)
+        XCTAssertEqual(switcher.grid.alpha, 1)
+        XCTAssertEqual(switcher.cells[1].card.alpha, 1)
+        XCTAssertEqual(switcher.cells[0].caption.alpha, 1, "The titles show")
+        let caption = switcher.cells[0]
+        XCTAssertNotNil(caption.favicon.image, "The icon beside the title")
+        XCTAssertNil(switcher.cells[1].favicon.image, "A blank square without one")
+        XCTAssertEqual(caption.favicon.frame.midY, caption.title.frame.midY, accuracy: 1, "In line with the title")
+        XCTAssertLessThan(caption.favicon.frame.maxX, caption.title.frame.minX)
+        XCTAssertGreaterThan(caption.favicon.layer.cornerRadius, 0, "Square icons round off a little")
+        let left = switcher.cells[0].frame, right = switcher.cells[1].frame
+        XCTAssertEqual(left.minY, right.minY, "Two across")
+        XCTAssertLessThan(left.maxX, right.minX)
+        XCTAssertTrue(bar.tabsButton.showsSwitcher, "Tabs becomes an empty square")
+        XCTAssertEqual(bar.home.alpha, 1, "The bar stays, with New Page and More")
+        XCTAssertEqual(bar.moreButton.tintColor, BottomBar.plusTint, "More's dots are as soft as New Page's plus")
+        XCTAssertEqual(browser.preferredStatusBarStyle, .default)
+
+        // Tabs can be pressed as quickly as wanted, each press turning the page around where it is.
+        bar.tabsButton.sendActions(for: .primaryActionTriggered)
+        XCTAssertFalse(browser.isTabSwitcherOpen)
+        try await Task.sleep(for: .milliseconds(80))
+        let growing = try XCTUnwrap(switcher.moving)
+        let grown = try XCTUnwrap(growing.layer.presentation()).frame.width
+        bar.tabsButton.sendActions(for: .primaryActionTriggered)
+        XCTAssertTrue(browser.isTabSwitcherOpen, "Tabs again turns it back before it has grown")
+        XCTAssertTrue(switcher.moving === growing, "The same page, from where it was")
+        // It carries its momentum a little, then heads back into its card.
+        try await Task.sleep(for: .milliseconds(60))
+        let turning = try XCTUnwrap(growing.layer.presentation()).frame.width
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertLessThan(try XCTUnwrap(growing.layer.presentation()).frame.width, turning)
+        XCTAssertGreaterThan(grown, switcher.cardSize.width, "It was partway grown")
+        bar.tabsButton.sendActions(for: .primaryActionTriggered)
+        XCTAssertFalse(browser.isTabSwitcherOpen)
+        bar.tabsButton.sendActions(for: .primaryActionTriggered)
+        XCTAssertTrue(browser.isTabSwitcherOpen)
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertNil(switcher.moving, "Settled in its card")
+        XCTAssertFalse(switcher.isHidden)
+        XCTAssertEqual(switcher.grid.alpha, 1)
+
+        // Choosing a card grows it back into its page.
+        switcher.cells[0].onSelect()
+        XCTAssertFalse(browser.isTabSwitcherOpen)
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertTrue(switcher.isHidden)
+        XCTAssertEqual(browser.tabIndex, 0)
+        XCTAssertTrue(browser.webView === first)
+        XCTAssertTrue(first.superview === browser.content)
+        XCTAssertNil(browser.tabs[1].webView.superview)
+        XCTAssertFalse(bar.tabsButton.showsSwitcher)
+
+        // A short swipe up the bar springs back; a longer one drops the page into its card.
+        browser.beginTabSwipe()
+        browser.updateTabSwipe(CGPoint(x: 0, y: -60))
+        XCTAssertTrue(browser.isTabSwitcherOpen)
+        let following = try XCTUnwrap(switcher.subviews.last as? TabCard)
+        XCTAssertLessThan(following.frame.width, browser.view.bounds.width, "The page shrinks with the finger")
+        XCTAssertLessThan(following.frame.maxY, browser.view.bounds.maxY)
+        browser.endTabSwipe(velocity: .zero)
+        XCTAssertFalse(browser.isTabSwitcherOpen)
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertTrue(switcher.isHidden)
+        browser.beginTabSwipe()
+        browser.updateTabSwipe(CGPoint(x: 0, y: -300))
+        XCTAssertGreaterThan(switcher.swipeProgress, 0.25)
+        browser.endTabSwipe(velocity: .zero)
+        XCTAssertTrue(browser.isTabSwitcherOpen)
+
+        // A tap on the page as it drops in grows it back, where it shows.
+        try await Task.sleep(for: .milliseconds(60))
+        let landing = try XCTUnwrap(switcher.moving)
+        let shown = try XCTUnwrap(landing.layer.presentation()).frame
+        XCTAssertTrue(switcher.hitTest(CGPoint(x: shown.midX, y: shown.midY), with: nil) === landing)
+        browser.selectTab(browser.tabIndex)
+        XCTAssertFalse(browser.isTabSwitcherOpen)
+        XCTAssertTrue(switcher.moving === landing)
+
+        // A swipe up as it grows catches it where it is, and drops it back in.
+        try await Task.sleep(for: .milliseconds(80))
+        let caughtFrame = try XCTUnwrap(landing.layer.presentation()).frame
+        browser.beginTabSwipe()
+        XCTAssertTrue(browser.isTabSwitcherOpen)
+        browser.updateTabSwipe(.zero)
+        XCTAssertEqual(landing.frame.midX, caughtFrame.midX, accuracy: 2, "Caught where it showed")
+        XCTAssertEqual(landing.frame.width, caughtFrame.width, accuracy: 2)
+        browser.updateTabSwipe(CGPoint(x: 0, y: -200))
+        browser.endTabSwipe(velocity: CGPoint(x: 0, y: -800))
+        XCTAssertTrue(browser.isTabSwitcherOpen)
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertFalse(switcher.isHidden)
+        XCTAssertEqual(switcher.grid.alpha, 1)
+        XCTAssertFalse(switcher.subviews.contains { $0 is TabCard })
+
+        // Closing a card closes its tab; the last one stays.
+        switcher.cells[1].onClose()
+        XCTAssertEqual(browser.tabs.count, 1)
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertEqual(switcher.cells.count, 1)
+        XCTAssertTrue(switcher.cells[0].closeButton.isHidden)
+        browser.selectTab(0)
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertTrue(switcher.isHidden)
+    }
+
+    @MainActor func testFindTurnsMoresPanelIntoAFindFieldThatStepsThroughMatchesAndKeepsTheScroll() async throws {
+        let browser = BrowserViewController(startURL: nil)
+        let window = try host(browser)
+        defer { window.isHidden = true }
+        let bar = browser.bottomBar, find = bar.find
+        let filler = String(repeating: "<p>Nothing to see here, just filler text.</p>", count: 40)
+        try await load("<html><body><p>needle one</p>\(filler)<p>needle two</p>\(filler)<p>needle three</p>\(filler)<p>needle four</p></body></html>",
+                       in: browser.webView, baseURL: URL(string: "https://example.com/")!)
+
+        // Find swaps More's panel for a focused find field, leaving the page clear and in place.
+        browser.openPanel(.menu)
+        try await Task.sleep(for: .milliseconds(400))
+        bar.menu.findTile.sendActions(for: .primaryActionTriggered)
+        XCTAssertTrue(browser.isPanelOpen, "Find keeps the panel open")
+        XCTAssertEqual(bar.panel, .find)
+        XCTAssertTrue(bar.shown === find)
+        XCTAssertTrue(find.field.isFirstResponder)
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertEqual(browser.content.transform, .identity, "The page doesn't recede behind Find")
+        XCTAssertEqual(find.field.frame.height, SearchPanel.fieldHeight)
+        XCTAssertEqual(find.field.backgroundColor, SearchPanel.fill, "Styled as the other fields")
+        XCTAssertFalse(find.nextButton.isEnabled, "Nothing to step through yet")
+        XCTAssertEqual(find.field.rightViewMode, .always)
+        XCTAssertTrue(find.field.rightView === find.askButton.superview, "An empty search offers Ask instead of results")
+        XCTAssertFalse(find.askButton.isHidden)
+        XCTAssertNil(find.field.accessibilityValue)
+
+        // Typing counts the matches; Next, Return and Previous step through them.
+        find.field.text = "needle"
+        find.field.sendActions(for: .editingChanged)
+        XCTAssertFalse(find.field.rightView === find.askButton.superview, "Ask disappears as soon as typing starts")
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertEqual(find.count.total, 4)
+        XCTAssertEqual(find.count.index, 0)
+        XCTAssertTrue(find.nextButton.isEnabled)
+        XCTAssertEqual(find.field.rightViewMode, .always)
+        find.nextButton.sendActions(for: .primaryActionTriggered)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(find.count.index, 1)
+        XCTAssertFalse(find.textFieldShouldReturn(find.field), "Return keeps the field")
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(find.count.index, 2)
+        find.nextButton.sendActions(for: .primaryActionTriggered)
+        try await Task.sleep(for: .milliseconds(600))
+        XCTAssertEqual(find.count.index, 3)
+        let scrolled = browser.webView.scrollView.contentOffset.y
+        XCTAssertGreaterThan(scrolled, 100, "The page scrolls to the match")
+        find.previousButton.sendActions(for: .primaryActionTriggered)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(find.count.index, 2)
+        find.field.text = "needle t"
+        find.field.sendActions(for: .editingChanged)
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertEqual(find.count.total, 2)
+        find.field.text = "haystack"
+        find.field.sendActions(for: .editingChanged)
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertEqual(find.count.total, 0)
+        XCTAssertEqual(find.field.textColor, .systemRed, "No matches, as on the Mac")
+        XCTAssertEqual(find.field.accessibilityValue, "No matches")
+        XCTAssertFalse(find.nextButton.isEnabled)
+        find.field.text = ""
+        find.field.sendActions(for: .editingChanged)
+        XCTAssertNil(find.count.total, "Clearing immediately removes the previous result")
+        XCTAssertTrue(find.field.rightView === find.askButton.superview)
+        XCTAssertEqual(find.field.textColor, .label)
+        XCTAssertNil(find.field.accessibilityValue)
+        try await Task.sleep(for: .milliseconds(300))
+        let cleared = try await browser.webView.callAsyncJavaScript(
+            "return CSS.highlights.get('rise-find')?.size ?? 0", arguments: [:], in: nil, contentWorld: PageFind.world) as? Int
+        XCTAssertEqual(cleared, 0, "An empty query removes the page highlights")
+        find.field.text = "needle"
+        find.field.sendActions(for: .editingChanged)
+        try await Task.sleep(for: .milliseconds(500))
+        find.nextButton.sendActions(for: .primaryActionTriggered)
+        try await Task.sleep(for: .milliseconds(600))
+
+        // Closing takes the highlights off and leaves the page where it was.
+        let kept = browser.webView.scrollView.contentOffset.y
+        browser.closePanel()
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertFalse(find.field.isFirstResponder)
+        XCTAssertEqual(browser.webView.scrollView.contentOffset.y, kept, accuracy: 1, "The scroll stays")
+        let highlighted = try await browser.webView.callAsyncJavaScript(
+            "return CSS.highlights.get('rise-find')?.size ?? 0", arguments: [:], in: nil, contentWorld: PageFind.world) as? Int
+        XCTAssertEqual(highlighted, 0)
+    }
+
+    @MainActor func testReturnWithNoMatchesKeepsTheQueryInAskUntilSend() async throws {
+        let browser = BrowserViewController(startURL: nil)
+        let window = try host(browser)
+        defer { window.isHidden = true }
+        try await load("<html><body>A needle in the page.</body></html>", in: browser.webView)
+        let find = browser.bottomBar.find
+        browser.openPanel(.find)
+        try await Task.sleep(for: .milliseconds(500))
+        var questions: [String] = []
+        let pending = AsyncThrowingStream<String, Error>.makeStream()
+        find.answer = { question, _ in questions.append(question); return pending.stream }
+        defer { pending.continuation.finish() }
+        find.field.text = "Why is this interesting?"
+        find.field.sendActions(for: .editingChanged)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(find.count.total, 0)
+        // A new query must not inherit the previous query's zero-results Return action.
+        find.field.text = "needle"
+        find.field.sendActions(for: .editingChanged)
+        _ = find.textFieldShouldReturn(find.field)
+        XCTAssertEqual(find.mode, .find)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(find.count.total, 1)
+        _ = find.textFieldShouldReturn(find.field)
+        XCTAssertEqual(find.mode, .find, "Return still steps through a successful search")
+
+        let question = "Why is this interesting?"
+        find.field.text = question
+        find.field.sendActions(for: .editingChanged)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(find.count.total, 0)
+        XCTAssertFalse(find.textFieldShouldReturn(find.field))
+        XCTAssertEqual(find.mode, .ask)
+        XCTAssertEqual(find.field.text, question)
+        XCTAssertEqual(find.field.placeholder, "Ask about the Page")
+        XCTAssertEqual(find.field.textColor, .label, "An Ask question is no longer a failed search")
+        XCTAssertNil(find.field.accessibilityValue)
+        XCTAssertTrue(find.field.isFirstResponder)
+        XCTAssertTrue(find.field.rightView === find.modeButton.superview)
+        XCTAssertTrue(find.sendButton.isEnabled)
+        XCTAssertFalse(find.isAnswering)
+        XCTAssertTrue(questions.isEmpty, "The first Return switches modes without sending")
+        find.sendButton.sendActions(for: .primaryActionTriggered)
+        XCTAssertEqual(questions, [question])
+        XCTAssertTrue(find.isAnswering)
+        browser.closePanel()
+    }
+
+    @MainActor func testAskSheetGrowsWithRevealedLinesInsteadOfQueuedText() async throws {
+        try XCTSkipIf(UIAccessibility.isReduceMotionEnabled, "Reduce Motion intentionally reveals words immediately")
+        let browser = BrowserViewController(startURL: nil)
+        let window = try host(browser)
+        defer { window.isHidden = true }
+        let find = browser.bottomBar.find, bar = browser.bottomBar
+        browser.openPanel(.find)
+        try await Task.sleep(for: .milliseconds(500))
+        find.enterAsk()
+        _ = find.field.resignFirstResponder()
+        try await Task.sleep(for: .milliseconds(500))
+        let initialHeight = bar.bounds.height
+        // A whole response arrives in one burst, while its words still reveal gradually.
+        find.answerView.show("First line.\nSecond line.\nThird line.", finished: true)
+        let start = CACurrentMediaTime()
+        XCTAssertEqual(find.answerHeight, 0, "Hidden text does not pre-expand the sheet")
+        XCTAssertEqual(bar.bounds.height, initialHeight)
+        find.answerView.advance(at: start+0.04)
+        let firstLine = find.answerHeight
+        XCTAssertGreaterThan(firstLine, FindPanel.answerTopPadding+FindPanel.answerBottomPadding)
+        XCTAssertEqual(bar.bounds.height, initialHeight+firstLine, accuracy: 1)
+        find.answerView.advance(at: start+0.075)
+        XCTAssertEqual(find.answerHeight, firstLine, "Another word on the same line doesn't expand the sheet")
+        find.answerView.advance(at: start+0.11)
+        let secondLine = find.answerHeight
+        XCTAssertGreaterThan(secondLine, firstLine)
+        XCTAssertEqual(bar.bounds.height, initialHeight+secondLine, accuracy: 1)
+        find.answerView.advance(at: start+0.175)
+        let thirdLine = find.answerHeight
+        XCTAssertGreaterThan(thirdLine, secondLine)
+        XCTAssertEqual(bar.bounds.height, initialHeight+thirdLine, accuracy: 1)
+        find.answerView.advance(at: start+0.5)
+        XCTAssertEqual(find.answerHeight, thirdLine, "Settling token colors doesn't resize the sheet")
+        find.maximumAnswerHeight = 25
+        XCTAssertEqual(find.answerHeight, FindPanel.answerTopPadding+FindPanel.answerBottomPadding+25,
+                       "Long answers remain capped so the answer can scroll")
+        browser.closePanel()
+    }
+
+    @MainActor func testAskStreamsTheSharedAssistantIntoFindAndHighlightsItsSupportingPassage() async throws {
+        let browser = BrowserViewController(startURL: nil)
+        let window = try host(browser)
+        defer { window.isHidden = true }
+        let page = browser.webView, find = browser.bottomBar.find
+        let quote = "The release is planned for March 3, 2027."
+        try await load("<html><head><title>Release notes</title></head><body><p>\(quote)</p></body></html>",
+                       in: page, baseURL: URL(string: "https://example.test/release")!)
+        var sse = ""
+        for content in ["{\"snippet\":\"\(quote)\"}\n", "It ships ", "**March 3, 2027**."] {
+            let chunk: [String: Any] = ["choices": [["delta": ["content": content]]]]
+            sse += "data: "+String(decoding: try JSONSerialization.data(withJSONObject: chunk), as: UTF8.self)+"\n\n"
+        }
+        sse += "data: [DONE]\n\n"
+        MobileAssistantProtocol.prepare(Data(sse.utf8))
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [MobileAssistantProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        var histories: [[PageAssistant.Turn]] = []
+        find.answer = { question, history in
+            histories.append(history)
+            return PageAssistant.answer(question, history: history,
+                page: { try await PageAssistant.snapshot(of: page) },
+                highlight: { await PageFind.highlightPassage($0, in: page) }, session: session)
+        }
+        browser.openPanel(.find)
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertTrue(find.field.rightView === find.askButton.superview)
+        let modeButton = find.modeButton
+        let askWidth = modeButton.bounds.width, askX = modeButton.center.x
+        find.askButton.sendActions(for: .primaryActionTriggered)
+        XCTAssertTrue(find.findButton === modeButton, "Ask and Find are the same moving button")
+        XCTAssertGreaterThan(modeButton.bounds.width, askWidth)
+        XCTAssertLessThan(modeButton.center.x, askX)
+        XCTAssertEqual(find.mode, .ask)
+        XCTAssertEqual(find.field.placeholder, "Ask about the Page")
+        XCTAssertTrue(find.field.isFirstResponder)
+        XCTAssertFalse(find.sendButton.isEnabled)
+        XCTAssertEqual(find.sendButton.tintColor, .tertiaryLabel, "An empty question greys out Send")
+        find.field.text = "When does it ship?"
+        find.field.sendActions(for: .editingChanged)
+        XCTAssertTrue(find.sendButton.isEnabled)
+        XCTAssertEqual(find.sendButton.tintColor, .label)
+        XCTAssertFalse(find.textFieldShouldReturn(find.field))
+        XCTAssertTrue(find.isAnswering)
+        if !UIAccessibility.isReduceMotionEnabled { XCTAssertTrue(find.shimmer.isRunning) }
+        XCTAssertFalse(find.field.isFirstResponder)
+        try await Task.sleep(for: .seconds(2))
+        XCTAssertFalse(find.isAnswering)
+        XCTAssertFalse(find.shimmer.isRunning)
+        XCTAssertEqual(find.answerView.answer, "It ships **March 3, 2027**.")
+        XCTAssertEqual(find.answerView.text, "It ships March 3, 2027.", "Markdown markers never flash in the answer")
+        XCTAssertEqual(find.field.text, "When does it ship?")
+        XCTAssertGreaterThan(find.bounds.height, SearchPanel.fieldHeight)
+        XCTAssertFalse(find.answerView.isHidden)
+        XCTAssertGreaterThan(find.answerView.bounds.height, 10)
+        XCTAssertLessThanOrEqual(find.answerView.frame.maxY, find.bounds.height+1)
+        let highlighted = try await page.callAsyncJavaScript(
+            "return CSS.highlights.get('rise-passage')?.size ?? 0", arguments: [:], in: nil, contentWorld: PageFind.world) as? Int
+        XCTAssertEqual(highlighted, 1)
+        let body = try XCTUnwrap(MobileAssistantProtocol.lastBody())
+        let request = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+        XCTAssertEqual(request["model"] as? String, "openai/gpt-6-luna")
+        let messages = try XCTUnwrap(request["messages"] as? [[String: String]])
+        XCTAssertTrue(messages.first?["content"]?.contains(quote) == true, "The current page supplies the context")
+        XCTAssertFalse(find.answerView.text.contains("gpt-6-luna"))
+        XCTAssertTrue(histories[0].isEmpty)
+        find.field.text = "Which year?"
+        find.field.sendActions(for: .editingChanged)
+        find.sendButton.sendActions(for: .primaryActionTriggered)
+        try await Task.sleep(for: .seconds(1))
+        XCTAssertEqual(histories.last?.count, 1)
+        XCTAssertEqual(histories.last?.first?.question, "When does it ship?")
+        find.findButton.sendActions(for: .primaryActionTriggered)
+        XCTAssertEqual(find.mode, .find)
+        XCTAssertEqual(find.field.placeholder, "Find on Page")
+        XCTAssertTrue(find.answerView.answer.isEmpty)
+        XCTAssertTrue(find.field.rightView === find.askButton.superview)
+        XCTAssertEqual(modeButton.bounds.width, askWidth)
+        XCTAssertEqual(modeButton.center.x, askX)
+        try await Task.sleep(for: .milliseconds(300))
+        let cleared = try await page.callAsyncJavaScript(
+            "return CSS.highlights.get('rise-passage')?.size ?? 0", arguments: [:], in: nil, contentWorld: PageFind.world) as? Int
+        XCTAssertEqual(cleared, 0)
+        browser.closePanel()
+    }
+
+    @MainActor func testFindCounterStaysCenteredWithAndWithoutTheOnscreenKeyboard() async throws {
+        let browser = BrowserViewController(startURL: nil)
+        let window = try host(browser)
+        defer { window.isHidden = true }
+        let keyboardGuide = browser.view.keyboardLayoutGuide
+        try await load("<html><body>A local page with no matches.</body></html>", in: browser.webView)
+        let find = browser.bottomBar.find
+        browser.openPanel(.menu)
+        try await Task.sleep(for: .milliseconds(400))
+        browser.bottomBar.menu.findTile.sendActions(for: .primaryActionTriggered)
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertTrue(find.field.isFirstResponder)
+        XCTAssertGreaterThan(keyboardGuide.layoutFrame.height, 150,
+                             "The onscreen keyboard appears, rather than just giving the field focus")
+        find.field.text = "missing"
+        find.field.sendActions(for: .editingChanged)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(find.count.total, 0)
+        _ = find.field.resignFirstResponder()
+        try await Task.sleep(for: .milliseconds(700))
+        let counter = try XCTUnwrap(find.field.rightView?.subviews.first)
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let image = UIGraphicsImageRenderer(size: counter.bounds.size, format: format).image { _ in
+            _ = counter.drawHierarchy(in: counter.bounds, afterScreenUpdates: true)
+        }
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "Find counter with keyboard hidden"; attachment.lifetime = .keepAlways
+        add(attachment)
+        let source = try XCTUnwrap(image.cgImage)
+        let width = source.width, height = source.height
+        var pixels = [UInt8](repeating: 0, count: width*height*4)
+        let context = try XCTUnwrap(CGContext(data: &pixels, width: width, height: height, bitsPerComponent: 8,
+            bytesPerRow: width*4, space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+        context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+        let ink = (0..<height).filter { y in (0..<width).contains { x in pixels[(y*width+x)*4+3] > 30 } }
+        let first = try XCTUnwrap(ink.first), last = try XCTUnwrap(ink.last)
+        XCTAssertEqual(Double(first+last)/2, Double(height)/2, accuracy: 3,
+                       "The rendered count is centered, even when the field sits in the window's safe area")
+        XCTAssertTrue(find.field.becomeFirstResponder())
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertGreaterThan(keyboardGuide.layoutFrame.height, 150,
+                             "Refocusing brings the onscreen keyboard back")
+        browser.closePanel()
+    }
+
+    @MainActor func testAskAccessoriesStayAlignedWhileDraggingAndRefocusingAnAnswer() async throws {
+        let browser = BrowserViewController(startURL: nil)
+        let window = try host(browser)
+        defer { window.isHidden = true }
+        let bar = browser.bottomBar, find = bar.find
+        browser.openPanel(.find)
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertEqual(find.askButton.backgroundColor, bar.newPageButton.backgroundColor)
+        XCTAssertEqual(find.findButton.backgroundColor, bar.newPageButton.backgroundColor)
+        XCTAssertLessThan(find.askButton.bounds.height, find.field.bounds.height)
+        XCTAssertGreaterThan(find.askButton.layer.cornerRadius, 0)
+        find.enterAsk()
+        let pending = AsyncThrowingStream<String, Error>.makeStream()
+        find.answer = { _, _ in pending.stream }
+        find.field.text = "What is the top story on this page?"
+        find.submitQuestion()
+        XCTAssertEqual(find.sendButton.symbolName, "stop.circle.fill")
+        pending.continuation.yield(String(repeating: "A detailed answer about the page. ", count: 12))
+        try await Task.sleep(for: .seconds(2.5))
+        XCTAssertTrue(find.isAnswering)
+        XCTAssertEqual(find.bounds.maxY-find.answerView.frame.maxY, FindPanel.answerBottomPadding, accuracy: 1)
+
+        func assertAccessoriesStayAtTheRight(file: StaticString = #filePath, line: UInt = #line) throws {
+            bar.setNeedsLayout(); bar.layoutIfNeeded()
+            find.setNeedsLayout(); find.layoutIfNeeded()
+            find.field.layoutIfNeeded()
+            let accessory = try XCTUnwrap(find.field.rightView, file: file, line: line)
+            XCTAssertEqual(accessory.frame.maxX, find.field.bounds.maxX, accuracy: 1, file: file, line: line)
+            XCTAssertGreaterThan(accessory.frame.minX, find.field.bounds.midX, file: file, line: line)
+            XCTAssertLessThanOrEqual(find.field.textRect(forBounds: find.field.bounds).maxX,
+                                     accessory.frame.minX+1, file: file, line: line)
+            XCTAssertGreaterThan(find.sendButton.frame.minX, find.findButton.frame.maxX, file: file, line: line)
+            XCTAssertEqual(find.sendButton.frame.minX-find.findButton.frame.maxX, 4, accuracy: 0.5, file: file, line: line)
+        }
+        let restingTop = bar.frame.minY
+        for distance: CGFloat in [-20, -60, -160, -320] {
+            browser.dragPanel(to: distance)
+            try assertAccessoriesStayAtTheRight()
+            XCTAssertLessThan(bar.frame.minY, restingTop, "Upward dragging retains resistance")
+            XCTAssertGreaterThan(bar.frame.minY, restingTop-41, "Resistance bounds the stretch")
+        }
+        browser.finishPanelDrag(at: -320)
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertEqual(bar.frame.minY, restingTop, accuracy: 1)
+        try assertAccessoriesStayAtTheRight()
+
+        // Finish the response, then refocus its question without the accessories moving into it.
+        pending.continuation.finish()
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertEqual(find.sendButton.symbolName, "arrow.up.circle.fill")
+        XCTAssertEqual(find.sendButton.subviews.compactMap { $0 as? UIImageView }.count, 1,
+                       "The outgoing icon is removed after the transition")
+        let rect = find.field.textRect(forBounds: find.field.bounds)
+        let hit = window.hitTest(find.field.convert(CGPoint(x: rect.midX, y: rect.midY), to: window), with: nil)
+        XCTAssertTrue(hit === find.field || hit?.isDescendant(of: find.field) == true,
+                      "The answer does not intercept taps into the question")
+        XCTAssertTrue(find.field.becomeFirstResponder())
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertTrue(find.field.isFirstResponder)
+        try assertAccessoriesStayAtTheRight()
+        let kept = find.field.text
+        find.field.text = "A follow-up question"
+        find.field.sendActions(for: .editingChanged)
+        XCTAssertNotEqual(find.field.text, kept)
+        XCTAssertEqual(find.mode, .ask)
+        try assertAccessoriesStayAtTheRight()
+        browser.closePanel()
+    }
+
+    @MainActor func testClosingAskCancelsLateTokensAndAnErrorCanBeRetried() async throws {
+        let browser = BrowserViewController(startURL: nil)
+        let window = try host(browser)
+        defer { window.isHidden = true }
+        let find = browser.bottomBar.find
+        let pending = AsyncThrowingStream<String, Error>.makeStream()
+        find.answer = { _, _ in pending.stream }
+        browser.openPanel(.find)
+        try await Task.sleep(for: .milliseconds(400))
+        find.enterAsk()
+        find.field.text = "What is this page?"
+        find.submitQuestion()
+        XCTAssertTrue(find.isAnswering)
+        browser.closePanel()
+        pending.continuation.yield("A late answer must not reopen the sheet.")
+        pending.continuation.finish()
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertFalse(browser.isPanelOpen)
+        XCTAssertFalse(find.isAnswering)
+        XCTAssertFalse(find.shimmer.isRunning)
+        XCTAssertEqual(find.answerView.answer, "")
+        XCTAssertEqual(find.mode, .find)
+        find.answer = { _, _ in AsyncThrowingStream { $0.finish(throwing: PageAssistant.Failure.service("Try again later.")) } }
+        browser.openPanel(.find)
+        try await Task.sleep(for: .milliseconds(400))
+        find.enterAsk()
+        find.field.text = "Try this question"
+        find.submitQuestion()
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertFalse(find.isAnswering)
+        XCTAssertEqual(find.answerView.answer, "Try again later.")
+        XCTAssertTrue(find.sendButton.isEnabled)
+        find.answer = { _, history in
+            XCTAssertTrue(history.isEmpty, "Failed requests do not enter the conversation")
+            return AsyncThrowingStream { $0.yield("A successful retry."); $0.finish() }
+        }
+        find.submitQuestion()
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertEqual(find.answerView.text, "A successful retry.")
+        XCTAssertFalse(find.isAnswering)
+        browser.closePanel()
     }
 
     func testSearchParsesGoogleSuggestionsAndTellsAddressesFromSearches() throws {
@@ -647,4 +1255,43 @@ final class WebKitBehaviorTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(800))
         XCTAssertEqual(webView.scrollView.zoomScale, before, accuracy: 0.01)
     }
+}
+
+/// Exercises the shared SSE transport on iPhone without a network dependency or API spend.
+private final class MobileAssistantProtocol: URLProtocol, @unchecked Sendable {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var response = Data()
+    nonisolated(unsafe) private static var body: Data?
+
+    static func prepare(_ response: Data) {
+        lock.lock(); defer { lock.unlock() }
+        self.response = response; body = nil
+    }
+    static func lastBody() -> Data? {
+        lock.lock(); defer { lock.unlock() }; return body
+    }
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        Self.lock.lock()
+        let data = Self.response
+        Self.body = request.httpBody
+        if Self.body == nil, let stream = request.httpBodyStream {
+            stream.open(); defer { stream.close() }
+            var bytes = [UInt8](repeating: 0, count: 4096), body = Data()
+            while stream.hasBytesAvailable {
+                let count = stream.read(&bytes, maxLength: bytes.count)
+                guard count > 0 else { break }
+                body.append(contentsOf: bytes.prefix(count))
+            }
+            Self.body = body
+        }
+        Self.lock.unlock()
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
+            headerFields: ["Content-Type": "text/event-stream"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
 }

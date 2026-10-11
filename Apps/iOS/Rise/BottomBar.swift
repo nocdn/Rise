@@ -4,10 +4,10 @@ import UIKit
 /// a stack of page previews for Tabs, a rounded button for New Page and a circle for the menu.
 /// Scrolling down collapses it to a thin, empty strip; scrolling back up opens it again. New Page
 /// grows it into a panel with rounded top corners for a search; More grows it a little, into the
-/// page's address and a few actions. Either way the bar's contents swap with a quick, blurred
-/// crossfade.
+/// page's address and a few actions, whose Find turns it into a find field above the keyboard.
+/// Either way the bar's contents swap with a quick, blurred crossfade.
 final class BottomBar: UIView {
-    enum Panel { case search, menu }
+    enum Panel { case search, menu, find }
 
     /// The buttons' row, and the space above it.
     static let rowHeight: CGFloat = 42
@@ -32,11 +32,14 @@ final class BottomBar: UIView {
     let search = SearchPanel()
     /// More's panel: the page's address, with large buttons under it.
     let menu = MenuPanel()
+    /// More's Find: a find field.
+    let find = FindPanel()
     /// Which panel the bar grows into.
     var panel = Panel.search
     /// The search's, and the address's, distance from the panel's top.
     static let searchTop: CGFloat = 20
-    /// New Page's plus, softer than the other symbols; pressed, it darkens, or lightens over dark pages.
+    /// New Page's plus and More's dots, softer than full text colour; pressed, they darken, or
+    /// lighten in dark mode.
     static let plusTint = UIColor.label.withAlphaComponent(0.7)
     static let pressedPlusTint = UIColor.label.withAlphaComponent(0.85)
     /// How small New Page and More get while pressed.
@@ -46,7 +49,7 @@ final class BottomBar: UIView {
     private let tap = UIImpactFeedbackGenerator(style: .rigid)
     /// Whichever of the row, the search and the menu is showing, if any.
     private(set) var shown: UIView?
-    private var contents: [UIView] { [home, search, menu] }
+    private var contents: [UIView] { [home, search, menu, find] }
     /// Collapsed, only the strip remains; set it inside an animation to animate.
     var isCollapsed = false {
         didSet {
@@ -68,6 +71,11 @@ final class BottomBar: UIView {
     /// than the safe area, just clearing the home indicator.
     static func height(collapsed: Bool, safeBottom: CGFloat) -> CGFloat {
         collapsed ? max(safeBottom-14, 14) : rowTop+rowHeight+max(safeBottom-rowTop, 8)
+    }
+
+    /// Find's panel's height: the field, just above the keyboard, or the safe area without one.
+    static func findHeight(keyboard: CGFloat, safeBottom: CGFloat, answer: CGFloat = 0) -> CGFloat {
+        searchTop+SearchPanel.fieldHeight+answer+(keyboard > 0 ? keyboard+12 : max(safeBottom, 16))
     }
 
     /// More's panel's height: the address, then a row of square buttons above the safe area.
@@ -97,25 +105,26 @@ final class BottomBar: UIView {
         newPageButton.layer.cornerRadius = (SearchPanel.cornerRadius*Self.newPageSize.height/SearchPanel.fieldHeight).rounded()
         newPageButton.setImage(UIImage(systemName: "plus", withConfiguration:
             UIImage.SymbolConfiguration(pointSize: 20, weight: .medium)), for: .normal)
-        // Softer than the other buttons' symbols, deepening under the finger as the fill does.
-        newPageButton.tintColor = Self.plusTint
-        newPageButton.addAction(UIAction { [weak self] _ in self?.newPageButton.tintColor = Self.pressedPlusTint },
-                                for: [.touchDown, .touchDragEnter])
-        newPageButton.addAction(UIAction { [weak self] _ in
-            UIView.animate(withDuration: 0.2, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
-                self?.newPageButton.tintColor = Self.plusTint
-            }
-        }, for: [.touchUpInside, .touchUpOutside, .touchDragExit, .touchCancel])
         newPageButton.accessibilityLabel = "New Page"
         moreButton.layer.cornerRadius = Self.menuSize/2
         moreButton.setImage(UIImage(systemName: "ellipsis", withConfiguration:
             UIImage.SymbolConfiguration(pointSize: 14, weight: .semibold)), for: .normal)
-        moreButton.tintColor = .label
         moreButton.accessibilityLabel = "More"
-        for button in [newPageButton, moreButton] { button.shrinksWhenPressed(to: Self.pressedScale, filled: true) }
+        for button in [newPageButton, moreButton] {
+            button.shrinksWhenPressed(to: Self.pressedScale, filled: true)
+            // Softer symbols, deepening under the finger as the fill does.
+            button.tintColor = Self.plusTint
+            button.addAction(UIAction { [weak button] _ in button?.tintColor = Self.pressedPlusTint },
+                             for: [.touchDown, .touchDragEnter])
+            button.addAction(UIAction { [weak button] _ in
+                UIView.animate(withDuration: 0.2, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+                    button?.tintColor = Self.plusTint
+                }
+            }, for: [.touchUpInside, .touchUpOutside, .touchDragExit, .touchCancel])
+        }
 
         for button in [tabsButton, newPageButton, moreButton] { row.addSubview(button) }
-        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+menu.tiles {
+        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+menu.tiles+find.buttons+[find.modeButton, find.sendButton] {
             // A light, crisp tap as the finger lands, rather than a soft thud; actions wait for it to lift.
             button.addAction(UIAction { [weak self] _ in self?.tap.impactOccurred(intensity: 0.5) }, for: .touchDown)
         }
@@ -127,7 +136,13 @@ final class BottomBar: UIView {
     /// Shows the row of buttons, or a panel's contents, swapping them with a quick crossfade, each
     /// softly blurred as it passes.
     func showContents(of panel: Panel?, animated: Bool = true) {
-        show(panel.map { $0 == .search ? search : menu } ?? home, animated: animated)
+        let view: UIView? = switch panel {
+        case .search: search
+        case .menu: menu
+        case .find: find
+        case nil: home
+        }
+        show(view, animated: animated)
     }
 
     /// Fades out whatever the bar shows.
@@ -174,6 +189,7 @@ final class BottomBar: UIView {
         place(home, 0, Self.rowTop+Self.rowHeight)
         place(search, Self.searchTop, SearchPanel.height)
         place(menu, Self.searchTop, MenuPanel.height(width: bounds.width))
+        place(find, Self.searchTop, SearchPanel.fieldHeight+find.answerHeight)
     }
 }
 
@@ -206,7 +222,19 @@ extension UIControl {
 /// Tabs, shown as Arc does: a small preview of the page on top of a card tilted behind it.
 final class TabsPreviewButton: UIButton {
     static let cardSize = CGSize(width: 26, height: 26)
+    /// With the tab switcher open, a rounded square filled like New Page and More, showing how
+    /// many tabs there are.
+    static let squareSize: CGFloat = 36
     private let back = UIView(), front = UIImageView()
+    private let square = UIView()
+    let countLabel = UILabel()
+    private(set) var showsSwitcher = false
+    var count = 1 {
+        didSet {
+            countLabel.text = "\(count)"
+            accessibilityValue = count == 1 ? "1 tab" : "\(count) tabs"
+        }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -229,6 +257,38 @@ final class TabsPreviewButton: UIButton {
         front.contentMode = .scaleToFill
         front.clipsToBounds = true
         front.layer.masksToBounds = true
+        square.isUserInteractionEnabled = false
+        square.backgroundColor = SearchPanel.fill
+        square.layer.cornerCurve = .continuous
+        square.layer.cornerRadius = (SearchPanel.cornerRadius*Self.squareSize/SearchPanel.fieldHeight).rounded()
+        square.alpha = 0
+        square.transform = CGAffineTransform(scaleX: 0.6, y: 0.6)
+        addSubview(square)
+        countLabel.font = SearchPanel.roundedFont(ofSize: 15, weight: .semibold, scaled: false)
+        countLabel.textColor = BottomBar.plusTint
+        countLabel.textAlignment = .center
+        countLabel.adjustsFontSizeToFitWidth = true
+        countLabel.minimumScaleFactor = 0.6
+        countLabel.text = "\(count)"
+        countLabel.isAccessibilityElement = false
+        square.addSubview(countLabel)
+        accessibilityValue = "1 tab"
+    }
+
+    /// Swaps the page previews for the empty square as the tab switcher opens, and back as it closes,
+    /// with the switcher's quick spring.
+    func setShowsSwitcher(_ shows: Bool, animated: Bool) {
+        guard shows != showsSwitcher else { return }
+        showsSwitcher = shows
+        accessibilityLabel = shows ? "Close Tabs" : "Tabs"
+        let change = { [self] in
+            square.alpha = shows ? 1 : 0
+            square.transform = shows ? .identity : CGAffineTransform(scaleX: 0.6, y: 0.6)
+            for card in [back, front] { card.alpha = shows ? 0 : 1 }
+        }
+        guard animated, !UIAccessibility.isReduceMotionEnabled else { change(); return }
+        UIView.animate(springDuration: TabSwitcherView.spring.duration, bounce: 0.2, initialSpringVelocity: 0, delay: 0,
+                       options: [.beginFromCurrentState, .allowUserInteraction], animations: change)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -241,6 +301,9 @@ final class TabsPreviewButton: UIButton {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        square.bounds = CGRect(x: 0, y: 0, width: Self.squareSize, height: Self.squareSize)
+        square.center = CGPoint(x: bounds.midX, y: bounds.midY)
+        countLabel.frame = square.bounds.insetBy(dx: 4, dy: 0)
         for card in [back, front] {
             card.center = CGPoint(x: bounds.midX, y: bounds.midY)
             card.layer.borderColor = UIColor.separator.resolvedColor(with: traitCollection).cgColor
