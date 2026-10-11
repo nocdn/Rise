@@ -13,6 +13,8 @@ import WebKit
     /// Samples the one-point row at `y` in the web view's coordinates.
     static func sample(_ webView: WKWebView, row y: CGFloat = 0, completion: @escaping @MainActor (UIColor?) -> Void) {
         let fallback = webView.themeColor ?? webView.underPageBackgroundColor
+        // A page that hasn't painted yet shows what's behind it, which isn't its colour.
+        guard !PagePaintWatcher.shared.isTransparent(webView) else { completion(nil); return }
         guard webView.bounds.width > 0, webView.window != nil else { completion(fallback); return }
         let configuration = WKSnapshotConfiguration()
         configuration.rect = CGRect(x: 0, y: min(max(0, y), webView.bounds.height-1), width: webView.bounds.width, height: 1)
@@ -94,6 +96,8 @@ import WebKit
     }
     private weak var webView: WKWebView?
     private var observations: [NSKeyValueObservation] = []
+    /// A page that was see-through until it painted is sampled as it first paints.
+    private var paintObserver: NSObjectProtocol?
     private var sampling = false, sampleAgain = false
     private let onChange: @MainActor (UIColor) -> Void
 
@@ -123,6 +127,11 @@ import WebKit
             webView.observe(\.underPageBackgroundColor) { [weak self] _, _ in MainActor.assumeIsolated { self?.sample() } },
             webView.scrollView.observe(\.contentOffset) { [weak self] _, _ in MainActor.assumeIsolated { self?.scrolled() } },
         ]
+        if let paintObserver { NotificationCenter.default.removeObserver(paintObserver) }
+        paintObserver = NotificationCenter.default.addObserver(forName: PagePaintWatcher.didPaint, object: webView,
+                                                               queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.sample() }
+        }
         sample()
     }
 

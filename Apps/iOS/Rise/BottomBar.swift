@@ -25,6 +25,11 @@ final class BottomBar: UIView {
 
     let tabsButton = TabsPreviewButton()
     let newPageButton = UIButton(type: .custom)
+    /// New Page's plus, which holding the button swaps for a waveform of the voice.
+    private let plusGlyph = UIImageView(image: UIImage(systemName: "plus", withConfiguration:
+        UIImage.SymbolConfiguration(pointSize: 20, weight: .medium)))
+    let waveform = VoiceWaveform()
+    private(set) var isListening = false
     let moreButton = UIButton(type: .custom)
     /// The bar's own contents: its row of buttons.
     let home = UIView()
@@ -103,8 +108,12 @@ final class BottomBar: UIView {
         newPageButton.layer.cornerCurve = .continuous
         // Rounded like the search field it opens, in proportion.
         newPageButton.layer.cornerRadius = (SearchPanel.cornerRadius*Self.newPageSize.height/SearchPanel.fieldHeight).rounded()
-        newPageButton.setImage(UIImage(systemName: "plus", withConfiguration:
-            UIImage.SymbolConfiguration(pointSize: 20, weight: .medium)), for: .normal)
+        for glyph in [plusGlyph, waveform] as [UIView] {
+            glyph.contentMode = .center
+            glyph.isUserInteractionEnabled = false
+            newPageButton.addSubview(glyph)
+        }
+        waveform.alpha = 0
         newPageButton.accessibilityLabel = "New Page"
         moreButton.layer.cornerRadius = Self.menuSize/2
         moreButton.setImage(UIImage(systemName: "ellipsis", withConfiguration:
@@ -145,8 +154,47 @@ final class BottomBar: UIView {
         show(view, animated: animated)
     }
 
+    /// Swaps New Page's plus for the waveform while a hold listens, and back, as icons swap elsewhere.
+    func setListening(_ listening: Bool, level: (() -> Float)? = nil) {
+        guard listening != isListening else { return }
+        isListening = listening
+        waveform.level = level
+        waveform.listen(listening)
+        newPageButton.accessibilityLabel = listening ? "Listening" : "New Page"
+        let previous: UIView = listening ? plusGlyph : waveform, next: UIView = listening ? waveform : plusGlyph
+        guard window != nil, !UIAccessibility.isReduceMotionEnabled else {
+            BlurCrossfade.stop(in: newPageButton)
+            previous.alpha = 0
+            next.alpha = 1
+            return
+        }
+        BlurCrossfade.swap(from: previous, to: next, style: .symbol)
+    }
+
     /// Fades out whatever the bar shows.
     func hideContents(animated: Bool = true) { show(nil, animated: animated) }
+
+    /// The same address surface rides upward with the sheet; only More's tiles swap away.
+    func expandAddress(_ url: URL?) {
+        search.beginEditingAddress(menu.address, url: url)
+        panel = .search
+        shown = search
+        for view in contents {
+            view.isUserInteractionEnabled = view === search
+            view.accessibilityElementsHidden = view !== search
+        }
+        search.alpha = 1
+        search.transform = .identity
+        BlurCrossfade.stop(in: self)
+        if UIAccessibility.isReduceMotionEnabled { menu.alpha = 0 }
+        else { BlurCrossfade.swap(from: menu, to: nil) }
+    }
+
+    func restoreAddress() {
+        search.releaseAddress()
+        if menu.address.superview !== menu { menu.addSubview(menu.address) }
+        menu.setNeedsLayout()
+    }
 
     private func show(_ next: UIView?, animated: Bool) {
         guard next !== shown else { return }
@@ -177,6 +225,11 @@ final class BottomBar: UIView {
         // By bounds and center, as pressed buttons are scaled.
         newPageButton.bounds = CGRect(origin: .zero, size: Self.newPageSize)
         newPageButton.center = CGPoint(x: bounds.midX, y: midY)
+        // By bounds and center, as they scale as they swap.
+        for glyph in [plusGlyph, waveform] as [UIView] {
+            glyph.bounds = newPageButton.bounds
+            glyph.center = CGPoint(x: newPageButton.bounds.midX, y: newPageButton.bounds.midY)
+        }
         let menuSide = Self.menuSize
         moreButton.bounds = CGRect(x: 0, y: 0, width: menuSide, height: menuSide)
         moreButton.center = CGPoint(x: bounds.width-centre, y: midY)

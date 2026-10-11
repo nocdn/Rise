@@ -65,11 +65,16 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     }()
 
     let field = SearchField()
+    private(set) var editingAddress: AddressBar?
     private(set) var suggestions: [String] = []
     private var rows: [UIButton] = []
     private var fetch: Task<Void, Never>?
     /// One soft click for clearing; two in quick succession for opening a page.
     private let click = UIImpactFeedbackGenerator(style: .rigid)
+    /// Where the clear button would be, while a held New Page's speech is transcribed.
+    let transcribing = UIActivityIndicatorView(style: .medium)
+    /// Counts openings, so a transcription lands only in the opening it was said for.
+    private var opening = 0
     /// Opens a page the person chose.
     var onOpen: @MainActor (URL) -> Void = { _ in }
 
@@ -92,6 +97,10 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         field.delegate = self
         field.addAction(UIAction { [weak self] _ in self?.queryChanged() }, for: .editingChanged)
         addSubview(field)
+        transcribing.hidesWhenStopped = true
+        transcribing.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
+        transcribing.accessibilityLabel = "Transcribing"
+        field.addSubview(transcribing)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -99,7 +108,13 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     override func layoutSubviews() {
         super.layoutSubviews()
         let width = bounds.width-2*Self.inset
-        field.frame = CGRect(x: Self.inset, y: 0, width: width, height: Self.fieldHeight)
+        let frame = CGRect(x: Self.inset, y: 0, width: width, height: Self.fieldHeight)
+        if let editingAddress {
+            editingAddress.frame = frame
+            editingAddress.layoutIfNeeded()
+        } else { field.frame = frame }
+        let clear = field.clearButtonRect(forBounds: field.bounds)
+        transcribing.center = CGPoint(x: clear.midX, y: clear.midY)
         for (index, row) in rows.enumerated() {
             // By bounds and center, as a pressed row is scaled.
             row.bounds = CGRect(x: 0, y: 0, width: width, height: Self.rowHeight)
@@ -110,18 +125,97 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     /// Each time the panel opens, the field starts empty and focused.
     func begin() {
         fetch?.cancel()
+        opening += 1
+        stopTranscribing()
         field.text = ""
         show([])
         field.becomeFirstResponder()
         click.prepare()
     }
 
+    /// Shows a small spinner where the clear button would be until `finishTranscribing`, which
+    /// is ignored if the panel has since closed or opened again.
+    func beginTranscribing() -> Int {
+        field.clearButtonMode = .never
+        transcribing.startAnimating()
+        return opening
+    }
+
+    /// Puts what was said in the field, after anything typed meanwhile, ready for Go.
+    func finishTranscribing(_ text: String, for opening: Int) {
+        guard opening == self.opening, transcribing.isAnimating else { return }
+        stopTranscribing()
+        guard !text.isEmpty else { return }
+        let typed = (field.text ?? "").trimmingCharacters(in: .whitespaces)
+        field.text = typed.isEmpty ? text : typed+" "+text
+        field.selectedTextRange = field.textRange(from: field.endOfDocument, to: field.endOfDocument)
+        queryChanged()
+        click.impactOccurred(intensity: 0.5)
+    }
+
+    private func stopTranscribing() {
+        guard transcribing.isAnimating else { return }
+        transcribing.stopAnimating()
+        field.clearButtonMode = .whileEditing
+    }
+
+    /// The address is carried into this panel, rather than crossfading to a duplicate field.
+    func beginEditingAddress(_ address: AddressBar, url: URL?) {
+        fetch?.cancel()
+        opening += 1
+        stopTranscribing()
+        show([])
+        editingAddress = address
+        addSubview(address)
+        field.text = url?.absoluteString ?? ""
+        address.prepareEditing(field, url: url)
+        click.prepare()
+    }
+
+    func focusAddress() {
+        guard editingAddress != nil else { return }
+        field.isUserInteractionEnabled = true
+        field.becomeFirstResponder()
+        field.selectedTextRange = field.textRange(from: field.beginningOfDocument, to: field.endOfDocument)
+    }
+
+    func finishAddressTransition() { editingAddress?.finishEditing() }
+
+    /// Restore the regular New Page field and return the address to More before another opening.
+    func releaseAddress() {
+        guard let address = editingAddress else { return }
+        editingAddress = nil
+        address.endEditingAddress()
+        addSubview(field)
+        field.backgroundColor = Self.fill
+        field.clearButtonMode = .whileEditing
+        field.rightView = nil
+        field.rightViewMode = .never
+        field.alpha = 1
+        field.isUserInteractionEnabled = true
+        setNeedsLayout()
+    }
+
+    func clearAddress() {
+        guard let editingAddress else { return }
+        editingAddress.host.text = ""
+        field.text = ""
+        queryChanged()
+        field.becomeFirstResponder()
+        click.impactOccurred(intensity: 0.5)
+    }
+
     func end() {
         fetch?.cancel()
+        opening += 1
+        stopTranscribing()
         field.resignFirstResponder()
     }
 
     private func queryChanged() {
+        // Input can arrive while the spring is still running: show it immediately without
+        // selecting it again when the label's animation finishes.
+        editingAddress?.finishEditing()
         fetch?.cancel()
         let query = (field.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty, let url = Self.suggestionsURL(for: query) else { show([]); return }

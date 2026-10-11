@@ -3,7 +3,7 @@ import UIKit
 /// The page's address at the top of More's panel, styled like the search field, with the Mac's
 /// controls: Back and Forward close together, each only if there's a page that way, the host behind a padlock on secure pages, then
 /// Reload.
-final class AddressBar: UIView {
+final class AddressBar: UIControl {
     static let buttonWidth: CGFloat = 30
     /// The centres of the outer buttons from the ends, and of the inner ones from the outer.
     static let outerCentre: CGFloat = 22
@@ -13,11 +13,16 @@ final class AddressBar: UIView {
 
     let backButton = AddressBar.button("chevron.left", size: 15, label: "Back")
     let forwardButton = AddressBar.button("chevron.right", size: 15, label: "Forward")
-    let reloadButton = AddressBar.button("arrow.clockwise", size: 14, weight: .bold, label: "Reload")
+    let reloadButton = AnimatedSymbolButton(symbol: "arrow.clockwise", pointSize: 14, weight: .bold)
     let lock = UIImageView(image: UIImage(systemName: "lock.fill", withConfiguration:
         UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)))
     let host = UILabel()
     var buttons: [UIButton] { [backButton, forwardButton, reloadButton] }
+    private(set) var isEditingURL = false
+    private var editor: SearchField?
+    private var editingContentsAligned = false
+    private var url: URL?
+    private var canGoBack = false, canGoForward = false
 
     private static func button(_ symbol: String, size: CGFloat, weight: UIImage.SymbolWeight = .semibold,
                                label: String) -> UIButton {
@@ -33,6 +38,7 @@ final class AddressBar: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         backgroundColor = SearchPanel.fill
+        clipsToBounds = true
         layer.cornerCurve = .continuous
         layer.cornerRadius = SearchPanel.cornerRadius
         lock.tintColor = .systemGreen
@@ -44,6 +50,10 @@ final class AddressBar: UIView {
         host.adjustsFontSizeToFitWidth = true
         host.minimumScaleFactor = 0.85
         host.accessibilityTraits = .staticText
+        host.isUserInteractionEnabled = false
+        reloadButton.accessibilityLabel = "Reload"
+        reloadButton.shrinksWhenPressed(to: Self.pressedScale)
+        accessibilityLabel = "Edit Address"
         for view in [lock, host] { addSubview(view) }
         buttons.forEach(addSubview)
     }
@@ -52,6 +62,10 @@ final class AddressBar: UIView {
 
     /// Shows a page's host, without `www.` as Safari does, behind a padlock if it's HTTPS.
     func show(_ url: URL?, canGoBack: Bool, canGoForward: Bool) {
+        self.url = url
+        self.canGoBack = canGoBack
+        self.canGoForward = canGoForward
+        guard !isEditingURL else { return }
         var name = url?.host() ?? ""
         if name.hasPrefix("www.") { name.removeFirst(4) }
         host.text = name
@@ -63,6 +77,64 @@ final class AddressBar: UIView {
         setNeedsLayout()
     }
 
+    /// Keep the bar intact: its label moves with the sheet while the editor already owns keyboard focus.
+    func prepareEditing(_ field: SearchField, url: URL?) {
+        isEditingURL = true
+        editingContentsAligned = false
+        editor = field
+        field.frame = bounds
+        field.backgroundColor = .clear
+        field.clearButtonMode = .never
+        field.rightView = UIView(frame: CGRect(x: 0, y: 0, width: 44, height: SearchPanel.fieldHeight))
+        field.rightViewMode = .always
+        field.alpha = 0
+        field.isUserInteractionEnabled = false
+        insertSubview(field, belowSubview: host)
+        host.text = url?.absoluteString ?? ""
+        host.lineBreakMode = .byTruncatingTail
+        host.adjustsFontSizeToFitWidth = false
+        reloadButton.setSymbol("xmark")
+        reloadButton.accessibilityLabel = "Clear Address"
+        backButton.isUserInteractionEnabled = false
+        forwardButton.isUserInteractionEnabled = false
+        setNeedsLayout()
+    }
+
+    /// Defer the target layout until the sheet's animation block; UIKit can lay out a reparented
+    /// field early, which otherwise makes its label jump to the left before the spring starts.
+    func alignEditingContents() {
+        editingContentsAligned = true
+        setNeedsLayout()
+        layoutIfNeeded()
+    }
+
+    func finishEditing() {
+        guard let editor else { return }
+        host.alpha = 0
+        lock.isHidden = true
+        backButton.isHidden = true
+        forwardButton.isHidden = true
+        editor.alpha = 1
+        editor.isUserInteractionEnabled = true
+    }
+
+    func endEditingAddress() {
+        editor = nil
+        editingContentsAligned = false
+        isEditingURL = false
+        host.alpha = 1
+        host.lineBreakMode = .byTruncatingHead
+        host.adjustsFontSizeToFitWidth = true
+        lock.alpha = 1
+        backButton.alpha = 1
+        forwardButton.alpha = 1
+        backButton.isUserInteractionEnabled = true
+        forwardButton.isUserInteractionEnabled = true
+        reloadButton.setSymbol("arrow.clockwise")
+        reloadButton.accessibilityLabel = "Reload"
+        show(url, canGoBack: canGoBack, canGoForward: canGoForward)
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         // By bounds and center, as pressed buttons are scaled.
@@ -72,6 +144,16 @@ final class AddressBar: UIView {
         for (button, x) in zip(buttons, [centres[0], forwardCentre, centres[2]]) {
             button.bounds = CGRect(x: 0, y: 0, width: width, height: height)
             button.center = CGPoint(x: x, y: bounds.midY)
+        }
+        if let editor {
+            editor.frame = bounds
+            if editingContentsAligned {
+                host.frame = editor.textRect(forBounds: bounds)
+                lock.alpha = 0
+                backButton.alpha = 0
+                forwardButton.alpha = 0
+            }
+            return
         }
         // The host and padlock together sit in the middle, as far as the buttons allow.
         let spacing: CGFloat = 5
@@ -120,7 +202,9 @@ final class MenuPanel: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        address.frame = CGRect(x: Self.inset, y: 0, width: bounds.width-2*Self.inset, height: SearchPanel.fieldHeight)
+        if address.superview === self {
+            address.frame = CGRect(x: Self.inset, y: 0, width: bounds.width-2*Self.inset, height: SearchPanel.fieldHeight)
+        }
         let side = Self.tileSide(width: bounds.width)
         let used = CGFloat(tiles.count)*side+CGFloat(tiles.count-1)*Self.spacing
         var x = (bounds.width-used)/2

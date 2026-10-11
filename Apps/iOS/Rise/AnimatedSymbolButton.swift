@@ -4,14 +4,17 @@ import UIKit
 final class AnimatedSymbolButton: UIButton {
     private(set) var symbolName: String
     private var glyph: UIImageView
+    private let symbolConfiguration: UIImage.SymbolConfiguration
 
     override var isEnabled: Bool {
         didSet { tintColor = isEnabled ? .label : .tertiaryLabel }
     }
 
-    init(symbol: String) {
+    init(symbol: String, pointSize: CGFloat = 19, weight: UIImage.SymbolWeight = .semibold) {
         symbolName = symbol
-        glyph = Self.imageView(symbol)
+        let configuration = UIImage.SymbolConfiguration(pointSize: pointSize, weight: weight)
+        symbolConfiguration = configuration
+        glyph = Self.imageView(symbol, configuration: configuration)
         super.init(frame: .zero)
         tintColor = .label
         addSubview(glyph)
@@ -32,7 +35,7 @@ final class AnimatedSymbolButton: UIButton {
     func setSymbol(_ symbol: String) {
         guard symbolName != symbol else { return }
         symbolName = symbol
-        let previous = glyph, next = Self.imageView(symbol)
+        let previous = glyph, next = Self.imageView(symbol, configuration: symbolConfiguration)
         glyph = next
         next.alpha = 0
         addSubview(next)
@@ -45,9 +48,9 @@ final class AnimatedSymbolButton: UIButton {
         BlurCrossfade.swap(from: previous, to: next, style: .symbol) { previous.removeFromSuperview() }
     }
 
-    private static func imageView(_ symbol: String) -> UIImageView {
+    private static func imageView(_ symbol: String, configuration: UIImage.SymbolConfiguration) -> UIImageView {
         let image = UIImageView(image: UIImage(systemName: symbol,
-            withConfiguration: UIImage.SymbolConfiguration(pointSize: 19, weight: .semibold)))
+            withConfiguration: configuration))
         image.contentMode = .center
         image.isUserInteractionEnabled = false
         image.isAccessibilityElement = false

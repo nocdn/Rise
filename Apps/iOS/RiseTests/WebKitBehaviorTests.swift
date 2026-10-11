@@ -690,6 +690,147 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertTrue(switcher.isHidden)
     }
 
+    @MainActor func testMenuAddressExpandsIntactIntoAFocusedSelectedURLAndClearsWithoutReloading() async throws {
+        let browser = BrowserViewController(startURL: nil)
+        let window = try host(browser)
+        defer { window.isHidden = true }
+        let keyboardGuide = browser.view.keyboardLayoutGuide
+        let url = try XCTUnwrap(URL(string: "https://www.example.test/articles?id=42#section"))
+        try await load("<html><body><input value='Keep this form'><script>window.keepMe = 42</script></body></html>",
+                       in: browser.webView, baseURL: url)
+        let original = browser.webView, bar = browser.bottomBar
+        bar.moreButton.sendActions(for: .primaryActionTriggered)
+        try await Task.sleep(for: .milliseconds(500))
+        let address = bar.menu.address
+        let initialLabelX = address.host.frame.minX
+        let initialTop = bar.frame.minY
+        let initialAddressFrame = address.frame
+        let initialReloadCenter = address.reloadButton.center
+        XCTAssertEqual(address.host.text, "example.test")
+        XCTAssertFalse(address.lock.isHidden)
+        address.sendActions(for: .touchUpInside)
+        XCTAssertEqual(bar.panel, .search)
+        XCTAssertTrue(bar.shown === bar.search)
+        XCTAssertTrue(bar.search.editingAddress === address)
+        XCTAssertTrue(address.superview === bar.search)
+        XCTAssertTrue(bar.search.field.superview === address)
+        XCTAssertEqual(address.frame, initialAddressFrame, "The field surface retains its size and placement in the sheet")
+        XCTAssertEqual(address.alpha, 1)
+        XCTAssertEqual(address.transform, .identity, "The URL bar never takes the contents' blur/scale morph")
+        XCTAssertFalse(address.subviews.contains { $0 is UIImageView && $0 !== address.lock },
+                       "No blurred snapshot is laid over the address")
+        XCTAssertEqual(address.host.text, url.absoluteString)
+        XCTAssertEqual(bar.search.field.text, url.absoluteString)
+        XCTAssertEqual(address.reloadButton.symbolName, "xmark")
+        XCTAssertEqual(address.reloadButton.center, initialReloadCenter)
+        XCTAssertTrue(address.reloadButton.subviews.contains { $0.subviews.contains { $0 is UIImageView } }
+                      || UIAccessibility.isReduceMotionEnabled, "The icon uses the Send/Stop blur swap")
+        XCTAssertTrue(bar.search.field.isFirstResponder, "The keyboard starts opening in the tap's event, before the spring finishes")
+        let immediateSelection = try XCTUnwrap(bar.search.field.selectedTextRange)
+        XCTAssertEqual(bar.search.field.offset(from: bar.search.field.beginningOfDocument, to: immediateSelection.start), 0)
+        XCTAssertEqual(bar.search.field.offset(from: immediateSelection.start, to: immediateSelection.end), url.absoluteString.utf16.count)
+        XCTAssertTrue(bar.menu.subviews.contains { $0 is UIImageView } || UIAccessibility.isReduceMotionEnabled,
+                      "Only the removed menu contents use the blurred crossfade")
+        if !UIAccessibility.isReduceMotionEnabled {
+            // Keyboard startup can delay the first display frame. Observe the first moving
+            // frame rather than assuming it has been rendered at exactly 50 ms.
+            for _ in 0..<20 {
+                try await Task.sleep(for: .milliseconds(10))
+                if let x = address.host.layer.presentation()?.frame.minX, x < initialLabelX { break }
+            }
+            let movingX = try XCTUnwrap(address.host.layer.presentation()?.frame.minX)
+            XCTAssertLessThan(movingX, initialLabelX)
+            XCTAssertGreaterThan(movingX, address.host.frame.minX, "The label travels left over the spring's duration")
+            XCTAssertGreaterThan(try XCTUnwrap(bar.layer.presentation()?.frame.minY), bar.frame.minY)
+        }
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertLessThan(bar.frame.minY, initialTop)
+        XCTAssertEqual(bar.bounds.height, (browser.view.bounds.height*BrowserViewController.panelHeightFraction).rounded(), accuracy: 1)
+        XCTAssertEqual(browser.content.transform.a, PageRecede.scale, accuracy: 0.001)
+        XCTAssertEqual(browser.content.transform.ty, PageRecede.drop, accuracy: 0.5)
+        XCTAssertEqual(address.host.frame.minX, bar.search.field.textRect(forBounds: address.bounds).minX, accuracy: 0.5)
+        XCTAssertTrue(address.lock.isHidden)
+        XCTAssertTrue(address.backButton.isHidden)
+        XCTAssertTrue(address.forwardButton.isHidden)
+        XCTAssertEqual(bar.menu.alpha, 0)
+        XCTAssertTrue(bar.search.field.isFirstResponder)
+        XCTAssertGreaterThan(keyboardGuide.layoutFrame.height, 150)
+        let selection = try XCTUnwrap(bar.search.field.selectedTextRange)
+        XCTAssertEqual(bar.search.field.offset(from: bar.search.field.beginningOfDocument, to: selection.start), 0)
+        XCTAssertEqual(bar.search.field.offset(from: selection.start, to: selection.end), url.absoluteString.utf16.count)
+        let attachment = XCTAttachment(image: UIGraphicsImageRenderer(bounds: browser.view.bounds).image { _ in
+            _ = browser.view.drawHierarchy(in: browser.view.bounds, afterScreenUpdates: true)
+        })
+        attachment.name = "Expanded URL editor"; attachment.lifetime = .keepAlways; add(attachment)
+        address.reloadButton.sendActions(for: .primaryActionTriggered)
+        XCTAssertEqual(bar.search.field.text, "")
+        XCTAssertEqual(bar.search.suggestions, [])
+        XCTAssertTrue(bar.search.field.isFirstResponder)
+        XCTAssertTrue(browser.webView === original)
+        XCTAssertEqual(bar.tabsButton.count, 1)
+        let kept = try await original.evaluateJavaScript("window.keepMe") as? Int
+        XCTAssertEqual(kept, 42, "X clears the input instead of reloading the page")
+        address.reloadButton.sendActions(for: .primaryActionTriggered)
+        XCTAssertFalse(browser.isPanelOpen, "X on an empty address closes the dialog")
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertTrue(browser.webView === original)
+        let stillKept = try await original.evaluateJavaScript("window.keepMe") as? Int
+        XCTAssertEqual(stillKept, 42, "Closing leaves the page as it was")
+        XCTAssertFalse(bar.search.field.isFirstResponder)
+        bar.moreButton.sendActions(for: .primaryActionTriggered)
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertTrue(address.superview === bar.menu)
+        XCTAssertFalse(address.isEditingURL)
+        XCTAssertEqual(address.host.text, "example.test")
+        XCTAssertEqual(address.reloadButton.symbolName, "arrow.clockwise")
+        XCTAssertFalse(address.lock.isHidden)
+        XCTAssertEqual(address.lock.alpha, 1)
+        browser.closePanel()
+        try await Task.sleep(for: .milliseconds(600))
+        bar.newPageButton.sendActions(for: .primaryActionTriggered)
+        XCTAssertNil(bar.search.editingAddress)
+        XCTAssertTrue(bar.search.field.superview === bar.search)
+        XCTAssertEqual(bar.search.field.text, "")
+        XCTAssertEqual(bar.search.field.backgroundColor, SearchPanel.fill)
+        XCTAssertEqual(bar.search.field.clearButtonMode, .whileEditing)
+        browser.closePanel()
+    }
+
+    @MainActor func testEditingAnAddressNavigatesItsTabAndAnInterruptedExpansionDoesNotFocusLater() async throws {
+        let browser = BrowserViewController(startURL: nil)
+        let window = try host(browser)
+        defer { window.isHidden = true }
+        try await load("<html><body>A local original page.</body></html>", in: browser.webView,
+                       baseURL: URL(string: "https://example.test/original")!)
+        let original = browser.webView, bar = browser.bottomBar
+        browser.openPanel(.menu)
+        try await Task.sleep(for: .milliseconds(500))
+        bar.menu.address.sendActions(for: .touchUpInside)
+        browser.closePanel()
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertFalse(browser.isPanelOpen)
+        XCTAssertFalse(bar.search.field.isFirstResponder, "A canceled spring doesn't bring up the keyboard later")
+        browser.openPanel(.menu)
+        try await Task.sleep(for: .milliseconds(500))
+        bar.menu.address.sendActions(for: .touchUpInside)
+        XCTAssertTrue(bar.search.field.isFirstResponder)
+        // Typing before the spring completes must not be reselected by its completion callback.
+        bar.search.field.text = "https://example.com/"
+        bar.search.field.sendActions(for: .editingChanged)
+        bar.search.field.selectedTextRange = bar.search.field.textRange(from: bar.search.field.endOfDocument,
+                                                                      to: bar.search.field.endOfDocument)
+        try await Task.sleep(for: .milliseconds(700))
+        let caret = try XCTUnwrap(bar.search.field.selectedTextRange)
+        XCTAssertTrue(caret.isEmpty)
+        XCTAssertEqual(bar.search.field.offset(from: bar.search.field.beginningOfDocument, to: caret.start), "https://example.com/".utf16.count)
+        XCTAssertFalse(bar.search.textFieldShouldReturn(bar.search.field))
+        XCTAssertFalse(browser.isPanelOpen)
+        XCTAssertFalse(bar.search.field.isFirstResponder)
+        XCTAssertTrue(browser.webView === original, "Go navigates the existing web view, preserving its history")
+        XCTAssertEqual(bar.tabsButton.count, 1, "Editing a URL doesn't add a tab")
+        original.stopLoading()
+    }
+
     @MainActor func testFindTurnsMoresPanelIntoAFindFieldThatStepsThroughMatchesAndKeepsTheScroll() async throws {
         let browser = BrowserViewController(startURL: nil)
         let window = try host(browser)
@@ -1109,6 +1250,85 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertEqual(find.answerView.text, "A successful retry.")
         XCTAssertFalse(find.isAnswering)
         browser.closePanel()
+    }
+
+    @MainActor func testHoldingNewPageShowsAWaveformAndFillsTheSearchWithWhatWasSaid() async throws {
+        let browser = BrowserViewController(startURL: nil)
+        let window = try host(browser)
+        defer { window.isHidden = true }
+        let bar = browser.bottomBar, search = bar.search
+        XCTAssertTrue(bar.newPageButton.gestureRecognizers?.contains { $0 is UILongPressGestureRecognizer } ?? false)
+
+        // Listening swaps the plus for seven rounded red bars that follow the level.
+        var level: Float = 0
+        bar.setListening(true) { level }
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(bar.waveform.alpha, 1)
+        let bars = try XCTUnwrap(bar.waveform.layer.sublayers)
+        XCTAssertEqual(bars.count, 7)
+        XCTAssertEqual(bars[3].frame.height, VoiceWaveform.barWidth, accuracy: 0.5, "Dots while quiet")
+        XCTAssertEqual(bars[0].cornerRadius, VoiceWaveform.barWidth/2)
+        level = 1
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertGreaterThan(bars[3].frame.height, 12, "The middle bars rise with the voice")
+        XCTAssertLessThanOrEqual(bars[3].frame.height, VoiceWaveform.maximumHeight)
+        XCTAssertTrue(bar.newPageButton.bounds.contains(bar.waveform.convert(bars[0].frame, to: bar.newPageButton)))
+        XCTAssertTrue(bar.newPageButton.bounds.contains(bar.waveform.convert(bars[6].frame, to: bar.newPageButton)))
+        bar.setListening(false)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(bar.waveform.alpha, 0, "The plus comes back")
+
+        // Letting go opens New Page, a spinner where X would be until the words land in the field.
+        browser.finishListening()
+        XCTAssertTrue(browser.isPanelOpen)
+        let opening = search.beginTranscribing()
+        XCTAssertTrue(search.transcribing.isAnimating)
+        let clear = search.field.clearButtonRect(forBounds: search.field.bounds)
+        search.layoutIfNeeded()
+        XCTAssertEqual(search.transcribing.center.x, clear.midX, accuracy: 1)
+        search.finishTranscribing("swift concurrency", for: opening)
+        XCTAssertFalse(search.transcribing.isAnimating)
+        XCTAssertEqual(search.field.text, "swift concurrency")
+        XCTAssertEqual(search.field.clearButtonMode, .whileEditing)
+
+        // A transcription for an earlier opening doesn't land in a later one.
+        browser.closePanel()
+        try await Task.sleep(for: .milliseconds(600))
+        browser.openPanel()
+        let stale = opening
+        _ = search.beginTranscribing()
+        search.finishTranscribing("late", for: stale)
+        XCTAssertEqual(search.field.text, "")
+        browser.closePanel()
+        try await Task.sleep(for: .milliseconds(600))
+    }
+
+    @MainActor func testDarkPagesShowTheDarkSurfaceUntilTheyFirstPaint() async throws {
+        let browser = BrowserViewController(startURL: nil)
+        let window = try host(browser)
+        defer { window.isHidden = true }
+        let watcher = PagePaintWatcher.shared
+
+        // A new page in dark mode is see-through until it paints, rather than WebKit's white.
+        let page = WKWebView(frame: window.bounds, configuration: WKWebViewConfiguration())
+        watcher.install(on: page, dark: true)
+        XCTAssertFalse(page.isOpaque)
+        XCTAssertEqual(page.backgroundColor, .clear)
+        XCTAssertTrue(watcher.isTransparent(page))
+        window.addSubview(page)
+        defer { page.removeFromSuperview() }
+        try await load("<html><body style='background:#111;color:#eee'>Dark page</body></html>", in: page,
+                       baseURL: URL(string: "https://example.com/dark")!)
+        for _ in 0..<100 where watcher.isTransparent(page) { try await Task.sleep(for: .milliseconds(50)) }
+        XCTAssertFalse(watcher.isTransparent(page), "Its first paint is reported")
+        XCTAssertTrue(page.isOpaque, "Opaque again once painted, so pages without a background get white")
+        XCTAssertNotEqual(page.backgroundColor, .clear)
+
+        // In light mode nothing changes.
+        let light = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        watcher.install(on: light, dark: false)
+        XCTAssertTrue(light.isOpaque)
+        XCTAssertFalse(watcher.isTransparent(light))
     }
 
     func testSearchParsesGoogleSuggestionsAndTellsAddressesFromSearches() throws {

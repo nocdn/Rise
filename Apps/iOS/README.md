@@ -39,15 +39,31 @@ Google for it; Go opens what was typed as an address when it looks like one
 (`example.com`, `https://…`), and searches Google otherwise. Either way the panel quickly grows
 up to fill the window as the search fades out and the new page appears inside it,
 while the page behind keeps receding at the same rate; the new page then stays as the page, the previous one held for Back (the edge swipe). Swiping the
-panel down or tapping the page puts it back without opening anything. More, the ellipsis
+panel down or tapping the page puts it back without opening anything. Holding New Page searches by voice instead:
+a strong, sharp click, then a constant soft haptic hum while it listens, as the plus swaps (with
+the icons' blurred swap) for seven fully rounded red bars that rise and fall smoothly with the
+microphone's level, tallest in the middle. Letting go opens New Page as a tap would, a small spinner
+where the clear button would be until what was said lands in the field, ready for Go. It's
+transcribed on the device by iOS's newest speech-to-text model, `SpeechAnalyzer` with
+`SpeechTranscriber` (iOS 26 and later; `DictationTranscriber` where that model isn't available),
+whose assets are fetched at launch. The first hold asks for the microphone and speech recognition
+instead of listening. More, the ellipsis
 circle on the right, grows the bar the same way into a panel about a third as tall, the page
 behind receding only as far as that growth takes it at the same rate. The bar's buttons
 swap the same way for the page's address, styled like the search field: Back and Forward
 close together, each only if there's a page that way, the host behind a green padlock on HTTPS pages, then Reload. Under it,
 square buttons Share, Summarise, Find (on page) and Copy (the link), labelled in rounded type. Back and Forward keep the
 panel open (Back also returns to a page a Peek or search replaced); Reload, Share and
-Copy close it. Summarise
-and tapping the address do nothing yet. Find swaps the panel's contents, with the same blurred
+Copy close it. Summarise does nothing yet. Tapping the address grows More into a New Page-sized
+editor on the same spring, receding the page further while the tiles blur and fade away. The
+address bar itself stays intact: the full URL slides from the center to the left as the sheet
+grows, the padlock and history buttons fade, and Reload swaps to a clear X with the same blur,
+scale and fade as Send/Stop. X clears the address, and on an empty field closes the dialog,
+leaving the page as it was. The keyboard starts opening immediately on tapping, with the full
+URL selected, while the sheet and label spring into place. Input during the spring appears
+immediately and keeps its caret when the animation finishes. Editing uses the same suggestions
+as New Page; Go navigates the current tab, while
+clearing or dismissing preserves its page. Find swaps the panel's contents, with the same blurred
 crossfade and spring, for a single "Find on Page" field styled like the search field, the panel
 moving to sit just above the keyboard as the page comes forward again, undimmed, to show its
 matches. It's laid out like the Mac's find bar: the current match and the count ("4/5") at the
@@ -131,6 +147,12 @@ Link detection uses [WebKit's context-menu delegate](https://developer.apple.com
 presentation uses a [custom UIKit presentation controller](https://developer.apple.com/documentation/uikit/uipresentationcontroller)
 with spring animations, so the card and the page behind can follow the same drag.
 
+In dark mode, a new page is see-through until it first paints, as on the Mac (`PagePaint.swift`),
+so the dark surface behind it shows instead of the white WebKit fills an unpainted page with.
+Once painted it's opaque again, so pages without a background of their own still get white, and
+the status bar strip samples its top then. Later navigations keep showing the old page until the
+new one paints, so they don't flash either.
+
 ## Project layout
 
 - `Rise.xcodeproj`: native Xcode project with a shared `RiseiOS` scheme and folder-synchronized source groups. Add Swift files to `Rise` or `RiseTests` without maintaining file lists or running a project generator.
@@ -154,6 +176,14 @@ From the repository root, the same restart entry point handles physical iOS buil
 
 ```sh
 ./scripts/restart.sh --ios --device "Your iPhone"
+```
+
+For a Simulator, pass its UDID from `xcrun simctl list devices available` instead. The
+script boots it, builds into `build/ios-simulator`, installs and relaunches the app:
+
+```sh
+./scripts/restart.sh --ios --simulator "Simulator UDID"
+python3 scripts/ios.py test --simulator "Simulator UDID"
 ```
 
 Names, hardware UDIDs and CoreDevice identifiers are accepted. To build without
