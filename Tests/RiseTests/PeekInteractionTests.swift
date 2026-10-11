@@ -280,6 +280,45 @@ final class PeekInteractionTests: XCTestCase {
         XCTAssertFalse(takesCommandZ(browser), "The chance to undo runs out")
         XCTAssertEqual(browser.splitGroups.count, 1)
     }
+    @MainActor func testSplitHandleMenuReturnsTheSameLivePeekAfterKeyboardUndoExpires() async throws {
+        let browser = browser(); defer { clean(browser); BrowserController.peekUndoDuration = 30 }
+        let source = browser.addTab()
+        browser.showPeek(url: URL(string: "about:blank")!, from: source.webView)
+        let peek = try XCTUnwrap(browser.peekTab), page = peek.webView
+        BrowserController.peekUndoDuration = 0.03
+        browser.splitPeek()
+        let menu = browser.splitHandle.makeContextMenu()
+        XCTAssertEqual(menu.items.map(\.title), ["Return to Peek state"])
+        XCTAssertTrue(menu.items[0].isEnabled)
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertNil(browser.peekUndo, "The keyboard shortcut remains time-limited")
+        XCTAssertTrue(browser.splitHandle.makeContextMenu().items[0].isEnabled)
+        menu.performActionForItem(at: 0)
+        XCTAssertTrue(browser.peekTab === peek && browser.peekTab?.webView === page)
+        XCTAssertTrue(browser.splitGroups.isEmpty)
+        XCTAssertEqual(browser.tabs.map(\.id), [source.id]); XCTAssertEqual(browser.selectedID, source.id)
+        XCTAssertTrue(browser.splitPeekReturns.isEmpty)
+        XCTAssertFalse(browser.splitHandle.makeContextMenu().items[0].isEnabled)
+    }
+    @MainActor func testSplitHandleMenuRestoresOnlyItsOwnPairAndForgetsSeparatedPairs() throws {
+        let browser = browser(); defer { clean(browser) }
+        let source = browser.addTab()
+        browser.showPeek(url: URL(string: "about:blank")!, from: source.webView)
+        browser.splitPeek()
+        XCTAssertTrue(browser.canReturnSplitToPeek)
+        let other = browser.addTab(), extra = browser.addTab()
+        browser.showSplit(other)
+        XCTAssertTrue(browser.splitHandle.makeContextMenu().items[0].isEnabled)
+        XCTAssertTrue(browser.returnSplitToPeek())
+        XCTAssertTrue(browser.peekTab === other, "A split without a promotion record returns its own right page")
+        XCTAssertEqual(browser.selectedID, extra.id)
+        browser.closePeek()
+        browser.select(source.id)
+        XCTAssertTrue(browser.canReturnSplitToPeek)
+        browser.separateSplit(containing: source.id)
+        XCTAssertTrue(browser.splitPeekReturns.isEmpty)
+        XCTAssertTrue(browser.tabs.contains { $0 === extra })
+    }
     @MainActor func testPeekControlsHoverSubtlyShrinkOnPressAndSlideOutFromBehindTheCard() throws {
         _ = NSApplication.shared
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 200), styleMask: [.borderless], backing: .buffered, defer: false)

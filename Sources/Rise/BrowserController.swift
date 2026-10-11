@@ -119,6 +119,8 @@ import RiseCore
     var peekControls: [PeekControl] = []
     /// ⌘Z puts a Peek that became a tab or a split back, for a short while.
     var peekUndo: PeekUndo?
+    /// The divider can restore its original Peek even after the keyboard undo window expires.
+    var splitPeekReturns: [UUID: PeekUndo] = [:]
     /// Waiting for the Peek's snapshot before it grows into the page.
     var isPromotingPeek = false
     var peekPromotion: PeekPromotion?
@@ -210,7 +212,10 @@ import RiseCore
         window.historyScrollEvent = { [weak self] event in self?.historySwipe.handle(event) ?? false }
         window.otherMouseEvent = { [weak self] event in self?.handleMiddleTabClick(event) ?? false }
         window.modifiersChanged = { [weak self] flags in self?.updateHoveredLinkModifiers(flags); self?.sidebarPeekModifiersChanged(flags) }
-        window.pointerMoved = { [weak self] event in self?.updateHoveredLinkCursor(event); self?.tabHoverPointerMoved() }
+        window.pointerMoved = { [weak self] event in
+            self?.sidebar.refreshReturningTabHover(at: event.locationInWindow)
+            self?.updateHoveredLinkCursor(event); self?.tabHoverPointerMoved()
+        }
         tabSwitcher.choose = { [weak self] id in self?.commitTabSwitch(id) }
         tabSwitchBackdrop.dismiss = { [weak self] in self?.cancelTabSwitch() }
         tabSwitchBackdrop.isHidden = true
@@ -531,6 +536,9 @@ import RiseCore
         findBar.reattached()
     }
     func update() {
+        splitPeekReturns = splitPeekReturns.filter { id, undo in
+            splitGroups.contains { $0.id == id && $0.contains(undo.tab.id) } && tabs.contains { $0 === undo.tab }
+        }
         applyTheme()
         sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: splitGroups)
         refreshTabHoverCard(); preloadGmailInbox()

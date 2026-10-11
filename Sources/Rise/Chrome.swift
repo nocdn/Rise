@@ -119,6 +119,13 @@ final class SidebarGrip: FlippedView {
     override func mouseDragged(with event: NSEvent) { resize?(event.locationInWindow.x) }
 }
 final class BrowserWindow: NSWindow {
+    var isDraggingTab = false {
+        didSet {
+            guard isDraggingTab != oldValue else { return }
+            if isDraggingTab { disableCursorRects(); NSCursor.arrow.set() }
+            else { enableCursorRects(); resetCursorRects() }
+        }
+    }
     var escapeAction: (() -> Bool)?
     /// Sees Escape before the first responder does, so an open find bar can keep it from the page.
     var escapeEvent: ((NSEvent) -> Bool)?
@@ -143,7 +150,9 @@ final class BrowserWindow: NSWindow {
     override func sendEvent(_ event: NSEvent) {
         defer {
             if [.mouseMoved, .leftMouseDragged, .scrollWheel, .leftMouseDown, .rightMouseDown].contains(event.type) { pointerMoved?(event) }
+            if isDraggingTab { NSCursor.arrow.set() }
         }
+        if isDraggingTab, event.type == .cursorUpdate { return }
         if addressPaletteEvent?(event) == true { return }
         if tabSwitchEvent?(event) != true {
             if event.type == .scrollWheel, historyScrollEvent?(event) == true { return }

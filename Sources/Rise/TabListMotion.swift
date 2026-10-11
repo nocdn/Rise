@@ -48,9 +48,14 @@ import QuartzCore
     let view: NSView
     let id: UUID
     let originalOrder: [UUID]
-    let grabOffset: CGFloat
+    let grabOffset: NSPoint
+    let startPoint: NSPoint
+    var isDetached = false
+    var overlay: TabDragOverlay?
+    var returnWork: DispatchWorkItem?
     var event: NSEvent
-    init(view: NSView, id: UUID, order: [UUID], grabOffset: CGFloat, event: NSEvent) {
-        self.view = view; self.id = id; originalOrder = order; self.grabOffset = grabOffset; self.event = event
+    init(view: NSView, id: UUID, order: [UUID], startPoint: NSPoint, event: NSEvent) {
+        self.view = view; self.id = id; originalOrder = order; self.startPoint = startPoint; self.event = event
+        grabOffset = NSPoint(x: startPoint.x-view.frame.minX, y: startPoint.y-view.frame.minY)
     }
 }

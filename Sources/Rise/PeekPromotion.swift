@@ -178,6 +178,9 @@ struct PeekUndo {
         discardPeekUndo()
         let expiry = DispatchWorkItem { [weak self] in self?.discardPeekUndo() }
         peekUndo = PeekUndo(kind: kind, tab: tab, sourceID: sourceID, opensNewTab: opensNewTab, origin: origin, expiry: expiry)
+        if case .split = kind, let group = activeSplitGroup, group.contains(tab.id) {
+            splitPeekReturns[group.id] = peekUndo
+        }
         DispatchQueue.main.asyncAfter(deadline: .now()+Self.peekUndoDuration, execute: expiry)
     }
     func discardPeekUndo() {
@@ -197,6 +200,22 @@ struct PeekUndo {
     /// of the page it had become, the way it grew.
     @discardableResult func undoPeekPromotion() -> Bool {
         guard let undo = peekUndo else { return false }
+        return undoPeekPromotion(undo)
+    }
+    var canReturnSplitToPeek: Bool {
+        guard let group = activeSplitGroup else { return false }
+        return tabs.contains { $0.id == group.leftID } && tabs.contains { $0.id == group.rightID }
+    }
+    @discardableResult func returnSplitToPeek() -> Bool {
+        guard canReturnSplitToPeek, let group = activeSplitGroup,
+              let right = tabs.first(where: { $0.id == group.rightID }) else { return false }
+        // Restored sessions and ordinary splits have no short-lived promotion record.
+        // Their right page can still return live to a Peek over the left page.
+        let undo = splitPeekReturns[group.id] ?? PeekUndo(kind: .split(previous: splitGroups.filter { $0.id != group.id }),
+            tab: right, sourceID: group.leftID, opensNewTab: false, origin: nil, expiry: DispatchWorkItem {})
+        return undoPeekPromotion(undo)
+    }
+    private func undoPeekPromotion(_ undo: PeekUndo) -> Bool {
         let source = undo.sourceID.flatMap { id in tabs.first { $0.id == id } }
         let shown: WKWebView?
         switch undo.kind {
@@ -207,7 +226,9 @@ struct PeekUndo {
             guard tabs.contains(where: { $0 === undo.tab }), tabs.count > 1 else { discardPeekUndo(); return false }
             shown = undo.tab.webView
         }
-        peekUndo = nil; undo.expiry.cancel()
+        if peekUndo?.tab === undo.tab { peekUndo = nil }
+        undo.expiry.cancel()
+        splitPeekReturns = splitPeekReturns.filter { $0.value.tab !== undo.tab }
         finishPeekPromotion()
         guard peekMotionAllowed, let shown, shown.window === window, !shown.isHiddenOrHasHiddenAncestor else {
             restorePeek(undo, source: source, from: nil); return true

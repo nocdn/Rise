@@ -44,6 +44,55 @@ final class FloatingVideoMotionTests: XCTestCase {
         }
     }
 
+    func testSlowDragsStayAtTheirPlacementAcrossFrameRatesAndCanBeFlickedAgain() {
+        for fps in [30.0, 60, 120] {
+            let start = CGRect(x: -900, y: 350, width: size.width, height: size.height)
+            var motion = FloatingVideoMotion(frame: start, visibleFrame: screen)
+            motion.begin(at: 0)
+            for step in 1...Int(fps) {
+                motion.drag(by: CGVector(dx: 120/fps, dy: 60/fps), at: Double(step)/fps)
+                motion.step(elapsed: 1/fps)
+            }
+            motion.end(at: 1)
+            for _ in 0..<Int(fps*3) { motion.step(elapsed: 1/fps) }
+            XCTAssertEqual(motion.phase, .idle)
+            XCTAssertEqual(motion.frame.minX, start.minX+120, accuracy: 0.01)
+            XCTAssertEqual(motion.frame.minY, start.minY+60, accuracy: 0.01)
+            let placed = motion.frame
+            motion.begin(at: 5)
+            XCTAssertEqual(motion.frame, placed)
+            motion.drag(by: CGVector(dx: -100, dy: 100), at: 5.01)
+            motion.end(at: 5.01)
+            for _ in 0..<Int(fps*3) { motion.step(elapsed: 1/fps) }
+            let limits = FloatingVideoMotion.originBounds(size: size, visibleFrame: screen)
+            XCTAssertEqual(motion.frame.origin, CGPoint(x: limits.minX, y: limits.maxY))
+        }
+    }
+
+    func testPausingAfterAFastMovePlacesTheWindowInsteadOfFlickingIt() {
+        let start = CGRect(x: -900, y: 350, width: size.width, height: size.height)
+        var motion = FloatingVideoMotion(frame: start, visibleFrame: screen)
+        motion.begin(at: 0)
+        motion.drag(by: CGVector(dx: 130, dy: 80), at: 0.01)
+        for _ in 0..<60 { motion.step(elapsed: 1.0/120) }
+        motion.end(at: 0.51)
+        for _ in 0..<360 { motion.step(elapsed: 1.0/120) }
+        XCTAssertEqual(motion.phase, .idle)
+        XCTAssertEqual(motion.frame.origin, CGPoint(x: start.minX+130, y: start.minY+80))
+    }
+
+    func testCancelledDragOnlyBringsAnOffscreenWindowBackToTheEdge() {
+        let start = CGRect(x: -900, y: 350, width: size.width, height: size.height)
+        var motion = FloatingVideoMotion(frame: start, visibleFrame: screen)
+        motion.begin(at: 0); motion.drag(by: CGVector(dx: -100_000, dy: 0), at: 0.01)
+        for _ in 0..<60 { motion.step(elapsed: 1.0/120) }
+        motion.end(at: 0.51, cancelled: true)
+        for _ in 0..<360 { motion.step(elapsed: 1.0/120) }
+        let limits = FloatingVideoMotion.originBounds(size: size, visibleFrame: screen)
+        XCTAssertEqual(motion.frame.minX, limits.minX)
+        XCTAssertEqual(motion.frame.minY, start.minY, "Clamping to the screen must not pull a placement into a corner")
+    }
+
     func testGrabbingDuringSettleKeepsCurrentPositionAndIdleReleaseDropsMomentum() {
         var motion = FloatingVideoMotion(frame: CGRect(x: -900, y: 350, width: size.width, height: size.height), visibleFrame: screen)
         motion.begin(at: 0); motion.drag(by: CGVector(dx: 130, dy: 80), at: 0.01)

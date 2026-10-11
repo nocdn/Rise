@@ -290,7 +290,7 @@ import RiseCore
     }
     override func mouseDragged(with event: NSEvent) {
         guard let pressEvent else { return }
-        if !dragging && abs(event.locationInWindow.y-pressEvent.locationInWindow.y) >= 3 {
+        if !dragging && (abs(event.locationInWindow.y-pressEvent.locationInWindow.y) >= 3 || event.locationInWindow.x-pressEvent.locationInWindow.x >= 3) {
             dragging = true; onDragStart?(pressEvent)
         }
         if dragging { onDragMove?(event) }

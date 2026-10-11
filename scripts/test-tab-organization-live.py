@@ -12,7 +12,7 @@ sdk = subprocess.check_output(
 linker = ["-Xlinker", "-platform_version", "-Xlinker", "macos",
           "-Xlinker", "14.0", "-Xlinker", sdk]
 # Build the testable module and verify gesture mechanics and actual GPU pixels.
-subprocess.run(["swift", "test", *linker, "--filter", "TabOrganizationTests|TabMouseActionsTests|SplitTabsTests|TabSwitchingTests"],
+subprocess.run(["swift", "test", *linker, "--filter", "TabOrganizationTests|TabDetachmentTests|TabMouseActionsTests|SplitTabsTests|TabSwitchingTests"],
                cwd=root, check=True)
 products = root / ".build/debug"
 folders = list((root / ".build/out/Intermediates.noindex/Rise.build/Debug").glob(

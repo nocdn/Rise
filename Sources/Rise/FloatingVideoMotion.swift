@@ -2,8 +2,8 @@ import Foundation
 import CoreGraphics
 
 /// Adapted from Snap's ScreenshotPreviewController and ScreenshotFeedbackStyle.
-/// The same drag filter, velocity filter, projection and corner spring are used;
-/// a video never takes the preview's off-screen dismissal branch.
+/// Slow releases keep their placement; flicks use its velocity projection and corner spring.
+/// A video never takes the preview's off-screen dismissal branch.
 struct FloatingVideoMotion {
     enum Phase { case idle, dragging, settling }
     private(set) var phase = Phase.idle
@@ -15,6 +15,8 @@ struct FloatingVideoMotion {
     private var inputVelocity = CGVector.zero
     private var lastInput: TimeInterval?
     static let edgeInset: CGFloat = 8
+    /// Screen points per second at lift-off, after accounting for a pause before release.
+    static let flickSpeed: CGFloat = 650
 
     init(frame: CGRect, visibleFrame: CGRect, contentInset: CGFloat = 0) {
         self.frame = frame
@@ -61,7 +63,16 @@ struct FloatingVideoMotion {
     mutating func end(at timestamp: TimeInterval, cancelled: Bool = false, reduceMotion: Bool = false) {
         guard phase == .dragging else { return }
         let decay = CGFloat(exp(-max(0, timestamp-(lastInput ?? timestamp))/0.045))
-        velocity = cancelled || reduceMotion ? .zero : CGVector(dx: inputVelocity.dx*decay, dy: inputVelocity.dy*decay)
+        let release = CGVector(dx: inputVelocity.dx*decay, dy: inputVelocity.dy*decay)
+        let flick = !cancelled && hypot(release.dx, release.dy) >= Self.flickSpeed
+        velocity = !flick || reduceMotion ? .zero : release
+        if !flick {
+            let placement = cancelled ? frame.origin : target
+            target = CGPoint(x: min(limits.maxX, max(limits.minX, placement.x)),
+                             y: min(limits.maxY, max(limits.minY, placement.y)))
+            phase = .settling; lastInput = nil; inputVelocity = .zero
+            return
+        }
         let speed = hypot(velocity.dx, velocity.dy)
         if speed > 5_000 { velocity.dx *= 5_000/speed; velocity.dy *= 5_000/speed }
         // Remove outward momentum at an edge, just as Snap does before settling.

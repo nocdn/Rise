@@ -72,16 +72,17 @@ final class TabOrganizationTests: XCTestCase {
         var clicks = 0; browser.sidebar.crossingClick = { clicks += 1 }
         browser.window!.sendEvent(event(.leftMouseDown,at:NSPoint(x:45,y:20),in:row))
         XCTAssertEqual(row.layer?.affineTransform().a,1)
-        browser.window!.sendEvent(event(.leftMouseDragged,at:NSPoint(x:700,y:10),in:browser.sidebar.rowsHost))
+        browser.window!.sendEvent(event(.leftMouseDragged,at:NSPoint(x:45,y:10),in:browser.sidebar.rowsHost))
         XCTAssertEqual(browser.tabs.map(\.id),[b.id,d.id,c.id,a.id]); XCTAssertEqual(clicks,2)
         XCTAssertEqual(row.frame.minX,6); XCTAssertEqual(row.frame.height,TabAppearance.subtitleRowHeight)
         XCTAssertTrue(browser.sidebar.rows[b.id] === row); XCTAssertTrue(b.webView === web); XCTAssertTrue(row.loadingBackground === loading)
         XCTAssertTrue(row.icon.image === icon); XCTAssertTrue(b.developer && b.pinned)
         XCTAssertEqual(browser.selectedID,d.id, "Dragging an inactive tab must preserve its selected styling")
-        browser.window!.sendEvent(event(.leftMouseDragged,at:NSPoint(x:-500,y:500),in:browser.sidebar.rowsHost))
+        browser.window!.sendEvent(event(.leftMouseDragged,at:NSPoint(x:45,y:500),in:browser.sidebar.rowsHost))
         XCTAssertEqual(browser.tabs.map(\.id),[d.id,c.id,a.id,b.id]); XCTAssertEqual(clicks,5)
-        browser.window!.sendEvent(event(.leftMouseUp,at:NSPoint(x:-500,y:500),in:browser.sidebar.rowsHost))
+        browser.window!.sendEvent(event(.leftMouseUp,at:NSPoint(x:45,y:500),in:browser.sidebar.rowsHost))
         XCTAssertNil(browser.sidebar.drag); XCTAssertNil(browser.sidebar.dragScrollTimer)
+        browser.sidebar.finishReturningTab()
         XCTAssertEqual(row.layer?.affineTransform().a,1); XCTAssertEqual(row.frame,browser.sidebar.targetFrames[b.id])
         XCTAssertEqual(browser.selectedID,d.id)
     }
@@ -99,11 +100,12 @@ final class TabOrganizationTests: XCTestCase {
             browser.window!.sendEvent(event(.leftMouseDragged, at: release, in: browser.sidebar.rowsHost))
             XCTAssertTrue(row.isHovered)
             XCTAssertEqual(row.layer?.backgroundColor?.alpha, 1, "The held inactive row is opaque")
-            XCTAssertTrue(row.frame.contains(release))
+            XCTAssertTrue(row.convert(row.bounds, to: browser.sidebar.rowsHost).contains(release))
             XCTAssertFalse(slot.contains(release))
             browser.window!.sendEvent(event(.leftMouseUp, at: release, in: browser.sidebar.rowsHost))
-            XCTAssertEqual(row.frame, slot)
+            XCTAssertEqual(row.convert(row.bounds, to: browser.sidebar.rowsHost), slot)
             XCTAssertFalse(row.isHovered, "Hover follows the final slot, not the position before release")
+            browser.sidebar.finishReturningTab()
             XCTAssertNil(row.dragFill)
             XCTAssertEqual(row.layer?.backgroundColor?.alpha, 0)
             XCTAssertEqual(browser.selectedID, selected.id)
@@ -118,7 +120,7 @@ final class TabOrganizationTests: XCTestCase {
         var clicks = 0; browser.sidebar.crossingClick = { clicks += 1 }
         browser.window!.sendEvent(event(.leftMouseDown,at:NSPoint(x:20,y:15),in:pair.right))
         XCTAssertEqual(pair.layer?.affineTransform().a,1)
-        browser.window!.sendEvent(event(.leftMouseDragged,at:NSPoint(x:700,y:8),in:browser.sidebar.rowsHost))
+        browser.window!.sendEvent(event(.leftMouseDragged,at:NSPoint(x:45,y:8),in:browser.sidebar.rowsHost))
         XCTAssertEqual(browser.sidebar.orderedIDs,[left.id,other.id]); XCTAssertEqual(clicks,1)
         XCTAssertEqual(browser.splitGroups,[group]); XCTAssertTrue(pair.left === browser.sidebar.rows[left.id]); XCTAssertTrue(pair.right === browser.sidebar.rows[right.id])
         browser.window!.cancelOperation(nil)
@@ -151,7 +153,7 @@ final class TabOrganizationTests: XCTestCase {
         XCTAssertTrue(row.control(row.titleField,textView:cancelEditor,doCommandBy:#selector(NSResponder.cancelOperation(_:))))
         XCTAssertEqual(tab.title,"My workspace"); XCTAssertEqual(row.titleField.stringValue,"My workspace")
     }
-    @MainActor func testPressHasNoScaleAndHorizontalMotionDoesNotReorder() throws {
+    @MainActor func testPressHasNoScaleAndPullingRightDetachesWithoutReordering() throws {
         let browser = browser(); defer { clean(browser) }
         let a = browser.addTab(), b = browser.addTab(); browser.root.layoutSubtreeIfNeeded()
         let row = browser.sidebar.rows[b.id]!, frame = row.frame
@@ -159,22 +161,31 @@ final class TabOrganizationTests: XCTestCase {
         XCTAssertNil(row.layer?.animation(forKey:"Rise.TabPress"))
         XCTAssertEqual(row.layer?.affineTransform().a,1); XCTAssertEqual(browser.sidebar.selectedTabShadow.layer?.affineTransform().a,1)
         browser.window!.sendEvent(event(.leftMouseDragged,at:NSPoint(x:700,y:18),in:row))
-        XCTAssertNil(browser.sidebar.drag); XCTAssertEqual(row.frame,frame); XCTAssertEqual(browser.tabs.map(\.id),[b.id,a.id])
+        XCTAssertTrue(browser.sidebar.drag?.isDetached == true)
+        XCTAssertEqual(row.frame.size,frame.size); XCTAssertEqual(browser.tabs.map(\.id),[b.id,a.id])
         browser.window!.sendEvent(event(.leftMouseUp,at:NSPoint(x:700,y:18),in:row))
+        XCTAssertNil(browser.sidebar.drag)
+        browser.sidebar.finishReturningTab()
+        XCTAssertEqual(row.frame,frame)
         XCTAssertEqual(row.layer?.affineTransform().a,1); XCTAssertEqual(browser.sidebar.selectedTabShadow.layer?.affineTransform().a,1)
     }
     @MainActor func testHoldingNearTheViewportEdgeAutoscrollsWithoutClippingTheHeldTab() async throws {
         let browser = browser(); defer { clean(browser) }
+        browser.window?.setContentSize(NSSize(width: 900, height: 600))
         for _ in 0..<30 { browser.addTab() }
         browser.root.layoutSubtreeIfNeeded()
         let row = browser.sidebar.rows[browser.selectedID!]!
         browser.sidebar.crossingClick = {}
         browser.window!.sendEvent(event(.leftMouseDown,at:NSPoint(x:45,y:18),in:row))
         browser.window!.sendEvent(event(.leftMouseDragged,at:NSPoint(x:45,y:browser.sidebar.scroll.contentView.bounds.maxY-6),in:browser.sidebar.rowsHost))
+        let timer = try XCTUnwrap(browser.sidebar.dragScrollTimer)
+        XCTAssertTrue(timer.isValid)
+        timer.fire()
         try await Task.sleep(for:.milliseconds(150))
         XCTAssertGreaterThan(browser.sidebar.scroll.contentView.bounds.minY,0)
-        XCTAssertTrue(browser.sidebar.scroll.contentView.bounds.contains(row.frame))
-        XCTAssertFalse(browser.sidebar.selectedTabShadow.isHidden)
+        XCTAssertTrue(browser.sidebar.scroll.contentView.bounds.contains(row.convert(row.bounds, to: browser.sidebar.rowsHost)))
+        XCTAssertTrue(browser.sidebar.selectedTabShadow.isHidden, "The held row supplies its own shadow above the scroller")
+        XCTAssertGreaterThan(browser.sidebar.drag?.overlay?.shadowView.layer?.shadowOpacity ?? 0, 0)
         browser.sidebar.cancelTabInteractions()
         XCTAssertNil(browser.sidebar.dragScrollTimer); XCTAssertNil(browser.sidebar.drag)
     }

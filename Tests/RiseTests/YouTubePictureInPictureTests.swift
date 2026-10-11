@@ -366,12 +366,14 @@ final class YouTubePictureInPictureTests: XCTestCase {
         XCTAssertTrue(panel.isDragging)
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertTrue(panel.isDragging, "Resting fingers keep the drag")
+        try await Task.sleep(for: .milliseconds(100))
+        let placed = panel.frame
         try await Task.sleep(for: .milliseconds(1800))
         XCTAssertFalse(panel.isDragging)
         let screen = try XCTUnwrap(panel.screen ?? NSScreen.main)
         let limits = FloatingVideoMotion.originBounds(size: panel.frame.size, visibleFrame: screen.visibleFrame, contentInset: FloatingVideoWindow.shadowInset)
-        XCTAssertEqual(panel.frame.minX, limits.maxX, accuracy: 0.5, "Without lift-off momentum it settles to the nearest corner")
-        XCTAssertEqual(panel.frame.minY, limits.minY, accuracy: 0.5)
+        XCTAssertEqual(panel.frame.minX, min(limits.maxX, max(limits.minX, placed.minX)), accuracy: 0.5)
+        XCTAssertEqual(panel.frame.minY, min(limits.maxY, max(limits.minY, placed.minY)), accuracy: 0.5, "Without lift-off momentum it keeps the placement within screen bounds")
     }
 
     /// A real magnify event, as the window server delivers it: to the key
@@ -698,6 +700,38 @@ final class YouTubePictureInPictureTests: XCTestCase {
         XCTAssertEqual(toggles, 2, "The rest of the picture still toggles"); XCTAssertFalse(panel.overlay.playButton.paused)
         overlay.mouseExited(with: try XCTUnwrap(NSEvent.enterExitEvent(with: .mouseExited, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: panel.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil)))
         XCTAssertFalse(overlay.controlsVisible)
+    }
+
+    @MainActor func testSlowTrackpadMovesKeepTheirPlacementWhileVideoKeepsPlaying() async throws {
+        let browser = browser(); defer { clean(browser) }
+        let source = try await fixture(in: browser)
+        _ = browser.addTab()
+        try await wait("gesture PiP") { browser.pictureInPicture.panel?.alphaValue == 1 }
+        let panel = try XCTUnwrap(browser.pictureInPicture.panel)
+        let original = panel.frame
+        let frames = panel.renderedFrameCount
+        var time = 10.0
+        for translation in [CGVector(dx: -8, dy: 8), CGVector(dx: -3, dy: -2)] {
+            let start = panel.frame
+            panel.handleGesture(.init(phase: .began, timestamp: time))
+            for step in 1...20 {
+                panel.handleGesture(.init(phase: .changed, translation: translation, timestamp: time+Double(step)*0.05))
+                try await Task.sleep(for: .milliseconds(12))
+            }
+            panel.handleGesture(.init(phase: .ended, timestamp: time+1.01))
+            let destination = start.offsetBy(dx: translation.dx*20, dy: translation.dy*20)
+            try await wait("slow placement settles", timeout: 3) {
+                !panel.isDragging && abs(panel.frame.minX-destination.minX) <= 1 && abs(panel.frame.minY-destination.minY) <= 1
+            }
+            try await Task.sleep(for: .milliseconds(250))
+            XCTAssertEqual(panel.frame.minX, destination.minX, accuracy: 1)
+            XCTAssertEqual(panel.frame.minY, destination.minY, accuracy: 1)
+            time += 2
+        }
+        XCTAssertNotEqual(panel.frame.origin, original.origin)
+        XCTAssertGreaterThan(panel.renderedFrameCount, frames)
+        XCTAssertTrue(source.webView.window === panel)
+        try await assertValue("document.querySelector('video').paused", in: source, equals: false)
     }
 
     @MainActor func testTrackpadFingerPhaseFlicksTheRealWindowAndSystemMomentumDoesNotDismissIt() async throws {

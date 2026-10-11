@@ -69,10 +69,14 @@ import WebKit
                 check(!browser.splitHandle.isHidden && browser.splitHandle.alphaValue == 1, "The handle shows between them")
                 try await shot("split")
 
-                // ⌘Z: the right half shrinks back into the Peek, live, over the page behind, whole again.
+                // The divider menu uses the same live return as ⌘Z.
                 var undoing: [(time: Double, card: CGFloat, cardPage: CGFloat, outline: CGFloat, page: CGFloat, gap: CGFloat)] = []
                 let undone = CACurrentMediaTime()
-                check(browser.undoPeekPromotion(), "⌘Z puts the Peek back")
+                let menu = browser.splitHandle.makeContextMenu()
+                check(menu.items.map(\.title) == ["Return to Peek state"] && menu.items[0].isEnabled,
+                      "The divider has one enabled native menu action")
+                menu.performActionForItem(at: 0)
+                check(browser.peekTab === peek, "The divider menu puts the same Peek back")
                 let backCard = browser.peekCard!, cardTo = browser.peekCardFrame.width
                 while browser.peekLiveMotion != nil || undoing.isEmpty {
                     // What shows at the far right: neither the card nor the page behind, but the window.

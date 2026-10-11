@@ -93,6 +93,8 @@ import RiseCore
         }
         splitHandle.onDragEnd = { [weak self] in start = nil; self?.scheduleSave() }
         splitHandle.onReset = { [weak self] in self?.centerSplit() }
+        splitHandle.canReturnToPeek = { [weak self] in self?.canReturnSplitToPeek == true }
+        splitHandle.onReturnToPeek = { [weak self] in self?.returnSplitToPeek() }
     }
     func setSplitFraction(_ fraction: Double, of id: UUID) {
         guard let index = splitGroups.firstIndex(where: { $0.id == id }) else { return }

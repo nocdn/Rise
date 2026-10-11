@@ -14,6 +14,8 @@ import AppKit
     var onDrag: ((CGFloat) -> Void)?
     var onDragEnd: (() -> Void)?
     var onReset: (() -> Void)?
+    var canReturnToPeek: (() -> Bool)?
+    var onReturnToPeek: (() -> Void)?
     private let pill = CALayer()
     private var tint = NSColor.black
     private var pressPoint: NSPoint?
@@ -78,6 +80,15 @@ import AppKit
     override func resetCursorRects() { addCursorRect(bounds, cursor: .resizeLeftRight) }
     override func cursorUpdate(with event: NSEvent) { NSCursor.resizeLeftRight.set() }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func menu(for event: NSEvent) -> NSMenu? { makeContextMenu() }
+    func makeContextMenu() -> NSMenu {
+        let menu = NSMenu(); menu.autoenablesItems = false
+        let item = NSMenuItem(title: "Return to Peek state", action: #selector(returnToPeek), keyEquivalent: "")
+        item.target = self; item.isEnabled = canReturnToPeek?() == true
+        menu.addItem(item)
+        return menu
+    }
+    @objc private func returnToPeek() { if canReturnToPeek?() == true { onReturnToPeek?() } }
     override func mouseEntered(with event: NSEvent) { hovering = true }
     override func mouseExited(with event: NSEvent) { hovering = false }
     override func mouseDown(with event: NSEvent) {

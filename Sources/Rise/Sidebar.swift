@@ -25,9 +25,11 @@ import RiseCore
     var displayedRows: [NSView] = []
     var targetFrames: [UUID: NSRect] = [:]
     var drag: SidebarDrag?
+    var returningDrag: SidebarDrag?
     var dragScrollTimer: Timer?
     var shadowRowID: UUID?
     var crossingClick: () -> Void = { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
+    var detachmentClick: () -> Void = { NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now) }
     var onAddress: (() -> Void)?
     var onNewTab: (() -> Void)?
     var onSelect: ((UUID) -> Void)?
@@ -112,14 +114,14 @@ import RiseCore
             let isSelected = group.map { group in selected.map { group.contains($0.id) } ?? false } ?? (tab.id == selected?.id)
             row.update(tab: tab, selected: isSelected, theme: theme, configuration: .forTab(tab, theme: theme))
             row.setPlayback(paused: playbackState?(tab.id))
-            if group == nil && row.superview !== rowsHost { rowsHost.addSubview(row) }
+            if group == nil && row.superview !== rowsHost && drag?.view !== row && returningDrag?.view !== row { rowsHost.addSubview(row) }
         }
         for id in Array(splitRows.keys) where !splits.contains(where: { $0.id == id }) { splitRows.removeValue(forKey: id)?.removeFromSuperview() }
         for group in splits {
             guard let left = rows[group.leftID], let right = rows[group.rightID] else { continue }
             let row = splitRows[group.id] ?? SplitTabRow(group: group, left: left, right: right)
             splitRows[group.id] = row
-            if row.superview !== rowsHost { rowsHost.addSubview(row) }
+            if row.superview !== rowsHost && drag?.view !== row && returningDrag?.view !== row { rowsHost.addSubview(row) }
             row.update(selected: selected.map { group.contains($0.id) } ?? false, theme: theme)
         }
         displayedRows = []; orderedIDs = []
@@ -171,7 +173,7 @@ import RiseCore
             let h: CGFloat = (row as? SplitTabRow)?.rowHeight ?? (row as? TabRow)?.rowHeight ?? TabAppearance.height
             let target = NSRect(x: TabAppearance.inset, y: y, width: w-2*TabAppearance.inset, height: h)
             targetFrames[orderedIDs[index]] = target
-            if drag?.view !== row {
+            if drag?.view !== row && returningDrag?.view !== row {
                 TabListMotion.move(row, to: target, animated: animatesRows && row.frame.width > 0)
             }
             y += h+TabAppearance.spacing
@@ -183,6 +185,7 @@ import RiseCore
     }
     @objc func positionSelectedTabShadow() {
         guard let id = selectedTabID, let row: NSView = splitRows.values.first(where: { $0.group.contains(id) }) ?? rows[id] else { selectedTabShadow.isHidden = true; return }
+        guard row.superview === rowsHost else { selectedTabShadow.isHidden = true; return }
         let rect = row.convert(row.bounds, to: self)
         // Avoid painting a full card behind a row clipped by vertical scrolling.
         selectedTabShadow.isHidden = !scroll.frame.contains(rect)
