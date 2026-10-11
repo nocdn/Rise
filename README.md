@@ -1,5 +1,9 @@
 # Rise
 
+The initial iOS app lives in [`Apps/iOS`](Apps/iOS/README.md): a native UIKit and
+WKWebView shell that opens Hacker News without browser controls. Both platforms
+share the original artwork and Icon Composer document in [`Assets/AppIcon`](Assets/AppIcon/README.md).
+
 A native macOS browser written in **AppKit + WKWebView**, with Arc-inspired chrome matched to the supplied Retina screenshots. No SwiftUI, Electron, or external dependencies. Requires macOS 14 or later.
 
 ## Build and run

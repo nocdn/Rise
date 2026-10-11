@@ -3,6 +3,10 @@
 # sign-app.py), so macOS keeps folder permissions instead of asking after every restart.
 set -euo pipefail
 builtin cd "${0:A:h:h}"
+if [[ "${1:-}" == "--ios" ]]; then
+    shift
+    exec python3 scripts/ios.py run "$@"
+fi
 ./scripts/build.sh
 APP="$PWD/build/Rise.app"
 BUNDLE_ID="$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$APP/Contents/Info.plist")"
