@@ -17,6 +17,10 @@ import AppKit
         row.layer?.removeAnimation(forKey: TabListMotion.movementKey)
         let point = rowsHost.convert(event.locationInWindow, from: nil)
         drag = SidebarDrag(view: row, id: canonical, order: orderedIDs, grabOffset: point.y-row.frame.minY, event: event)
+        let fraction = row.convert(row.bounds, to: self).midY / max(1, bounds.height)
+        let fill = TabAppearance.dragFill(newTab.theme, sidebarFraction: fraction)
+        (row as? TabRow)?.dragFill = fill
+        (row as? SplitTabRow)?.dragFill = fill
         rowsHost.addSubview(row, positioned: .above, relativeTo: nil)
         dragScrollTimer = Timer(timeInterval: 1/60, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.autoscrollDraggedTab() }
@@ -56,6 +60,8 @@ import AppKit
     func endTabDrag(cancelled: Bool = false) {
         guard let drag else { return }
         self.drag = nil; dragScrollTimer?.invalidate(); dragScrollTimer = nil
+        (drag.view as? TabRow)?.dragFill = nil
+        (drag.view as? SplitTabRow)?.dragFill = nil
         if cancelled {
             let byID = Dictionary(uniqueKeysWithValues: displayedRows.compactMap { row in canonicalID(for: row).map { ($0,row) } })
             let order = drag.originalOrder.filter { byID[$0] != nil }
@@ -67,7 +73,7 @@ import AppKit
     }
     func cancelTabInteractions() {
         endTabDrag(cancelled: true)
-        rows.values.forEach { $0.cancelPress(); $0.finishRename(save: false) }
+        rows.values.forEach { $0.cancelPress(); $0.refreshHover(); $0.finishRename(save: false) }
     }
     private func autoscrollDraggedTab() {
         guard let drag else { dragScrollTimer?.invalidate(); dragScrollTimer = nil; return }

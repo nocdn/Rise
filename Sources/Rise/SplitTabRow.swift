@@ -7,6 +7,9 @@ import RiseCore
     let left: TabRow
     let right: TabRow
     let divider = Surface()
+    private var selected = false
+    private var theme = RiseTheme.neutral
+    var dragFill: NSColor? { didSet { update(selected: selected, theme: theme) } }
     var rowHeight: CGFloat {
         left.showsSubtitle || right.showsSubtitle ? TabAppearance.subtitleRowHeight + 8 : TabAppearance.height
     }
@@ -19,7 +22,8 @@ import RiseCore
     }
     required init?(coder: NSCoder) { fatalError() }
     func update(selected: Bool, theme: RiseTheme) {
-        fill = selected ? TabAppearance.selectedFill(theme) : .clear
+        self.selected = selected; self.theme = theme
+        fill = selected ? TabAppearance.selectedFill(theme) : dragFill ?? .clear
         layer?.borderWidth = selected ? 0.5 : 0
         layer?.borderColor = NSColor.white.withAlphaComponent(theme == .dark ? 0.08 : 0.7).cgColor
         divider.fill = theme.text.withAlphaComponent(0.15)

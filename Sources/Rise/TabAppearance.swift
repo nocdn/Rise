@@ -22,6 +22,13 @@ import AppKit
     static func hoverFill(_ theme: RiseTheme) -> NSColor {
         theme == .rose ? theme.hoveredTab : .white.withAlphaComponent(theme == .dark ? 0.16 : 0.55)
     }
+    /// Flatten the hover fill against the sidebar, so neighboring rows cannot show through a drag.
+    static func dragFill(_ theme: RiseTheme, sidebarFraction: CGFloat) -> NSColor {
+        let colors = theme.backgroundGradient ?? [theme.background]
+        let background = colors.first!.blended(withFraction: min(1, max(0, sidebarFraction)), of: colors.last!)!
+        let hover = hoverFill(theme)
+        return background.blended(withFraction: hover.alphaComponent, of: hover.withAlphaComponent(1))!.withAlphaComponent(1)
+    }
     static func text(_ theme: RiseTheme, selected: Bool) -> NSColor {
         if theme == .rose { return selected ? theme.selectedText : theme.text }
         return (theme == .dark ? NSColor.white : .black).withAlphaComponent(selected ? 1 : theme == .dark ? 0.835 : 0.76)

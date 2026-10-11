@@ -85,6 +85,30 @@ final class TabOrganizationTests: XCTestCase {
         XCTAssertEqual(row.layer?.affineTransform().a,1); XCTAssertEqual(row.frame,browser.sidebar.targetFrames[b.id])
         XCTAssertEqual(browser.selectedID,d.id)
     }
+    @MainActor func testDroppingInsideTheHeldRowButOutsideItsFinalSlotClearsHover() throws {
+        let browser = browser(); defer { clean(browser) }
+        _ = browser.addTab()
+        let dragged = browser.addTab(), selected = browser.addTab()
+        browser.root.layoutSubtreeIfNeeded()
+        let row = browser.sidebar.rows[dragged.id]!, slot = row.frame
+        for offset: CGFloat in [-20, 20] {
+            row.layer?.removeAllAnimations()
+            row.mouseEntered(with: NSEvent())
+            browser.window!.sendEvent(event(.leftMouseDown, at: NSPoint(x: 45, y: 18), in: row))
+            let release = NSPoint(x: 45, y: slot.minY + 18 + offset)
+            browser.window!.sendEvent(event(.leftMouseDragged, at: release, in: browser.sidebar.rowsHost))
+            XCTAssertTrue(row.isHovered)
+            XCTAssertEqual(row.layer?.backgroundColor?.alpha, 1, "The held inactive row is opaque")
+            XCTAssertTrue(row.frame.contains(release))
+            XCTAssertFalse(slot.contains(release))
+            browser.window!.sendEvent(event(.leftMouseUp, at: release, in: browser.sidebar.rowsHost))
+            XCTAssertEqual(row.frame, slot)
+            XCTAssertFalse(row.isHovered, "Hover follows the final slot, not the position before release")
+            XCTAssertNil(row.dragFill)
+            XCTAssertEqual(row.layer?.backgroundColor?.alpha, 0)
+            XCTAssertEqual(browser.selectedID, selected.id)
+        }
+    }
     @MainActor func testSplitPairsDragAsOneAndEscapeRestoresTheirOriginalOrder() throws {
         let browser = browser(); defer { clean(browser) }
         let left = browser.addTab(), right = browser.addTab(), other = browser.addTab()

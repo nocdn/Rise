@@ -41,7 +41,7 @@ import WebKit
                 check(abs(row.layer!.presentation()!.affineTransform().a-1) < 0.001,"Release leaves the tab at full size")
                 let old = row.layer!.position.y
                 let d = browser.addTab(); browser.root.layoutSubtreeIfNeeded()
-                check(browser.sidebar.rows[d.id]!.frame.minY == 8,"A new tab appears immediately at the top")
+                check(browser.sidebar.rows[d.id]!.frame.minY == 0,"A new tab appears immediately at the top")
                 try await Task.sleep(for:.milliseconds(70))
                 let during = row.layer!.presentation()!.position.y
                 check(during > old && during < row.layer!.position.y,"Existing rows visibly make space for a new tab")

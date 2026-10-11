@@ -39,6 +39,7 @@ import RiseCore
     }
     static let splitCloseSize: CGFloat = 20, splitCloseSymbol: CGFloat = 11
     var theme = RiseTheme.neutral
+    var dragFill: NSColor? { didSet { style() } }
     var onSelect: (() -> Void)?
     var onMenu: ((NSEvent) -> Void)?
     var onRename: ((String) -> Void)?
@@ -178,7 +179,7 @@ import RiseCore
         layer?.cornerRadius = isSplitMember ? 8 : TabAppearance.radius
         loadingBackground.layer?.cornerRadius = isSplitMember ? 8 : TabAppearance.radius
         loadingBackground.layer?.cornerCurve = .continuous
-        layer?.backgroundColor = (selected ? (isSplitMember ? theme.pill : TabAppearance.selectedFill(theme)) : hover ? TabAppearance.hoverFill(theme) : .clear).cgColor
+        layer?.backgroundColor = (selected ? (isSplitMember ? theme.pill : TabAppearance.selectedFill(theme)) : dragFill ?? (hover ? TabAppearance.hoverFill(theme) : .clear)).cgColor
         // The border follows the same continuous contour as the background.
         layer?.borderColor = NSColor.white.withAlphaComponent(theme == .dark ? 0.08 : 0.7).cgColor
         layer?.borderWidth = selected && !isSplitMember ? 0.5 : 0
@@ -253,9 +254,21 @@ import RiseCore
     override func updateTrackingAreas() {
         super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+        refreshHover()
     }
-    override func mouseEntered(with event: NSEvent) { hover = true; style(); onHover?(true) }
-    override func mouseExited(with event: NSEvent) { if pressEvent == nil { hover = false; style() }; onHover?(false) }
+    private func setHovered(_ hovered: Bool) {
+        guard hover != hovered else { return }
+        hover = hovered; style(); onHover?(hovered)
+    }
+    /// Moving or releasing a row can leave its tracking state at the old geometry.
+    func refreshHover(at location: NSPoint? = nil) {
+        guard pressEvent == nil else { return }
+        guard let window, window.isVisible, !isHiddenOrHasHiddenAncestor else { setHovered(false); return }
+        let point = convert(location ?? window.mouseLocationOutsideOfEventStream, from: nil)
+        setHovered(visibleRect.intersection(bounds).contains(point))
+    }
+    override func mouseEntered(with event: NSEvent) { setHovered(true) }
+    override func mouseExited(with event: NSEvent) { if pressEvent == nil { setHovered(false) } else { onHover?(false) } }
     override func rightMouseDown(with event: NSEvent) { onMenu?(event) }
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard !isHidden else { return nil }
@@ -286,9 +299,9 @@ import RiseCore
         guard pressEvent != nil else { return }
         let wasDragging = dragging
         cancelPress()
-        hover = bounds.contains(convert(event.locationInWindow, from: nil)); style()
         if wasDragging { onDragEnd?() }
         else if bounds.contains(convert(event.locationInWindow, from: nil)) { onSelect?() }
+        refreshHover(at: event.locationInWindow)
     }
     func cancelPress() {
         pressEvent = nil; dragging = false
