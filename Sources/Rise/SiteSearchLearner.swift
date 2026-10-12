@@ -9,23 +9,38 @@ import RiseCore
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         guard message.frameInfo.isMainFrame, let webView = message.webView, let body = message.body as? [String: Any],
               let terms = body["terms"] as? [String] else { return }
-        learner?.searched(terms.prefix(6).map { String($0.prefix(200)) }, name: body["name"] as? String, in: webView)
+        learner?.searched(terms, name: body["name"] as? String, in: webView, url: { [weak webView] in webView?.url })
     }
 }
 
 /// Learns how a site searches: when a search typed into a page leads to an address holding
 /// those words, that address becomes the site's search, which Tab then offers in the address bar.
 @MainActor final class SiteSearchLearner {
-    static let world = WKContentWorld.world(name: "Rise.SiteSearch")
+    static let worldName = "Rise.SiteSearch"
+    static let world = WKContentWorld.world(name: worldName)
     /// How long after a search the page has to get to its results.
     static let window: TimeInterval = 15
     let searches: LearnedSearches
     private let controllers = NSHashTable<WKUserContentController>.weakObjects()
-    private struct Pending { weak var webView: WKWebView?; let terms: [String], name: String?, until: Date }
+    /// A search made in a page, as its view, waiting for the page to get to its results.
+    private struct Pending { weak var view: NSView?; let terms: [String], name: String?, until: Date }
+    /// Pages of engines other than WebKit, which get the script through the page.
+    private let pages = NSHashTable<AnyObject>.weakObjects()
     private var pending: [ObjectIdentifier: Pending] = [:]
     var onLearn: (() -> Void)?
 
     init(storageURL: URL) { searches = LearnedSearches(storageURL: storageURL) }
+    func install(on page: WebPage) {
+        if let webView = (page as? WebKitPage)?.webView { install(on: webView); return }
+        guard !pages.contains(page) else { return }
+        pages.add(page)
+        page.addMessageHandler("riseSiteSearch", world: .named(Self.worldName)) { [weak self] message in
+            guard message.frame.isMain, let page = message.page, let body = message.body as? [String: Any],
+                  let terms = body["terms"] as? [String] else { return }
+            self?.searched(terms, name: body["name"] as? String, in: page.view, url: { [weak page] in page?.url })
+        }
+        page.addUserScript(Self.script, world: .named(Self.worldName), mainFrameOnly: true, handlers: ["riseSiteSearch"])
+    }
     func install(on webView: WKWebView) {
         let controller = webView.configuration.userContentController
         // window.open can supply a configuration sharing the opener's controller.
@@ -34,16 +49,17 @@ import RiseCore
         controller.add(SiteSearchBridge(self), contentWorld: Self.world, name: "riseSiteSearch")
         controller.addUserScript(WKUserScript(source: Self.script, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: Self.world))
     }
-    func searched(_ terms: [String], name: String?, in webView: WKWebView) {
-        pending[ObjectIdentifier(webView)] = Pending(webView: webView, terms: terms, name: name, until: Date().addingTimeInterval(Self.window))
-        addressChanged(webView)
+    func searched(_ terms: [String], name: String?, in view: NSView, url: () -> URL?) {
+        let terms = terms.prefix(6).map { String($0.prefix(200)) }
+        pending[ObjectIdentifier(view)] = Pending(view: view, terms: terms, name: name, until: Date().addingTimeInterval(Self.window))
+        addressChanged(view, url: url())
     }
     /// The page's address changed, by loading or by script: does it hold what was just searched for?
-    func addressChanged(_ webView: WKWebView) {
-        let id = ObjectIdentifier(webView)
+    func addressChanged(_ view: NSView, url: URL?) {
+        let id = ObjectIdentifier(view)
         guard let search = pending[id] else { return }
-        guard search.webView === webView, search.until > Date() else { pending[id] = nil; return }
-        guard let url = webView.url, searches.learn(from: url, terms: search.terms, name: search.name) else { return }
+        guard search.view === view, search.until > Date() else { pending[id] = nil; return }
+        guard let url, searches.learn(from: url, terms: search.terms, name: search.name) else { return }
         pending[id] = nil; onLearn?()
     }
 
@@ -62,7 +78,9 @@ import RiseCore
       const siteName = () => document.querySelector('meta[property="og:site_name"]')?.content ||
         document.querySelector('meta[name="application-name"]')?.content || '';
       const post = terms => {
-        if (terms.length) webkit.messageHandlers.riseSiteSearch.postMessage({ terms, name: siteName() });
+        // WebKit's handlers, or the ones Rise's script wrapper gives a Chromium page.
+        const handlers = typeof riseHandlers !== 'undefined' ? riseHandlers : webkit.messageHandlers;
+        if (terms.length) handlers.riseSiteSearch.postMessage({ terms, name: siteName() });
       };
       const fields = root => [...root.querySelectorAll('input, textarea')];
       addEventListener('keydown', event => {

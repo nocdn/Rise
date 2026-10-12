@@ -33,6 +33,10 @@ final class BrowserStateTests: XCTestCase {
         XCTAssertEqual(AddressResolver.resolve(" https://example.com ")?.absoluteString, "https://example.com")
         XCTAssertEqual(AddressResolver.resolve("http://example.com")?.scheme, "http")
     }
+    func testRisePagesOpenRatherThanSearch() {
+        XCTAssertEqual(AddressResolver.resolve("rise://settings")?.absoluteString, "rise://settings")
+        XCTAssertEqual(AddressResolver.resolve("rise://settings/privacy")?.absoluteString, "rise://settings/privacy")
+    }
     func testLocalDevelopmentAddresses() {
         XCTAssertEqual(AddressResolver.resolve("localhost:8190/a")?.absoluteString, "http://localhost:8190/a")
         XCTAssertEqual(AddressResolver.resolve("127.0.0.1:8000")?.scheme, "http")

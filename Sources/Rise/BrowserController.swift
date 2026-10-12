@@ -80,6 +80,7 @@ import RiseCore
     var sidebarVisible = true
     let sidebarPeek = SidebarPeek()
     let sidebarFloat = SidebarFloat()
+    let devTools = DevToolsPanel()
     lazy var tabHoverCards: TabHoverCards = {
         let hover = TabHoverCards(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("pr-summaries.json"))
         hover.summaries.onChange = { [weak self] key in self?.pullRequestSummaryChanged(key) }
@@ -292,6 +293,7 @@ import RiseCore
         root.addSubview(sidebar); root.addSubview(pageShadow); pageShadow.addSubview(pageClip); installSplitHandle()
         pageClip.addSubview(emptyPage); pageClip.addSubview(developerBar)
         installSidebarEdge()
+        installDevTools()
         root.addSubview(grip)
         grip.resize = { [weak self] x in self?.resizeSidebar(to: x) }
         let actions: [(String, String, () -> Void)] = [
@@ -399,7 +401,10 @@ import RiseCore
         toolbarHost.frame.size.width = shown ? max(112, sidebar.frame.width-toolbarX-8)+room : 28
         carryTitlebarControls(by: carry)
         toolbarHost.layout()
+        // The selected tab's DevTools take the window's right side.
+        let devToolsRoom = layoutDevTools(in: b, pageLeft: pageLeft)
         pageShadow.frame = PageAppearance.frame(in: b, sidebarWidth: pageLeft, sidebarVisible: true)
+        pageShadow.frame.size.width = max(0, pageShadow.frame.width-devToolsRoom)
         pageShadow.refreshOutline()
         pageClip.frame = pageShadow.bounds
         // The peek width is temporary, and a floating sidebar is never resized.
@@ -486,6 +491,20 @@ import RiseCore
         #if RISE_CHROMIUM
         if let chromium = page as? ChromiumPage {
             chromium.onDownload = { [weak self] download, name in self?.beginChromiumDownload(download, suggestedName: name) }
+            chromium.onPopup = { [weak self, weak chromium] popup, url in
+                guard let self, let chromium else { return false }
+                // Gmail draws a popped-out conversation from the page that opened it, so it shows
+                // in the popup itself, in a Peek.
+                if GmailAccount.isPopout(url), self.tabHoverCards.popoutSource === chromium.view || self.shouldPeek(modifiers: NSEvent.modifierFlags) {
+                    self.tabHoverCards.popoutSource = nil; self.discardPeekUndo()
+                    self.showPeek(url: url, existing: self.configure(BrowserTab(page: popup)))
+                    return true
+                }
+                // A site taking the user to a new tab: Back from there comes home again.
+                let opener = self.tabs.first { $0.page === chromium }
+                self.addTab(page: popup).returnsTo = opener?.id
+                return true
+            }
             chromium.onPermissionRequest = { [weak self, weak chromium] capabilities, origin, decide in
                 guard let self, let chromium else { decide(false); return }
                 self.permissionCoordinator.request(in: chromium.view, origin: origin, capabilities: capabilities, completion: decide)
@@ -522,13 +541,13 @@ import RiseCore
         tab.page.setTheme(theme.appearance, background: theme.page)
         adBlocker.install(on: tab.page)
         HistorySwipeController.install(on: tab.page)
-        siteSearchLearner.install(on: tab.webView)
+        siteSearchLearner.install(on: tab.page)
         tab.prepareForLoad = { [weak self] web in try await self?.adBlocker.prepare(web) }
         tab.onLoadError = { [weak self, weak tab] error in
             if let tab { self?.showNavigationError(error, in: tab.page.view) }
         }
         linkPreloader.install(on: tab.page)
-        permissionCoordinator.install(on: tab.webView)
+        permissionCoordinator.install(on: tab.page)
         pageFullscreen.install(on: tab.page)
         pictureInPicture.install(on: tab.page)
         tabMedia.install(on: tab.page)
@@ -537,7 +556,7 @@ import RiseCore
         tab.onChange = { [weak self, weak tab] in
             guard let self, let tab else { return }
             self.suggestionFavicons.remember(tab)
-            self.siteSearchLearner.addressChanged(tab.webView)
+            self.siteSearchLearner.addressChanged(tab.page.view, url: tab.page.url)
             if !tab.page.isLoading, let url = tab.page.url, let title = tab.page.title {
                 self.browsingHistory.updateTitle(self.historyTitle(title, url: url), for: url)
             }
@@ -553,8 +572,9 @@ import RiseCore
     }
     /// A background tab loads in the list without taking over the page, as ⌘-clicked links do.
     /// Given an `opener`, it goes right above that tab (or its split pair), so the two stay together.
-    @discardableResult func addTab(url: URL? = nil, configuration: WKWebViewConfiguration? = nil, background: Bool = false, opener: UUID? = nil) -> BrowserTab {
-        let tab = configure(BrowserTab(configuration: configuration, engine: ChromiumEngine.engineForNewTabs))
+    @discardableResult func addTab(url: URL? = nil, configuration: WKWebViewConfiguration? = nil, background: Bool = false, opener: UUID? = nil,
+                                   page: WebPage? = nil) -> BrowserTab {
+        let tab = configure(BrowserTab(configuration: configuration, engine: ChromiumEngine.engineForNewTabs, page: page))
         let members = opener.map { id in splitGroups.first { $0.contains(id) }.map { [$0.leftID, $0.rightID] } ?? [id] } ?? []
         tabs.insert(tab, at: members.compactMap { id in tabs.firstIndex { $0.id == id } }.min() ?? 0)
         if background { update() } else { select(tab.id) }

@@ -1,0 +1,68 @@
+--- a/include/cef_browser.h
++++ b/include/cef_browser.h
+@@ -688,6 +688,15 @@
+   virtual bool RestoreNavigationState(CefRefPtr<CefBinaryValue> state) = 0;
+ 
+   ///
++  /// Has the DevTools front end loaded in |frontend|, a browser showing
++  /// devtools://devtools/bundled/devtools_app.html, inspect this browser, so
++  /// DevTools can be shown wherever the client draws |frontend|. Returns false
++  /// if |frontend| shows no front end yet. Must be called on the UI thread.
++  ///
++  /*--cef(added=experimental)--*/
++  virtual bool AttachDevToolsFrontend(CefRefPtr<CefBrowserHost> frontend) = 0;
++
++  ///
+   /// If a misspelled word is currently selected in an editable node calling
+   /// this method will replace it with the specified |word|.
+   ///
+--- a/libcef/browser/browser_host_base.h
++++ b/libcef/browser/browser_host_base.h
+@@ -269,6 +269,7 @@
+                             bool current_only) override;
+   CefRefPtr<CefBinaryValue> GetNavigationState() override;
+   bool RestoreNavigationState(CefRefPtr<CefBinaryValue> state) override;
++  bool AttachDevToolsFrontend(CefRefPtr<CefBrowserHost> frontend) override;
+   CefRefPtr<CefNavigationEntry> GetVisibleNavigationEntry() override;
+   void SetAutoResizeEnabled(bool enabled,
+                             const CefSize& min_size,
+--- a/libcef/browser/browser_host_base.cc
++++ b/libcef/browser/browser_host_base.cc
+@@ -34,6 +34,8 @@
+ #include "content/public/browser/download_request_utils.h"
+ #include "content/public/browser/file_select_listener.h"
+ #include "base/pickle.h"
++#include "chrome/browser/devtools/devtools_ui_bindings.h"
++#include "content/public/browser/devtools_agent_host.h"
+ #include "components/sessions/content/content_serialized_navigation_builder.h"
+ #include "components/sessions/core/serialized_navigation_entry.h"
+ #include "content/public/browser/navigation_entry.h"
+@@ -809,6 +811,28 @@
+         .WriteToPickle(kMaxNavigationEntrySize, &pickle);
+   }
+   return CefBinaryValue::Create(pickle.data(), pickle.size());
++}
++
++bool CefBrowserHostBase::AttachDevToolsFrontend(
++    CefRefPtr<CefBrowserHost> frontend) {
++  if (!CEF_CURRENTLY_ON_UIT()) {
++    DCHECK(false) << "called on invalid thread";
++    return false;
++  }
++  auto inspected = GetWebContents();
++  auto frontend_host = frontend ? static_cast<CefBrowserHostBase*>(frontend.get())
++                                : nullptr;
++  auto frontend_contents =
++      frontend_host ? frontend_host->GetWebContents() : nullptr;
++  // The front end's bindings come with its page, made as it commits.
++  auto bindings = frontend_contents
++                      ? DevToolsUIBindings::ForWebContents(frontend_contents)
++                      : nullptr;
++  if (!inspected || !bindings || frontend_contents == inspected) {
++    return false;
++  }
++  bindings->AttachTo(content::DevToolsAgentHost::GetOrCreateFor(inspected));
++  return true;
+ }
+ 
+ bool CefBrowserHostBase::RestoreNavigationState(

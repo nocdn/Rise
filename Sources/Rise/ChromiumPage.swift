@@ -9,13 +9,33 @@ enum RiseProfile {
     static var directory: URL? { ProcessInfo.processInfo.environment["RISE_PROFILE_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) } }
 }
 
-/// Chromium, where it's been built into Rise (see Engine/README.md). It only starts when
-/// asked, with `RISE_ENGINE=chromium` or the `RiseEngine` default set to "chromium"; then
-/// new tabs use it. Everywhere else Rise runs on WebKit alone.
+/// Chrome's own pages Rise shows as its own: rise://settings is chrome://settings, with every page
+/// under it. Only Rise opens them; to sites they're another app's addresses.
+enum RisePages {
+    static let hosts: Set<String> = ["settings"]
+    static let settings = URL(string: "rise://settings")!
+    /// The Chrome page to load for a Rise address.
+    static func page(for url: URL) -> URL { swap(url, from: "rise", to: "chrome") ?? url }
+    /// The Rise address to show for a Chrome page.
+    static func address(for url: URL?) -> URL? { url.flatMap { swap($0, from: "chrome", to: "rise") } ?? url }
+    private static func swap(_ url: URL, from: String, to: String) -> URL? {
+        guard url.scheme?.lowercased() == from, let host = url.host?.lowercased(), hosts.contains(host),
+              var parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
+        parts.scheme = to
+        // Shown as typed: rise://settings, not Chromium's rise://settings/.
+        if to == "rise", parts.path == "/" { parts.path = "" }
+        return parts.url
+    }
+}
+
+/// Chromium, where it's been built into Rise (see Engine/README.md): Rise's engine unless asked
+/// for WebKit, with `RISE_ENGINE=webkit` or the `RiseEngine` default set to "webkit". New and
+/// restored tabs use it. Builds without it run on WebKit alone.
 @MainActor enum ChromiumEngine {
     #if RISE_CHROMIUM
     static var isRequested: Bool {
-        ProcessInfo.processInfo.environment["RISE_ENGINE"] == "chromium" || UserDefaults.standard.string(forKey: "RiseEngine") == "chromium"
+        if let engine = ProcessInfo.processInfo.environment["RISE_ENGINE"] { return engine != "webkit" }
+        return UserDefaults.standard.string(forKey: "RiseEngine") != "webkit"
     }
     /// The application class Chromium needs, made before anything else asks for `NSApp`.
     static func makeApplication() -> NSApplication { isRequested ? RCApplication.shared : NSApplication.shared }
@@ -47,7 +67,7 @@ enum RiseProfile {
 #if RISE_CHROMIUM
 /// A page drawn by Chromium.
 @MainActor final class ChromiumPage: NSObject, WebPage, RCBrowserViewDelegate {
-    let browserView = RCBrowserView(frame: .zero, url: nil)
+    let browserView: RCBrowserView
     var engine: WebEngine { .chromium }
     var view: NSView { browserView }
     var onChange: ((WebPageChange) -> Void)?
@@ -66,9 +86,17 @@ enum RiseProfile {
     private var hasLoaded = false
     private var seen: (url: URL?, title: String?, loading: Bool, back: Bool, forward: Bool, progress: Double) = (nil, nil, false, false, false, 0)
 
-    override init() {
+    /// A page of its own, or, given `browserView`, a window another page opened, already loading.
+    init(browserView: RCBrowserView? = nil) {
+        self.browserView = browserView ?? RCBrowserView(frame: .zero, url: nil)
+        hasLoaded = browserView != nil
         super.init()
-        browserView.delegate = self
+        self.browserView.delegate = self
+    }
+    /// A window this page opens itself, still its popup; returns whether Rise took it.
+    var onPopup: ((_ popup: ChromiumPage, URL) -> Bool)?
+    nonisolated func browserView(_ browserView: RCBrowserView, adoptPopup popup: RCBrowserView, url: URL, userGesture: Bool) -> Bool {
+        MainActor.assumeIsolated { onPopup?(ChromiumPage(browserView: popup), url) ?? false }
     }
     nonisolated func browserViewDidChange(_ browserView: RCBrowserView) {
         MainActor.assumeIsolated { reportChanges() }
@@ -170,7 +198,7 @@ enum RiseProfile {
     }
     private var audible = false
 
-    var url: URL? { hasLoaded ? browserView.url : nil }
+    var url: URL? { hasLoaded ? RisePages.address(for: browserView.url) : nil }
     var title: String? { hasLoaded ? browserView.title : nil }
     var isLoading: Bool { browserView.isLoading }
     var estimatedProgress: Double { browserView.progress }
@@ -205,7 +233,7 @@ enum RiseProfile {
         get { browserView.zoom }
         set { browserView.zoom = newValue }
     }
-    func load(_ url: URL) { hasLoaded = true; browserView.open(url) }
+    func load(_ url: URL) { hasLoaded = true; browserView.open(RisePages.page(for: url)) }
     func goBack() { browserView.goBack() }
     func goForward() { browserView.goForward() }
     func reload() { browserView.reload() }

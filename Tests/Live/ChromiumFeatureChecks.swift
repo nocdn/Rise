@@ -1,7 +1,8 @@
 // Rise's features on Chromium pages, in a real Rise window: the tab's sound and its play button
 // (also from a frame of another site, in a process of its own), picture in picture, find,
 // downloads, camera and location prompts, history after a relaunch, what Rise does as pages
-// load, fail, crash and close, its theme, full screen, ad blocking and Preload Links.
+// load, fail, crash and close, its theme, full screen, ad blocking and Preload Links, windows that
+// keep their opener, site search learning, notifications, merge checks and DevTools.
 // Run with python3 scripts/test-chromium-live.py features.
 import AppKit
 @testable import Rise
@@ -170,6 +171,123 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         browser.linkPreloader.setEnabled(false)
     }
 
+    /// Runs a script in a page that isn't a tab's, such as DevTools' own.
+    func value(_ script: String, in view: RCBrowserView) async -> Any? {
+        await withCheckedContinuation { done in view.evaluateFunctionBody(script, arguments: [:], frame: nil, world: nil) { value, _ in done.resume(returning: value) } }
+    }
+
+    /// Windows that keep their opener, site search learning, notifications, merge checks,
+    /// DevTools, the JavaScript Console and View Source.
+    func riseFeatures() async throws {
+        check(ChromiumEngine.isRequested, "Chromium is Rise's engine unless asked for WebKit")
+
+        // A window a page opens is still its popup, as sign-ins and Gmail's popped-out emails need.
+        _ = try page("child", "<h1>Child</h1>")
+        let parent = await open(try page("parent", "<h1>Parent</h1>"))
+        _ = await value("window.open('child.html'); return 0", in: parent.page)
+        if await waitUntil("The window opens in a tab", 10, { self.browser.tabs.contains { $0.returnsTo == parent.id } }),
+           let child = browser.tabs.first(where: { $0.returnsTo == parent.id }) {
+            _ = await waitUntil("Its page loads") { child.page.url?.lastPathComponent == "child.html" && !child.page.isLoading }
+            check(await value("return window.opener?.document.title", in: child.page) as? String == "parent", "Its opener is still there")
+            browser.closeTab(child.id)
+        }
+
+        // A search made on a site teaches the address bar to search it.
+        _ = try page("shop", """
+        <meta property=og:site_name content='Lamp Shop'><form><input type=search name=find><button>Search</button></form>
+        <script>document.querySelector('form').addEventListener('submit', event => {
+          event.preventDefault(); history.pushState({}, '', '/results/?term=' + encodeURIComponent(event.target.find.value))
+        })</script>
+        """)
+        let shop = await open(URL(string: "http://rise-check.test:\(ports[0])/shop.html")!)
+        _ = await value("document.querySelector('[name=find]').value = 'desk lamp'; document.querySelector('form').requestSubmit(); return 0", in: shop.page)
+        _ = await waitUntil("Rise learns the site's search") { self.browser.siteSearchLearner.searches.site(forAddress: "rise-check.test")?.name == "Lamp Shop" }
+
+        // A site asking to notify gets Rise's prompt.
+        browser.permissionCoordinator.requestNotificationAuthorization = { $0(true) }
+        let notifying = await open(try page("notify", "<h1>Notify</h1>"))
+        _ = await value("Notification.requestPermission().then(answer => window.answer = answer); return 0", in: notifying.page)
+        if await waitUntil("Rise asks first", 10, { self.browser.permissionCoordinator.popover.isShown }) {
+            browser.permissionCoordinator.resolve(true)
+            _ = await waitUntil("And the site may notify") { await self.value("return window.answer", in: notifying.page) as? String == "granted" }
+        }
+
+        // A pull request's merge checks are scrolled to.
+        let pr = await open(try page("pr", "<div style='height:3000px'></div><div data-testid=merge-checks style='height:80px'>Checks</div><div style='height:3000px'></div>"))
+        _ = try? await pr.page.evaluate("return " + BrowserController.scrollToMergeChecks, arguments: [:], in: nil, world: .named("Rise.HoverCards"))
+        _ = await waitUntil("The merge checks are in view") { (await self.value("return scrollY", in: pr.page) as? Double ?? 0) > 2000 }
+
+        // DevTools slide in from the right as the page makes room, inspect it on Elements, and
+        // slide away again.
+        let inspected = await open(try page("inspected", "<h1>Inspected</h1>"))
+        let wide = inspected.page.view.frame.width
+        browser.toggleDevTools()
+        _ = await waitUntil("DevTools slide in") { self.browser.devTools.isOpen && self.browser.devTools.progress == 1 }
+        check(inspected.page.view.frame.width < wide-300, "The page makes room: \(wide) to \(inspected.page.view.frame.width)")
+        if let frontend = browser.devTools.clip.subviews.first as? RCBrowserView {
+            _ = await waitUntil("They inspect the page", 20) { frontend.title?.contains("inspected.html") == true }
+            let elements = """
+            const find = root => root.querySelector('#tab-elements') ||
+              [...root.querySelectorAll('*')].map(node => node.shadowRoot && find(node.shadowRoot)).find(Boolean);
+            return find(document)?.getAttribute('aria-selected')
+            """
+            _ = await waitUntil("On the Elements panel", 10) { await self.value(elements, in: frontend) as? String == "true" }
+            let picking = "const UI = await import('./ui/legacy/legacy.js'); return UI.ActionRegistry.ActionRegistry.instance().getAction('elements.toggle-element-search').toggled()"
+            _ = await waitUntil("Ready to select an element", 10) { await self.value(picking, in: frontend) as? Bool == true }
+        } else { check(false, "DevTools are in the panel") }
+        // A third of the window by default, with the split's handle in the gap beside the page.
+        let panel = browser.devTools, standard = panel.shadow.frame.width
+        check(abs(standard-(browser.root.bounds.width*0.32).rounded()) < 1, "DevTools are a third of the window wide: \(standard)")
+        check(!panel.handle.isHidden && panel.handle.frame.maxX == panel.shadow.frame.minX, "The handle is in the gap beside them")
+        // Dragged left, the handle widens DevTools and the page gives way; the width is kept.
+        let pageBefore = inspected.page.view.frame.width
+        panel.handle.onDrag?(-100); panel.handle.onDragEnd?()
+        check(panel.shadow.frame.width == standard+100 && inspected.page.view.frame.width == pageBefore-100, "Dragging the handle resizes DevTools and the page")
+        check(browser.preferences.double(forKey: DevToolsPanel.widthKey) == Double(standard+100), "The width is kept")
+        // A double click goes back to the standard width.
+        panel.handle.onReset?()
+        check(panel.shadow.frame.width == standard && browser.preferences.object(forKey: DevToolsPanel.widthKey) == nil, "A double click resets it")
+        // With their animation off, DevTools come and go at once.
+        browser.setAnimatesDevTools(false)
+        browser.toggleDevTools()
+        check(panel.shadow.isHidden && panel.tabID == nil && inspected.page.view.frame.width == wide, "Without the animation they go at once")
+        browser.toggleDevTools()
+        check(panel.progress == 1 && !panel.shadow.isHidden, "And come at once")
+        browser.setAnimatesDevTools(true)
+        browser.toggleDevTools()
+        _ = await waitUntil("And slide away") { self.browser.devTools.shadow.isHidden && self.browser.devTools.tabID == nil }
+        check(inspected.page.view.frame.width == wide, "The page takes its room back")
+        // Closing DevTools' page must never close the window it was in.
+        try await Task.sleep(for: .milliseconds(500))
+        check(browser.window?.isVisible == true, "Rise's window stays open")
+
+        // The JavaScript Console runs what's typed as a console does, and View Source opens the source.
+        let console = await withCheckedContinuation { done in
+            (inspected.page as! ChromiumPage).browserView.evaluateConsoleExpression("let a = 2; await Promise.resolve(a * 21)") { value, _ in done.resume(returning: value) }
+        }
+        check((console as? NSNumber)?.intValue == 42, "The console's answer: \(console ?? "nil")")
+        browser.viewSource()
+        _ = await waitUntil("The source opens in a tab") { self.browser.selectedTab?.page.url?.scheme == "view-source" }
+
+        // Chrome's settings are Rise's, at rise://settings and every page under it.
+        browser.showSettings()
+        if let settings = browser.selectedTab {
+            _ = await waitUntil("rise://settings opens", 15) { settings.page.url == RisePages.settings && !settings.page.isLoading }
+            _ = await waitUntil("With Chrome's settings in it", 15) {
+                await self.value("return !!document.querySelector('settings-ui')", in: settings.page) as? Bool == true
+            }
+            settings.load(URL(string: "rise://settings/privacy")!)
+            _ = await waitUntil("And its pages") { settings.page.url?.absoluteString == "rise://settings/privacy" && !settings.page.isLoading }
+            browser.showSettings()
+            check(browser.selectedID == settings.id && browser.tabs.filter({ $0.page.url?.scheme == "rise" }).count == 1, "⌘, goes back to the settings already open")
+        }
+        // A site can't open them.
+        let sneaky = await open(try page("sneaky", "<a id=s href='chrome://settings'>Settings</a>"))
+        _ = await value("location.href = 'chrome://settings'; return 0", in: sneaky.page)
+        try await Task.sleep(for: .milliseconds(800))
+        check(sneaky.page.url?.lastPathComponent == "sneaky.html", "A site can't open settings: \(sneaky.page.url?.absoluteString ?? "-")")
+    }
+
     func checks() async throws {
         browser = BrowserController(sessionURL: folder.appendingPathComponent("session.json"), restore: false, preferences: UserDefaults(suiteName: suite)!)
         browser.downloadsFolder = folder.appendingPathComponent("Downloads")
@@ -303,6 +421,7 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         _ = await waitUntil("And closes itself") { !browser.tabs.contains { $0.returnsTo == opener.id } && browser.selectedID == opener.id }
 
         try await pageLook()
+        try await riseFeatures()
 
         // History after a relaunch: a page made later goes straight to where the tab was, with its history.
         let first = try page("first", "<h1>First</h1>"), second = try page("second", "<h1>Second</h1>")

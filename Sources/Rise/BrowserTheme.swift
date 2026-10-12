@@ -66,6 +66,6 @@ import AppKit
         peekBackdrop?.fill = theme.background.withAlphaComponent(0.72)
         peekCard?.fill = theme.page; (peekCard?.subviews.first as? Surface)?.fill = theme.page
         peekControls.forEach { $0.applyTheme(theme) }
-        splitHandle.applyTheme(theme)
+        splitHandle.applyTheme(theme); devTools.handle.applyTheme(theme)
     }
 }

@@ -43,6 +43,9 @@ import Vision
         menu.addItem(menuItem("Live Page While Expanding Peek", checked: livePeekResize) { [weak self] in
             self?.setLivePeekResize(!(self?.livePeekResize ?? true))
         })
+        menu.addItem(menuItem("Animate Developer Tools", checked: animatesDevTools) { [weak self] in
+            self?.setAnimatesDevTools(!(self?.animatesDevTools ?? true))
+        })
         menu.addItem(menuItem("Simulated Full Screen", checked: pageFullscreen.isSimulated) { [weak self] in self?.toggleSimulatedFullscreen() })
         if pageFullscreen.isSimulated {
             menu.addItem(menuItem("Collapse Sidebar in Simulated Full Screen", checked: collapsesSidebarInSimulatedFullscreen) { [weak self] in
@@ -113,27 +116,27 @@ import Vision
     }
     func refreshPermissionScripts() {
         for tab in tabs + (peekTab.map { [$0] } ?? []) {
-            tab.webView.evaluateJavaScript("window.riseSiteControls?.refresh()") { _, _ in }
+            tab.page.evaluate("window.riseSiteControls?.refresh()", arguments: [:], in: nil, world: .page) { _ in }
         }
     }
     func copyTextFromPageImage() {
-        guard let web = selectedTab?.webView else { return }
-        web.takeSnapshot(with: nil) { [weak self] image, error in
-            guard let self, let image, let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-                self?.showMessage("Couldn’t read page text", error?.localizedDescription ?? "No page image available."); return
+        guard let page = selectedTab?.page else { return }
+        Task { [weak self] in
+            let image = await page.snapshot(width: nil)
+            guard let self else { return }
+            guard let image, let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                self.showMessage("Couldn’t read page text", "No page image available."); return
             }
-            Task {
-                do {
-                    let text = try await Task.detached(priority: .userInitiated) {
-                        let request = VNRecognizeTextRequest(); request.recognitionLevel = .accurate; request.usesLanguageCorrection = true
-                        try VNImageRequestHandler(cgImage: cgImage).perform([request])
-                        return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
-                    }.value
-                    guard !text.isEmpty else { self.showMessage("No text found", "No readable text was found in the visible page."); return }
-                    NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
-                    self.showMessage("Text copied", "The visible page’s text is on your clipboard.")
-                } catch { self.showMessage("Couldn’t read page text", error.localizedDescription) }
-            }
+            do {
+                let text = try await Task.detached(priority: .userInitiated) {
+                    let request = VNRecognizeTextRequest(); request.recognitionLevel = .accurate; request.usesLanguageCorrection = true
+                    try VNImageRequestHandler(cgImage: cgImage).perform([request])
+                    return (request.results ?? []).compactMap { $0.topCandidates(1).first?.string }.joined(separator: "\n")
+                }.value
+                guard !text.isEmpty else { self.showMessage("No text found", "No readable text was found in the visible page."); return }
+                NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
+                self.showMessage("Text copied", "The visible page’s text is on your clipboard.")
+            } catch { self.showMessage("Couldn’t read page text", error.localizedDescription) }
         }
     }
 }

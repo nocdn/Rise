@@ -42,6 +42,8 @@ The checkout lives outside the repo: `RISE_CHROMIUM_ROOT`, by default
 | Patch | Why |
 |---|---|
 | `cef/0001-navigation-state-and-audible.patch` | Back/forward history saved and restored with Chromium's own session format, and when a page starts or stops making sound |
+| `cef/0002-attach-devtools-frontend.patch` | Chrome's DevTools front end, loaded in a page of Rise's own, inspects another page; CEF can't put its own DevTools window inside an app's view on macOS, so Rise's DevTools slide in beside the page this way |
+| `cef/0003-allow-settings-page.patch` | Chrome's settings open in Rise's own pages, as rise://settings (CEF otherwise only allows a short list of chrome:// pages there) |
 | `chromium/0001-hide-web-contents-after-a-turn.patch` | Rise moves pages between views (Peek, split, ⌘Z); a page out of its window for an instant no longer blanks for several frames when it's back |
 
 ## Stages
@@ -64,10 +66,12 @@ The checkout lives outside the repo: `RISE_CHROMIUM_ROOT`, by default
 ## Trying Rise on Chromium
 
 Where the engine is built, `./scripts/build.sh` puts it into Rise.app (the framework and
-four `Rise Helper` apps, about 560 MB). Rise still starts on WebKit; Chromium only starts
-when asked, and then new and restored tabs use it:
+four `Rise Helper` apps, about 560 MB), and Rise runs on Chromium: new and restored tabs use
+it. WebKit is still there when asked for, with `RISE_ENGINE=webkit` or
+`defaults write dev.bartosz.Rise RiseEngine webkit`. To try a build without touching the
+everyday profile:
 
-    open -n build/Rise.app --env RISE_ENGINE=chromium --env RISE_PROFILE_DIR=/tmp/rise-chromium
+    open -n build/Rise.app --env RISE_PROFILE_DIR=/tmp/rise-chromium
 
 `RISE_PROFILE_DIR` keeps that session, history and website data apart from the everyday
 ones, and its Chromium never uses the Keychain. The everyday profile keeps Chromium's key in
@@ -82,10 +86,15 @@ On Chromium tabs these work, also for frames of other sites:
   pictures, site icons, crashed-page reloads, and `window.close()` for tabs a site opened.
 - Rise's theme (light or dark, and the colour before a page draws), full screen (native,
   in a window of its own, and simulated, with ⇧⌘F), ad blocking and Preload Links.
+- Windows a page opens stay its popups, so sign-ins and Gmail's popped-out emails work; the
+  Gmail card, merge checks, site search learning and site notifications.
+- Chrome's settings at rise://settings (⌘,), with every page under it.
+- Developer Mode: Chrome's DevTools with ⌥⌘J, on Elements, sliding in from the right as the
+  docked sidebar does from the left; the JavaScript Console, View Source and the screenshots.
 
 Rise's page scripts reach every frame through Chromium's DevTools protocol, inside the app.
-Still WebKit-only: the Gmail card, Rise's own page menu, site notifications, and WebKit's
-own picture in picture for encrypted video.
+Still WebKit-only: Rise's own page menu and WebKit's own picture in picture for encrypted
+video. Not carried over yet: the WebKit profile's cookies and sign-ins.
 
 Ad blocking uses the filter lists WebKit's rules are made from (`Filters/Sources`, plus
 Rise's own rules in `Engine/adblock/rise.txt`), one engine per list so each keeps its own

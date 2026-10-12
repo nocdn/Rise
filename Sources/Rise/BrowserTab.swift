@@ -58,15 +58,16 @@ import RiseCore
     var isInNativeFullscreen: Bool { page.isInNativeFullscreen }
     private var thumbnailCaptureInFlight = false
     /// A page a site opens with its own WebKit configuration stays on WebKit.
-    init(saved: SavedTab? = nil, configuration: WKWebViewConfiguration? = nil, engine: WebEngine = .webKit) {
+    /// Given `page`, the tab shows that page, as a window a site opened.
+    init(saved: SavedTab? = nil, configuration: WKWebViewConfiguration? = nil, engine: WebEngine = .webKit, page: WebPage? = nil) {
         id = saved?.id ?? UUID(); customTitle = saved?.customTitle; title = saved?.customTitle ?? saved?.title ?? "New Tab"
         pinned = saved?.pinned ?? false; developer = saved?.developer ?? false
         requestedURL = saved.flatMap { URL(string: $0.url) }
         if let saved, let data = saved.sessionState { restoredState = (saved.url, data) }
         #if RISE_CHROMIUM
-        page = engine == .chromium && configuration == nil ? ChromiumPage() : WebKitPage(configuration: configuration)
+        self.page = page ?? (engine == .chromium && configuration == nil ? ChromiumPage() : WebKitPage(configuration: configuration))
         #else
-        page = WebKitPage(configuration: configuration)
+        self.page = page ?? WebKitPage(configuration: configuration)
         #endif
         super.init()
         if let data = saved?.faviconData, data.count <= FaviconSnapshot.maximumBytes,

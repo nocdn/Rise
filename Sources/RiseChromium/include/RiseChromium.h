@@ -101,6 +101,12 @@ typedef NS_OPTIONS(NSUInteger, RCPermission) {
 /// Rise has opened it; NO lets it open in this page instead.
 - (BOOL)browserView:(RCBrowserView *)browserView openURL:(NSURL *)url disposition:(RCOpenDisposition)disposition
         userGesture:(BOOL)userGesture;
+/// A window the page opens itself, by script or a link to a new window, made in `popup` with this
+/// page as its opener, so the two can still talk (as sign-ins and Gmail's popped-out emails
+/// need). Return YES once Rise has put `popup` somewhere; NO opens `url` as
+/// `browserView:openURL:disposition:userGesture:` does instead.
+- (BOOL)browserView:(RCBrowserView *)browserView adoptPopup:(RCBrowserView *)popup url:(NSURL *)url
+        userGesture:(BOOL)userGesture;
 /// "Open Link in Peek" from the page's context menu.
 - (void)browserView:(RCBrowserView *)browserView openLinkInPeek:(NSURL *)url;
 /// A Rise script posted `body` to `handler`. `reply` is set for handlers added with replies,
@@ -204,6 +210,13 @@ typedef NS_OPTIONS(NSUInteger, RCPermission) {
                 world:(nullable NSString *)world
         mainFrameOnly:(BOOL)mainFrameOnly
              handlers:(NSArray<NSString *> *)handlers;
+/// Runs `expression` in the page as a console does, statements, `let` and `await` included,
+/// with the value of the last; or the error it threw.
+- (void)evaluateConsoleExpression:(NSString *)expression
+                       completion:(void (^)(id _Nullable value, NSString *_Nullable error))completion;
+/// A page showing Chromium's DevTools for this one, opened on the Elements panel. It inspects
+/// this page from when its front end loads; `close` it when it's done.
+- (RCBrowserView *)makeDevToolsView;
 /// Stops running user scripts whose source starts with `prefix` on documents to come.
 - (void)removeUserScriptsWithPrefix:(NSString *)prefix;
 /// As `evaluateFunctionBody:arguments:world:completion:`, in `frame` (nil: the main one) and

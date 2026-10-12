@@ -85,7 +85,7 @@ struct GmailPage: Decodable {
     private let reader = GmailPageReader()
     var loadPage: PageLoader?
 
-    func prepare(account: GmailAccount, category: GmailCategory, source: WKWebView, host: NSView, refreshAfter: TimeInterval = 60) {
+    func prepare(account: GmailAccount, category: GmailCategory, source: WebPage, host: NSView, refreshAfter: TimeInterval = 60) {
         reader.prepare(source: source, host: host)
         show(Request(account: account, category: category), refreshAfter: refreshAfter)
     }
@@ -147,7 +147,7 @@ struct GmailPage: Decodable {
     deinit { task?.cancel() }
 }
 
-/// A companion Gmail page shares the tab's existing WebKit session. It reads Gmail's
+/// A companion Gmail page, of the tab's own engine, shares the tab's session. It reads Gmail's
 /// text-only list previews, never opening a message or changing its read state.
 @MainActor final class GmailPageReader {
     enum Failure: Error {
@@ -159,45 +159,51 @@ struct GmailPage: Decodable {
             }
         }
     }
-    private(set) var webView: WKWebView?
+    private(set) var companion: WebPage?
     private var request: GmailInbox.Request?
     private var page = 0
     private var firstID: String?
-    func prepare(source: WKWebView, host: NSView) {
-        if webView?.configuration.websiteDataStore !== source.configuration.websiteDataStore { tearDown() }
-        if webView == nil {
-            let configuration = WKWebViewConfiguration()
-            configuration.websiteDataStore = source.configuration.websiteDataStore
-            configuration.processPool = source.configuration.processPool
-            configuration.applicationNameForUserAgent = BrowserIdentity.applicationName
-            let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 1100, height: 800), configuration: configuration)
+    func prepare(source: WebPage, host: NSView) {
+        if let companion, companion.engine != source.engine { tearDown() }
+        if companion == nil {
+            #if RISE_CHROMIUM
+            let web: WebPage = source.engine == .chromium ? ChromiumPage() : WebKitPage()
+            #else
+            let web: WebPage = WebKitPage()
+            #endif
             // A window keeps Gmail's list rendering normally; the companion stays offscreen,
             // and its container keeps the page out of the window's accessibility tree.
             let container = HiddenAccessibilityView(frame: NSRect(x: -20000, y: 0, width: 1100, height: 800))
-            container.addSubview(web)
+            web.view.frame = container.bounds
+            container.addSubview(web.view)
             host.addSubview(container, positioned: .below, relativeTo: host.subviews.first)
-            webView = web
+            companion = web
         }
     }
+    /// Runs one of the scripts below, in Rise's own world.
+    private func run(_ script: String, in web: WebPage) async throws -> Any? {
+        try await web.evaluate("return " + script, arguments: [:], in: nil, world: .named(Self.world))
+    }
+    static let world = "Rise.Gmail"
     func load(_ request: GmailInbox.Request, _ page: Int) async throws -> GmailPage {
-        guard let web = webView else { throw Failure.unavailable }
+        guard let web = companion else { throw Failure.unavailable }
         let previous = firstID
         if self.request == request, self.page == page-1, page > 1 {
-            let advanced = try await web.evaluateJavaScript(Self.nextPage, contentWorld: .defaultClient) as? Bool ?? false
+            let advanced = try await run(Self.nextPage, in: web) as? Bool ?? false
             if !advanced { throw Failure.unavailable }
         } else {
             self.request = request; self.page = 0; firstID = nil
             let url = request.account.searchURL(category: request.category, page: page)
             // Gmail rewrites the address's encoding. The same route would only scroll to its
             // fragment, so refreshing it needs a real reload.
-            if Self.route(web.url) == Self.route(url) { web.reload() } else { web.load(URLRequest(url: url)) }
+            if Self.route(web.url) == Self.route(url) { web.reload() } else { web.load(url) }
         }
         let deadline = Date().addingTimeInterval(25)
         while Date() < deadline {
             try Task.checkCancellation()
             if let url = web.url, url.host == "accounts.google.com" { throw Failure.signedOut }
             if !web.isLoading, GmailAccount(url: web.url) == request.account,
-               let value = try? await web.evaluateJavaScript(Self.snapshot, contentWorld: .defaultClient),
+               let value = try? await run(Self.snapshot, in: web),
                let raw = value as? [String: Any], raw["ready"] as? Bool == true,
                raw["query"] as? String == request.category.query, page > 1 || raw["page"] as? Int == 1,
                let data = try? JSONSerialization.data(withJSONObject: raw),
@@ -210,13 +216,19 @@ struct GmailPage: Decodable {
         }
         throw Failure.unavailable
     }
-    func cancel() { webView?.stopLoading(); request = nil; page = 0; firstID = nil }
+    func cancel() { companion?.stopLoading(); request = nil; page = 0; firstID = nil }
     nonisolated static func route(_ url: URL?) -> String? {
         guard let url, let fragment = url.fragment else { return nil }
         var parts = URLComponents(url: url, resolvingAgainstBaseURL: false); parts?.fragment = nil
         return (parts?.string ?? "")+"#"+(fragment.replacingOccurrences(of: "+", with: " ").removingPercentEncoding ?? fragment)
     }
-    func tearDown() { cancel(); webView?.superview?.removeFromSuperview(); webView = nil }
+    func tearDown() {
+        cancel(); companion?.view.superview?.removeFromSuperview()
+        #if RISE_CHROMIUM
+        (companion as? ChromiumPage)?.browserView.close()
+        #endif
+        companion = nil
+    }
 
     /// Shift-clicking a conversation's row is how Gmail opens it in a new window. Only the
     /// row's own page can draw that window, so the click has to come from the row.

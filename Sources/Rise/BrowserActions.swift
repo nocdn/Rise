@@ -208,9 +208,13 @@ import RiseCore
         window?.makeFirstResponder(tab.page.view)
     }
     func capturePage() {
-        guard let webView = selectedTab?.webView else { return }
-        webView.takeSnapshot(with: nil) { [weak self] image, error in
-            guard let self, let image, let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff), let data = bitmap.representation(using: .png, properties: [:]) else { if let error { self?.showMessage("Screenshot failed", error.localizedDescription) }; return }
+        guard let page = selectedTab?.page else { return }
+        Task { [weak self] in
+            let image = await page.snapshot(width: nil)
+            guard let self else { return }
+            guard let image, let tiff = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff), let data = bitmap.representation(using: .png, properties: [:]) else {
+                self.showMessage("Screenshot failed", "No page image available."); return
+            }
             let panel = NSSavePanel(); panel.allowedContentTypes = [.png]; panel.nameFieldStringValue = "Rise Screenshot.png"
             guard let window = self.window else { return }
             panel.beginSheetModal(for: window) { result in
@@ -219,18 +223,35 @@ import RiseCore
         }
     }
     @objc func javascriptConsole() {
-        guard let webView = selectedTab?.webView, let window else { return }
+        guard let tab = selectedTab, let window else { return }
         let alert = NSAlert(); alert.messageText = "JavaScript Console"
-        alert.informativeText = "Evaluate JavaScript in the current page. Full Web Inspector is available from Safari’s Develop menu while Developer Mode is enabled."
+        alert.informativeText = tab.page.engine == .chromium
+            ? "Evaluate JavaScript in the current page. The full DevTools open with ⌥⌘J."
+            : "Evaluate JavaScript in the current page. Full Web Inspector is available from Safari’s Develop menu while Developer Mode is enabled."
         let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 440, height: 28)); input.font = .monospacedSystemFont(ofSize: 12, weight: .regular); input.placeholderString = "document.title"
         alert.accessoryView = input; alert.addButton(withTitle: "Run"); alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { [weak self] result in
             guard result == .alertFirstButtonReturn else { return }
-            webView.evaluateJavaScript(input.stringValue) { value, error in self?.showMessage("JavaScript Result", error?.localizedDescription ?? value.map { String(describing: $0) } ?? "undefined") }
+            let show = { (value: Any?, error: String?) in self?.showMessage("JavaScript Result", error ?? value.map { String(describing: $0) } ?? "undefined") }
+            #if RISE_CHROMIUM
+            if let chromium = tab.page as? ChromiumPage {
+                chromium.browserView.evaluateConsoleExpression(input.stringValue) { value, error in MainActor.assumeIsolated { show(value, error) } }
+                return
+            }
+            #endif
+            tab.webView.evaluateJavaScript(input.stringValue) { value, error in show(value, error?.localizedDescription) }
         }; window.makeFirstResponder(input)
     }
     func viewSource() {
-        guard let webView = selectedTab?.webView else { return }
+        guard let tab = selectedTab else { return }
+        // Chromium shows the source as the server sent it, in a tab of its own.
+        if tab.page.engine == .chromium {
+            if let url = tab.page.url, ["http", "https", "file"].contains(url.scheme ?? ""), let source = URL(string: "view-source:" + url.absoluteString) {
+                addTab(url: source, opener: tab.id).returnsTo = tab.id
+            }
+            return
+        }
+        let webView = tab.webView
         webView.evaluateJavaScript("document.documentElement.outerHTML") { [weak self] value, error in
             guard let self, let html = value as? String else { return }
             let source = self.addTab(); source.title = "Page Source"

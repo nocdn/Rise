@@ -6,6 +6,8 @@ public enum AddressResolver {
         guard !text.isEmpty else { return nil }
         if text == "about:blank" { return URL(string: text) }
         if text.hasPrefix("/") { return URL(fileURLWithPath: text) }
+        // Rise's own pages, such as rise://settings.
+        if let url = URL(string: text), url.scheme?.lowercased() == "rise", url.host != nil { return url }
         if let url = URL(string: text), let scheme = url.scheme?.lowercased(), scheme == "file" || (["https", "http"].contains(scheme) && url.host != nil) { return url }
         if !text.contains(where: { $0.isWhitespace }), let candidate = URL(string: "https://" + text), let rawHost = candidate.host {
             let host = rawHost.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))

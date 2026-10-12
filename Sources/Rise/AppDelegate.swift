@@ -30,6 +30,10 @@ import AppKit
         let app = addMenu("Rise")
         item(app, "About Rise", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), target: NSApp)
         app.addItem(.separator())
+        if ChromiumEngine.isRunning {
+            item(app, "Settings…", #selector(BrowserController.showSettings), ",", target: browser)
+            app.addItem(.separator())
+        }
         item(app, "Hide Rise", #selector(NSApplication.hide(_:)), "h", target: NSApp)
         item(app, "Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", modifiers: [.command, .option], target: NSApp)
         item(app, "Show All", #selector(NSApplication.unhideAllApplications(_:)), target: NSApp)
@@ -58,6 +62,7 @@ import AppKit
         item(view, "Reload", #selector(BrowserController.reload), "r", target: browser)
         item(view, "Hard Reload", #selector(BrowserController.hardReload), "r", modifiers: [.command, .shift], target: browser)
         item(view, "Toggle Developer Mode", #selector(BrowserController.toggleDeveloper), "d", modifiers: .control, target: browser)
+        item(view, "Developer Tools", #selector(BrowserController.toggleDevTools), "j", modifiers: [.command, .option], target: browser)
         item(view, "Change Theme", #selector(BrowserController.toggleTheme), target: browser)
         item(view, "Show Downloads", #selector(BrowserController.toggleDownloads), "l", modifiers: [.command, .option], target: browser)
         item(view, "Peek Current Page", #selector(BrowserController.peekCurrentPage), "p", modifiers: [.command, .shift], target: browser)

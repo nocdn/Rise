@@ -7,7 +7,9 @@ import UserNotifications
     init(_ owner: PermissionCoordinator) { self.owner = owner }
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
         guard let owner else { replyHandler(nil, "Browser closed"); return }
-        owner.receive(message, reply: replyHandler)
+        guard let web = message.webView, message.frameInfo.isMainFrame else { replyHandler(nil, "Invalid origin"); return }
+        owner.receive(message.body, origin: SitePermissions.origin(message.frameInfo.securityOrigin), host: message.frameInfo.securityOrigin.host,
+                      in: web, reply: replyHandler)
     }
 }
 
@@ -29,6 +31,19 @@ import UserNotifications
     init(browser: BrowserController) {
         self.browser = browser; super.init()
         popover.behavior = .transient; popover.animates = false; popover.delegate = self
+    }
+    /// Pages of engines other than WebKit, which get the script through the page.
+    private let pages = NSHashTable<AnyObject>.weakObjects()
+    func install(on page: WebPage) {
+        if let webView = (page as? WebKitPage)?.webView { install(on: webView); return }
+        guard !pages.contains(page) else { return }
+        pages.add(page)
+        page.addMessageHandler("riseSiteControls", world: .page) { [weak self] message, reply in
+            let origin = message.frame.origin.flatMap(URL.init(string:))
+            guard let self, message.frame.isMain, let view = message.page?.view else { reply(nil, "Invalid origin"); return }
+            self.receive(message.body, origin: SitePermissions.origin(origin), host: origin?.host, in: view, reply: reply)
+        }
+        page.addUserScript(Self.script, world: .page, mainFrameOnly: true, handlers: ["riseSiteControls"])
     }
     func install(on web: WKWebView) {
         let content = web.configuration.userContentController
@@ -75,11 +90,11 @@ import UserNotifications
         if web == nil || requestingWebView === web { resolve(false) }
     }
     func popoverDidClose(_ notification: Notification) { resolve(false) }
-    func receive(_ message: WKScriptMessage, reply: @escaping (Any?, String?) -> Void) {
-        guard let browser, let web = message.webView, message.frameInfo.isMainFrame,
-              let origin = SitePermissions.origin(message.frameInfo.securityOrigin),
-              origin == SitePermissions.origin(web.url),
-              let body = message.body as? [String: Any], let kind = body["kind"] as? String else { reply(nil, "Invalid origin"); return }
+    /// A request from the site controls script in a page's main frame, as its view, from
+    /// `origin`, which must still be the page's own.
+    func receive(_ message: Any, origin: String?, host: String?, in web: NSView, reply: @escaping (Any?, String?) -> Void) {
+        guard let browser, let origin, origin == SitePermissions.origin(browser.page(showing: web)?.url),
+              let body = message as? [String: Any], let kind = body["kind"] as? String else { reply(nil, "Invalid origin"); return }
         switch kind {
         case "status":
             let status = browser.sitePermissions.permission(.notifications, origin: origin)
@@ -93,7 +108,7 @@ import UserNotifications
             guard browser.sitePermissions.permission(.notifications, origin: origin) == .allow,
                   Bundle.main.bundleIdentifier != nil, let title = body["title"] as? String else { reply(nil, "Notifications not allowed"); return }
             let content = UNMutableNotificationContent()
-            content.title = String(title.prefix(200)); content.subtitle = message.frameInfo.securityOrigin.host
+            content.title = String(title.prefix(200)); content.subtitle = host ?? ""
             content.body = String((body["body"] as? String ?? "").prefix(2000)); content.sound = body["silent"] as? Bool == true ? nil : .default
             let id = Self.notificationID(origin: origin, identifier: body["id"] as? String ?? UUID().uuidString)
             let center = UNUserNotificationCenter.current(); center.delegate = self
@@ -118,7 +133,9 @@ import UserNotifications
     static let script = #"""
     (() => {
       if (window.riseSiteControls || !window.isSecureContext) return;
-      const send = body => window.webkit.messageHandlers.riseSiteControls.postMessage(body);
+      // WebKit's handlers, or the ones Rise's script wrapper gives a Chromium page.
+      const handlers = typeof riseHandlers !== 'undefined' ? riseHandlers : window.webkit.messageHandlers;
+      const send = body => handlers.riseSiteControls.postMessage(body);
       let permission = 'default', pip = true;
       const refresh = () => send({kind:'status'}).then(value => { permission = value.notifications; pip = value.pip; }).catch(() => {});
       window.riseSiteControls = { refresh, autoPiP() {

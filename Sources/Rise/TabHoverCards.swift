@@ -27,7 +27,8 @@ import WebKit
     fileprivate var leftRow: NSRect?
     fileprivate var insideCard = false
     /// The Gmail tab asked to pop a conversation out, whose window becomes a Peek.
-    weak var popoutSource: WKWebView?
+    /// The page, as its view, asked to pop an email out, whose popup goes in a Peek.
+    weak var popoutSource: NSView?
     fileprivate var tracksPointer = false
     init(storageURL: URL) { summaries = PullRequestSummaries(storageURL: storageURL) }
 }
@@ -138,7 +139,7 @@ import WebKit
         case .files: if let url = pr.filesURL, tab.url != url { tab.load(url) }
         case .mergeChecks:
             guard let url = pr.overviewURL else { return }
-            let web = tab.webView
+            let web = tab.page
             let onOverview = web.url.map { $0.path.trimmingCharacters(in: ["/"]) == url.path.trimmingCharacters(in: ["/"]) } ?? false
             if !onOverview { tab.load(url) }
             Task { [weak web] in
@@ -148,7 +149,7 @@ import WebKit
                     if web.url.map({ $0.path.trimmingCharacters(in: ["/"]) == url.path.trimmingCharacters(in: ["/"]) }) == true, !web.isLoading { break }
                     try? await Task.sleep(for: .milliseconds(100))
                 }
-                _ = try? await web?.evaluateJavaScript(Self.scrollToMergeChecks, contentWorld: .defaultClient)
+                _ = try? await web?.evaluate("return " + Self.scrollToMergeChecks, arguments: [:], in: nil, world: .named("Rise.HoverCards"))
             }
         }
     }
@@ -233,7 +234,7 @@ import WebKit
             hover.gmailCard.onOpen = { [weak self] email in self?.openGmailEmail(email) }
         }
         if !hover.tracksPointer, let window { hover.tracksPointer = !window.acceptsMouseMovedEvents; window.acceptsMouseMovedEvents = true }
-        gmailInbox.prepare(account: account, category: gmailCategory, source: tab.webView, host: root)
+        gmailInbox.prepare(account: account, category: gmailCategory, source: tab.page, host: root)
         let anchor = row.convert(row.bounds, to: root)
         hover.gmailCard.present(key: account.baseURL.absoluteString+"|"+gmailCategory.rawValue, inbox: gmailInbox,
                             left: sidebar.frame.maxX+6, anchorTop: anchor.minY, maxBottom: root.bounds.height-8,
@@ -253,19 +254,20 @@ import WebKit
         if selectedID != id { select(id) }
         let list = request.account.listURL(category: request.category, page: gmailInbox.page(of: email.id))
         if GmailPageReader.route(tab.url) != GmailPageReader.route(list) { tab.load(list) }
-        let web = tab.webView
-        tabHoverCards.popoutSource = web
+        let web = tab.page
+        tabHoverCards.popoutSource = web.view
         Task { [weak self, weak web] in
             // Up to 7.5 s for the list to show the row, then 2 s for Gmail to open its window.
             for _ in 0..<50 {
-                guard let self, let web, self.tabHoverCards.popoutSource === web else { return }
-                if !web.isLoading, (try? await web.evaluateJavaScript(GmailPageReader.popOut(email.id), contentWorld: .page)) as? Bool == true {
-                    for _ in 0..<40 where self.tabHoverCards.popoutSource === web { try? await Task.sleep(for: .milliseconds(50)) }
+                guard let self, let web, self.tabHoverCards.popoutSource === web.view else { return }
+                // Run as if from a click, which Gmail's window needs on Chromium.
+                if !web.isLoading, (try? await web.evaluate("return " + GmailPageReader.popOut(email.id), arguments: [:], in: nil, world: .page)) as? Bool == true {
+                    for _ in 0..<40 where self.tabHoverCards.popoutSource === web.view { try? await Task.sleep(for: .milliseconds(50)) }
                     break
                 }
                 try? await Task.sleep(for: .milliseconds(150))
             }
-            guard let self, self.tabHoverCards.popoutSource === web else { return }
+            guard let self, self.tabHoverCards.popoutSource === web?.view else { return }
             self.tabHoverCards.popoutSource = nil
             self.showPeek(url: message)
         }
@@ -282,7 +284,7 @@ import WebKit
         }
         // The open card keeps its own list until it closes.
         guard tabHoverCards.shownID == nil, root.window != nil else { return }
-        gmailInbox.prepare(account: account, category: gmailCategory, source: tab.webView, host: root,
+        gmailInbox.prepare(account: account, category: gmailCategory, source: tab.page, host: root,
                            refreshAfter: TabHoverCards.backgroundRefresh)
     }
 }

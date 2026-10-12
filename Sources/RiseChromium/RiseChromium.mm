@@ -15,6 +15,7 @@
 #include "include/cef_permission_handler.h"
 #include "include/wrapper/cef_library_loader.h"
 #include "include/cef_resource_request_handler.h"
+#include "include/cef_request_context.h"
 
 #include <atomic>
 
@@ -107,6 +108,10 @@ class RiseApp : public CefApp, public CefBrowserProcessHandler {
 - (void)crashed;
 - (void)openInOtherApp:(NSURL *)url;
 - (void)updateFullscreen:(BOOL)fullscreen;
+- (nullable RCBrowserView *)popupFor:(NSURL *)url userGesture:(BOOL)userGesture;
+- (void)loadStarted;
+- (void)readyToClose;
+- (CefRefPtr<CefClient>)client;
 @end
 
 @interface RCFrame ()
@@ -180,6 +185,8 @@ bool IsWebScheme(NSString *scheme) {
                                                  @"ws", @"wss" ]];
   return [schemes containsObject:scheme.lowercaseString];
 }
+
+cef_color_t ARGB(NSColor *color);
 
 std::atomic<bool> gAdBlockEnabled{true};
 
@@ -321,6 +328,9 @@ class RiseClient : public CefClient,
     }
     return false;
   }
+  void OnLoadStart(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, TransitionType) override {
+    if (frame->IsMain()) [view_ loadStarted];
+  }
   void OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int) override {
     if (frame->IsMain()) [view_ loadFinished];
   }
@@ -358,9 +368,13 @@ class RiseClient : public CefClient,
     return true;
   }
 
-  void OnAddressChange(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, const CefString &url) override {
+  void OnAddressChange(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, const CefString &url) override {
     if (!frame->IsMain()) return;
     NSString *text = [NSString stringWithUTF8String:url.ToString().c_str()];
+    // A page's source reports the page's own address; its entry keeps the one it was opened with.
+    CefRefPtr<CefNavigationEntry> entry = browser->GetHost()->GetVisibleNavigationEntry();
+    std::string shown = entry ? entry->GetDisplayURL().ToString() : "";
+    if (shown.rfind("view-source:", 0) == 0) text = [NSString stringWithUTF8String:shown.c_str()];
     [view_ updateURL:text.length ? [NSURL URLWithString:text] : nil];
   }
   void OnTitleChange(CefRefPtr<CefBrowser>, const CefString &title) override {
@@ -372,18 +386,36 @@ class RiseClient : public CefClient,
   void OnLoadingStateChange(CefRefPtr<CefBrowser>, bool isLoading, bool canGoBack, bool canGoForward) override {
     [view_ updateLoading:isLoading back:canGoBack forward:canGoForward];
   }
-  // A link or script opening a window goes to Rise's tabs; failing that, this page.
+  // A link or script opening a window goes to Rise's tabs: as a page of its own, still this
+  // one's popup, or, where Rise doesn't take that, its address in a new tab; failing both, this page.
   bool OnBeforePopup(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame>, int, const CefString &target_url,
                      const CefString &, WindowOpenDisposition target_disposition, bool user_gesture,
-                     const CefPopupFeatures &, CefWindowInfo &, CefRefPtr<CefClient> &, CefBrowserSettings &,
-                     CefRefPtr<CefDictionaryValue> &, bool *) override {
+                     const CefPopupFeatures &, CefWindowInfo &window_info, CefRefPtr<CefClient> &client,
+                     CefBrowserSettings &settings, CefRefPtr<CefDictionaryValue> &, bool *) override {
     RCOpenDisposition disposition;
     if (!Disposition(target_disposition, &disposition)) disposition = RCOpenDispositionForegroundTab;
     NSURL *url = URLFromString(target_url);
+    // A tab opened in the background, as by ⌘-click, is the person's, not the page's.
+    if (url && disposition != RCOpenDispositionBackgroundTab) {
+      if (RCBrowserView *popup = [view_ popupFor:url userGesture:user_gesture]) {
+        NSSize size = popup.bounds.size;
+        window_info.SetAsChild((__bridge void *)popup, CefRect(0, 0, (int)std::max(1.0, size.width), (int)std::max(1.0, size.height)));
+        window_info.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
+        settings.background_color = ARGB(popup.pageBackgroundColor);
+        client = popup.client;
+        return false;
+      }
+    }
     if (!url || ![view_ openURL:url disposition:disposition userGesture:user_gesture]) browser->GetMainFrame()->LoadURL(target_url);
     return true;
   }
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override { [view_ browserCreated:browser]; }
+  // Left to CEF, a page closing would close the window its view is in: Rise's own. Rise lets its
+  // view go instead, which finishes the close.
+  bool DoClose(CefRefPtr<CefBrowser>) override {
+    [view_ readyToClose];
+    return true;
+  }
   void OnBeforeClose(CefRefPtr<CefBrowser>) override { [view_ browserClosed]; }
 
  private:
@@ -607,6 +639,8 @@ cef_color_t ARGB(NSColor *color) {
   // Asked to load while Chromium was still making the page: loads once it exists.
   BOOL _loadsWhenCreated;
   BOOL _closed;
+  // The page this one shows DevTools for.
+  __weak RCBrowserView *_inspected;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame URL:(NSURL *)url {
@@ -683,6 +717,14 @@ cef_color_t ARGB(NSColor *color) {
   }
   if (_loadsWhenCreated && _pendingURL) _browser->GetMainFrame()->LoadURL(std::string(_pendingURL.absoluteString.UTF8String));
   _loadsWhenCreated = NO;
+}
+
+- (void)readyToClose {
+  // On the next turn, out of Chromium's closing: its view going is what completes it.
+  NSArray<NSView *> *children = self.subviews.copy;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    for (NSView *child in children) [child removeFromSuperview];
+  });
 }
 
 - (void)browserClosed {
@@ -1164,6 +1206,54 @@ static NSString *JSONText(id value) {
 }
 - (void)openInOtherApp:(NSURL *)url {
   if ([self.delegate respondsToSelector:@selector(browserView:openInOtherApp:)]) [self.delegate browserView:self openInOtherApp:url];
+}
+
+- (CefRefPtr<CefClient>)client { return _client; }
+
+- (RCBrowserView *)makeDevToolsView {
+  // DevTools opens on the panel it last showed; Rise's opens on Elements.
+  CefRefPtr<CefRequestContext> context = CefRequestContext::GetGlobalContext();
+  CefRefPtr<CefValue> current = context->GetPreference("devtools.preferences");
+  CefRefPtr<CefDictionaryValue> preferences = current && current->GetType() == VTYPE_DICTIONARY
+                                                  ? current->GetDictionary()->Copy(false)
+                                                  : CefDictionaryValue::Create();
+  preferences->SetString("panel-selectedTab", "\"elements\"");
+  CefRefPtr<CefValue> value = CefValue::Create();
+  value->SetDictionary(preferences);
+  CefString error;
+  context->SetPreference("devtools.preferences", value, error);
+  RCBrowserView *frontend = [[RCBrowserView alloc] initWithFrame:NSZeroRect
+                                                             URL:[NSURL URLWithString:@"devtools://devtools/bundled/devtools_app.html"]];
+  frontend->_inspected = self;
+  return frontend;
+}
+// The front end's bindings come with each document it loads, so it's attached to its page as each
+// one commits.
+- (void)loadStarted {
+  RCBrowserView *inspected = _inspected;
+  if (inspected && inspected->_browser && _browser) inspected->_browser->GetHost()->AttachDevToolsFrontend(_browser->GetHost());
+}
+
+- (void)evaluateConsoleExpression:(NSString *)expression completion:(void (^)(id, NSString *))completion {
+  NSDictionary *params = @{@"expression": expression, @"replMode": @YES, @"awaitPromise": @YES, @"returnByValue": @YES, @"userGesture": @YES};
+  [self devTools:@"Runtime.evaluate" params:params session:@"" reply:^(NSDictionary *result, NSDictionary *error) {
+    if (!result) { completion(nil, error[@"message"] ?: @"The page went away"); return; }
+    if (NSDictionary *exception = result[@"exceptionDetails"]) {
+      completion(nil, exception[@"exception"][@"description"] ?: exception[@"text"] ?: @"The script threw");
+      return;
+    }
+    NSDictionary *value = result[@"result"];
+    id shown = value[@"value"] ?: value[@"description"] ?: value[@"type"];
+    completion(shown == NSNull.null ? nil : shown, nil);
+  }];
+}
+- (RCBrowserView *)popupFor:(NSURL *)url userGesture:(BOOL)userGesture {
+  if (_closed || ![self.delegate respondsToSelector:@selector(browserView:adoptPopup:url:userGesture:)]) return nil;
+  RCBrowserView *popup = [[RCBrowserView alloc] initWithFrame:self.bounds URL:nil];
+  // Chromium makes this one's page itself, as it opens.
+  popup->_client = new RiseClient(popup);
+  popup.pageBackgroundColor = self.pageBackgroundColor;
+  return [self.delegate browserView:self adoptPopup:popup url:url userGesture:userGesture] ? popup : nil;
 }
 
 - (void)updateFullscreen:(BOOL)fullscreen {
