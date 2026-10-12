@@ -97,7 +97,7 @@ import Vision
                     self.refreshPermissionScripts(); self.refreshSiteControls()
                     // Revoke an active capture session as well as future requests.
                     if permission != .allow && (capability == .camera || capability == .microphone) {
-                        for tab in self.tabs where SitePermissions.origin(tab.url) == origin { tab.webView.reload() }
+                        for tab in self.tabs where SitePermissions.origin(tab.url) == origin { tab.page.reload() }
                     }
                 }
             })

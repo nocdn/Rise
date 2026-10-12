@@ -49,7 +49,7 @@ struct PeekUndo {
         if livePeekResize { expandPeekLive(tab, card: card, modifiers: modifiers); return }
         isPromotingPeek = true
         // The Peek, and the page under it, which may start changing straight away.
-        let under = (tabs.first { $0.id == peekSourceTabID } ?? selectedTab)?.webView
+        let under = (tabs.first { $0.id == peekSourceTabID } ?? selectedTab)?.page
         var peekImage: NSImage?, underImage: NSImage?, waiting = under == nil ? 1 : 2, finished = false
         let finish = { [weak self, weak tab] in
             guard !finished else { return }
@@ -59,9 +59,9 @@ struct PeekUndo {
             guard let tab, tab === self.peekTab else { return }
             self.promotePeek(tab, modifiers: modifiers, snapshots: (peekImage, underImage))
         }
-        let configuration = WKSnapshotConfiguration(); configuration.afterScreenUpdates = false
-        tab.webView.takeSnapshot(with: configuration) { image, _ in peekImage = image; waiting -= 1; if waiting == 0 { finish() } }
-        under?.takeSnapshot(with: configuration) { image, _ in underImage = image; waiting -= 1; if waiting == 0 { finish() } }
+        let peekPage = tab.page
+        Task { peekImage = await peekPage.snapshot(width: nil); waiting -= 1; if waiting == 0 { finish() } }
+        if let under { Task { underImage = await under.snapshot(width: nil); waiting -= 1; if waiting == 0 { finish() } } }
         // A busy page mustn't hold the press up.
         DispatchQueue.main.asyncAfter(deadline: .now()+0.12) { finish() }
     }
@@ -71,7 +71,7 @@ struct PeekUndo {
         let previous = splitGroups, sourceID = peekSourceTabID ?? selectedID, opensNewTab = peekOpensNewTab, origin = peekOrigin
         let finish = { [weak self] in
             guard let self, tab === self.peekTab else { return }
-            tab.webView.removeFromSuperview()
+            tab.page.view.removeFromSuperview()
             self.peekTab = nil; self.closePeek(); self.tabs.insert(tab, at: 0); self.showSplit(tab)
             self.registerPeekUndo(.split(previous: previous), tab: tab, sourceID: sourceID, opensNewTab: opensNewTab, origin: origin)
         }
@@ -89,25 +89,25 @@ struct PeekUndo {
             if selectedID != source.id { select(source.id) }
             handOff(tab, into: source)
             // The page from before stays drawn around the growing card until it covers it all.
-            let cover = ghost == nil ? nil : snapshots.under.map { freeze(source.webView, as: $0) }
+            let cover = ghost == nil ? nil : snapshots.under.map { freeze(source.page.view, as: $0) }
             registerPeekUndo(.sameTab, tab: tab, sourceID: source.id, opensNewTab: false, origin: origin)
-            growPeek(views, ghost: ghost, into: source.webView, cover: cover)
+            growPeek(views, ghost: ghost, into: source.page.view, cover: cover)
         } else {
             let index = source.flatMap { source in tabs.firstIndex { $0.id == source.id } } ?? 0
-            tab.webView.removeFromSuperview()
+            tab.page.view.removeFromSuperview()
             tabs.insert(tab, at: index); select(tab.id)
             registerPeekUndo(.newTab, tab: tab, sourceID: source?.id, opensNewTab: opensNewTab, origin: origin)
-            growPeek(views, ghost: ghost, into: tab.webView, cover: nil)
+            growPeek(views, ghost: ghost, into: tab.page.view, cover: nil)
         }
-        window?.makeFirstResponder(selectedTab?.webView)
+        window?.makeFirstResponder(selectedTab?.page.view)
         update()
     }
 
     /// Ends the Peek but leaves its views on screen, for the caller to animate away.
     private func takePeekViews() -> (card: Surface?, backdrop: Surface?, controls: [PeekControl]) {
-        if let web = peekTab?.webView {
-            historySwipe.cancel(for: web); permissionCoordinator.cancel(for: web)
-            if hoveredWebView === web { hideLinkStatus() }
+        if let peek = peekTab {
+            historySwipe.cancel(for: peek.page); permissionCoordinator.cancel(for: peek.page.view)
+            if hoveredWebView === peek.page.view { hideLinkStatus() }
         }
         let views = (card: peekCard, backdrop: peekBackdrop, controls: peekControls)
         finishPeekMotion(); finishPeekPromotion()
@@ -118,7 +118,7 @@ struct PeekUndo {
     }
 
     /// Lays a still of the page from before over the page, under the Peek's dimming.
-    private func freeze(_ web: WKWebView, as image: NSImage) -> NSView {
+    private func freeze(_ web: NSView, as image: NSImage) -> NSView {
         let cover = PeekStandbyView(frame: web.frame)
         cover.wantsLayer = true; cover.layer?.contents = image; cover.layer?.contentsGravity = .resize
         web.superview?.addSubview(cover, positioned: .above, relativeTo: web)
@@ -137,7 +137,7 @@ struct PeekUndo {
     }
 
     private func growPeek(_ views: (card: Surface?, backdrop: Surface?, controls: [PeekControl]), ghost: PeekGhost?,
-                          into page: WKWebView, cover: NSView?) {
+                          into page: NSView, cover: NSView?) {
         let motion = peekMotionAllowed && ghost != nil
         let spring = Self.peekPromoteSpring
         views.card?.removeFromSuperview()
@@ -217,15 +217,16 @@ struct PeekUndo {
     }
     private func undoPeekPromotion(_ undo: PeekUndo) -> Bool {
         let source = undo.sourceID.flatMap { id in tabs.first { $0.id == id } }
-        let shown: WKWebView?
+        let shownPage: WebPage?
         switch undo.kind {
         case .sameTab:
             guard let source, source.backPages.contains(where: { $0 === undo.tab }) else { discardPeekUndo(); return false }
-            shown = source.webView
+            shownPage = source.page
         case .newTab, .split:
             guard tabs.contains(where: { $0 === undo.tab }), tabs.count > 1 else { discardPeekUndo(); return false }
-            shown = undo.tab.webView
+            shownPage = undo.tab.page
         }
+        let shown = shownPage?.view
         if peekUndo?.tab === undo.tab { peekUndo = nil }
         undo.expiry.cancel()
         splitPeekReturns = splitPeekReturns.filter { $0.value.tab !== undo.tab }
@@ -237,16 +238,15 @@ struct PeekUndo {
         let frame = shown.convert(shown.bounds, to: root)
         // Live, the page itself shrinks, so there's no still to wait for.
         if livePeekResize {
-            restorePeek(undo, source: source, from: PeekOrigin(webView: nil, rect: .zero, image: nil, rootFrame: frame)); return true
+            restorePeek(undo, source: source, from: PeekOrigin(page: nil, rect: .zero, image: nil, rootFrame: frame)); return true
         }
         var finished = false
         let finish = { [weak self] (image: NSImage?) in
             guard !finished else { return }
             finished = true
-            self?.restorePeek(undo, source: source, from: PeekOrigin(webView: nil, rect: .zero, image: image, rootFrame: frame))
+            self?.restorePeek(undo, source: source, from: PeekOrigin(page: nil, rect: .zero, image: image, rootFrame: frame))
         }
-        let configuration = WKSnapshotConfiguration(); configuration.afterScreenUpdates = false
-        shown.takeSnapshot(with: configuration) { image, _ in finish(image) }
+        if let shownPage { Task { finish(await shownPage.snapshot(width: nil)) } }
         DispatchQueue.main.asyncAfter(deadline: .now()+0.12) { finish(nil) }
         return true
     }
@@ -262,10 +262,10 @@ struct PeekUndo {
             trade(source, with: undo.tab)
             dropForwardPages(of: source)
             // The Peek's page goes straight from the page into the card, never leaving the window.
-            undo.tab.webView.setAllMediaPlaybackSuspended(false)
+            undo.tab.page.setMediaSuspended(false)
             settle(source, recordsVisit: false)
         case .newTab, .split:
-            if case .split = undo.kind, let source, source.webView.superview === pageClip { widening = source.webView.frame }
+            if case .split = undo.kind, let source, source.page.view.superview === pageClip { widening = source.page.view.frame }
             detachTab(undo.tab)
             if case .split(let previous) = undo.kind {
                 splitGroups = previous.filter { group in
@@ -284,11 +284,11 @@ struct PeekUndo {
             // of the card shrinking off it; it eases into the window's edge rather than past it.
             let to = pageBody, spring = Self.peekWidenSpring
             pageLayoutHeld = true
-            source.webView.frame = from; shapePage(around: [from])
+            source.page.view.frame = from; shapePage(around: [from])
             motion.alongside = { [weak self, weak source] elapsed in
                 guard let self, let source else { return }
                 let page = from.interpolated(to: to, by: PeekLiveMotion.settledProgress(at: elapsed, along: spring)).limited(to: to, edges: .windowSides)
-                source.webView.frame = page; self.shapePage(around: [page])
+                source.page.view.frame = page; self.shapePage(around: [page])
             }
             motion.afterwards = { [weak self] in self?.pageLayoutHeld = false; self?.layoutChrome() }
         }
@@ -301,6 +301,6 @@ struct PeekUndo {
         tabs.removeAll { $0 === tab }; recentTabIDs.removeAll { $0 == tab.id }
         findBars.removeValue(forKey: tab.id)?.discard()
         if selectedID == tab.id { selectedID = nil }
-        tab.webView.removeFromSuperview()
+        tab.page.view.removeFromSuperview()
     }
 }

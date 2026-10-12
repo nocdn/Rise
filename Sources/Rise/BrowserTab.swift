@@ -5,7 +5,11 @@ import RiseCore
 @MainActor final class BrowserTab: NSObject {
     let id: UUID
     /// The page on show. A Peek growing into the tab trades pages with it rather than loading again.
-    private(set) var webView: WKWebView
+    private(set) var page: WebPage
+    /// The WebKit view behind `page`, for code not yet moved onto `WebPage`. A Chromium page
+    /// has an idle stand-in that never loads or shows, so that code does nothing for it.
+    var webView: WKWebView { (page as? WebKitPage)?.webView ?? standIn }
+    private lazy var standIn: WKWebView = LinkCursorWebView(frame: .zero)
     /// Earlier live pages, oldest first, that Back reaches once this page's own history runs out;
     /// and later ones Forward reaches. Each holder only keeps a page; it isn't a tab in the list.
     var backPages: [BrowserTab] = []
@@ -19,20 +23,21 @@ import RiseCore
     var pinned: Bool
     var developer: Bool
     var requestedURL: URL?
-    var observations: [NSKeyValueObservation] = []
-    /// Whether the page is making sound. WebKit only reports this privately.
-    private(set) var isPlayingAudio = false
+    /// The tab whose page opened this one in a new tab and brought the user here. Back, once
+    /// this tab's own history runs out, closes it and returns there.
+    var returnsTo: UUID?
+    /// Whether the page is making sound.
+    var isPlayingAudio: Bool { page.isPlayingAudio }
     /// The page keeps playing, but without sound.
     private(set) var isAudioMuted = false
-    private var audioObserver: PrivateKeyObserver?
     var onChange: (() -> Void)?
-    var prepareForLoad: ((WKWebView) async throws -> Void)?
+    var prepareForLoad: ((WebPage) async throws -> Void)?
     var onLoadError: ((Error) -> Void)?
     private var navigationTask: Task<Void, Never>?
     private var loadGeneration = 0
     private(set) var hasAttemptedNavigation = false
     var isPreparingNavigation: Bool { navigationTask != nil }
-    var isLoading: Bool { isPreparingNavigation || webView.isLoading }
+    var isLoading: Bool { isPreparingNavigation || page.isLoading }
     var needsBlockingReload = false
     /// Set by a hard reload until the tab stops loading, so its progress shows in red.
     var isHardReloading = false
@@ -49,27 +54,20 @@ import RiseCore
     static let maximumSessionState = 2_000_000
     var onThumbnailChange: (() -> Void)?
     var onFullscreenChange: (() -> Void)?
-    /// WebKit's own fullscreen has the web view in its window.
-    var isInNativeFullscreen: Bool { webView.fullscreenState != .notInFullscreen }
+    /// The engine's own fullscreen has the page in its window.
+    var isInNativeFullscreen: Bool { page.isInNativeFullscreen }
     private var thumbnailCaptureInFlight = false
-    init(saved: SavedTab? = nil, configuration: WKWebViewConfiguration? = nil) {
+    /// A page a site opens with its own WebKit configuration stays on WebKit.
+    init(saved: SavedTab? = nil, configuration: WKWebViewConfiguration? = nil, engine: WebEngine = .webKit) {
         id = saved?.id ?? UUID(); customTitle = saved?.customTitle; title = saved?.customTitle ?? saved?.title ?? "New Tab"
         pinned = saved?.pinned ?? false; developer = saved?.developer ?? false
         requestedURL = saved.flatMap { URL(string: $0.url) }
         if let saved, let data = saved.sessionState { restoredState = (saved.url, data) }
-        let configuration = configuration ?? WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()
-        configuration.applicationNameForUserAgent = BrowserIdentity.applicationName
-        // Simulated fullscreen falls back to WebKit's, and is off unless chosen.
-        configuration.preferences.isElementFullscreenEnabled = true
-        // WebKit's own picture in picture is off unless asked for privately. Encrypted video
-        // floats there, since Rise's window can't draw it, and sites' own buttons use it.
-        let allowPictureInPicture = NSSelectorFromString("_setAllowsPictureInPictureMediaPlayback:")
-        if configuration.preferences.responds(to: allowPictureInPicture) {
-            typealias SetBool = @convention(c) (AnyObject, Selector, Bool) -> Void
-            unsafeBitCast(configuration.preferences.method(for: allowPictureInPicture), to: SetBool.self)(configuration.preferences, allowPictureInPicture, true)
-        }
-        webView = LinkCursorWebView(frame: .zero, configuration: configuration)
+        #if RISE_CHROMIUM
+        page = engine == .chromium && configuration == nil ? ChromiumPage() : WebKitPage(configuration: configuration)
+        #else
+        page = WebKitPage(configuration: configuration)
+        #endif
         super.init()
         if let data = saved?.faviconData, data.count <= FaviconSnapshot.maximumBytes,
            let origin = saved?.faviconOrigin, origin == SitePermissions.origin(requestedURL),
@@ -80,46 +78,41 @@ import RiseCore
                 darkFavicon = darkImage; darkFaviconData = darkData
             }
         }
-        webView.isInspectable = true; webView.allowsBackForwardNavigationGestures = false
-        webView.underPageBackgroundColor = NSColor(hex: 0xFDFCFC)
-        observeWebView()
+        observePage()
     }
-    private func observeWebView() {
-        observations = []
-        audioObserver = PrivateKeyObserver(webView, key: Self.playingAudioKey) { [weak self] in Task { @MainActor in self?.audioChanged() } }
-        observations.append(webView.observe(\.title, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.changed() } })
-        observations.append(webView.observe(\.url, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.changed() } })
-        observations.append(webView.observe(\.estimatedProgress, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.onChange?() } })
-        observations.append(webView.observe(\.isLoading, options: [.new]) { [weak self] _, _ in
-            Task { @MainActor in
-                // Checked when the task runs, so the end of a load the hard reload replaced doesn't clear it.
-                if self?.isLoading == false { self?.isHardReloading = false }
-                self?.onChange?()
+    private func observePage() {
+        page.onChange = { [weak self] change in
+            guard let self else { return }
+            switch change {
+            case .title, .url: changed()
+            case .loading:
+                // Checked when the change arrives, so the end of a load the hard reload replaced doesn't clear it.
+                if !isLoading { isHardReloading = false }
+                onChange?()
+            case .fullscreen: onFullscreenChange?()
+            case .progress, .navigation, .audio: onChange?()
             }
-        })
-        observations.append(webView.observe(\.fullscreenState, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.onFullscreenChange?() } })
-        observations.append(webView.observe(\.canGoBack, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.onChange?() } })
-        observations.append(webView.observe(\.canGoForward, options: [.new]) { [weak self] _, _ in Task { @MainActor in self?.onChange?() } })
+        }
     }
     /// Trades live pages with `other`: each takes the other's page with its history, title and
     /// icon, and nothing loads. The tab itself keeps its id, place, pin and name.
     func exchangePages(with other: BrowserTab) {
         for tab in [self, other] { tab.loadGeneration += 1; tab.navigationTask?.cancel(); tab.navigationTask = nil }
-        swap(&webView, &other.webView)
+        swap(&page, &other.page)
         swap(&title, &other.title); swap(&requestedURL, &other.requestedURL)
         swap(&favicon, &other.favicon); swap(&darkFavicon, &other.darkFavicon); swap(&iconOrigin, &other.iconOrigin)
         swap(&thumbnail, &other.thumbnail); swap(&hasAttemptedNavigation, &other.hasAttemptedNavigation)
-        swap(&isPlayingAudio, &other.isPlayingAudio); swap(&isAudioMuted, &other.isAudioMuted)
+        swap(&isAudioMuted, &other.isAudioMuted)
         restoredState = nil; other.restoredState = nil
         // An icon still on its way belongs to the page that's gone; fetch the new page's again.
         for tab in [self, other] {
             tab.iconTask?.cancel(); tab.iconTask = nil
             if tab.favicon == nil { tab.iconOrigin = nil }
         }
-        observeWebView(); other.observeWebView()
+        observePage(); other.observePage()
         changed(); other.changed()
     }
-    var url: URL? { webView.url ?? requestedURL }
+    var url: URL? { page.url ?? requestedURL }
     var saved: SavedTab {
         let origin = SitePermissions.origin(url)
         let data = origin != nil && origin == iconOrigin ? faviconData : nil
@@ -129,8 +122,8 @@ import RiseCore
     }
     /// The live history once the page has loaded; until then, the history it was restored with.
     var sessionState: Data? {
-        guard webView.url != nil else { return restoredState?.data }
-        guard let data = webView.interactionState as? Data, data.count <= Self.maximumSessionState else { return nil }
+        guard page.url != nil else { return restoredState?.data }
+        guard let data = page.sessionState, data.count <= Self.maximumSessionState else { return nil }
         return data
     }
     func rename(_ text: String) {
@@ -147,18 +140,16 @@ import RiseCore
         navigationTask = Task { [weak self] in
             guard let self else { return }
             do {
-                try await self.prepareForLoad?(self.webView)
+                try await self.prepareForLoad?(self.page)
                 guard !Task.isCancelled, self.loadGeneration == generation else { return }
                 self.navigationTask = nil
                 // A restored tab reopens its saved page with its back/forward history.
                 if let state = self.restoredState, state.url == url.absoluteString {
                     self.restoredState = nil
-                    self.webView.interactionState = state.data
-                    if self.webView.backForwardList.currentItem != nil { return }
+                    if self.page.restoreSession(state.data, fallback: url) { return }
                 }
                 self.restoredState = nil
-                if url.isFileURL { self.webView.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent()) }
-                else { self.webView.load(URLRequest(url: url)) }
+                self.page.load(url)
             } catch {
                 guard !Task.isCancelled, self.loadGeneration == generation else { return }
                 self.navigationTask = nil; self.onLoadError?(error)
@@ -166,37 +157,26 @@ import RiseCore
         }
         onChange?()
     }
-    private static let playingAudioKey = "_isPlayingAudio"
-    private func audioChanged() {
-        let playing = webView.responds(to: NSSelectorFromString(Self.playingAudioKey)) && webView.value(forKey: Self.playingAudioKey) as? Bool == true
-        guard playing != isPlayingAudio else { return }
-        isPlayingAudio = playing; onChange?()
-    }
     func setAudioMuted(_ muted: Bool) {
-        // _WKMediaMutedState: 1 mutes audio and leaves capture devices alone.
-        let selector = NSSelectorFromString("_setPageMuted:")
-        guard webView.responds(to: selector) else { return }
-        typealias SetPageMuted = @convention(c) (AnyObject, Selector, UInt) -> Void
-        unsafeBitCast(webView.method(for: selector), to: SetPageMuted.self)(webView, selector, muted ? 1 : 0)
+        guard page.setAudioMuted(muted) else { return }
         isAudioMuted = muted; onChange?()
     }
-    func cancelLoad() { loadGeneration += 1; navigationTask?.cancel(); navigationTask = nil; webView.stopLoading() }
+    func cancelLoad() { loadGeneration += 1; navigationTask?.cancel(); navigationTask = nil; page.stopLoading() }
     func changed() {
         if AddressResolver.isLocal(url) { developer = true }
         if let customTitle { title = customTitle }
-        else if let value = webView.title, !value.isEmpty {
+        else if let value = page.title, !value.isEmpty {
             title = hidesNotificationCounts ? TitleNotificationCount.removing(from: value, url: url) : value
         }
         else if let url, url.absoluteString != "about:blank" { title = AddressResolver.displayHost(url) }
         updateIcon(); onChange?()
     }
     func captureThumbnail() {
-        guard !thumbnailCaptureInFlight, webView.bounds.width > 0, webView.bounds.height > 0 else { return }
+        guard !thumbnailCaptureInFlight, page.view.bounds.width > 0, page.view.bounds.height > 0 else { return }
         thumbnailCaptureInFlight = true
-        let capturedURL = url
-        let snapshot = WKSnapshotConfiguration()
-        snapshot.snapshotWidth = 320; snapshot.afterScreenUpdates = false
-        webView.takeSnapshot(with: snapshot) { [weak self] image, _ in
+        let capturedURL = url, page = page
+        Task { [weak self] in
+            let image = await page.snapshot(width: 320)
             guard let self else { return }
             self.thumbnailCaptureInFlight = false
             guard self.url == capturedURL, let image, image.size.width > 0 else { return }

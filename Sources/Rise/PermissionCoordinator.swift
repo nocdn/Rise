@@ -16,7 +16,8 @@ import UserNotifications
 @MainActor final class PermissionCoordinator: NSObject, NSPopoverDelegate, UNUserNotificationCenterDelegate {
     weak var browser: BrowserController?
     let popover = NSPopover()
-    private weak var requestingWebView: WKWebView?
+    /// The page asking, as its view.
+    private weak var requestingWebView: NSView?
     private var reply: ((Bool) -> Void)?
     private var controllers = NSHashTable<WKUserContentController>.weakObjects()
     var requestNotificationAuthorization: (@escaping (Bool) -> Void) -> Void = { done in
@@ -36,11 +37,12 @@ import UserNotifications
         content.addScriptMessageHandler(PermissionBridge(self), contentWorld: .page, name: "riseSiteControls")
         content.addUserScript(WKUserScript(source: Self.script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
     }
-    func request(in web: WKWebView, origin: String?, capabilities: [SiteCapability], completion: @escaping (Bool) -> Void) {
+    /// `web` is the asking page's view, whichever engine draws it.
+    func request(in web: NSView, origin: String?, capabilities: [SiteCapability], completion: @escaping (Bool) -> Void) {
         guard !capabilities.isEmpty, let browser, let origin, let url = URL(string: origin),
               url.scheme == "https" || ["localhost", "127.0.0.1", "::1", "[::1]"].contains(url.host ?? ""),
               web.window === browser.window, !web.isHidden,
-              browser.visibleTabIDs.contains(where: { id in browser.tabs.contains { $0.id == id && $0.webView === web } }) || browser.peekTab?.webView === web else { completion(false); return }
+              browser.visibleTabIDs.contains(where: { id in browser.tabs.contains { $0.id == id && $0.page.view === web } }) || browser.peekTab?.page.view === web else { completion(false); return }
         let decisions = capabilities.map { browser.sitePermissions.permission($0, origin: origin) }
         guard !decisions.contains(.block) else { completion(false); return }
         if decisions.allSatisfy({ $0 == .allow }) { completion(true); return }
@@ -48,11 +50,11 @@ import UserNotifications
         browser.siteControlsPopover.close(); browser.siteInfoPopover.close()
         browser.showSidebarAtOnce()
         requestingWebView = web
-        let documentURL = web.url
+        let documentURL = browser.page(showing: web)?.url
         reply = { [weak self, weak browser, weak web] allowed in
             guard let browser, let web, web.window === browser.window else { completion(false); return }
             let finish: (Bool) -> Void = { [weak web, weak browser] granted in
-                guard let browser, let web, web.url == documentURL, web.window === browser.window else { completion(false); return }
+                guard let browser, let web, browser.page(showing: web)?.url == documentURL, web.window === browser.window else { completion(false); return }
                 if granted { capabilities.forEach { browser.sitePermissions.set(.allow, for: $0, origin: origin) } }
                 completion(granted)
             }
@@ -69,7 +71,7 @@ import UserNotifications
         let completion = reply; reply = nil; requestingWebView = nil
         popover.close(); completion?(allowed)
     }
-    func cancel(for web: WKWebView? = nil) {
+    func cancel(for web: NSView? = nil) {
         if web == nil || requestingWebView === web { resolve(false) }
     }
     func popoverDidClose(_ notification: Notification) { resolve(false) }

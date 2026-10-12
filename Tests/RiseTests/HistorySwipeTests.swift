@@ -113,7 +113,7 @@ final class HistorySwipeTests: XCTestCase {
         XCTAssertTrue(web.canGoBack)
         XCTAssertFalse(web.allowsBackForwardNavigationGestures)
         var clicks = 0, pulls = [Double](), releases = [Bool]()
-        let router = HistorySwipeController(window: browser.window as! BrowserWindow, pageAt: { _ in web },
+        let router = HistorySwipeController(window: browser.window as! BrowserWindow, pageAt: { _ in tab.page },
             feedback: { _, pull, _, release in if let release { releases.append(release) } else { pulls.append(pull) } })
         router.thresholdClick = { clicks += 1 }
         XCTAssertTrue(router.handle(event(.began, fingerX: 10)))
@@ -258,7 +258,7 @@ final class HistorySwipeTests: XCTestCase {
         let shape = try XCTUnwrap(arrow.layer?.sublayers?.compactMap { $0 as? CAShapeLayer }.first)
         let restingHeight = try XCTUnwrap(shape.path).boundingBox.height
         arrow.drag(pull: 1, armed: true)
-        XCTAssertEqual(try XCTUnwrap(shape.path).boundingBox.height, restingHeight * 0.75, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(shape.path).boundingBox.height, restingHeight * 0.65, accuracy: 0.001, "The head's points are about a third shorter at the threshold")
         arrow.drag(pull: 0.8, armed: false)
         XCTAssertFalse(arrow.armed)
         XCTAssertEqual(shape.strokeColor, arrow.contentTintColor?.cgColor)

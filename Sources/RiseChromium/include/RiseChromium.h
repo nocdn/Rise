@@ -1,0 +1,177 @@
+#import <AppKit/AppKit.h>
+
+NS_ASSUME_NONNULL_BEGIN
+
+/// Chromium's browser process inside Rise: started once, before any page.
+@interface RCEngine : NSObject
+/// Loads the Chromium framework from the app bundle and starts it, keeping website data in
+/// `cachePath`. Call on the main thread after `RCApplication.sharedApplication`, before the
+/// run loop starts. Returns NO if Chromium couldn't start.
+///
+/// Chromium encrypts cookies and saved data with a key it keeps in the Keychain, in Rise's own
+/// item ("Rise Safe Storage"). A throwaway profile, such as a test's, passes `keychain` NO: its
+/// key is made up in memory and the Keychain is never asked, so it can't prompt for a password.
++ (BOOL)startWithCachePath:(NSString *)cachePath keychain:(BOOL)keychain;
+@property (class, readonly) BOOL isRunning;
+/// Stops Chromium; call as the app terminates.
++ (void)shutdown;
+@end
+
+/// The application class Chromium needs: it tells Chromium when AppKit is delivering an event.
+@interface RCApplication : NSApplication
+@end
+
+/// Where a page asks for a link to open.
+typedef NS_ENUM(NSInteger, RCOpenDisposition) {
+  RCOpenDispositionForegroundTab,
+  RCOpenDispositionBackgroundTab,
+  RCOpenDispositionWindow,
+  RCOpenDispositionPopup,
+};
+
+/// A frame a Rise script posted from, to run scripts in again: Chromium's DevTools session for
+/// its process (empty for the page's own) and the script's execution context there.
+@interface RCFrame : NSObject
+@property (nonatomic, readonly) NSString *session;
+@property (nonatomic, readonly) NSInteger context;
+@property (nonatomic, readonly) BOOL isMain;
+/// As the frame reports it: "https://example.com", or "null" for an opaque origin.
+@property (nonatomic, readonly) NSString *origin;
+@end
+
+/// A file the page is downloading.
+typedef NS_ENUM(NSInteger, RCDownloadState) {
+  RCDownloadStateDownloading,
+  RCDownloadStatePaused,
+  RCDownloadStateFinished,
+  RCDownloadStateCancelled,
+  RCDownloadStateFailed,
+};
+@interface RCDownload : NSObject
+@property (nonatomic, readonly) NSURL *url;
+@property (nonatomic, readonly) RCDownloadState state;
+@property (nonatomic, readonly) int64_t receivedBytes;
+/// -1 while unknown.
+@property (nonatomic, readonly) int64_t totalBytes;
+/// Called on the main thread whenever the state or the byte counts change.
+@property (nonatomic, copy, nullable) void (^onUpdate)(RCDownload *download);
+- (void)pause;
+- (void)resume;
+- (void)cancel;
+@end
+
+/// What a page asks permission for.
+typedef NS_OPTIONS(NSUInteger, RCPermission) {
+  RCPermissionCamera = 1 << 0,
+  RCPermissionMicrophone = 1 << 1,
+  RCPermissionLocation = 1 << 2,
+};
+
+@class RCBrowserView;
+@protocol RCBrowserViewDelegate <NSObject>
+/// The page's address, title, loading state or history changed.
+- (void)browserViewDidChange:(RCBrowserView *)browserView;
+@optional
+/// The pointer moved onto a link, or off one (nil).
+- (void)browserView:(RCBrowserView *)browserView didHoverLink:(nullable NSURL *)url;
+/// The page wants `url` somewhere other than itself, a new tab or window. Return YES once
+/// Rise has opened it; NO lets it open in this page instead.
+- (BOOL)browserView:(RCBrowserView *)browserView openURL:(NSURL *)url disposition:(RCOpenDisposition)disposition
+        userGesture:(BOOL)userGesture;
+/// "Open Link in Peek" from the page's context menu.
+- (void)browserView:(RCBrowserView *)browserView openLinkInPeek:(NSURL *)url;
+/// A Rise script posted `body` to `handler`. `reply` is set for handlers added with replies,
+/// and must be called once.
+- (void)browserView:(RCBrowserView *)browserView
+    didReceiveMessage:(id)body
+              handler:(NSString *)handler
+                frame:(RCFrame *)frame
+                reply:(nullable void (^)(id _Nullable value, NSString *_Nullable error))reply;
+/// The page wants to save a file named `suggestedName`: return where, or nil not to.
+- (nullable NSURL *)browserView:(RCBrowserView *)browserView
+         destinationForDownload:(RCDownload *)download
+                  suggestedName:(NSString *)suggestedName;
+/// `origin` asks for `permissions`; call `decide` once with those allowed (none to deny).
+- (void)browserView:(RCBrowserView *)browserView
+    requestPermissions:(RCPermission)permissions
+                origin:(NSString *)origin
+                decide:(void (^)(RCPermission allowed))decide;
+/// A permission request was withdrawn, as by navigating away, before it was decided.
+- (void)browserViewDidWithdrawPermissionRequest:(RCBrowserView *)browserView;
+@end
+
+/// A page drawn by Chromium, filling this view. Rise lays it out, clips and animates it like
+/// any other view.
+@interface RCBrowserView : NSView
+- (instancetype)initWithFrame:(NSRect)frame URL:(nullable NSURL *)url NS_DESIGNATED_INITIALIZER;
+- (instancetype)initWithFrame:(NSRect)frameRect NS_UNAVAILABLE;
+- (nullable instancetype)initWithCoder:(NSCoder *)coder NS_UNAVAILABLE;
+@property (nonatomic, weak, nullable) id<RCBrowserViewDelegate> delegate;
+@property (nonatomic, readonly, nullable) NSURL *URL;
+@property (nonatomic, readonly, nullable) NSString *title;
+@property (nonatomic, readonly) BOOL isLoading;
+@property (nonatomic, readonly) BOOL canGoBack;
+@property (nonatomic, readonly) BOOL canGoForward;
+@property (nonatomic, readonly) double progress;
+/// Whether the page makes sound now.
+@property (nonatomic, readonly) BOOL audible;
+/// The back/forward history, with scroll positions and forms, for restoring at the next launch.
+@property (nonatomic, readonly, nullable) NSData *navigationState;
+/// Gives a page that hasn't loaded anything that history and loads its current entry, or loads
+/// `fallback` if it can't use it.
+- (void)restoreNavigationState:(NSData *)state fallback:(NSURL *)fallback;
+/// The link under the pointer.
+@property (nonatomic, readonly, nullable) NSURL *hoveredURL;
+/// Under something else, such as a Peek: the page takes no hover and sets no cursor, though
+/// mouse tracking would otherwise reach it through whatever covers it.
+@property (nonatomic) BOOL covered;
+/// Page zoom as a factor, 1 for 100%.
+@property (nonatomic) double zoom;
+/// The color shown where the page hasn't painted yet.
+@property (nonatomic, copy) NSColor *pageBackgroundColor;
+- (void)loadURL:(NSURL *)url NS_SWIFT_NAME(open(_:));
+- (void)goBack;
+- (void)goForward;
+- (void)reload;
+- (void)reloadIgnoringCache;
+- (void)stopLoading;
+- (void)setAudioMuted:(BOOL)muted;
+/// Runs `functionBody` as the body of an async function with `arguments` as its parameters,
+/// in the isolated script world `world`, which the page's own scripts can't see. Completes
+/// with the returned value, as JSON allows, or nil if it threw or the page went away.
+- (void)evaluateFunctionBody:(NSString *)functionBody
+                   arguments:(NSDictionary<NSString *, id> *)arguments
+                       world:(NSString *)world
+                  completion:(void (^)(id _Nullable result))completion;
+/// Runs `source` in `world` at the start of every document this page loads from now on,
+/// and in the current one.
+- (void)addScriptToEveryDocument:(NSString *)source world:(NSString *)world;
+/// Lets Rise scripts in `world` (nil: the page's own) post to `name`, as
+/// `riseHandlers.<name>.postMessage(body)`, which returns a promise of the reply when `replies`.
+/// Add handlers before the scripts that use them.
+- (void)addMessageHandler:(NSString *)name world:(nullable NSString *)world replies:(BOOL)replies;
+/// Runs `source` at the start of every document, in every frame (or only the main one), in
+/// `world` (nil: the page's own), with `riseHandlers` holding the message handlers it's given.
+/// Frames of other sites, in processes of their own, run it too.
+- (void)addUserScript:(NSString *)source
+                world:(nullable NSString *)world
+        mainFrameOnly:(BOOL)mainFrameOnly
+             handlers:(NSArray<NSString *> *)handlers;
+/// As `evaluateFunctionBody:arguments:world:completion:`, in `frame` (nil: the main one) and
+/// `world` (nil: the page's own), reporting why it failed.
+- (void)evaluateFunctionBody:(NSString *)functionBody
+                   arguments:(NSDictionary<NSString *, id> *)arguments
+                       frame:(nullable RCFrame *)frame
+                       world:(nullable NSString *)world
+                  completion:(void (^)(id _Nullable result, NSString *_Nullable error))completion;
+/// The page's live picture, `rect` of it (in this view's coordinates), for showing elsewhere in
+/// the window, as a Peek's card does on its way to and from its link: Chromium draws into it as
+/// into the page, with nothing copied. Nil until the page has drawn. Scale it with a transform.
+- (nullable CALayer *)liveLayerShowing:(NSRect)rect;
+/// A picture of what the page shows now, the size of this view.
+- (void)snapshotWithCompletion:(void (^)(NSImage *_Nullable image))completion;
+/// Closes the page for good; the view shows nothing after.
+- (void)close;
+@end
+
+NS_ASSUME_NONNULL_END

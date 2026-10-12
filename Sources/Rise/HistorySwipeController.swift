@@ -7,18 +7,15 @@ import WebKit
 /// as in Safari, pages that take the wheel themselves, like a drawing canvas that pans:
 /// a gesture's first events reach the page at once, and only swipe if it lets them be.
 @MainActor final class HistorySwipeController {
-    static let world = WKContentWorld.world(name: "Rise.HistorySwipe")
+    static let worldName = "Rise.HistorySwipe"
+    static let world = WKContentWorld.world(name: worldName)
     private weak var window: BrowserWindow?
-    private let pageAt: (NSEvent) -> WKWebView?
+    private let pageAt: (NSEvent) -> WebPage?
     private let feedback: (HistoryDirection?, Double, Bool, Bool?) -> Void
-    var prepareCloth: ((WKWebView) -> Void)?
-    var dragCloth: ((WKWebView, HistoryDirection, Double) -> Void)?
-    var releaseCloth: ((Double, Bool, Bool) -> Void)?
-    var cancelCloth: (() -> Void)?
-    var isPeekPage: ((WKWebView) -> Bool)?
+    var isPeekPage: ((WebPage) -> Bool)?
     /// Whether a page can go that way, which can include pages the browser holds beyond its own history.
-    var canNavigate: (WKWebView, HistoryDirection) -> Bool = { page, direction in direction == .back ? page.canGoBack : page.canGoForward }
-    var navigate: (WKWebView, HistoryDirection) -> Void = { page, direction in if direction == .back { page.goBack() } else { page.goForward() } }
+    var canNavigate: (WebPage, HistoryDirection) -> Bool = { page, direction in direction == .back ? page.canGoBack : page.canGoForward }
+    var navigate: (WebPage, HistoryDirection) -> Void = { page, direction in if direction == .back { page.goBack() } else { page.goForward() } }
     var dragPeek: ((Double) -> Void)?
     var releasePeek: ((Bool) -> Void)?
     var cancelPeek: (() -> Void)?
@@ -26,14 +23,13 @@ import WebKit
     var thresholdClick: () -> Void = {
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
     }
-    private weak var page: WKWebView?
+    private weak var page: WebPage?
     private(set) var gesture = HistorySwipeState()
     private var pending: [NSEvent] = []
     private var probing = false, permitted = false, suppressMomentum = false
-    private var clothPrepared = false
     private var generation = 0
     private var probeTimeout: DispatchWorkItem?
-    init(window: BrowserWindow, pageAt: @escaping (NSEvent) -> WKWebView?,
+    init(window: BrowserWindow, pageAt: @escaping (NSEvent) -> WebPage?,
          feedback: @escaping (HistoryDirection?, Double, Bool, Bool?) -> Void) {
         self.window = window; self.pageAt = pageAt; self.feedback = feedback
     }
@@ -51,9 +47,6 @@ import WebKit
             peekGesture = isPeekPage?(page) == true
             guard peekGesture || canNavigate(page, .back) || canNavigate(page, .forward) else { return false }
             self.page = page; probing = true; pending = []
-            if !peekGesture, abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) * 1.2 {
-                prepareCloth?(page); clothPrepared = true
-            }
             hold(event)
             probe(page, at: event)
             return true
@@ -66,18 +59,20 @@ import WebKit
     private func hold(_ event: NSEvent) {
         pending.append(event); window?.deliverPageScroll(event)
     }
-    private func probe(_ page: WKWebView, at event: NSEvent) {
+    private func probe(_ page: WebPage, at event: NSEvent) {
         let token = generation
-        let point = page.convert(event.locationInWindow, from: nil)
+        let view = page.view
+        var point = view.convert(event.locationInWindow, from: nil)
+        if !view.isFlipped { point.y = view.bounds.height-point.y }
         let timeout = DispatchWorkItem { [weak self] in self?.resolveProbe(false, token: token) }
         probeTimeout = timeout
         // A busy web process doesn't swipe; scrolling never waits for it.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: timeout)
         Task { [weak self, weak page] in
             guard let page else { self?.resolveProbe(false, token: token); return }
-            let result = try? await page.callAsyncJavaScript(Self.scrollProbe,
-                arguments: ["x": point.x, "y": point.y, "width": max(1, page.bounds.width), "height": max(1, page.bounds.height)],
-                in: nil, contentWorld: Self.world)
+            let result = await page.evaluate(Self.scrollProbe,
+                arguments: ["x": point.x, "y": point.y, "width": max(1, view.bounds.width), "height": max(1, view.bounds.height)],
+                world: Self.worldName)
             self?.resolveProbe(result as? Bool ?? false, token: token)
         }
     }
@@ -87,7 +82,6 @@ import WebKit
         let events = pending; pending.removeAll()
         // The page has had these already; a swipe takes over their travel.
         if allows { gesture.begin(); events.forEach { _ = handleResolved($0) } }
-        else { cancelCloth?(); clothPrepared = false }
     }
     private func handleResolved(_ event: NSEvent) -> Bool {
         if !event.momentumPhase.isEmpty {
@@ -114,40 +108,32 @@ import WebKit
         if gesture.move(dx: Double(dx), dy: Double(event.scrollingDeltaY),
                         canBack: peekGesture || canNavigate(page, .back), canForward: canNavigate(page, .forward)) { thresholdClick() }
         if gesture.consumesScroll {
+            // The page stays still; only the arrow answers, and a Peek follows the pull back.
             feedback(gesture.direction, gesture.arrowPull, gesture.isArmed, nil)
-            if let direction = gesture.direction {
-                if peekGesture, direction == .back { dragPeek?(gesture.arrowPull) }
-                else {
-                    if !clothPrepared { prepareCloth?(page); clothPrepared = true }
-                    dragCloth?(page, direction, gesture.distance)
-                }
-            }
+            if peekGesture, gesture.direction == .back { dragPeek?(gesture.arrowPull) }
         }
         return gesture.consumesScroll
     }
     private func finish(cancelled: Bool) -> Bool {
-        let consumed = gesture.consumesScroll, direction = gesture.direction, distance = gesture.distance
+        let consumed = gesture.consumesScroll, direction = gesture.direction
         let page = self.page, committed = gesture.finish(cancelled: cancelled)
         let dismissesPeek = peekGesture && direction == .back
         suppressMomentum = consumed; permitted = false; self.page = nil; peekGesture = false
         feedback(direction, 0, false, committed != nil)
         if dismissesPeek { releasePeek?(committed != nil) }
-        else if consumed { releaseCloth?(distance, committed != nil, cancelled) }
-        else { cancelCloth?() }
+        // Past the threshold the page simply goes there, at once.
         if !dismissesPeek, let committed, let page {
             navigate(page, committed)
         }
         return consumed
     }
-    func cancel(for page: WKWebView) { if self.page === page { cancel() } }
+    func cancel(for page: WebPage) { if self.page === page { cancel() } }
     func cancel() {
         generation += 1; probeTimeout?.cancel(); probeTimeout = nil
         pending.removeAll(); probing = false; permitted = false; suppressMomentum = false
-        clothPrepared = false
         let direction = gesture.direction, returnsPeek = peekGesture && direction == .back
         _ = gesture.finish(cancelled: true); page = nil; peekGesture = false
         if returnsPeek { cancelPeek?() }
-        cancelCloth?()
         if let direction { feedback(direction, 0, false, false) }
     }
     /// Notes when the page cancels a wheel event, which a page that pans or zooms with the
@@ -161,6 +147,10 @@ import WebKit
     })();
     """#
     private static let watched = NSHashTable<WKUserContentController>.weakObjects()
+    static func install(on page: WebPage) {
+        guard let webView = (page as? WebKitPage)?.webView else { page.addScriptToEveryDocument(wheelWatch, world: worldName); return }
+        install(on: webView)
+    }
     static func install(on webView: WKWebView) {
         let controller = webView.configuration.userContentController
         // window.open can supply a configuration sharing the opener's controller.
@@ -198,17 +188,17 @@ import WebKit
 }
 
 @MainActor extension BrowserController {
-    func historyPage(at event: NSEvent) -> WKWebView? {
+    func historyPage(at event: NSEvent) -> WebPage? {
         // Hit-testing also excludes the URL palette, find panel, and Peek controls.
         guard window?.isKeyWindow == true else { return nil }
         let point = root.convert(event.locationInWindow, from: nil)
         guard let hit = root.hitTest(point) else { return nil }
-        let pages = [peekTab?.webView, selectedTab?.webView, splitTab?.webView].compactMap { $0 }
-        guard let page = pages.first(where: { $0.superview != nil && (hit === $0 || hit.isDescendant(of: $0)) }) else { return nil }
+        let pages = [peekTab?.page, selectedTab?.page, splitTab?.page].compactMap { $0 }
+        guard let page = pages.first(where: { $0.view.superview != nil && (hit === $0.view || hit.isDescendant(of: $0.view)) }) else { return nil }
         // A Peek that has gone somewhere doesn't swipe: it neither goes back nor closes, so
         // browsing inside it can't throw it away. Its history is on the toolbar arrows.
-        if page === peekTab?.webView, peekHasNavigated { return nil }
-        if let tab = tabs.first(where: { $0.webView === page }), selectedID != tab.id { select(tab.id) }
+        if page === peekTab?.page, peekHasNavigated { return nil }
+        if let tab = tabs.first(where: { $0.page === page }), selectedID != tab.id { select(tab.id) }
         return page
     }
 }

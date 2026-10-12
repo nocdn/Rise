@@ -3,11 +3,14 @@ import AppKit
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
     var browser: BrowserController!
     func applicationDidFinishLaunching(_ notification: Notification) {
-        browser = BrowserController(); buildMenu()
+        browser = BrowserController(sessionURL: RiseProfile.directory?.appendingPathComponent("session.json")); buildMenu()
         browser.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
-    func applicationWillTerminate(_ notification: Notification) { browser?.pictureInPicture.tearDown(); browser?.saveNow() }
+    func applicationWillTerminate(_ notification: Notification) {
+        browser?.pictureInPicture.tearDown(); browser?.saveNow()
+        ChromiumEngine.shutdown()
+    }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func application(_ application: NSApplication, open urls: [URL]) {
         if browser == nil { browser = BrowserController(); buildMenu(); browser.showWindow(nil) }

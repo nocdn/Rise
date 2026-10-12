@@ -12,21 +12,23 @@ final class PeekStandbyView: FlippedView {
     /// A short dwell keeps sweeps across many links from loading each one.
     func updatePeekStandby(modifiers: NSEvent.ModifierFlags = NSEvent.modifierFlags) {
         peekStandbyWork?.cancel(); peekStandbyWork = nil
-        guard shouldPeek(modifiers: modifiers), let web = hoveredWebView, web !== peekTab?.webView, let url = linkStatus.url,
-              LinkPreloader.isEligible(url, from: web.url), peekStandby?.url != url else { return }
+        guard shouldPeek(modifiers: modifiers), let web = hoveredWebView, web !== peekTab?.page.view, let url = linkStatus.url,
+              let page = page(showing: web), LinkPreloader.isEligible(url, from: page.url), peekStandby?.url != url else { return }
+        let engine = page.engine
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.linkStatus.url == url, self.shouldPeek(modifiers: NSEvent.modifierFlags) else { return }
-            self.renderPeekStandby(url)
+            self.renderPeekStandby(url, engine: engine)
         }
         peekStandbyWork = work
         DispatchQueue.main.asyncAfter(deadline: .now()+0.08, execute: work)
     }
-    func renderPeekStandby(_ url: URL) {
+    /// The standby page uses the hovered page's engine, as the Peek it becomes does.
+    func renderPeekStandby(_ url: URL, engine: WebEngine = .webKit) {
         discardPeekStandby()
-        let tab = configure(BrowserTab())
+        let tab = configure(BrowserTab(engine: engine))
         // It renders invisibly behind the page, so it mustn't take hover until it's shown.
-        (tab.webView as? LinkCursorWebView)?.isCovered = true
-        peekStandbyView.alphaValue = 0; peekStandbyView.addSubview(tab.webView)
+        setCovered(true, tab)
+        peekStandbyView.alphaValue = 0; peekStandbyView.addSubview(tab.page.view)
         if peekStandbyView.superview == nil { root.addSubview(peekStandbyView, positioned: .below, relativeTo: pageShadow) }
         peekStandby = (url, tab); layoutPeekStandby(); tab.load(url)
         // An abandoned standby page stops using resources after a while.
@@ -36,20 +38,20 @@ final class PeekStandbyView: FlippedView {
     }
     func layoutPeekStandby() {
         peekStandbyView.frame = peekCardFrame
-        peekStandby?.tab.webView.frame = peekStandbyView.bounds
+        peekStandby?.tab.page.view.frame = peekStandbyView.bounds
     }
     /// Hands over the standby page if it is the one being Peeked; otherwise drops it.
     func takePeekStandby(for url: URL) -> BrowserTab? {
         guard let standby = peekStandby, standby.url == url else { discardPeekStandby(); return nil }
         peekStandby = nil; peekStandbyExpiry?.cancel(); peekStandbyExpiry = nil
-        standby.tab.webView.removeFromSuperview()
+        standby.tab.page.view.removeFromSuperview()
         return standby.tab
     }
     func discardPeekStandby() {
         peekStandbyExpiry?.cancel(); peekStandbyExpiry = nil
         guard let standby = peekStandby else { return }
         peekStandby = nil
-        permissionCoordinator.cancel(for: standby.tab.webView)
-        standby.tab.cancelLoad(); standby.tab.webView.removeFromSuperview()
+        permissionCoordinator.cancel(for: standby.tab.page.view)
+        standby.tab.cancelLoad(); standby.tab.page.view.removeFromSuperview()
     }
 }

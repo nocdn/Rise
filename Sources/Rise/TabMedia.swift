@@ -1,10 +1,4 @@
-import WebKit
-
-@MainActor private final class TabMediaBridge: NSObject, WKScriptMessageHandler {
-    weak var owner: TabMedia?
-    init(_ owner: TabMedia) { self.owner = owner }
-    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) { owner?.receive(message) }
-}
+import AppKit
 
 /// Follows the audio and video each tab plays, in every frame, so the tab's play
 /// button can pause and resume any site's media, not only YouTube's. Media counts
@@ -12,12 +6,11 @@ import WebKit
 @MainActor final class TabMedia: NSObject {
     static let handler = "riseTabMedia"
     weak var browser: BrowserController?
-    private let controllers = NSHashTable<WKUserContentController>.weakObjects()
     private struct Frame {
         var paused: Bool
         /// When the frame last played, so play resumes the frame heard most recently.
         var playedAt: CFTimeInterval
-        var info: WKFrameInfo
+        var frame: PageFrame
     }
     private var frames: [UUID: [String: Frame]] = [:]
     /// Called when a tab's state changes.
@@ -25,13 +18,10 @@ import WebKit
 
     init(browser: BrowserController?) { self.browser = browser; super.init() }
 
-    func install(on web: WKWebView) {
-        let content = web.configuration.userContentController
-        guard !controllers.contains(content) else { return }
-        controllers.add(content)
+    func install(on page: WebPage) {
         // The page's world, so media the page never adds to its document is seen as well.
-        content.add(TabMediaBridge(self), contentWorld: .page, name: Self.handler)
-        content.addUserScript(WKUserScript(source: Self.script, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page))
+        page.addMessageHandler(Self.handler, world: .page) { [weak self] message in self?.receive(message) }
+        page.addUserScript(Self.script, world: .page, mainFrameOnly: false, handlers: [Self.handler])
     }
 
     /// Whether the tab's media is paused, or nil when it has none.
@@ -45,12 +35,14 @@ import WebKit
         guard let tab = browser?.tabs.first(where: { $0.id == id }), let frames = frames[id], !frames.isEmpty else { return }
         let pause = paused(id) == false
         let targets = pause ? frames.filter { !$0.value.paused } : frames.max { $0.value.playedAt < $1.value.playedAt }.map { [$0.key: $0.value] } ?? [:]
+        let page = tab.page
         for (key, frame) in targets {
-            tab.webView.callAsyncJavaScript("return window.__riseTabMedia?.toggle(pause) ?? null", arguments: ["pause": pause],
-                                            in: frame.info, in: .page) { [weak self, weak tab] result in
+            page.evaluate("return window.__riseTabMedia?.toggle(pause) ?? null", arguments: ["pause": pause],
+                          in: frame.frame, world: .page) { [weak self, weak tab] result in
+                let value = try? result.get()
                 // A hidden page reports late, since its timers are throttled.
                 guard let self, let tab else { return }
-                if case .success(let value) = result, let paused = value as? Bool { self.update(tab.id, key: key) { $0.paused = paused } }
+                if let paused = value as? Bool { self.update(tab.id, key: key) { $0.paused = paused } }
                 // The answer the button waits for; reports before it can't undo the press.
                 self.browser?.sidebar.rows[tab.id]?.setPlayback(paused: self.browser?.playbackPaused(tab.id), confirmed: true)
             }
@@ -63,16 +55,16 @@ import WebKit
         onChange?(id)
     }
 
-    func receive(_ message: WKScriptMessage) {
-        guard let web = message.webView, let tab = browser?.tabs.first(where: { $0.webView === web }),
+    func receive(_ message: PageMessage) {
+        guard let page = message.page, let tab = browser?.tabs.first(where: { $0.page === page }),
               let body = message.body as? [String: Any], let key = body["frame"] as? String else { return }
         let before = paused(tab.id)
         switch body["state"] as? String {
         case "playing":
-            frames[tab.id, default: [:]][key] = Frame(paused: false, playedAt: CACurrentMediaTime(), info: message.frameInfo)
+            frames[tab.id, default: [:]][key] = Frame(paused: false, playedAt: CACurrentMediaTime(), frame: message.frame)
         case "paused":
             let playedAt = frames[tab.id]?[key]?.playedAt ?? CACurrentMediaTime()
-            frames[tab.id, default: [:]][key] = Frame(paused: true, playedAt: playedAt, info: message.frameInfo)
+            frames[tab.id, default: [:]][key] = Frame(paused: true, playedAt: playedAt, frame: message.frame)
         default:
             frames[tab.id]?[key] = nil
             if frames[tab.id]?.isEmpty == true { frames[tab.id] = nil }
@@ -89,7 +81,7 @@ import WebKit
     static let script = #"""
     (() => {
       if (window.__riseTabMedia) return;
-      const handler = window.webkit?.messageHandlers?.riseTabMedia;
+      const handler = riseHandlers.riseTabMedia;
       if (!handler) return;
       const post = handler.postMessage.bind(handler);
       const frame = Math.random().toString(36).slice(2);

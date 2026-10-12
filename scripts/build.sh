@@ -18,5 +18,9 @@ cp THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/THIRD_PARTY_NOTICES.md"
 xcrun actool "$PWD/Assets/AppIcon/Rise.icon" --compile "$APP/Contents/Resources" --app-icon Rise --include-all-app-icons \
   --output-partial-info-plist "$PWD/.build/icon-info.plist" --target-device mac --platform macosx \
   --minimum-deployment-target 14.0 --output-format human-readable-text --errors > /dev/null
+# The Chromium engine goes in where this Mac has built it (see Engine/README.md).
+if [[ -x .build/release/RiseHelper ]]; then
+  python3 scripts/engine/package.py "$APP" .build/release/RiseHelper
+fi
 python3 scripts/sign-app.py "$APP"
 echo "Built $APP"

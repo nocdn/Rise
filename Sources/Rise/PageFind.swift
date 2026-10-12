@@ -12,18 +12,19 @@ import WebKit
 
     /// An isolated world keeps the page's own scripts from seeing or breaking the finder.
     static let world = WKContentWorld.world(name: "RiseFind")
+    static let worldName = "RiseFind"
     /// Pages where the native fallback ran; WebKit marks its matches, and only a search that
     /// matches nothing clears them (an empty one doesn't).
     private static let nativelyMarked = NSHashTable<WKWebView>.weakObjects()
 
-    static func find(_ query: String, direction: Direction, in webView: WKWebView) async -> Matches {
-        switch await call("return __riseFind.find(query, direction)", ["query": query, "direction": direction.rawValue], in: webView) {
+    static func find(_ query: String, direction: Direction, in page: WebPage) async -> Matches {
+        switch await call("return __riseFind.find(query, direction)", ["query": query, "direction": direction.rawValue], in: page) {
         case .success(let result as [String: Any]):
             if let count = result["count"] as? Int, let index = result["index"] as? Int { return Matches(count: count, index: index) }
             return Matches(count: nil, index: -1)
         case .success:
             // Only a page that can't draw highlights at all searches natively.
-            return await findNatively(query, backwards: direction == .previous, in: webView)
+            return await findNatively(query, backwards: direction == .previous, in: page)
         case .failure:
             // A page mid-navigation can reject the call. Falling back here would leave native
             // marks the in-page finder knows nothing about, so report the count as unknown instead.
@@ -32,43 +33,45 @@ import WebKit
     }
     /// Use the finder's own text extraction for model context so verbatim snippets map to
     /// the same DOM nodes, including around inline links and hidden accessibility labels.
-    static func visibleText(in webView: WKWebView) async -> String? {
-        if case .success(let text as String) = await call("return __riseFind.sourceText()", [:], in: webView) { return text }
+    static func visibleText(in page: WebPage) async -> String? {
+        if case .success(let text as String) = await call("return __riseFind.sourceText()", [:], in: page) { return text }
         return nil
     }
     /// Removes the find highlights and, on closing, selects the current match as browsers do.
-    static func clear(_ webView: WKWebView, selectingCurrent: Bool) async {
-        await clearNativeMarks(webView)
-        _ = await call("return __riseFind.clear(select)", ["select": selectingCurrent], in: webView)
+    static func clear(_ page: WebPage, selectingCurrent: Bool) async {
+        await clearNativeMarks(page)
+        _ = await call("return __riseFind.clear(select)", ["select": selectingCurrent], in: page)
     }
     /// Highlights the first occurrence of `quote` and scrolls to it; false when it isn't on the page.
-    static func highlightPassage(_ quote: String, in webView: WKWebView) async -> Bool {
-        switch await call("return __riseFind.passage(quote)", ["quote": quote], in: webView) {
+    static func highlightPassage(_ quote: String, in page: WebPage) async -> Bool {
+        switch await call("return __riseFind.passage(quote)", ["quote": quote], in: page) {
         case .success(let found as Bool): return found
-        case .success: return await findNatively(quote, backwards: false, in: webView).index >= 0
+        case .success: return await findNatively(quote, backwards: false, in: page).index >= 0
         case .failure: return false
         }
     }
-    static func clearPassage(_ webView: WKWebView) async {
-        await clearNativeMarks(webView)
-        _ = await call("return __riseFind.passage('')", [:], in: webView)
+    static func clearPassage(_ page: WebPage) async {
+        await clearNativeMarks(page)
+        _ = await call("return __riseFind.passage('')", [:], in: page)
     }
 
-    private static func findNatively(_ query: String, backwards: Bool, in webView: WKWebView) async -> Matches {
-        guard !query.isEmpty else { await clearNativeMarks(webView); return Matches(count: 0, index: -1) }
+    /// Only WebKit lacks highlights in some builds; Chromium always has them.
+    private static func findNatively(_ query: String, backwards: Bool, in page: WebPage) async -> Matches {
+        guard let webView = (page as? WebKitPage)?.webView else { return Matches(count: nil, index: -1) }
+        guard !query.isEmpty else { await clearNativeMarks(page); return Matches(count: 0, index: -1) }
         nativelyMarked.add(webView)
         let configuration = WKFindConfiguration(); configuration.backwards = backwards; configuration.wraps = true
         let found = (try? await webView.find(query, configuration: configuration))?.matchFound ?? false
         return Matches(count: found ? nil : 0, index: found ? 0 : -1)
     }
-    private static func clearNativeMarks(_ webView: WKWebView) async {
-        guard nativelyMarked.contains(webView) else { return }
+    private static func clearNativeMarks(_ page: WebPage) async {
+        guard let webView = (page as? WebKitPage)?.webView, nativelyMarked.contains(webView) else { return }
         nativelyMarked.remove(webView)
         let configuration = WKFindConfiguration(); configuration.wraps = true
         _ = try? await webView.find("\u{1}\u{2}\u{1}", configuration: configuration)
     }
-    private static func call(_ body: String, _ arguments: [String: Any], in webView: WKWebView) async -> Result<Any?, Error> {
-        do { return .success(try await webView.callAsyncJavaScript(script+"\n"+body, arguments: arguments, in: nil, contentWorld: world)) }
+    private static func call(_ body: String, _ arguments: [String: Any], in page: WebPage) async -> Result<Any?, Error> {
+        do { return .success(try await page.evaluate(script+"\n"+body, arguments: arguments, in: nil, world: .named(worldName))) }
         catch { return .failure(error) }
     }
 

@@ -2,7 +2,7 @@ import AppKit
 import WebKit
 
 /// Owns WebKit's cancel/resume lifecycle separately from the popover's lifetime.
-@MainActor final class DownloadTransfer: NSObject, WKDownloadDelegate {
+@MainActor final class DownloadTransfer: NSObject, WKDownloadDelegate, DownloadControl {
     private var download: WKDownload?
     private let source: WKWebView
     private let request: URLRequest?

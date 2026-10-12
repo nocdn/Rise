@@ -3,7 +3,7 @@ import WebKit
 
 /// The link a Peek grew out of: its rect in the source page and a snapshot of it.
 struct PeekOrigin {
-    weak var webView: WKWebView?
+    weak var page: WebPage?
     var rect: NSRect
     var image: NSImage?
     /// A whole page the Peek shrinks back out of, as ⌘Z after expanding does, in root coordinates.
@@ -27,6 +27,12 @@ final class PeekGhost: Surface {
     var pageAspect: CGFloat?
     var pageImage: NSImage? { didSet { page.layer?.contents = pageImage } }
     var linkImage: NSImage? { didSet { link.layer?.contents = linkImage } }
+    /// The page and the link themselves, live, where the engine can show them so: they take the
+    /// pictures' place, fitted and pinned the same way.
+    var pageLive: CALayer? { didSet { mount(pageLive, replacing: oldValue, in: page) } }
+    var linkLive: CALayer? { didSet { mount(linkLive, replacing: oldValue, in: link) } }
+    /// The pages it shows live, kept until it goes.
+    var holds: [AnyObject] = []
 
     init(color: NSColor) {
         clip = Surface(color: color, radius: 8)
@@ -41,16 +47,37 @@ final class PeekGhost: Surface {
     }
     required init?(coder: NSCoder) { fatalError() }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    func dismantle() { companions.forEach { $0.removeFromSuperview() }; companions = []; removeFromSuperview() }
+    func dismantle() { companions.forEach { $0.removeFromSuperview() }; companions = []; holds = []; removeFromSuperview() }
+    private func mount(_ live: CALayer?, replacing old: CALayer?, in view: NSView) {
+        old?.removeFromSuperlayer()
+        guard let live, let layer = view.layer else { return }
+        live.anchorPoint = .zero; live.position = .zero
+        layer.addSublayer(live)
+        fit(live, to: view.frame.width, along: nil)
+    }
+    /// Scales a live layer to `width` on the same spring as the view it fills, so they stay together.
+    private func fit(_ live: CALayer?, to width: CGFloat, along spring: CASpringAnimation?) {
+        guard let live, live.bounds.width > 0 else { return }
+        let scale = width/live.bounds.width, target = CATransform3DMakeScale(scale, scale, 1)
+        let shown = live.presentation()?.transform ?? live.transform
+        CATransaction.begin(); CATransaction.setDisableActions(true); live.transform = target; CATransaction.commit()
+        guard let spring else { live.removeAnimation(forKey: "peek.scale"); return }
+        let animation = spring.copy() as! CASpringAnimation
+        animation.keyPath = "transform"; animation.fromValue = NSValue(caTransform3D: shown)
+        animation.toValue = NSValue(caTransform3D: target); animation.duration = animation.settlingDuration
+        live.add(animation, forKey: "peek.scale")
+    }
     /// With a spring, every layer follows the same curve, so the parts stay aligned.
     func place(_ frame: NSRect, spring: CASpringAnimation? = nil) {
         let linkAspect = linkImage.map { $0.size.height / max(1, $0.size.width) }
+            ?? linkLive.map { $0.bounds.height / max(1, $0.bounds.width) }
         let size = frame.size
         for (view, target) in [(self, frame), (clip, NSRect(origin: .zero, size: size)),
                                (page, NSRect(x: 0, y: 0, width: size.width, height: size.width*(pageAspect ?? size.height/max(1, size.width)))),
                                (link, NSRect(x: 0, y: 0, width: size.width, height: size.width*(linkAspect ?? size.height/max(1, size.width))))] {
             if let spring { view.spring(to: target, along: spring) } else { view.frame = target }
         }
+        fit(pageLive, to: size.width, along: spring); fit(linkLive, to: size.width, along: spring)
     }
     func fadeShadow(to opacity: Float, duration: TimeInterval) {
         let animation = CABasicAnimation(keyPath: "shadowOpacity")
@@ -117,30 +144,28 @@ extension NSView {
     var peekMotionAllowed: Bool { window?.isVisible == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
     /// Sends the lookup to the page immediately, so it is not queued behind other work.
-    func peekLink(in web: WKWebView, locate: Bool, completion: @escaping (PeekOrigin?) -> Void) {
-        guard let window = web.window, web.magnification == 1, !web.isHiddenOrHasHiddenAncestor, web.bounds.width > 0 else { completion(nil); return }
-        let zoom = max(0.01, web.pageZoom)
+    func peekLink(in page: WebPage, locate: Bool, completion: @escaping (PeekOrigin?) -> Void) {
+        Task { completion(await peekLink(in: page, locate: locate)) }
+    }
+    func peekLink(in page: WebPage, locate: Bool) async -> PeekOrigin? {
+        let web = page.view
+        guard let window = web.window, !page.isMagnified, !web.isHiddenOrHasHiddenAncestor, web.bounds.width > 0 else { return nil }
+        let zoom = max(0.01, page.zoom)
         var point = web.convert(window.mouseLocationOutsideOfEventStream, from: nil)
         if !web.isFlipped { point.y = web.bounds.height - point.y }
         let inside = point.x >= 0 && point.y >= 0 && point.x <= web.bounds.width && point.y <= web.bounds.height
         let arguments: [String: Any] = ["x": inside ? point.x/zoom : -1, "y": inside ? point.y/zoom : -1, "locate": locate]
-        web.callAsyncJavaScript(Self.peekLinkScript, arguments: arguments, in: nil, in: .defaultClient) { [weak web] result in
-            guard let web, case .success(let value) = result, let box = value as? [NSNumber], box.count == 4 else { completion(nil); return }
-            var rect = NSRect(x: box[0].doubleValue*zoom, y: box[1].doubleValue*zoom, width: box[2].doubleValue*zoom, height: box[3].doubleValue*zoom)
-            if !web.isFlipped { rect.origin.y = web.bounds.height - rect.maxY }
-            rect = rect.insetBy(dx: -3, dy: -2).intersection(web.bounds)
-            guard !rect.isEmpty else { completion(nil); return }
-            let configuration = WKSnapshotConfiguration(); configuration.rect = rect; configuration.afterScreenUpdates = false
-            web.takeSnapshot(with: configuration) { image, _ in completion(PeekOrigin(webView: web, rect: rect, image: image)) }
-        }
-    }
-    func peekLink(in web: WKWebView, locate: Bool) async -> PeekOrigin? {
-        await withCheckedContinuation { continuation in peekLink(in: web, locate: locate) { continuation.resume(returning: $0) } }
+        guard let box = await page.evaluate(Self.peekLinkScript, arguments: arguments, world: nil) as? [NSNumber], box.count == 4 else { return nil }
+        var rect = NSRect(x: box[0].doubleValue*zoom, y: box[1].doubleValue*zoom, width: box[2].doubleValue*zoom, height: box[3].doubleValue*zoom)
+        if !web.isFlipped { rect.origin.y = web.bounds.height - rect.maxY }
+        rect = rect.insetBy(dx: -3, dy: -2).intersection(web.bounds)
+        guard !rect.isEmpty else { return nil }
+        return PeekOrigin(page: page, rect: rect, image: page.showsLiveLayers ? nil : await page.snapshot(rect: rect))
     }
     /// The origin's rect in root coordinates, if its page is still on screen.
     func peekFrame(of origin: PeekOrigin?) -> NSRect? {
         if let frame = origin?.rootFrame { return frame }
-        guard let origin, let web = origin.webView, web.window === window, !web.isHiddenOrHasHiddenAncestor else { return nil }
+        guard let origin, let web = origin.page?.view, web.window === window, !web.isHiddenOrHasHiddenAncestor else { return nil }
         return web.convert(origin.rect, to: root)
     }
     /// Shrinks the page (and the backdrop dimming it) slightly about its center
@@ -175,21 +200,55 @@ extension NSView {
         view.alphaValue = alpha; view.layer?.add(animation, forKey: "peekFade")
     }
     /// Keeps the travelling card showing the live Peek page as it loads and paints.
-    func streamPeekPage(into ghost: PeekGhost, from web: WKWebView) {
-        let configuration = WKSnapshotConfiguration(); configuration.afterScreenUpdates = false
-        web.takeSnapshot(with: configuration) { [weak self, weak ghost, weak web] image, _ in
-            guard let self, let ghost, let web, ghost.phase == .opening, ghost.superview != nil else { return }
+    func streamPeekPage(into ghost: PeekGhost, from page: WebPage) {
+        if page.showsLiveLayers { showLivePeekPage(in: ghost, from: page); return }
+        Task { [weak self, weak ghost, weak page] in
+            guard let page else { return }
+            let image = await page.snapshot(width: nil)
+            guard let self, let ghost, ghost.phase == .opening, ghost.superview != nil else { return }
             if let image {
                 if ghost.pageImage == nil { self.fadePeekView(ghost.page, to: 1, duration: 0.08) }
                 ghost.pageImage = image
+            } else {
+                // Nothing to show yet; ask again on the next frame rather than at once.
+                try? await Task.sleep(for: .milliseconds(16))
             }
-            self.streamPeekPage(into: ghost, from: web)
+            self.streamPeekPage(into: ghost, from: page)
         }
     }
 
+    /// The engine shows the page itself in the card, once it has drawn, checking each frame in
+    /// case the page starts drawing somewhere new, as a page changing process does.
+    func showLivePeekPage(in ghost: PeekGhost, from page: WebPage) {
+        guard ghost.phase == .opening, ghost.superview != nil else { return }
+        if let live = ghost.pageLive { live.setNeedsLayout() }
+        else if let live = page.liveLayer(showing: nil) {
+            ghost.holds.append(page); ghost.pageLive = live
+            fadePeekView(ghost.page, to: 1, duration: 0.08)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now()+1.0/60) { [weak self, weak ghost, weak page] in
+            guard let self, let ghost, let page else { return }
+            self.showLivePeekPage(in: ghost, from: page)
+        }
+    }
+    /// The link a card grows out of or shrinks into: live from its page where the engine can.
+    func showPeekLink(_ origin: PeekOrigin?, in ghost: PeekGhost) {
+        ghost.linkImage = origin?.image
+        guard origin?.image == nil, let origin, let page = origin.page, origin.rootFrame == nil,
+              let live = page.liveLayer(showing: origin.rect) else { return }
+        ghost.holds.append(page); ghost.linkLive = live
+    }
+    /// A card leaving takes its page out of sight; a live page stays in the window, unseen and
+    /// under the pages, until the card showing it has gone, or it would stop drawing.
+    func retire(_ card: NSView, behind ghost: PeekGhost) {
+        guard ghost.pageLive != nil else { card.removeFromSuperview(); return }
+        card.alphaValue = 0
+        root.addSubview(card, positioned: .below, relativeTo: pageShadow)
+        ghost.companions.append(card)
+    }
     /// Starts locating the clicked link before the Peek's own page begins loading;
     /// a new page's startup otherwise delays the lookup by well over 100 ms.
-    func beginPeekReveal(from source: WKWebView?, standIn: PeekOrigin? = nil) -> UUID? {
+    func beginPeekReveal(from source: WebPage?, standIn: PeekOrigin? = nil) -> UUID? {
         guard peekMotionAllowed else { return nil }
         let token = UUID(); peekMotionToken = token
         if let standIn { DispatchQueue.main.async { [weak self] in self?.playPeekOpen(standIn, token: token) } }
@@ -207,22 +266,23 @@ extension NSView {
         DispatchQueue.main.asyncAfter(deadline: .now()+0.15) { [weak self] in self?.playPeekOpen(nil, token: token) }
     }
     func playPeekOpen(_ origin: PeekOrigin?, token: UUID) {
-        guard token == peekMotionToken, let card = peekCard, let web = peekTab?.webView else { return }
+        guard token == peekMotionToken, let card = peekCard, let page = peekTab?.page else { return }
         peekMotionToken = nil
         // A whole page shrinking back into a Peek isn't where it closes to; its link is, set by ⌘Z.
         if origin?.rootFrame == nil { peekOrigin = origin }
         let target = card.frame, start = peekFrame(of: origin)
         if livePeekResize, let start, origin?.rootFrame != nil {
-            shrinkIntoPeekLive(card: card, web: web, from: start); return
+            shrinkIntoPeekLive(card: card, web: page.view, from: start); return
         }
-        let ghost = PeekGhost(color: theme.page); ghost.linkImage = origin?.image
+        let ghost = PeekGhost(color: theme.page)
         ghost.pageAspect = target.height/max(1, target.width); ghost.page.alphaValue = 0
         root.addSubview(ghost, positioned: .above, relativeTo: card)
+        showPeekLink(origin, in: ghost)
         ghost.place(start ?? target.insetBy(dx: target.width*0.04, dy: target.height*0.04))
         if start == nil { ghost.alphaValue = 0; fadePeekView(ghost, to: 1, duration: 0.15) }
         // The link hands over to the page early, while the card is still growing.
         fadePeekView(ghost.link, to: 0, delay: 0.01, duration: 0.09)
-        streamPeekPage(into: ghost, from: web)
+        streamPeekPage(into: ghost, from: page)
         let spring = origin?.rootFrame == nil ? Self.peekOpenSpring : Self.peekUnexpandSpring
         ghost.layer?.shadowOpacity = 0; ghost.fadeShadow(to: 0.25, duration: spring.perceptualDuration*0.6)
         ghost.place(target, spring: spring)
@@ -245,37 +305,40 @@ extension NSView {
 
     /// Snapshots the closing Peek, then shrinks it back into the link it came from.
     /// `hold` gives the controls a head start going back in before the card moves away.
-    func dismissPeek(card: Surface, backdrop: Surface?, page web: WKWebView, origin: PeekOrigin?, hold: TimeInterval = 0) {
+    func dismissPeek(card: Surface, backdrop: Surface?, page web: WebPage, origin: PeekOrigin?, hold: TimeInterval = 0) {
         peekLeftovers = [backdrop, card].compactMap { $0 }
         let token = UUID(); peekMotionToken = token
         let earliest = CACurrentMediaTime()+hold
         // Closing should feel immediate; never wait long for the snapshots.
         DispatchQueue.main.asyncAfter(deadline: .now()+max(0.08, hold)) { [weak self] in
-            self?.playPeekClose(card: card, backdrop: backdrop, page: nil, origin: origin, token: token)
+            self?.playPeekClose(card: card, backdrop: backdrop, page: nil, live: web, origin: origin, token: token)
         }
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let configuration = WKSnapshotConfiguration(); configuration.afterScreenUpdates = false
-            async let page = try? web.takeSnapshot(configuration: configuration)
+            // A page the engine shows live needs no picture: the card shrinks showing the page itself.
+            async let page = web.showsLiveLayers ? nil : web.snapshot(width: nil)
             // The source may have scrolled since opening; find the link again.
-            async let link = origin?.webView.asyncFlatMap { await self.peekLink(in: $0, locate: false) }
+            async let link = origin?.page.asyncFlatMap { await self.peekLink(in: $0, locate: false) }
             let (image, found) = await (page, link)
             let wait = earliest-CACurrentMediaTime()
             if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
-            self.playPeekClose(card: card, backdrop: backdrop, page: image, origin: found ?? origin, token: token)
+            self.playPeekClose(card: card, backdrop: backdrop, page: image, live: web, origin: found ?? origin, token: token)
         }
     }
     /// How long a closing card waits for its controls to start going back in.
     static let peekCloseHold: TimeInterval = 0.05
-    func playPeekClose(card: Surface, backdrop: Surface?, page: NSImage?, origin: PeekOrigin?, token: UUID) {
+    func playPeekClose(card: Surface, backdrop: Surface?, page: NSImage?, live: WebPage?, origin: PeekOrigin?, token: UUID) {
         guard token == peekMotionToken else { return }
         peekMotionToken = nil; peekLeftovers = []
-        let ghost = PeekGhost(color: theme.page); ghost.pageImage = page; ghost.linkImage = origin?.image
+        let ghost = PeekGhost(color: theme.page); ghost.pageImage = page
         ghost.pageAspect = card.frame.height/max(1, card.frame.width); ghost.link.alphaValue = 0
         let start = visiblePeekFrame(card)
-        root.addSubview(ghost, positioned: .above, relativeTo: card); ghost.place(start)
-        card.removeFromSuperview()
+        root.addSubview(ghost, positioned: .above, relativeTo: card)
+        if let live, let layer = live.liveLayer(showing: nil) { ghost.holds.append(live); ghost.pageLive = layer }
+        showPeekLink(origin, in: ghost)
+        ghost.place(start)
         shrinkPeek(ghost, into: peekFrame(of: origin), backdrop: backdrop)
+        retire(card, behind: ghost)
     }
     /// Springs a card back into its link from wherever it currently appears, so a
     /// Peek can be dismissed mid-open and simply reverses.
@@ -292,7 +355,7 @@ extension NSView {
             ghost.place(start)
             CATransaction.commit()
         }
-        ghost.phase = .closing; ghost.companions = [backdrop].compactMap { $0 }
+        ghost.phase = .closing; ghost.companions += [backdrop].compactMap { $0 }
         let spring = Self.peekCloseSpring, duration = spring.perceptualDuration
         ghost.fadeShadow(to: 0, duration: duration)
         if end != nil {

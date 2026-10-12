@@ -49,7 +49,7 @@ import RiseCore
         for saved in closedTabs.suffix(15).reversed() {
             menu.addItem(menuItem(saved.title) { [weak self] in
                 guard let self else { return }; self.closedTabs.removeAll { $0.id == saved.id }
-                let tab = self.configure(BrowserTab(saved: saved)); self.tabs.insert(tab, at: 0); self.select(tab.id)
+                let tab = self.configure(BrowserTab(saved: saved, engine: ChromiumEngine.engineForNewTabs)); self.tabs.insert(tab, at: 0); self.select(tab.id)
             })
         }
         menu.popUp(positioning: nil, at: NSPoint(x: 12, y: sidebar.bounds.height-42), in: sidebar)
@@ -90,18 +90,21 @@ import RiseCore
     @objc func peekCurrentPage() { if let url = selectedTab?.url { showPeek(url: url) } }
     /// `existing` brings back a page that was a Peek before, as ⌘Z does, without loading it again,
     /// shrinking it out of `standIn`, the page it had become, when given.
-    func showPeek(url: URL, from source: WKWebView? = nil, opensNewTab: Bool = false, existing: BrowserTab? = nil, standIn: PeekOrigin? = nil) {
+    func showPeek(url: URL, from source: NSView? = nil, opensNewTab: Bool = false, existing: BrowserTab? = nil, standIn: PeekOrigin? = nil) {
         // One Peek at a time: a Peek link inside the Peek shakes the pill's "Cannot open … in Peek".
-        if source != nil, source === peekTab?.webView { refusePeek(url); return }
+        if source != nil, source === peekTab?.page.view { refusePeek(url); return }
         if existing == nil { discardPeekUndo() }
-        let sourceID = tabs.first { $0.webView === source }?.id ?? peekSourceTabID ?? selectedID
+        let sourcePage = page(showing: source)
+        let sourceID = tabs.first { $0.page.view === source }?.id ?? peekSourceTabID ?? selectedID
+        // The Peek uses the engine of the page it opens from, so it can become that tab without loading again.
+        let engine = sourcePage?.engine ?? tabs.first { $0.id == sourceID }?.page.engine ?? ChromiumEngine.engineForNewTabs
         cancelTabSwitch()
         closePeek(replacing: true); hideLinkStatus()
         peekSourceTabID = sourceID; peekOpensNewTab = opensNewTab
-        let reveal = beginPeekReveal(from: source, standIn: standIn)
+        let reveal = beginPeekReveal(from: sourcePage, standIn: standIn)
         // A page already rendering from a Shift-hover shows from the first frame.
         let standby = existing == nil ? takePeekStandby(for: url) : nil
-        let tab = existing ?? standby ?? configure(BrowserTab()); peekTab = tab
+        let tab = existing ?? standby ?? configure(BrowserTab(engine: engine)); peekTab = tab
         let backdrop = PeekBackdrop(color: theme.background.withAlphaComponent(0.72));
         backdrop.dismiss = { [weak self] in self?.closePeek(animated: true) }; backdrop.frame = pageClip.bounds
         // Dimming lives inside the page so it recedes with it and never covers the page's shadow.
@@ -110,7 +113,7 @@ import RiseCore
         card.layer?.shadowColor = NSColor.black.cgColor; card.layer?.shadowOpacity = 0.25
         card.layer?.shadowRadius = 8; card.layer?.shadowOffset = NSSize(width: 0, height: -2)
         let clip = PageSurface(color: theme.page, radius: 8); clip.layer?.masksToBounds = true; clip.clipsToBounds = true; clip.autoresizingMask = [.width, .height]
-        card.addSubview(clip); clip.addSubview(tab.webView)
+        card.addSubview(clip); clip.addSubview(tab.page.view)
         root.addSubview(card, positioned: .below, relativeTo: dismissArea); peekCard = card
         for (glyph, title, action) in [
             (PeekControl.Glyph.cross, "Close Peek", { [weak self] in self?.closePeek(animated: true) }),
@@ -120,7 +123,7 @@ import RiseCore
             let button = PeekControl(glyph: glyph, title: title); button.action = action; button.applyTheme(theme)
             root.addSubview(button, positioned: .below, relativeTo: dismissArea); peekControls.append(button)
         }
-        layoutPeek(); if standby == nil, existing == nil { tab.load(url) }; window?.makeFirstResponder(tab.webView)
+        layoutPeek(); if standby == nil, existing == nil { tab.load(url) }; window?.makeFirstResponder(tab.page.view)
         updatePeekCovers()
         revealPeek(reveal)
     }
@@ -140,7 +143,7 @@ import RiseCore
         }
         (peekCard as? PageSurface)?.refreshOutline()
         peekCard.subviews.first?.frame = peekCard.bounds
-        peekTab.webView.frame = peekCard.bounds
+        peekTab.page.view.frame = peekCard.bounds
         for (i, button) in peekControls.enumerated() { button.frame = PeekControl.frame(cardMaxX: peekCard.frame.maxX, top: 20+CGFloat(i)*44) }
         if peekSwipePull > 0 { applyPeekSwipeTransform() }
     }
@@ -148,24 +151,24 @@ import RiseCore
     /// growing. State clears immediately either way. Replacing a Peek keeps the page
     /// receded and lets the old dimming fade under the new one.
     func closePeek(animated: Bool = false, replacing: Bool = false) {
-        if let web = peekTab?.webView { historySwipe.cancel(for: web) }
+        if let page = peekTab?.page { historySwipe.cancel(for: page) }
         // An interrupted live resize leaves the pages for layout to put back.
         let interrupted = peekLiveMotion?.isRunning == true
         peekLiveMotion?.stop(); peekLiveMotion = nil; isPromotingPeek = false; pageLayoutHeld = false
-        let card = peekCard, backdrop = peekBackdrop, web = peekTab?.webView, origin = peekOrigin
+        let card = peekCard, backdrop = peekBackdrop, web = peekTab?.page, origin = peekOrigin
         peekSourceTabID = nil; peekOpensNewTab = false; peekSwipePull = 0
         let motion = animated && peekMotionAllowed, growing = peekGhosts.first { $0.phase == .opening }
         // Pending lookups and snapshots no longer apply; cards already shrinking finish on their own.
         peekMotionToken = nil; peekLeftovers.forEach { $0.removeFromSuperview() }; peekLeftovers = []
         if !motion { growing?.dismantle() }
         peekOrigin = nil
-        if let peekTab { permissionCoordinator.cancel(for: peekTab.webView) }
-        if let peekTab, hoveredWebView === peekTab.webView { hideLinkStatus() }
+        if let peekTab { permissionCoordinator.cancel(for: peekTab.page.view) }
+        if let peekTab, hoveredWebView === peekTab.page.view { hideLinkStatus() }
         peekTab?.cancelLoad(); peekTab = nil
         peekBackdrop = nil; peekCard = nil
         if motion, let card {
             recedePage(false, along: Self.peekPageReturnSpring)
-            if let growing { card.removeFromSuperview(); shrinkPeek(growing, into: peekFrame(of: origin), backdrop: backdrop) }
+            if let growing { shrinkPeek(growing, into: peekFrame(of: origin), backdrop: backdrop); retire(card, behind: growing) }
             else if card.alphaValue == 1, let web {
                 dismissPeek(card: card, backdrop: backdrop, page: web, origin: origin, hold: peekControls.isEmpty ? 0 : Self.peekCloseHold)
             }
@@ -180,7 +183,7 @@ import RiseCore
         }
         let controls = peekControls; peekControls = []
         tuckPeekControls(controls, animated: motion && card != nil)
-        window?.makeFirstResponder(selectedTab?.webView)
+        window?.makeFirstResponder(selectedTab?.page.view)
         updatePeekCovers(); update()
         if interrupted { layoutChrome() }
     }
@@ -202,7 +205,7 @@ import RiseCore
     func navigateDeveloperAddress(_ text: String) {
         guard let url = AddressResolver.resolve(text, searchEngine: searchEngine), let tab = selectedTab else { return }
         errorWebView = nil; tab.load(url); update()
-        window?.makeFirstResponder(tab.webView)
+        window?.makeFirstResponder(tab.page.view)
     }
     func capturePage() {
         guard let webView = selectedTab?.webView else { return }

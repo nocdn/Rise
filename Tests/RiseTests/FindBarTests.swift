@@ -9,7 +9,8 @@ import AppKit
     func testAssistantSeesCodeThatGitHubDrawsFromAttributes() async throws {
         // Like GitHub's file view: the lines are empty spans painted from an attribute,
         // under a transparent aria-readonly text area, inside display: contents wrappers.
-        let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        let webPage = WebKitPage(), web = webPage.webView
+        web.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
         web.loadHTMLString("""
         <style>[data-code-text]::before{content:attr(data-code-text)} textarea{color:transparent;background:none}</style>
         <h1>1-4</h1>
@@ -20,7 +21,7 @@ import AppKit
         <textarea>a draft comment</textarea>
         """, baseURL: URL(string: "https://github.com/a/b/blob/master/1-4"))
         for _ in 0..<100 where web.isLoading { try await Task.sleep(nanoseconds: 50_000_000) }
-        let page = try await PageAssistant.snapshot(of: web)
+        let page = try await PageAssistant.snapshot(of: webPage)
         XCTAssertTrue(page.text.contains("1-4"), page.text)
         XCTAssertTrue(page.text.contains("printf(\"%6.1f\", celsius);"), page.text)
         XCTAssertTrue(page.text.contains("Wrapped paragraph"), page.text)

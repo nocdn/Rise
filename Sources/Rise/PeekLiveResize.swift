@@ -67,7 +67,7 @@ import WebKit
         let source = tabs.first { $0.id == peekSourceTabID } ?? selectedTab
         let from = card.frame
         // Where the page settles; view geometry leaves out the page's recede.
-        let target = (activeSplitGroup == nil ? source?.webView : nil).map { $0.convert($0.bounds, to: root) }
+        let target = (activeSplitGroup == nil ? source?.page.view : nil).map { $0.convert($0.bounds, to: root) }
             ?? pageClip.convert(pageClip.bounds, to: root)
         (peekBackdrop as? PeekBackdrop)?.dismiss = nil
         if let backdrop = peekBackdrop {
@@ -81,7 +81,7 @@ import WebKit
         let edges = windowSides
         peekLiveMotion = PeekLiveMotion(on: card, spring: spring, step: { [weak self, weak card, weak tab] progress in
             guard let self, let card, let tab else { return }
-            self.placeLivePeek(card, web: tab.webView, at: from.interpolated(to: target, by: progress).limited(to: target, edges: edges))
+            self.placeLivePeek(card, web: tab.page.view, at: from.interpolated(to: target, by: progress).limited(to: target, edges: edges))
         }, completion: { [weak self, weak tab] in
             guard let self else { return }
             self.peekLiveMotion = nil; self.isPromotingPeek = false
@@ -90,7 +90,7 @@ import WebKit
         })
     }
     /// ⌘Z: the page shrinks back into the Peek card live, the way it grew.
-    func shrinkIntoPeekLive(card: Surface, web: WKWebView, from start: NSRect) {
+    func shrinkIntoPeekLive(card: Surface, web: NSView, from start: NSRect) {
         finishPeekLiveMotion()
         let spring = Self.peekUnexpandSpring, target = card.frame
         card.alphaValue = 1
@@ -112,7 +112,7 @@ import WebKit
     /// Ends a live resize still under way, as if it had run its course, before another starts.
     func finishPeekLiveMotion() { if let motion = peekLiveMotion, motion.isRunning { motion.finish() } }
     /// Places the card with its real page filling it, laid out again at every size.
-    func placeLivePeek(_ card: Surface, web: WKWebView, at frame: NSRect) {
+    func placeLivePeek(_ card: Surface, web: NSView, at frame: NSRect) {
         CATransaction.begin(); CATransaction.setDisableActions(true)
         card.frame = frame
         card.subviews.first?.frame = card.bounds

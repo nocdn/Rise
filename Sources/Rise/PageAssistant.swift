@@ -34,11 +34,11 @@ enum PageAssistant {
     }
 
     /// The visible text of the page, plus whatever the user has selected on it.
-    @MainActor static func snapshot(of webView: WKWebView) async throws -> Page {
-        let source = await PageFind.visibleText(in: webView)
+    @MainActor static func snapshot(of webPage: WebPage) async throws -> Page {
+        let source = await PageFind.visibleText(in: webPage)
         let script = "return [fallback && document.body ? document.body.innerText : '', String(window.getSelection() || '')]"
-        let parts = try await webView.callAsyncJavaScript(script, arguments: ["fallback": source == nil], contentWorld: .defaultClient) as? [String] ?? []
-        return Page(title: webView.title ?? "", url: webView.url?.absoluteString ?? "",
+        let parts = await webPage.evaluate(script, arguments: ["fallback": source == nil], world: nil) as? [String] ?? []
+        return Page(title: webPage.title ?? "", url: webPage.url?.absoluteString ?? "",
                     selection: parts.count > 1 ? parts[1] : "", text: String((source ?? parts.first ?? "").prefix(pageCharacterLimit)))
     }
 
@@ -111,7 +111,7 @@ enum PageAssistant {
     /// Answers about the page in the bar's own tab.
     func configurePageAssistant(_ bar: FindBar, for tab: BrowserTab) {
         bar.answer = { [weak tab, weak bar] question, history in
-            let webView = tab?.webView
+            let webView = tab?.page
             let generation = bar?.answerGeneration
             return PageAssistant.answer(question, history: history, page: {
                 guard let webView else { throw PageAssistant.Failure.service("There’s no page to ask about.") }

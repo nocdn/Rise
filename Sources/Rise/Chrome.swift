@@ -132,6 +132,8 @@ final class BrowserWindow: NSWindow {
     var tabSwitchEvent: ((NSEvent) -> Bool)?
     var addressPaletteEvent: ((NSEvent) -> Bool)?
     var pageMouseDown: ((NSEvent) -> Void)?
+    /// Sees a link click before the page does, and takes it (with the rest of the click) if it returns true.
+    var linkClickEvent: ((NSEvent) -> Bool)?
     var otherMouseEvent: ((NSEvent) -> Bool)?
     var historyScrollEvent: ((NSEvent) -> Bool)?
     var modifiersChanged: ((NSEvent.ModifierFlags) -> Void)?
@@ -159,6 +161,7 @@ final class BrowserWindow: NSWindow {
             if otherMouseEvent?(event) == true { return }
             // keyCode is only valid on key events (it raises on others), so the type goes first.
             if event.type == .keyDown || event.type == .keyUp, event.keyCode == 53, escapeEvent?(event) == true { return }
+            if [.leftMouseDown, .leftMouseDragged, .leftMouseUp].contains(event.type), linkClickEvent?(event) == true { return }
             if event.type == .leftMouseDown || event.type == .rightMouseDown { pageMouseDown?(event) }
             super.sendEvent(event)
         }

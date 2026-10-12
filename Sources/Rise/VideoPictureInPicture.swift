@@ -1,20 +1,13 @@
 import AppKit
 import WebKit
 
-@MainActor private final class VideoPictureInPictureBridge: NSObject, WKScriptMessageHandler {
-    weak var owner: VideoPictureInPicture?
-    init(_ owner: VideoPictureInPicture) { self.owner = owner }
-    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) { owner?.receive(message) }
-}
-
 /// Floats a tab's video when the tab is left: YouTube's video pages, and on any
 /// other site a video that has played with sound, in the page or one of its frames.
 /// Transfers the original web view, preserving the player's MediaSource, cookies,
 /// audio, playhead, quality and playback rate. Each handoff owns its completion.
 @MainActor final class VideoPictureInPicture: NSObject {
-    static let contentWorld = WKContentWorld.world(name: "Rise.PictureInPicture")
+    static let world = ScriptWorld.named("Rise.PictureInPicture")
     weak var browser: BrowserController?
-    private let controllers = NSHashTable<WKUserContentController>.weakObjects()
     /// Each tab's floating candidate, from the frame chosen among those with a video.
     private var states: [UUID: VideoState] = [:] {
         didSet {
@@ -51,12 +44,16 @@ import WebKit
     }
     private struct FrameVideo {
         let state: VideoState
-        let info: WKFrameInfo
+        let info: PageFrame
         /// When it last played, so the frame heard most recently floats.
         let playedAt: CFTimeInterval
     }
-    /// The frame a video plays in; `info` is nil for the main frame.
-    private struct Target { let key: String?; let info: WKFrameInfo? }
+    /// The frame a video plays in; `info` is nil for the main frame when it isn't known yet.
+    private struct Target {
+        let key: String?; let info: PageFrame?
+        /// In one of the page's frames, which are lifted over the page to float.
+        var inSubframe: Bool { info.map { !$0.isMain } ?? false }
+    }
     @MainActor private final class Session {
         let id = UUID()
         weak var tab: BrowserTab?
@@ -80,17 +77,14 @@ import WebKit
         var queuedSeek: (fraction: Double, final: Bool)?
         init(tab: BrowserTab, panel: FloatingVideoWindow, target: Target) { self.tab = tab; self.panel = panel; self.target = target }
         func call(_ body: String, completion: @escaping (Any?, Error?) -> Void = { _, _ in }) {
-            VideoPictureInPicture.call(body, in: tab?.webView, frame: target.info, completion: completion)
+            VideoPictureInPicture.call(body, in: tab?.page, frame: target.info, completion: completion)
         }
     }
     init(browser: BrowserController) { self.browser = browser; super.init() }
 
-    func install(on web: WKWebView) {
-        let content = web.configuration.userContentController
-        guard !controllers.contains(content) else { return }
-        controllers.add(content)
-        content.add(VideoPictureInPictureBridge(self), contentWorld: Self.contentWorld, name: "risePictureInPicture")
-        content.addUserScript(WKUserScript(source: Self.script, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: Self.contentWorld))
+    func install(on page: WebPage) {
+        page.addMessageHandler("risePictureInPicture", world: Self.world) { [weak self] message in self?.receive(message) }
+        page.addUserScript(Self.script, world: Self.world, mainFrameOnly: false, handlers: ["risePictureInPicture"])
     }
     /// Whether the floating window holds this tab's page.
     func owns(_ tab: BrowserTab) -> Bool {
@@ -111,7 +105,7 @@ import WebKit
     /// Plays or pauses a tab's video, whether or not the tab is showing.
     func togglePlayback(_ id: UUID) {
         guard let tab = browser?.tabs.first(where: { $0.id == id }) else { return }
-        Self.call("return window.risePictureInPicture?.togglePlayback() ?? null", in: tab.webView, frame: target(tab)?.info) { [weak self, weak tab] value, _ in
+        Self.call("return window.risePictureInPicture?.togglePlayback() ?? null", in: tab.page, frame: target(tab)?.info) { [weak self, weak tab] value, _ in
             // A hidden page reports late, since its timers are throttled.
             guard let self, let tab else { return }
             let paused = value as? Bool ?? self.states[tab.id]?.paused
@@ -129,11 +123,11 @@ import WebKit
     private func chosenFrame(_ tab: BrowserTab) -> (key: String, video: FrameVideo)? {
         guard let frames = frameVideos[tab.id], !frames.isEmpty else { return nil }
         if let key = sessions.first(where: { $0.tab === tab && !$0.released })?.target.key, let video = frames[key] { return (key, video) }
-        func rank(_ video: FrameVideo) -> (Int, Int, CFTimeInterval) { (video.state.playing ? 1 : 0, video.info.isMainFrame ? 1 : 0, video.playedAt) }
+        func rank(_ video: FrameVideo) -> (Int, Int, CFTimeInterval) { (video.state.playing ? 1 : 0, video.info.isMain ? 1 : 0, video.playedAt) }
         return frames.max { rank($0.value) < rank($1.value) }.map { ($0.key, $0.value) }
     }
     private func target(_ tab: BrowserTab) -> Target? {
-        chosenFrame(tab).map { Target(key: $0.key, info: $0.video.info.isMainFrame ? nil : $0.video.info) }
+        chosenFrame(tab).map { Target(key: $0.key, info: $0.video.info) }
     }
 
     /// Runs before tab attachment, so a leaving player has its new window before
@@ -165,7 +159,7 @@ import WebKit
             // A fast switch can outrun delivery of the video's play event.
             let token = UUID(); probeID = token
             let url = tab.url
-            Self.call("return window.risePictureInPicture?.canFloat() ?? null", in: tab.webView) { [weak self, weak tab] value, _ in
+            Self.call("return window.risePictureInPicture?.canFloat() ?? null", in: tab.page) { [weak self, weak tab] value, _ in
                 guard let self, self.probeID == token, let tab, tab.url == url,
                       self.browser?.tabs.contains(where: { $0 === tab }) == true,
                       !self.previousVisible.contains(tab.id), !self.dismissed.contains(tab.id), self.allowed(tab),
@@ -175,13 +169,13 @@ import WebKit
         }
     }
 
-    func receive(_ message: WKScriptMessage) {
-        guard let browser, let web = message.webView, let tab = browser.tabs.first(where: { $0.webView === web }),
+    func receive(_ message: PageMessage) {
+        guard let browser, let web = message.page, let tab = browser.tabs.first(where: { $0.page === web }),
               let body = message.body as? [String: Any], let frame = body["frame"] as? String else { return }
-        let main = message.frameInfo.isMainFrame
+        let main = message.frame.isMain
         // The page's own reports must come from the page now showing.
         if main {
-            guard SitePermissions.origin(message.frameInfo.securityOrigin) == SitePermissions.origin(web.url),
+            guard message.frame.origin == SitePermissions.origin(web.url),
                   body["href"] as? String == web.url?.absoluteString else { return }
         }
         if let kind = body["kind"] as? String {
@@ -202,7 +196,7 @@ import WebKit
             let state = VideoState(playing: body["playing"] as? Bool == true, paused: body["paused"] as? Bool != false,
                                    ended: body["ended"] as? Bool == true, encrypted: body["encrypted"] as? Bool == true, aspect: aspect)
             let playedAt = state.playing ? CACurrentMediaTime() : frameVideos[tab.id]?[frame]?.playedAt ?? 0
-            frameVideos[tab.id, default: [:]][frame] = FrameVideo(state: state, info: message.frameInfo, playedAt: playedAt)
+            frameVideos[tab.id, default: [:]][frame] = FrameVideo(state: state, info: message.frame, playedAt: playedAt)
         } else {
             frameVideos[tab.id]?[frame] = nil
             if frameVideos[tab.id]?.isEmpty == true { frameVideos[tab.id] = nil }
@@ -261,8 +255,8 @@ import WebKit
             }
         }
         session.panel.onVideoSizeChange = { [weak self, weak session] size, ratio in
-            guard let self, let session, self.current === session, !session.leaving, let web = session.tab?.webView else { return }
-            let zoom = web.pageZoom > 0 ? web.pageZoom : 1
+            guard let self, let session, self.current === session, !session.leaving, let web = session.tab?.page else { return }
+            let zoom = web.zoom > 0 ? web.zoom : 1
             session.call("return window.risePictureInPicture?.resize(\(Self.canvasArguments(size, ratio, in: web))) ?? null") { [weak self, weak session] value, error in
                 guard let self, let session, error == nil, let place = value as? [String: Any],
                       let x = place["x"] as? Double, let y = place["y"] as? Double else { return }
@@ -282,9 +276,9 @@ import WebKit
     private func prepare(_ session: Session) {
         guard let tab = session.tab else { return }
         let token = session.transitionID
-        if tab.webView.window !== session.panel {
+        if tab.page.view.window !== session.panel {
             if !session.panel.hasVideoFrame { session.panel.showForFirstFrame() }
-            session.panel.attach(tab.webView)
+            session.panel.attach(tab.page.view)
         }
         session.firstFrameTimeout?.cancel()
         session.firstFrameTimeout = Task { [weak self, weak session] in
@@ -293,7 +287,7 @@ import WebKit
                   !session.panel.hasVideoFrame else { return }
             self.restore(session, animated: false, pause: false)
         }
-        let size = session.panel.videoFrame.size, arguments = Self.canvasArguments(size, session.panel.backingScaleFactor, in: tab.webView)
+        let size = session.panel.videoFrame.size, arguments = Self.canvasArguments(size, session.panel.backingScaleFactor, in: tab.page)
         session.call("return await window.risePictureInPicture?.enter('\(token.uuidString)', \(arguments)) ?? false") { [weak self, weak session] value, error in
             guard let self, let session, self.current === session, session.transitionID == token else { return }
             if error != nil || value as? Bool != true { self.restore(session, animated: false, pause: false) }
@@ -307,19 +301,19 @@ import WebKit
         if let old = current { departing[old.id] = old; current = nil; restore(old, animated: true, pause: true) }
         for id in Array(nativeFloats.keys) where id != tab.id { exitNative(id, pause: true) }
         nativeFloats[tab.id] = target
-        Self.call("return window.risePictureInPicture?.enterNative() ?? false", in: tab.webView, frame: target.info) { [weak self, weak tab] value, _ in
+        Self.call("return window.risePictureInPicture?.enterNative() ?? false", in: tab.page, frame: target.info) { [weak self, weak tab] value, _ in
             guard let self, let tab, value as? Bool != true, self.nativeFloats[tab.id]?.key == target.key else { return }
             self.nativeFloats[tab.id] = nil
         }
     }
     private func exitNative(_ id: UUID, pause: Bool) {
         guard let target = nativeFloats.removeValue(forKey: id), let tab = browser?.tabs.first(where: { $0.id == id }) else { return }
-        Self.call("window.risePictureInPicture?.exitNative(\(pause))", in: tab.webView, frame: target.info) { _, _ in }
+        Self.call("window.risePictureInPicture?.exitNative(\(pause))", in: tab.page, frame: target.info) { _, _ in }
     }
 
     /// The canvas is sized in CSS pixels, which page zoom scales on screen.
-    private static func canvasArguments(_ size: NSSize, _ backingScale: CGFloat, in web: WKWebView) -> String {
-        let zoom = web.pageZoom > 0 ? web.pageZoom : 1
+    private static func canvasArguments(_ size: NSSize, _ backingScale: CGFloat, in web: WebPage) -> String {
+        let zoom = web.zoom > 0 ? web.zoom : 1
         return "\(size.width/zoom), \(size.height/zoom), \(backingScale*zoom)"
     }
 
@@ -337,7 +331,7 @@ import WebKit
     }
     @objc private func paintVideo(_ link: CADisplayLink) {
         guard let session = current, session.playbackLink === link, !session.leaving,
-              session.pendingFrameID == nil, session.tab?.webView != nil else { return }
+              session.pendingFrameID == nil, session.tab != nil else { return }
         let frameID = UUID(); session.pendingFrameID = frameID
         session.paintsIssued += 1
         let paint = session.paintsIssued
@@ -345,7 +339,7 @@ import WebKit
             guard let self, let session, session.pendingFrameID == frameID else { return }
             session.pendingFrameID = nil
             // The video's frame went away, taking its picture with it.
-            if error != nil, session.target.info != nil, self.current === session { self.restore(session, animated: true, pause: false); return }
+            if error != nil, session.target.inSubframe, self.current === session { self.restore(session, animated: true, pause: false); return }
             if let pending = session.pendingCanvas, paint > pending.afterPaint { self.showPendingCanvas(session) }
             guard self.current === session, !session.leaving, session.panel.hasVideoFrame,
                   let stats = value as? [String: Any], let frames = stats["frames"] as? Int else { return }
@@ -406,31 +400,43 @@ import WebKit
         session.firstFrameTimeout?.cancel(); session.firstFrameTimeout = nil
         session.transitionID = UUID()
         let token = session.transitionID, animated = animated && !reduceMotion()
-        let web = session.tab?.webView
+        let web = session.tab?.page
         // Freeze the current picture, so the live page can return to its tab at
-        // once while only the frozen picture fades. WebKit takes the snapshot
-        // before it runs exit(), which removes the canvas from the page.
-        var frozen: NSImage?, waiting = 1
+        // once while only the frozen picture fades. The snapshot is asked for
+        // before exit() runs, which removes the canvas from the page.
+        var frozen: NSImage?, waiting = session.target.inSubframe ? 2 : 1
         let finish = { [weak self, weak session] in
             waiting -= 1
             guard waiting == 0, let self, let session, session.transitionID == token else { return }
             self.handBack(session, frozen: frozen, animated: animated, token: token)
         }
-        if animated, session.panel.hasVideoFrame, let web, web.window === session.panel {
-            waiting += 1
-            let configuration = WKSnapshotConfiguration()
-            configuration.rect = CGRect(origin: .zero, size: session.panel.videoHost.bounds.size)
-            web.takeSnapshot(with: configuration) { image, _ in frozen = image; finish() }
+        let exit = { [weak self, weak session] in
+            guard let self, let session else { return }
+            session.call("window.risePictureInPicture?.exit()") { _, _ in finish() }
+            // The page goes back to its tab with its frames in place.
+            if session.target.inSubframe { self.lowerFrames(session) { finish() } }
         }
-        session.call("window.risePictureInPicture?.exit()") { _, _ in finish() }
-        // The page goes back to its tab with its frames in place.
-        if session.target.info != nil { waiting += 1; lowerFrames(session) { finish() } }
+        // The picture is taken before exit() removes the canvas from the page.
+        guard animated, session.panel.hasVideoFrame, let web, web.view.window === session.panel else { exit(); return }
+        waiting += 1
+        let size = session.panel.videoHost.bounds.size
+        if let webView = (web as? WebKitPage)?.webView {
+            // WebKit takes it as asked, ahead of the script that follows.
+            let configuration = WKSnapshotConfiguration()
+            configuration.rect = CGRect(origin: .zero, size: size)
+            webView.takeSnapshot(with: configuration) { image, _ in frozen = image; finish() }
+            exit()
+        } else {
+            // Chromium's comes from its GPU process, so the script waits for it.
+            let rect = CGRect(x: 0, y: web.view.isFlipped ? 0 : web.view.bounds.height-size.height, width: size.width, height: size.height)
+            Task { frozen = await web.snapshot(rect: rect); finish(); exit() }
+        }
     }
     /// A frame's video floats with the frames above it lifted over their pages.
     /// Putting them back from the top also covers a frame that has gone away.
     private func lowerFrames(_ session: Session, completion: @escaping () -> Void = {}) {
-        guard session.target.info != nil else { completion(); return }
-        Self.call("window.risePictureInPicture?.release()", in: session.tab?.webView) { _, _ in completion() }
+        guard session.target.inSubframe else { completion(); return }
+        Self.call("window.risePictureInPicture?.release()", in: session.tab?.page) { _, _ in completion() }
     }
 
     private func handBack(_ session: Session, frozen: NSImage?, animated: Bool, token: UUID) {
@@ -443,19 +449,19 @@ import WebKit
             if let tab = session.tab, self.states[tab.id]?.playing == true { self.resumeAfterEnd(tab) }
         }
         guard let tab = session.tab else { return }
-        if tab.webView.window === session.panel { tab.webView.removeFromSuperview(); tab.webView.autoresizingMask = [] }
+        if tab.page.view.window === session.panel { tab.page.view.removeFromSuperview(); tab.page.view.autoresizingMask = [] }
         guard let browser else { return }
         browser.attachVisiblePages(); browser.layoutChrome()
         // Selecting the tab could not focus a page held by the panel.
         // Give it focus now, unless something else has taken it.
         if browser.selectedID == tab.id, browser.peekTab == nil,
            let window = browser.window, window.firstResponder == nil || window.firstResponder === window {
-            window.makeFirstResponder(tab.webView)
+            window.makeFirstResponder(tab.page.view)
         }
     }
 
-    func navigationStarted(in web: WKWebView) {
-        guard let browser, let tab = browser.tabs.first(where: { $0.webView === web }) else { return }
+    func navigationStarted(in web: NSView) {
+        guard let browser, let tab = browser.tabs.first(where: { $0.page.view === web }) else { return }
         // A page still returning to the browser window was in the panel.
         if clearMedia(for: tab) { browser.attachVisiblePages(); browser.layoutChrome() }
     }
@@ -480,16 +486,16 @@ import WebKit
         stopPlaybackClock(session)
         session.firstFrameTimeout?.cancel()
         session.transitionID = UUID()
-        let web = session.tab?.webView
+        let web = session.tab?.page.view
         // A released page is already back in the browser.
         if let web, web.window === session.panel { web.removeFromSuperview(); web.autoresizingMask = [] }
         session.call("window.risePictureInPicture?.exit()"); lowerFrames(session)
         session.panel.closeImmediately()
     }
 
-    static func call(_ body: String, in web: WKWebView?, frame: WKFrameInfo? = nil, completion: @escaping (Any?, Error?) -> Void) {
-        guard let web else { completion(nil, nil); return }
-        web.callAsyncJavaScript(body, arguments: [:], in: frame, in: contentWorld) { result in
+    static func call(_ body: String, in page: WebPage?, frame: PageFrame? = nil, completion: @escaping (Any?, Error?) -> Void) {
+        guard let page else { completion(nil, nil); return }
+        page.evaluate(body, arguments: [:], in: frame, world: world) { result in
             switch result {
             case .success(let value): completion(value, nil)
             case .failure(let error): completion(nil, error)

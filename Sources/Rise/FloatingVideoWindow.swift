@@ -153,7 +153,8 @@ struct FloatingVideoScrollInput {
         if resizeMotion.map({ $0.phase == .idle }) ?? true { onVideoSizeChange?(surface.bounds.size, backingScaleFactor) }
     }
 
-    func attach(_ webView: WKWebView) {
+    /// `webView` is the page's view, whichever engine draws it.
+    func attach(_ webView: NSView) {
         let viewport = webView.frame.size
         webView.removeFromSuperview()
         // Keep the original player alive and its viewport stable. Its decoded

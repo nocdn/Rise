@@ -20,7 +20,7 @@ enum PageAppearance {
 enum PageOutline {
     static func path(in rect: CGRect, radius: CGFloat, continuous: Bool) -> CGPath {
         // Apple's public continuous shape supplies the same smooth contour to
-        // the explicit shadow path and the snapshot/cloth masks. A circular
+        // the explicit shadow path and the page masks. A circular
         // shadow around a continuous clip otherwise leaves mismatched corners.
         if continuous {
             return RoundedRectangle(cornerRadius: radius, style: .continuous).path(in: rect).cgPath

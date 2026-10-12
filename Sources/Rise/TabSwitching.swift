@@ -76,6 +76,6 @@ import AppKit
         tabSwitchGeneration += 1; tabSwitchWork?.cancel(); tabSwitchWork = nil
         tabSwitchOrder = []; tabSwitchIndex = 0
         tabSwitcher.dismiss(); tabSwitchBackdrop.isHidden = true
-        window?.makeFirstResponder(peekTab?.webView ?? selectedTab?.webView)
+        window?.makeFirstResponder(peekTab?.page.view ?? selectedTab?.page.view)
     }
 }

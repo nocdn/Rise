@@ -8,7 +8,8 @@ import RiseCore
     let pageClip = PageSurface(color: NSColor(hex: 0xFDFCFC), radius: PageAppearance.radius)
     let emptyPage = Surface(color: NSColor(hex: 0xFDFCFC))
     let linkStatus = LinkStatusPill()
-    weak var hoveredWebView: WKWebView?
+    /// The page whose link is under the pointer, as its view.
+    weak var hoveredWebView: NSView?
     let developerBar = DeveloperHeader(color: NSColor(hex: 0xFCF6F7))
     let developerAddress = DeveloperAddressField(frame: .zero)
     lazy var developerMotion = DeveloperModeMotion { [weak self] in self?.layoutChrome() }
@@ -44,12 +45,6 @@ import RiseCore
     let toolbarAccessory = NSTitlebarAccessoryViewController()
     var toolbarButtons: [ChromeButton] = []
     var devButtons: [ChromeButton] = []
-    lazy var pageCloth: PageClothTransition = {
-        let transition = PageClothTransition(theme: { [weak self] in self?.theme ?? .neutral })
-        transition.updateFrame = { [weak self] web, pull, forward in self?.updateClothFrame(for: web, pull: pull, forward: forward) }
-        transition.resetFrame = { [weak self] in self?.resetClothFrame() }
-        return transition
-    }()
     lazy var historySwipe: HistorySwipeController = {
         let controller = HistorySwipeController(window: window as! BrowserWindow, pageAt: { [weak self] event in
             self?.historyPage(at: event)
@@ -60,19 +55,7 @@ import RiseCore
         })
         controller.canNavigate = { [weak self] page, direction in self?.canNavigate(page, direction) ?? false }
         controller.navigate = { [weak self] page, direction in self?.navigate(page, direction) }
-        controller.prepareCloth = { [weak self] web in
-            guard let self else { return }
-            self.developerMotion.cancel(); self.layoutChrome()
-            self.pageCloth.prepare(web)
-        }
-        controller.dragCloth = { [weak self] web, direction, distance in
-            self?.hideLinkStatus(); self?.pageCloth.drag(web, direction: direction, distance: distance)
-        }
-        controller.releaseCloth = { [weak self] distance, committed, cancelled in
-            self?.pageCloth.release(distance: distance, committed: committed, cancelled: cancelled)
-        }
-        controller.cancelCloth = { [weak self] in self?.pageCloth.cancel() }
-        controller.isPeekPage = { [weak self] web in self?.peekTab?.webView === web }
+        controller.isPeekPage = { [weak self] page in self?.peekTab?.page === page }
         controller.dragPeek = { [weak self] pull in self?.dragPeek(pull: pull) }
         controller.releasePeek = { [weak self] committed in
             if committed { self?.closePeek(animated: true) } else { self?.returnPeekFromSwipe() }
@@ -134,6 +117,8 @@ import RiseCore
     var pageBody = NSRect.zero
     /// An animation is placing the pages itself, so layout leaves them where it put them.
     var pageLayoutHeld = false
+    /// A Shift- or Option-click that opened a Peek: the rest of it stays from the page.
+    var takesLinkClick = false
     var peekOrigin: PeekOrigin?
     var peekMotionToken: UUID?
     var peekLeftovers: [NSView] = []
@@ -212,6 +197,7 @@ import RiseCore
         }
         window.smartRenameEvent = { [weak self] event in self?.handleSmartRenameKey(event) ?? false }
         window.pageMouseDown = { [weak self] event in self?.focusSplitPage(at: event) }
+        window.linkClickEvent = { [weak self] event in self?.takeLinkClick(event) ?? false }
         window.historyScrollEvent = { [weak self] event in self?.historySwipe.handle(event) ?? false }
         window.otherMouseEvent = { [weak self] event in self?.handleMiddleTabClick(event) ?? false }
         window.modifiersChanged = { [weak self] flags in self?.updateHoveredLinkModifiers(flags); self?.sidebarPeekModifiersChanged(flags) }
@@ -264,7 +250,7 @@ import RiseCore
             else { theme = RiseTheme(rawValue: saved.theme) ?? .neutral }
             sidebarWidth = SidebarWidth.previousIdeals.contains(saved.sidebarWidth) ? SidebarWidth.ideal
                 : min(SidebarWidth.range.upperBound, max(SidebarWidth.range.lowerBound, saved.sidebarWidth))
-            tabs = saved.tabs.map { configure(BrowserTab(saved: $0)) }
+            tabs = saved.tabs.map { configure(BrowserTab(saved: $0, engine: ChromiumEngine.engineForNewTabs)) }
             // Old sessions can fill their missing icons without loading every page.
             tabs.forEach { $0.updateIcon() }
             splitGroups = saved.splitGroups
@@ -317,7 +303,7 @@ import RiseCore
         developerAddress.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
         developerAddress.textColor = NSColor(hex: 0x393134); developerBar.addSubview(developerAddress)
         developerAddress.onSubmit = { [weak self] text in self?.navigateDeveloperAddress(text) }
-        developerAddress.onCancel = { [weak self] in self?.window?.makeFirstResponder(self?.selectedTab?.webView) }
+        developerAddress.onCancel = { [weak self] in self?.window?.makeFirstResponder(self?.selectedTab?.page.view) }
         siteInfoPopover.behavior = .transient
         downloadsPopover.behavior = .transient
         siteControlsPopover.behavior = .transient
@@ -425,11 +411,11 @@ import RiseCore
         } else if let group = activeSplitGroup {
             let frames = splitFrames(in: body, fraction: group.fraction)
             for (id, frame) in [(group.leftID, frames.left), (group.rightID, frames.right)] {
-                if let tab = tabs.first(where: { $0.id == id }), !pictureInPicture.owns(tab), !tab.isInNativeFullscreen { tab.webView.frame = frame }
+                if let tab = tabs.first(where: { $0.id == id }), !pictureInPicture.owns(tab), !tab.isInNativeFullscreen { tab.page.view.frame = frame }
             }
             shapePage(around: [frames.left, frames.right])
         } else {
-            if let tab = selectedTab, !pictureInPicture.owns(tab), !tab.isInNativeFullscreen { tab.webView.frame = body }
+            if let tab = selectedTab, !pictureInPicture.owns(tab), !tab.isInNativeFullscreen { tab.page.view.frame = body }
             shapePage(around: [])
         }
         layoutSplitHandle()
@@ -474,11 +460,38 @@ import RiseCore
             }
             web.openInPeek = { [weak self, weak web] url in self?.showPeek(url: url, from: web) }
         }
+        // Chromium reports hovers, new tabs and its menu through the page; WebKit through delegates.
+        // The page, not the tab, is captured: it can move to another tab when a Peek becomes one.
+        let page = tab.page
+        page.onHoverLink = { [weak self, weak page] url in
+            guard let self, let page else { return }
+            self.showHoveredLink(url, in: page.view)
+        }
+        page.onOpenElsewhere = { [weak self, weak page] url, background in
+            guard let self else { return false }
+            let opener = self.tabs.first { $0.page === page }?.id
+            if background { self.addTab(url: url, background: true, opener: opener ?? self.selectedID) }
+            else { self.addTab(url: url).returnsTo = opener }
+            return true
+        }
+        page.onOpenInPeek = { [weak self, weak page] url in self?.showPeek(url: url, from: page?.view) }
+        #if RISE_CHROMIUM
+        if let chromium = page as? ChromiumPage {
+            chromium.onDownload = { [weak self] download, name in self?.beginChromiumDownload(download, suggestedName: name) }
+            chromium.onPermissionRequest = { [weak self, weak chromium] capabilities, origin, decide in
+                guard let self, let chromium else { decide(false); return }
+                self.permissionCoordinator.request(in: chromium.view, origin: origin, capabilities: capabilities, completion: decide)
+            }
+            chromium.onPermissionWithdrawn = { [weak self, weak chromium] in
+                if let view = chromium?.view { self?.permissionCoordinator.cancel(for: view) }
+            }
+        }
+        #endif
         tab.hidesNotificationCounts = hidesNotificationCounts
         tab.showsRepositorySubtitle = showsRepositorySubtitle
         tab.webView.appearance = theme.appearance; tab.webView.underPageBackgroundColor = theme.page
         adBlocker.install(on: tab.webView)
-        HistorySwipeController.install(on: tab.webView)
+        HistorySwipeController.install(on: tab.page)
         siteSearchLearner.install(on: tab.webView)
         tab.prepareForLoad = { [weak self] web in try await self?.adBlocker.prepare(web) }
         tab.onLoadError = { [weak self, weak tab] error in
@@ -487,15 +500,15 @@ import RiseCore
         linkPreloader.install(on: tab.webView)
         permissionCoordinator.install(on: tab.webView)
         pageFullscreen.install(on: tab.webView)
-        pictureInPicture.install(on: tab.webView)
-        tabMedia.install(on: tab.webView)
+        pictureInPicture.install(on: tab.page)
+        tabMedia.install(on: tab.page)
         pagePaint.install(on: tab.webView, dark: theme == .dark)
         suggestionFavicons.remember(tab)
         tab.onChange = { [weak self, weak tab] in
             guard let self, let tab else { return }
             self.suggestionFavicons.remember(tab)
             self.siteSearchLearner.addressChanged(tab.webView)
-            if !tab.webView.isLoading, let url = tab.webView.url, let title = tab.webView.title {
+            if !tab.page.isLoading, let url = tab.page.url, let title = tab.page.title {
                 self.browsingHistory.updateTitle(self.historyTitle(title, url: url), for: url)
             }
             self.update()
@@ -511,7 +524,7 @@ import RiseCore
     /// A background tab loads in the list without taking over the page, as ⌘-clicked links do.
     /// Given an `opener`, it goes right above that tab (or its split pair), so the two stay together.
     @discardableResult func addTab(url: URL? = nil, configuration: WKWebViewConfiguration? = nil, background: Bool = false, opener: UUID? = nil) -> BrowserTab {
-        let tab = configure(BrowserTab(configuration: configuration))
+        let tab = configure(BrowserTab(configuration: configuration, engine: ChromiumEngine.engineForNewTabs))
         let members = opener.map { id in splitGroups.first { $0.contains(id) }.map { [$0.leftID, $0.rightID] } ?? [id] } ?? []
         tabs.insert(tab, at: members.compactMap { id in tabs.firstIndex { $0.id == id } }.min() ?? 0)
         if background { update() } else { select(tab.id) }
@@ -533,7 +546,7 @@ import RiseCore
         attachVisiblePages()
         recentTabIDs.removeAll { $0 == id }; recentTabIDs.insert(id, at: 0)
         if let tab = selectedTab {
-            window?.makeFirstResponder(tab.webView)
+            window?.makeFirstResponder(tab.page.view)
         }
         update(); layoutChrome()
         findBar.reattached()
@@ -547,8 +560,8 @@ import RiseCore
         sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: splitGroups)
         refreshTabHoverCard(); preloadGmailInbox()
         window?.title = (selectedTab?.title).map { "\($0) — Rise" } ?? "Rise"
-        toolbarButtons[1].isEnabled = historyWebView.map { canNavigate($0, .back) } ?? false
-        toolbarButtons[2].isEnabled = historyWebView.map { canNavigate($0, .forward) } ?? false
+        toolbarButtons[1].isEnabled = historyPage.map { canNavigate($0, .back) } ?? false
+        toolbarButtons[2].isEnabled = historyPage.map { canNavigate($0, .forward) } ?? false
         toolbarButtons[3].image = selectedTab?.isLoading == true ? NavigationIcon.stop : NavigationIcon.reload
         developerAddress.updateURL(selectedTab?.url?.absoluteString ?? "")
         errorSurface.isHidden = errorWebView == nil || errorWebView !== selectedTab?.webView
@@ -557,7 +570,7 @@ import RiseCore
     @objc func newTab() { paletteCreatesTab = true; showPalette(text: "") }
     @objc func focusAddress() { paletteCreatesTab = false; showPalette(text: selectedTab?.url?.absoluteString == "about:blank" ? "" : selectedTab?.url?.absoluteString ?? "") }
     func showPalette(text: String) { if searchEngine == .google { googleSearchSuggestions.warmUp() }; historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); permissionCoordinator.cancel(); dismissArea.isHidden = false; palette.currentPage = selectedTab.flatMap { tab in tab.url.map { ($0.absoluteString, tab.favicon(for: theme)) } }; palette.show(text: text, theme: theme, createsTab: paletteCreatesTab); layoutChrome() }
-    func hidePalette() { googleSearchSuggestions.cancel(); suggestionFavicons.cancelPreview(); guard palette.isPresented else { return }; palette.hide(); dismissArea.isHidden = true; window?.makeFirstResponder(selectedTab?.webView) }
+    func hidePalette() { googleSearchSuggestions.cancel(); suggestionFavicons.cancelPreview(); guard palette.isPresented else { return }; palette.hide(); dismissArea.isHidden = true; window?.makeFirstResponder(selectedTab?.page.view) }
     func submitAddress(_ text: String, suggestion: AddressSuggestion?) {
         hidePalette()
         if let command = suggestion?.command {
@@ -590,10 +603,10 @@ import RiseCore
         let tab = tabs.remove(at: index); closedTabs.append(tab.saved)
         pageFullscreen.setActive(false, in: tab.webView)
         releaseHeldPages(of: tab)
-        permissionCoordinator.cancel(for: tab.webView)
+        permissionCoordinator.cancel(for: tab.page.view)
         recentTabIDs.removeAll { $0 == id }
         if closedTabs.count > 50 { closedTabs.removeFirst() }
-        tab.cancelLoad(); tab.webView.removeFromSuperview()
+        tab.cancelLoad(); tab.page.view.removeFromSuperview()
         findBars.removeValue(forKey: id)?.discard()
         if selectedID == id {
             selectedID = nil
@@ -602,7 +615,7 @@ import RiseCore
         }
         attachVisiblePages(); update()
     }
-    @objc func reopenTab() { guard let saved = closedTabs.popLast() else { return }; let tab = configure(BrowserTab(saved: saved)); tabs.insert(tab, at: 0); select(tab.id) }
+    @objc func reopenTab() { guard let saved = closedTabs.popLast() else { return }; let tab = configure(BrowserTab(saved: saved, engine: ChromiumEngine.engineForNewTabs)); tabs.insert(tab, at: 0); select(tab.id) }
     @objc func goBack() { navigateHistory(.back) }
     @objc func goForward() { navigateHistory(.forward) }
     private func navigateHistory(_ direction: HistoryDirection) {
@@ -614,12 +627,12 @@ import RiseCore
         errorWebView = nil
         if let peek = peekTab {
             // Pages visited inside a Peek have their own history.
-            if direction == .back ? peek.webView.canGoBack : peek.webView.canGoForward {
-                if direction == .back { peek.webView.goBack() } else { peek.webView.goForward() }
+            if direction == .back ? peek.page.canGoBack : peek.page.canGoForward {
+                if direction == .back { peek.page.goBack() } else { peek.page.goForward() }
             }
-        } else if let tab = selectedTab, direction == .back ? tab.webView.canGoBack : tab.webView.canGoForward {
+        } else if let tab = selectedTab, direction == .back ? tab.page.canGoBack : tab.page.canGoForward {
             tab.cancelLoad()
-            if direction == .back { tab.webView.goBack() } else { tab.webView.goForward() }
+            if direction == .back { tab.page.goBack() } else { tab.page.goForward() }
         } else if let tab = selectedTab {
             // Past the page's own history: a page held from before a Peek grew into the tab.
             goThroughHeldPages(direction, in: tab)
@@ -630,10 +643,10 @@ import RiseCore
     @objc func hardReload() {
         historySwipe.cancel(); errorWebView = nil
         selectedTab?.isHardReloading = true
-        if let tab = selectedTab, tab.webView.url == nil, let url = tab.requestedURL { tab.load(url) } else { selectedTab?.webView.reloadFromOrigin() }
+        if let tab = selectedTab, tab.page.url == nil, let url = tab.requestedURL { tab.load(url) } else { selectedTab?.page.reloadIgnoringCache() }
         update()
     }
-    @objc func reload() { historySwipe.cancel(); errorWebView = nil; if selectedTab?.isLoading == true { selectedTab?.cancelLoad() } else if let tab = selectedTab, tab.webView.url == nil, let url = tab.requestedURL { tab.load(url) } else { selectedTab?.webView.reload() }; update() }
+    @objc func reload() { historySwipe.cancel(); errorWebView = nil; if selectedTab?.isLoading == true { selectedTab?.cancelLoad() } else if let tab = selectedTab, tab.page.url == nil, let url = tab.requestedURL { tab.load(url) } else { selectedTab?.page.reload() }; update() }
     @objc func retry() { errorWebView = nil; if let url = selectedTab?.url { selectedTab?.load(url) }; update() }
     @objc func toggleSidebar() {
         if keepPeekedSidebar() { return }
@@ -662,7 +675,7 @@ import RiseCore
         let visible = tab.id == selectedID
         if visible {
             historySwipe.cancel()
-            window?.makeFirstResponder(tab.webView); siteInfoPopover.close()
+            window?.makeFirstResponder(tab.page.view); siteInfoPopover.close()
         }
         let from = visible ? developerMotion.height(for: tab.id, enabled: tab.developer) : 0
         tab.developer.toggle()
@@ -679,9 +692,9 @@ import RiseCore
     @objc func nextTab() { cycleTab(1) }
     @objc func previousTab() { cycleTab(-1) }
     func cycleTab(_ direction: Int) { guard !tabs.isEmpty else { return }; let index = tabs.firstIndex { $0.id == selectedID } ?? 0; select(tabs[(index+direction+tabs.count)%tabs.count].id) }
-    @objc func zoomIn() { selectedTab?.webView.pageZoom = min(3, (selectedTab?.webView.pageZoom ?? 1)+0.1) }
-    @objc func zoomOut() { selectedTab?.webView.pageZoom = max(0.3, (selectedTab?.webView.pageZoom ?? 1)-0.1) }
-    @objc func actualSize() { selectedTab?.webView.pageZoom = 1 }
+    @objc func zoomIn() { selectedTab?.page.zoom = min(3, (selectedTab?.page.zoom ?? 1)+0.1) }
+    @objc func zoomOut() { selectedTab?.page.zoom = max(0.3, (selectedTab?.page.zoom ?? 1)-0.1) }
+    @objc func actualSize() { selectedTab?.page.zoom = 1 }
     func scheduleSave() {
         saveWork?.cancel(); let work = DispatchWorkItem { [weak self] in self?.saveNow() }; saveWork = work
         DispatchQueue.main.asyncAfter(deadline: .now()+0.4, execute: work)

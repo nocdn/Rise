@@ -83,8 +83,8 @@ import WebKit
         hover.gmailCard.dismiss(); hover.showsGmail = false
         let title = pr.title(fromTab: tab.title)
         hover.summaries.load(pr, title: title) { [weak tab] in
-            guard let webView = tab?.webView, PullRequest(url: webView.url) == pr else { return nil }
-            return try? await PageAssistant.snapshot(of: webView).text
+            guard let page = tab?.page, PullRequest(url: page.url) == pr else { return nil }
+            return try? await PageAssistant.snapshot(of: page).text
         }
         hover.summaries.refreshStatus(pr)
         if hover.pullRequestCard.superview !== root {

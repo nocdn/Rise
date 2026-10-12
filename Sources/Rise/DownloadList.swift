@@ -1,6 +1,12 @@
 import AppKit
 import WebKit
 
+/// Pauses, resumes and cancels one engine's download for the list.
+@MainActor protocol DownloadControl: AnyObject {
+    func togglePause()
+    func cancel()
+}
+
 struct DownloadRecord: Codable, Equatable {
     var id = UUID()
     var path: String
@@ -50,7 +56,7 @@ struct DownloadRecord: Codable, Equatable {
     }
     private(set) var items: [Item] = []
     private let storeURL: URL
-    private var transfers: [UUID: DownloadTransfer] = [:]
+    private var transfers: [UUID: DownloadControl] = [:]
     private var timer: Timer?
     var onChange: (() -> Void)?
     static let limit = 200
@@ -69,10 +75,16 @@ struct DownloadRecord: Codable, Equatable {
         return item.record.id
     }
     func track(_ download: WKDownload, at destination: URL, expectedBytes: Int64, failed: @escaping (Error) -> Void) {
-        let id = begin(destination, progress: download.progress)
+        track(at: destination, progress: download.progress, expectedBytes: expectedBytes) { item, list in
+            DownloadTransfer(download: download, item: item, list: list, failed: failed)
+        }
+    }
+    /// A new row for a download saving to `destination`, run by the control `make` gives.
+    func track(at destination: URL, progress: Progress, expectedBytes: Int64, control make: (Item, DownloadList) -> DownloadControl) {
+        let id = begin(destination, progress: progress)
         let item = items.first { $0.record.id == id }!
         item.totalBytes = max(item.totalBytes, expectedBytes)
-        transfers[id] = DownloadTransfer(download: download, item: item, list: self, failed: failed)
+        transfers[id] = make(item, self)
     }
     func togglePause(_ id: UUID) { transfers[id]?.togglePause() }
     func cancel(_ id: UUID) { transfers[id]?.cancel() }

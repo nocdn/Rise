@@ -57,7 +57,9 @@ import CryptoKit
         let controller = webView.configuration.userContentController
         if !controllers.contains(controller) { controllers.add(controller); apply(to: controller) }
     }
-    func prepare(_ webView: WKWebView) async throws {
+    /// WebKit's content rules; a Chromium page is blocked in the engine instead.
+    func prepare(_ page: WebPage) async throws {
+        guard let webView = (page as? WebKitPage)?.webView else { return }
         install(on: webView)
         guard enabled else { return }
         rules = try await AdBlockRules.compilation.value

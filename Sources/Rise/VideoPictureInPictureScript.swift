@@ -16,7 +16,7 @@ import WebKit
       const canvas = document.createElement('canvas');
       canvas.setAttribute('aria-hidden', 'true');
       const context = canvas.getContext('2d', {alpha:false});
-      const post = body => window.webkit.messageHandlers.risePictureInPicture.postMessage({...body, frame, href:location.href});
+      const post = body => riseHandlers.risePictureInPicture.postMessage({...body, frame, href:location.href});
       const videoPage = () => (location.pathname === '/watch' && new URL(location.href).searchParams.get('v')) || /^\/(shorts|live|embed)\/.+/.test(location.pathname);
       const heard = new WeakSet(), watched = new WeakSet();
       const mediaEvents = ['play','playing','pause','ended','loadedmetadata','emptied','volumechange'];

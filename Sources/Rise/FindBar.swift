@@ -825,7 +825,7 @@ class FindInputCell: NSTextFieldCell {
         if let bar = findBars[tab.id] { return bar }
         let bar = FindBar(); bar.applyTheme(theme)
         bar.find = { [weak tab] query, direction in
-            guard let webView = tab?.webView else { return PageFind.Matches(count: 0, index: -1) }
+            guard let webView = tab?.page else { return PageFind.Matches(count: 0, index: -1) }
             return await PageFind.find(query, direction: direction, in: webView)
         }
         bar.dismiss = { [weak self] in self?.hideFind() }
@@ -840,7 +840,7 @@ class FindInputCell: NSTextFieldCell {
             bar.removeFromSuperview()
             if bar.isPresented && bar.input.stringValue.isEmpty && !bar.isAnswering {
                 bar.closeInstantly()
-                if let webView = tabs.first(where: { $0.id == previousID })?.webView { Task { await PageFind.clearPassage(webView) } }
+                if let webView = tabs.first(where: { $0.id == previousID })?.page { Task { await PageFind.clearPassage(webView) } }
             }
         }
         let bar = findBar
@@ -856,9 +856,9 @@ class FindInputCell: NSTextFieldCell {
     }
     func hideFind() {
         findBar.hide()
-        if let webView = selectedTab?.webView {
+        if let webView = selectedTab?.page {
             Task { await PageFind.clear(webView, selectingCurrent: true); await PageFind.clearPassage(webView) }
         }
-        window?.makeFirstResponder(selectedTab?.webView)
+        window?.makeFirstResponder(selectedTab?.page.view)
     }
 }

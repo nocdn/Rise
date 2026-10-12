@@ -6,15 +6,29 @@ import RiseCore
     func shouldPeek(modifiers: NSEvent.ModifierFlags) -> Bool {
         modifiers.contains(.shift) || modifiers.contains(.option)
     }
-    @discardableResult func openModifiedLink(_ url: URL, modifiers: NSEvent.ModifierFlags, from source: WKWebView? = nil, opensNewTab: Bool = false) -> Bool {
+    /// A Shift- or Option-click on a link in a Chromium page opens a Peek before Chromium sees the
+    /// click, which would otherwise open a window or download the link. WebKit pages report it themselves.
+    func takeLinkClick(_ event: NSEvent) -> Bool {
+        if event.type != .leftMouseDown {
+            if event.type == .leftMouseUp, takesLinkClick { takesLinkClick = false; return true }
+            return takesLinkClick
+        }
+        takesLinkClick = false
+        guard shouldPeek(modifiers: event.modifierFlags), let hovered = hoveredWebView, let url = linkStatus.url,
+              page(showing: hovered)?.engine == .chromium,
+              let hit = root.hitTest(root.convert(event.locationInWindow, from: nil)), hit === hovered || hit.isDescendant(of: hovered) else { return false }
+        takesLinkClick = true
+        openModifiedLink(url, modifiers: event.modifierFlags, from: hovered)
+        return true
+    }
+    @discardableResult func openModifiedLink(_ url: URL, modifiers: NSEvent.ModifierFlags, from source: NSView? = nil, opensNewTab: Bool = false) -> Bool {
         if shouldPeek(modifiers: modifiers) { showPeek(url: url, from: source, opensNewTab: opensNewTab); return true }
         if modifiers.contains(.command) {
-            addTab(url: url, background: true, opener: tabs.first { $0.webView === source }?.id ?? selectedID); return true
+            addTab(url: url, background: true, opener: tabs.first { $0.page.view === source }?.id ?? selectedID); return true
         }
         return false
     }
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        if action.targetFrame?.isMainFrame == true, action.navigationType != .backForward { pageCloth.cancel(for: webView) }
         if action.targetFrame?.isMainFrame == true { permissionCoordinator.cancel(for: webView) }
         if action.shouldPerformDownload { decisionHandler(.download); return }
         if action.navigationType == .linkActivated, let url = action.request.url {
@@ -39,17 +53,14 @@ import RiseCore
         pictureInPicture.navigationStarted(in: webView)
         permissionCoordinator.cancel(for: webView)
         if selectedTab?.webView === webView { siteControlsPopover.close() }
-        historySwipe.cancel(for: webView)
+        if let page = page(showing: webView) { historySwipe.cancel(for: page) }
         if hoveredWebView === webView { hideLinkStatus() }
         if errorWebView === webView { errorWebView = nil }; update()
     }
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         pageFullscreen.setActive(false, in: webView)
-        pageCloth.destinationDidCommit(webView)
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        pageCloth.remember(webView)
-        pageCloth.destinationDidCommit(webView)
         pagePaint.didFinish(webView)
         if let tab = tabs.first(where: { $0.webView === webView }), let url = tab.url, url.absoluteString != "about:blank" {
             tab.captureThumbnail()
@@ -62,7 +73,6 @@ import RiseCore
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { showNavigationError(error, in: webView) }
     func showNavigationError(_ error: Error, in webView: WKWebView) {
         guard (error as NSError).code != NSURLErrorCancelled else { return }
-        pageCloth.cancel(for: webView)
         errorWebView = webView; errorMessage.stringValue = error.localizedDescription; update()
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
@@ -84,7 +94,11 @@ import RiseCore
         if shouldPeek(modifiers: action.modifierFlags), let url = action.request.url {
             showPeek(url: url, from: webView, opensNewTab: true); return nil
         }
-        return addTab(configuration: configuration).webView
+        // A site taking the user to a new tab: Back from there comes home again.
+        let opener = tabs.first { $0.webView === webView }
+        let tab = addTab(configuration: configuration)
+        tab.returnsTo = opener?.id
+        return tab.webView
     }
     func webViewDidClose(_ webView: WKWebView) { if let tab = tabs.first(where: { $0.webView === webView }) { closeTab(tab.id) } }
     func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) {
@@ -133,12 +147,16 @@ import RiseCore
         pendingDownloads[ObjectIdentifier(download)] = download; download.delegate = self
     }
     /// Saves straight to Downloads; names in use, on disk or by another download, get a number.
-    func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
+    /// Where a new download named `suggestedFilename` saves: in Downloads, numbered if the name's in use.
+    func newDownloadDestination(_ suggestedFilename: String) -> URL {
         try? FileManager.default.createDirectory(at: downloadsFolder, withIntermediateDirectories: true)
         let pending = downloads.pendingDestinations
-        let destination = Self.downloadDestination(for: suggestedFilename, in: downloadsFolder) {
+        return Self.downloadDestination(for: suggestedFilename, in: downloadsFolder) {
             pending.contains($0) || FileManager.default.fileExists(atPath: $0.path)
         }
+    }
+    func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String, completionHandler: @escaping (URL?) -> Void) {
+        let destination = newDownloadDestination(suggestedFilename)
         downloads.track(download, at: destination, expectedBytes: response.expectedContentLength) { [weak self] error in
             self?.showMessage("Download failed", error.localizedDescription)
         }

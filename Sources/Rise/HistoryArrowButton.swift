@@ -89,9 +89,9 @@ final class HistoryArrowButton: ChromeButton {
         let wing = Double(size.height - 3 - arrow.lineWidth) / 2
         let tip = CGPoint(x: bounds.midX + facing * (half - pull * half * 32/36), y: bounds.midY)
         let tail = CGPoint(x: bounds.midX - facing * half, y: bounds.midY)
-        // At toolbar scale, a quarter shorter makes the demo's wing compression
-        // visible without changing the resting size or stroke weight.
-        let arm = wing * (1 - pull * 0.25)
+        // The head's two points shorten with the pull too, about a third at the threshold,
+        // visible at toolbar scale without changing the resting size or stroke weight.
+        let arm = wing * (1 - pull * 0.35)
         let path = CGMutablePath()
         path.move(to: tip); path.addLine(to: tail)
         path.move(to: CGPoint(x: tip.x - facing * arm, y: tip.y - arm))

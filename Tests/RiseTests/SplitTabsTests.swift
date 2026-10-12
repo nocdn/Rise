@@ -112,15 +112,6 @@ final class SplitTabsTests: XCTestCase {
         XCTAssertFalse(handle.isHidden); XCTAssertTrue(handle.superview === browser.pageShadow)
         XCTAssertEqual(handle.frame.minX, l.maxX); XCTAssertEqual(handle.frame.width, gap)
 
-        // A history swipe on the right page squeezes only its card, then the split's shape comes back.
-        browser.updateClothFrame(for: right.webView, pull: 1, forward: false)
-        let swiped = try XCTUnwrap(browser.pageClip.clothOutline).boundingBoxOfPath
-        XCTAssertEqual(swiped.minX, 0, accuracy: 0.5, "The left page stays put")
-        XCTAssertTrue(browser.pageClip.clothOutline!.contains(CGPoint(x: l.midX, y: height/2)))
-        XCTAssertFalse(browser.pageClip.clothOutline!.contains(CGPoint(x: r.minX+r.width*0.03, y: height/2)), "The right page gives way at its edge")
-        browser.resetClothFrame()
-        XCTAssertNil(browser.pageClip.clothOutline); XCTAssertTrue(browser.pageClip.restingOutline === outline)
-
         browser.separateSplit(containing: left.id); browser.root.layoutSubtreeIfNeeded()
         XCTAssertNil(browser.pageClip.restingOutline); XCTAssertTrue(handle.isHidden)
     }

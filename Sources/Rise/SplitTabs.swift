@@ -20,10 +20,10 @@ import RiseCore
         for tab in tabs {
             // WebKit's fullscreen window holds the web view until it hands it back.
             if pictureInPicture.owns(tab) || tab.isInNativeFullscreen { continue }
-            if !visible.contains(tab.id) { tab.webView.removeFromSuperview(); continue }
-            if tab.needsBlockingReload, tab.webView.url != nil { tab.needsBlockingReload = false; tab.webView.reloadFromOrigin() }
-            if tab.webView.url == nil, !tab.hasAttemptedNavigation, !tab.webView.isLoading, let url = tab.requestedURL { tab.load(url) }
-            if tab.webView.superview !== pageClip { pageClip.addSubview(tab.webView, positioned: .below, relativeTo: developerBar) }
+            if !visible.contains(tab.id) { tab.page.view.removeFromSuperview(); continue }
+            if tab.needsBlockingReload, tab.page.url != nil { tab.needsBlockingReload = false; tab.page.reloadIgnoringCache() }
+            if tab.page.url == nil, !tab.hasAttemptedNavigation, !tab.page.isLoading, let url = tab.requestedURL { tab.load(url) }
+            if tab.page.view.superview !== pageClip { pageClip.addSubview(tab.page.view, positioned: .below, relativeTo: developerBar) }
         }
     }
     @objc func toggleSplit() {
@@ -31,7 +31,7 @@ import RiseCore
         guard let current = selectedTab else { return }
         if let other = tabs.first(where: { $0.id != current.id }) { showSplit(other) }
         else if let url = current.url {
-            let other = configure(BrowserTab()); tabs.insert(other, at: 0); other.load(url); showSplit(other)
+            let other = configure(BrowserTab(engine: ChromiumEngine.engineForNewTabs)); tabs.insert(other, at: 0); other.load(url); showSplit(other)
         }
     }
     func showSplit(_ tab: BrowserTab) {
@@ -49,7 +49,7 @@ import RiseCore
         let point = root.convert(event.locationInWindow, from: nil)
         guard let hit = root.hitTest(point) else { return }
         for tab in tabs where visibleTabIDs.contains(tab.id) && tab.id != selectedID {
-            if hit === tab.webView || hit.isDescendant(of: tab.webView) { select(tab.id); return }
+            if hit === tab.page.view || hit.isDescendant(of: tab.page.view) { select(tab.id); return }
         }
     }
 }
@@ -129,12 +129,12 @@ import RiseCore
     /// both live, laying out at every size; then the Peek's page joins the tab list as the split.
     func splitPeekLive(_ tab: BrowserTab, card: Surface, finish: @escaping () -> Void) {
         guard let source = tabs.first(where: { $0.id == (peekSourceTabID ?? selectedID) }), source.id == selectedID,
-              source.webView.superview === pageClip, activeSplitGroup == nil else { finish(); return }
+              source.page.view.superview === pageClip, activeSplitGroup == nil else { finish(); return }
         finishPeekLiveMotion()
         isPromotingPeek = true; pageLayoutHeld = true
         let spring = Self.peekSplitSpring
         let frames = splitFrames(in: pageBody, fraction: 0.5)
-        let pageFrom = source.webView.frame, cardFrom = card.frame
+        let pageFrom = source.page.view.frame, cardFrom = card.frame
         // View geometry leaves out the page's recede, so this is where the right half settles.
         let cardTo = pageClip.convert(frames.right, to: root)
         (peekBackdrop as? PeekBackdrop)?.dismiss = nil
@@ -156,9 +156,9 @@ import RiseCore
             let radius = radiusFrom+(PageAppearance.radius-radiusFrom)*min(1, progress)
             card.layer?.cornerRadius = radius; clip?.layer?.cornerRadius = radius
             CATransaction.commit()
-            self.placeLivePeek(card, web: tab.webView, at: cardFrom.interpolated(to: cardTo, by: progress).limited(to: page, edges: edges))
+            self.placeLivePeek(card, web: tab.page.view, at: cardFrom.interpolated(to: cardTo, by: progress).limited(to: page, edges: edges))
             let page = pageFrom.interpolated(to: frames.left, by: progress)
-            source.webView.frame = page; self.shapePage(around: [page])
+            source.page.view.frame = page; self.shapePage(around: [page])
         }, completion: { [weak self, weak tab] in
             guard let self else { return }
             self.peekLiveMotion = nil; self.isPromotingPeek = false; self.pageLayoutHeld = false
