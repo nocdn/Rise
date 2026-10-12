@@ -34,25 +34,33 @@ import RiseCore
         if action.navigationType == .linkActivated, let url = action.request.url {
             if openModifiedLink(url, modifiers: action.modifierFlags, from: webView, opensNewTab: action.targetFrame == nil) { decisionHandler(.cancel); return }
         }
-        // Going somewhere new, not back or forward, leaves the tab's later held pages behind.
-        if action.targetFrame?.isMainFrame == true, action.navigationType != .backForward, action.navigationType != .reload,
-           let tab = tabs.first(where: { $0.webView === webView }), !tab.forwardPages.isEmpty { dropForwardPages(of: tab) }
-        if let scheme = action.request.url?.scheme?.lowercased(), !["http", "https", "file", "about", "data", "blob"].contains(scheme) {
-            // External schemes require a deliberate choice; never silently run them.
-            let alert = NSAlert(); alert.messageText = "Open in another app?"; alert.informativeText = action.request.url?.absoluteString ?? ""
-            alert.addButton(withTitle: "Open"); alert.addButton(withTitle: "Cancel")
-            if let window { alert.beginSheetModal(for: window) { response in if response == .alertFirstButtonReturn, let url = action.request.url { NSWorkspace.shared.open(url) } } }
-            decisionHandler(.cancel); return
+        if action.targetFrame?.isMainFrame == true, action.navigationType != .backForward, action.navigationType != .reload {
+            leaveForwardPages(of: webView)
+        }
+        if let url = action.request.url, let scheme = url.scheme?.lowercased(), !["http", "https", "file", "about", "data", "blob"].contains(scheme) {
+            confirmOpeningInOtherApp(url); decisionHandler(.cancel); return
         }
         decisionHandler(.allow)
+    }
+    /// Going somewhere new, not back or forward, leaves the tab's later held pages behind.
+    func leaveForwardPages(of view: NSView) {
+        if let tab = tabs.first(where: { $0.page.view === view }), !tab.forwardPages.isEmpty { dropForwardPages(of: tab) }
+    }
+    /// External schemes require a deliberate choice; never silently run them.
+    func confirmOpeningInOtherApp(_ url: URL) {
+        let alert = NSAlert(); alert.messageText = "Open in another app?"; alert.informativeText = url.absoluteString
+        alert.addButton(withTitle: "Open"); alert.addButton(withTitle: "Cancel")
+        if let window { alert.beginSheetModal(for: window) { response in if response == .alertFirstButtonReturn { NSWorkspace.shared.open(url) } } }
     }
     func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
         decisionHandler(response.canShowMIMEType ? .allow : .download)
     }
-    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { pageStartedLoading(webView) }
+    /// A page, as its view, starts loading somewhere new.
+    func pageStartedLoading(_ webView: NSView) {
         pictureInPicture.navigationStarted(in: webView)
         permissionCoordinator.cancel(for: webView)
-        if selectedTab?.webView === webView { siteControlsPopover.close() }
+        if selectedTab?.page.view === webView { siteControlsPopover.close() }
         if let page = page(showing: webView) { historySwipe.cancel(for: page) }
         if hoveredWebView === webView { hideLinkStatus() }
         if errorWebView === webView { errorWebView = nil }; update()
@@ -62,24 +70,37 @@ import RiseCore
     }
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         pagePaint.didFinish(webView)
-        if let tab = tabs.first(where: { $0.webView === webView }), let url = tab.url, url.absoluteString != "about:blank" {
+        pageFinishedLoading(webView)
+    }
+    /// A page, as its view, has loaded: it goes in the history, and its tab's picture, icon
+    /// and find bar catch up.
+    func pageFinishedLoading(_ webView: NSView) {
+        if let tab = tabs.first(where: { $0.page.view === webView }), let url = tab.url, url.absoluteString != "about:blank" {
             tab.captureThumbnail()
-            browsingHistory.record(url, title: historyTitle(webView.title ?? tab.title, url: url))
-            discoverPageFavicon(webView)
+            browsingHistory.record(url, title: historyTitle(tab.page.title ?? tab.title, url: url))
+            discoverPageFavicon(tab.page)
         }; update()
-        if let tab = tabs.first(where: { $0.webView === webView }) { findBars[tab.id]?.pageChanged() }
+        if let tab = tabs.first(where: { $0.page.view === webView }) { findBars[tab.id]?.pageChanged() }
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { showNavigationError(error, in: webView) }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { showNavigationError(error, in: webView) }
-    func showNavigationError(_ error: Error, in webView: WKWebView) {
+    func showNavigationError(_ error: Error, in webView: NSView) {
         guard (error as NSError).code != NSURLErrorCancelled else { return }
-        errorWebView = webView; errorMessage.stringValue = error.localizedDescription; update()
+        showNavigationError(error.localizedDescription, in: webView)
+    }
+    func showNavigationError(_ message: String, in webView: NSView) {
+        errorWebView = webView; errorMessage.stringValue = message; update()
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         pageFullscreen.setActive(false, in: webView)
+        pageCrashed(webView)
+    }
+    /// A page's process ended, taking its media; it loads again.
+    func pageCrashed(_ webView: NSView) {
         pictureInPicture.navigationStarted(in: webView)
-        if let tab = tabs.first(where: { $0.webView === webView }) { tabMedia.remove(tab.id) }
-        webView.reload()
+        guard let page = page(showing: webView) else { return }
+        if let tab = tabs.first(where: { $0.page === page }) { tabMedia.remove(tab.id) }
+        page.reload()
     }
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for action: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         guard action.targetFrame == nil else { return nil }

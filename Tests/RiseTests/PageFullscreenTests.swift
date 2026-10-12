@@ -95,11 +95,11 @@ import XCTest
         defer { preferences.removePersistentDomain(forName: suite) }
         let fullscreen = PageFullscreen(preferences: preferences)
         XCTAssertFalse(fullscreen.isSimulated, "Simulated fullscreen is off unless chosen")
-        let web = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        let page = WebKitPage(configuration: WKWebViewConfiguration()), web = page.webView
         let other = WKUserScript(source: "window.other = 1", injectionTime: .atDocumentStart, forMainFrameOnly: true)
         web.configuration.userContentController.addUserScript(other)
         fullscreen.install(on: web)
-        fullscreen.setSimulated(true, in: [web])
+        fullscreen.setSimulated(true, in: [page])
         XCTAssertTrue(preferences.bool(forKey: PageFullscreen.simulatedKey))
         let scripts = web.configuration.userContentController.userScripts
         XCTAssertEqual(scripts.count, 2, "Other scripts stay; the fullscreen script is replaced, not added again")

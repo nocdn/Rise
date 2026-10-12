@@ -43,8 +43,7 @@ import AppKit
         }
         let allTabs = tabs + (peekTab.map { [$0] } ?? [])
         for tab in allTabs {
-            if tab.webView.appearance?.name != appearance.name { tab.webView.appearance = appearance }
-            if tab.webView.underPageBackgroundColor != theme.page { tab.webView.underPageBackgroundColor = theme.page }
+            tab.page.setTheme(appearance, background: theme.page)
             pagePaint.applyTheme(dark: theme == .dark, to: tab.webView)
         }
         if theme == .dark {

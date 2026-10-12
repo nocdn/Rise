@@ -70,6 +70,9 @@ enum WebEngine: String, Codable {
     /// page at once, so calls reach it in the order they're made.
     func evaluate(_ body: String, arguments: [String: Any], in frame: PageFrame?, world: ScriptWorld,
                   completion: @escaping (Result<Any?, Error>) -> Void)
+    /// Draws the page in Rise's theme: `appearance` for what it prefers (light or dark), and
+    /// `background` before it first draws and around it.
+    func setTheme(_ appearance: NSAppearance, background: NSColor)
     /// Pauses the page's audio and video while it's held out of sight, and lets it go on after.
     func setMediaSuspended(_ suspended: Bool)
     /// The link under the pointer changed, where the engine reports it to the app.
@@ -111,6 +114,14 @@ extension WebPage {
             evaluate(body, arguments: arguments, in: frame, world: world) { continuation.resume(with: $0) }
         }
     }
+}
+
+/// How a page is going somewhere.
+enum PageNavigationKind { case newPage, history, reload }
+/// What happens to a page as it loads, where the engine reports it through the page rather
+/// than Rise's WebKit delegates.
+enum PageEvent {
+    case willNavigate(PageNavigationKind), finished, failed(String), crashed, openInOtherApp(URL)
 }
 
 enum WebPageChange {

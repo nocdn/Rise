@@ -14,6 +14,18 @@
 #include "include/cef_download_handler.h"
 #include "include/cef_permission_handler.h"
 #include "include/wrapper/cef_library_loader.h"
+#include "include/cef_resource_request_handler.h"
+
+#include <atomic>
+
+#if RISE_ADBLOCK
+extern "C" {
+bool rise_adblock_load(void);
+bool rise_adblock_blocks(const char *url, const char *source, const char *kind);
+char *rise_adblock_hidden(const char *url, const char *classes, const char *ids);
+void rise_adblock_free_string(char *value);
+}
+#endif
 
 static NSString *const RCContextReadyNotification = @"RCContextReady";
 
@@ -89,6 +101,12 @@ class RiseApp : public CefApp, public CefBrowserProcessHandler {
 - (void)requestPermissions:(RCPermission)permissions origin:(NSString *)origin decide:(void (^)(RCPermission allowed))decide;
 - (void)withdrawPermissionRequest;
 - (void)updateAudible:(BOOL)audible;
+- (void)navigationStarting:(RCNavigationKind)kind;
+- (void)loadFinished;
+- (void)loadFailed:(NSInteger)code text:(NSString *)text url:(nullable NSURL *)url;
+- (void)crashed;
+- (void)openInOtherApp:(NSURL *)url;
+- (void)updateFullscreen:(BOOL)fullscreen;
 @end
 
 @interface RCFrame ()
@@ -154,6 +172,56 @@ bool Disposition(cef_window_open_disposition_t disposition, RCOpenDisposition *r
 }
 
 constexpr int kOpenInPeekCommand = MENU_ID_USER_FIRST + 1;
+
+// Addresses pages open themselves; any other scheme belongs to another app.
+bool IsWebScheme(NSString *scheme) {
+  static NSSet *schemes = [NSSet setWithArray:@[ @"http", @"https", @"file", @"about", @"data", @"blob", @"javascript",
+                                                 @"chrome", @"chrome-error", @"devtools", @"view-source", @"filesystem",
+                                                 @"ws", @"wss" ]];
+  return [schemes containsObject:scheme.lowercaseString];
+}
+
+std::atomic<bool> gAdBlockEnabled{true};
+
+// The adblock engine's name for what a request fetches; null for a page itself, which, as on
+// WebKit, is never blocked.
+const char *AdBlockKind(cef_resource_type_t type) {
+  switch (type) {
+    case RT_MAIN_FRAME: case RT_NAVIGATION_PRELOAD_MAIN_FRAME: return nullptr;
+    case RT_SUB_FRAME: case RT_NAVIGATION_PRELOAD_SUB_FRAME: return "sub_frame";
+    case RT_STYLESHEET: return "stylesheet";
+    case RT_SCRIPT: case RT_WORKER: case RT_SHARED_WORKER: case RT_SERVICE_WORKER: return "script";
+    case RT_IMAGE: case RT_FAVICON: return "image";
+    case RT_FONT_RESOURCE: return "font";
+    case RT_OBJECT: case RT_PLUGIN_RESOURCE: return "object";
+    case RT_MEDIA: return "media";
+    case RT_XHR: return "xmlhttprequest";
+    case RT_PING: return "ping";
+    case RT_CSP_REPORT: return "csp_report";
+    default: return "other";
+  }
+}
+
+// Checks what pages fetch against the filter lists, on Chromium's network thread.
+class AdBlockHandler : public CefResourceRequestHandler {
+ public:
+  ReturnValue OnBeforeResourceLoad(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefRefPtr<CefRequest> request,
+                                   CefRefPtr<CefCallback>) override {
+#if RISE_ADBLOCK
+    const char *kind = AdBlockKind(request->GetResourceType());
+    if (!kind || !gAdBlockEnabled) return RV_CONTINUE;
+    // Rules name sites by the page the person is on, as WebKit's do.
+    CefRefPtr<CefFrame> page = browser ? browser->GetMainFrame() : nullptr;
+    std::string source = page ? page->GetURL().ToString() : frame ? frame->GetURL().ToString() : "";
+    if (source.empty()) return RV_CONTINUE;
+    if (rise_adblock_blocks(request->GetURL().ToString().c_str(), source.c_str(), kind)) return RV_CANCEL;
+#endif
+    return RV_CONTINUE;
+  }
+
+ private:
+  IMPLEMENT_REFCOUNTING(AdBlockHandler);
+};
 
 class RiseClient : public CefClient,
                    public CefDisplayHandler,
@@ -228,6 +296,43 @@ class RiseClient : public CefClient,
     if (result == CEF_PERMISSION_RESULT_IGNORE) [view_ withdrawPermissionRequest];
   }
   void OnAudibleChange(CefRefPtr<CefBrowser>, bool audible) override { [view_ updateAudible:audible]; }
+
+  CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
+                                                                 CefRefPtr<CefRequest>, bool, bool, const CefString &,
+                                                                 bool &) override {
+    static CefRefPtr<CefResourceRequestHandler> handler = new AdBlockHandler();
+    return RCAdBlock.available ? handler : nullptr;
+  }
+  void OnFullscreenModeChange(CefRefPtr<CefBrowser>, bool fullscreen) override { [view_ updateFullscreen:fullscreen]; }
+
+  bool OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, CefRefPtr<CefRequest> request, bool,
+                      bool is_redirect) override {
+    NSURL *url = URLFromString(request->GetURL());
+    if (url.scheme.length && !IsWebScheme(url.scheme)) {
+      [view_ openInOtherApp:url];
+      return true;
+    }
+    if (frame->IsMain() && !is_redirect) {
+      cef_transition_type_t transition = request->GetTransitionType();
+      RCNavigationKind kind = (transition & TT_FORWARD_BACK_FLAG) ? RCNavigationKindHistory
+                              : (transition & TT_SOURCE_MASK) == TT_RELOAD ? RCNavigationKindReload
+                                                                            : RCNavigationKindNewPage;
+      [view_ navigationStarting:kind];
+    }
+    return false;
+  }
+  void OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, int) override {
+    if (frame->IsMain()) [view_ loadFinished];
+  }
+  void OnLoadError(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame, ErrorCode code, const CefString &text,
+                   const CefString &failed_url) override {
+    // A load stopped or replaced on purpose isn't a failure.
+    if (!frame->IsMain() || code == ERR_ABORTED) return;
+    [view_ loadFailed:code text:[NSString stringWithUTF8String:text.ToString().c_str()] url:URLFromString(failed_url)];
+  }
+  void OnRenderProcessTerminated(CefRefPtr<CefBrowser>, TerminationStatus, int, const CefString &) override {
+    [view_ crashed];
+  }
 
   // Chromium's status bubble text is the hovered link; Rise shows its own pill instead.
   void OnStatusMessage(CefRefPtr<CefBrowser>, const CefString &value) override {
@@ -317,6 +422,41 @@ cef_color_t ARGB(NSColor *color) {
 }
 
 }  // namespace
+
+@implementation RCAdBlock
++ (BOOL)available {
+#if RISE_ADBLOCK
+  return YES;
+#else
+  return NO;
+#endif
+}
++ (BOOL)enabled { return gAdBlockEnabled; }
++ (void)setEnabled:(BOOL)enabled { gAdBlockEnabled = enabled; }
++ (void)load {
+#if RISE_ADBLOCK
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ rise_adblock_load(); });
+#endif
+}
++ (NSArray<NSString *> *)hiddenSelectorsForURL:(NSURL *)url classes:(NSArray<NSString *> *)classes ids:(NSArray<NSString *> *)ids {
+#if RISE_ADBLOCK
+  if (!gAdBlockEnabled || !url.absoluteString) return @[];
+  NSString *(^json)(NSArray *) = ^NSString *(NSArray *names) {
+    NSData *data = names ? [NSJSONSerialization dataWithJSONObject:names options:0 error:nil] : nil;
+    return data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : nil;
+  };
+  NSString *classList = json(classes), *idList = json(ids);
+  char *result = rise_adblock_hidden(url.absoluteString.UTF8String, classList.UTF8String, idList.UTF8String);
+  if (!result) return @[];
+  NSData *data = [NSData dataWithBytes:result length:strlen(result)];
+  rise_adblock_free_string(result);
+  NSArray *selectors = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+  return [selectors isKindOfClass:NSArray.class] ? selectors : @[];
+#else
+  return @[];
+#endif
+}
+@end
 
 @implementation RCEngine
 
@@ -483,7 +623,10 @@ cef_color_t ARGB(NSColor *color) {
     _downloads = [NSMutableDictionary dictionary];
     _loadsWhenCreated = url != nil;
     self.wantsLayer = YES;
-    if (gContextReady) [self createBrowser];
+    // Made on the next turn, so what Rise sets on the new view first, such as its theme's colour
+    // for before the page draws, is what Chromium starts with.
+    __weak RCBrowserView *weakSelf = self;
+    if (gContextReady) dispatch_async(dispatch_get_main_queue(), ^{ [weakSelf createBrowser]; });
     else [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(contextReady) name:RCContextReadyNotification object:nil];
   }
   return self;
@@ -508,6 +651,7 @@ cef_color_t ARGB(NSColor *color) {
   window.runtime_style = CEF_RUNTIME_STYLE_ALLOY;
   CefBrowserSettings settings;
   settings.background_color = ARGB(_pageBackgroundColor);
+  if (_scriptsDisabled) settings.javascript = STATE_DISABLED;
   // Made empty: Rise's scripts go in first, then it loads or restores its history.
   CefBrowserHost::CreateBrowser(window, _client, "", settings, nullptr, nullptr);
 }
@@ -673,9 +817,11 @@ cef_color_t ARGB(NSColor *color) {
   }
 }
 - (void)devToolsMessage:(NSData *)json {
-  // With Runtime on, the page's console and contexts report too; those are let go unread.
+  // With Runtime and Page on, the page's console, contexts and loading report too; those are let
+  // go unread.
   static const char *const ignored[] = {"\"Runtime.consoleAPICalled\"", "\"Runtime.exceptionThrown\"",
-                                        "\"Runtime.executionContextDestroyed\"", "\"Runtime.executionContextsCleared\""};
+                                        "\"Runtime.executionContextDestroyed\"", "\"Runtime.executionContextsCleared\"",
+                                        "\"Page."};
   const char *bytes = (const char *)json.bytes;
   size_t head = std::min<size_t>(json.length, 96);
   for (const char *method : ignored)
@@ -739,6 +885,10 @@ static NSString *JSONText(id value) {
   // A context made later gets Rise's bindings as it's made only while Runtime is on; Rise's own
   // worlds are made by its scripts, after the handlers are added.
   [self devTools:@"Runtime.enable" params:@{} session:session completion:^(NSDictionary *) {}];
+  // Scripts for new documents run in them only while Page is on; without it, only in the document
+  // there when they're added.
+  [self devTools:@"Page.enable" params:@{} session:session completion:^(NSDictionary *) {}];
+  if (NSDictionary *media = self.emulatedMedia) [self devTools:@"Emulation.setEmulatedMedia" params:media session:session completion:^(NSDictionary *) {}];
   [self devTools:@"Target.setAutoAttach"
           params:@{@"autoAttach": @YES, @"waitForDebuggerOnStart": @YES, @"flatten": @YES, @"filter": @[ @{@"type": @"iframe"} ]}
          session:session completion:^(NSDictionary *) {}];
@@ -770,15 +920,36 @@ static NSString *JSONText(id value) {
         }];
   }
 }
+- (nullable NSDictionary *)emulatedMedia {
+  if (!_prefersDark) return nil;
+  return @{@"features": @[ @{@"name": @"prefers-color-scheme", @"value": _prefersDark.boolValue ? @"dark" : @"light"} ]};
+}
+- (void)setPrefersDark:(NSNumber *)prefersDark {
+  if (prefersDark == _prefersDark || [prefersDark isEqual:_prefersDark]) return;
+  _prefersDark = prefersDark.copy;
+  if (!_browser) return;
+  NSDictionary *media = self.emulatedMedia ?: @{@"features": @[]};
+  for (NSString *session in self.allSessions) [self devTools:@"Emulation.setEmulatedMedia" params:media session:session completion:^(NSDictionary *) {}];
+}
+- (void)setPageBackgroundColor:(NSColor *)color {
+  _pageBackgroundColor = color.copy;
+  // Shown before the page first draws, and around it.
+  self.layer.backgroundColor = color.CGColor;
+}
 - (void)sendHandler:(NSString *)name to:(NSString *)session {
   NSMutableDictionary *params = [@{@"name": BindingName(name)} mutableCopy];
   if (NSString *world = _handlers[name][@"world"]) params[@"executionContextName"] = world;
   [self devTools:@"Runtime.addBinding" params:params session:session completion:^(NSDictionary *) {}];
 }
 - (void)sendScript:(NSDictionary *)script to:(NSString *)session {
+  if (![script[@"source"] length]) return;
   NSMutableDictionary *params = [@{@"source": script[@"source"], @"runImmediately": @YES} mutableCopy];
   if (NSString *world = script[@"world"]) params[@"worldName"] = world;
-  [self devTools:@"Page.addScriptToEvaluateOnNewDocument" params:params session:session completion:^(NSDictionary *) {}];
+  // Each session names the script its own way, to remove it by later.
+  NSMutableDictionary *identifiers = script[@"identifiers"];
+  [self devTools:@"Page.addScriptToEvaluateOnNewDocument" params:params session:session completion:^(NSDictionary *result) {
+    if (NSString *identifier = result[@"identifier"]) identifiers[session] = identifier;
+  }];
 }
 - (NSArray<NSString *> *)allSessions {
   return [@[ @"" ] arrayByAddingObjectsFromArray:_sessions.allObjects];
@@ -824,7 +995,8 @@ static NSString *JSONText(id value) {
     "if (%@ && !(window === window.top)) return;\n"
     "%@\n"
     "})();", JSONText(ran), JSONText(ran), JSONText(bindings), mainFrameOnly ? @"true" : @"false", source];
-  NSMutableDictionary *script = [@{@"source": wrapped, @"wrapped": @YES} mutableCopy];
+  NSMutableDictionary *script = [@{@"source": wrapped, @"wrapped": @YES, @"original": source,
+                                   @"identifiers": [NSMutableDictionary dictionary]} mutableCopy];
   if (world) script[@"world"] = world;
   [_scripts addObject:script];
   if (_browser) for (NSString *session in self.allSessions) [self sendScript:script to:session];
@@ -871,7 +1043,9 @@ static NSString *JSONText(id value) {
   NSString *expression = [self expressionFor:functionBody arguments:arguments];
   if (!expression) { completion(nil, @"Arguments can't be passed to the page"); return; }
   void (^run)(NSNumber *, NSString *) = ^(NSNumber *context, NSString *session) {
-    NSMutableDictionary *params = [@{@"expression": expression, @"awaitPromise": @YES, @"returnByValue": @YES} mutableCopy];
+    // Rise runs these for the user, as a button of its own does: media plays and windows open as
+    // they would from a click.
+    NSMutableDictionary *params = [@{@"expression": expression, @"awaitPromise": @YES, @"returnByValue": @YES, @"userGesture": @YES} mutableCopy];
     if (context) params[@"contextId"] = context;
     [self devTools:@"Runtime.evaluate" params:params session:session reply:^(NSDictionary *result, NSDictionary *error) {
       if (!result) { completion(nil, error[@"message"] ?: @"The page went away"); return; }
@@ -929,8 +1103,23 @@ static NSString *JSONText(id value) {
                   completion:^(id result, NSString *) { completion(result); }];
 }
 
+- (void)removeUserScriptsWithPrefix:(NSString *)prefix {
+  NSIndexSet *matching = [_scripts indexesOfObjectsPassingTest:^BOOL(NSDictionary *script, NSUInteger, BOOL *) {
+    return [script[@"original"] hasPrefix:prefix];
+  }];
+  [matching enumerateIndexesUsingBlock:^(NSUInteger index, BOOL *) {
+    NSDictionary *identifiers = [self->_scripts[index][@"identifiers"] copy];
+    for (NSString *session in identifiers) {
+      [self devTools:@"Page.removeScriptToEvaluateOnNewDocument" params:@{@"identifier": identifiers[session]} session:session
+          completion:^(NSDictionary *) {}];
+    }
+    // Emptied in place rather than removed, so the run-once guards keep their numbers.
+    self->_scripts[index] = @{@"source": @"", @"identifiers": [NSMutableDictionary dictionary]};
+  }];
+}
+
 - (void)addScriptToEveryDocument:(NSString *)source world:(NSString *)world {
-  NSDictionary *script = @{@"source": source, @"world": world};
+  NSDictionary *script = @{@"source": source, @"world": world, @"identifiers": [NSMutableDictionary dictionary]};
   [_scripts addObject:script];
   if (_browser) for (NSString *session in self.allSessions) [self sendScript:script to:session];
 }
@@ -956,6 +1145,34 @@ static NSString *JSONText(id value) {
     return;
   }
   if (![self restore:state]) _browser->GetMainFrame()->LoadURL(std::string(fallback.absoluteString.UTF8String));
+}
+
+- (void)navigationStarting:(RCNavigationKind)kind {
+  if ([self.delegate respondsToSelector:@selector(browserView:willNavigate:)]) [self.delegate browserView:self willNavigate:kind];
+}
+- (void)loadFinished {
+  if ([self.delegate respondsToSelector:@selector(browserViewDidFinishLoad:)]) [self.delegate browserViewDidFinishLoad:self];
+}
+- (void)loadFailed:(NSInteger)code text:(NSString *)text url:(NSURL *)url {
+  if ([self.delegate respondsToSelector:@selector(browserView:didFailLoadWithCode:description:url:)]) {
+    [self.delegate browserView:self didFailLoadWithCode:code description:text url:url];
+  }
+}
+- (void)crashed {
+  [_sessions removeAllObjects];
+  if ([self.delegate respondsToSelector:@selector(browserViewDidCrash:)]) [self.delegate browserViewDidCrash:self];
+}
+- (void)openInOtherApp:(NSURL *)url {
+  if ([self.delegate respondsToSelector:@selector(browserView:openInOtherApp:)]) [self.delegate browserView:self openInOtherApp:url];
+}
+
+- (void)updateFullscreen:(BOOL)fullscreen {
+  if (fullscreen == _fullscreen) return;
+  _fullscreen = fullscreen;
+  [self.delegate browserViewDidChange:self];
+}
+- (void)exitFullscreen {
+  if (_browser && _fullscreen) _browser->GetHost()->ExitFullscreen(true);
 }
 
 - (void)updateAudible:(BOOL)audible {

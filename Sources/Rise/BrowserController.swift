@@ -142,7 +142,8 @@ import RiseCore
     let sessionURL: URL
     let preferences: UserDefaults
     var lastSaved: BrowserSession?
-    var errorWebView: WKWebView?
+    /// The page, as its view, whose load failed.
+    var errorWebView: NSView?
     let adBlocker: AdBlocker
     var blockingChangeGeneration = 0
     let linkPreloader: LinkPreloader
@@ -210,6 +211,13 @@ import RiseCore
         tabSwitchBackdrop.isHidden = true
         linkPreloader.prepareWebView = { [weak self] web in self?.adBlocker.install(on: web) }
         linkPreloader.onHover = { [weak self] url, webView in self?.showHoveredLink(url, in: webView) }
+        #if RISE_CHROMIUM
+        linkPreloader.loadPage = { url, page, done in
+            guard page is ChromiumPage else { return nil }
+            let preload = ChromiumPreload(url, size: page.view.bounds.size, done: done)
+            return { preload.cancel() }
+        }
+        #endif
         linkPreloader.onComplete = { [weak self] url in
             guard let self, let hovered = self.linkStatus.url,
                   LinkPreloader.cacheKey(hovered) == url else { return }
@@ -311,7 +319,7 @@ import RiseCore
         // The pages under the notice would take its button's pointer and cursor for their own links.
         infoPlaque.onPointer = { [weak self] over in
             guard let self else { return }
-            if over { (tabs.map(\.webView) + [peekTab?.webView].compactMap { $0 }).forEach { ($0 as? LinkCursorWebView)?.isCovered = true } }
+            if over { for tab in tabs + [peekTab].compactMap({ $0 }) { setCovered(true, tab) } }
             else { updatePeekCovers() }
         }
         let devActions: [(String, String, () -> Void)] = [
@@ -482,6 +490,28 @@ import RiseCore
                 guard let self, let chromium else { decide(false); return }
                 self.permissionCoordinator.request(in: chromium.view, origin: origin, capabilities: capabilities, completion: decide)
             }
+            chromium.onEvent = { [weak self, weak chromium] event in
+                guard let self, let view = chromium?.view else { return }
+                switch event {
+                case .willNavigate(let kind):
+                    if kind == .newPage { self.leaveForwardPages(of: view) }
+                    self.pageFullscreen.setActive(false, in: view)
+                    self.pageStartedLoading(view)
+                case .finished: self.pageFinishedLoading(view)
+                case .failed(let message): self.showNavigationError(message, in: view)
+                case .crashed: self.pageFullscreen.setActive(false, in: view); self.pageCrashed(view)
+                case .openInOtherApp(let url): self.confirmOpeningInOtherApp(url)
+                }
+            }
+            // WebKit closes a window a site opened when it asks; Chromium, which doesn't know these
+            // pages were opened that way, leaves it to Rise.
+            chromium.addMessageHandler("riseWindowClose", world: .page) { [weak self] message in
+                guard let self, let page = message.page, message.frame.isMain,
+                      let tab = self.tabs.first(where: { $0.page === page }), tab.returnsTo != nil else { return }
+                self.closeTab(tab.id)
+            }
+            chromium.addUserScript("window.close = function close() { riseHandlers.riseWindowClose.postMessage(null); };",
+                                   world: .page, mainFrameOnly: true, handlers: ["riseWindowClose"])
             chromium.onPermissionWithdrawn = { [weak self, weak chromium] in
                 if let view = chromium?.view { self?.permissionCoordinator.cancel(for: view) }
             }
@@ -489,17 +519,17 @@ import RiseCore
         #endif
         tab.hidesNotificationCounts = hidesNotificationCounts
         tab.showsRepositorySubtitle = showsRepositorySubtitle
-        tab.webView.appearance = theme.appearance; tab.webView.underPageBackgroundColor = theme.page
-        adBlocker.install(on: tab.webView)
+        tab.page.setTheme(theme.appearance, background: theme.page)
+        adBlocker.install(on: tab.page)
         HistorySwipeController.install(on: tab.page)
         siteSearchLearner.install(on: tab.webView)
         tab.prepareForLoad = { [weak self] web in try await self?.adBlocker.prepare(web) }
         tab.onLoadError = { [weak self, weak tab] error in
-            if let tab { self?.showNavigationError(error, in: tab.webView) }
+            if let tab { self?.showNavigationError(error, in: tab.page.view) }
         }
-        linkPreloader.install(on: tab.webView)
+        linkPreloader.install(on: tab.page)
         permissionCoordinator.install(on: tab.webView)
-        pageFullscreen.install(on: tab.webView)
+        pageFullscreen.install(on: tab.page)
         pictureInPicture.install(on: tab.page)
         tabMedia.install(on: tab.page)
         pagePaint.install(on: tab.webView, dark: theme == .dark)
@@ -564,7 +594,7 @@ import RiseCore
         toolbarButtons[2].isEnabled = historyPage.map { canNavigate($0, .forward) } ?? false
         toolbarButtons[3].image = selectedTab?.isLoading == true ? NavigationIcon.stop : NavigationIcon.reload
         developerAddress.updateURL(selectedTab?.url?.absoluteString ?? "")
-        errorSurface.isHidden = errorWebView == nil || errorWebView !== selectedTab?.webView
+        errorSurface.isHidden = errorWebView == nil || errorWebView !== selectedTab?.page.view
         layoutChrome(); refreshTabSwitcher(); scheduleSave()
     }
     @objc func newTab() { paletteCreatesTab = true; showPalette(text: "") }
@@ -601,7 +631,7 @@ import RiseCore
         let partner = splitGroups.first { $0.contains(id) }.map { $0.leftID == id ? $0.rightID : $0.leftID }
         splitGroups.removeAll { $0.contains(id) }
         let tab = tabs.remove(at: index); closedTabs.append(tab.saved)
-        pageFullscreen.setActive(false, in: tab.webView)
+        pageFullscreen.setActive(false, in: tab.page.view)
         releaseHeldPages(of: tab)
         permissionCoordinator.cancel(for: tab.page.view)
         recentTabIDs.removeAll { $0 == id }

@@ -29,6 +29,7 @@ took: Chromium built from source with our own patches and our own embedding laye
 | `scripts/engine/checkout.sh` | Fetches the pinned sources (no history, about 30 GB) into `../rise-chromium` |
 | `scripts/engine/patch.sh` | Applies our patches (skips any already applied) |
 | `scripts/engine/build.sh` | Builds the engine for Apple silicon and makes the framework distribution |
+| `Engine/adblock/` | Ad and tracker blocking for Chromium pages: Brave's `adblock` crate behind a small C interface |
 
 Needs Xcode with the macOS SDK the pin expects (26.5 for Chromium 156), its Metal
 toolchain (`xcodebuild -downloadComponent MetalToolchain`), and about 100 GB free.
@@ -72,12 +73,24 @@ when asked, and then new and restored tabs use it:
 ones, and its Chromium never uses the Keychain. The everyday profile keeps Chromium's key in
 Rise's own Keychain item, "Rise Safe Storage".
 
-On Chromium tabs, Peek with all its motion, back/forward history across relaunches,
-downloads, find, camera, microphone and location prompts, picture in picture and the tab's
-sound and play button work, also for frames of other sites. Rise's page scripts reach every
-frame through Chromium's DevTools protocol, inside the app. Still WebKit-only: preloading,
-ad blocking, full screen, the Gmail card, crashed-page recovery, Rise's own page menu, site
-notifications, and WebKit's own picture in picture for encrypted video.
+On Chromium tabs these work, also for frames of other sites:
+
+- Peek with all its motion, and back/forward history across relaunches.
+- Downloads, find, and camera, microphone and location prompts.
+- Picture in picture, and the tab's sound and play button.
+- Browsing history, error pages, the prompt before opening another app, tab switcher
+  pictures, site icons, crashed-page reloads, and `window.close()` for tabs a site opened.
+- Rise's theme (light or dark, and the colour before a page draws), full screen (native,
+  in a window of its own, and simulated, with ⇧⌘F), ad blocking and Preload Links.
+
+Rise's page scripts reach every frame through Chromium's DevTools protocol, inside the app.
+Still WebKit-only: the Gmail card, Rise's own page menu, site notifications, and WebKit's
+own picture in picture for encrypted video.
+
+Ad blocking uses the filter lists WebKit's rules are made from (`Filters/Sources`, plus
+Rise's own rules in `Engine/adblock/rise.txt`), one engine per list so each keeps its own
+exceptions, as on WebKit. `./scripts/build.sh` builds the library with `cargo` where the
+engine is; the engines are made when the library is built, so Rise only loads them.
 
 Live checks, in a real Rise window with Chromium (see `scripts/test-chromium-live.py`):
 

@@ -87,7 +87,7 @@ import WebKit
         findBars[tab.id]?.pageChanged()
         if recordsVisit, let url = tab.url, url.absoluteString != "about:blank" {
             browsingHistory.record(url, title: historyTitle(tab.page.title ?? tab.title, url: url))
-            discoverPageFavicon(tab.webView)
+            discoverPageFavicon(tab.page)
         }
         if tab.id == selectedID { window?.makeFirstResponder(tab.page.view) }
         update()

@@ -1,12 +1,12 @@
-import WebKit
+import AppKit
 
 @MainActor extension BrowserController {
-    func discoverPageFavicon(_ web: WKWebView) {
+    func discoverPageFavicon(_ web: WebPage) {
         guard let pageURL = web.url else { return }
         // Read the real page's declared icon, including icons hosted on a CDN.
         // Keep both appearances; an icon can use media links or SVG media rules.
         let script = """
-        (() => {
+        return (() => {
           const icons = Array.from(document.querySelectorAll('link[rel]')).filter(link =>
             link.rel.toLowerCase().split(/\\s+/).includes('icon') || link.rel.toLowerCase() === 'apple-touch-icon');
           function choose(dark) {
@@ -25,9 +25,9 @@ import WebKit
           return { light: choose(false), dark: choose(true) };
         })()
         """
-        web.evaluateJavaScript(script) { [weak self, weak web] result, _ in
-            guard let self, let web, web.url == pageURL, self.tabs.contains(where: { $0.webView === web }),
-                  let icons = result as? [String: Any] else { return }
+        web.evaluate(script, arguments: [:], in: nil, world: .page) { [weak self, weak web] result in
+            guard let self, let web, web.url == pageURL, self.tabs.contains(where: { $0.page === web }),
+                  let icons = (try? result.get()) as? [String: Any] else { return }
             let light = FaviconDiscovery.lightIcon(for: pageURL) ?? (icons["light"] as? String).flatMap(URL.init(string:))
             let dark = FaviconDiscovery.darkIcon(for: pageURL) ?? (icons["dark"] as? String).flatMap(URL.init(string:))
             if let light { self.suggestionFavicons.loadPageIcon(light, for: pageURL) }

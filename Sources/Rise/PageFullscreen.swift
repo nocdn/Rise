@@ -30,7 +30,10 @@ private final class PageFullscreenLogBridge: NSObject, WKScriptMessageHandler {
     static let stateHandler = "riseFullscreenState"
     private let preferences: UserDefaults
     private var controllers = NSHashTable<WKUserContentController>.weakObjects()
-    private let activeWebViews = NSHashTable<WKWebView>.weakObjects()
+    /// Pages, as their views, whose element is simulated full screen.
+    private let activeWebViews = NSHashTable<NSView>.weakObjects()
+    /// Chromium pages, whose script is swapped when the mode changes.
+    private let scriptedPages = NSHashTable<AnyObject>.weakObjects()
     private(set) var isSimulated: Bool
     var onChange: (() -> Void)?
 
@@ -39,6 +42,24 @@ private final class PageFullscreenLogBridge: NSObject, WKScriptMessageHandler {
         isSimulated = preferences.bool(forKey: Self.simulatedKey)
     }
 
+    func install(on page: WebPage) {
+        guard let web = (page as? WebKitPage)?.webView else {
+            scriptedPages.add(page)
+            page.addMessageHandler(Self.logHandler, world: .page) { message in
+                if let text = message.body as? String { Self.log.notice("\(String(text.prefix(600)), privacy: .public)") }
+            }
+            page.addMessageHandler(Self.stateHandler, world: .page) { [weak self] message in
+                guard message.frame.isMain, let active = message.body as? Bool, let view = message.page?.view else { return }
+                self?.setActive(active, in: view)
+            }
+            installScript(on: page)
+            return
+        }
+        install(on: web)
+    }
+    private func installScript(on page: WebPage) {
+        page.addUserScript(Self.script(simulated: isSimulated), world: .page, mainFrameOnly: false, handlers: [Self.logHandler, Self.stateHandler])
+    }
     func install(on web: WKWebView) {
         let content = web.configuration.userContentController
         guard !controllers.contains(content) else { return }
@@ -48,9 +69,9 @@ private final class PageFullscreenLogBridge: NSObject, WKScriptMessageHandler {
         content.addUserScript(Self.userScript(simulated: isSimulated))
     }
 
-    func isActive(in web: WKWebView) -> Bool { activeWebViews.contains(web) }
+    func isActive(in web: NSView) -> Bool { activeWebViews.contains(web) }
 
-    func setActive(_ active: Bool, in web: WKWebView) {
+    func setActive(_ active: Bool, in web: NSView) {
         let active = active && isSimulated
         guard active != isActive(in: web) else { return }
         if active { activeWebViews.add(web) } else { activeWebViews.remove(web) }
@@ -59,7 +80,7 @@ private final class PageFullscreenLogBridge: NSObject, WKScriptMessageHandler {
 
     /// Saves the choice, loads later pages with it and switches pages already open,
     /// including one that is fullscreen right now.
-    func setSimulated(_ value: Bool, in webViews: [WKWebView]) {
+    func setSimulated(_ value: Bool, in pages: [WebPage]) {
         isSimulated = value
         preferences.set(value, forKey: Self.simulatedKey)
         if !value { activeWebViews.removeAllObjects() }
@@ -71,8 +92,14 @@ private final class PageFullscreenLogBridge: NSObject, WKScriptMessageHandler {
             others.forEach(content.addUserScript)
             content.addUserScript(Self.userScript(simulated: value))
         }
-        for web in webViews {
-            web.evaluateJavaScript("window.__riseFullscreen?.setMode(\(value)); 0") { _, _ in }
+        #if RISE_CHROMIUM
+        for case let page as ChromiumPage in scriptedPages.allObjects {
+            page.browserView.removeUserScripts(withPrefix: Self.marker)
+            installScript(on: page)
+        }
+        #endif
+        for page in pages {
+            page.evaluate("window.__riseFullscreen?.setMode(mode)", arguments: ["mode": value], in: nil, world: .page) { _ in }
         }
     }
 
@@ -96,7 +123,9 @@ private final class PageFullscreenLogBridge: NSObject, WKScriptMessageHandler {
       if (Object.prototype.hasOwnProperty.call(window, KEY)) return;
       let simulated = __RISE_SIMULATED__;
       const isTop = window === window.top;
-      const handler = window.webkit?.messageHandlers?.riseFullscreenLog;
+      // Rise's handlers: WebKit's own, or those Chromium's pages get from Rise's script wrapper.
+      const handlers = typeof riseHandlers !== 'undefined' ? riseHandlers : window.webkit?.messageHandlers;
+      const handler = handlers?.riseFullscreenLog;
       const log = (...parts) => {
         try { handler?.postMessage(`[${isTop ? 'top' : 'frame'} ${location.host || location.protocol}] ` + parts.map(String).join(' ')); } catch {}
       };
@@ -133,7 +162,7 @@ private final class PageFullscreenLogBridge: NSObject, WKScriptMessageHandler {
         stateReportPending = true;
         queueMicrotask(() => {
           stateReportPending = false;
-          try { window.webkit?.messageHandlers?.riseFullscreenState?.postMessage(!!active); } catch {}
+          try { handlers?.riseFullscreenState?.postMessage(!!active); } catch {}
         });
       };
       const setActive = state => { active = state; reportState(); };

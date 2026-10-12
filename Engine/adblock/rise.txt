@@ -1,0 +1,19 @@
+! Rise's own rules, as scripts/update-adblock.py adds them to WebKit's: general ad-slot selectors
+! and ad-script and banner file names.
+/\/ads(\.min)?\.js([?].*)?$/$script,domain=~localhost|~127.0.0.1
+/\/pagead(\.min)?\.js([?].*)?$/$script,domain=~localhost|~127.0.0.1
+/[./_-]ads[./_-]banner[./_-]/
+/[./_-]ad[./_-]banner[./_-]/
+! One selector a line: the engine files a list of them under its first class only.
+~localhost,~127.0.0.1##.textads
+~localhost,~127.0.0.1##.adsbox
+~localhost,~127.0.0.1##.banner_ads
+~localhost,~127.0.0.1##.banner-ads
+~localhost,~127.0.0.1##.afs_ads
+~localhost,~127.0.0.1##.ad-zone
+~localhost,~127.0.0.1##.ad-space
+~localhost,~127.0.0.1##.ad-banner
+~localhost,~127.0.0.1##.ad_banner
+~localhost,~127.0.0.1##.ad-unit
+~localhost,~127.0.0.1##img[src*="ads_banner"]
+~localhost,~127.0.0.1##object[data*="ads_banner"]

@@ -3,6 +3,22 @@
 NS_ASSUME_NONNULL_BEGIN
 
 /// Chromium's browser process inside Rise: started once, before any page.
+/// Ad and tracker blocking for every Chromium page, from Brave's adblock engine built with the
+/// filter lists WebKit's rules come from. Requests go out unchecked until the lists are loaded.
+@interface RCAdBlock : NSObject
+/// Whether this build has it.
+@property (class, readonly) BOOL available;
+/// Whether requests are checked; off lets everything through.
+@property (class) BOOL enabled;
+/// Loads the lists, off the main thread.
++ (void)load;
+/// Selectors to hide on a document at `url`; given the class and id names the document uses,
+/// the general selectors for those names instead.
++ (NSArray<NSString *> *)hiddenSelectorsForURL:(NSURL *)url
+                                       classes:(nullable NSArray<NSString *> *)classes
+                                           ids:(nullable NSArray<NSString *> *)ids;
+@end
+
 @interface RCEngine : NSObject
 /// Loads the Chromium framework from the app bundle and starts it, keeping website data in
 /// `cachePath`. Call on the main thread after `RCApplication.sharedApplication`, before the
@@ -60,6 +76,13 @@ typedef NS_ENUM(NSInteger, RCDownloadState) {
 - (void)cancel;
 @end
 
+/// How the page is going somewhere.
+typedef NS_ENUM(NSInteger, RCNavigationKind) {
+  RCNavigationKindNewPage,
+  RCNavigationKindHistory,
+  RCNavigationKindReload,
+};
+
 /// What a page asks permission for.
 typedef NS_OPTIONS(NSUInteger, RCPermission) {
   RCPermissionCamera = 1 << 0,
@@ -98,6 +121,19 @@ typedef NS_OPTIONS(NSUInteger, RCPermission) {
                 decide:(void (^)(RCPermission allowed))decide;
 /// A permission request was withdrawn, as by navigating away, before it was decided.
 - (void)browserViewDidWithdrawPermissionRequest:(RCBrowserView *)browserView;
+/// The page is about to go somewhere, before its request goes out.
+- (void)browserView:(RCBrowserView *)browserView willNavigate:(RCNavigationKind)kind;
+/// The page has finished loading.
+- (void)browserViewDidFinishLoad:(RCBrowserView *)browserView;
+/// The page failed to load `url`; `code` is Chromium's network error.
+- (void)browserView:(RCBrowserView *)browserView
+    didFailLoadWithCode:(NSInteger)code
+            description:(NSString *)description
+                    url:(nullable NSURL *)url;
+/// The page's renderer process ended; it shows nothing until it's loaded again.
+- (void)browserViewDidCrash:(RCBrowserView *)browserView;
+/// A link for another app, such as mailto:, which the page doesn't open itself.
+- (void)browserView:(RCBrowserView *)browserView openInOtherApp:(NSURL *)url;
 @end
 
 /// A page drawn by Chromium, filling this view. Rise lays it out, clips and animates it like
@@ -115,6 +151,14 @@ typedef NS_OPTIONS(NSUInteger, RCPermission) {
 @property (nonatomic, readonly) double progress;
 /// Whether the page makes sound now.
 @property (nonatomic, readonly) BOOL audible;
+/// Whether the page shows an element full screen, through the Fullscreen API; Rise makes the
+/// view fill the screen while it does.
+@property (nonatomic, readonly) BOOL fullscreen;
+/// Takes the page out of full screen, as Escape does.
+- (void)exitFullscreen;
+/// Loads without running the page's scripts, as a page loaded out of sight only to warm the
+/// cache does. Set before the view's first turn of the run loop.
+@property (nonatomic) BOOL scriptsDisabled;
 /// The back/forward history, with scroll positions and forms, for restoring at the next launch.
 @property (nonatomic, readonly, nullable) NSData *navigationState;
 /// Gives a page that hasn't loaded anything that history and loads its current entry, or loads
@@ -129,6 +173,9 @@ typedef NS_OPTIONS(NSUInteger, RCPermission) {
 @property (nonatomic) double zoom;
 /// The color shown where the page hasn't painted yet.
 @property (nonatomic, copy) NSColor *pageBackgroundColor;
+/// Whether the page should look dark, as its `prefers-color-scheme` reports, whatever macOS's
+/// own appearance; nil follows macOS.
+@property (nonatomic, copy, nullable) NSNumber *prefersDark;
 - (void)loadURL:(NSURL *)url NS_SWIFT_NAME(open(_:));
 - (void)goBack;
 - (void)goForward;
@@ -157,6 +204,8 @@ typedef NS_OPTIONS(NSUInteger, RCPermission) {
                 world:(nullable NSString *)world
         mainFrameOnly:(BOOL)mainFrameOnly
              handlers:(NSArray<NSString *> *)handlers;
+/// Stops running user scripts whose source starts with `prefix` on documents to come.
+- (void)removeUserScriptsWithPrefix:(NSString *)prefix;
 /// As `evaluateFunctionBody:arguments:world:completion:`, in `frame` (nil: the main one) and
 /// `world` (nil: the page's own), reporting why it failed.
 - (void)evaluateFunctionBody:(NSString *)functionBody

@@ -109,6 +109,10 @@ import WebKit
                                                                                forMainFrameOnly: true, in: .world(name: world)))
     }
     func setMediaSuspended(_ suspended: Bool) { webView.setAllMediaPlaybackSuspended(suspended) }
+    func setTheme(_ appearance: NSAppearance, background: NSColor) {
+        if webView.appearance?.name != appearance.name { webView.appearance = appearance }
+        if webView.underPageBackgroundColor != background { webView.underPageBackgroundColor = background }
+    }
 
     // Pages a page opens share its user content, so what's there is kept on the controller
     // itself (a table keyed by it could hand a later controller at the same address its record).

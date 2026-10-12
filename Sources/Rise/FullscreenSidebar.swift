@@ -13,7 +13,7 @@ import AppKit
     func reconcileFullscreenSidebar() {
         let visible = tabs.filter { visibleTabIDs.contains($0.id) } + (peekTab.map { [$0] } ?? [])
         let fullscreen = pageFullscreen.isSimulated && collapsesSidebarInSimulatedFullscreen
-            && visible.contains { pageFullscreen.isActive(in: $0.webView) }
+            && visible.contains { pageFullscreen.isActive(in: $0.page.view) }
         if fullscreen {
             guard fullscreenSidebarWasVisible == nil else { return }
             fullscreenSidebarWasVisible = sidebarVisible

@@ -1,6 +1,7 @@
 // Rise's features on Chromium pages, in a real Rise window: the tab's sound and its play button
 // (also from a frame of another site, in a process of its own), picture in picture, find,
-// downloads, camera and location prompts, and history after a relaunch.
+// downloads, camera and location prompts, history after a relaunch, what Rise does as pages
+// load, fail, crash and close, its theme, full screen, ad blocking and Preload Links.
 // Run with python3 scripts/test-chromium-live.py features.
 import AppKit
 @testable import Rise
@@ -68,6 +69,105 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
 
     func run() async {
         do { try await checks() } catch { check(false, "\(error)") }
+    }
+
+    /// How many times the first site's server was asked for `path`.
+    func requests(_ path: String) -> Int {
+        let log = (try? String(contentsOf: folder.appendingPathComponent("server-0.log"), encoding: .utf8)) ?? ""
+        return log.components(separatedBy: "\"GET \(path) ").count - 1
+    }
+
+    /// Rise's theme, full screen, ad blocking and Preload Links on Chromium pages.
+    func pageLook() async throws {
+        // A Dark page prefers dark, and starts in Rise's dark page colour before it first draws.
+        browser.theme = .dark; browser.update()
+        let themed = browser.addTab(url: try page("theme", "<meta name=color-scheme content='light dark'><h1>Theme</h1>"))
+        let start = (themed.page as! ChromiumPage).browserView.pageBackgroundColor.usingColorSpace(.sRGB)
+        let dark = RiseTheme.dark.page.usingColorSpace(.sRGB)
+        check(start != nil && dark != nil && abs(start!.redComponent - dark!.redComponent) < 0.01, "A new page starts in Rise's dark page colour")
+        _ = await waitUntil("theme.html loads") { themed.page.url?.lastPathComponent == "theme.html" && !themed.page.isLoading }
+        let prefersDark = "return matchMedia('(prefers-color-scheme: dark)').matches"
+        check(await value(prefersDark, in: themed.page) as? Bool == true, "A Dark page prefers dark")
+        browser.theme = .neutral; browser.update()
+        _ = await waitUntil("And light again in Light") { await self.value(prefersDark, in: themed.page) as? Bool == false }
+
+        // Native full screen: the page goes to a full-screen window of its own and comes back,
+        // when it leaves itself and on Escape.
+        let box = "<div id=box style='width:200px;height:100px;background:red'></div>"
+        let screen = await open(try page("fullscreen", box))
+        let enter = "document.getElementById('box').requestFullscreen().catch(() => {}); return 0"
+        for (round, leave) in ["the page leaves", "Escape"].enumerated() {
+            _ = await value(enter, in: screen.page)
+            guard await waitUntil("The page goes full screen (\(round))", 10, { screen.page.isInNativeFullscreen && screen.page.view.window?.styleMask.contains(.fullScreen) == true }),
+                  let window = screen.page.view.window else { break }
+            check(await value("return document.fullscreenElement?.id", in: screen.page) as? String == "box", "The element is full screen")
+            if round == 0 { _ = await value("document.exitFullscreen(); return 0", in: screen.page) }
+            else if let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                                                   context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53) {
+                window.sendEvent(escape)
+            }
+            _ = await waitUntil("It comes back to its tab when \(leave)") {
+                !screen.page.isInNativeFullscreen && screen.page.view.window === self.browser.window
+            }
+            _ = await waitUntil("And out of full screen") { await self.value("return document.fullscreenElement === null", in: screen.page) as? Bool == true }
+        }
+
+        // Simulated full screen lifts the element over the page in its tab, and later pages get it too.
+        browser.pageFullscreen.setSimulated(true, in: browser.tabs.map(\.page))
+        _ = await value(enter, in: screen.page)
+        _ = await waitUntil("The element is lifted over the page") { self.browser.pageFullscreen.isActive(in: screen.page.view) }
+        check(!screen.page.isInNativeFullscreen && screen.page.view.window === browser.window, "In its own tab")
+        let rect = await value("const r = document.getElementById('box').getBoundingClientRect(); return [r.width, innerWidth]", in: screen.page) as? [Double]
+        check(rect?.first == rect?.last, "Covering the page: \(rect ?? [])")
+        _ = await value("document.exitFullscreen(); return 0", in: screen.page)
+        _ = await waitUntil("And lets it go") { !self.browser.pageFullscreen.isActive(in: screen.page.view) }
+        // Rise's scripts run in a tab's later documents too, not only its first.
+        _ = await value("window.riseCheckOld = true; return 0", in: screen.page)
+        screen.page.reload()
+        _ = await waitUntil("A later page is simulated too") {
+            await self.value("return !window.riseCheckOld && window.__riseFullscreen?.simulated", in: screen.page) as? Bool == true
+        }
+        browser.pageFullscreen.setSimulated(false, in: browser.tabs.map(\.page))
+
+        // Ad blocking: requests the lists block don't go out, and ad slots are hidden, also ones
+        // added later, by EasyList's rules and Rise's own; turning it off lets them through.
+        try "ok".write(to: folder.appendingPathComponent("x_ads_banner_1.txt"), atomically: true, encoding: .utf8)
+        _ = try page("ads", "<div class=ADBAR id=slot>Ad</div><div class=adsbox id=own>Ad</div><p id=text>Text</p>")
+        let ads = await open(URL(string: "http://rise-check.test:\(ports[0])/ads.html")!)
+        let fetches = "return fetch('x_ads_banner_1.txt').then(r => r.ok, () => 'blocked')"
+        let hidden = "const add = document.createElement('div'); add.className = 'ADBox'; add.id = 'later'; document.body.append(add);" +
+            "await new Promise(r => setTimeout(r, 400)); return ['slot', 'own', 'later', 'text'].map(id => getComputedStyle(document.getElementById(id)).display)"
+        check(await value(fetches, in: ads.page) as? String == "blocked", "A blocked request doesn't go out")
+        _ = await waitUntil("Ad slots are hidden, and only them") { await self.value(hidden, in: ads.page) as? [String] == ["none", "none", "none", "block"] }
+        browser.toggleAdBlocking()
+        _ = await waitUntil("Turned off, the request goes out") { await self.value(fetches, in: ads.page) as? Bool == true }
+        _ = await waitUntil("And, reloaded, nothing is hidden") { await self.value(hidden, in: ads.page) as? [String] == ["block", "block", "block", "block"] }
+        browser.toggleAdBlocking()
+        _ = await waitUntil("Turned on again, they're hidden again") { await self.value(hidden, in: ads.page) as? [String] == ["none", "none", "none", "block"] }
+
+        // Preload Links: resting on a link loads its page, without its scripts, and the click takes
+        // it from the cache.
+        _ = try page("warm", "<link rel=stylesheet href=warm.css><script>fetch('script-ran')</script><h1>Warm</h1>")
+        try "h1 { color: green }".write(to: folder.appendingPathComponent("warm.css"), atomically: true, encoding: .utf8)
+        // Long unchanged, so the cache keeps them fresh for a while, as a server's own caching would.
+        for name in ["warm.html", "warm.css"] {
+            try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -365 * 86400)],
+                                                  ofItemAtPath: folder.appendingPathComponent(name).path)
+        }
+        browser.linkPreloader.setEnabled(true)
+        let links = await open(try page("hover", "<a id=warm href=warm.html>Warm</a>"))
+        _ = await value("document.getElementById('warm').dispatchEvent(new PointerEvent('pointerover', {bubbles: true, composed: true, pointerType: 'mouse'})); return 0",
+                        in: links.page)
+        let warm = URL(string: "\(site)/warm.html")!
+        _ = await waitUntil("The page is preloaded") { self.browser.linkPreloader.isComplete(warm) }
+        check(requests("/warm.html") == 1 && requests("/warm.css") == 1 && requests("/script-ran") == 0,
+              "Its page and style are fetched, but its scripts don't run")
+        check(browser.tabs.count == browser.tabs.filter { $0.page.url != warm }.count, "Nothing opens")
+        _ = await value("document.getElementById('warm').click(); return 0", in: links.page)
+        _ = await waitUntil("The click goes there") { links.page.url == warm && !links.page.isLoading }
+        _ = await waitUntil("And runs its scripts") { self.requests("/script-ran") == 1 }
+        check(requests("/warm.css") == 1, "Taking the style from the cache: \(requests("/warm.html")) page and \(requests("/warm.css")) style requests")
+        browser.linkPreloader.setEnabled(false)
     }
 
     func checks() async throws {
@@ -155,6 +255,54 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         _ = await waitUntil("Rise asks before the site gets the location") { browser.permissionCoordinator.popover.isShown }
         browser.permissionCoordinator.resolve(false)
         _ = await waitUntil("Denying refuses it") { await value("return window.place", in: ask.page) as? String == "denied 1" }
+
+        // Loaded pages go in the browsing history, and their tabs get a picture for the tab switcher.
+        check(browser.browsingHistory.entries.contains { $0.url == text.page.url?.absoluteString && $0.title == "find" },
+              "Visited pages are in the browsing history")
+        _ = await waitUntil("The tab gets its picture") { text.thumbnail != nil }
+
+        // A page that can't load shows Rise's error, worded plainly.
+        let closed = { let socket = Darwin.socket(AF_INET, SOCK_STREAM, 0); defer { Darwin.close(socket) }
+            var address = sockaddr_in(); address.sin_family = sa_family_t(AF_INET); address.sin_addr.s_addr = inet_addr("127.0.0.1")
+            var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+            _ = withUnsafeMutablePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.bind(socket, $0, length) } }
+            _ = withUnsafeMutablePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.getsockname(socket, $0, &length) } }
+            return Int(UInt16(bigEndian: address.sin_port))
+        }()
+        // A port nothing listens on.
+        let broken = browser.addTab(url: URL(string: "http://127.0.0.1:\(closed)/")!)
+        _ = await waitUntil("Rise shows the page's error") {
+            browser.errorWebView === broken.page.view && browser.errorMessage.stringValue == "Could not connect to the server."
+        }
+        check(!browser.errorSurface.isHidden, "The error is on screen")
+
+        // A link for another app asks first.
+        let links = await open(try page("links", "<a id=m href='mailto:rise@example.com'>Mail</a>"))
+        _ = await value("document.getElementById('m').click()", in: links.page)
+        _ = await waitUntil("Rise asks before opening another app") {
+            (browser.window?.attachedSheet?.contentViewController as Any?) != nil || browser.window?.attachedSheet != nil
+        }
+        if let sheet = browser.window?.attachedSheet { browser.window?.endSheet(sheet, returnCode: .alertSecondButtonReturn) }
+
+        // A page whose process crashes loads again.
+        let crashing = await open(try page("crash", "<h1>Crash</h1>"))
+        let devTools = NSSelectorFromString("devTools:params:completion:")
+        typealias Send = @convention(c) (AnyObject, Selector, NSString, NSDictionary, @escaping @convention(block) (NSDictionary?) -> Void) -> Void
+        let view = (crashing.page as! ChromiumPage).browserView
+        unsafeBitCast(class_getMethodImplementation(RCBrowserView.self, devTools), to: Send.self)(view, devTools, "Page.crash", [:]) { _ in }
+        try await Task.sleep(for: .milliseconds(500))
+        _ = await waitUntil("The crashed page loads again") {
+            await value("return document.title", in: crashing.page) as? String == "crash" && !crashing.page.isLoading
+        }
+
+        // A tab a site opened closes when the site asks, back to the tab that opened it.
+        _ = try page("closer", "<script>setTimeout(() => window.close(), 400)</script><h1>Closer</h1>")
+        let opener = await open(try page("opener", "<h1>Opener</h1>"))
+        _ = await value("window.open('closer.html')", in: opener.page)
+        _ = await waitUntil("The site's tab opens") { browser.tabs.contains { $0.returnsTo == opener.id } }
+        _ = await waitUntil("And closes itself") { !browser.tabs.contains { $0.returnsTo == opener.id } && browser.selectedID == opener.id }
+
+        try await pageLook()
 
         // History after a relaunch: a page made later goes straight to where the tab was, with its history.
         let first = try page("first", "<h1>First</h1>"), second = try page("second", "<h1>Second</h1>")

@@ -1,0 +1,25 @@
+[package]
+name = "rise-adblock"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Rise's ad and tracker blocking for Chromium pages: Brave's adblock engine behind a small C interface."
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+adblock = { version = "0.13.3", default-features = false, features = ["embedded-domain-resolver", "full-regex-handling"] }
+serde_json = "1"
+
+# The engines are built from the filter lists when the library is, so the app only loads them.
+[build-dependencies]
+adblock = { version = "0.13.3", default-features = false, features = ["embedded-domain-resolver", "full-regex-handling"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.release.build-override]
+opt-level = 3

@@ -335,8 +335,8 @@ import AppKit
     /// already open too, and says which one is now on.
     @objc func toggleSimulatedFullscreen() {
         let simulated = !pageFullscreen.isSimulated
-        let webViews = tabs.map(\.webView) + (peekTab.map { [$0.webView] } ?? [])
-        pageFullscreen.setSimulated(simulated, in: webViews)
+        let pages = tabs.map(\.page) + (peekTab.map { [$0.page] } ?? [])
+        pageFullscreen.setSimulated(simulated, in: pages)
         showInfo(simulated ? "Simulated full screen enabled" : "Native full screen enabled", image: InfoPlaque.fullScreenIcon, kind: "fullscreen")
     }
     func showInfo(_ text: String, image: NSImage? = nil, action: InfoPlaque.Action? = nil, kind: String = "info") {

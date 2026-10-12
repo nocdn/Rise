@@ -171,7 +171,7 @@ import WebKit
         hover.insideCard = inside
         // The pages under the card keep their hover tracking otherwise, and would take the
         // card's pointer and cursor for their own links.
-        if inside { for tab in tabs { (tab.webView as? LinkCursorWebView)?.isCovered = true }; (peekTab?.webView as? LinkCursorWebView)?.isCovered = true }
+        if inside { for tab in tabs { setCovered(true, tab) }; if let peekTab { setCovered(true, peekTab) } }
         else { updatePeekCovers() }
         if inside { hover.safeOrigin = nil; hover.safeTarget = nil; hover.leftRow = nil; return }
         // Heading back from the card to its tab crosses a gap first; a triangle toward the tab

@@ -6,6 +6,11 @@ python3 scripts/sign-app.py --check
 # Swift Build can otherwise stamp the deployment target as the SDK version,
 # which opts AppKit into legacy rendering despite compiling with a newer SDK.
 RISE_SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version)"
+# Chromium pages' ad blocking is built from the same filter lists as WebKit's rules.
+ENGINE_ROOT="${RISE_CHROMIUM_ROOT:-${PWD:h}/rise-chromium}"
+if [[ -f "$ENGINE_ROOT/distrib/current/include/cef_app.h" ]] && command -v cargo > /dev/null; then
+  cargo build --quiet --release --manifest-path Engine/adblock/Cargo.toml --target-dir "$ENGINE_ROOT/adblock-build"
+fi
 swift build -c release -Xlinker -platform_version -Xlinker macos -Xlinker 14.0 -Xlinker "$RISE_SDK_VERSION"
 APP="$PWD/build/Rise.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"

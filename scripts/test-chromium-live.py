@@ -52,6 +52,7 @@ subprocess.run(["swiftc", "-target", f"{platform.machine()}-apple-macos14.0", "-
                 "-Xcc", f"-fmodule-map-file={debug / 'RiseChromium.build/module.modulemap'}",
                 "-I", str(root / "Sources/RiseChromium/include"), *objects,
                 str(engine / "bridge-build/wrapper/libcef_dll_wrapper/libcef_dll_wrapper.a"), "-lc++",
+                *([str(engine / "adblock-build/release/librise_adblock.a")] if (engine / "adblock-build/release/librise_adblock.a").exists() else []),
                 *linker, "-o", str(executable)], cwd=root, check=True)
 subprocess.run(["codesign", "--force", "--sign", "-", str(executable)], check=True, capture_output=True)
 subprocess.run(["codesign", "--force", "--sign", "-", str(probe)], check=True, capture_output=True)
@@ -66,11 +67,15 @@ if check == "features":
     for _ in range(2):
         with socket.socket() as probe_socket:
             probe_socket.bind(("127.0.0.1", 0)); ports.append(probe_socket.getsockname()[1])
-    servers = [subprocess.Popen([sys.executable, "-m", "http.server", str(port), "--bind", "127.0.0.1", "--directory", str(folder)],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) for port in ports]
+    # Each server's requests go in a log the checks read, to see what was fetched.
+    servers = [subprocess.Popen([sys.executable, "-u", "-m", "http.server", str(port), "--bind", "127.0.0.1", "--directory", str(folder)],
+                                stdout=subprocess.DEVNULL, stderr=open(folder / f"server-{index}.log", "w"))
+               for index, port in enumerate(ports)]
     environment["RISE_CHECK_PORTS"] = ",".join(map(str, ports))
     # Media plays without a click, and the camera is Chromium's made-up one, so no real camera is asked for.
-    arguments = ["--autoplay-policy=no-user-gesture-required", "--use-fake-device-for-media-stream"]
+    # rise-check.test is an ordinary site to the filter lists, which leave local addresses alone.
+    arguments = ["--autoplay-policy=no-user-gesture-required", "--use-fake-device-for-media-stream",
+                 "--host-resolver-rules=MAP rise-check.test 127.0.0.1"]
 try:
     result = subprocess.run([str(executable), *arguments], env=environment)
 finally:

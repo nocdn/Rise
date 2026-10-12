@@ -59,6 +59,7 @@ enum RiseProfile {
     /// The page asks for these; `decide` takes whether they're allowed.
     var onPermissionRequest: ((_ capabilities: [SiteCapability], _ origin: String?, _ decide: @escaping (Bool) -> Void) -> Void)?
     var onPermissionWithdrawn: (() -> Void)?
+    var onEvent: ((PageEvent) -> Void)?
     private var handlers: [String: (PageMessage) -> Void] = [:]
     private var replyingHandlers: [String: (PageMessage, @escaping (Any?, String?) -> Void) -> Void] = [:]
     /// Until it's asked to load something, the page is Chromium's blank start, not a page of its own.
@@ -109,6 +110,34 @@ enum RiseProfile {
     nonisolated func browserViewDidWithdrawPermissionRequest(_ browserView: RCBrowserView) {
         MainActor.assumeIsolated { onPermissionWithdrawn?() }
     }
+    nonisolated func browserView(_ browserView: RCBrowserView, willNavigate kind: RCNavigationKind) {
+        MainActor.assumeIsolated { onEvent?(.willNavigate(kind == .history ? .history : kind == .reload ? .reload : .newPage)) }
+    }
+    nonisolated func browserViewDidFinishLoad(_ browserView: RCBrowserView) {
+        MainActor.assumeIsolated { onEvent?(.finished) }
+    }
+    nonisolated func browserView(_ browserView: RCBrowserView, didFailLoadWithCode code: Int, description: String, url: URL?) {
+        MainActor.assumeIsolated { onEvent?(.failed(Self.errorMessage(code, description))) }
+    }
+    nonisolated func browserViewDidCrash(_ browserView: RCBrowserView) {
+        MainActor.assumeIsolated { onEvent?(.crashed) }
+    }
+    nonisolated func browserView(_ browserView: RCBrowserView, openInOtherApp url: URL) {
+        MainActor.assumeIsolated { onEvent?(.openInOtherApp(url)) }
+    }
+    /// Chromium's network errors, worded as WebKit words the common ones.
+    static func errorMessage(_ code: Int, _ description: String) -> String {
+        switch code {
+        case -105, -137: return "A server with the specified hostname could not be found."
+        case -106: return "The Internet connection appears to be offline."
+        case -102, -109, -104: return "Could not connect to the server."
+        case -7, -118: return "The request timed out."
+        case -101, -100: return "The network connection was lost."
+        case -21: return "The network connection changed."
+        case -299 ... -200: return "The certificate for this server is invalid."
+        default: return description.replacingOccurrences(of: "net::", with: "")
+        }
+    }
 
     func addMessageHandler(_ name: String, world: ScriptWorld, receive: @escaping (PageMessage) -> Void) {
         handlers[name] = receive
@@ -137,6 +166,7 @@ enum RiseProfile {
         if now.back != before.back || now.forward != before.forward { onChange?(.navigation) }
         if now.progress != before.progress { onChange?(.progress) }
         if browserView.audible != audible { audible = browserView.audible; onChange?(.audio) }
+        if browserView.fullscreen != (fullscreenWindow != nil) { followFullscreen() }
     }
     private var audible = false
 
@@ -146,7 +176,25 @@ enum RiseProfile {
     var estimatedProgress: Double { browserView.progress }
     var canGoBack: Bool { browserView.canGoBack }
     var canGoForward: Bool { browserView.canGoForward }
-    var isInNativeFullscreen: Bool { false }
+    /// While an element is full screen, the page shows in a window of its own, in its own
+    /// Space, as WebKit's full screen does; Rise's layout leaves it be until it's back.
+    var isInNativeFullscreen: Bool { fullscreenWindow != nil }
+    private var fullscreenWindow: ChromiumFullscreenWindow?
+    private func followFullscreen() {
+        if browserView.fullscreen, fullscreenWindow == nil {
+            let window = ChromiumFullscreenWindow(showing: browserView)
+            window.onLeave = { [weak self] in self?.browserView.exitFullscreen() }
+            window.onClosed = { [weak self, weak window] in
+                guard let self, self.fullscreenWindow === window else { return }
+                self.fullscreenWindow = nil; self.onChange?(.fullscreen)
+            }
+            fullscreenWindow = window
+            onChange?(.fullscreen)
+            window.enter()
+        } else if !browserView.fullscreen, let window = fullscreenWindow {
+            window.leave()
+        }
+    }
     var isMagnified: Bool { false }
     var isCovered: Bool {
         get { browserView.covered }
@@ -200,6 +248,10 @@ enum RiseProfile {
         }
     }
     func addScriptToEveryDocument(_ source: String, world: String) { browserView.addScript(toEveryDocument: source, world: world) }
+    func setTheme(_ appearance: NSAppearance, background: NSColor) {
+        browserView.prefersDark = NSNumber(value: appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+        if browserView.pageBackgroundColor != background { browserView.pageBackgroundColor = background }
+    }
     func setMediaSuspended(_ suspended: Bool) {
         // Plays again only what was playing when it was held.
         Task { _ = await evaluate(Self.suspendMedia, arguments: ["suspend": suspended], world: nil) }
@@ -210,5 +262,90 @@ enum RiseProfile {
       else if (media.dataset.riseSuspended) { delete media.dataset.riseSuspended; media.play().catch(() => {}); }
     }
     """
+}
+/// The window a Chromium page shows an element full screen in.
+@MainActor final class ChromiumFullscreenWindow: NSWindow, NSWindowDelegate {
+    /// Takes the page out of its full screen: the person left it, by Escape or the window's own
+    /// button, or the window is going.
+    var onLeave: (() -> Void)?
+    /// Out of full screen; the page can go back where it was.
+    var onClosed: (() -> Void)?
+    init(showing page: NSView) {
+        let start = page.window.map { $0.convertToScreen(page.convert(page.bounds, to: nil)) } ?? NSScreen.main?.frame ?? .zero
+        super.init(contentRect: start, styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        titleVisibility = .hidden; titlebarAppearsTransparent = true
+        backgroundColor = .black; isReleasedWhenClosed = false
+        collectionBehavior = [.fullScreenPrimary]; delegate = self
+        let content = NSView(frame: NSRect(origin: .zero, size: start.size))
+        contentView = content
+        page.frame = content.bounds; page.autoresizingMask = [.width, .height]
+        content.addSubview(page)
+    }
+    /// Going into full screen; macOS ignores a toggle until it's in.
+    private var entering = false
+    /// Out of full screen is where it's headed, whoever asked.
+    private var wantsOut = false
+    private var closed = false
+    func enter() {
+        makeKeyAndOrderFront(nil)
+        entering = true
+        toggleFullScreen(nil)
+        makeFirstResponder(contentView?.subviews.first)
+    }
+    /// Heads out of full screen, as soon as macOS allows.
+    func leave() {
+        wantsOut = true
+        guard !entering, !closed else { return }
+        if styleMask.contains(.fullScreen) { toggleFullScreen(nil) } else { finish() }
+    }
+    func windowDidEnterFullScreen(_ notification: Notification) {
+        entering = false
+        // Not from inside this notice, which macOS ignores.
+        if wantsOut { DispatchQueue.main.async { [weak self] in self?.leave() } }
+    }
+    func windowWillExitFullScreen(_ notification: Notification) {
+        // The window's own button, or Mission Control: the page goes too.
+        if !wantsOut { wantsOut = true; onLeave?() }
+    }
+    func windowDidExitFullScreen(_ notification: Notification) { finish() }
+    func windowDidFailToEnterFullScreen(_ window: NSWindow) { entering = false; finish() }
+    private func finish() {
+        guard !closed else { return }
+        closed = true
+        // The page leaves its full screen with the window, whichever went first.
+        onLeave?()
+        contentView?.subviews.first?.autoresizingMask = []
+        onClosed?()
+        orderOut(nil)
+    }
+    override func sendEvent(_ event: NSEvent) {
+        // Escape leaves full screen before the page sees it, as in Chrome.
+        if event.type == .keyDown, event.keyCode == 53 { onLeave?(); leave(); return }
+        super.sendEvent(event)
+    }
+}
+/// A Chromium page loaded out of sight with its scripts off, only to put a link the pointer
+/// rests on into the cache the tab then loads it from.
+@MainActor final class ChromiumPreload: NSObject, RCBrowserViewDelegate {
+    private let view: RCBrowserView
+    private var done: ((Bool) -> Void)?
+    init(_ url: URL, size: NSSize, done: @escaping (Bool) -> Void) {
+        view = RCBrowserView(frame: NSRect(origin: .zero, size: size), url: nil)
+        self.done = done
+        super.init()
+        view.scriptsDisabled = true; view.delegate = self
+        view.setAudioMuted(true); view.open(url)
+    }
+    func cancel() { done = nil; view.close() }
+    private func finish(_ loaded: Bool) { let done = done; self.done = nil; done?(loaded) }
+    nonisolated func browserViewDidChange(_ browserView: RCBrowserView) {}
+    nonisolated func browserViewDidFinishLoad(_ browserView: RCBrowserView) { MainActor.assumeIsolated { finish(true) } }
+    nonisolated func browserView(_ browserView: RCBrowserView, didFailLoadWithCode code: Int, description: String, url: URL?) {
+        MainActor.assumeIsolated { finish(false) }
+    }
+    nonisolated func browserViewDidCrash(_ browserView: RCBrowserView) { MainActor.assumeIsolated { finish(false) } }
+    // Never anything more than the page: no downloads, other apps or new tabs.
+    nonisolated func browserView(_ browserView: RCBrowserView, destinationFor download: RCDownload, suggestedName: String) -> URL? { nil }
+    nonisolated func browserView(_ browserView: RCBrowserView, open url: URL, disposition: RCOpenDisposition, userGesture: Bool) -> Bool { true }
 }
 #endif
