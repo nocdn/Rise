@@ -1,0 +1,556 @@
+--- a/include/cef_request_context.h
++++ b/include/cef_request_context.h
+@@ -48,6 +48,8 @@
+ #include "include/cef_values.h"
+ 
+ class CefRequestContextHandler;
++class CefExtensionAction;
++class CefExtensionActionsObserver;
+ class CefSchemeHandlerFactory;
+ 
+ ///
+@@ -272,8 +274,32 @@
+   ///
+   /*--cef(added=experimental)--*/
+   virtual CefString GetDefaultSearchName() = 0;
++
++  ///
++  /// How many extension toolbar buttons GetExtensionActions() gives. Must be
++  /// called on the browser process UI thread.
++  ///
++  /*--cef(added=experimental)--*/
++  virtual size_t GetExtensionActionCount() = 0;
++
++  ///
++  /// The toolbar buttons of the extensions enabled in this context, in no set
++  /// order. Must be called on the browser process UI thread.
++  ///
++  /*--cef(added=experimental,count_func=actions:GetExtensionActionCount)--*/
++  virtual void GetExtensionActions(
++      std::vector<CefRefPtr<CefExtensionAction>>& actions) = 0;
+ 
+   ///
++  /// Has |observer| hear when this context's extension toolbar buttons
++  /// change, until the returned object is released. Must be called on the
++  /// browser process UI thread.
++  ///
++  /*--cef(added=experimental)--*/
++  virtual CefRefPtr<CefRegistration> AddExtensionActionsObserver(
++      CefRefPtr<CefExtensionActionsObserver> observer) = 0;
++
++  ///
+   /// Returns the current value for |content_type| that applies for the
+   /// specified URLs. If both URLs are empty the default value will be returned.
+   /// Returns nullptr if no value is configured. Must be called on the browser
+--- a/libcef/browser/request_context_impl.h
++++ b/libcef/browser/request_context_impl.h
+@@ -124,6 +124,11 @@
+                    CefRefPtr<CefResolveCallback> callback) override;
+   CefString GetDefaultSearchURL(const CefString& terms) override;
+   CefString GetDefaultSearchName() override;
++  size_t GetExtensionActionCount() override;
++  void GetExtensionActions(
++      std::vector<CefRefPtr<CefExtensionAction>>& actions) override;
++  CefRefPtr<CefRegistration> AddExtensionActionsObserver(
++      CefRefPtr<CefExtensionActionsObserver> observer) override;
+   CefRefPtr<CefMediaRouter> GetMediaRouter(
+       CefRefPtr<CefCompletionCallback> callback) override;
+   CefRefPtr<CefValue> GetWebsiteSetting(
+--- a/libcef/browser/request_context_impl.cc
++++ b/libcef/browser/request_context_impl.cc
+@@ -19,6 +19,7 @@
+ #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/themes/theme_service.h"
++#include "cef/libcef/browser/extension_action_impl.h"
+ #include "chrome/browser/search_engines/template_url_service_factory.h"
+ #include "chrome/browser/themes/theme_service_factory.h"
+ #include "components/search_engines/template_url.h"
+@@ -572,6 +573,32 @@
+   return provider ? CefString(provider->short_name()) : CefString();
+ }
+ 
++size_t CefRequestContextImpl::GetExtensionActionCount() {
++  if (!VerifyBrowserContext()) {
++    return 0;
++  }
++  return cef_extension_actions::GetActions(browser_context()->AsProfile())
++      .size();
++}
++
++void CefRequestContextImpl::GetExtensionActions(
++    std::vector<CefRefPtr<CefExtensionAction>>& actions) {
++  actions.clear();
++  if (!VerifyBrowserContext()) {
++    return;
++  }
++  actions = cef_extension_actions::GetActions(browser_context()->AsProfile());
++}
++
++CefRefPtr<CefRegistration> CefRequestContextImpl::AddExtensionActionsObserver(
++    CefRefPtr<CefExtensionActionsObserver> observer) {
++  if (!VerifyBrowserContext()) {
++    return nullptr;
++  }
++  return cef_extension_actions::AddObserver(browser_context()->AsProfile(),
++                                            observer);
++}
++
+ CefRefPtr<CefValue> CefRequestContextImpl::GetWebsiteSetting(
+     const CefString& requesting_url,
+     const CefString& top_level_url,
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -746,6 +746,8 @@
+     "libcef/browser/stream_impl.h",
+     "libcef/browser/task_manager_impl.cc",
+     "libcef/browser/task_manager_impl.h",
++    "libcef/browser/extension_action_impl.cc",
++    "libcef/browser/extension_action_impl.h",
+     "libcef/browser/tab_strip_impl.cc",
+     "libcef/browser/tab_strip_impl.h",
+     "libcef/browser/trace_impl.cc",
+diff --git a/include/cef_extension_action.h b/include/cef_extension_action.h
+new file mode 100644
+index 000000000..386627749
+--- /dev/null
++++ b/include/cef_extension_action.h
+@@ -0,0 +1,114 @@
++// Copyright (c) 2026 Marshall A. Greenblatt. All rights reserved.
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are
++// met:
++//
++//    * Redistributions of source code must retain the above copyright
++// notice, this list of conditions and the following disclaimer.
++//    * Redistributions in binary form must reproduce the above
++// copyright notice, this list of conditions and the following disclaimer
++// in the documentation and/or other materials provided with the
++// distribution.
++//    * Neither the name of Google Inc. nor the name Chromium Embedded
++// Framework nor the names of its contributors may be used to endorse
++// or promote products derived from this software without specific prior
++// written permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++
++#ifndef CEF_INCLUDE_CEF_EXTENSION_ACTION_H_
++#define CEF_INCLUDE_CEF_EXTENSION_ACTION_H_
++#pragma once
++
++#include "include/cef_base.h"
++#include "include/cef_browser.h"
++#include "include/cef_image.h"
++
++///
++/// A Chrome extension's toolbar button, for the client to draw. Values for a
++/// tab take |browser|, the browser showing it; nullptr gives the button's
++/// defaults. The methods of this class must be called on the browser process
++/// UI thread.
++///
++/*--cef(source=library,added=experimental)--*/
++class CefExtensionAction : public virtual CefBaseRefCounted {
++ public:
++  ///
++  /// The extension's id.
++  ///
++  /*--cef()--*/
++  virtual CefString GetExtensionId() = 0;
++
++  ///
++  /// The extension's name.
++  ///
++  /*--cef()--*/
++  virtual CefString GetName() = 0;
++
++  ///
++  /// The button's tooltip.
++  ///
++  /*--cef(optional_param=browser)--*/
++  virtual CefString GetTitle(CefRefPtr<CefBrowser> browser) = 0;
++
++  ///
++  /// The text of the button's badge; empty for none.
++  ///
++  /*--cef(optional_param=browser)--*/
++  virtual CefString GetBadgeText(CefRefPtr<CefBrowser> browser) = 0;
++
++  ///
++  /// The badge's background color.
++  ///
++  /*--cef(optional_param=browser)--*/
++  virtual cef_color_t GetBadgeColor(CefRefPtr<CefBrowser> browser) = 0;
++
++  ///
++  /// The button's icon, which may still be loading (the observer hears when
++  /// it's done); nullptr if there's none yet.
++  ///
++  /*--cef(optional_param=browser)--*/
++  virtual CefRefPtr<CefImage> GetIcon(CefRefPtr<CefBrowser> browser) = 0;
++
++  ///
++  /// Whether the button works in this tab.
++  ///
++  /*--cef(optional_param=browser)--*/
++  virtual bool IsEnabled(CefRefPtr<CefBrowser> browser) = 0;
++
++  ///
++  /// Clicks the button for |browser|'s tab, giving the extension that tab if
++  /// it asks for the active tab. Returns the address of the popup for the
++  /// client to show, or an empty string if the extension handled the click.
++  ///
++  /*--cef()--*/
++  virtual CefString Execute(CefRefPtr<CefBrowser> browser) = 0;
++};
++
++///
++/// Hears that extensions' toolbar buttons were added, removed or changed. The
++/// methods of this class are called on the browser process UI thread.
++///
++/*--cef(source=client,added=experimental)--*/
++class CefExtensionActionsObserver : public virtual CefBaseRefCounted {
++ public:
++  ///
++  /// Something about the buttons changed: ask for them again.
++  ///
++  /*--cef()--*/
++  virtual void OnExtensionActionsChanged() = 0;
++};
++
++#endif  // CEF_INCLUDE_CEF_EXTENSION_ACTION_H_
+diff --git a/libcef/browser/extension_action_impl.cc b/libcef/browser/extension_action_impl.cc
+new file mode 100644
+index 000000000..33561c86d
+--- /dev/null
++++ b/libcef/browser/extension_action_impl.cc
+@@ -0,0 +1,282 @@
++// Copyright 2026 The Chromium Embedded Framework Authors. All rights
++// reserved. Use of this source code is governed by a BSD-style license that
++// can be found in the LICENSE file.
++
++#include "cef/libcef/browser/extension_action_impl.h"
++
++#include <set>
++
++#include "base/scoped_multi_source_observation.h"
++#include "base/scoped_observation.h"
++#include "cef/libcef/browser/browser_host_base.h"
++#include "cef/libcef/browser/image_impl.h"
++#include "cef/libcef/browser/thread_util.h"
++#include "chrome/browser/extensions/extension_action_dispatcher.h"
++#include "chrome/browser/extensions/extension_action_runner.h"
++#include "chrome/browser/profiles/profile.h"
++#include "components/sessions/content/session_tab_helper.h"
++#include "content/public/browser/web_contents.h"
++#include "extensions/browser/extension_action.h"
++#include "extensions/browser/extension_action_manager.h"
++#include "extensions/browser/extension_icon_image.h"
++#include "extensions/browser/extension_registry.h"
++#include "extensions/browser/extension_registry_observer.h"
++#include "extensions/common/extension.h"
++#include "extensions/common/manifest.h"
++#include "ui/gfx/image/image.h"
++#include "ui/gfx/image/image_skia.h"
++
++namespace cef_extension_actions {
++
++namespace {
++
++// Extensions a person installed, which have toolbar buttons in Chrome.
++const extensions::Extension* ToolbarExtension(Profile* profile,
++                                              const std::string& id) {
++  auto* registry = extensions::ExtensionRegistry::Get(profile);
++  const extensions::Extension* extension =
++      registry ? registry->enabled_extensions().GetByID(id) : nullptr;
++  if (!extension || !extension->is_extension() ||
++      extensions::Manifest::IsComponentLocation(extension->location())) {
++    return nullptr;
++  }
++  return extension;
++}
++
++content::WebContents* ContentsOf(CefRefPtr<CefBrowser> browser) {
++  auto host = browser ? CefBrowserHostBase::FromBrowser(browser) : nullptr;
++  return host ? host->GetWebContents() : nullptr;
++}
++
++int TabIdOf(CefRefPtr<CefBrowser> browser) {
++  content::WebContents* contents = ContentsOf(browser);
++  return contents ? sessions::SessionTabHelper::IdForTab(contents).id()
++                  : extensions::ExtensionAction::kDefaultTabId;
++}
++
++cef_color_t ToCefColor(SkColor color) {
++  return CefColorSetARGB(SkColorGetA(color), SkColorGetR(color),
++                         SkColorGetG(color), SkColorGetB(color));
++}
++
++class ExtensionActionImpl : public CefExtensionAction {
++ public:
++  ExtensionActionImpl(Profile* profile, const std::string& id)
++      : profile_(profile), id_(id) {}
++
++  ExtensionActionImpl(const ExtensionActionImpl&) = delete;
++  ExtensionActionImpl& operator=(const ExtensionActionImpl&) = delete;
++
++  CefString GetExtensionId() override { return id_; }
++  CefString GetName() override {
++    const extensions::Extension* extension = Extension();
++    return extension ? extension->name() : std::string();
++  }
++  CefString GetTitle(CefRefPtr<CefBrowser> browser) override {
++    auto* action = Action();
++    return action ? action->GetTitle(TabIdOf(browser)) : std::string();
++  }
++  CefString GetBadgeText(CefRefPtr<CefBrowser> browser) override {
++    auto* action = Action();
++    return action ? action->GetDisplayBadgeText(TabIdOf(browser))
++                  : std::string();
++  }
++  cef_color_t GetBadgeColor(CefRefPtr<CefBrowser> browser) override {
++    auto* action = Action();
++    return action ? ToCefColor(action->GetBadgeBackgroundColor(TabIdOf(browser)))
++                  : 0;
++  }
++  CefRefPtr<CefImage> GetIcon(CefRefPtr<CefBrowser> browser) override {
++    if (!CEF_CURRENTLY_ON_UIT()) {
++      return nullptr;
++    }
++    auto* action = Action();
++    if (!action) {
++      return nullptr;
++    }
++    gfx::ImageSkia image;
++    gfx::Image set = action->GetExplicitlySetIcon(TabIdOf(browser));
++    if (!set.IsEmpty()) {
++      image = *set.ToImageSkia();
++    } else if (auto* icon = action->default_icon_image()) {
++      image = icon->image_skia();
++    }
++    if (image.isNull()) {
++      return nullptr;
++    }
++    // Asking for each scale loads it, if it isn't yet.
++    image.GetRepresentation(1.0f);
++    image.GetRepresentation(2.0f);
++    return new CefImageImpl(image);
++  }
++  bool IsEnabled(CefRefPtr<CefBrowser> browser) override {
++    auto* action = Action();
++    return action && action->GetIsVisible(TabIdOf(browser));
++  }
++  CefString Execute(CefRefPtr<CefBrowser> browser) override {
++    if (!CEF_CURRENTLY_ON_UIT()) {
++      return std::string();
++    }
++    const extensions::Extension* extension = Extension();
++    auto* action = Action();
++    content::WebContents* contents = ContentsOf(browser);
++    auto* runner =
++        contents ? extensions::ExtensionActionRunner::GetForWebContents(contents)
++                 : nullptr;
++    if (!extension || !action || !runner) {
++      return std::string();
++    }
++    if (runner->RunAction(extension, /*grant_tab_permissions=*/true) !=
++        extensions::ExtensionAction::ShowAction::kShowPopup) {
++      return std::string();
++    }
++    return action->GetPopupUrl(TabIdOf(browser)).spec();
++  }
++
++ private:
++  const extensions::Extension* Extension() {
++    return CEF_CURRENTLY_ON_UIT() ? ToolbarExtension(profile_, id_) : nullptr;
++  }
++  extensions::ExtensionAction* Action() {
++    const extensions::Extension* extension = Extension();
++    return extension ? extensions::ExtensionActionManager::Get(profile_)
++                           ->GetExtensionAction(*extension)
++                     : nullptr;
++  }
++
++  raw_ptr<Profile> profile_;
++  const std::string id_;
++
++  IMPLEMENT_REFCOUNTING_DELETE_ON_UIT(ExtensionActionImpl);
++};
++
++// Tells the client of extensions coming and going, their buttons changing and
++// their icons loading.
++class Registration : public CefRegistration,
++                     public extensions::ExtensionRegistryObserver,
++                     public extensions::ExtensionActionDispatcher::Observer,
++                     public extensions::IconImage::Observer {
++ public:
++  Registration(Profile* profile,
++               CefRefPtr<CefExtensionActionsObserver> observer)
++      : profile_(profile), observer_(observer) {
++    registry_observation_.Observe(extensions::ExtensionRegistry::Get(profile));
++    if (auto* dispatcher = extensions::ExtensionActionDispatcher::Get(profile)) {
++      dispatcher->AddObserver(this);
++      dispatcher_ = dispatcher;
++    }
++    WatchIcons();
++  }
++  ~Registration() override {
++    if (dispatcher_) {
++      dispatcher_->RemoveObserver(this);
++    }
++  }
++
++  Registration(const Registration&) = delete;
++  Registration& operator=(const Registration&) = delete;
++
++  // extensions::ExtensionRegistryObserver:
++  void OnExtensionLoaded(content::BrowserContext* browser_context,
++                         const extensions::Extension* extension) override {
++    Changed();
++  }
++  void OnExtensionUnloaded(content::BrowserContext* browser_context,
++                           const extensions::Extension* extension,
++                           extensions::UnloadedExtensionReason reason) override {
++    Changed();
++  }
++  void OnShutdown(extensions::ExtensionRegistry* registry) override {
++    icon_observations_.RemoveAllObservations();
++    registry_observation_.Reset();
++  }
++
++  // extensions::ExtensionActionDispatcher::Observer:
++  void OnExtensionActionUpdated(
++      extensions::ExtensionAction* extension_action,
++      content::WebContents* web_contents,
++      content::BrowserContext* browser_context) override {
++    Changed();
++  }
++  void OnShuttingDown() override {
++    if (dispatcher_) {
++      dispatcher_->RemoveObserver(this);
++      dispatcher_ = nullptr;
++    }
++  }
++
++  // extensions::IconImage::Observer:
++  void OnExtensionIconImageChanged(extensions::IconImage* image) override {
++    observer_->OnExtensionActionsChanged();
++  }
++  void OnExtensionIconImageDestroyed(extensions::IconImage* image) override {
++    if (icon_observations_.IsObservingSource(image)) {
++      icon_observations_.RemoveObservation(image);
++    }
++  }
++
++ private:
++  void Changed() {
++    WatchIcons();
++    observer_->OnExtensionActionsChanged();
++  }
++  void WatchIcons() {
++    auto* registry = extensions::ExtensionRegistry::Get(profile_);
++    if (!registry) {
++      return;
++    }
++    for (const auto& extension : registry->enabled_extensions()) {
++      if (!ToolbarExtension(profile_, extension->id())) {
++        continue;
++      }
++      auto* action = extensions::ExtensionActionManager::Get(profile_)
++                         ->GetExtensionAction(*extension);
++      auto* icon = action ? action->default_icon_image() : nullptr;
++      if (icon && !icon_observations_.IsObservingSource(icon)) {
++        icon_observations_.AddObservation(icon);
++      }
++    }
++  }
++
++  raw_ptr<Profile> profile_;
++  CefRefPtr<CefExtensionActionsObserver> observer_;
++  raw_ptr<extensions::ExtensionActionDispatcher> dispatcher_ = nullptr;
++  base::ScopedObservation<extensions::ExtensionRegistry,
++                          extensions::ExtensionRegistryObserver>
++      registry_observation_{this};
++  base::ScopedMultiSourceObservation<extensions::IconImage,
++                                     extensions::IconImage::Observer>
++      icon_observations_{this};
++
++  IMPLEMENT_REFCOUNTING_DELETE_ON_UIT(Registration);
++};
++
++}  // namespace
++
++std::vector<CefRefPtr<CefExtensionAction>> GetActions(Profile* profile) {
++  std::vector<CefRefPtr<CefExtensionAction>> actions;
++  auto* registry = profile ? extensions::ExtensionRegistry::Get(profile) : nullptr;
++  if (!registry) {
++    return actions;
++  }
++  for (const auto& extension : registry->enabled_extensions()) {
++    if (!ToolbarExtension(profile, extension->id()) ||
++        !extensions::ExtensionActionManager::Get(profile)->GetExtensionAction(
++            *extension)) {
++      continue;
++    }
++    actions.push_back(new ExtensionActionImpl(profile, extension->id()));
++  }
++  return actions;
++}
++
++CefRefPtr<CefRegistration> AddObserver(
++    Profile* profile,
++    CefRefPtr<CefExtensionActionsObserver> observer) {
++  if (!profile || !observer) {
++    return nullptr;
++  }
++  return new Registration(profile, observer);
++}
++
++}  // namespace cef_extension_actions
+diff --git a/libcef/browser/extension_action_impl.h b/libcef/browser/extension_action_impl.h
+new file mode 100644
+index 000000000..24c481986
+--- /dev/null
++++ b/libcef/browser/extension_action_impl.h
+@@ -0,0 +1,30 @@
++// Copyright 2026 The Chromium Embedded Framework Authors. All rights
++// reserved. Use of this source code is governed by a BSD-style license that
++// can be found in the LICENSE file.
++
++#ifndef CEF_LIBCEF_BROWSER_EXTENSION_ACTION_IMPL_H_
++#define CEF_LIBCEF_BROWSER_EXTENSION_ACTION_IMPL_H_
++#pragma once
++
++#include <string>
++#include <vector>
++
++#include "base/memory/raw_ptr.h"
++#include "cef/include/cef_extension_action.h"
++#include "cef/include/cef_registration.h"
++
++class Profile;
++
++namespace cef_extension_actions {
++
++// The toolbar buttons of the extensions enabled in `profile`.
++std::vector<CefRefPtr<CefExtensionAction>> GetActions(Profile* profile);
++
++// Has `observer` hear of changes to them, until the result is released.
++CefRefPtr<CefRegistration> AddObserver(
++    Profile* profile,
++    CefRefPtr<CefExtensionActionsObserver> observer);
++
++}  // namespace cef_extension_actions
++
++#endif  // CEF_LIBCEF_BROWSER_EXTENSION_ACTION_IMPL_H_

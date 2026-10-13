@@ -110,15 +110,9 @@ final class SiteSettingRow: NSButton {
             field.frame = NSRect(x: 10, y: y, width: 220, height: 20); view.addSubview(field)
         }
         heading("Extensions", y: 52)
-        let add = PopoverActionButton(symbol: "plus", size: 15, scale: scale, title: "Extensions", theme: theme) { [weak browser] in
-            browser?.siteControlsPopover.close()
-            browser?.showMessage("Extensions", "Rise uses Apple WebKit. Safari and Chrome extensions cannot be installed in this browser yet.")
-        }
-        add.frame = NSRect(x: 10+(52-52*scale)/2, y: 78+(34-34*scale)/2, width: 52*scale, height: 34*scale)
-        extensionsButton = add
-        add.toolTip = "Extension support"; add.setAccessibilityLabel("Extensions"); view.addSubview(add)
-        heading("Settings", y: 125)
-        var y: CGFloat = 151
+        var y = layOutExtensions(in: view, theme: theme, scale: scale)
+        heading("Settings", y: y)
+        y += 26
         func row(_ title: String, subtitle: String, symbol: String, image: NSImage? = nil, active: Bool, checked: Bool? = nil, action: @escaping () -> Void) {
             let row = SiteSettingRow(title: title, subtitle: subtitle, symbol: symbol, image: image, active: active, checked: checked, theme: theme, action: action)
             row.frame = NSRect(x: 14, y: y, width: 216, height: 43); view.addSubview(row); rows[title] = row; y += 43
@@ -139,6 +133,71 @@ final class SiteSettingRow: NSButton {
             row(capability.title, subtitle: permission.subtitle, symbol: capability.symbol, active: permission == .allow) { [weak browser] in browser?.permissionSettingMenu(capability) }
         }
         view.setFrameSize(NSSize(width: 240, height: y+8))
+    }
+}
+
+@MainActor extension SiteControlsController {
+    /// The extensions' buttons, four to a line with “+” last, and below them, on a Web Store page
+    /// for one not yet added, a row adding it. Returns where what follows goes.
+    func layOutExtensions(in view: NSView, theme: RiseTheme, scale: CGFloat) -> CGFloat {
+        guard let browser else { return 125 }
+        var buttons: [NSButton] = []
+        var addTitle = "Extensions"
+        #if RISE_CHROMIUM
+        if ChromiumEngine.isRunning {
+            addTitle = "Get Extensions"
+            for action in browser.extensionActions {
+                let id = action.extensionID
+                let button = PopoverActionButton(symbol: "puzzlepiece.extension", size: 15, scale: scale, title: action.name, theme: theme) { [weak browser] in
+                    browser?.runExtension(id)
+                }
+                if let icon = action.icon(forTab: browser.selectedChromiumView) {
+                    icon.size = NSSize(width: 18*scale, height: 18*scale); button.image = icon
+                }
+                button.menu = browser.extensionMenu(for: action)
+                buttons.append(button)
+            }
+        }
+        #endif
+        let add = PopoverActionButton(symbol: "plus", size: 15, scale: scale, title: addTitle, theme: theme) { [weak browser] in
+            guard let browser else { return }
+            #if RISE_CHROMIUM
+            if ChromiumEngine.isRunning {
+                browser.siteControlsPopover.close()
+                browser.addTab(url: URL(string: "https://chromewebstore.google.com/category/extensions")!)
+                return
+            }
+            #endif
+            browser.siteControlsPopover.close()
+            browser.showMessage("Extensions", "Rise uses Apple WebKit. Safari and Chrome extensions cannot be installed in this browser yet.")
+        }
+        add.toolTip = ChromiumEngine.isRunning ? "Get extensions from the Chrome Web Store" : "Extension support"
+        add.setAccessibilityLabel(addTitle)
+        #if RISE_CHROMIUM
+        if ChromiumEngine.isRunning {
+            let menu = NSMenu()
+            menu.addItem(browser.menuItem("Manage Extensions…") { [weak browser] in browser?.showExtensions() })
+            add.menu = menu
+        }
+        #endif
+        extensionsButton = add
+        buttons.append(add)
+        for (index, button) in buttons.enumerated() {
+            let column = CGFloat(index % 4), line = CGFloat(index / 4)
+            button.frame = NSRect(x: 10+column*56+(52-52*scale)/2, y: 78+line*42+(34-34*scale)/2, width: 52*scale, height: 34*scale)
+            view.addSubview(button)
+        }
+        var y = 78+CGFloat((buttons.count+3)/4)*42+5
+        #if RISE_CHROMIUM
+        if ChromiumEngine.isRunning, let id = BrowserController.webStoreExtensionID(browser.selectedTab?.url), !browser.isExtensionInstalled(id) {
+            let name = (browser.selectedTab?.title ?? "").replacingOccurrences(of: " - Chrome Web Store", with: "")
+            let row = SiteSettingRow(title: "Add to Rise", subtitle: name.isEmpty ? "From the Chrome Web Store" : name, symbol: "plus",
+                                     active: true, theme: theme) { [weak browser] in browser?.addFromWebStore(id) }
+            row.frame = NSRect(x: 14, y: y-4, width: 216, height: 43); view.addSubview(row); rows["Add to Rise"] = row
+            y += 45
+        }
+        #endif
+        return y
     }
 }
 

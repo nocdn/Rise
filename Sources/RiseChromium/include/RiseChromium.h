@@ -219,6 +219,8 @@ typedef NS_ENUM(NSInteger, RCEditCommand) {
 - (void)browserViewDidCrash:(RCBrowserView *)browserView;
 /// A link for another app, such as mailto:, which the page doesn't open itself.
 - (void)browserView:(RCBrowserView *)browserView openInOtherApp:(NSURL *)url;
+/// The page is closing without Rise having asked, as when an extension closes its tab.
+- (void)browserViewDidRequestClose:(RCBrowserView *)browserView;
 /// The page was right-clicked; Rise shows its menu for `menu`.
 - (void)browserView:(RCBrowserView *)browserView
     showContextMenu:(RCContextMenu *)menu NS_SWIFT_NAME(browserView(_:showContextMenu:));
@@ -265,6 +267,9 @@ typedef NS_ENUM(NSInteger, RCEditCommand) {
 /// Loads without running the page's scripts, as a page loaded out of sight only to warm the
 /// cache does. Set before the view's first turn of the run loop.
 @property (nonatomic) BOOL scriptsDisabled;
+/// A Chrome extension's popup, as extensions see it (a "popup" view, not a tab). Set it before
+/// the page loads.
+@property (nonatomic) BOOL extensionPopup;
 /// The back/forward history, with scroll positions and forms, for restoring at the next launch.
 @property (nonatomic, readonly, nullable) NSData *navigationState;
 /// Gives a page that hasn't loaded anything that history and loads its current entry, or loads
@@ -336,6 +341,70 @@ typedef NS_ENUM(NSInteger, RCEditCommand) {
 - (void)snapshotWithCompletion:(void (^)(NSImage *_Nullable image))completion;
 /// Closes the page for good; the view shows nothing after.
 - (void)close;
+@end
+
+/// What Chrome extensions ask of a Rise window: tabs opened, brought forward, moved, pinned or
+/// closed. Called on the main thread.
+@protocol RCTabStripDelegate <NSObject>
+/// Opens `url` in a new tab at `index` (-1: the end), in front if `active`; returns its page,
+/// once it's among the window's tabs, or nil not to open one.
+- (nullable RCBrowserView *)tabStripOpenTabWithURL:(NSURL *)url index:(NSInteger)index active:(BOOL)active;
+- (void)tabStripActivateTab:(RCBrowserView *)tab;
+- (void)tabStripCloseTab:(RCBrowserView *)tab;
+- (void)tabStripMoveTab:(RCBrowserView *)tab toIndex:(NSInteger)index;
+- (void)tabStripSetTab:(RCBrowserView *)tab pinned:(BOOL)pinned;
+- (void)tabStripActivateWindow;
+@end
+
+/// A Rise window as Chrome extensions see it: a browser window holding its tabs, which the tabs
+/// and windows APIs list and act on.
+@interface RCTabStrip : NSObject
+- (instancetype)initWithDelegate:(id<RCTabStripDelegate>)delegate NS_DESIGNATED_INITIALIZER;
+- (instancetype)init NS_UNAVAILABLE;
+/// The window's id, as extensions see it.
+@property (nonatomic, readonly) NSInteger windowID;
+/// The window's tabs in order, the first `pinnedCount` pinned, the one at `activeIndex` in front
+/// (-1: none). Pages still being made join once they exist.
+- (void)setTabs:(NSArray<RCBrowserView *> *)tabs pinnedCount:(NSInteger)pinnedCount activeIndex:(NSInteger)activeIndex;
+/// Whether it's the window in front.
+@property (nonatomic) BOOL active;
+/// Its frame on screen, in AppKit's coordinates.
+@property (nonatomic) NSRect frame;
+/// Removes the window, as when it closes.
+- (void)close;
+@end
+
+/// A Chrome extension's toolbar button. Values for a tab take its page; nil gives the defaults.
+@interface RCExtensionAction : NSObject
+@property (nonatomic, readonly) NSString *extensionID;
+@property (nonatomic, readonly) NSString *name;
+- (NSString *)titleForTab:(nullable RCBrowserView *)tab;
+/// Empty for no badge.
+- (NSString *)badgeTextForTab:(nullable RCBrowserView *)tab;
+- (NSColor *)badgeColorForTab:(nullable RCBrowserView *)tab;
+/// Nil while it's still loading; observers hear when it's ready.
+- (nullable NSImage *)iconForTab:(nullable RCBrowserView *)tab;
+- (BOOL)isEnabledForTab:(nullable RCBrowserView *)tab;
+/// Clicks it in `tab`, giving the extension the tab if it asks for the active one: the popup's
+/// address for Rise to show, or nil if the extension took the click itself.
+- (nullable NSURL *)clickInTab:(RCBrowserView *)tab;
+@end
+
+/// The toolbar buttons of the extensions installed in Rise's profile.
+@interface RCExtensions : NSObject
+@property (class, readonly) NSArray<RCExtensionAction *> *actions;
+/// Calls `changed` on the main thread whenever buttons are added, removed or change, until the
+/// returned object goes away.
++ (id)observeActions:(void (^)(void))changed;
+/// Installs the Chrome Web Store's extension `extensionID`, after the install prompt asks;
+/// `completion` hears how it went.
++ (void)installFromWebStore:(NSString *)extensionID
+                 completion:(nullable void (^)(BOOL success, NSString *_Nullable error))completion;
+/// Asks the person before any extension is installed, in place of Chrome's dialog: `prompt` shows
+/// the title (such as “Add uBlock Origin Lite?”), the icon and what it will be able to do, and calls
+/// `answer` once. Nil gives Chrome's dialog back.
++ (void)setInstallPrompt:(nullable void (^)(NSString *title, NSImage *_Nullable icon, NSArray<NSString *> *permissions,
+                                            NSString *acceptLabel, void (^answer)(BOOL accept)))prompt;
 @end
 
 NS_ASSUME_NONNULL_END

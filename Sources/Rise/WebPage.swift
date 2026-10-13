@@ -122,6 +122,8 @@ enum PageNavigationKind { case newPage, history, reload }
 /// than Rise's WebKit delegates.
 enum PageEvent {
     case willNavigate(PageNavigationKind), finished, failed(String), crashed, openInOtherApp(URL)
+    /// The engine closed the page itself, as for an extension's tabs.remove.
+    case closed
 }
 
 enum WebPageChange {

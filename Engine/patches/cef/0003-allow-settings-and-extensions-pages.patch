@@ -1,11 +1,13 @@
 --- a/libcef/browser/alloy/alloy_browser_host_impl.cc
 +++ b/libcef/browser/alloy/alloy_browser_host_impl.cc
-@@ -79,6 +79,8 @@
+@@ -79,6 +79,10 @@
      content::kChromeUINetworkErrorsListingHost,
      chrome::kChromeUIPrintHost,
      content::kChromeUIProcessInternalsHost,
-+    // Rise shows Chrome's settings in its own pages, as rise://settings.
++    // Rise shows Chrome's settings and extensions in its own pages, as
++    // rise://settings and rise://extensions.
 +    chrome::kChromeUISettingsHost,
++    chrome::kChromeUIExtensionsHost,
      content::kChromeUIResourcesHost,
  #if BUILDFLAG(IS_WIN) || BUILDFLAG(IS_LINUX)
      chrome::kChromeUISandboxHost,

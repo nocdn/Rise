@@ -23,9 +23,11 @@ class SidebarHoverButton: ChromeButton {
     func updateAddressControlVisibility(animated: Bool = true) {
         let visible = hasAddress && (isSidebarHovered || isSiteControlsOpen) && !isHidden
         updateAddressTextBoundary(animated: animated)
-        for button in [copyButton,settingsButton] {
-            button.allowsInteraction = visible
-            button.isHidden = !hasAddress
+        let pinned = visibleExtensionButtons
+        for button in [copyButton,settingsButton] + extensionButtons {
+            let shown = !(button is SidebarExtensionButton) || pinned.contains(button as! SidebarExtensionButton)
+            button.allowsInteraction = visible && shown
+            button.isHidden = !hasAddress || !shown
             let target: CGFloat = visible ? 1 : 0
             guard button.alphaValue != target else {
                 if !animated { button.layer?.removeAnimation(forKey: Self.controlsFadeKey) }
@@ -46,7 +48,7 @@ class SidebarHoverButton: ChromeButton {
     }
     func updateAddressTextBoundary(animated: Bool) {
         let visible = hasAddress && (isSidebarHovered || isSiteControlsOpen) && !isHidden
-        let edge = visible ? copyButton.frame.minX-address.frame.minX-addressText.frame.minX-2 : addressText.bounds.width
+        let edge = visible ? addressControlsMinX-address.frame.minX-addressText.frame.minX-2 : addressText.bounds.width
         addressText.setFadeBoundary(max(0, edge), duration: animated ? (visible ? 0.14 : 0.12) : 0)
     }
     var settingsAnchorRect: NSRect { address.convert(settingsButton.bounds, from: settingsButton) }

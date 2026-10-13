@@ -19,7 +19,7 @@ import sys
 import socket
 import tempfile
 
-checks = {"peek": "ChromiumPeekBenchmarks.swift", "features": "ChromiumFeatureChecks.swift"}
+checks = {"peek": "ChromiumPeekBenchmarks.swift", "features": "ChromiumFeatureChecks.swift", "extensions": "ChromiumExtensionChecks.swift"}
 check = sys.argv[1] if len(sys.argv) > 1 else "peek"
 if check not in checks:
     raise SystemExit(f"Unknown check {check}; choose from {', '.join(checks)}.")
@@ -76,8 +76,68 @@ if check == "features":
     # rise-check.test is an ordinary site to the filter lists, which leave local addresses alone.
     arguments = ["--autoplay-policy=no-user-gesture-required", "--use-fake-device-for-media-stream",
                  "--host-resolver-rules=MAP rise-check.test 127.0.0.1"]
+if check == "extensions":
+    # A test extension, unpacked: a background worker, a content script on every page and a popup.
+    extension = folder / "extension"
+    extension.mkdir(exist_ok=True)
+    (extension / "manifest.json").write_text("""{
+      "manifest_version": 3, "name": "Rise Test Extension", "version": "1.0",
+      "permissions": ["tabs", "storage", "activeTab"], "host_permissions": ["<all_urls>"],
+      "background": {"service_worker": "background.js"},
+      "content_scripts": [{"matches": ["<all_urls>"], "js": ["content.js"], "run_at": "document_idle"}],
+      "action": {"default_popup": "popup.html", "default_title": "Rise Test", "default_icon": "icon.png"}
+    }""")
+    (extension / "background.js").write_text("""
+    let activated = [];
+    chrome.tabs.onActivated.addListener(info => activated.push(info.tabId));
+    chrome.runtime.onMessage.addListener((message, sender, reply) => {
+      (async () => {
+        if (message.cmd === 'create') return {id: (await chrome.tabs.create({url: message.url, active: true})).id};
+        if (message.cmd === 'activate') return {id: (await chrome.tabs.update(message.id, {active: true})).id};
+        if (message.cmd === 'remove') { await chrome.tabs.remove(message.id); return {removed: true}; }
+        if (message.cmd === 'activated') return {activated};
+        const all = await chrome.tabs.query({});
+        const active = await chrome.tabs.query({active: true, currentWindow: true});
+        const windows = await chrome.windows.getAll({populate: true});
+        return {tab: sender.tab?.id ?? null, window: sender.tab?.windowId ?? null, index: sender.tab?.index ?? null,
+                all: all.map(t => [t.id, t.url, t.index, t.active]), active: active.map(t => t.id),
+                windows: windows.map(w => [w.id, w.focused, w.tabs.length])};
+      })().then(reply, error => reply({error: String(error)}));
+      return true;
+    });
+    """)
+    (extension / "content.js").write_text("""
+    document.documentElement.dataset.riseExtensionId = chrome.runtime.id;
+    const ask = (message, key) => chrome.runtime.sendMessage(message)
+      .then(answer => document.documentElement.dataset[key] = JSON.stringify(answer))
+      .catch(error => document.documentElement.dataset[key] = JSON.stringify({error: String(error)}));
+    ask({}, 'riseExtension');
+    addEventListener('message', event => { if (event.data?.riseTest) ask(event.data.riseTest, 'riseAnswer'); });
+    """)
+    # A 32 by 32 orange square for its button.
+    import struct, zlib
+    def chunk(kind, data): return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
+    pixels = b"".join(b"\0" + b"\xff\x80\x00\xff" * 32 for _ in range(32))
+    (extension / "icon.png").write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 32, 32, 8, 6, 0, 0, 0))
+                                         + chunk(b"IDAT", zlib.compress(pixels)) + chunk(b"IEND", b""))
+    (extension / "popup.html").write_text("<!doctype html><body style='margin:0;width:240px;height:120px'>Popup<script src=popup.js></script>")
+    (extension / "popup.js").write_text("""
+    chrome.tabs.query({active: true, currentWindow: true}).then(tabs => document.body.dataset.report = JSON.stringify(tabs.map(t => [t.id, t.url])))
+      .catch(error => document.body.dataset.report = 'error ' + error);
+    chrome.tabs.getCurrent().then(tab => document.body.dataset.kind =
+      tab ? 'tab' : chrome.extension.getViews({type: 'popup'}).includes(window) ? 'popup' : 'neither');
+    """)
+    ports = []
+    with socket.socket() as probe_socket:
+        probe_socket.bind(("127.0.0.1", 0)); ports.append(probe_socket.getsockname()[1])
+    servers = [subprocess.Popen([sys.executable, "-u", "-m", "http.server", str(ports[0]), "--bind", "127.0.0.1", "--directory", str(folder)],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)]
+    environment["RISE_CHECK_PORTS"] = str(ports[0])
+    arguments = [f"--load-extension={extension}"]
 try:
-    result = subprocess.run([str(executable), *arguments], env=environment)
+    # RISE_LLDB=1 runs the check under lldb, which prints where it crashed.
+    debugger = ["lldb", "--batch", "-o", "run", "-k", "bt 40", "-k", "quit 1", "--"] if os.environ.get("RISE_LLDB") else []
+    result = subprocess.run([*debugger, str(executable), *arguments], env=environment)
 finally:
     for server in servers:
         server.terminate()

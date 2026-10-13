@@ -44,12 +44,18 @@ The checkout lives outside the repo: `RISE_CHROMIUM_ROOT`, by default
 |---|---|
 | `cef/0001-navigation-state-and-audible.patch` | Back/forward history saved and restored with Chromium's own session format, and when a page starts or stops making sound |
 | `cef/0002-attach-devtools-frontend.patch` | Chrome's DevTools front end, loaded in a page of Rise's own, inspects another page; CEF can't put its own DevTools window inside an app's view on macOS, so Rise's DevTools slide in beside the page this way |
-| `cef/0003-allow-settings-page.patch` | Chrome's settings open in Rise's own pages, as rise://settings (CEF otherwise only allows a short list of chrome:// pages there) |
+| `cef/0003-allow-settings-and-extensions-pages.patch` | Chrome's settings and extensions pages open in Rise's own pages, as rise://settings and rise://extensions (CEF otherwise only allows a short list of chrome:// pages there) |
 | `cef/0004-default-search-engine.patch` | Rise's address bar searches with the default search engine chosen in Chrome's Search engine section of rise://settings |
 | `cef/0005-context-menu-actions.patch` | What Rise's page menu needs that CEF doesn't offer: copying the image clicked, inspecting the element clicked in DevTools, and Look Up on the selection |
+| `cef/0006-tab-strips.patch` | A Rise window as extensions see it (`CefTabStrip`): a browser window whose tabs are Rise's pages, which the tabs and windows APIs list, watch and act on, with what extensions ask (open, switch to, move, pin, close) passed to Rise |
+| `cef/0007-extension-actions.patch` | Extensions' toolbar buttons for Rise to draw: their titles, icons and badges for a tab, a click (which gives the extension the tab, then names the popup to show), and word when any change |
+| `cef/0008-extension-install.patch` | Installing from the Chrome Web Store by an extension's id, asking in Rise's own sheet in place of Chrome's dialog, and letting the installer's download through (CEF drops downloads not started by one of its pages) |
+| `cef/0009-extension-popups.patch` | A page made an extension's popup, as extensions see it: a "popup" view, not a tab |
 | `chromium/0001-hide-web-contents-after-a-turn.patch` | Rise moves pages between views (Peek, split, ⌘Z); a page out of its window for an instant no longer blanks for several frames when it's back |
 | `chromium/0002-rise-settings-sections.patch` | Chrome's settings leave out what Rise's pages don't use or Rise does its own way (Google sign-in, autofill and passwords, extensions, startup, performance, AI, Safety Check, downloads, and Appearance's rows for Chrome's own window: theme, toolbar, mode, tab strip, side panel, quitting and split view) and the update status of Chrome's updater |
 | `chromium/0003-rise-settings-rows.patch` | Rise's own settings in Chrome's settings page: rows Rise describes (so a new Rise setting needs no engine change), at the end of Appearance, System and Privacy, and in new Tabs and AI sections, and Rise's mark for About Rise |
+| `chromium/0004-extension-embedder-windows.patch` | The extension APIs see an embedder's windows (CEF's tab strips) beside Chrome's own, and cope with tabs that aren't in a Chrome tab strip (no lifecycle unit; popups that have tab ids but aren't tabs). Made against the tree after CEF's own patches, as CEF also patches `tabs_api.cc` |
+| `chromium/0005-extension-install-prompt.patch` | An embedder can ask about extension installs itself in place of Chrome's dialog |
 
 ## Stages
 
@@ -60,7 +66,8 @@ The checkout lives outside the repo: `RISE_CHROMIUM_ROOT`, by default
    split, Cmd-Z unsplit, rounded corners, promotion without reload, compared frame by
    frame against WebKit.
 4. **Extensions patch.** Embedded pages registered as tabs with Chrome's extension system;
-   extension buttons and popups drawn by Rise.
+   extension buttons and popups drawn by Rise. Done: Web Store installs, buttons, popups and
+   the tabs and windows APIs, tried with uBlock Origin Lite, Dark Reader and Bitwarden.
 5. **Port features.** Navigation, downloads, find, zoom, page scripts, snapshots, ad
    blocking, preloading, audio, picture in picture, swipes.
 6. **Data.** New Chromium profile; tabs, splits, pins, history and icons carry over;
@@ -107,6 +114,14 @@ On Chromium tabs these work, also for frames of other sites:
 - Pinch zoom (which the Peek allows for), force-click Look Up, and Chromium's own picture in
   picture for protected video, where WebKit's pages use WebKit's.
 
+- Chrome extensions, as Arc has them. Install from the Chrome Web Store with the “Add to Rise”
+  button Rise puts by the extension's name (the store itself offers Chrome only), or from the
+  site controls; Rise's sheet shows what the extension can do. Pinned extensions sit in the
+  sidebar's address row, every extension is in the site controls (right-click to pin, unpin or
+  manage), and popups open in popovers under their button, sized to their page. Extensions see
+  Rise's windows and tabs through the tabs and windows APIs. rise://extensions is Chrome's
+  extensions page, for turning them off, removing them, and loading unpacked ones.
+
 Rise's page scripts reach every frame through Chromium's DevTools protocol, inside the app.
 Not carried over yet: the WebKit profile's cookies and sign-ins.
 
@@ -119,6 +134,7 @@ Live checks, in a real Rise window with Chromium (see `scripts/test-chromium-liv
 
     python3 scripts/test-chromium-live.py peek       # Peek's motion, frame by frame
     python3 scripts/test-chromium-live.py features   # the features above
+    python3 scripts/test-chromium-live.py extensions # a test extension: tabs, buttons, popups
 
 ## Build settings worth knowing
 

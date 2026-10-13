@@ -1,0 +1,70 @@
+diff --git a/chrome/browser/extensions/extension_install_prompt.cc b/chrome/browser/extensions/extension_install_prompt.cc
+index b07aaf556e..8507fc2950 100644
+--- a/chrome/browser/extensions/extension_install_prompt.cc
++++ b/chrome/browser/extensions/extension_install_prompt.cc
+@@ -7,6 +7,7 @@
+ #include <optional>
+ #include <utility>
+ 
++#include "base/no_destructor.h"
+ #include "base/functional/bind.h"
+ #include "base/location.h"
+ #include "base/task/single_thread_task_runner.h"
+@@ -62,6 +63,28 @@ InstallPromptData::PromptType
+     ExtensionInstallPrompt::g_last_prompt_type_for_tests =
+         InstallPromptData::UNSET_PROMPT_TYPE;
+ 
++namespace {
++
++ExtensionInstallPrompt::ShowDialogCallback& EmbedderShowDialogCallback() {
++  static base::NoDestructor<ExtensionInstallPrompt::ShowDialogCallback>
++      callback;
++  return *callback;
++}
++
++}  // namespace
++
++// static
++void ExtensionInstallPrompt::SetEmbedderShowDialogCallback(
++    ShowDialogCallback callback) {
++  EmbedderShowDialogCallback() = std::move(callback);
++}
++
++// static
++ExtensionInstallPrompt::ShowDialogCallback
++ExtensionInstallPrompt::GetEmbedderShowDialogCallback() {
++  return EmbedderShowDialogCallback();
++}
++
+ // static
+ InstallPromptData::PromptType
+ ExtensionInstallPrompt::GetReEnablePromptTypeForExtension(
+diff --git a/chrome/browser/extensions/extension_install_prompt.h b/chrome/browser/extensions/extension_install_prompt.h
+index 7edcac89ef..c6f72d2492 100644
+--- a/chrome/browser/extensions/extension_install_prompt.h
++++ b/chrome/browser/extensions/extension_install_prompt.h
+@@ -60,6 +60,11 @@ class ExtensionInstallPrompt : public extensions::ExtensionInstallPromptClient {
+   // The implementations of this function are platform-specific.
+   static ShowDialogCallback GetDefaultShowDialogCallback();
+ 
++  // An embedder that asks about installs itself, as CEF's client does, in
++  // place of Chrome's dialog; a null callback gives the dialog back.
++  static void SetEmbedderShowDialogCallback(ShowDialogCallback callback);
++  static ShowDialogCallback GetEmbedderShowDialogCallback();
++
+   // Returns the appropriate prompt type for the given `extension`.
+   // TODO(devlin): This method is yucky - callers probably only care about one
+   // prompt type. We just need to comb through and figure out what it is.
+diff --git a/chrome/browser/ui/views/extensions/extension_install_dialog_view.cc b/chrome/browser/ui/views/extensions/extension_install_dialog_view.cc
+index 83ce5b59c1..6e775fab50 100644
+--- a/chrome/browser/ui/views/extensions/extension_install_dialog_view.cc
++++ b/chrome/browser/ui/views/extensions/extension_install_dialog_view.cc
+@@ -732,5 +732,8 @@ END_METADATA
+ // static
+ ExtensionInstallPrompt::ShowDialogCallback
+ ExtensionInstallPrompt::GetDefaultShowDialogCallback() {
++  if (ShowDialogCallback embedder = GetEmbedderShowDialogCallback()) {
++    return embedder;
++  }
+   return base::BindRepeating(&ShowExtensionInstallDialogImpl);
+ }

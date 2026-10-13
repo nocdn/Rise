@@ -1,0 +1,384 @@
+--- a/include/cef_request_context.h
++++ b/include/cef_request_context.h
+@@ -50,6 +50,8 @@
+ class CefRequestContextHandler;
+ class CefExtensionAction;
+ class CefExtensionActionsObserver;
++class CefExtensionInstallCallback;
++class CefExtensionInstallHandler;
+ class CefSchemeHandlerFactory;
+ 
+ ///
+@@ -299,7 +301,26 @@
+   virtual CefRefPtr<CefRegistration> AddExtensionActionsObserver(
+       CefRefPtr<CefExtensionActionsObserver> observer) = 0;
+ 
++  ///
++  /// Has |handler| ask the person before extensions are installed, in place of
++  /// Chrome's dialog; nullptr gives the dialog back. Must be called on the
++  /// browser process UI thread.
+   ///
++  /*--cef(added=experimental,optional_param=handler)--*/
++  virtual void SetExtensionInstallHandler(
++      CefRefPtr<CefExtensionInstallHandler> handler) = 0;
++
++  ///
++  /// Installs the Chrome Web Store's extension |extension_id|, asking first,
++  /// as the store's own button does. |callback| hears how it ended. Must be
++  /// called on the browser process UI thread.
++  ///
++  /*--cef(added=experimental,optional_param=callback)--*/
++  virtual void InstallExtensionFromWebStore(
++      const CefString& extension_id,
++      CefRefPtr<CefExtensionInstallCallback> callback) = 0;
++
++  ///
+   /// Returns the current value for |content_type| that applies for the
+   /// specified URLs. If both URLs are empty the default value will be returned.
+   /// Returns nullptr if no value is configured. Must be called on the browser
+--- a/libcef/browser/request_context_impl.h
++++ b/libcef/browser/request_context_impl.h
+@@ -129,6 +129,11 @@
+       std::vector<CefRefPtr<CefExtensionAction>>& actions) override;
+   CefRefPtr<CefRegistration> AddExtensionActionsObserver(
+       CefRefPtr<CefExtensionActionsObserver> observer) override;
++  void SetExtensionInstallHandler(
++      CefRefPtr<CefExtensionInstallHandler> handler) override;
++  void InstallExtensionFromWebStore(
++      const CefString& extension_id,
++      CefRefPtr<CefExtensionInstallCallback> callback) override;
+   CefRefPtr<CefMediaRouter> GetMediaRouter(
+       CefRefPtr<CefCompletionCallback> callback) override;
+   CefRefPtr<CefValue> GetWebsiteSetting(
+--- a/libcef/browser/request_context_impl.cc
++++ b/libcef/browser/request_context_impl.cc
+@@ -20,6 +20,7 @@
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/themes/theme_service.h"
+ #include "cef/libcef/browser/extension_action_impl.h"
++#include "cef/libcef/browser/extension_install_impl.h"
+ #include "chrome/browser/search_engines/template_url_service_factory.h"
+ #include "chrome/browser/themes/theme_service_factory.h"
+ #include "components/search_engines/template_url.h"
+@@ -597,8 +598,28 @@
+   }
+   return cef_extension_actions::AddObserver(browser_context()->AsProfile(),
+                                             observer);
++}
++
++void CefRequestContextImpl::SetExtensionInstallHandler(
++    CefRefPtr<CefExtensionInstallHandler> handler) {
++  if (CEF_CURRENTLY_ON_UIT()) {
++    cef_extension_install::SetHandler(handler);
++  }
+ }
+ 
++void CefRequestContextImpl::InstallExtensionFromWebStore(
++    const CefString& extension_id,
++    CefRefPtr<CefExtensionInstallCallback> callback) {
++  if (!VerifyBrowserContext()) {
++    if (callback) {
++      callback->OnInstallFinished(extension_id, false, "No browser context");
++    }
++    return;
++  }
++  cef_extension_install::InstallFromWebStore(browser_context()->AsProfile(),
++                                             extension_id, callback);
++}
++
+ CefRefPtr<CefValue> CefRequestContextImpl::GetWebsiteSetting(
+     const CefString& requesting_url,
+     const CefString& top_level_url,
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -748,6 +748,8 @@
+     "libcef/browser/task_manager_impl.h",
+     "libcef/browser/extension_action_impl.cc",
+     "libcef/browser/extension_action_impl.h",
++    "libcef/browser/extension_install_impl.cc",
++    "libcef/browser/extension_install_impl.h",
+     "libcef/browser/tab_strip_impl.cc",
+     "libcef/browser/tab_strip_impl.h",
+     "libcef/browser/trace_impl.cc",
+diff --git a/include/cef_extension_install.h b/include/cef_extension_install.h
+new file mode 100644
+index 000000000..a2d6c7371
+--- /dev/null
++++ b/include/cef_extension_install.h
+@@ -0,0 +1,80 @@
++// Copyright (c) 2026 Marshall A. Greenblatt. All rights reserved.
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are
++// met:
++//
++//    * Redistributions of source code must retain the above copyright
++// notice, this list of conditions and the following disclaimer.
++//    * Redistributions in binary form must reproduce the above
++// copyright notice, this list of conditions and the following disclaimer
++// in the documentation and/or other materials provided with the
++// distribution.
++//    * Neither the name of Google Inc. nor the name Chromium Embedded
++// Framework nor the names of its contributors may be used to endorse
++// or promote products derived from this software without specific prior
++// written permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++
++#ifndef CEF_INCLUDE_CEF_EXTENSION_INSTALL_H_
++#define CEF_INCLUDE_CEF_EXTENSION_INSTALL_H_
++#pragma once
++
++#include <vector>
++
++#include "include/cef_base.h"
++#include "include/cef_callback.h"
++#include "include/cef_image.h"
++
++///
++/// Asks the person before a Chrome extension is installed, or enabled again
++/// with more permissions, in place of Chrome's dialog. The methods of this
++/// class are called on the browser process UI thread.
++///
++/*--cef(source=client,added=experimental)--*/
++class CefExtensionInstallHandler : public virtual CefBaseRefCounted {
++ public:
++  ///
++  /// Show the person |title| (such as "Add uBlock Origin Lite?"), the
++  /// extension's |icon| and what it will be able to do (|permissions|), with
++  /// a button reading |accept_label|; then call |callback|'s Continue() to go
++  /// ahead or Cancel() not to.
++  ///
++  /*--cef(optional_param=icon)--*/
++  virtual void OnInstallPrompt(const CefString& extension_id,
++                               const CefString& title,
++                               CefRefPtr<CefImage> icon,
++                               const std::vector<CefString>& permissions,
++                               const CefString& accept_label,
++                               CefRefPtr<CefCallback> callback) = 0;
++};
++
++///
++/// Hears how an install from the Chrome Web Store ended. The methods of this
++/// class are called on the browser process UI thread.
++///
++/*--cef(source=client,added=experimental)--*/
++class CefExtensionInstallCallback : public virtual CefBaseRefCounted {
++ public:
++  ///
++  /// The install of |extension_id| ended: |success|, or with |error|.
++  ///
++  /*--cef(optional_param=error)--*/
++  virtual void OnInstallFinished(const CefString& extension_id,
++                                 bool success,
++                                 const CefString& error) = 0;
++};
++
++#endif  // CEF_INCLUDE_CEF_EXTENSION_INSTALL_H_
+diff --git a/libcef/browser/extension_install_impl.cc b/libcef/browser/extension_install_impl.cc
+new file mode 100644
+index 000000000..872d22d97
+--- /dev/null
++++ b/libcef/browser/extension_install_impl.cc
+@@ -0,0 +1,142 @@
++// Copyright 2026 The Chromium Embedded Framework Authors. All rights
++// reserved. Use of this source code is governed by a BSD-style license that
++// can be found in the LICENSE file.
++
++#include "cef/libcef/browser/extension_install_impl.h"
++
++#include <string>
++#include <vector>
++
++#include "base/functional/bind.h"
++#include "base/no_destructor.h"
++#include "base/strings/utf_string_conversions.h"
++#include "cef/libcef/browser/image_impl.h"
++#include "cef/libcef/browser/thread_util.h"
++#include "chrome/browser/extensions/extension_install_prompt.h"
++#include "chrome/browser/extensions/extension_install_prompt_show_params.h"
++#include "chrome/browser/extensions/webstore_install_with_prompt.h"
++#include "chrome/browser/profiles/profile.h"
++#include "extensions/browser/install_prompt_data.h"
++#include "extensions/common/extension.h"
++#include "ui/gfx/image/image.h"
++#include "ui/gfx/native_ui_types.h"
++
++namespace cef_extension_install {
++
++namespace {
++
++CefRefPtr<CefExtensionInstallHandler>& Handler() {
++  static base::NoDestructor<CefRefPtr<CefExtensionInstallHandler>> handler;
++  return *handler;
++}
++
++// The person's answer, given once; an unanswered prompt counts as cancelled.
++class PromptCallback : public CefCallback {
++ public:
++  explicit PromptCallback(ExtensionInstallPrompt::DoneCallback done)
++      : done_(std::move(done)) {}
++  ~PromptCallback() override {
++    if (done_) {
++      std::move(done_).Run(ExtensionInstallPrompt::DoneCallbackPayload(
++          ExtensionInstallPrompt::Result::USER_CANCELED));
++    }
++  }
++
++  PromptCallback(const PromptCallback&) = delete;
++  PromptCallback& operator=(const PromptCallback&) = delete;
++
++  void Continue() override {
++    Answer(ExtensionInstallPrompt::Result::ACCEPTED);
++  }
++  void Cancel() override {
++    Answer(ExtensionInstallPrompt::Result::USER_CANCELED);
++  }
++
++ private:
++  void Answer(ExtensionInstallPrompt::Result result) {
++    if (!CEF_CURRENTLY_ON_UIT()) {
++      CEF_POST_TASK(CEF_UIT,
++                    base::BindOnce(&PromptCallback::Answer, this, result));
++      return;
++    }
++    if (done_) {
++      std::move(done_).Run(ExtensionInstallPrompt::DoneCallbackPayload(result));
++    }
++  }
++
++  ExtensionInstallPrompt::DoneCallback done_;
++
++  IMPLEMENT_REFCOUNTING_DELETE_ON_UIT(PromptCallback);
++};
++
++void ShowPrompt(std::unique_ptr<ExtensionInstallPromptShowParams> show_params,
++                ExtensionInstallPrompt::DoneCallback done,
++                std::unique_ptr<extensions::InstallPromptData> prompt) {
++  CefRefPtr<CefExtensionInstallHandler> handler = Handler();
++  if (!handler || !prompt) {
++    std::move(done).Run(ExtensionInstallPrompt::DoneCallbackPayload(
++        ExtensionInstallPrompt::Result::ABORTED));
++    return;
++  }
++  std::vector<CefString> permissions;
++  for (size_t i = 0; i < prompt->GetPermissionCount(); ++i) {
++    permissions.push_back(prompt->GetPermission(i));
++  }
++  CefRefPtr<CefImage> icon;
++  if (!prompt->icon().IsEmpty()) {
++    icon = new CefImageImpl(*prompt->icon().ToImageSkia());
++  }
++  const extensions::Extension* extension = prompt->extension();
++  handler->OnInstallPrompt(extension ? extension->id() : std::string(),
++                           prompt->GetDialogTitle(), icon, permissions,
++                           prompt->GetAcceptButtonLabel(),
++                           new PromptCallback(std::move(done)));
++}
++
++// Chrome's install from the store, without its post-install bubble, which
++// needs a Chrome window.
++class WebStoreInstall : public extensions::WebstoreInstallWithPrompt {
++ public:
++  WebStoreInstall(const std::string& id, Profile* profile, Callback callback)
++      : WebstoreInstallWithPrompt(id,
++                                  profile,
++                                  gfx::NativeWindow(),
++                                  std::move(callback)) {
++    set_show_post_install_ui(false);
++  }
++
++ private:
++  ~WebStoreInstall() override = default;
++};
++
++}  // namespace
++
++void SetHandler(CefRefPtr<CefExtensionInstallHandler> handler) {
++  Handler() = handler;
++  ExtensionInstallPrompt::SetEmbedderShowDialogCallback(
++      handler ? base::BindRepeating(&ShowPrompt)
++              : ExtensionInstallPrompt::ShowDialogCallback());
++}
++
++void InstallFromWebStore(Profile* profile,
++                         const CefString& extension_id,
++                         CefRefPtr<CefExtensionInstallCallback> callback) {
++  if (!CEF_CURRENTLY_ON_UIT()) {
++    return;
++  }
++  const std::string id = extension_id;
++  auto install = base::MakeRefCounted<WebStoreInstall>(
++      id, profile,
++      base::BindOnce(
++          [](CefRefPtr<CefExtensionInstallCallback> callback, std::string id,
++             bool success, const std::string& error,
++             extensions::webstore_install::Result result) {
++            if (callback) {
++              callback->OnInstallFinished(id, success, error);
++            }
++          },
++          callback, id));
++  install->BeginInstall();
++}
++
++}  // namespace cef_extension_install
+diff --git a/libcef/browser/extension_install_impl.h b/libcef/browser/extension_install_impl.h
+new file mode 100644
+index 000000000..39b112421
+--- /dev/null
++++ b/libcef/browser/extension_install_impl.h
+@@ -0,0 +1,25 @@
++// Copyright 2026 The Chromium Embedded Framework Authors. All rights
++// reserved. Use of this source code is governed by a BSD-style license that
++// can be found in the LICENSE file.
++
++#ifndef CEF_LIBCEF_BROWSER_EXTENSION_INSTALL_IMPL_H_
++#define CEF_LIBCEF_BROWSER_EXTENSION_INSTALL_IMPL_H_
++#pragma once
++
++#include "cef/include/cef_extension_install.h"
++
++class Profile;
++
++namespace cef_extension_install {
++
++// Has `handler` ask about installs in place of Chrome's dialog.
++void SetHandler(CefRefPtr<CefExtensionInstallHandler> handler);
++
++// Installs a Chrome Web Store extension, asking first.
++void InstallFromWebStore(Profile* profile,
++                         const CefString& extension_id,
++                         CefRefPtr<CefExtensionInstallCallback> callback);
++
++}  // namespace cef_extension_install
++
++#endif  // CEF_LIBCEF_BROWSER_EXTENSION_INSTALL_IMPL_H_
+diff --git a/libcef/browser/download_manager_delegate_impl.cc b/libcef/browser/download_manager_delegate_impl.cc
+index e5363cc46..0586acae2 100644
+--- a/libcef/browser/download_manager_delegate_impl.cc
++++ b/libcef/browser/download_manager_delegate_impl.cc
+@@ -379,6 +379,12 @@ void CefDownloadManagerDelegateImpl::OnDownloadCreated(DownloadManager* manager,
+   // This callback may arrive after DetermineDownloadTarget, so we allow
+   // association from either method.
+   CefRefPtr<CefBrowserHostBase> browser = GetOrAssociateBrowser(item);
++  // An extension being installed from the Chrome Web Store downloads from a
++  // page of its own, which Chrome's download handling completes.
++  if (!browser &&
++      item->GetDownloadSource() == download::DownloadSource::EXTENSION_INSTALLER) {
++    return;
++  }
+   if (!browser) {
+     // If the download is rejected (e.g. ALT+click on an invalid protocol link)
+     // then an "interrupted" download will be started via DownloadManagerImpl::

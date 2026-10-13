@@ -1,0 +1,967 @@
+--- a/BUILD.gn
++++ b/BUILD.gn
+@@ -746,6 +746,8 @@
+     "libcef/browser/stream_impl.h",
+     "libcef/browser/task_manager_impl.cc",
+     "libcef/browser/task_manager_impl.h",
++    "libcef/browser/tab_strip_impl.cc",
++    "libcef/browser/tab_strip_impl.h",
+     "libcef/browser/trace_impl.cc",
+     "libcef/browser/trace_subscriber.cc",
+     "libcef/browser/trace_subscriber.h",
+diff --git a/include/cef_tab_strip.h b/include/cef_tab_strip.h
+new file mode 100644
+index 000000000..d40b037d4
+--- /dev/null
++++ b/include/cef_tab_strip.h
+@@ -0,0 +1,138 @@
++// Copyright (c) 2026 Marshall A. Greenblatt. All rights reserved.
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are
++// met:
++//
++//    * Redistributions of source code must retain the above copyright
++// notice, this list of conditions and the following disclaimer.
++//    * Redistributions in binary form must reproduce the above
++// copyright notice, this list of conditions and the following disclaimer
++// in the documentation and/or other materials provided with the
++// distribution.
++//    * Neither the name of Google Inc. nor the name Chromium Embedded
++// Framework nor the names of its contributors may be used to endorse
++// or promote products derived from this software without specific prior
++// written permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++// "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++// LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++// A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++// OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++// LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++// DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++// THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++// (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++// OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++#ifndef CEF_INCLUDE_CEF_TAB_STRIP_H_
++#define CEF_INCLUDE_CEF_TAB_STRIP_H_
++#pragma once
++
++#include <vector>
++
++#include "include/cef_base.h"
++#include "include/cef_browser.h"
++
++///
++/// Carries out what extensions ask of a client window that holds Alloy style
++/// browsers as its tabs. The methods of this class are called on the browser
++/// process UI thread.
++///
++/*--cef(source=client,added=experimental)--*/
++class CefTabStripDelegate : public virtual CefBaseRefCounted {
++ public:
++  ///
++  /// Open |url| in a new tab at |index| (-1 for the end), in front if
++  /// |active|. Return the browser made for it, which must already exist (made
++  /// with CefBrowserHost::CreateBrowserSync) and be in the tab strip, or
++  /// nullptr not to open one.
++  ///
++  /*--cef()--*/
++  virtual CefRefPtr<CefBrowser> OpenTab(const CefString& url,
++                                        int index,
++                                        bool active) = 0;
++
++  ///
++  /// Bring |browser|'s tab to the front.
++  ///
++  /*--cef()--*/
++  virtual void ActivateTab(CefRefPtr<CefBrowser> browser) = 0;
++
++  ///
++  /// Close |browser|'s tab.
++  ///
++  /*--cef()--*/
++  virtual void CloseTab(CefRefPtr<CefBrowser> browser) = 0;
++
++  ///
++  /// Move |browser|'s tab to |index|.
++  ///
++  /*--cef()--*/
++  virtual void MoveTab(CefRefPtr<CefBrowser> browser, int index) {}
++
++  ///
++  /// Pin or unpin |browser|'s tab.
++  ///
++  /*--cef()--*/
++  virtual void SetTabPinned(CefRefPtr<CefBrowser> browser, bool pinned) {}
++
++  ///
++  /// Bring the window to the front.
++  ///
++  /*--cef()--*/
++  virtual void ActivateWindow() {}
++};
++
++///
++/// A client window holding Alloy style browsers as its tabs, which Chrome
++/// extensions see as a browser window, with those tabs, through the tabs and
++/// windows APIs. The methods of this class must be called on the browser
++/// process UI thread.
++///
++/*--cef(source=library,added=experimental)--*/
++class CefTabStrip : public virtual CefBaseRefCounted {
++ public:
++  ///
++  /// Creates a window for the global request context's extensions.
++  ///
++  /*--cef()--*/
++  static CefRefPtr<CefTabStrip> Create(CefRefPtr<CefTabStripDelegate> delegate);
++
++  ///
++  /// The window's id, as extensions see it.
++  ///
++  /*--cef()--*/
++  virtual int GetWindowId() = 0;
++
++  ///
++  /// The window's tabs, in order: the first |pinned_count| are pinned, and
++  /// the one at |active_index| is in front (-1 for none).
++  ///
++  /*--cef()--*/
++  virtual void SetTabs(const std::vector<CefRefPtr<CefBrowser>>& tabs,
++                       int pinned_count,
++                       int active_index) = 0;
++
++  ///
++  /// Whether the window is the active one.
++  ///
++  /*--cef()--*/
++  virtual void SetActive(bool active) = 0;
++
++  ///
++  /// The window's bounds on screen.
++  ///
++  /*--cef()--*/
++  virtual void SetBounds(const CefRect& bounds) = 0;
++
++  ///
++  /// Removes the window, as when it's closed.
++  ///
++  /*--cef()--*/
++  virtual void Close() = 0;
++};
++
++#endif  // CEF_INCLUDE_CEF_TAB_STRIP_H_
+diff --git a/libcef/browser/tab_strip_impl.cc b/libcef/browser/tab_strip_impl.cc
+new file mode 100644
+index 000000000..f678617f0
+--- /dev/null
++++ b/libcef/browser/tab_strip_impl.cc
+@@ -0,0 +1,759 @@
++// Copyright 2026 The Chromium Embedded Framework Authors. All rights
++// reserved. Use of this source code is governed by a BSD-style license that
++// can be found in the LICENSE file.
++
++#include "cef/libcef/browser/tab_strip_impl.h"
++
++#include <algorithm>
++#include <map>
++#include <set>
++#include <vector>
++
++#include "base/callback_list.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/no_destructor.h"
++#include "base/observer_list.h"
++#include "base/time/time.h"
++#include "cef/libcef/browser/browser_host_base.h"
++#include "cef/libcef/browser/request_context_impl.h"
++#include "chrome/browser/extensions/browser_extension_window_controller.h"
++#include "chrome/browser/extensions/embedder_browser_windows.h"
++#include "chrome/browser/extensions/extension_browser_window_helper.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/tab_list/tab_list_interface.h"
++#include "chrome/browser/tab_list/tab_list_interface_observer.h"
++#include "chrome/browser/tab_list/tab_removed_reason.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "components/sessions/content/session_tab_helper.h"
++#include "components/sessions/core/session_id.h"
++#include "components/tab_groups/tab_group_visual_data.h"
++#include "components/tabs/public/tab_interface.h"
++#include "content/public/browser/navigation_handle.h"
++#include "content/public/browser/page_navigator.h"
++#include "content/public/browser/web_contents.h"
++#include "ui/base/base_window.h"
++#include "ui/base/mojom/window_show_state.mojom.h"
++#include "ui/base/unowned_user_data/scoped_unowned_user_data.h"
++#include "ui/base/unowned_user_data/unowned_user_data_host.h"
++#include "ui/gfx/range/range.h"
++
++class EmbedderTab;
++
++namespace {
++
++// Every embedder window's tab, by what it shows, for the extension APIs.
++std::map<content::WebContents*, EmbedderTab*>& TabsByContents() {
++  static base::NoDestructor<std::map<content::WebContents*, EmbedderTab*>>
++      tabs;
++  return *tabs;
++}
++
++content::WebContents* ContentsOf(CefRefPtr<CefBrowser> browser) {
++  auto host = browser ? CefBrowserHostBase::FromBrowser(browser) : nullptr;
++  return host ? host->GetWebContents() : nullptr;
++}
++
++CefRefPtr<CefBrowser> BrowserOf(content::WebContents* contents) {
++  auto host = CefBrowserHostBase::GetBrowserForContents(contents);
++  return host ? host->GetBrowser() : nullptr;
++}
++
++}  // namespace
++
++// The client window's native window, as far as extensions ask about it.
++class EmbedderBaseWindow : public ui::BaseWindow {
++ public:
++  explicit EmbedderBaseWindow(CefRefPtr<CefTabStripDelegate> delegate)
++      : delegate_(delegate) {}
++
++  void set_active(bool active) { active_ = active; }
++  void set_bounds(const gfx::Rect& bounds) { bounds_ = bounds; }
++
++  // ui::BaseWindow:
++  bool IsActive() const override { return active_; }
++  bool IsMaximized() const override { return false; }
++  bool IsMinimized() const override { return false; }
++  bool IsFullscreen() const override { return false; }
++  gfx::NativeWindow GetNativeWindow() const override {
++    return gfx::NativeWindow();
++  }
++  gfx::Rect GetRestoredBounds() const override { return bounds_; }
++  ui::mojom::WindowShowState GetRestoredState() const override {
++    return ui::mojom::WindowShowState::kNormal;
++  }
++  gfx::Rect GetBounds() const override { return bounds_; }
++  void Show() override { delegate_->ActivateWindow(); }
++  void Hide() override {}
++  bool IsVisible() const override { return true; }
++  void ShowInactive() override {}
++  void Close() override {}
++  void Activate() override { delegate_->ActivateWindow(); }
++  void Deactivate() override {}
++  void Maximize() override {}
++  void Minimize() override {}
++  void Restore() override {}
++  void SetBounds(const gfx::Rect& bounds) override {}
++  void FlashFrame(bool flash) override {}
++  ui::ZOrderLevel GetZOrderLevel() const override {
++    return ui::ZOrderLevel::kNormal;
++  }
++  void SetZOrderLevel(ui::ZOrderLevel order) override {}
++
++ private:
++  CefRefPtr<CefTabStripDelegate> delegate_;
++  bool active_ = false;
++  gfx::Rect bounds_;
++};
++
++// One of the client window's tabs: an Alloy style browser's WebContents.
++class EmbedderTab : public tabs::TabInterface {
++ public:
++  EmbedderTab(BrowserWindowInterface* window,
++              CefRefPtr<CefTabStripDelegate> delegate,
++              content::WebContents* contents)
++      : window_(window), delegate_(delegate), contents_(contents) {
++    TabsByContents()[contents] = this;
++    // The tabs API reports the window a tab is in from the tab's session data.
++    if (auto* helper = sessions::SessionTabHelper::FromWebContents(contents)) {
++      helper->SetWindowID(window->GetSessionID());
++    }
++  }
++  ~EmbedderTab() override {
++    auto& tabs = TabsByContents();
++    auto it = tabs.find(contents_);
++    if (it != tabs.end() && it->second == this) {
++      tabs.erase(it);
++    }
++  }
++
++  void SetPinned(bool pinned) {
++    if (pinned == pinned_) {
++      return;
++    }
++    pinned_ = pinned;
++    pinned_state_changed_.Notify(this, pinned);
++  }
++  void SetActivated(bool active) {
++    if (active == active_) {
++      return;
++    }
++    if (!active) {
++      will_deactivate_.Notify(this);
++    }
++    active_ = active;
++    if (active) {
++      last_active_ = base::Time::Now();
++      did_activate_.Notify(this);
++    }
++  }
++
++  // tabs::TabInterface:
++  base::WeakPtr<tabs::TabInterface> GetWeakPtr() override {
++    return weak_factory_.GetWeakPtr();
++  }
++  content::WebContents* GetContents() const override { return contents_; }
++  void LoadIfNeeded() override {}
++  std::u16string GetTitle() const override { return contents_->GetTitle(); }
++  GURL GetURL() const override { return contents_->GetVisibleURL(); }
++  base::Time GetLastActiveTime() const override { return last_active_; }
++  Profile* GetProfile() const override {
++    return Profile::FromBrowserContext(contents_->GetBrowserContext());
++  }
++  void Close() override {
++    if (auto browser = BrowserOf(contents_)) {
++      delegate_->CloseTab(browser);
++    }
++  }
++  base::CallbackListSubscription RegisterWillDiscardContents(
++      WillDiscardContentsCallback callback) override {
++    return {};
++  }
++  bool IsActivated() const override { return active_; }
++  base::CallbackListSubscription RegisterDidActivate(
++      DidActivateCallback callback) override {
++    return did_activate_.Add(std::move(callback));
++  }
++  base::CallbackListSubscription RegisterWillDeactivate(
++      WillDeactivateCallback callback) override {
++    return will_deactivate_.Add(std::move(callback));
++  }
++  bool IsVisible() const override { return active_; }
++  bool IsSelected() const override { return active_; }
++  base::CallbackListSubscription RegisterDidBecomeVisible(
++      DidBecomeVisibleCallback callback) override {
++    return {};
++  }
++  base::CallbackListSubscription RegisterWillBecomeHidden(
++      WillBecomeHiddenCallback callback) override {
++    return {};
++  }
++  base::CallbackListSubscription RegisterWillDetach(
++      WillDetach callback) override {
++    return {};
++  }
++  base::CallbackListSubscription RegisterDidInsert(
++      DidInsertCallback callback) override {
++    return {};
++  }
++  base::CallbackListSubscription RegisterPinnedStateChanged(
++      PinnedStateChangedCallback callback) override {
++    return pinned_state_changed_.Add(std::move(callback));
++  }
++  base::CallbackListSubscription RegisterGroupChanged(
++      GroupChangedCallback callback) override {
++    return {};
++  }
++  base::CallbackListSubscription RegisterBlockedStateChanged(
++      BlockedStateChangedCallback callback) override {
++    return {};
++  }
++  bool CanShowModalUI() const override { return true; }
++  std::unique_ptr<tabs::ScopedTabModalUI> ShowModalUI() override {
++    return std::make_unique<tabs::ScopedTabModalUI>();
++  }
++  base::CallbackListSubscription RegisterModalUIChanged(
++      TabInterfaceCallback callback) override {
++    return {};
++  }
++  bool IsInNormalWindow() const override { return true; }
++  BrowserWindowInterface* GetBrowserWindowInterface() override {
++    return window_;
++  }
++  const BrowserWindowInterface* GetBrowserWindowInterface() const override {
++    return window_;
++  }
++  tabs::TabFeatures* GetTabFeatures() override { return nullptr; }
++  const tabs::TabFeatures* GetTabFeatures() const override { return nullptr; }
++  bool IsPinned() const override { return pinned_; }
++  bool IsBlocked() const override { return false; }
++  bool IsSplit() const override { return false; }
++  std::optional<tab_groups::TabGroupId> GetGroup() const override {
++    return std::nullopt;
++  }
++  std::optional<split_tabs::SplitTabId> GetSplit() const override {
++    return std::nullopt;
++  }
++  tabs::TabCollection* GetParentCollection(
++      base::PassKey<tabs::TabCollection>) const override {
++    return nullptr;
++  }
++  const tabs::TabCollection* GetParentCollection() const override {
++    return nullptr;
++  }
++  void OnReparented(tabs::TabCollection* parent,
++                    base::PassKey<tabs::TabCollection>) override {}
++  void OnAncestorChanged(base::PassKey<tabs::TabCollection>) override {}
++  ui::UnownedUserDataHost& GetUnownedUserDataHost() override {
++    return user_data_host_;
++  }
++  const ui::UnownedUserDataHost& GetUnownedUserDataHost() const override {
++    return user_data_host_;
++  }
++
++ private:
++  raw_ptr<BrowserWindowInterface> window_;
++  CefRefPtr<CefTabStripDelegate> delegate_;
++  raw_ptr<content::WebContents> contents_;
++  bool pinned_ = false;
++  bool active_ = false;
++  base::Time last_active_;
++  ui::UnownedUserDataHost user_data_host_;
++  base::RepeatingCallbackList<void(tabs::TabInterface*)> did_activate_;
++  base::RepeatingCallbackList<void(tabs::TabInterface*)> will_deactivate_;
++  base::RepeatingCallbackList<void(tabs::TabInterface*, bool)>
++      pinned_state_changed_;
++  base::WeakPtrFactory<EmbedderTab> weak_factory_{this};
++};
++
++// The client window's tabs, as the client reports them; what extensions ask of
++// them goes to the client.
++class EmbedderTabList : public TabListInterface {
++ public:
++  EmbedderTabList(BrowserWindowInterface* window,
++                  CefRefPtr<CefTabStripDelegate> delegate)
++      : window_(window), delegate_(delegate) {}
++  ~EmbedderTabList() override {
++    for (TabListInterfaceObserver& observer : observers_) {
++      observer.OnTabListDestroyed(*this);
++    }
++  }
++
++  // Takes the client's tabs, telling observers what changed: tabs removed,
++  // added and moved, then which is in front.
++  void SetTabs(const std::vector<content::WebContents*>& contents,
++               int pinned_count,
++               int active_index) {
++    std::set<content::WebContents*> kept(contents.begin(), contents.end());
++    // Tabs gone.
++    for (size_t i = 0; i < tabs_.size();) {
++      if (kept.count(tabs_[i]->GetContents())) {
++        ++i;
++        continue;
++      }
++      std::unique_ptr<EmbedderTab> tab = std::move(tabs_[i]);
++      tabs_.erase(tabs_.begin() + i);
++      if (active_ == tab.get()) {
++        active_ = nullptr;
++      }
++      for (TabListInterfaceObserver& observer : observers_) {
++        observer.OnTabRemoved(*this, tab.get(), TabRemovedReason::kDeleted);
++      }
++    }
++    // The order now, with new tabs made.
++    std::vector<EmbedderTab*> before;
++    for (auto& tab : tabs_) {
++      before.push_back(tab.get());
++    }
++    std::vector<std::unique_ptr<EmbedderTab>> ordered;
++    std::vector<std::pair<EmbedderTab*, int>> added;
++    for (size_t i = 0; i < contents.size(); ++i) {
++      auto it = std::ranges::find_if(tabs_, [&](const auto& tab) {
++        return tab && tab->GetContents() == contents[i];
++      });
++      if (it != tabs_.end()) {
++        ordered.push_back(std::move(*it));
++      } else {
++        ordered.push_back(
++            std::make_unique<EmbedderTab>(window_, delegate_, contents[i]));
++        added.emplace_back(ordered.back().get(), static_cast<int>(i));
++      }
++    }
++    tabs_ = std::move(ordered);
++    for (auto& [tab, index] : added) {
++      for (TabListInterfaceObserver& observer : observers_) {
++        observer.OnTabAdded(*this, tab, index);
++      }
++    }
++    // Tabs that kept their place among the others but moved.
++    for (size_t from = 0; from < before.size(); ++from) {
++      int to = GetIndexOf(before[from]);
++      if (to >= 0 && to != static_cast<int>(from)) {
++        for (TabListInterfaceObserver& observer : observers_) {
++          observer.OnTabMoved(*this, before[from], static_cast<int>(from), to);
++        }
++      }
++    }
++    for (size_t i = 0; i < tabs_.size(); ++i) {
++      tabs_[i]->SetPinned(static_cast<int>(i) < pinned_count);
++    }
++    EmbedderTab* active =
++        active_index >= 0 && active_index < static_cast<int>(tabs_.size())
++            ? tabs_[active_index].get()
++            : nullptr;
++    if (active != active_) {
++      if (active_) {
++        active_->SetActivated(false);
++      }
++      active_ = active;
++      if (active_) {
++        active_->SetActivated(true);
++      }
++      // Observers hear of a tab coming forward; none at all, as while the
++      // client's selected tab is still being made, isn't a change for them.
++      if (active_) {
++        for (TabListInterfaceObserver& observer : observers_) {
++          observer.OnActiveTabChanged(*this, active_);
++        }
++      }
++      active_tab_changed_.Notify(window_);
++    }
++  }
++
++  void SetWindowActive(bool active) {
++    for (TabListInterfaceObserver& observer : observers_) {
++      observer.OnTabListActiveChanged(*this, active);
++    }
++  }
++
++  base::CallbackListSubscription RegisterActiveTabDidChange(
++      BrowserWindowInterface::ActiveTabChangeCallback callback) {
++    return active_tab_changed_.Add(std::move(callback));
++  }
++
++  // TabListInterface:
++  void AddTabListInterfaceObserver(TabListInterfaceObserver* observer) override {
++    observers_.AddObserver(observer);
++  }
++  void RemoveTabListInterfaceObserver(
++      TabListInterfaceObserver* observer) override {
++    observers_.RemoveObserver(observer);
++  }
++  int GetTabCount() const override { return static_cast<int>(tabs_.size()); }
++  int GetActiveIndex() const override { return GetIndexOf(active_); }
++  tabs::TabInterface* GetActiveTab() override { return active_; }
++  void ActivateTab(tabs::TabHandle tab) override {
++    if (auto browser = BrowserFor(tab)) {
++      delegate_->ActivateTab(browser);
++    }
++  }
++  tabs::TabInterface* OpenTab(const GURL& url,
++                              int index,
++                              bool foreground) override {
++    // The client makes the tab, and tells us of it, before returning.
++    auto contents = ContentsOf(delegate_->OpenTab(url.spec(), index, foreground));
++    return contents ? FindTab(contents) : nullptr;
++  }
++  void SetOpenerForTab(tabs::TabHandle target, tabs::TabHandle opener) override {
++  }
++  tabs::TabInterface* GetOpenerForTab(tabs::TabHandle target) override {
++    return nullptr;
++  }
++  tabs::TabInterface* InsertWebContentsAt(
++      int index,
++      std::unique_ptr<content::WebContents> web_contents,
++      bool should_pin,
++      std::optional<tab_groups::TabGroupId> group) override {
++    return nullptr;
++  }
++  content::WebContents* DiscardTab(tabs::TabHandle tab) override {
++    return nullptr;
++  }
++  tabs::TabInterface* DuplicateTab(tabs::TabHandle tab) override {
++    tabs::TabInterface* original = tab.Get();
++    if (!original) {
++      return nullptr;
++    }
++    return OpenTab(original->GetURL(), GetIndexOfTab(tab) + 1, true);
++  }
++  tabs::TabInterface* GetTab(int index) override {
++    return index >= 0 && index < GetTabCount() ? tabs_[index].get() : nullptr;
++  }
++  int GetIndexOfTab(tabs::TabHandle tab) override {
++    return GetIndexOf(tab.Get());
++  }
++  void HighlightTabs(tabs::TabHandle tab_to_activate,
++                     const std::set<tabs::TabHandle>& tabs) override {
++    ActivateTab(tab_to_activate);
++  }
++  void MoveTab(tabs::TabHandle tab, int index) override {
++    if (auto browser = BrowserFor(tab)) {
++      delegate_->MoveTab(browser, index);
++    }
++  }
++  void CloseTab(tabs::TabHandle tab) override {
++    if (auto browser = BrowserFor(tab)) {
++      delegate_->CloseTab(browser);
++    }
++  }
++  std::unique_ptr<content::WebContents> DetachWebContents(
++      tabs::TabHandle tab) override {
++    return nullptr;
++  }
++  std::vector<tabs::TabInterface*> GetAllTabs() override {
++    std::vector<tabs::TabInterface*> all;
++    for (auto& tab : tabs_) {
++      all.push_back(tab.get());
++    }
++    return all;
++  }
++  void PinTab(tabs::TabHandle tab) override {
++    if (auto browser = BrowserFor(tab)) {
++      delegate_->SetTabPinned(browser, true);
++    }
++  }
++  void UnpinTab(tabs::TabHandle tab) override {
++    if (auto browser = BrowserFor(tab)) {
++      delegate_->SetTabPinned(browser, false);
++    }
++  }
++  bool ContainsTabGroup(tab_groups::TabGroupId group_id) override {
++    return false;
++  }
++  std::vector<tab_groups::TabGroupId> ListTabGroups() override { return {}; }
++  std::set<split_tabs::SplitTabId> ListSplits() override { return {}; }
++  std::optional<tab_groups::TabGroupVisualData> GetTabGroupVisualData(
++      tab_groups::TabGroupId group_id) override {
++    return std::nullopt;
++  }
++  gfx::Range GetTabGroupTabIndices(tab_groups::TabGroupId group_id) override {
++    return gfx::Range();
++  }
++  std::optional<tab_groups::TabGroupId> CreateTabGroup(
++      const std::vector<tabs::TabHandle>& tabs) override {
++    return std::nullopt;
++  }
++  std::optional<split_tabs::SplitTabId> CreateSplit(
++      const std::vector<tabs::TabHandle>& tabs) override {
++    return std::nullopt;
++  }
++  void SetTabGroupVisualData(
++      tab_groups::TabGroupId group_id,
++      const tab_groups::TabGroupVisualData& visual_data) override {}
++  std::optional<tab_groups::TabGroupId> AddTabsToGroup(
++      std::optional<tab_groups::TabGroupId> group_id,
++      const std::set<tabs::TabHandle>& tabs) override {
++    return std::nullopt;
++  }
++  void Ungroup(const std::set<tabs::TabHandle>& tabs) override {}
++  void Unsplit(split_tabs::SplitTabId split_id) override {}
++  void MoveGroupTo(tab_groups::TabGroupId group_id, int index) override {}
++  void MoveTabToWindow(tabs::TabHandle tab,
++                       SessionID destination_window_id,
++                       int destination_index) override {}
++  bool MoveTabGroupToWindow(tab_groups::TabGroupId group_id,
++                            SessionID destination_window_id,
++                            int destination_index) override {
++    return false;
++  }
++  bool IsThisTabListEditable() override { return true; }
++  bool IsClosingAllTabs() override { return false; }
++
++ private:
++  int GetIndexOf(const tabs::TabInterface* tab) const {
++    for (size_t i = 0; i < tabs_.size(); ++i) {
++      if (tabs_[i].get() == tab) {
++        return static_cast<int>(i);
++      }
++    }
++    return -1;
++  }
++  EmbedderTab* FindTab(content::WebContents* contents) {
++    for (auto& tab : tabs_) {
++      if (tab->GetContents() == contents) {
++        return tab.get();
++      }
++    }
++    return nullptr;
++  }
++  CefRefPtr<CefBrowser> BrowserFor(tabs::TabHandle handle) {
++    tabs::TabInterface* tab = handle.Get();
++    return tab && GetIndexOf(tab) >= 0 ? BrowserOf(tab->GetContents())
++                                       : nullptr;
++  }
++
++  raw_ptr<BrowserWindowInterface> window_;
++  CefRefPtr<CefTabStripDelegate> delegate_;
++  std::vector<std::unique_ptr<EmbedderTab>> tabs_;
++  raw_ptr<EmbedderTab> active_ = nullptr;
++  base::ObserverList<TabListInterfaceObserver> observers_;
++  base::RepeatingCallbackList<void(BrowserWindowInterface*)>
++      active_tab_changed_;
++};
++
++// The client window as a browser window that only the extension APIs see,
++// through extensions::EmbedderBrowserWindows.
++class EmbedderBrowserWindow : public BrowserWindowInterface {
++ public:
++  EmbedderBrowserWindow(Profile* profile,
++                        CefRefPtr<CefTabStripDelegate> delegate)
++      : profile_(profile),
++        delegate_(delegate),
++        session_id_(SessionID::NewUnique()),
++        base_window_(delegate),
++        tab_list_(this, delegate),
++        tab_list_holder_(user_data_host_, tab_list_),
++        features_(std::make_unique<BrowserWindowFeatures>()) {
++    window_controller_ =
++        std::make_unique<extensions::BrowserExtensionWindowController>(this);
++    window_helper_ =
++        std::make_unique<extensions::ExtensionBrowserWindowHelper>(this,
++                                                                   profile);
++    extensions::EmbedderBrowserWindows::Get().SetTabLookup(
++        base::BindRepeating([](content::WebContents* contents)
++                                -> tabs::TabInterface* {
++          auto& tabs = TabsByContents();
++          auto it = tabs.find(contents);
++          return it != tabs.end() ? it->second : nullptr;
++        }));
++    extensions::EmbedderBrowserWindows::Get().Add(this);
++  }
++  ~EmbedderBrowserWindow() override {
++    closing_ = true;
++    extensions::EmbedderBrowserWindows::Get().Remove(this);
++    did_close_.Notify(this);
++    tab_list_.SetTabs({}, 0, -1);
++    window_helper_.reset();
++    window_controller_.reset();
++  }
++
++  EmbedderTabList& tab_list() { return tab_list_; }
++
++  void SetActive(bool active) {
++    if (active == active_) {
++      return;
++    }
++    active_ = active;
++    base_window_.set_active(active);
++    if (active) {
++      extensions::EmbedderBrowserWindows::Get().Activated(this);
++      did_become_active_.Notify(this);
++    } else {
++      did_become_inactive_.Notify(this);
++    }
++    tab_list_.SetWindowActive(active);
++  }
++  void SetBounds(const gfx::Rect& bounds) { base_window_.set_bounds(bounds); }
++
++  // content::PageNavigator:
++  content::WebContents* OpenURL(
++      const content::OpenURLParams& params,
++      base::OnceCallback<void(content::NavigationHandle&)>
++          navigation_handle_callback) override {
++    tabs::TabInterface* tab = tab_list_.OpenTab(
++        params.url, -1,
++        params.disposition != WindowOpenDisposition::NEW_BACKGROUND_TAB);
++    return tab ? tab->GetContents() : nullptr;
++  }
++
++  // BrowserWindowInterface:
++  ui::UnownedUserDataHost& GetUnownedUserDataHost() override {
++    return user_data_host_;
++  }
++  const ui::UnownedUserDataHost& GetUnownedUserDataHost() const override {
++    return user_data_host_;
++  }
++  ui::BaseWindow* GetWindow() override { return &base_window_; }
++  const ui::BaseWindow* GetWindow() const override { return &base_window_; }
++  Profile* GetProfile() override { return profile_; }
++  const Profile* GetProfile() const override { return profile_; }
++  const SessionID& GetSessionID() const override { return session_id_; }
++  bool IsDeleteScheduled() const override { return closing_; }
++  base::CallbackListSubscription RegisterBrowserDidClose(
++      BrowserDidCloseCallback callback) override {
++    return did_close_.Add(std::move(callback));
++  }
++  Type GetType() const override { return TYPE_NORMAL; }
++  base::WeakPtr<BrowserWindowInterface> GetWeakPtr() override {
++    return weak_factory_.GetWeakPtr();
++  }
++  void OpenGURL(const GURL& gurl, WindowOpenDisposition disposition) override {
++    tab_list_.OpenTab(gurl, -1,
++                      disposition != WindowOpenDisposition::NEW_BACKGROUND_TAB);
++  }
++  TabStripModel* GetTabStripModel() override { return nullptr; }
++  const TabStripModel* GetTabStripModel() const override { return nullptr; }
++  bool IsTabStripVisible() override { return true; }
++  base::CallbackListSubscription RegisterBrowserCloseCancelled(
++      BrowserCloseCancelledCallback callback) override {
++    return {};
++  }
++  base::CallbackListSubscription RegisterActiveTabDidChange(
++      ActiveTabChangeCallback callback) override {
++    return tab_list_.RegisterActiveTabDidChange(std::move(callback));
++  }
++  tabs::TabInterface* GetActiveTabInterface() override {
++    return tab_list_.GetActiveTab();
++  }
++  BrowserWindowFeatures& GetFeatures() override { return *features_; }
++  const BrowserWindowFeatures& GetFeatures() const override {
++    return *features_;
++  }
++  web_modal::WebContentsModalDialogHost*
++  GetWebContentsModalDialogHostForWindow() override {
++    return nullptr;
++  }
++  web_modal::WebContentsModalDialogHost* GetWebContentsModalDialogHostForTab(
++      tabs::TabInterface* tab_interface) override {
++    return nullptr;
++  }
++  bool IsActive() const override { return active_; }
++  base::CallbackListSubscription RegisterDidBecomeActive(
++      DidBecomeActiveCallback callback) override {
++    return did_become_active_.Add(std::move(callback));
++  }
++  base::CallbackListSubscription RegisterDidBecomeInactive(
++      DidBecomeInactiveCallback callback) override {
++    return did_become_inactive_.Add(std::move(callback));
++  }
++  bool IsNormalBrowser() const override { return true; }
++  std::vector<tabs::TabInterface*> GetAllTabInterfaces() override {
++    return tab_list_.GetAllTabs();
++  }
++  bool IsTabModalPopup() const override { return false; }
++  void SetIsTabModalPopup(
++      bool is_tab_modal_popup,
++      base::PassKey<internal::ScopedBrowserShower>) override {}
++  bool CreatedBySessionRestore() const override { return false; }
++  DesktopBrowserWindowCapabilities* capabilities() override { return nullptr; }
++  const DesktopBrowserWindowCapabilities* capabilities() const override {
++    return nullptr;
++  }
++
++ private:
++  raw_ptr<Profile> profile_;
++  CefRefPtr<CefTabStripDelegate> delegate_;
++  const SessionID session_id_;
++  bool active_ = false;
++  bool closing_ = false;
++  ui::UnownedUserDataHost user_data_host_;
++  EmbedderBaseWindow base_window_;
++  EmbedderTabList tab_list_;
++  ui::ScopedUnownedUserData<TabListInterface> tab_list_holder_;
++  std::unique_ptr<BrowserWindowFeatures> features_;
++  std::unique_ptr<extensions::BrowserExtensionWindowController>
++      window_controller_;
++  std::unique_ptr<extensions::ExtensionBrowserWindowHelper> window_helper_;
++  base::RepeatingCallbackList<void(BrowserWindowInterface*)> did_close_;
++  base::RepeatingCallbackList<void(BrowserWindowInterface*)>
++      did_become_active_;
++  base::RepeatingCallbackList<void(BrowserWindowInterface*)>
++      did_become_inactive_;
++  base::WeakPtrFactory<EmbedderBrowserWindow> weak_factory_{this};
++};
++
++// static
++CefRefPtr<CefTabStrip> CefTabStrip::Create(
++    CefRefPtr<CefTabStripDelegate> delegate) {
++  if (!CEF_CURRENTLY_ON_UIT()) {
++    DCHECK(false) << "called on invalid thread";
++    return nullptr;
++  }
++  if (!delegate) {
++    return nullptr;
++  }
++  return new CefTabStripImpl(delegate);
++}
++
++CefTabStripImpl::CefTabStripImpl(CefRefPtr<CefTabStripDelegate> delegate) {
++  Profile* profile =
++      CefRequestContextImpl::GetProfile(CefRequestContext::GetGlobalContext());
++  if (profile) {
++    window_ = std::make_unique<EmbedderBrowserWindow>(profile, delegate);
++  }
++}
++
++CefTabStripImpl::~CefTabStripImpl() = default;
++
++int CefTabStripImpl::GetWindowId() {
++  return window_ ? window_->GetSessionID().id() : -1;
++}
++
++void CefTabStripImpl::SetTabs(const std::vector<CefRefPtr<CefBrowser>>& tabs,
++                              int pinned_count,
++                              int active_index) {
++  if (!window_ || !CEF_CURRENTLY_ON_UIT()) {
++    return;
++  }
++  std::vector<content::WebContents*> contents;
++  int active = -1;
++  for (size_t i = 0; i < tabs.size(); ++i) {
++    if (auto* tab_contents = ContentsOf(tabs[i])) {
++      if (static_cast<int>(i) == active_index) {
++        active = static_cast<int>(contents.size());
++      }
++      contents.push_back(tab_contents);
++    }
++  }
++  window_->tab_list().SetTabs(contents, pinned_count, active);
++}
++
++void CefTabStripImpl::SetActive(bool active) {
++  if (window_ && CEF_CURRENTLY_ON_UIT()) {
++    window_->SetActive(active);
++  }
++}
++
++void CefTabStripImpl::SetBounds(const CefRect& bounds) {
++  if (window_ && CEF_CURRENTLY_ON_UIT()) {
++    window_->SetBounds(
++        gfx::Rect(bounds.x, bounds.y, bounds.width, bounds.height));
++  }
++}
++
++void CefTabStripImpl::Close() {
++  if (CEF_CURRENTLY_ON_UIT()) {
++    window_.reset();
++  }
++}
+diff --git a/libcef/browser/tab_strip_impl.h b/libcef/browser/tab_strip_impl.h
+new file mode 100644
+index 000000000..b4028acad
+--- /dev/null
++++ b/libcef/browser/tab_strip_impl.h
+@@ -0,0 +1,41 @@
++// Copyright 2026 The Chromium Embedded Framework Authors. All rights
++// reserved. Use of this source code is governed by a BSD-style license that
++// can be found in the LICENSE file.
++
++#ifndef CEF_LIBCEF_BROWSER_TAB_STRIP_IMPL_H_
++#define CEF_LIBCEF_BROWSER_TAB_STRIP_IMPL_H_
++#pragma once
++
++#include <memory>
++
++#include "cef/include/cef_tab_strip.h"
++#include "cef/libcef/browser/thread_util.h"
++
++class EmbedderBrowserWindow;
++
++// A client window, holding Alloy style browsers as tabs, as Chrome extensions
++// see it: a browser window of its own (see EmbedderBrowserWindow).
++class CefTabStripImpl : public CefTabStrip {
++ public:
++  explicit CefTabStripImpl(CefRefPtr<CefTabStripDelegate> delegate);
++  ~CefTabStripImpl() override;
++
++  CefTabStripImpl(const CefTabStripImpl&) = delete;
++  CefTabStripImpl& operator=(const CefTabStripImpl&) = delete;
++
++  // CefTabStrip methods.
++  int GetWindowId() override;
++  void SetTabs(const std::vector<CefRefPtr<CefBrowser>>& tabs,
++               int pinned_count,
++               int active_index) override;
++  void SetActive(bool active) override;
++  void SetBounds(const CefRect& bounds) override;
++  void Close() override;
++
++ private:
++  std::unique_ptr<EmbedderBrowserWindow> window_;
++
++  IMPLEMENT_REFCOUNTING_DELETE_ON_UIT(CefTabStripImpl);
++};
++
++#endif  // CEF_LIBCEF_BROWSER_TAB_STRIP_IMPL_H_

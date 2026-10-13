@@ -63,8 +63,14 @@ import RiseCore
         controller.cancelPeek = { [weak self] in self?.returnPeekFromSwipe() }
         return controller
     }()
-    var tabs: [BrowserTab] = []
-    var selectedID: UUID?
+    var tabs: [BrowserTab] = [] { didSet { extensionTabsChanged() } }
+    var selectedID: UUID? { didSet { extensionTabsChanged() } }
+    /// The window as Chrome extensions see it (`ExtensionWindow`).
+    var extensionWindow: AnyObject?
+    #if RISE_CHROMIUM
+    /// The extension popup that's open, if any.
+    var extensionPopup: ExtensionPopup?
+    #endif
     var selectedTab: BrowserTab? { tabs.first { $0.id == selectedID } }
     var closedTabs: [SavedTab] = []
     let browsingHistory: BrowsingHistory
@@ -505,6 +511,7 @@ import RiseCore
         if let chromium = page as? ChromiumPage {
             chromium.onDownload = { [weak self] download, name in self?.beginChromiumDownload(download, suggestedName: name) }
             installRiseSettings(on: chromium)
+            installWebStoreButton(on: chromium)
             chromium.onContextMenu = { [weak self, weak chromium] info in
                 guard let self, let chromium else { return }
                 self.showContextMenu(info, in: chromium)
@@ -547,6 +554,12 @@ import RiseCore
                 case .failed(let message): self.showNavigationError(message, in: view)
                 case .crashed: self.pageFullscreen.setActive(false, in: view); self.pageCrashed(view)
                 case .openInOtherApp(let url): self.confirmOpeningInOtherApp(url)
+                case .closed:
+                    // Out of Chromium's closing, its tab goes too.
+                    DispatchQueue.main.async { [weak self, weak view] in
+                        guard let self, let tab = self.tabs.first(where: { $0.page.view === view }) else { return }
+                        self.closeTab(tab.id)
+                    }
                 }
             }
             // WebKit closes a window a site opened when it asks; Chromium, which doesn't know these
@@ -629,6 +642,7 @@ import RiseCore
         findBar.reattached()
     }
     func update() {
+        extensionTabsChanged()
         reconcileFullscreenSidebar()
         splitPeekReturns = splitPeekReturns.filter { id, undo in
             splitGroups.contains { $0.id == id && $0.contains(undo.tab.id) } && tabs.contains { $0 === undo.tab }

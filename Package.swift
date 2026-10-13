@@ -22,7 +22,8 @@ var targets: [Target] = [
                       resources: [.copy("Resources/Blocking")],
                       swiftSettings: hasChromium ? [.define("RISE_CHROMIUM")] : []),
     .testTarget(name: "RiseCoreTests", dependencies: ["RiseCore"]),
-    .testTarget(name: "RiseTests", dependencies: ["Rise", "RiseCore"], resources: [.copy("Resources")]),
+    .testTarget(name: "RiseTests", dependencies: ["Rise", "RiseCore"], resources: [.copy("Resources")],
+                swiftSettings: hasChromium ? [.define("RISE_CHROMIUM")] : []),
 ]
 var products: [Product] = [.executable(name: "Rise", targets: ["Rise"])]
 if hasChromium {

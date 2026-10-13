@@ -545,9 +545,15 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
             }
             // Links to Chrome pages Rise's pages can't show open nothing.
             let count = browser.tabs.count
-            _ = await value("window.open('chrome://extensions'); return 0", in: settings.page)
+            _ = await value("window.open('chrome://history'); return 0", in: settings.page)
             try await Task.sleep(for: .milliseconds(800))
             check(browser.tabs.count == count, "A link to a page Rise can't show opens no blank tab")
+            // Chrome's extensions page opens as Rise's.
+            _ = await value("window.open('chrome://extensions'); return 0", in: settings.page)
+            _ = await waitUntil("Settings' link to extensions opens rise://extensions") {
+                self.browser.selectedTab?.page.url?.absoluteString.hasPrefix("rise://extensions") == true
+            }
+            if let extensionsTab = browser.selectedTab, extensionsTab.id != settings.id { browser.closeTab(extensionsTab.id); browser.select(settings.id) }
 
             // Rise searches with the engine chosen in Chrome's Search engine section.
             let engines = "const {sendWithPromise} = await import('chrome://resources/js/cr.js');" +

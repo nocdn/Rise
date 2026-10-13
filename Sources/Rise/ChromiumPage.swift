@@ -12,7 +12,7 @@ enum RiseProfile {
 /// Chrome's own pages Rise shows as its own: rise://settings is chrome://settings, with every page
 /// under it. Only Rise opens them; to sites they're another app's addresses.
 enum RisePages {
-    static let hosts: Set<String> = ["settings"]
+    static let hosts: Set<String> = ["settings", "extensions"]
     static let settings = URL(string: "rise://settings")!
     /// The Chrome page to load for a Rise address. Settings open on their first section Rise shows,
     /// as Chrome's first, You and Google, isn't one.
@@ -213,6 +213,9 @@ enum RisePages {
     }
     nonisolated func browserView(_ browserView: RCBrowserView, didFailLoadWithCode code: Int, description: String, url: URL?) {
         MainActor.assumeIsolated { onEvent?(.failed(Self.errorMessage(code, description))) }
+    }
+    nonisolated func browserViewDidRequestClose(_ browserView: RCBrowserView) {
+        MainActor.assumeIsolated { onEvent?(.closed) }
     }
     nonisolated func browserViewDidCrash(_ browserView: RCBrowserView) {
         MainActor.assumeIsolated { onEvent?(.crashed) }

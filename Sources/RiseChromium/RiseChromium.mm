@@ -16,6 +16,9 @@
 #include "include/wrapper/cef_library_loader.h"
 #include "include/cef_resource_request_handler.h"
 #include "include/cef_request_context.h"
+#include "include/cef_extension_action.h"
+#include "include/cef_extension_install.h"
+#include "include/cef_tab_strip.h"
 
 #include <atomic>
 
@@ -29,6 +32,8 @@ void rise_adblock_free_string(char *value);
 #endif
 
 static NSString *const RCContextReadyNotification = @"RCContextReady";
+// A page's browser exists, so it can join its window's tabs for extensions.
+static NSString *const RCBrowserCreatedNotification = @"RCBrowserCreated";
 
 namespace {
 
@@ -101,6 +106,9 @@ class RiseApp : public CefApp, public CefBrowserProcessHandler {
 - (BOOL)chooseFiles:(RCFileChooserMode)mode title:(NSString *)title defaultPath:(NSString *)path
          extensions:(NSArray<NSString *> *)extensions completion:(void (^)(NSArray<NSURL *> *_Nullable urls))completion;
 - (void)inspectWithMenu:(RCContextMenu *)menu;
+- (void)createBrowserNow:(BOOL)now;
+- (void)closeRequested;
+- (CefRefPtr<CefBrowser>)cefBrowser;
 - (void)devToolsMessage:(NSData *)json;
 - (nullable NSString *)destinationForDownload:(CefRefPtr<CefDownloadItem>)item suggestedName:(NSString *)name;
 - (void)updateDownload:(CefRefPtr<CefDownloadItem>)item callback:(CefRefPtr<CefDownloadItemCallback>)callback;
@@ -277,7 +285,7 @@ bool Disposition(cef_window_open_disposition_t disposition, RCOpenDisposition *r
 // Addresses pages open themselves; any other scheme belongs to another app.
 bool IsWebScheme(NSString *scheme) {
   static NSSet *schemes = [NSSet setWithArray:@[ @"http", @"https", @"file", @"about", @"data", @"blob", @"javascript",
-                                                 @"chrome", @"chrome-error", @"devtools", @"view-source", @"filesystem",
+                                                 @"chrome", @"chrome-error", @"chrome-extension", @"devtools", @"view-source", @"filesystem",
                                                  @"ws", @"wss" ]];
   return [schemes containsObject:scheme.lowercaseString];
 }
@@ -554,6 +562,7 @@ class RiseClient : public CefClient,
   // Left to CEF, a page closing would close the window its view is in: Rise's own. Rise lets its
   // view go instead, which finishes the close.
   bool DoClose(CefRefPtr<CefBrowser>) override {
+    [view_ closeRequested];
     [view_ readyToClose];
     return true;
   }
@@ -831,7 +840,11 @@ cef_color_t ARGB(NSColor *color) {
 }
 
 - (void)createBrowser {
-  if (_closed || _client) return;
+  [self createBrowserNow:NO];
+}
+// Made at once, rather than on Chromium's next turn, for a tab an extension opens and wants back.
+- (void)createBrowserNow:(BOOL)now {
+  if (_closed || _client || !gContextReady) return;
   _client = new RiseClient(self);
   CefWindowInfo window;
   NSSize size = self.bounds.size;
@@ -841,12 +854,17 @@ cef_color_t ARGB(NSColor *color) {
   settings.background_color = ARGB(_pageBackgroundColor);
   if (_scriptsDisabled) settings.javascript = STATE_DISABLED;
   // Made empty: Rise's scripts go in first, then it loads or restores its history.
-  CefBrowserHost::CreateBrowser(window, _client, "", settings, nullptr, nullptr);
+  if (now) CefBrowserHost::CreateBrowserSync(window, _client, "", settings, nullptr, nullptr);
+  else CefBrowserHost::CreateBrowser(window, _client, "", settings, nullptr, nullptr);
+}
+- (CefRefPtr<CefBrowser>)cefBrowser {
+  return _browser;
 }
 
 - (void)browserCreated:(CefRefPtr<CefBrowser>)browser {
   _browser = browser;
   _devTools = browser->GetHost()->AddDevToolsMessageObserver(new DevToolsReplies(self));
+  if (_extensionPopup) browser->GetHost()->SetAsExtensionPopup();
   NSArray *waiting = _waiting.copy;
   [_waiting removeAllObjects];
   for (void (^command)(void) in waiting) command();
@@ -856,6 +874,7 @@ cef_color_t ARGB(NSColor *color) {
   // the setup and hands it over, in order, when the first load makes one, before its document.
   [self prepareSession:@"" done:nil];
   [self becomeReady];
+  [NSNotificationCenter.defaultCenter postNotificationName:RCBrowserCreatedNotification object:self];
 }
 
 - (void)becomeReady {
@@ -1553,6 +1572,13 @@ static NSString *JSONText(id value) {
   if (_browser) _browser->GetHost()->SetZoomLevel(std::log(std::max(0.01, _zoom)) / std::log(1.2));
 }
 
+// Closing without Rise asking, as an extension's tabs.remove does: Rise lets the tab go too.
+- (void)closeRequested {
+  if (!_closed && [self.delegate respondsToSelector:@selector(browserViewDidRequestClose:)]) {
+    [self.delegate browserViewDidRequestClose:self];
+  }
+}
+
 - (void)downloadURL:(NSURL *)url {
   if (_browser) _browser->GetHost()->StartDownload(url.absoluteString.UTF8String);
 }
@@ -1562,6 +1588,298 @@ static NSString *JSONText(id value) {
   RCBrowserView *inspected = _inspected;
   if (inspected && inspected->_attachedFrontend == self) inspected->_attachedFrontend = nil;
   if (_browser) _browser->GetHost()->CloseBrowser(true);
+}
+
+@end
+
+// MARK: Extensions
+
+namespace {
+
+NSURL *ExtensionURL(const CefString &value) {
+  NSString *text = [NSString stringWithUTF8String:value.ToString().c_str()];
+  return text.length ? [NSURL URLWithString:text] : nil;
+}
+
+NSImage *ImageFrom(CefRefPtr<CefImage> image) {
+  if (!image || image->IsEmpty()) return nil;
+  NSSize size = NSMakeSize(image->GetWidth(), image->GetHeight());
+  NSImage *result = [[NSImage alloc] initWithSize:size];
+  for (float scale : {1.0f, 2.0f}) {
+    int width = 0, height = 0;
+    CefRefPtr<CefBinaryValue> png = image->GetAsPNG(scale, true, width, height);
+    if (!png || !png->GetSize()) continue;
+    NSMutableData *data = [NSMutableData dataWithLength:png->GetSize()];
+    png->GetData(data.mutableBytes, data.length, 0);
+    NSBitmapImageRep *rep = [NSBitmapImageRep imageRepWithData:data];
+    if (!rep) continue;
+    rep.size = size;
+    [result addRepresentation:rep];
+  }
+  return result.representations.count ? result : nil;
+}
+
+}  // namespace
+
+@interface RCTabStrip ()
+- (void)resend;
+- (nullable RCBrowserView *)viewFor:(CefRefPtr<CefBrowser>)browser;
+@property (nonatomic, weak, readonly) id<RCTabStripDelegate> delegate;
+@end
+
+namespace {
+
+// What extensions ask of the window, carried to Rise.
+class TabStripDelegate : public CefTabStripDelegate {
+ public:
+  explicit TabStripDelegate(RCTabStrip *strip) : strip_(strip) {}
+  CefRefPtr<CefBrowser> OpenTab(const CefString &url, int index, bool active) override {
+    RCTabStrip *strip = strip_;
+    NSURL *address = ExtensionURL(url);
+    RCBrowserView *view = address ? [strip.delegate tabStripOpenTabWithURL:address index:index active:active] : nil;
+    if (!view) return nullptr;
+    // Extensions get the tab back at once, so its browser is made now, and joins the window's tabs.
+    [view createBrowserNow:YES];
+    [strip resend];
+    return [view cefBrowser];
+  }
+  void ActivateTab(CefRefPtr<CefBrowser> browser) override {
+    RCTabStrip *strip = strip_;
+    if (RCBrowserView *view = [strip viewFor:browser]) [strip.delegate tabStripActivateTab:view];
+  }
+  void CloseTab(CefRefPtr<CefBrowser> browser) override {
+    RCTabStrip *strip = strip_;
+    if (RCBrowserView *view = [strip viewFor:browser]) [strip.delegate tabStripCloseTab:view];
+  }
+  void MoveTab(CefRefPtr<CefBrowser> browser, int index) override {
+    RCTabStrip *strip = strip_;
+    if (RCBrowserView *view = [strip viewFor:browser]) [strip.delegate tabStripMoveTab:view toIndex:index];
+  }
+  void SetTabPinned(CefRefPtr<CefBrowser> browser, bool pinned) override {
+    RCTabStrip *strip = strip_;
+    if (RCBrowserView *view = [strip viewFor:browser]) [strip.delegate tabStripSetTab:view pinned:pinned];
+  }
+  void ActivateWindow() override { [strip_.delegate tabStripActivateWindow]; }
+
+ private:
+  __weak RCTabStrip *strip_;
+  IMPLEMENT_REFCOUNTING(TabStripDelegate);
+};
+
+}  // namespace
+
+@implementation RCTabStrip {
+  CefRefPtr<CefTabStrip> _strip;
+  NSArray<RCBrowserView *> *_tabs;
+  NSInteger _pinnedCount, _activeIndex;
+}
+
+- (instancetype)initWithDelegate:(id<RCTabStripDelegate>)delegate {
+  self = [super init];
+  if (self) {
+    _delegate = delegate;
+    _tabs = @[];
+    _activeIndex = -1;
+    if (gContextReady) _strip = CefTabStrip::Create(new TabStripDelegate(self));
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(browserCreated:) name:RCBrowserCreatedNotification object:nil];
+  }
+  return self;
+}
+
+- (void)dealloc {
+  [NSNotificationCenter.defaultCenter removeObserver:self];
+  if (_strip) _strip->Close();
+}
+
+- (NSInteger)windowID {
+  return _strip ? _strip->GetWindowId() : -1;
+}
+
+- (void)setTabs:(NSArray<RCBrowserView *> *)tabs pinnedCount:(NSInteger)pinnedCount activeIndex:(NSInteger)activeIndex {
+  _tabs = tabs.copy;
+  _pinnedCount = pinnedCount;
+  _activeIndex = activeIndex;
+  [self resend];
+}
+
+- (void)browserCreated:(NSNotification *)notification {
+  if ([_tabs containsObject:notification.object]) [self resend];
+}
+
+// Pages whose browsers don't exist yet are left out until they do.
+- (void)resend {
+  if (!_strip) return;
+  std::vector<CefRefPtr<CefBrowser>> browsers;
+  int pinned = 0, active = -1;
+  for (NSUInteger i = 0; i < _tabs.count; i++) {
+    CefRefPtr<CefBrowser> browser = [_tabs[i] cefBrowser];
+    if (!browser) continue;
+    if ((NSInteger)i < _pinnedCount) pinned++;
+    if ((NSInteger)i == _activeIndex) active = (int)browsers.size();
+    browsers.push_back(browser);
+  }
+  _strip->SetTabs(browsers, pinned, active);
+}
+
+- (RCBrowserView *)viewFor:(CefRefPtr<CefBrowser>)browser {
+  for (RCBrowserView *view in _tabs) {
+    CefRefPtr<CefBrowser> candidate = [view cefBrowser];
+    if (candidate && browser && candidate->IsSame(browser)) return view;
+  }
+  return nil;
+}
+
+- (void)setActive:(BOOL)active {
+  _active = active;
+  if (_strip) _strip->SetActive(active);
+}
+
+- (void)setFrame:(NSRect)frame {
+  _frame = frame;
+  // Chromium measures screens from the top left of the main one.
+  CGFloat top = NSMaxY(NSScreen.screens.firstObject.frame);
+  if (_strip) _strip->SetBounds(CefRect((int)frame.origin.x, (int)(top - NSMaxY(frame)), (int)frame.size.width, (int)frame.size.height));
+}
+
+- (void)close {
+  if (_strip) _strip->Close();
+  _strip = nullptr;
+}
+
+@end
+
+@implementation RCExtensionAction {
+  CefRefPtr<CefExtensionAction> _action;
+}
+
+- (instancetype)initWithAction:(CefRefPtr<CefExtensionAction>)action {
+  self = [super init];
+  if (self) {
+    _action = action;
+    _extensionID = [NSString stringWithUTF8String:action->GetExtensionId().ToString().c_str()];
+    _name = [NSString stringWithUTF8String:action->GetName().ToString().c_str()];
+  }
+  return self;
+}
+
+- (NSString *)titleForTab:(RCBrowserView *)tab {
+  return [NSString stringWithUTF8String:_action->GetTitle([tab cefBrowser]).ToString().c_str()];
+}
+- (NSString *)badgeTextForTab:(RCBrowserView *)tab {
+  return [NSString stringWithUTF8String:_action->GetBadgeText([tab cefBrowser]).ToString().c_str()];
+}
+- (NSColor *)badgeColorForTab:(RCBrowserView *)tab {
+  cef_color_t color = _action->GetBadgeColor([tab cefBrowser]);
+  return [NSColor colorWithSRGBRed:CefColorGetR(color) / 255.0 green:CefColorGetG(color) / 255.0
+                              blue:CefColorGetB(color) / 255.0 alpha:CefColorGetA(color) / 255.0];
+}
+- (NSImage *)iconForTab:(RCBrowserView *)tab {
+  return ImageFrom(_action->GetIcon([tab cefBrowser]));
+}
+- (BOOL)isEnabledForTab:(RCBrowserView *)tab {
+  return _action->IsEnabled([tab cefBrowser]);
+}
+- (NSURL *)clickInTab:(RCBrowserView *)tab {
+  CefRefPtr<CefBrowser> browser = [tab cefBrowser];
+  return browser ? ExtensionURL(_action->Execute(browser)) : nil;
+}
+
+@end
+
+namespace {
+
+class ActionsObserver : public CefExtensionActionsObserver {
+ public:
+  explicit ActionsObserver(void (^changed)(void)) : changed_(changed) {}
+  void OnExtensionActionsChanged() override {
+    void (^changed)(void) = changed_;
+    // Many come together, as icons load; one call answers them.
+    if (pending_) return;
+    pending_ = true;
+    CefRefPtr<ActionsObserver> self(this);
+    dispatch_async(dispatch_get_main_queue(), ^{
+      self->pending_ = false;
+      changed();
+    });
+  }
+
+ private:
+  void (^changed_)(void);
+  bool pending_ = false;
+  IMPLEMENT_REFCOUNTING(ActionsObserver);
+};
+
+}  // namespace
+
+@interface RCActionsObservation : NSObject
+@end
+@implementation RCActionsObservation {
+ @public
+  CefRefPtr<CefRegistration> _registration;
+}
+@end
+
+@implementation RCExtensions
+
++ (NSArray<RCExtensionAction *> *)actions {
+  if (!gContextReady) return @[];
+  std::vector<CefRefPtr<CefExtensionAction>> actions;
+  CefRequestContext::GetGlobalContext()->GetExtensionActions(actions);
+  NSMutableArray *result = [NSMutableArray array];
+  for (auto &action : actions) [result addObject:[[RCExtensionAction alloc] initWithAction:action]];
+  return result;
+}
+
++ (void)installFromWebStore:(NSString *)extensionID completion:(void (^)(BOOL, NSString *))completion {
+  class Done : public CefExtensionInstallCallback {
+   public:
+    explicit Done(void (^completion)(BOOL, NSString *)) : completion_(completion) {}
+    void OnInstallFinished(const CefString &, bool success, const CefString &error) override {
+      if (!completion_) return;
+      NSString *message = [NSString stringWithUTF8String:error.ToString().c_str()];
+      completion_(success, message.length ? message : nil);
+    }
+
+   private:
+    void (^completion_)(BOOL, NSString *);
+    IMPLEMENT_REFCOUNTING(Done);
+  };
+  if (!gContextReady) {
+    if (completion) completion(NO, @"Chromium isn't running");
+    return;
+  }
+  CefRequestContext::GetGlobalContext()->InstallExtensionFromWebStore(extensionID.UTF8String, new Done(completion));
+}
+
++ (void)setInstallPrompt:(void (^)(NSString *, NSImage *, NSArray<NSString *> *, NSString *, void (^)(BOOL)))prompt {
+  class Handler : public CefExtensionInstallHandler {
+   public:
+    explicit Handler(void (^prompt)(NSString *, NSImage *, NSArray<NSString *> *, NSString *, void (^)(BOOL))) : prompt_(prompt) {}
+    void OnInstallPrompt(const CefString &, const CefString &title, CefRefPtr<CefImage> icon, const std::vector<CefString> &permissions,
+                         const CefString &accept_label, CefRefPtr<CefCallback> callback) override {
+      NSMutableArray *list = [NSMutableArray array];
+      for (const CefString &permission : permissions) [list addObject:[NSString stringWithUTF8String:permission.ToString().c_str()]];
+      prompt_([NSString stringWithUTF8String:title.ToString().c_str()], ImageFrom(icon), list,
+              [NSString stringWithUTF8String:accept_label.ToString().c_str()], ^(BOOL accept) {
+                if (accept) callback->Continue();
+                else callback->Cancel();
+              });
+    }
+
+   private:
+    void (^prompt_)(NSString *, NSImage *, NSArray<NSString *> *, NSString *, void (^)(BOOL));
+    IMPLEMENT_REFCOUNTING(Handler);
+  };
+  if (!gContextReady) return;
+  CefRequestContext::GetGlobalContext()->SetExtensionInstallHandler(prompt ? new Handler(prompt) : nullptr);
+}
+
++ (id)observeActions:(void (^)(void))changed {
+  RCActionsObservation *observation = [RCActionsObservation new];
+  if (gContextReady) {
+    observation->_registration = CefRequestContext::GetGlobalContext()->AddExtensionActionsObserver(new ActionsObserver(changed));
+  }
+  return observation;
 }
 
 @end

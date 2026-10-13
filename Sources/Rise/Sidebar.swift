@@ -12,6 +12,14 @@ import RiseCore
         didSet { updateAddressControlVisibility() }
     }
     var hasAddress = false
+    /// Pinned extensions, in the address row (`SidebarExtensionButton`).
+    var extensionButtons: [SidebarExtensionButton] = [] {
+        didSet {
+            for button in oldValue where !extensionButtons.contains(button) { button.removeFromSuperview() }
+            for button in extensionButtons where button.superview !== self { addSubview(button) }
+            needsLayout = true; updateAddressControlVisibility(animated: false)
+        }
+    }
     let newTab = NewTabButton()
     let scroll = NSScrollView()
     let rowsHost = FlippedView()
@@ -84,7 +92,7 @@ import RiseCore
         addressText.textColor = blank ? theme.muted : theme.text.withAlphaComponent(theme == .dark ? 0.95 : 0.85)
         searchIcon.isHidden = !blank; hasAddress = !blank
         updateAddressControlVisibility()
-        [copyButton, settingsButton, archiveButton, cleanUpButton].forEach {
+        ([copyButton, settingsButton, archiveButton, cleanUpButton] + extensionButtons).forEach {
             $0.contentTintColor = $0 === archiveButton || $0 === cleanUpButton ? theme.sidebarIcon : theme.muted
             $0.hoverColor = theme.text.withAlphaComponent(0.07)
         }
@@ -163,6 +171,7 @@ import RiseCore
         addressText.frame = NSRect(x: textX, y: 10, width: max(0, address.bounds.width-textX-13), height: 18)
         copyButton.frame = NSRect(x: address.frame.maxX-59, y: 56, width: 27, height: 24)
         settingsButton.frame = NSRect(x: address.frame.maxX-31, y: 56, width: 27, height: 24)
+        layoutExtensionButtons()
         updateAddressTextBoundary(animated: false)
         let start: CGFloat = 98
         newTab.frame = NSRect(x: TabAppearance.inset, y: start, width: w-2*TabAppearance.inset, height: TabAppearance.height)
