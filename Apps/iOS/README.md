@@ -191,6 +191,8 @@ thread for the same reason. The motion runs at up to 120 Hz
 on ProMotion iPhones (`CADisableMinimumFrameDurationOnPhone`). The timings, springs and sizes were
 measured from a recording of Arc Search frame by frame and tuned in `Playgrounds/summarise.html`;
 `SummariseMotion` holds them, noting where the app has since moved on from the playground.
+`docs/Motion.md` records everything learned about this motion and the tab switcher's: the
+measurements, the physics, what was tried and removed, and the preferences behind it.
 
 Each Summarise is logged on the device: its events (the pinch, letting go, the summary arriving,
 the reveal, the close with what the page underneath was doing, the finish) and its frames, every
