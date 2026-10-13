@@ -84,7 +84,7 @@ import RiseCore
     lazy var tabHoverCards: TabHoverCards = {
         let hover = TabHoverCards(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("pr-summaries.json"))
         hover.summaries.onChange = { [weak self] key in self?.pullRequestSummaryChanged(key) }
-        hover.summaries.provider = { [weak self] in self?.aiProvider ?? .openRouter }
+        hover.summaries.provider = { [weak self] in self?.modelChoice ?? .openRouter }
         return hover
     }()
     lazy var gmailInbox: GmailInbox = {
@@ -142,6 +142,7 @@ import RiseCore
     var saveWork: DispatchWorkItem?
     let sessionURL: URL
     let preferences: UserDefaults
+    let aiKeys = AIKeys()
     var lastSaved: BrowserSession?
     /// The page, as its view, whose load failed.
     var errorWebView: NSView?
@@ -482,6 +483,14 @@ import RiseCore
         }
         page.onOpenElsewhere = { [weak self, weak page] url, background in
             guard let self else { return false }
+            #if RISE_CHROMIUM
+            // Chrome's own pages open only as Rise's (rise://settings); the rest, which Rise's pages
+            // can't show, aren't opened at all rather than as a blank tab.
+            if url.scheme?.lowercased() == "chrome" {
+                if let address = RisePages.address(for: url), address.scheme == "rise" { self.addTab(url: address) }
+                return true
+            }
+            #endif
             let opener = self.tabs.first { $0.page === page }?.id
             if background { self.addTab(url: url, background: true, opener: opener ?? self.selectedID) }
             else { self.addTab(url: url).returnsTo = opener }
@@ -491,8 +500,10 @@ import RiseCore
         #if RISE_CHROMIUM
         if let chromium = page as? ChromiumPage {
             chromium.onDownload = { [weak self] download, name in self?.beginChromiumDownload(download, suggestedName: name) }
+            installRiseSettings(on: chromium)
             chromium.onPopup = { [weak self, weak chromium] popup, url in
-                guard let self, let chromium else { return false }
+                // Chrome's own pages go as other links do, above.
+                guard let self, let chromium, url.scheme?.lowercased() != "chrome" else { return false }
                 // Gmail draws a popped-out conversation from the page that opened it, so it shows
                 // in the popup itself, in a Peek.
                 if GmailAccount.isPopout(url), self.tabHoverCards.popoutSource === chromium.view || self.shouldPeek(modifiers: NSEvent.modifierFlags) {
@@ -619,7 +630,7 @@ import RiseCore
     }
     @objc func newTab() { paletteCreatesTab = true; showPalette(text: "") }
     @objc func focusAddress() { paletteCreatesTab = false; showPalette(text: selectedTab?.url?.absoluteString == "about:blank" ? "" : selectedTab?.url?.absoluteString ?? "") }
-    func showPalette(text: String) { if searchEngine == .google { googleSearchSuggestions.warmUp() }; historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); permissionCoordinator.cancel(); dismissArea.isHidden = false; palette.currentPage = selectedTab.flatMap { tab in tab.url.map { ($0.absoluteString, tab.favicon(for: theme)) } }; palette.show(text: text, theme: theme, createsTab: paletteCreatesTab); layoutChrome() }
+    func showPalette(text: String) { if searchProvider.isGoogle { googleSearchSuggestions.warmUp() }; historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); permissionCoordinator.cancel(); dismissArea.isHidden = false; palette.currentPage = selectedTab.flatMap { tab in tab.url.map { ($0.absoluteString, tab.favicon(for: theme)) } }; palette.show(text: text, theme: theme, createsTab: paletteCreatesTab); layoutChrome() }
     func hidePalette() { googleSearchSuggestions.cancel(); suggestionFavicons.cancelPreview(); guard palette.isPresented else { return }; palette.hide(); dismissArea.isHidden = true; window?.makeFirstResponder(selectedTab?.page.view) }
     func submitAddress(_ text: String, suggestion: AddressSuggestion?) {
         hidePalette()
@@ -632,7 +643,7 @@ import RiseCore
             default: break
             }; return
         }
-        guard let url = suggestion?.url ?? AddressResolver.resolve(text, searchEngine: searchEngine) else { return }
+        guard let url = suggestion?.url ?? AddressResolver.resolve(text, search: searchProvider.searchURL) else { return }
         // Resolve again at activation time: an open tab may have navigated or
         // closed since the result was built. Never create an exact duplicate.
         if let existing = openTab(for: url) { select(existing.id); return }

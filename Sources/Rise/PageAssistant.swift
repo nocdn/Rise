@@ -61,7 +61,7 @@ enum PageAssistant {
                        page: @escaping @MainActor () async throws -> Page,
                        highlight: @escaping @MainActor (String) async -> Bool,
                        inputTokens: @escaping @MainActor (Int) -> Void = { _ in },
-                       provider: AIProvider = .openRouter,
+                       provider: ModelChoice = .openRouter,
                        session: URLSession = .shared) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -76,7 +76,7 @@ enum PageAssistant {
         }
     }
 
-    @MainActor private static func streamAnswer(_ messages: [[String: Any]], provider: AIProvider, session: URLSession,
+    @MainActor private static func streamAnswer(_ messages: [[String: Any]], provider: ModelChoice, session: URLSession,
                                      highlight: @escaping @MainActor (String) async -> Bool,
                                      inputTokens: @escaping @MainActor (Int) -> Void,
                                      yield: (String) -> Void) async throws {
@@ -125,12 +125,12 @@ enum PageAssistant {
             }, inputTokens: { [weak bar] count in
                 guard let generation else { return }
                 bar?.recordInputTokens(count, for: generation)
-            }, provider: self.aiProvider)
+            }, provider: self.modelChoice)
         }
-        bar.provider = { [weak self] in self?.aiProvider ?? .openRouter }
+        bar.provider = { [weak self] in self?.modelChoice ?? .openRouter }
     }
 
-    /// OpenRouter unless OpenCode is picked in the site controls' More menu.
+    /// OpenRouter unless another is picked in rise://settings (or WebKit's More menu).
     var aiProvider: AIProvider { AIProvider(rawValue: preferences.string(forKey: AIProvider.preferenceKey) ?? "") ?? .openRouter }
     func selectAIProvider(_ provider: AIProvider) {
         preferences.set(provider.rawValue, forKey: AIProvider.preferenceKey)

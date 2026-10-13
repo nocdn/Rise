@@ -1,21 +1,46 @@
 import Foundation
 
-/// Where Rise's model requests go: OpenRouter with the built-in key, or the signed-in
-/// OpenCode service on this Mac, which runs the same model through the user's own account.
+/// Where Rise's model requests go: OpenRouter or OpenAI with an API key, or the signed-in
+/// OpenCode service on this Mac, which runs the model through the user's own account.
 enum AIProvider: String, CaseIterable {
     case openRouter
     #if os(macOS)
     case openCode
     #endif
+    case openAI
     static let preferenceKey = "Rise.AIProvider"
     var title: String {
         switch self {
-        case .openRouter: return "OpenRouter (Hardcoded)"
+        case .openRouter: return "OpenRouter"
         #if os(macOS)
-        case .openCode: return "OpenCode"
+        case .openCode: return "OpenCode (Local)"
         #endif
+        case .openAI: return "OpenAI"
         }
     }
+    /// The model a provider uses until another is chosen, as that provider names it.
+    var defaultModel: String { self == .openAI ? "gpt-6-luna" : PageAssistant.model }
+    /// The reasoning efforts a provider takes, by value and title.
+    var efforts: [(String, String)] {
+        let common = [("none", "None"), ("low", "Low"), ("medium", "Medium"), ("high", "High"), ("xhigh", "Extra high")]
+        return self == .openAI ? common + [("max", "Max")] : common
+    }
+}
+
+/// A provider with the model, reasoning effort and API key a request uses.
+struct ModelChoice: Equatable {
+    var provider: AIProvider
+    var model: String
+    var effort: String
+    /// Nil for OpenRouter's built-in key, and for OpenCode, which signs in on its own.
+    var apiKey: String?
+
+    static let openRouter = ModelChoice(provider: .openRouter, model: PageAssistant.model, effort: PageAssistant.reasoningEffort)
+    #if os(macOS)
+    static let openCode = ModelChoice(provider: .openCode, model: PageAssistant.model, effort: PageAssistant.reasoningEffort)
+    #endif
+    /// The model's own name, without its maker: "gpt-6-luna".
+    var modelName: String { model.split(separator: "/").last.map(String.init) ?? model }
 }
 
 enum ModelEvent: Equatable {
@@ -29,33 +54,44 @@ enum ModelEvent: Equatable {
 enum ModelService {
     /// Streams one chat-style request. The handler runs before the next event is read,
     /// so a slow handler holds the stream back instead of buffering it.
-    @MainActor static func run(_ messages: [[String: Any]], provider: AIProvider, session: URLSession = .shared,
+    @MainActor static func run(_ messages: [[String: Any]], provider: ModelChoice, session: URLSession = .shared,
                     handle: (ModelEvent) async throws -> Void) async throws {
-        switch provider {
-        case .openRouter: try await OpenRouterClient.run(messages, session: session, handle: handle)
+        switch provider.provider {
+        case .openRouter: try await OpenRouterClient.run(messages, choice: provider, session: session, handle: handle)
         #if os(macOS)
         case .openCode: try await OpenCodeClient.run(messages, session: session, handle: handle)
         #endif
+        case .openAI: try await OpenAIClient.run(messages, choice: provider, session: session, handle: handle)
         }
+    }
+
+    static func errorMessage(in data: Data) -> String? {
+        let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        return (object?["error"] as? [String: Any])?["message"] as? String
+    }
+
+    /// Reads a failed response's body for the service's own explanation.
+    static func failure(_ bytes: URLSession.AsyncBytes, status: Int) async throws -> Error {
+        var data = Data()
+        for try await byte in bytes { data.append(byte) }
+        return PageAssistant.Failure.service(errorMessage(in: data) ?? "The model couldn’t answer (HTTP \(status)).")
     }
 }
 
 enum OpenRouterClient {
-    @MainActor static func run(_ messages: [[String: Any]], session: URLSession,
+    @MainActor static func run(_ messages: [[String: Any]], choice: ModelChoice, session: URLSession,
                     handle: (ModelEvent) async throws -> Void) async throws {
         var request = URLRequest(url: PageAssistant.endpoint)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(PageAssistant.apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(choice.apiKey ?? PageAssistant.apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Rise", forHTTPHeaderField: "X-Title")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "model": PageAssistant.model, "stream": true,
-            "reasoning": ["effort": PageAssistant.reasoningEffort], "messages": messages])
+            "model": choice.model, "stream": true,
+            "reasoning": ["effort": choice.effort], "messages": messages])
         let (bytes, response) = try await session.bytes(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            var data = Data()
-            for try await byte in bytes { data.append(byte) }
-            throw PageAssistant.Failure.service(errorMessage(in: data) ?? "The model couldn’t answer (HTTP \(http.statusCode)).")
+            throw try await ModelService.failure(bytes, status: http.statusCode)
         }
         for try await line in bytes.lines {
             try Task.checkCancellation()
@@ -63,7 +99,7 @@ enum OpenRouterClient {
             let payload = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
             if payload == "[DONE]" { break }
             let data = Data(payload.utf8)
-            if let message = errorMessage(in: data) { throw PageAssistant.Failure.service(message) }
+            if let message = ModelService.errorMessage(in: data) { throw PageAssistant.Failure.service(message) }
             let chunk = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             // Usage can arrive without a content delta, after the last answer token.
             if let count = (chunk?["usage"] as? [String: Any])?["prompt_tokens"] as? Int, count >= 0 {
@@ -76,10 +112,51 @@ enum OpenRouterClient {
             if let content = delta["content"] as? String, !content.isEmpty { try await handle(.text(content)) }
         }
     }
+}
 
-    private static func errorMessage(in data: Data) -> String? {
-        let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        return (object?["error"] as? [String: Any])?["message"] as? String
+/// OpenAI's Responses API, which takes every reasoning effort its models offer.
+enum OpenAIClient {
+    static let endpoint = URL(string: "https://api.openai.com/v1/responses")!
+    static let missingKey = "Add an OpenAI API key in Rise’s settings, under AI."
+
+    @MainActor static func run(_ messages: [[String: Any]], choice: ModelChoice, session: URLSession,
+                    handle: (ModelEvent) async throws -> Void) async throws {
+        guard let key = choice.apiKey, !key.isEmpty else { throw PageAssistant.Failure.service(missingKey) }
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "model": choice.model, "stream": true, "store": false,
+            "reasoning": ["effort": choice.effort], "input": messages])
+        let (bytes, response) = try await session.bytes(for: request)
+        if let http = response as? HTTPURLResponse, http.statusCode != 200 {
+            throw try await ModelService.failure(bytes, status: http.statusCode)
+        }
+        for try await line in bytes.lines {
+            try Task.checkCancellation()
+            guard line.hasPrefix("data:") else { continue }
+            let data = Data(line.dropFirst(5).trimmingCharacters(in: .whitespaces).utf8)
+            guard let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { continue }
+            let response = event["response"] as? [String: Any]
+            switch event["type"] as? String {
+            case "response.output_item.added":
+                if (event["item"] as? [String: Any])?["type"] as? String == "reasoning" { try await handle(.responded) }
+            case "response.output_text.delta":
+                if let delta = event["delta"] as? String, !delta.isEmpty { try await handle(.text(delta)) }
+            case "response.completed":
+                if let count = (response?["usage"] as? [String: Any])?["input_tokens"] as? Int, count >= 0 {
+                    try await handle(.inputTokens(count))
+                }
+                return
+            case "response.failed", "response.incomplete":
+                let message = (response?["error"] as? [String: Any])?["message"] as? String
+                throw PageAssistant.Failure.service(message ?? "The model stopped before the answer finished.")
+            case "error":
+                throw PageAssistant.Failure.service(event["message"] as? String ?? "The model couldn’t answer.")
+            default: continue
+            }
+        }
     }
 }
 

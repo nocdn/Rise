@@ -27,7 +27,8 @@ took: Chromium built from source with our own patches and our own embedding laye
 | `Engine/patches/cef/` | Our patches to CEF, applied in name order |
 | `Engine/patches/chromium/` | Our patches to Chromium, applied in name order |
 | `scripts/engine/checkout.sh` | Fetches the pinned sources (no history, about 30 GB) into `../rise-chromium` |
-| `scripts/engine/patch.sh` | Applies our patches (skips any already applied) |
+| `scripts/engine/patch.sh` | Applies our patches (skips any already applied), then the branding |
+| `scripts/engine/brand.py` | Names Rise where Chromium names itself (in every language) and puts Rise's icon (`Engine/branding/logo.png`) where Chromium's logo shows; a script rather than a patch, so it needs no fitting to new versions |
 | `scripts/engine/build.sh` | Builds the engine for Apple silicon and makes the framework distribution |
 | `Engine/adblock/` | Ad and tracker blocking for Chromium pages: Brave's `adblock` crate behind a small C interface |
 
@@ -44,7 +45,10 @@ The checkout lives outside the repo: `RISE_CHROMIUM_ROOT`, by default
 | `cef/0001-navigation-state-and-audible.patch` | Back/forward history saved and restored with Chromium's own session format, and when a page starts or stops making sound |
 | `cef/0002-attach-devtools-frontend.patch` | Chrome's DevTools front end, loaded in a page of Rise's own, inspects another page; CEF can't put its own DevTools window inside an app's view on macOS, so Rise's DevTools slide in beside the page this way |
 | `cef/0003-allow-settings-page.patch` | Chrome's settings open in Rise's own pages, as rise://settings (CEF otherwise only allows a short list of chrome:// pages there) |
+| `cef/0004-default-search-engine.patch` | Rise's address bar searches with the default search engine chosen in Chrome's Search engine section of rise://settings |
 | `chromium/0001-hide-web-contents-after-a-turn.patch` | Rise moves pages between views (Peek, split, ⌘Z); a page out of its window for an instant no longer blanks for several frames when it's back |
+| `chromium/0002-rise-settings-sections.patch` | Chrome's settings leave out what Rise's pages don't use or Rise does its own way (Google sign-in, autofill and passwords, extensions, startup, performance, AI, Safety Check, downloads, and Appearance's rows for Chrome's own window: theme, toolbar, mode, tab strip, side panel, quitting and split view) and the update status of Chrome's updater |
+| `chromium/0003-rise-settings-rows.patch` | Rise's own settings in Chrome's settings page: rows Rise describes (so a new Rise setting needs no engine change), at the end of Appearance, System and Privacy, and in new Tabs and AI sections |
 
 ## Stages
 
@@ -88,7 +92,11 @@ On Chromium tabs these work, also for frames of other sites:
   in a window of its own, and simulated, with ⇧⌘F), ad blocking and Preload Links.
 - Windows a page opens stay its popups, so sign-ins and Gmail's popped-out emails work; the
   Gmail card, merge checks, site search learning and site notifications.
-- Chrome's settings at rise://settings (⌘,), with every page under it.
+- Chrome's settings at rise://settings (⌘,), in Rise's name and with its icon, with every page
+  under it and without the parts Rise doesn't use. Rise's own settings are among them: in
+  Appearance, System and Privacy, and in Tabs and AI sections of their own (AI: OpenRouter,
+  OpenCode or OpenAI, with an API key kept in the keychain, a model and a reasoning effort); the site
+  controls' ⋯ opens them. The address bar searches with Chrome's default search engine.
 - Developer Mode: Chrome's DevTools with ⌥⌘J, on Elements, sliding in from the right as the
   docked sidebar does from the left; the JavaScript Console, View Source and the screenshots.
 

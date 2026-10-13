@@ -137,6 +137,48 @@ private final class AssistantStreamProtocol: URLProtocol {
             XCTAssertEqual(AssistantStreamProtocol.recordedRequests().count, 1)
         }
     }
+    func testOpenAIStreamsThroughTheResponsesAPIWithTheChosenModelEffortAndKey() async throws {
+        let events: [[String: Any]] = [
+            ["type": "response.output_item.added", "item": ["type": "reasoning"]],
+            ["type": "response.output_text.delta", "delta": "{\"snippet\":\"March 3\"}\nIt ships "],
+            ["type": "response.output_text.delta", "delta": "**March 3**."],
+            ["type": "response.completed", "response": ["usage": ["input_tokens": 1200, "output_tokens": 9]]],
+        ]
+        let stream = try events.map { "event: \($0["type"]!)\ndata: " + String(decoding: try JSONSerialization.data(withJSONObject: $0), as: UTF8.self) + "\n\n" }.joined()
+        AssistantStreamProtocol.prepare(Data(stream.utf8))
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [AssistantStreamProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        var counts: [Int] = [], highlights: [String] = [], text = ""
+        let choice = ModelChoice(provider: .openAI, model: "gpt-6-luna", effort: "max", apiKey: "sk-test")
+        for try await token in PageAssistant.answer("When?", history: [], page: {
+            PageAssistant.Page(title: "Release", url: "https://example.test", selection: "", text: "March 3")
+        }, highlight: { highlights.append($0); return true }, inputTokens: { counts.append($0) }, provider: choice, session: session) { text += token }
+        XCTAssertEqual(text, "It ships **March 3**.")
+        XCTAssertEqual(highlights, ["March 3"])
+        XCTAssertEqual(counts, [1200])
+        let request = try XCTUnwrap(AssistantStreamProtocol.recordedRequests().first)
+        XCTAssertEqual(request.url, URL(string: "https://api.openai.com/v1/responses"))
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer sk-test")
+        let upload = try XCTUnwrap(request.httpBodyStream); upload.open(); defer { upload.close() }
+        var data = Data(), buffer = [UInt8](repeating: 0, count: 65_536)
+        while case let count = upload.read(&buffer, maxLength: buffer.count), count > 0 { data.append(buffer, count: count) }
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(body["model"] as? String, "gpt-6-luna")
+        XCTAssertEqual(body["reasoning"] as? [String: String], ["effort": "max"])
+        XCTAssertEqual(body["store"] as? Bool, false)
+        XCTAssertEqual((body["input"] as? [[String: Any]])?.first?["role"] as? String, "system")
+    }
+    func testOpenAIWithoutAKeyAsksForOne() async throws {
+        var message: String?
+        do {
+            for try await _ in PageAssistant.answer("When?", history: [], page: {
+                PageAssistant.Page(title: "Release", url: "https://example.test", selection: "", text: "March 3")
+            }, highlight: { _ in true }, provider: ModelChoice(provider: .openAI, model: "gpt-6-luna", effort: "low")) {}
+        } catch PageAssistant.Failure.service(let text) { message = text }
+        XCTAssertEqual(message, OpenAIClient.missingKey)
+    }
     func testUsageOnlyFinalChunkReportsInputTokensWithoutAddingThemToTheAnswer() async throws {
         let session = try session(contents: ["{\"snippet\":\"\"}\nIt ships tomorrow."],
                                   usage: ["prompt_tokens": 2452, "completion_tokens": 13, "total_tokens": 2465,

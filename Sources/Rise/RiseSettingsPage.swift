@@ -1,0 +1,150 @@
+import AppKit
+#if RISE_CHROMIUM
+import RiseChromium
+#endif
+
+/// Rise's own settings, among Chrome's at rise://settings: the settings page asks Rise for each
+/// section's rows, and changes them, through the `riseSettings` object Rise's script gives it.
+/// Rows are described here, so a new setting needs no change to the engine.
+@MainActor extension BrowserController {
+    static let settingsHandler = "riseSettings"
+
+    /// The rows Rise adds to a section of the settings page: `appearance`, `tabs`, `ai`, `system`
+    /// or `privacy`.
+    func riseSettingRows(_ section: String) -> [[String: Any]] {
+        func toggle(_ key: String, _ label: String, _ sublabel: String? = nil, _ value: Bool) -> [String: Any] {
+            ["key": key, "type": "toggle", "label": label, "sublabel": sublabel ?? "", "value": value]
+        }
+        func select(_ key: String, _ label: String, _ sublabel: String? = nil, _ value: String, _ options: [(String, String)]) -> [String: Any] {
+            ["key": key, "type": "select", "label": label, "sublabel": sublabel ?? "", "value": value,
+             "options": options.map { ["value": $0.0, "label": $0.1] }]
+        }
+        switch section {
+        case "appearance":
+            return [
+                select("theme", "Theme", "The colours of Rise's window and its pages", automaticTheme ? "automatic" : theme.rawValue,
+                       [("automatic", "Automatic"), (RiseTheme.neutral.rawValue, "Light"), (RiseTheme.rose.rawValue, "Rose"), (RiseTheme.dark.rawValue, "Dark")]),
+                toggle("livePeekResize", "Live page while expanding Peek", "The page lays itself out at every size as a Peek grows into a tab", livePeekResize),
+                toggle("animateDevTools", "Animate developer tools", "DevTools slide in and out from the right", animatesDevTools),
+            ]
+        case "tabs":
+            return [
+                select("gmailCategory", "Gmail preview category", "Which emails the Gmail tab's hover card shows", gmailCategory.rawValue,
+                       GmailCategory.allCases.map { ($0.rawValue, $0.title) }),
+                toggle("hideNotificationCounts", "Hide notification counts", "Leave counts such as (3) out of tab titles and history", hidesNotificationCounts),
+                toggle("repositorySubtitle", "Show repository under merge request tabs", nil, showsRepositorySubtitle),
+            ]
+        case "ai":
+            let provider = aiProvider
+            let about = provider == .openCode ? "Through the OpenCode service on this Mac, with your own account"
+                : "Answers questions about pages and summarises them"
+            var rows = [select("aiProvider", "Provider", about, provider.rawValue, AIProvider.allCases.map { ($0.rawValue, $0.title) })]
+            guard provider != .openCode else { return rows }
+            let saved = hasAIKey(provider)
+            var key: [String: Any] = ["key": "aiKey", "type": "text", "secret": true, "value": "", "label": "API key",
+                                      "placeholder": saved ? "Saved" : provider == .openRouter ? "Optional" : "Not set",
+                                      "sublabel": saved ? "Kept in your keychain. Type a new one to replace it"
+                                          : provider == .openRouter ? "Without one, Rise uses its built-in key" : "From platform.openai.com, kept in your keychain"]
+            if saved { key["button"] = "Remove"; key["buttonKey"] = "aiKeyRemove" }
+            rows.append(key)
+            rows.append(["key": "aiModel", "type": "text", "label": "Model", "value": aiModel(provider), "placeholder": provider.defaultModel,
+                         "sublabel": provider == .openRouter ? "As OpenRouter names it, such as \(provider.defaultModel)" : "Such as \(provider.defaultModel)"])
+            rows.append(select("aiEffort", "Reasoning effort", "How long the model thinks before answering", aiEffort(provider), provider.efforts))
+            return rows
+        case "system":
+            var rows = [toggle("simulatedFullscreen", "Simulated full screen", "Pages go full screen inside Rise's window (⇧⌘F)", pageFullscreen.isSimulated)]
+            if pageFullscreen.isSimulated {
+                rows.append(toggle("collapseSidebar", "Collapse sidebar in simulated full screen", nil, collapsesSidebarInSimulatedFullscreen))
+            }
+            return rows
+        case "privacy":
+            var rows: [[String: Any]] = [["key": "clearHistory", "type": "button", "label": "Clear address bar history",
+                                          "sublabel": "Pages and site searches Rise suggests as you type", "button": "Clear"]]
+            for (origin, capability, permission) in sitePermissions.decidedSites {
+                rows.append(select("permission|\(capability.rawValue)|\(origin)", URL(string: origin).flatMap(\.host) ?? origin, capability.title,
+                                   permission.rawValue, [("ask", "Ask every time"), ("allow", "Allow"), ("block", "Block")]))
+            }
+            return rows
+        default:
+            return []
+        }
+    }
+
+    func setRiseSetting(_ key: String, _ value: Any) {
+        let on = value as? Bool ?? false, text = value as? String ?? ""
+        switch key {
+        case "theme": chooseTheme(text == "automatic" ? nil : RiseTheme(rawValue: text) ?? .neutral)
+        case "livePeekResize": setLivePeekResize(on)
+        case "animateDevTools": setAnimatesDevTools(on)
+        case "gmailCategory": if let category = GmailCategory(rawValue: text) { selectGmailCategory(category) }
+        case "hideNotificationCounts": setHidesNotificationCounts(on)
+        case "repositorySubtitle": setShowsRepositorySubtitle(on)
+        case "aiProvider": if let provider = AIProvider(rawValue: text) { selectAIProvider(provider) }
+        case "aiKey": if !text.isEmpty { setAIKey(text, for: aiProvider) }
+        case "aiModel": setAIModel(text, for: aiProvider)
+        case "aiEffort": setAIEffort(text, for: aiProvider)
+        case "simulatedFullscreen":
+            if on != pageFullscreen.isSimulated { pageFullscreen.setSimulated(on, in: tabs.map(\.page) + (peekTab.map { [$0.page] } ?? [])) }
+        case "collapseSidebar": setCollapsesSidebarInSimulatedFullscreen(on)
+        default:
+            let parts = key.split(separator: "|", maxSplits: 2).map(String.init)
+            guard parts.count == 3, parts[0] == "permission", let capability = SiteCapability(rawValue: parts[1]),
+                  let permission = SitePermission(rawValue: text) else { return }
+            sitePermissions.set(permission, for: capability, origin: parts[2])
+            refreshPermissionScripts(); refreshSiteControls()
+            // Revoke an active capture session as well as future requests.
+            if permission != .allow && (capability == .camera || capability == .microphone) {
+                for tab in tabs where SitePermissions.origin(tab.url) == parts[2] { tab.page.reload() }
+            }
+        }
+    }
+
+    func runRiseSetting(_ key: String) {
+        switch key {
+        case "clearHistory": confirmClearBrowsingHistory()
+        case "aiKeyRemove": setAIKey(nil, for: aiProvider)
+        default: break
+        }
+    }
+
+    /// Lets Chrome's settings, and only them, reach Rise's.
+    func installRiseSettings(on page: WebPage) {
+        page.addMessageHandler(Self.settingsHandler, world: .page) { [weak self] message, reply in
+            guard let self, message.frame.isMain, Self.isSettings(message.frame),
+                  let body = message.body as? [String: Any], let kind = body["kind"] as? String else { reply(nil, "Not settings"); return }
+            switch kind {
+            case "rows": reply(self.riseSettingRows(body["section"] as? String ?? ""), nil)
+            case "set":
+                if let key = body["key"] as? String, let value = body["value"] { self.setRiseSetting(key, value) }
+                reply(true, nil)
+            case "run":
+                if let key = body["key"] as? String { self.runRiseSetting(key) }
+                reply(true, nil)
+            default: reply(nil, "Unknown request")
+            }
+        }
+        page.addUserScript(Self.settingsScript, world: .page, mainFrameOnly: true, handlers: [Self.settingsHandler])
+    }
+
+    /// Only Chrome's settings page itself, which `PageFrame.origin` leaves out as it isn't a website.
+    private static func isSettings(_ frame: PageFrame) -> Bool {
+        #if RISE_CHROMIUM
+        return (frame.handle as? RCFrame)?.origin == "chrome://settings"
+        #else
+        return false
+        #endif
+    }
+
+    static let settingsScript = """
+    (() => {
+      if (location.origin !== 'chrome://settings' || window.riseSettings) return;
+      const send = body => riseHandlers.riseSettings.postMessage(body);
+      window.riseSettings = Object.freeze({
+        rows: section => send({kind: 'rows', section}),
+        set: (key, value) => send({kind: 'set', key, value}),
+        run: key => send({kind: 'run', key}),
+      });
+      dispatchEvent(new Event('rise-settings-ready'));
+    })();
+    """
+}

@@ -203,7 +203,7 @@ import RiseCore
         siteInfoPopover.show(relativeTo: rect, of: anchor, preferredEdge: .minY)
     }
     func navigateDeveloperAddress(_ text: String) {
-        guard let url = AddressResolver.resolve(text, searchEngine: searchEngine), let tab = selectedTab else { return }
+        guard let url = AddressResolver.resolve(text, search: searchProvider.searchURL), let tab = selectedTab else { return }
         errorWebView = nil; tab.load(url); update()
         window?.makeFirstResponder(tab.page.view)
     }

@@ -151,6 +151,21 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         try await Task.sleep(for: .milliseconds(500))
         await recording("5-split", for: 0.7) { self.browser.splitPeek() }
         check(browser.activeSplitGroup != nil, "The Peek became the split's right page")
+        // Dragging the split's handle resizes both pages live, there and back.
+        try await Task.sleep(for: .milliseconds(400))
+        await recording("5b-drag", for: 1.1) {
+            Task { @MainActor in
+                let steps = 30
+                for step in 0...steps {
+                    let t = Double(step)/Double(steps)
+                    self.browser.splitHandle.onDrag?(CGFloat(-220*sin(t*Double.pi)))
+                    try? await Task.sleep(for: .milliseconds(28))
+                }
+                self.browser.splitHandle.onDragEnd?()
+            }
+        }
+        check(abs((browser.activeSplitGroup?.fraction ?? 0)-0.5) < 0.01, "The split is back in the middle after the drag")
+        try await Task.sleep(for: .milliseconds(300))
         await recording("6-unsplit", for: 0.8) { _ = self.browser.undoPeekPromotion() }
         check(browser.activeSplitGroup == nil && browser.peekTab != nil, "⌘Z puts it back in the Peek")
         if engine == .chromium {

@@ -2,6 +2,10 @@ import Foundation
 
 public enum AddressResolver {
     public static func resolve(_ input: String, searchEngine: SearchEngine = .google) -> URL? {
+        resolve(input) { searchEngine.searchURL(for: $0) }
+    }
+    /// An address for what was typed, or failing that a search for it with `search`.
+    public static func resolve(_ input: String, search: (String) -> URL?) -> URL? {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return nil }
         if text == "about:blank" { return URL(string: text) }
@@ -16,7 +20,7 @@ public enum AddressResolver {
                 return URL(string: (local ? "http://" : "https://") + text)
             }
         }
-        return searchEngine.searchURL(for: text)
+        return search(text)
     }
     public static func displayHost(_ url: URL?) -> String {
         guard let url, url.absoluteString != "about:blank" else { return "Search or Enter URL…" }

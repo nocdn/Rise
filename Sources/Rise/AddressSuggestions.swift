@@ -53,10 +53,11 @@ import RiseCore
             result.append(AddressSuggestion(title: popular.site.name, subtitle: url.absoluteString, symbol: "globe", url: url,
                                             tabID: openTab(for: url)?.id, command: nil, completion: popular.completed, isTypedAction: true, isAutofill: true))
         }
-        if !query.isEmpty, let url = AddressResolver.resolve(query, searchEngine: searchEngine) {
-            let search = url == searchEngine.searchURL(for: query)
+        let provider = searchProvider
+        if !query.isEmpty, let url = AddressResolver.resolve(query, search: provider.searchURL) {
+            let search = url == provider.searchURL(query)
             if search {
-                result.append(AddressSuggestion(title: "Search \(searchEngine.title) for “\(query)”", subtitle: "", symbol: "magnifyingglass", url: url, tabID: nil,
+                result.append(AddressSuggestion(title: "Search \(provider.title) for “\(query)”", subtitle: "", symbol: "magnifyingglass", url: url, tabID: nil,
                                                 command: nil, isTypedAction: true))
             } else { typedURL = url; appendSite(title: query, url: url, fetchFavicon: false, typed: true) }
         }
@@ -86,7 +87,7 @@ import RiseCore
                 else { result.insert(command, at: 0) }
             }
         }
-        if searchEngine == .google, palette.isPresented, (palette.input.currentEditor() as? NSTextView)?.hasMarkedText() != true,
+        if provider.isGoogle, palette.isPresented, (palette.input.currentEditor() as? NSTextView)?.hasMarkedText() != true,
            result.first?.command == nil {
             let remote = googleSearchSuggestions.suggestions(for: query)
             if !remote.isEmpty {
@@ -95,8 +96,7 @@ import RiseCore
                 result = Array(result.prefix(max(openTabPrefix, max(2, AddressAppearance.maximumSuggestions-remote.count))))
                 var destinations = Set(result.compactMap { $0.url?.absoluteString })
                 for term in remote {
-                    let url = searchEngine.searchURL(for: term)
-                    guard destinations.insert(url.absoluteString).inserted else { continue }
+                    guard let url = provider.searchURL(term), destinations.insert(url.absoluteString).inserted else { continue }
                     result.append(AddressSuggestion(title: term, subtitle: "", symbol: "magnifyingglass", url: url, tabID: nil, command: nil))
                 }
             }

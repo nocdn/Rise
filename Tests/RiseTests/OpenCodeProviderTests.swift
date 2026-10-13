@@ -154,12 +154,31 @@ private final class OpenCodeProtocol: URLProtocol {
             return item?.submenu?.items.filter { $0.state == .on }.map(\.title) ?? []
         }
         XCTAssertEqual(browser.aiProvider, .openRouter)
-        XCTAssertEqual(checked(), ["OpenRouter (Hardcoded)"])
+        XCTAssertEqual(checked(), ["OpenRouter"])
         browser.selectAIProvider(.openCode)
         XCTAssertEqual(browser.aiProvider, .openCode)
-        XCTAssertEqual(checked(), ["OpenCode"])
-        XCTAssertEqual(FindBar.answeredBy(browser.aiProvider), "Answered by gpt-6-luna via OpenCode")
+        XCTAssertEqual(checked(), ["OpenCode (Local)"])
+        XCTAssertEqual(FindBar.answeredBy(browser.modelChoice), "Answered by gpt-6-luna via OpenCode")
         XCTAssertEqual(browser.tabHoverCards.summaries.provider(), .openCode)
+
+        // OpenAI's model, effort and key come from settings; the key from the keychain, not preferences.
+        var stored: [AIProvider: String] = [:]
+        browser.aiKeys.read = { stored[$0] }
+        browser.aiKeys.write = { stored[$0] = $1 }
+        browser.setRiseSetting("aiProvider", "openAI")
+        XCTAssertEqual(browser.modelChoice, ModelChoice(provider: .openAI, model: "gpt-6-luna", effort: "low"))
+        browser.setRiseSetting("aiKey", "sk-test")
+        browser.setRiseSetting("aiModel", "gpt-6-sol")
+        browser.setRiseSetting("aiEffort", "max")
+        XCTAssertEqual(browser.modelChoice, ModelChoice(provider: .openAI, model: "gpt-6-sol", effort: "max", apiKey: "sk-test"))
+        XCTAssertEqual(stored, [.openAI: "sk-test"])
+        XCTAssertFalse(preferences.dictionaryRepresentation().values.contains { $0 as? String == "sk-test" })
+        XCTAssertEqual(browser.riseSettingRows("ai").compactMap { $0["key"] as? String }, ["aiProvider", "aiKey", "aiModel", "aiEffort"])
+        browser.runRiseSetting("aiKeyRemove")
+        XCTAssertNil(browser.modelChoice.apiKey)
+        XCTAssertEqual(stored, [:])
+        browser.setRiseSetting("aiProvider", "openCode")
+        XCTAssertEqual(browser.riseSettingRows("ai").compactMap { $0["key"] as? String }, ["aiProvider"], "OpenCode needs no key, model or effort")
     }
 }
 

@@ -272,7 +272,9 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         // Chrome's settings are Rise's, at rise://settings and every page under it.
         browser.showSettings()
         if let settings = browser.selectedTab {
-            _ = await waitUntil("rise://settings opens", 15) { settings.page.url == RisePages.settings && !settings.page.isLoading }
+            _ = await waitUntil("rise://settings opens, on its first section", 15) {
+                settings.page.url?.absoluteString == "rise://settings/privacy" && !settings.page.isLoading
+            }
             _ = await waitUntil("With Chrome's settings in it", 15) {
                 await self.value("return !!document.querySelector('settings-ui')", in: settings.page) as? Bool == true
             }
@@ -281,11 +283,173 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
             browser.showSettings()
             check(browser.selectedID == settings.id && browser.tabs.filter({ $0.page.url?.scheme == "rise" }).count == 1, "⌘, goes back to the settings already open")
         }
+        // In Rise's words, without the parts of Chrome Rise's pages don't use.
+        let shown = """
+        let text = '';
+        const walk = node => {
+          if (node.nodeType === Node.TEXT_NODE) { text += node.textContent + ' '; return; }
+          if (node.nodeType === Node.ELEMENT_NODE && node.checkVisibility && !node.checkVisibility()) return;
+          if (node.shadowRoot) walk(node.shadowRoot);
+          node.childNodes.forEach(walk);
+        };
+        walk(document.body);
+        return text.replace(/\\s+/g, ' ');
+        """
+        if let settings = browser.tabs.first(where: { $0.page.url?.scheme == "rise" }) {
+            for path in ["", "/privacy", "/languages", "/system", "/help"] {
+                settings.load(URL(string: "rise://settings" + path)!)
+                let expected = "rise://settings" + (path.isEmpty ? "/privacy" : path)
+                _ = await waitUntil("rise://settings\(path) loads") { settings.page.url?.absoluteString == expected && !settings.page.isLoading }
+                try await Task.sleep(for: .milliseconds(1200))
+                // Where Chromium is the open-source project Rise is made from, it keeps its name.
+                let text = (await value(shown, in: settings.page) as? String ?? "")
+                    .replacingOccurrences(of: "The Chromium Authors", with: "").replacingOccurrences(of: "the Chromium open source project", with: "")
+                var excerpt = ""
+                if let found = text.range(of: "Chromium") {
+                    let from = text.index(found.lowerBound, offsetBy: -40, limitedBy: text.startIndex) ?? text.startIndex
+                    let to = text.index(found.upperBound, offsetBy: 40, limitedBy: text.endIndex) ?? text.endIndex
+                    excerpt = ": …" + String(text[from..<to])
+                }
+                check(excerpt.isEmpty && !text.isEmpty, "rise://settings\(path) says Rise, not Chromium\(excerpt)")
+                if path == "/help" {
+                    check(!text.contains("checking for updates"), "No update status from Chrome's updater")
+                }
+                if path.isEmpty {
+                    check(!text.contains("You and Google") && !text.contains("Autofill") && !text.contains("Extensions"), "Without Google sign-in, autofill or extensions")
+                }
+            }
+            // Links to Chrome pages Rise's pages can't show open nothing.
+            let count = browser.tabs.count
+            _ = await value("window.open('chrome://extensions'); return 0", in: settings.page)
+            try await Task.sleep(for: .milliseconds(800))
+            check(browser.tabs.count == count, "A link to a page Rise can't show opens no blank tab")
+
+            // Rise searches with the engine chosen in Chrome's Search engine section.
+            let engines = "const {sendWithPromise} = await import('chrome://resources/js/cr.js');" +
+                "const list = await sendWithPromise('getSearchEnginesList');"
+            func chooseEngine(_ pattern: String) async -> String? {
+                await value(engines + "const engine = list.defaults.find(e => /\(pattern)/.test(e.name)); if (!engine) return null;" +
+                            "chrome.send('setDefaultSearchEngine', [engine.id, 1, null]); return engine.name", in: settings.page) as? String
+            }
+            let original = browser.searchProvider.title
+            if let chosen = await chooseEngine("DuckDuckGo") {
+                _ = await waitUntil("Rise searches with \(chosen) once it's chosen in settings") {
+                    self.browser.searchProvider.title == chosen && self.browser.searchProvider.searchURL("rise")?.host?.contains("duckduckgo") == true
+                }
+                check(!browser.searchProvider.isGoogle, "Without Google's suggestions")
+                _ = await chooseEngine(original)
+                _ = await waitUntil("And with \(original) again") { self.browser.searchProvider.title == original }
+            } else { check(false, "Chrome offers DuckDuckGo to choose") }
+
+            // Rise's own settings are among Chrome's: in sections of their own, and in Chrome's.
+            for (path, label) in [("/tabs", "Gmail preview category"), ("/assistant", "Reasoning effort"), ("/appearance", "The colours of Rise"),
+                                  ("/system", "Simulated full screen"), ("/privacy", "Clear address bar history")] {
+                settings.load(URL(string: "rise://settings" + path)!)
+                _ = await waitUntil("rise://settings\(path) shows Rise's “\(label)”", 15) {
+                    guard !settings.page.isLoading else { return false }
+                    return (await self.value(shown, in: settings.page) as? String)?.contains(label) == true
+                }
+            }
+            // Appearance leaves out the rows for Chrome's own window, and keeps the ones for pages.
+            settings.load(URL(string: "rise://settings/appearance")!)
+            _ = await waitUntil("Appearance shows fonts and zoom, not Chrome's toolbar, tab strip, mode or quitting", 15) {
+                guard !settings.page.isLoading, let text = await self.value(shown, in: settings.page) as? String else { return false }
+                return text.contains("Font size") && text.contains("Page zoom") && text.contains("The colours of Rise")
+                    && !["Customize your toolbar", "Mode", "Tab position", "Show tab search button", "Side panel position",
+                         "Show warning before quitting"].contains { text.contains($0) }
+            }
+            // Changing one there changes Rise.
+            let deep = "const find = (root, selector) => root.querySelector(selector) ||" +
+                " [...root.querySelectorAll('*')].map(node => node.shadowRoot && find(node.shadowRoot, selector)).find(Boolean);"
+            settings.load(URL(string: "rise://settings/tabs")!)
+            let hidden = browser.hidesNotificationCounts
+            _ = await waitUntil("The Tabs section's toggle is there") {
+                await self.value(deep + "const toggle = find(document, 'cr-toggle[data-key=hideNotificationCounts]'); toggle?.click(); return !!toggle", in: settings.page) as? Bool == true
+            }
+            _ = await waitUntil("Turning it off in settings turns it off in Rise") { self.browser.hidesNotificationCounts != hidden }
+            browser.setHidesNotificationCounts(hidden)
+            settings.load(URL(string: "rise://settings/assistant")!)
+            let provider = browser.aiProvider
+            _ = await waitUntil("Choosing another AI provider in settings chooses it in Rise") {
+                _ = await self.value(deep + "const select = find(document, 'select[data-key=aiProvider]'); if (!select) return false;" +
+                                     "select.selectedIndex = (select.selectedIndex + 1) % select.options.length; select.dispatchEvent(new Event('change')); return true",
+                                     in: settings.page)
+                return self.browser.aiProvider != provider
+            }
+            // OpenAI shows its key, model and effort, and a model typed there is the one Rise asks.
+            browser.selectAIProvider(.openAI)
+            settings.load(URL(string: "rise://settings/assistant")!)
+            _ = await waitUntil("OpenAI shows its API key, model and reasoning effort") {
+                await self.value(deep + "const model = find(document, 'cr-input[data-key=aiModel]'), effort = find(document, 'select[data-key=aiEffort]');" +
+                                 "return !!find(document, 'cr-input[data-key=aiKey][type=password]') && model?.value === 'gpt-6-luna' && effort?.value === 'low'",
+                                 in: settings.page) as? Bool == true
+            }
+            _ = await value(deep + "const model = find(document, 'cr-input[data-key=aiModel]'); model.value = 'gpt-6-sol';" +
+                            "model.dispatchEvent(new CustomEvent('change')); return true", in: settings.page)
+            _ = await waitUntil("A model typed in settings is the one Rise asks for") { self.browser.modelChoice.model == "gpt-6-sol" }
+            browser.setAIModel("", for: .openAI)
+            browser.selectAIProvider(provider)
+            // The site controls' ⋯ opens them, from any page.
+            _ = await open(try page("plain", "<h1>Plain</h1>"))
+            browser.moreSiteControls()
+            check(browser.selectedID == settings.id, "The site controls' ⋯ opens Rise's settings")
+        }
+
+        // Links and images drag out of pages, carrying their address or picture.
+        let picture = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 240, pixelsHigh: 160, bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true,
+                                       isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: picture)
+        NSColor.systemTeal.setFill(); NSRect(x: 0, y: 0, width: 240, height: 160).fill()
+        NSGraphicsContext.restoreGraphicsState()
+        try picture.representation(using: .png, properties: [:])!.write(to: folder.appendingPathComponent("picture.png"))
+        // macOS runs one drag at a time, and Chromium starts the next only once it hears the last
+        // one ended, at the mouse's real release, which window events can't give; so one drag here.
+        let dragPage = try page("drag", "<a id=l href='https://example.com/dragged'><img src=picture.png width=240></a>")
+        let dragging = browser.addTab(url: dragPage)
+        _ = await waitUntil("The drag page loads") {
+            guard dragging.page.url == dragPage, !dragging.page.isLoading else { return false }
+            return await self.value("return document.querySelector('img').complete", in: dragging.page) as? Bool == true
+        }
+        try await Task.sleep(for: .milliseconds(500))
+        let dragged = try await drag("#l img", in: dragging.page)
+        check(dragged.contains(.URL) || dragged.contains(NSPasteboard.PasteboardType("public.url")), "Dragging a link out carries its address")
+        check(dragged.contains(.tiff) || dragged.contains(.png) || dragged.contains(NSPasteboard.PasteboardType("com.apple.pasteboard.promised-file-url"))
+              || dragged.contains(NSPasteboard.PasteboardType("NSPromiseContentsPboardType")), "And an image, its picture: \(dragged.map(\.rawValue).filter { !$0.hasPrefix("org.chromium") }.prefix(8))")
+
         // A site can't open them.
         let sneaky = await open(try page("sneaky", "<a id=s href='chrome://settings'>Settings</a>"))
         _ = await value("location.href = 'chrome://settings'; return 0", in: sneaky.page)
         try await Task.sleep(for: .milliseconds(800))
         check(sneaky.page.url?.lastPathComponent == "sneaky.html", "A site can't open settings: \(sneaky.page.url?.absoluteString ?? "-")")
+    }
+
+    /// Pressing on `selector` in `page` and dragging it a little away, with the window's own mouse
+    /// events: the drag macOS starts carries what was dragged, for whatever it's dropped on.
+    func drag(_ selector: String, in page: WebPage) async throws -> [NSPasteboard.PasteboardType] {
+        let script = "const r = document.querySelector('\(selector)').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]"
+        let found: Any? = await value(script, in: page)
+        guard let window = browser.window, let rect = found as? [Double] else { return [] }
+        let view = page.view
+        let inView = NSPoint(x: rect[0], y: view.isFlipped ? rect[1] : view.bounds.height-rect[1])
+        let start = view.convert(inView, to: nil)
+        NSPasteboard(name: .drag).clearContents()
+        func send(_ type: NSEvent.EventType, _ point: NSPoint) {
+            if let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                              windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: type == .leftMouseUp ? 0 : 1) {
+                window.sendEvent(event)
+            }
+        }
+        send(.leftMouseDown, start)
+        try await Task.sleep(for: .milliseconds(80))
+        for step in 1...12 {
+            send(.leftMouseDragged, NSPoint(x: start.x+CGFloat(step)*8, y: start.y-CGFloat(step)*3))
+            try await Task.sleep(for: .milliseconds(30))
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        let types = NSPasteboard(name: .drag).types ?? []
+        send(.leftMouseUp, NSPoint(x: start.x+96, y: start.y-36))
+        try await Task.sleep(for: .milliseconds(200))
+        return types
     }
 
     func checks() async throws {

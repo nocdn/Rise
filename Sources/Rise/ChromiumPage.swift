@@ -14,8 +14,13 @@ enum RiseProfile {
 enum RisePages {
     static let hosts: Set<String> = ["settings"]
     static let settings = URL(string: "rise://settings")!
-    /// The Chrome page to load for a Rise address.
-    static func page(for url: URL) -> URL { swap(url, from: "rise", to: "chrome") ?? url }
+    /// The Chrome page to load for a Rise address. Settings open on their first section Rise shows,
+    /// as Chrome's first, You and Google, isn't one.
+    static func page(for url: URL) -> URL {
+        guard var page = swap(url, from: "rise", to: "chrome") else { return url }
+        if page.host == "settings", ["", "/"].contains(page.path) { page = URL(string: "chrome://settings/privacy")! }
+        return page
+    }
     /// The Rise address to show for a Chrome page.
     static func address(for url: URL?) -> URL? { url.flatMap { swap($0, from: "chrome", to: "rise") } ?? url }
     private static func swap(_ url: URL, from: String, to: String) -> URL? {

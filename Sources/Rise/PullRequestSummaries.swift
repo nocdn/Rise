@@ -259,7 +259,7 @@ enum PullRequestSummarizer {
         if !page.isEmpty { context += "\nPull request page:\n\(page.prefix(20_000))\n" }
         return [["role": "system", "content": systemPrompt], ["role": "user", "content": context]]
     }
-    static func summarize(_ messages: [[String: Any]], provider: AIProvider = .openRouter,
+    static func summarize(_ messages: [[String: Any]], provider: ModelChoice = .openRouter,
                           session: URLSession = .shared) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
@@ -294,7 +294,7 @@ enum PullRequestSummarizer {
     private let storageURL: URL
     var onChange: ((String) -> Void)?
     /// Which service writes descriptions.
-    var provider: () -> AIProvider = { .openRouter }
+    var provider: () -> ModelChoice = { .openRouter }
 
     init(storageURL: URL) {
         self.storageURL = storageURL

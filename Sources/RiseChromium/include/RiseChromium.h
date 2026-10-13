@@ -20,6 +20,10 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 @interface RCEngine : NSObject
+/// The default search engine chosen in Chrome's settings (rise://settings), by name; nil if none.
++ (nullable NSString *)defaultSearchName;
+/// Where a search for `terms` goes with that engine; nil if none.
++ (nullable NSURL *)searchURLForTerms:(NSString *)terms;
 /// Loads the Chromium framework from the app bundle and starts it, keeping website data in
 /// `cachePath`. Call on the main thread after `RCApplication.sharedApplication`, before the
 /// run loop starts. Returns NO if Chromium couldn't start.

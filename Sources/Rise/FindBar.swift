@@ -214,9 +214,8 @@ class FindInputCell: NSTextFieldCell {
     static let visibleAnswerLines = 8
     /// The "Answered by" row under an answer, which takes the place of its bottom inset.
     static let footerHeight: CGFloat = 34, footerMid: CGFloat = 18
-    static var modelName: String { PageAssistant.model.split(separator: "/").last.map(String.init) ?? PageAssistant.model }
-    static func answeredBy(_ provider: AIProvider) -> String {
-        "Answered by \(modelName)" + (provider == .openCode ? " via OpenCode" : "")
+    static func answeredBy(_ provider: ModelChoice) -> String {
+        "Answered by \(provider.modelName)" + (provider.provider == .openCode ? " via OpenCode" : "")
     }
 
     let panel = Surface(radius: radius)
@@ -262,7 +261,7 @@ class FindInputCell: NSTextFieldCell {
     /// Streams an answer to a question about the page, given the conversation so far.
     var answer: ((String, [Turn]) -> AsyncThrowingStream<String, Error>)?
     /// Which service answers, named in the footer.
-    var provider: () -> AIProvider = { .openRouter }
+    var provider: () -> ModelChoice = { .openRouter }
     private(set) var inputTokenCount: Int?
     private(set) var answerGeneration = 0
     private(set) var conversation: [Turn] = []

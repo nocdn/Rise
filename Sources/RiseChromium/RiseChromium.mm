@@ -491,6 +491,16 @@ cef_color_t ARGB(NSColor *color) {
 @end
 
 @implementation RCEngine
++ (NSString *)defaultSearchName {
+  if (!self.isRunning) return nil;
+  std::string name = CefRequestContext::GetGlobalContext()->GetDefaultSearchName().ToString();
+  return name.empty() ? nil : [NSString stringWithUTF8String:name.c_str()];
+}
++ (NSURL *)searchURLForTerms:(NSString *)terms {
+  if (!self.isRunning) return nil;
+  std::string url = CefRequestContext::GetGlobalContext()->GetDefaultSearchURL(terms.UTF8String).ToString();
+  return url.empty() ? nil : [NSURL URLWithString:[NSString stringWithUTF8String:url.c_str()]];
+}
 
 + (BOOL)startWithCachePath:(NSString *)cachePath keychain:(BOOL)keychain {
   if (gRunning) return YES;

@@ -56,6 +56,14 @@ enum SitePermission: String, CaseIterable {
         decisions[origin, default: [:]][capability.rawValue] = value.rawValue
         preferences.set(decisions, forKey: Self.preferenceKey)
     }
+    /// Every site's decision for each capability, by site.
+    var decidedSites: [(origin: String, capability: SiteCapability, permission: SitePermission)] {
+        decisions.keys.sorted().flatMap { origin in
+            SiteCapability.allCases.compactMap { capability in
+                decisions[origin]?[capability.rawValue].flatMap(SitePermission.init(rawValue:)).map { (origin, capability, $0) }
+            }
+        }
+    }
     func hasDecision(_ capability: SiteCapability, origin: String?) -> Bool {
         origin.flatMap { decisions[$0]?[capability.rawValue] } != nil
     }

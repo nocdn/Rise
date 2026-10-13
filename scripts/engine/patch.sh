@@ -38,3 +38,6 @@ apply() {
 
 apply "$CEF_SRC" "$ENGINE_DIR/patches/cef"
 apply "$CHROMIUM_SRC" "$ENGINE_DIR/patches/chromium"
+
+# Rise's name where Chromium names itself to people, in every language.
+python3 "$(dirname "$0")/brand.py" "$CHROMIUM_SRC"
