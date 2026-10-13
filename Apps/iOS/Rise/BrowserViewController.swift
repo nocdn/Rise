@@ -1,5 +1,6 @@
 import UIKit
 import WebKit
+import SwiftUI
 
 /// The iOS shell: a tab's page under a status bar strip and above a bottom bar, with the other
 /// tabs in a switcher. Pages that a Peek replaced in a tab are held for Back.
@@ -68,6 +69,13 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private var pinchGrabScale: CGFloat = 1
     /// The page folded into a card over its summary, between the page and the bottom bar.
     private(set) var summarise: SummariseView?
+    /// Keep one text view graph for this browser: destroying it at the page handoff costs frames.
+    /// Each scene has a fresh reveal model, installed in the host when its own summary arrives.
+    private lazy var summaryHost: UIHostingController<SummaryBlocks> = {
+        let host = UIHostingController(rootView: SummaryBlocks(reveal: SummaryReveal()))
+        host.overrideUserInterfaceStyle = .light
+        return host
+    }()
     private lazy var collapsedBarTap = UITapGestureRecognizer(target: self, action: #selector(openCollapsedBar))
 
     init(startURL: URL? = BrowserViewController.homeURL, allowsPeek: Bool = true,
@@ -891,9 +899,11 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let page = webView
         let title = [page.title, page.url?.host()].compactMap { $0 }.first { !$0.isEmpty } ?? ""
         let size = view.bounds.size
+        let attachingHost = summaryHost.parent == nil
+        if attachingHost { addChild(summaryHost) }
         let summarise = SummariseView(page: { [content] in
             content.snapshotView(afterScreenUpdates: false) ?? UIView(frame: CGRect(origin: .zero, size: size))
-        }, title: title, size: size)
+        }, title: title, size: size, summaryHost: summaryHost)
         summarise.makeSummary = { try await PageSummary.make(of: PageAssistant.snapshot(of: page)) }
         let log = SummariseLog(path: path == .pinch ? "pinch" : "menu", page: page.url?.host() ?? "no page")
         summarise.log = log
@@ -920,6 +930,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
                 scroll.setZoomScale(zoom, animated: false)
                 scroll.setContentOffset(offset, animated: false)
             }
+            // Reparent directly within the window before removing the scene. Even a retained
+            // host does expensive SwiftUI environment/bridge updates if its window becomes nil.
+            summaryHost.view.isHidden = true
+            view.insertSubview(summaryHost.view, belowSubview: content)
             summarise.removeFromSuperview()
             self.summarise = nil
             bottomBar.transform = .identity
@@ -927,6 +941,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             setNeedsStatusBarAppearanceUpdate()
         }
         view.insertSubview(summarise, belowSubview: bottomBar)
+        if attachingHost { summaryHost.didMove(toParent: self) }
         bottomBar.isUserInteractionEnabled = false
         self.summarise = summarise
         if path == .pinch { summarise.beginPinch(at: point) } else { summarise.startFromMenu() }

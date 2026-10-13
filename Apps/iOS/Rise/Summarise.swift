@@ -292,6 +292,9 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate {
     private var haptics: CHHapticEngine?
     private var hum: CHHapticAdvancedPatternPlayer?
     private var hapticsReady = false, wantsHum = false, preparingHaptics = false
+    /// Core Haptics supports worker queues. Playback stays on MainActor; a worker only owns
+    /// preparation or shutdown, and never operates on an engine still being used by the scene.
+    private struct HapticEngineTransfer: @unchecked Sendable { let engine: CHHapticEngine }
 
     // The backdrop, which stays put as everything else scrolls over it.
     private let backdrop = UIView()
@@ -312,12 +315,12 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate {
 
     /// `page` makes a replica of the page, as `snapshotView(afterScreenUpdates:)` does, which is
     /// quick enough to make as the fingers start to move, unlike drawing it.
-    init(page: @escaping () -> UIView, title: String, size: CGSize) {
+    init(page: @escaping () -> UIView, title: String, size: CGSize, summaryHost: UIHostingController<SummaryBlocks>) {
         pageReplica = page()
         self.size = size
         let reveal = SummaryReveal()
         self.reveal = reveal
-        summaryHost = UIHostingController(rootView: SummaryBlocks(reveal: reveal))
+        self.summaryHost = summaryHost
         super.init(frame: CGRect(origin: .zero, size: size))
         // A light canvas keeps the summary readable over Rise's pale icon colours.
         overrideUserInterfaceStyle = .light
@@ -378,7 +381,6 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate {
         summaryHost.safeAreaRegions = []
         summaryHost.view.backgroundColor = .clear
         summaryHost.view.isHidden = true
-        content.addSubview(summaryHost.view)
         // The card stays over the summary as it grows back over it. Its layers are sorted by depth
         // with the summary's, and the card is tipped, so it's brought well forward; there's no
         // perspective out here for that to show.
@@ -400,6 +402,15 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil else { return }
+        // The browser parks this view while closed. Move it only once the new scene is in the
+        // same window, avoiding a detach/reattach and SwiftUI environment rebuild at each end.
+        content.addSubview(summaryHost.view)
+        content.layer.addSublayer(group)
+    }
 
     private static func color(_ hex: Int, alpha: CGFloat = 1) -> CGColor {
         UIColor(red: CGFloat(hex >> 16 & 0xFF)/255, green: CGFloat(hex >> 8 & 0xFF)/255,
@@ -682,7 +693,13 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate {
         link?.invalidate(); link = nil
         task?.cancel()
         stopHum()
-        haptics?.stop()
+        // Releasing the engine also tears down its audio session, including synchronous XPC.
+        // Keep it alive through the stop on a worker so that cannot hold up the live page.
+        if let engine = haptics {
+            let transfer = HapticEngineTransfer(engine: engine)
+            haptics = nil
+            Task.detached(priority: .utility) { try? await transfer.engine.stop() }
+        }
         onBar?(0)
         let started = CACurrentMediaTime()
         onFinish?()
@@ -725,13 +742,18 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate {
             engine.playsHapticsOnly = true
             engine.isAutoShutdownEnabled = false
             guard (try? await engine.start()) != nil else { return }
-            await MainActor.run {
-                guard let self, self.mode != .done else { engine.stop(); return }
-            self.log?.event("haptics ready")
-                self.haptics = engine
+            let transfer = HapticEngineTransfer(engine: engine)
+            let accepted = await MainActor.run {
+                guard let self, self.mode != .done else { return false }
+                self.log?.event("haptics ready")
+                self.haptics = transfer.engine
                 self.hapticsReady = true
                 self.playHum()
+                return true
             }
+            // The scene may have ended while the engine was starting. Stop it here, rather
+            // than creating and releasing an audio session on the main actor's rejection path.
+            if !accepted { try? await transfer.engine.stop() }
         }
     }
 

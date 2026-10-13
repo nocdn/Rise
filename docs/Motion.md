@@ -423,8 +423,23 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
   It happens while the card swings slowly, so the card moves under a point; left as is.
 - **The reveal's blur** needs about 11 offscreen passes in one frame (seen in an Animation Hitches
   trace); work per frame peaks around 6 ms.
-- **Removing the overlay** at the end of a close costs about 25–33 ms. It happens when nothing is
-  moving; deferring it only moves the stall to when the person might be scrolling.
+- **The live-page handoff must stay cheap too.** A close on apple.com had 88 steady 120 Hz
+  callbacks, then gaps of 19, 14 and 33 ms just after it finished. Three real-device replays
+  reproduced 21–33 ms gaps there, despite the log's cleanup block taking only 1–4 ms.
+  - Time Profiler caught `CHHapticEngine`/`CHMetrics` destruction and the audio session's
+    synchronous XPC in the display-link autorelease pool, outside that cleanup measurement.
+    Engine shutdown and release now run on a worker, also when a scene ends during preparation.
+  - SwiftUI also updated its environment and bridges, then destroyed the hosting view after
+    the Core Animation commit. Retaining the host alone still left a first-close hitch.
+  - Each browser now keeps one light summary hosting controller as a child. Its hidden view
+    moves directly between the attached scene and the browser, so it never leaves the window
+    at a handoff. Each new scene still has a fresh reveal model and request; the model is
+    installed when its summary arrives. The page replica and scene are released normally.
+  - Three long-summary closes on the iPhone then had 88 close and 61 post-close callbacks
+    each, with no dropped callbacks and a worst gap of 8.4 ms; cleanup was about 1.1 ms.
+    Animation Hitches also reported no rendered hitches in that capture, with the closing
+    frames at 120 Hz. Device regressions cover fresh text on successive summaries, release of
+    old scenes, and catching a close without losing its summary or the page's scroll position.
 - **Real pinches dropped single frames** with Rise's own work at 0.1 ms. WebKit was busy following
   the same fingers, which is why its pinch and pan are now ended when Summarise takes over.
 - **The close itself** runs at a steady 120 Hz: 88 of 88 frames on a real close.
@@ -514,6 +529,9 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
     back and the page is restored after being nudged 40 pt.
   - `timing`: on a real page in real time, pinches, closes once revealed, catches and closes again,
     printing the frame gaps by phase.
+  - `close`: on Apple's homepage, opens and closes a settled 1026 pt fixture summary three
+    times in real time, using only the scene's own frame log. Nothing holds the old scene alive
+    after the handoff. Check both the close and the following half-second in the on-device log.
   - `tabs`: swipes up the bar in real time (a hard flick, the card tapped back, a short swipe that
     springs back) and writes the moving page's frame and its title's opacity and place each frame
     to `tabs.csv`, as shown (the presentation layers), since the flight's model values jump to the

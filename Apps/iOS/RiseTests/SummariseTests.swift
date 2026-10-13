@@ -124,4 +124,62 @@ final class SummariseTests: XCTestCase {
         XCTAssertEqual(controller.bottomBar.transform, .identity)
         XCTAssertTrue(controller.bottomBar.isUserInteractionEnabled)
     }
+
+    /// Reusing the hosting controller must still request and lay out the next page's text,
+    /// and must not keep the old scene, replica or display link alive.
+    @MainActor func testSuccessiveSummariesUseFreshTextAndReleaseTheirScenes() async throws {
+        let controller = BrowserViewController(startURL: nil)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        window.layoutIfNeeded()
+        defer { controller.summarise?.finish(); window.isHidden = true }
+
+        controller.webView.loadHTMLString("<html><body><p>A page to summarise.</p></body></html>",
+                                          baseURL: URL(string: "https://rise.test/"))
+        for _ in 0..<100 where controller.webView.isLoading { try await Task.sleep(for: .milliseconds(10)) }
+
+        let short = PageSummary(overview: "First page.", sections: [])
+        let long = PageSummary(overview: String(repeating: "A different page with much more to summarise. ", count: 40), sections: [])
+        var heights: [CGFloat] = []
+        weak var previous: SummariseView?
+        for summary in [short, long] {
+            controller.startSummarise(.pinch)
+            var current: SummariseView? = try XCTUnwrap(controller.summarise)
+            current?.manualTime = 0
+            current?.makeSummary = { summary }
+            current?.startFromMenu()
+            for _ in 0..<100 where current?.summaryHeight == 0 { try await Task.sleep(for: .milliseconds(10)) }
+            heights.append(try XCTUnwrap(current).summaryHeight)
+            current?.advance(to: 2.5)
+            current?.close()
+            current?.advance(to: 4)
+            previous = current
+            current = nil
+            try await Task.sleep(for: .milliseconds(30))
+            XCTAssertNil(controller.summarise)
+            XCTAssertNil(previous)
+            XCTAssertEqual(controller.bottomBar.transform, .identity)
+            XCTAssertTrue(controller.bottomBar.isUserInteractionEnabled)
+        }
+        XCTAssertGreaterThan(heights[0], 50)
+        XCTAssertGreaterThan(heights[1], heights[0]+300)
+    }
+
+    @MainActor func testRegrabbingAClosingSummaryKeepsItsTextAndRestoresThePage() async throws {
+        let controller = BrowserViewController(startURL: nil)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        defer { controller.summarise?.finish(); window.isHidden = true }
+        let result = await SummariseReplay.run(in: controller, savingFramesTo: nil, regrab: true)
+        XCTAssertTrue(result.revealed)
+        XCTAssertGreaterThan(result.summaryHeight, 200)
+        XCTAssertTrue(result.finished)
+        XCTAssertEqual(result.pageMoved, 0, accuracy: 0.1)
+        XCTAssertEqual(controller.bottomBar.transform, .identity)
+        XCTAssertTrue(controller.bottomBar.isUserInteractionEnabled)
+    }
 }

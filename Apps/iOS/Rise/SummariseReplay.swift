@@ -45,6 +45,7 @@ import UIKit
             case "gentle": await run(in: controller, savingFramesTo: folder, pinch: .gentle)
             case "regrab": await run(in: controller, savingFramesTo: folder, regrab: true)
             case "timing": await timeStart(in: controller)
+            case "close": await timeClose(in: controller)
             case "tabs": await swipeToTabs(in: controller, savingTo: folder)
             case "tabsDrag": await swipeToTabs(in: controller, savingTo: folder, slowDrag: true)
             case "tabsFlick": await swipeToTabs(in: controller, savingTo: folder, fastFlick: true)
@@ -54,7 +55,10 @@ import UIKit
             default: await run(in: controller, savingFramesTo: folder)
             }
             let report = "revealed \(result.revealed), bar \(result.barWhileLoading), summary \(result.summaryHeight), finished \(result.finished), page moved \(result.pageMoved)"
-            if let folder { try? report.write(to: folder.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8) }
+            if let folder {
+                try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                try? report.write(to: folder.appendingPathComponent("result.txt"), atomically: true, encoding: .utf8)
+            }
         }
     }
 
@@ -349,6 +353,33 @@ import UIKit
             link?.invalidate()
             return lines.joined(separator: "  ")
         }
+    }
+
+    /// Reopens a settled, long summary on Apple's homepage three times. Only the scene's own
+    /// logger asks for frames, and nothing retains the scene after it hands the live page back.
+    static func timeClose(in controller: BrowserViewController) async -> Result {
+        controller.webView.load(URLRequest(url: URL(string: "https://www.apple.com/")!))
+        for _ in 0..<500 where controller.webView.isLoading { try? await Task.sleep(for: .milliseconds(20)) }
+        try? await Task.sleep(for: .milliseconds(1500))
+        let longSummary = PageSummary(overview: summary.overview, sections: summary.sections+summary.sections)
+        var result = Result()
+        for round in 0..<3 {
+            // Install the fixture before committing starts its request.
+            controller.startSummarise(.pinch)
+            controller.summarise?.makeSummary = { longSummary }
+            controller.summarise?.startFromMenu()
+            controller.summarise?.log?.event("replay", "close \(round)")
+            for _ in 0..<250 where controller.summarise?.isRevealed != true {
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+            try? await Task.sleep(for: .seconds(2.5))
+            result.revealed = controller.summarise?.isRevealed == true
+            result.summaryHeight = controller.summarise?.summaryHeight ?? 0
+            controller.summarise?.close()
+            try? await Task.sleep(for: .milliseconds(1400))
+            result.finished = controller.summarise == nil
+        }
+        return result
     }
 
     /// Pinches in real time on a real page, printing the gaps between frames, for the console.

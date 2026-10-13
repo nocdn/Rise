@@ -224,6 +224,10 @@ Each Summarise is logged on the device: its events (the pinch, letting go, the s
 the reveal, the close with what the page underneath was doing, the finish) and its frames, every
 one while things move fast and the dropped ones otherwise, with half a second of the page's own
 frames after the card has grown back. The last 40 are kept in the app's caches.
+The browser reuses one SwiftUI text host, keeping it hidden in the same window between summaries,
+while each scene gets a fresh model and request. Closing releases the scene and page replica;
+the haptic engine's audio-session teardown runs off the main thread. This avoids the text-view
+and audio cleanup stalling the first frames of the live page.
 `python3 scripts/summarise-log.py --device <iPhone> [--last N]` fetches them and reports, for each,
 what happened when, every phase's frame rate, and each dropped frame with what happened near it.
 
