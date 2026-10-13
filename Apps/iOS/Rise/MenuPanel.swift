@@ -167,8 +167,8 @@ final class AddressBar: UIControl {
     }
 }
 
-/// More's panel: the page's address where the search field would be, with large square buttons
-/// under it.
+/// More's panel: the page's address where the search field would be, with large buttons under it,
+/// a little less tall than wide.
 final class MenuPanel: UIView {
     static let inset: CGFloat = SearchPanel.inset
     static let spacing: CGFloat = 10
@@ -177,19 +177,22 @@ final class MenuPanel: UIView {
     static let cornerRadius: CGFloat = 20
     static let pressedScale: CGFloat = 0.94
     /// The address and the tiles.
-    static func height(width: CGFloat) -> CGFloat { SearchPanel.fieldHeight+top+tileSide(width: width) }
+    static func height(width: CGFloat) -> CGFloat { SearchPanel.fieldHeight+top+tileSize(width: width).height }
 
     let address = AddressBar()
-    let shareTile = MenuTile(symbol: "square.and.arrow.up", title: "Share")
-    let summariseTile = MenuTile(symbol: "text.line.3.summary", title: "Summarise")
-    let findTile = MenuTile(symbol: "doc.text.magnifyingglass", title: "Find", label: "Find on Page")
-    let copyTile = MenuTile(symbol: "link", title: "Copy", label: "Copy Link")
+    let shareTile = MenuTile(symbol: "square.and.arrow.up", label: "Share")
+    let summariseTile = MenuTile(symbol: "text.line.3.summary", label: "Summarise")
+    let findTile = MenuTile(symbol: "doc.text.magnifyingglass", label: "Find on Page")
+    let copyTile = MenuTile(symbol: "link", label: "Copy Link")
     var tiles: [MenuTile] { [shareTile, summariseTile, findTile, copyTile] }
+    /// The tiles' height, as a share of their width.
+    static let tileProportion: CGFloat = 0.85
 
-    /// Four square tiles across the panel.
-    static func tileSide(width: CGFloat) -> CGFloat {
+    /// Four tiles across the panel.
+    static func tileSize(width: CGFloat) -> CGSize {
         let count = 4.0
-        return max(0, ((width-2*inset-(count-1)*spacing)/count).rounded(.down))
+        let side = max(0, ((width-2*inset-(count-1)*spacing)/count).rounded(.down))
+        return CGSize(width: side, height: (side*tileProportion).rounded())
     }
 
     override init(frame: CGRect) {
@@ -205,42 +208,32 @@ final class MenuPanel: UIView {
         if address.superview === self {
             address.frame = CGRect(x: Self.inset, y: 0, width: bounds.width-2*Self.inset, height: SearchPanel.fieldHeight)
         }
-        let side = Self.tileSide(width: bounds.width)
-        let used = CGFloat(tiles.count)*side+CGFloat(tiles.count-1)*Self.spacing
+        let size = Self.tileSize(width: bounds.width)
+        let used = CGFloat(tiles.count)*size.width+CGFloat(tiles.count-1)*Self.spacing
         var x = (bounds.width-used)/2
         for tile in tiles {
             // By bounds and center, as a pressed tile is scaled.
-            tile.bounds = CGRect(x: 0, y: 0, width: side, height: side)
-            tile.center = CGPoint(x: x+side/2, y: SearchPanel.fieldHeight+Self.top+side/2)
-            x += side+Self.spacing
+            tile.bounds = CGRect(origin: .zero, size: size)
+            tile.center = CGPoint(x: x+size.width/2, y: SearchPanel.fieldHeight+Self.top+size.height/2)
+            x += size.width+Self.spacing
         }
     }
 }
 
-/// A square in More's panel: a symbol over a short title, filled like the search field.
+/// A button in More's panel: a symbol, filled like the search field.
 final class MenuTile: UIButton {
     private let symbol = UIImageView()
-    private let title = UILabel()
 
-    init(symbol name: String, title text: String, label: String? = nil) {
+    init(symbol name: String, label: String) {
         super.init(frame: .zero)
         layer.cornerCurve = .continuous
         layer.cornerRadius = MenuPanel.cornerRadius
         symbol.image = UIImage(systemName: name, withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .medium))
         symbol.tintColor = .label
         symbol.contentMode = .center
-        title.text = text
-        // Rounded, like the field's text, and fixed in size, as the tile is.
-        title.font = SearchPanel.roundedFont(ofSize: 12, weight: .medium, scaled: false)
-        title.textColor = .label
-        title.textAlignment = .center
-        title.adjustsFontSizeToFitWidth = true
-        title.minimumScaleFactor = 0.75
-        for view in [symbol, title] {
-            view.isUserInteractionEnabled = false
-            addSubview(view)
-        }
-        accessibilityLabel = label ?? text
+        symbol.isUserInteractionEnabled = false
+        addSubview(symbol)
+        accessibilityLabel = label
         shrinksWhenPressed(to: MenuPanel.pressedScale, filled: true)
     }
 
@@ -250,8 +243,6 @@ final class MenuTile: UIButton {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        let titleHeight = ceil(title.font.lineHeight)
-        symbol.frame = CGRect(x: 0, y: bounds.height*0.2, width: bounds.width, height: bounds.height*0.38)
-        title.frame = CGRect(x: 6, y: bounds.height*0.64, width: bounds.width-12, height: titleHeight)
+        symbol.frame = bounds
     }
 }

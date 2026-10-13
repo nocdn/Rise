@@ -59,6 +59,15 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// How much of the window the keyboard covers, which Find's panel sits above.
     private var keyboardHeight: CGFloat = 0
     private lazy var panelPan = UIPanGestureRecognizer(target: self, action: #selector(dragPanel(_:)))
+    /// Pinching in on the page, from its smallest zoom, folds it up and summarises it.
+    private lazy var summarisePinch = UIPinchGestureRecognizer(target: self, action: #selector(pinchToSummarise(_:)))
+    private var pinchFromSmallest = false
+    /// Where the pinch's fingers started, and where they were last together.
+    private var pinchStart = CGPoint.zero, pinchCentroid = CGPoint.zero
+    /// The fingers' scale when Summarise caught the card, which they go on from.
+    private var pinchGrabScale: CGFloat = 1
+    /// The page folded into a card over its summary, between the page and the bottom bar.
+    private(set) var summarise: SummariseView?
     private lazy var collapsedBarTap = UITapGestureRecognizer(target: self, action: #selector(openCollapsedBar))
 
     init(startURL: URL? = BrowserViewController.homeURL, allowsPeek: Bool = true,
@@ -147,6 +156,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             // In the content, so it recedes with the page behind the bar's panels.
             content.addSubview(tabSwitcher)
             setUpBottomBar()
+            summarisePinch.delegate = self
+            summarisePinch.cancelsTouchesInView = false
+            content.addGestureRecognizer(summarisePinch)
         }
         backSwipe.edges = .left
         backSwipe.delegate = self
@@ -182,6 +194,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         pullToReload.layoutGap()
         bottomBar.find.maximumAnswerHeight = max(80, min(300, view.bounds.height-keyboardHeight-160))
         layoutBottomBar()
+        // Summarise is laid out for the window it started in.
+        if let summarise, summarise.bounds.size != view.bounds.size { summarise.finish() }
         if tabSwitcher.superview === content {
             tabSwitcher.frame = content.bounds
             tabSwitcher.pageSize = content.bounds.size
@@ -213,6 +227,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     /// Light text and icons over a dark strip, dark ones over a light strip.
     override var preferredStatusBarStyle: UIStatusBarStyle {
+        // Over Summarise's light backdrop.
+        if let summarise, !summarise.isOverPage { return .darkContent }
         // Over the dark backdrop around the receded page. Behind More's panel, the page recedes
         // too little to clear the clock.
         if isPanelOpen, bottomBar.panel == .search, !UIAccessibility.isReduceMotionEnabled { return .lightContent }
@@ -263,7 +279,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let url = shareableURL
         bottomBar.menu.address.show(url, canGoBack: webView.canGoBack || !previousPages.isEmpty,
                                canGoForward: webView.canGoForward)
-        for tile in [bottomBar.menu.shareTile, bottomBar.menu.copyTile] { tile.isEnabled = url != nil }
+        for tile in [bottomBar.menu.shareTile, bottomBar.menu.summariseTile, bottomBar.menu.copyTile] { tile.isEnabled = url != nil }
     }
 
     /// Back past the start of an adopted page's history returns to the page it replaced.
@@ -284,11 +300,18 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             let velocity = tabSwipe.velocity(in: view)
             return canShowTabSwitcher && !voice.isRecording && velocity.y < 0 && abs(velocity.y) > abs(velocity.x)
         }
+        if gestureRecognizer === summarisePinch { return (canSummarise || summarise?.canGrab == true) && !isPanelOpen }
         if gestureRecognizer === newPageHold {
             return VoiceInput.isSupported && !isPanelOpen && presentedViewController == nil && !isSwipingToTabs
         }
         return gestureRecognizer !== backSwipe
-            || (!previousPages.isEmpty && !webView.canGoBack && !isPanelOpen && !isTabSwitcherOpen)
+            || (!previousPages.isEmpty && !webView.canGoBack && !isPanelOpen && !isTabSwitcherOpen && summarise == nil)
+    }
+
+    /// Summarise's pinch watches alongside WebKit's zoom, taking over only when pinching in from its smallest.
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        gestureRecognizer === summarisePinch
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
@@ -424,8 +447,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
                 else { $0.bottomBar.search.clearAddress() }
             }),
             (menu.shareTile, { $0.closePanel(); $0.share() }),
-            // Nothing to summarise with yet.
-            (menu.summariseTile, { _ in }),
+            (menu.summariseTile, { $0.summariseFromMenu() }),
             (menu.findTile, { $0.openFind() }),
             (menu.copyTile, { $0.closePanel(); $0.copyLink() }),
         ]
@@ -439,7 +461,11 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let bounds = view.bounds, safeBottom = view.window?.safeAreaInsets.bottom ?? 0
         var height = BottomBar.height(collapsed: bottomBar.isCollapsed, safeBottom: safeBottom)
         if panelExpansion != 0 { height += panelTravel*panelExpansion }
+        // Summarise slides the bar off by its transform, which frames don't account for.
+        let offset = bottomBar.transform
+        bottomBar.transform = .identity
         bottomBar.frame = CGRect(x: 0, y: bounds.maxY-height, width: bounds.width, height: height)
+        bottomBar.transform = offset
         // Pages scroll clear of the open bar. Its collapsed strip leaves the inset alone, so the
         // page never resizes as the bar collapses; it just shows more of itself.
         let needed = BottomBar.height(collapsed: false, safeBottom: safeBottom)-safeBottom
@@ -750,6 +776,122 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         return true
     }
 
+    // MARK: Summarise
+
+    private var canSummarise: Bool {
+        allowsPeek && summarise == nil && !isTabSwitcherOpen && !isSwipingToTabs && presentedViewController == nil
+            && view.window != nil && shareableURL != nil
+    }
+
+    /// The page shrinks into Summarise's card with the fingers as they pinch in from its smallest
+    /// zoom, which WebKit would otherwise follow with a bounce, and carries on into it when let go.
+    @objc private func pinchToSummarise(_ pinch: UIPinchGestureRecognizer) {
+        let scroll = webView.scrollView
+        switch pinch.state {
+        case .began, .changed:
+            if pinch.state == .began {
+                pinchFromSmallest = scroll.zoomScale <= scroll.minimumZoomScale+0.001
+                if pinchFromSmallest { scroll.bouncesZoom = false }
+                pinchStart = pinch.location(in: view)
+            }
+            // Between the fingers, until one lifts.
+            if pinch.numberOfTouches >= 2 { pinchCentroid = pinch.location(in: view) }
+            if let summarise {
+                // Caught as soon as the fingers move, on its way back to the page.
+                if pinch.state == .began, summarise.canGrab {
+                    scroll.bouncesZoom = false
+                    pinchGrabScale = pinch.scale
+                    summarise.grab(at: pinchCentroid)
+                    stopFollowing(scroll)
+                }
+                summarise.updatePinch(scale: pinch.scale/pinchGrabScale, centroid: pinchCentroid)
+            } else if pinchFromSmallest, pinch.scale < 0.99, scroll.zoomScale <= scroll.minimumZoomScale+0.001,
+                      canSummarise, !isPanelOpen {
+                pinchGrabScale = 1
+                startSummarise(.pinch, at: pinchStart)
+                summarise?.updatePinch(scale: pinch.scale, centroid: pinchCentroid)
+                stopFollowing(scroll)
+            }
+        case .ended, .cancelled, .failed:
+            scroll.bouncesZoom = true
+            pinchFromSmallest = false
+            summarise?.endPinch(cancelled: pinch.state != .ended)
+        default: break
+        }
+    }
+
+    /// Summarise has the pinch now: WebKit's own zoom and scrolling, following the same fingers,
+    /// would only move the page underneath and cost it frames. Turning them off and on again ends
+    /// them, leaving them ready for the next touch.
+    private func stopFollowing(_ scroll: UIScrollView) {
+        for gesture in [scroll.pinchGestureRecognizer, scroll.panGestureRecognizer] {
+            guard let gesture, gesture.isEnabled else { continue }
+            gesture.isEnabled = false
+            gesture.isEnabled = true
+        }
+    }
+
+    /// Summarise in More: the panel goes at once and the whole page shrinks into the card.
+    func summariseFromMenu() {
+        guard isPanelOpen, bottomBar.panel == .menu, canSummarise else { return }
+        isPanelOpen = false
+        bottomBar.search.end()
+        bottomBar.find.end()
+        dimming.isUserInteractionEnabled = false
+        bottomBar.accessibilityViewIsModal = false
+        setPanel(0)
+        bottomBar.showContents(of: nil, animated: false)
+        startSummarise(.menu)
+        setNeedsStatusBarAppearanceUpdate()
+    }
+
+    /// Lays Summarise over the page, under the bar, from a picture of the page as it is.
+    func startSummarise(_ path: SummariseView.Path, at point: CGPoint = .zero) {
+        guard canSummarise else { return }
+        let page = webView
+        let title = [page.title, page.url?.host()].compactMap { $0 }.first { !$0.isEmpty } ?? ""
+        let size = view.bounds.size
+        let summarise = SummariseView(page: { [content] in
+            content.snapshotView(afterScreenUpdates: false) ?? UIView(frame: CGRect(origin: .zero, size: size))
+        }, title: title, size: size)
+        summarise.makeSummary = { try await PageSummary.make(of: PageAssistant.snapshot(of: page)) }
+        let log = SummariseLog(path: path == .pinch ? "pinch" : "menu", page: page.url?.host() ?? "no page")
+        summarise.log = log
+        let describePage = { [weak page] in
+            guard let page else { return "page gone" }
+            return String(format: "page %@, zoom %.2f, scrolled %.0f of %.0f pt", page.isLoading ? "loading" : "loaded",
+                          page.scrollView.zoomScale, page.scrollView.contentOffset.y, page.scrollView.contentSize.height)
+        }
+        summarise.describePage = describePage
+        log.event("page", describePage())
+        // The page is where the card shows it, though fingers may move it underneath: two of them
+        // pan it as they pinch, and the page takes touches as the card grows back.
+        let scroll = page.scrollView, zoom = scroll.zoomScale, offset = scroll.contentOffset
+        summarise.onBar = { [weak self] offset in
+            guard let self else { return }
+            bottomBar.transform = offset == 0 ? .identity : CGAffineTransform(translationX: 0, y: offset*(bottomBar.bounds.height+4))
+        }
+        summarise.onStatusBar = { [weak self] in self?.setNeedsStatusBarAppearanceUpdate() }
+        summarise.onFinish = { [weak self, weak summarise, weak scroll] in
+            guard let self, let summarise, self.summarise === summarise else { return }
+            if let scroll, scroll.zoomScale != zoom || scroll.contentOffset != offset {
+                log.event("page moved", String(format: "to %.0f, %.0f at zoom %.2f, back to %.0f, %.0f at zoom %.2f",
+                                               scroll.contentOffset.x, scroll.contentOffset.y, scroll.zoomScale, offset.x, offset.y, zoom))
+                scroll.setZoomScale(zoom, animated: false)
+                scroll.setContentOffset(offset, animated: false)
+            }
+            summarise.removeFromSuperview()
+            self.summarise = nil
+            bottomBar.transform = .identity
+            bottomBar.isUserInteractionEnabled = true
+            setNeedsStatusBarAppearanceUpdate()
+        }
+        view.insertSubview(summarise, belowSubview: bottomBar)
+        bottomBar.isUserInteractionEnabled = false
+        self.summarise = summarise
+        if path == .pinch { summarise.beginPinch(at: point) } else { summarise.startFromMenu() }
+    }
+
     // MARK: Tabs
 
     /// Opens a page chosen in New Page's panel in a new tab after this one.
@@ -930,6 +1072,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             pullToReload.onGapHeld = { [weak self] held in self?.tint.gapHeld = held }
             pageChanged()
             VoiceInput.prepare()
+            DispatchQueue.main.async { SummariseView.prepareGlows() }
         }
         if let startURL { webView.load(URLRequest(url: startURL)) }
     }

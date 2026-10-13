@@ -6,6 +6,16 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let scene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: scene)
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains(SummariseReplay.argument) {
+            let controller = BrowserViewController(startURL: nil)
+            window.rootViewController = controller
+            self.window = window
+            window.makeKeyAndVisible()
+            SummariseReplay.runIfRequested(in: controller)
+            return
+        }
+        #endif
         window.rootViewController = BrowserViewController(opensSearchOnFirstAppearance: true)
         self.window = window
         window.makeKeyAndVisible()

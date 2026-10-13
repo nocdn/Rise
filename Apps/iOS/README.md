@@ -53,9 +53,9 @@ circle on the right, grows the bar the same way into a panel about a third as ta
 behind receding only as far as that growth takes it at the same rate. The bar's buttons
 swap the same way for the page's address, styled like the search field: Back and Forward
 close together, each only if there's a page that way, the host behind a green padlock on HTTPS pages, then Reload. Under it,
-square buttons Share, Summarise, Find (on page) and Copy (the link), labelled in rounded type. Back and Forward keep the
+buttons a little less tall than wide, each just a symbol: Share, Summarise, Find (on page) and Copy (the link). Back and Forward keep the
 panel open (Back also returns to a page a Peek or search replaced); Reload, Share and
-Copy close it. Summarise does nothing yet. Tapping the address grows More into a New Page-sized
+Copy close it; Summarise is below. Tapping the address grows More into a New Page-sized
 editor on the same spring, receding the page further while the tiles blur and fade away. The
 address bar itself stays intact: the full URL slides from the center to the left as the sheet
 grows, the padlock and history buttons fade, and Reload swaps to a clear X with the same blur,
@@ -155,6 +155,44 @@ so the dark surface behind it shows instead of the white WebKit fills an unpaint
 Once painted it's opaque again, so pages without a background of their own still get white, and
 the status bar strip samples its top then. Later navigations keep showing the old page until the
 new one paints, so they don't flash either.
+
+## Summarise
+
+As in Arc Search, pinching in on the page, from its smallest zoom, summarises it. As when pinching
+into Safari's tabs, the page follows the fingers at their scale, the spot pinched staying under
+them wherever they go, giving a little past its limits, while its corners round at once and it
+crops to its top and tips back a little as it shrinks towards the card over a pale backdrop where a
+purple and a pink glow circle each other. Let go smaller than 85%, or while shrinking quickly, it
+flies from wherever it is to the card at the top, carrying on at the speed it was going in scale
+and position, coasting the way the fingers were going before it curves round to its place: a
+gentle pinch glides into place, while a hard one shoots smaller than the card and springs back up
+to it. Let go otherwise, it springs back to the page. Summarise in More takes the
+page into the card the same way on its own. The bottom bar drops away, speeding up, as it goes.
+The card shows the top of the page, with another card peeking out behind, and swings gently from side to side while the shared OpenRouter
+model (`gpt-6-luna`) reads the page, a soft haptic hum running meanwhile, as when holding New
+Page. When the summary arrives, the reveal waits for the swing to pass the middle: the card
+settles, growing a little, the hum ends in one short, strong, dull hit, and the summary's
+paragraph and key points, each beside a blue symbol, fade in from a heavy blur one after another
+as the glows settle. Everything scrolls together over the backdrop. Tapping the card grows it back
+into the page, uncropping as it grows, as the summary fades and sinks back a little and the bar
+springs back. On the way back, or springing back from a short pinch, a pinch catches it at once
+from wherever it is, as in Safari, and let go it takes it back into the card, showing the summary
+it already had again once it lands. Fingers can still move the page underneath, two of them
+panning it as they pinch, or touches reaching it as the card grows back, so its scroll and zoom
+are put back as the card showed them before it takes over again; once Summarise has the pinch,
+WebKit's own zoom and scrolling are ended. The card is a replica of the page from `snapshotView`, quick
+enough not to hold up the pinch's first frames, and the haptic engine starts away from the main
+thread for the same reason. The motion runs at up to 120 Hz
+on ProMotion iPhones (`CADisableMinimumFrameDurationOnPhone`). The timings, springs and sizes were
+measured from a recording of Arc Search frame by frame and tuned in `Playgrounds/summarise.html`;
+`SummariseMotion` holds them, noting where the app has since moved on from the playground.
+
+Each Summarise is logged on the device: its events (the pinch, letting go, the summary arriving,
+the reveal, the close with what the page underneath was doing, the finish) and its frames, every
+one while things move fast and the dropped ones otherwise, with half a second of the page's own
+frames after the card has grown back. The last 40 are kept in the app's caches.
+`python3 scripts/summarise-log.py --device <iPhone> [--last N]` fetches them and reports, for each,
+what happened when, every phase's frame rate, and each dropped frame with what happened near it.
 
 ## Project layout
 
