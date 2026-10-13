@@ -16,6 +16,9 @@
         </dict>
     </dict>
     <key>UILaunchScreen</key><dict/>
+    <!-- Downloads land in Documents/Downloads, shown in Files under On My iPhone › Rise. -->
+    <key>UIFileSharingEnabled</key><true/>
+    <key>LSSupportsOpeningDocumentsInPlace</key><true/>
     <!-- Lets animations run at up to 120 Hz on ProMotion iPhones, rather than 60. -->
     <key>CADisableMinimumFrameDurationOnPhone</key><true/>
     <key>NSMicrophoneUsageDescription</key><string>Hold New Page to say what to search for.</string>

@@ -179,7 +179,7 @@ final class FindPanel: UIView, UITextFieldDelegate {
         instant.disablesAnimations = true
         withTransaction(instant) { modeTitle.asking = next == .ask }
         if animate {
-            UIView.animate(springDuration: 0.25, bounce: 0.12, initialSpringVelocity: 0, delay: 0,
+            UIView.animate(springDuration: 0.3, bounce: 0.25, initialSpringVelocity: 0, delay: 0,
                            options: [.beginFromCurrentState, .allowUserInteraction]) { self.layoutModeAccessory() }
             BlurCrossfade.swap(from: next == .find ? sendButton : nil,
                                to: next == .ask ? sendButton : nil, style: .symbol)

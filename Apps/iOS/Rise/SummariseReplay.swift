@@ -51,6 +51,7 @@ import UIKit
             case "tabsFlick": await swipeToTabs(in: controller, savingTo: folder, fastFlick: true)
             case "tabsNew": await tabsThenNewPage(in: controller)
             case "more": await openMore(in: controller)
+            case "downloads": await downloads(in: controller, savingTo: folder)
             case "tabsPress": await pressTabs(in: controller)
             default: await run(in: controller, savingFramesTo: folder)
             }
@@ -292,6 +293,60 @@ import UIKit
         for _ in 0..<500 where controller.webView.isLoading { try? await Task.sleep(for: .milliseconds(20)) }
         try? await Task.sleep(for: .milliseconds(800))
         controller.openPanel(.menu)
+        return Result()
+    }
+
+    /// Opens More over Hacker News, starts a download, answers its question after a moment, then
+    /// opens Downloads, drawing the screen at each step into the folder.
+    static func downloads(in controller: BrowserViewController, savingTo folder: URL?) async -> Result {
+        let snap = { (name: String) in
+            guard let folder, let scene = controller.view.window?.windowScene else { return }
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let bounds = scene.screen.bounds
+            let image = UIGraphicsImageRenderer(bounds: bounds).image { _ in
+                for window in scene.windows.sorted(by: { $0.windowLevel < $1.windowLevel }) where !window.isHidden {
+                    window.drawHierarchy(in: window.frame, afterScreenUpdates: true)
+                }
+            }
+            try? image.pngData()?.write(to: folder.appendingPathComponent(name+".png"))
+        }
+        controller.webView.load(URLRequest(url: URL(string: "https://news.ycombinator.com/")!))
+        for _ in 0..<500 where controller.webView.isLoading { try? await Task.sleep(for: .milliseconds(20)) }
+        try? await Task.sleep(for: .milliseconds(800))
+        controller.openPanel(.menu)
+        try? await Task.sleep(for: .milliseconds(900))
+        snap("1-menu")
+        controller.openSiteSettings()
+        try? await Task.sleep(for: .milliseconds(900))
+        snap("1b-site-settings")
+        controller.closeSiteSettings()
+        try? await Task.sleep(for: .milliseconds(700))
+        let downloads = MobileDownloads.shared, ask = downloads.confirm
+        downloads.confirm = { name, host, bytes, answer in
+            ask?(name, host, bytes) { _ in }
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(1200))
+                snap("2-confirm")
+                controller.presentedViewController?.dismiss(animated: false)
+                downloads.confirm = ask
+                answer(true)
+            }
+        }
+        controller.webView.load(URLRequest(url: URL(string: "https://proof.ovh.net/files/10Mb.dat")!))
+        for _ in 0..<300 where downloads.items.first?.state != .downloading { try? await Task.sleep(for: .milliseconds(20)) }
+        controller.openDownloads()
+        try? await Task.sleep(for: .milliseconds(900))
+        snap("3-downloads")
+        for _ in 0..<1500 where downloads.items.first?.state == .downloading { try? await Task.sleep(for: .milliseconds(20)) }
+        try? await Task.sleep(for: .milliseconds(1500))
+        snap("4-finished")
+        controller.bottomBar.downloads.setSelecting(true)
+        try? await Task.sleep(for: .milliseconds(700))
+        snap("5-selecting")
+        controller.bottomBar.downloads.toggleAll()
+        try? await Task.sleep(for: .milliseconds(700))
+        snap("6-selected")
+        print("Rise iOS downloads: \(downloads.items.map { "\($0.name) \($0.state) \($0.totalBytes)" })")
         return Result()
     }
 

@@ -1,0 +1,28 @@
+Rise iPhone ad blocking
+
+AdGuard Base (includes EasyList), Mobile Ads and Quick Fixes snapshots, 13 October 2026.
+Copyright AdGuard Software Ltd. and filter contributors. GPL-3.0.
+https://github.com/AdguardTeam/AdguardFilters
+https://github.com/AdguardTeam/FiltersRegistry
+https://easylist.to/
+
+AdGuard Scriptlets 2.5.1 and Extended CSS 2.2.1.
+Copyright AdGuard Software Ltd. GPL-3.0.
+https://github.com/AdguardTeam/Scriptlets
+https://github.com/AdguardTeam/ExtendedCss
+
+tldts 7.0.19, copyright Rémi Berson and contributors. MIT.
+https://github.com/remusao/tldts
+See Blocking-tldts-LICENSE.txt.
+
+Build-time tools: AdGuard SafariConverterLib 4.3.0 and AGTree 4.2.1 (GPL-3.0),
+Terser 5.39.0 (BSD-2-Clause). These tools are not linked into the application.
+
+See Blocking-LICENSE.txt for GPL-3.0. Corresponding source snapshots,
+generation scripts, exact dependency versions and checksums are in Rise's
+Filters/iOS and scripts/ios-adblock directories:
+https://github.com/nocdn/Rise
+
+The generated JavaScript is modified to select fixes by site, honor exceptions,
+and exclude YouTube. The native lists append mandatory YouTube exceptions.
+Filters are bundled at build time; the app never downloads executable filter code.

@@ -7,7 +7,7 @@ import UIKit
 /// page's address and a few actions, whose Find turns it into a find field above the keyboard.
 /// Either way the bar's contents swap with a quick, blurred crossfade.
 final class BottomBar: UIView {
-    enum Panel { case search, menu, find, siteSettings }
+    enum Panel { case search, menu, find, siteSettings, downloads }
 
     /// The buttons' row, and the space above it.
     static let rowHeight: CGFloat = 42
@@ -41,6 +41,8 @@ final class BottomBar: UIView {
     let find = FindPanel()
     /// Site protections, currently a visual preview.
     let siteSettings = SiteSettingsPanel()
+    /// More's Downloads: the list of downloads.
+    let downloads = DownloadsPanel()
     /// Which panel the bar grows into.
     var panel = Panel.search
     /// The search's, and the address's, distance from the panel's top.
@@ -58,7 +60,7 @@ final class BottomBar: UIView {
     private var copySuccessTask: Task<Void, Never>?
     /// Whichever of the row, the search and the menu is showing, if any.
     private(set) var shown: UIView?
-    private var contents: [UIView] { [home, search, menu, find, siteSettings] }
+    private var contents: [UIView] { [home, search, menu, find, siteSettings, downloads] }
     /// Collapsed, only the strip remains; set it inside an animation to animate.
     var isCollapsed = false {
         didSet {
@@ -87,7 +89,7 @@ final class BottomBar: UIView {
         searchTop+SearchPanel.fieldHeight+answer+(keyboard > 0 ? keyboard+12 : max(safeBottom, 16))
     }
 
-    /// More's panel's height: the address, icon tiles and Site settings above the safe area.
+    /// More's panel's height: the address, icon tiles, Settings and Downloads above the safe area.
     static func menuHeight(width: CGFloat, safeBottom: CGFloat) -> CGFloat {
         searchTop+MenuPanel.height(width: width)+max(safeBottom, 16)
     }
@@ -95,6 +97,12 @@ final class BottomBar: UIView {
     static func siteSettingsHeight(width: CGFloat, safeBottom: CGFloat) -> CGFloat {
         max(menuHeight(width: width, safeBottom: safeBottom)+48,
             searchTop+SiteSettingsPanel.height+max(safeBottom, 16))
+    }
+
+    /// As Site settings, growing for a longer list.
+    static func downloadsHeight(width: CGFloat, safeBottom: CGFloat, rows: Int) -> CGFloat {
+        max(menuHeight(width: width, safeBottom: safeBottom)+48,
+            searchTop+DownloadsPanel.height(rows: rows)+max(safeBottom, 16))
     }
 
     override init(frame: CGRect) {
@@ -140,10 +148,11 @@ final class BottomBar: UIView {
         }
 
         for button in [tabsButton, newPageButton, moreButton] { row.addSubview(button) }
-        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton]+menu.buttons+siteSettings.buttons+find.buttons+[find.modeButton, find.sendButton] {
+        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton]+menu.buttons+siteSettings.buttons+downloads.buttons+find.buttons+[find.modeButton, find.sendButton] {
             // A light, crisp tap as the finger lands, rather than a soft thud; actions wait for it to lift.
             button.addAction(UIAction { [weak self] _ in self?.tap.impactOccurred(intensity: 0.5) }, for: .touchDown)
         }
+        downloads.onTouchDown = { [weak self] in self?.tap.impactOccurred(intensity: 0.5) }
         tap.prepare()
     }
 
@@ -173,6 +182,7 @@ final class BottomBar: UIView {
         case .menu: menu
         case .find: find
         case .siteSettings: siteSettings
+        case .downloads: downloads
         case nil: home
         }
         show(view, animated: animated)
@@ -274,15 +284,16 @@ final class BottomBar: UIView {
         place(menu, Self.searchTop, MenuPanel.height(width: bounds.width))
         place(find, Self.searchTop, SearchPanel.fieldHeight+find.answerHeight)
         place(siteSettings, Self.searchTop, SiteSettingsPanel.height)
+        place(downloads, Self.searchTop, DownloadsPanel.height(rows: downloads.rowCount))
     }
 }
 
 extension UIControl {
     /// Darkens at once under the finger, and fades back as it lifts, without scaling.
-    func darkensWhenPressed(restingFill: UIColor = SearchPanel.fill) {
+    func darkensWhenPressed(restingFill: UIColor = SearchPanel.fill, pressedFill: UIColor = SearchPanel.pressedFill) {
         backgroundColor = restingFill
         addAction(UIAction { [weak self] _ in
-            self?.backgroundColor = SearchPanel.pressedFill
+            self?.backgroundColor = pressedFill
         }, for: [.touchDown, .touchDragEnter])
         addAction(UIAction { [weak self] _ in
             guard let self else { return }
@@ -295,8 +306,9 @@ extension UIControl {
     /// Shrinks the control a little under the finger, and springs it back as it lifts. Lay it
     /// out by bounds and center, as frames ignore the scale. `filled` controls take the search
     /// field's fill by default, a little darker while pressed, as native buttons do.
-    func shrinksWhenPressed(to scale: CGFloat, filled: Bool = false, restingFill: UIColor = SearchPanel.fill) {
-        if filled { darkensWhenPressed(restingFill: restingFill) }
+    func shrinksWhenPressed(to scale: CGFloat, filled: Bool = false, restingFill: UIColor = SearchPanel.fill,
+                            pressedFill: UIColor = SearchPanel.pressedFill) {
+        if filled { darkensWhenPressed(restingFill: restingFill, pressedFill: pressedFill) }
         let press = { [weak self] (pressed: Bool) in
             guard let self else { return }
             guard !UIAccessibility.isReduceMotionEnabled else { return }

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24">
+  <!-- Tabler Icons by Paweł Kuna, MIT: https://github.com/tabler/tabler-icons/blob/master/LICENSE -->
+  <!-- 1.542857 SVG units at 28/24 scale gives the menu's 1.8-point stroke. -->
+  <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.542857" d="M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zm0 2h16m0 4H4m0 4h16M9 4v4m5 0v4m-6 0v4m8-4v4m-5 0v4"/>
+</svg>

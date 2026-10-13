@@ -47,6 +47,11 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private var scrollObservation: NSKeyValueObservation?
     /// Keeps More's address and its Back and Forward up to date with the page.
     private var addressObservations: [NSKeyValueObservation] = []
+    let adBlocker: MobileAdBlocker
+    weak var adBlockingPage: WKWebView?
+    var adBlockingNavigation: WKNavigation?
+    var adBlockingTask: Task<Void, Never>?
+    var adBlockingID: UUID?
     /// How far the page has scrolled in its current direction, to collapse or open the bar.
     private var scrollTravel: CGFloat = 0, lastScrollOffset: CGFloat = 0
     /// The panel New Page grows the bar into, as a share of the window's height.
@@ -79,7 +84,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private lazy var collapsedBarTap = UITapGestureRecognizer(target: self, action: #selector(openCollapsedBar))
 
     init(startURL: URL? = BrowserViewController.homeURL, allowsPeek: Bool = true,
-         opensSearchOnFirstAppearance: Bool = false) {
+         opensSearchOnFirstAppearance: Bool = false, adBlocker: MobileAdBlocker = .shared) {
+        self.adBlocker = adBlocker
         self.startURL = startURL
         self.allowsPeek = allowsPeek
         self.opensSearchOnFirstAppearance = opensSearchOnFirstAppearance
@@ -284,6 +290,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     /// Back in More's panel also returns past the start of the page's history to the page it replaced.
     private func updateAddress() {
+        updateAdBlockingSettings()
         let url = shareableURL
         bottomBar.menu.address.show(url, canGoBack: webView.canGoBack || !previousPages.isEmpty,
                                canGoForward: webView.canGoForward)
@@ -332,6 +339,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             if bottomBar.panel == .search, touched.isDescendant(of: bottomBar.search.field) { return false }
             if bottomBar.panel == .siteSettings,
                bottomBar.siteSettings.switches.contains(where: { touched.isDescendant(of: $0) }) { return false }
+            // A list long enough to scroll keeps its own drags.
+            if bottomBar.panel == .downloads, bottomBar.downloads.isScrollable,
+               touched.isDescendant(of: bottomBar.downloads.list) { return false }
         }
         return true
     }
@@ -468,10 +478,14 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             (menu.copyTile, { $0.copyLink() }),
             (menu.siteSettingsButton, { $0.openSiteSettings() }),
             (bottomBar.siteSettings.closeButton, { $0.closeSiteSettings() }),
+            (menu.downloadsButton, { $0.openDownloads() }),
+            (bottomBar.downloads.closeButton, { $0.closeDownloads() }),
         ]
         for (control, action) in actions {
             control.addAction(UIAction { [weak self] _ in if let self { action(self) } }, for: .primaryActionTriggered)
         }
+        bottomBar.siteSettings.onAdBlockingChanged = { [weak self] enabled in self?.changeAdBlocking(enabled) }
+        if allowsPeek { setUpDownloads() }
     }
 
     private func layoutBottomBar() {
@@ -531,6 +545,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         case .menu: BottomBar.menuHeight(width: view.bounds.width, safeBottom: safeBottom)
         case .find: BottomBar.findHeight(keyboard: keyboardHeight, safeBottom: safeBottom, answer: bottomBar.find.answerHeight)
         case .siteSettings: BottomBar.siteSettingsHeight(width: view.bounds.width, safeBottom: safeBottom)
+        case .downloads: BottomBar.downloadsHeight(width: view.bounds.width, safeBottom: safeBottom,
+                                                   rows: bottomBar.downloads.rowCount)
         }
         return max(1, height-open)
     }
@@ -628,6 +644,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// More fades away with its usual blurred swap as the settings surface grows a little.
     func openSiteSettings() {
         guard isPanelOpen, bottomBar.panel == .menu else { return }
+        updateAdBlockingSettings()
         swapMenuPanel(to: .siteSettings)
     }
 
@@ -635,6 +652,27 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     func closeSiteSettings() {
         guard isPanelOpen, bottomBar.panel == .siteSettings else { return }
         swapMenuPanel(to: .menu)
+    }
+
+    /// Downloads opens as Site settings does, showing what's under way and what's done.
+    func openDownloads() {
+        guard isPanelOpen, bottomBar.panel == .menu else { return }
+        bottomBar.downloads.reload(MobileDownloads.shared.items)
+        bottomBar.downloads.setSelecting(false, animated: false)
+        swapMenuPanel(to: .downloads)
+    }
+
+    func closeDownloads() {
+        guard isPanelOpen, bottomBar.panel == .downloads else { return }
+        swapMenuPanel(to: .menu)
+    }
+
+    /// Downloads came or went: the list follows, and the open panel grows or shrinks to fit it.
+    func downloadsChanged() {
+        let rows = bottomBar.downloads.rowCount
+        bottomBar.downloads.reload(MobileDownloads.shared.items)
+        guard isPanelOpen, bottomBar.panel == .downloads, bottomBar.downloads.rowCount != rows else { return }
+        swapMenuPanel(to: .downloads)
     }
 
     private func swapMenuPanel(to panel: BottomBar.Panel) {
@@ -1203,6 +1241,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        finishAdBlockingReload(on: webView, navigation: navigation)
         PagePaintWatcher.shared.didFinish(webView)
         tabs.first { $0.webView === webView }?.loadFavicon()
         guard webView === self.webView else { return }

@@ -9,6 +9,9 @@ import UIKit
     static let blockAds = UIImage(named: "MenuBlockAds")
     static let blockTrackers = UIImage(named: "MenuBlockTrackers")
     static let blockCookieBanners = UIImage(named: "MenuBlockCookieBanners")
+    static let bypassPaywall = UIImage(named: "MenuBypassPaywall")
+    /// The arrow from Tabler's cloud download, enlarged slightly and centred.
+    static let downloads = UIImage(named: "MenuDownloads")
 
     static let summarise: UIImage = {
         let path = UIBezierPath()

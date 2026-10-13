@@ -12,7 +12,6 @@ final class HistoryChevronButton: UIButton {
     private let direction: Direction
     private let glyph = UIImageView(image: UIImage(systemName: "chevron.left", withConfiguration:
         UIImage.SymbolConfiguration(pointSize: 14.5, weight: .semibold)))
-    private var turn: UIViewPropertyAnimator?
 
     init(_ direction: Direction) {
         self.direction = direction
@@ -35,25 +34,33 @@ final class HistoryChevronButton: UIButton {
         glyph.center = CGPoint(x: bounds.midX, y: bounds.midY)
     }
 
+    /// Turns by angle rather than by matrix, so a turn to Forward goes clockwise and a turn back
+    /// to Back the other way; a half turn interpolated as a transform always goes the same way.
     func turn(from previous: HistoryChevronButton) {
-        let pose = previous.glyph.layer.presentation()?.affineTransform() ?? previous.glyph.transform
+        let start = previous.angle
         previous.resetDirection()
         resetDirection()
         guard window != nil, !UIAccessibility.isReduceMotionEnabled else { return }
-        glyph.transform = pose
-        let spring = UISpringTimingParameters(dampingRatio: 0.76)
-        let animator = UIViewPropertyAnimator(duration: 0.32, timingParameters: spring)
-        animator.addAnimations { [weak self] in
-            guard let self else { return }
-            self.glyph.transform = CGAffineTransform(rotationAngle: self.direction.angle)
-        }
-        turn = animator
-        animator.startAnimation()
+        let spring = CASpringAnimation(perceptualDuration: 0.32, bounce: 0.24)
+        spring.keyPath = "transform.rotation.z"
+        spring.fromValue = start
+        spring.toValue = direction.angle
+        spring.duration = spring.settlingDuration
+        glyph.layer.add(spring, forKey: Self.turnKey)
     }
 
     func resetDirection() {
-        if let turn, turn.state == .active { turn.stopAnimation(true) }
-        turn = nil
+        glyph.layer.removeAnimation(forKey: Self.turnKey)
         glyph.transform = CGAffineTransform(rotationAngle: direction.angle)
+    }
+
+    private static let turnKey = "turn"
+
+    /// The glyph's angle on screen, from Back's 0 to Forward's half turn. Overshooting a half turn
+    /// reads as just past minus a half turn, so it's brought back round.
+    private var angle: CGFloat {
+        let layer = glyph.layer.presentation() ?? glyph.layer
+        let angle = (layer.value(forKeyPath: "transform.rotation.z") as? CGFloat) ?? direction.angle
+        return angle < -.pi/2 ? angle+2*CGFloat.pi : angle
     }
 }
