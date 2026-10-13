@@ -328,7 +328,10 @@ The swipe up the bottom bar (from anywhere on it, even New Page) uses the same m
   `0.5·e^(−(progress − 1))`.
 - **Shape:** as with the pinch, by `k = clamp((1 − s)/(1 − cardScale))^1.3`:
   - Crop: the height goes to the card's 1.42 aspect, and the strip is cropped off.
-  - Corners: they round to 28.8 within the first 5%, then ease to the card's 18.
+  - Corners: the screen's own (`_displayCornerRadius`, 28.8 if it can't be read) from the very
+    start, all four, easing by `k` to the card's 18. He didn't want the page square at first and
+    rounding only a little way in. The Tabs press starts from them too, and growing back ends on
+    them, so the real page takes over unseen behind the screen's corners.
 - **Place:**
   - The bottom edge follows the finger.
   - Horizontally, the spot across from where the finger started stays under it:
@@ -427,6 +430,13 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
   - After the fixes, an Animation Hitches trace of all six rounds shows no Tabs+New Page or New
     Page frame later than 8 ms. Tabs alone still has a late first frame (about 30 ms of work
     before its first commit, from rest), with a steady 120 Hz after it.
+- **Core Animation keyframes play at 60 Hz unless asked.** Measured with the `tabsPress` replay
+  (nothing else asking for frames): the switcher's flights ran at 60 Hz except while the grid's
+  UIKit crossfade ran alongside. With `preferredFrameRateRange` 80–120 on each keyframe animation
+  they ran at 120 Hz for the first 0.35–0.45 s, then iOS still dropped to 60 for the slow end of
+  the flight (0.75 s into the card, 0.52 s back). A display link that does nothing, asking for
+  120 Hz, held from the flight's start to its landing, keeps every frame at 120 Hz. The replays
+  that record frames with a display link hide this, as their own link holds the screen at 120.
 - **Opening the panel's keyboard** still costs the main thread about 160 ms, and closing it
   (`resignFirstResponder`) about 47 ms. Only what runs on Core Animation stays smooth through
   that.
@@ -485,6 +495,8 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
     end.
   - `more`: opens More over Hacker News and leaves it open, to look at the receded page's corners
     (concentric with the screen's: its corner radius, read from UIKit, less the page's inset).
+  - `tabsPress`: presses Tabs and taps the card back three times on Hacker News with nothing else
+    asking for frames, for an Animation Hitches trace of the rate the flights really run at.
   - `tabsNew`: on a real page, six rounds of Tabs and then New Page 100 ms later, New Page alone
     and Tabs alone, printing each press's main-thread cost and every frame the main thread
     dropped. Its drops show the main thread, not the screen: check what showed with an Animation

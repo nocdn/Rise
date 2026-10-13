@@ -39,7 +39,7 @@ enum PageRecede {
     }
 
     /// The screen's own corner radius, which UIKit knows but doesn't make public.
-    @MainActor private static func screenCornerRadius(of view: UIView) -> CGFloat {
+    @MainActor static func screenCornerRadius(of view: UIView) -> CGFloat {
         let screen = view.window?.windowScene?.screen ?? UIScreen.main
         let key = "_displayCornerRadius"
         // Asking for a key it doesn't have would crash.

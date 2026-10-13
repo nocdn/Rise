@@ -240,7 +240,8 @@ final class TabSwitcherView: UIView {
     /// The grid's own fade and growth.
     static let spring = (duration: 0.3, bounce: 0.14)
     static let returnSpring = (duration: 0.28, bounce: 0.0)
-    /// The page's corners as it starts to shrink, which ease down to the card's.
+    /// The page's corners as it starts to shrink, which ease down to the card's, if the screen's
+    /// can't be read.
     static let swipeRadius = 28.8
     /// How far into its shrinking, as a share of the way to its card, the titles start to come in.
     static let captionFrom = 0.35
@@ -305,6 +306,9 @@ final class TabSwitcherView: UIView {
     private var flight: Flight?
     /// Counts flights, so one that's been interrupted doesn't finish.
     private var flights = 0
+    /// Holds the screen at 120 Hz while the page flies: Core Animation otherwise drops to 60 for
+    /// the slow end of a flight, and for all of one without other animations alongside.
+    private var rateHold: CADisplayLink?
     /// Called as each flight starts, on Core Animation, when the main thread can be busy for a
     /// moment without it showing.
     var onFlight: () -> Void = {}
@@ -425,7 +429,7 @@ final class TabSwitcherView: UIView {
         card.replica = replica
         card.crop = 0
         card.frame = bounds
-        card.layer.cornerRadius = 0
+        card.layer.cornerRadius = pageRadius
         card.layoutIfNeeded()
         caught = nil
         swipeProgress = 0
@@ -476,7 +480,7 @@ final class TabSwitcherView: UIView {
         let k = pow(min(1, max(0, (1-s)/(1-target.scale))), SummariseMotion.pinchEasing)
         var shape = Shape(x: anchorX+Double(translation.x)-(anchorX-width/2)*s, y: 0, scale: s,
                           height: height+(target.height-height)*k, crop: k,
-                          radius: (Self.swipeRadius+(Double(Self.cornerRadius)-Self.swipeRadius)*k)*min(1, k/SummariseMotion.pinchRounding))
+                          radius: pageRadius+(Double(Self.cornerRadius)-pageRadius)*k)
         shape.y = height-max(0, Double(rise))-shape.height*s/2
         if let caught {
             let held = max(0, 1-hypot(translation.x, translation.y)/Self.catchTravel)
@@ -639,7 +643,14 @@ final class TabSwitcherView: UIView {
     // MARK: The page's flight
 
     private var pageShape: Shape {
-        Shape(x: Double(bounds.midX), y: Double(bounds.midY), scale: 1, height: Double(bounds.height), crop: 0, radius: 0)
+        Shape(x: Double(bounds.midX), y: Double(bounds.midY), scale: 1, height: Double(bounds.height), crop: 0, radius: pageRadius)
+    }
+
+    /// The page's corners at full size: the screen's, so they're round from the moment it starts
+    /// to shrink, rather than square at first, and ease from there to the card's.
+    private var pageRadius: Double {
+        let screen = Double(PageRecede.screenCornerRadius(of: self))
+        return screen > 0 ? screen : Self.swipeRadius
     }
 
     /// A tab's card, settled.
@@ -716,11 +727,13 @@ final class TabSwitcherView: UIView {
         CATransaction.setCompletionBlock { [weak self] in
             guard let self, flights == id, self.flight != nil else { return }
             self.flight = nil
+            holdRate(false)
             done()
         }
         apply(target, to: card)
         animate(card, along: path, duration: Double(path.count-1)*step, from: now)
         CATransaction.commit()
+        holdRate(true)
         onFlight()
     }
 
@@ -732,6 +745,8 @@ final class TabSwitcherView: UIView {
             animation.calculationMode = .linear
             animation.beginTime = layer.convertTime(start, from: nil)
             animation.fillMode = .backwards
+            // Left to choose, iOS plays explicit animations at 60 Hz.
+            animation.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
             layer.add(animation, forKey: Self.flightKey+keyPath)
         }
         let width = bounds.width
@@ -773,7 +788,19 @@ final class TabSwitcherView: UIView {
     }
 
     /// Leaves the page where it shows in its flight, and drops the flight.
+    private func holdRate(_ holding: Bool) {
+        guard holding != (rateHold != nil) else { return }
+        rateHold?.invalidate()
+        rateHold = nil
+        guard holding else { return }
+        let link = CADisplayLink(target: FrameTicker {}, selector: #selector(FrameTicker.tick))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
+        link.add(to: .main, forMode: .common)
+        rateHold = link
+    }
+
     private func stopFlight() {
+        holdRate(false)
         guard let flight else { return }
         let shown = flight.at(CACurrentMediaTime()-flight.t0)
         self.flight = nil

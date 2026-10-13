@@ -112,12 +112,13 @@ Page and More, and Tabs becomes a rounded square filled like them that shows how
 are. Tapping a card grows it back into the page; its close button closes the tab (the last one
 stays). A swipe up anywhere on the bottom bar, even starting on New Page, shrinks the page with
 the finger, as Summarise's pinch does: its bottom edge follows the finger and the spot across
-from where it started stays under it, the corners rounding and the page cropping towards its card
+from where it started stays under it, its corners the screen's own from the start and easing to
+the card's, the page cropping towards its card
 as it goes, its title riding under it and fading in, with the others', over the last part of the
 way. Let go past a quarter of the way or flicked, it flies on at the speed it was going
 and curves round into its card on Summarise's springs, a hard flick shrinking past the card's
 size first; a short one springs back. Each flight is worked out as it starts and played by Core
-Animation at up to 120 Hz, so it carries on smoothly while the app is busy, as when New Page is
+Animation, held at 120 Hz from takeoff to landing, so it carries on smoothly while the app is busy, as when New Page is
 pressed straight after Tabs and brings the keyboard up; the page flies as a quick copy of the
 screen, and its card's picture is drawn once it's on its way. Every move
 turns around from wherever it has got to, carrying on from its speed, so Tabs can be pressed as

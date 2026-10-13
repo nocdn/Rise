@@ -41,6 +41,7 @@ import UIKit
             case "tabs": await swipeToTabs(in: controller, savingTo: folder)
             case "tabsNew": await tabsThenNewPage(in: controller)
             case "more": await openMore(in: controller)
+            case "tabsPress": await pressTabs(in: controller)
             default: await run(in: controller, savingFramesTo: folder)
             }
             let report = "revealed \(result.revealed), bar \(result.barWhileLoading), summary \(result.summaryHeight), finished \(result.finished), page moved \(result.pageMoved)"
@@ -211,6 +212,21 @@ import UIKit
 
     /// Presses Tabs, then New Page 100 ms later, as quickly as a person might, on a real page,
     /// printing every frame's gap for a second and what each press cost, for the console.
+    /// Presses Tabs and taps the card back a few times, with nothing else asking for frames, to see
+    /// in an Animation Hitches trace the rate the flights run at on their own.
+    static func pressTabs(in controller: BrowserViewController) async -> Result {
+        controller.webView.load(URLRequest(url: URL(string: "https://news.ycombinator.com/")!))
+        for _ in 0..<500 where controller.webView.isLoading { try? await Task.sleep(for: .milliseconds(20)) }
+        try? await Task.sleep(for: .milliseconds(1500))
+        for _ in 0..<3 {
+            controller.bottomBar.tabsButton.sendActions(for: .primaryActionTriggered)
+            try? await Task.sleep(for: .milliseconds(1500))
+            controller.selectTab(controller.tabIndex)
+            try? await Task.sleep(for: .milliseconds(1500))
+        }
+        return Result()
+    }
+
     /// Opens More over a page with a coloured top and leaves it open, to see the receded page's corners.
     static func openMore(in controller: BrowserViewController) async -> Result {
         controller.webView.load(URLRequest(url: URL(string: "https://news.ycombinator.com/")!))
