@@ -94,8 +94,13 @@ class RiseApp : public CefApp, public CefBrowserProcessHandler {
 - (void)updateLoading:(BOOL)loading back:(BOOL)back forward:(BOOL)forward;
 - (void)updateHoveredURL:(nullable NSURL *)url;
 - (BOOL)openURL:(NSURL *)url disposition:(RCOpenDisposition)disposition userGesture:(BOOL)gesture;
-- (BOOL)canOpenInPeek;
-- (void)openLinkInPeek:(NSURL *)url;
+- (BOOL)showContextMenu:(RCContextMenu *)menu;
+- (BOOL)runDialog:(RCDialogKind)kind message:(NSString *)message defaultText:(NSString *)text origin:(nullable NSURL *)origin
+       completion:(void (^)(BOOL accepted, NSString *_Nullable text))completion;
+- (void)cancelDialog;
+- (BOOL)chooseFiles:(RCFileChooserMode)mode title:(NSString *)title defaultPath:(NSString *)path
+         extensions:(NSArray<NSString *> *)extensions completion:(void (^)(NSArray<NSURL *> *_Nullable urls))completion;
+- (void)inspectWithMenu:(RCContextMenu *)menu;
 - (void)devToolsMessage:(NSData *)json;
 - (nullable NSString *)destinationForDownload:(CefRefPtr<CefDownloadItem>)item suggestedName:(NSString *)name;
 - (void)updateDownload:(CefRefPtr<CefDownloadItem>)item callback:(CefRefPtr<CefDownloadItemCallback>)callback;
@@ -160,6 +165,99 @@ class RiseApp : public CefApp, public CefBrowserProcessHandler {
 @end
 
 namespace {
+NSString *StringFrom(const CefString &value) {
+  return [NSString stringWithUTF8String:value.ToString().c_str()] ?: @"";
+}
+}  // namespace
+
+@interface RCContextMenu ()
+- (instancetype)initWithBrowser:(CefRefPtr<CefBrowser>)browser
+                          frame:(CefRefPtr<CefFrame>)frame
+                         params:(CefRefPtr<CefContextMenuParams>)params
+                           view:(RCBrowserView *)view;
+- (void)inspectNow;
+@end
+
+@implementation RCContextMenu {
+  CefRefPtr<CefBrowser> _browser;
+  CefRefPtr<CefFrame> _frame;
+  __weak RCBrowserView *_view;
+  int _x, _y;
+}
+- (instancetype)initWithBrowser:(CefRefPtr<CefBrowser>)browser
+                          frame:(CefRefPtr<CefFrame>)frame
+                         params:(CefRefPtr<CefContextMenuParams>)params
+                           view:(RCBrowserView *)view {
+  self = [super init];
+  if (self) {
+    _browser = browser; _frame = frame; _view = view;
+    _x = params->GetXCoord(); _y = params->GetYCoord();
+    _point = NSMakePoint(_x, _y);
+    NSString *link = StringFrom(params->GetLinkUrl()), *source = StringFrom(params->GetSourceUrl());
+    _linkURL = link.length ? [NSURL URLWithString:link] : nil;
+    _sourceURL = source.length ? [NSURL URLWithString:source] : nil;
+    switch (params->GetMediaType()) {
+      case CM_MEDIATYPE_IMAGE: _mediaKind = RCMediaKindImage; break;
+      case CM_MEDIATYPE_VIDEO: _mediaKind = RCMediaKindVideo; break;
+      case CM_MEDIATYPE_AUDIO: _mediaKind = RCMediaKindAudio; break;
+      default: _mediaKind = RCMediaKindNone;
+    }
+    _hasImageContents = params->HasImageContents();
+    _selectionText = StringFrom(params->GetSelectionText());
+    _editable = params->IsEditable();
+    int flags = params->GetEditStateFlags();
+    RCEditFlags edit = 0;
+    if (flags & CM_EDITFLAG_CAN_UNDO) edit |= RCEditFlagsCanUndo;
+    if (flags & CM_EDITFLAG_CAN_REDO) edit |= RCEditFlagsCanRedo;
+    if (flags & CM_EDITFLAG_CAN_CUT) edit |= RCEditFlagsCanCut;
+    if (flags & CM_EDITFLAG_CAN_COPY) edit |= RCEditFlagsCanCopy;
+    if (flags & CM_EDITFLAG_CAN_PASTE) edit |= RCEditFlagsCanPaste;
+    if (flags & CM_EDITFLAG_CAN_DELETE) edit |= RCEditFlagsCanDelete;
+    if (flags & CM_EDITFLAG_CAN_SELECT_ALL) edit |= RCEditFlagsCanSelectAll;
+    _editFlags = edit;
+    _misspelledWord = StringFrom(params->GetMisspelledWord());
+    std::vector<CefString> suggestions;
+    params->GetDictionarySuggestions(suggestions);
+    NSMutableArray *words = [NSMutableArray array];
+    for (const CefString &word : suggestions) [words addObject:StringFrom(word)];
+    _suggestions = words;
+  }
+  return self;
+}
+- (void)perform:(RCEditCommand)command {
+  if (!_frame) return;
+  switch (command) {
+    case RCEditCommandUndo: _frame->Undo(); break;
+    case RCEditCommandRedo: _frame->Redo(); break;
+    case RCEditCommandCut: _frame->Cut(); break;
+    case RCEditCommandCopy: _frame->Copy(); break;
+    case RCEditCommandPaste: _frame->Paste(); break;
+    case RCEditCommandPasteAndMatchStyle: _frame->PasteAndMatchStyle(); break;
+    case RCEditCommandDelete: _frame->Delete(); break;
+    case RCEditCommandSelectAll: _frame->SelectAll(); break;
+  }
+}
+- (void)replaceMisspellingWith:(NSString *)word {
+  if (_browser) _browser->GetHost()->ReplaceMisspelling(word.UTF8String);
+}
+- (void)learnMisspelledWord {
+  if (_browser && _misspelledWord.length) _browser->GetHost()->AddWordToDictionary(_misspelledWord.UTF8String);
+}
+- (void)copyImage {
+  if (_browser) _browser->GetHost()->CopyImageAt(_frame, _x, _y);
+}
+- (void)lookUp {
+  if (_browser) _browser->GetHost()->LookUpSelection(_frame);
+}
+- (void)inspect {
+  [_view inspectWithMenu:self];
+}
+- (void)inspectNow {
+  if (_browser) _browser->GetHost()->InspectElementAt(_frame, _x, _y);
+}
+@end
+
+namespace {
 
 NSURL *URLFromString(const CefString &value) {
   NSString *text = [NSString stringWithUTF8String:value.ToString().c_str()];
@@ -175,8 +273,6 @@ bool Disposition(cef_window_open_disposition_t disposition, RCOpenDisposition *r
     default: return false;
   }
 }
-
-constexpr int kOpenInPeekCommand = MENU_ID_USER_FIRST + 1;
 
 // Addresses pages open themselves; any other scheme belongs to another app.
 bool IsWebScheme(NSString *scheme) {
@@ -236,6 +332,8 @@ class RiseClient : public CefClient,
                    public CefLifeSpanHandler,
                    public CefRequestHandler,
                    public CefContextMenuHandler,
+                   public CefJSDialogHandler,
+                   public CefDialogHandler,
                    public CefDownloadHandler,
                    public CefPermissionHandler {
  public:
@@ -245,6 +343,8 @@ class RiseClient : public CefClient,
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
   CefRefPtr<CefContextMenuHandler> GetContextMenuHandler() override { return this; }
+  CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override { return this; }
+  CefRefPtr<CefDialogHandler> GetDialogHandler() override { return this; }
   CefRefPtr<CefDownloadHandler> GetDownloadHandler() override { return this; }
   CefRefPtr<CefPermissionHandler> GetPermissionHandler() override { return this; }
 
@@ -355,17 +455,58 @@ class RiseClient : public CefClient,
     NSURL *url = URLFromString(target_url);
     return url && Disposition(target_disposition, &disposition) && [view_ openURL:url disposition:disposition userGesture:user_gesture];
   }
-  void OnBeforeContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefRefPtr<CefContextMenuParams> params,
-                           CefRefPtr<CefMenuModel> model) override {
-    if (params->GetLinkUrl().empty() || ![view_ canOpenInPeek]) return;
-    model->InsertItemAt(0, kOpenInPeekCommand, "Open Link in Peek");
-    model->InsertSeparatorAt(1);
-  }
-  bool OnContextMenuCommand(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, CefRefPtr<CefContextMenuParams> params,
-                            int command_id, cef_event_flags_t) override {
-    if (command_id != kOpenInPeekCommand) return false;
-    if (NSURL *url = URLFromString(params->GetLinkUrl())) [view_ openLinkInPeek:url];
+  // Rise's own menu, as WebKit's pages have, rather than CEF's short one.
+  bool RunContextMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, CefRefPtr<CefContextMenuParams> params,
+                      CefRefPtr<CefMenuModel>, CefRefPtr<CefRunContextMenuCallback> callback) override {
+    RCContextMenu *menu = [[RCContextMenu alloc] initWithBrowser:browser frame:frame params:params view:view_];
+    if (![view_ showContextMenu:menu]) return false;
+    // Rise carries out what's chosen itself.
+    callback->Cancel();
     return true;
+  }
+
+  // alert(), confirm(), prompt() and leaving a page with unsaved changes ask in Rise's sheets.
+  bool OnJSDialog(CefRefPtr<CefBrowser>, const CefString &origin_url, JSDialogType type, const CefString &message,
+                  const CefString &default_prompt_text, CefRefPtr<CefJSDialogCallback> callback, bool &) override {
+    RCDialogKind kind = type == JSDIALOGTYPE_ALERT ? RCDialogKindAlert
+                        : type == JSDIALOGTYPE_CONFIRM ? RCDialogKindConfirm
+                                                       : RCDialogKindPrompt;
+    return [view_ runDialog:kind message:StringFrom(message) defaultText:StringFrom(default_prompt_text)
+                     origin:URLFromString(origin_url)
+                 completion:^(BOOL accepted, NSString *text) { callback->Continue(accepted, text.UTF8String ?: ""); }];
+  }
+  bool OnBeforeUnloadDialog(CefRefPtr<CefBrowser>, const CefString &message, bool is_reload,
+                            CefRefPtr<CefJSDialogCallback> callback) override {
+    return [view_ runDialog:is_reload ? RCDialogKindReload : RCDialogKindLeave message:StringFrom(message) defaultText:@""
+                     origin:nil
+                 completion:^(BOOL accepted, NSString *) { callback->Continue(accepted, ""); }];
+  }
+  void OnResetDialogState(CefRefPtr<CefBrowser>) override { [view_ cancelDialog]; }
+
+  // <input type=file> and the File System Access pickers open Rise's panels.
+  bool OnFileDialog(CefRefPtr<CefBrowser>, FileDialogMode mode, const CefString &title, const CefString &default_file_path,
+                    const std::vector<CefString> &, const std::vector<CefString> &accept_extensions,
+                    const std::vector<CefString> &, CefRefPtr<CefFileDialogCallback> callback) override {
+    RCFileChooserMode chooser = mode == FILE_DIALOG_OPEN_MULTIPLE ? RCFileChooserModeOpenMultiple
+                                : mode == FILE_DIALOG_OPEN_FOLDER ? RCFileChooserModeOpenFolder
+                                : mode == FILE_DIALOG_SAVE        ? RCFileChooserModeSave
+                                                                  : RCFileChooserModeOpen;
+    // Each filter's extensions, as ".png;.jpg".
+    NSMutableOrderedSet<NSString *> *extensions = [NSMutableOrderedSet orderedSet];
+    for (const CefString &filter : accept_extensions) {
+      for (NSString *part in [StringFrom(filter) componentsSeparatedByString:@";"]) {
+        NSString *extension = [part stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@". "]];
+        if (extension.length) [extensions addObject:extension.lowercaseString];
+      }
+    }
+    return [view_ chooseFiles:chooser title:StringFrom(title) defaultPath:StringFrom(default_file_path)
+                   extensions:extensions.array
+                   completion:^(NSArray<NSURL *> *urls) {
+                     if (!urls) { callback->Cancel(); return; }
+                     std::vector<CefString> paths;
+                     for (NSURL *url in urls) paths.push_back(url.path.UTF8String);
+                     callback->Continue(paths);
+                   }];
   }
 
   void OnAddressChange(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame, const CefString &url) override {
@@ -651,6 +792,9 @@ cef_color_t ARGB(NSColor *color) {
   BOOL _closed;
   // The page this one shows DevTools for.
   __weak RCBrowserView *_inspected;
+  // The DevTools front end inspecting this page, and an element waiting for it.
+  __weak RCBrowserView *_attachedFrontend;
+  RCContextMenu *_pendingInspect;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame URL:(NSURL *)url {
@@ -825,11 +969,36 @@ cef_color_t ARGB(NSColor *color) {
   return [self.delegate respondsToSelector:@selector(browserView:openURL:disposition:userGesture:)] &&
          [self.delegate browserView:self openURL:url disposition:disposition userGesture:gesture];
 }
-- (BOOL)canOpenInPeek {
-  return [self.delegate respondsToSelector:@selector(browserView:openLinkInPeek:)];
+- (BOOL)showContextMenu:(RCContextMenu *)menu {
+  if (![self.delegate respondsToSelector:@selector(browserView:showContextMenu:)]) return NO;
+  // Shown on the next turn, out of Chromium's own call.
+  __weak RCBrowserView *weakSelf = self;
+  dispatch_async(dispatch_get_main_queue(), ^{
+    RCBrowserView *view = weakSelf;
+    if (view && !view->_closed) [view.delegate browserView:view showContextMenu:menu];
+  });
+  return YES;
 }
-- (void)openLinkInPeek:(NSURL *)url {
-  [self.delegate browserView:self openLinkInPeek:url];
+- (BOOL)runDialog:(RCDialogKind)kind message:(NSString *)message defaultText:(NSString *)text origin:(NSURL *)origin
+       completion:(void (^)(BOOL, NSString *))completion {
+  if (![self.delegate respondsToSelector:@selector(browserView:runDialog:message:defaultText:origin:completion:)]) return NO;
+  [self.delegate browserView:self runDialog:kind message:message defaultText:text origin:origin completion:completion];
+  return YES;
+}
+- (void)cancelDialog {
+  if ([self.delegate respondsToSelector:@selector(browserViewDidCancelDialog:)]) [self.delegate browserViewDidCancelDialog:self];
+}
+- (BOOL)chooseFiles:(RCFileChooserMode)mode title:(NSString *)title defaultPath:(NSString *)path
+         extensions:(NSArray<NSString *> *)extensions completion:(void (^)(NSArray<NSURL *> *))completion {
+  if (![self.delegate respondsToSelector:@selector(browserView:chooseFiles:title:defaultPath:extensions:completion:)]) return NO;
+  [self.delegate browserView:self chooseFiles:mode title:title defaultPath:path extensions:extensions completion:completion];
+  return YES;
+}
+// The element goes to the DevTools front end attached now, or to the one about to attach: before
+// then, Rise's own DevTools sessions would take it instead.
+- (void)inspectWithMenu:(RCContextMenu *)menu {
+  if (_attachedFrontend) [menu inspectNow];
+  else _pendingInspect = menu;
 }
 
 // MARK: DevTools
@@ -1241,7 +1410,12 @@ static NSString *JSONText(id value) {
 // one commits.
 - (void)loadStarted {
   RCBrowserView *inspected = _inspected;
-  if (inspected && inspected->_browser && _browser) inspected->_browser->GetHost()->AttachDevToolsFrontend(_browser->GetHost());
+  if (!inspected || !inspected->_browser || !_browser) return;
+  if (!inspected->_browser->GetHost()->AttachDevToolsFrontend(_browser->GetHost())) return;
+  inspected->_attachedFrontend = self;
+  RCContextMenu *pending = inspected->_pendingInspect;
+  inspected->_pendingInspect = nil;
+  [pending inspectNow];
 }
 
 - (void)evaluateConsoleExpression:(NSString *)expression completion:(void (^)(id, NSString *))completion {
@@ -1379,8 +1553,14 @@ static NSString *JSONText(id value) {
   if (_browser) _browser->GetHost()->SetZoomLevel(std::log(std::max(0.01, _zoom)) / std::log(1.2));
 }
 
+- (void)downloadURL:(NSURL *)url {
+  if (_browser) _browser->GetHost()->StartDownload(url.absoluteString.UTF8String);
+}
+
 - (void)close {
   _closed = YES;
+  RCBrowserView *inspected = _inspected;
+  if (inspected && inspected->_attachedFrontend == self) inspected->_attachedFrontend = nil;
   if (_browser) _browser->GetHost()->CloseBrowser(true);
 }
 

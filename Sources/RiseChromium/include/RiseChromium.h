@@ -94,6 +94,83 @@ typedef NS_OPTIONS(NSUInteger, RCPermission) {
   RCPermissionLocation = 1 << 2,
 };
 
+/// A dialog a page asks for: `alert()`, `confirm()`, `prompt()`, or, leaving or reloading a page
+/// with changes it hasn't saved, whether to.
+typedef NS_ENUM(NSInteger, RCDialogKind) {
+  RCDialogKindAlert,
+  RCDialogKindConfirm,
+  RCDialogKindPrompt,
+  RCDialogKindLeave,
+  RCDialogKindReload,
+};
+
+/// What a page's file chooser picks.
+typedef NS_ENUM(NSInteger, RCFileChooserMode) {
+  RCFileChooserModeOpen,
+  RCFileChooserModeOpenMultiple,
+  RCFileChooserModeOpenFolder,
+  RCFileChooserModeSave,
+};
+
+/// What was right-clicked as media.
+typedef NS_ENUM(NSInteger, RCMediaKind) {
+  RCMediaKindNone,
+  RCMediaKindImage,
+  RCMediaKindVideo,
+  RCMediaKindAudio,
+};
+
+/// What an editable field right-clicked in can do.
+typedef NS_OPTIONS(NSUInteger, RCEditFlags) {
+  RCEditFlagsCanUndo = 1 << 0,
+  RCEditFlagsCanRedo = 1 << 1,
+  RCEditFlagsCanCut = 1 << 2,
+  RCEditFlagsCanCopy = 1 << 3,
+  RCEditFlagsCanPaste = 1 << 4,
+  RCEditFlagsCanDelete = 1 << 5,
+  RCEditFlagsCanSelectAll = 1 << 6,
+};
+
+typedef NS_ENUM(NSInteger, RCEditCommand) {
+  RCEditCommandUndo,
+  RCEditCommandRedo,
+  RCEditCommandCut,
+  RCEditCommandCopy,
+  RCEditCommandPaste,
+  RCEditCommandPasteAndMatchStyle,
+  RCEditCommandDelete,
+  RCEditCommandSelectAll,
+};
+
+/// What a right-click in a page was on, for Rise to build its menu from, and what that menu can
+/// do there. Actions apply to the frame clicked in.
+@interface RCContextMenu : NSObject
+/// Where, in the page's view, from its top left.
+@property (nonatomic, readonly) NSPoint point;
+@property (nonatomic, readonly, nullable) NSURL *linkURL;
+/// The image, video or audio's address.
+@property (nonatomic, readonly, nullable) NSURL *sourceURL;
+@property (nonatomic, readonly) RCMediaKind mediaKind;
+/// Whether the image's picture is there to copy.
+@property (nonatomic, readonly) BOOL hasImageContents;
+@property (nonatomic, readonly) NSString *selectionText;
+@property (nonatomic, readonly) BOOL editable;
+@property (nonatomic, readonly) RCEditFlags editFlags;
+/// The misspelled word clicked, and the spellchecker's suggestions for it.
+@property (nonatomic, readonly) NSString *misspelledWord;
+@property (nonatomic, readonly) NSArray<NSString *> *suggestions;
+- (instancetype)init NS_UNAVAILABLE;
+- (void)perform:(RCEditCommand)command;
+- (void)replaceMisspellingWith:(NSString *)word;
+/// Adds the misspelled word to the spelling dictionary.
+- (void)learnMisspelledWord;
+- (void)copyImage;
+/// Shows the dictionary's definition of the selection, at it.
+- (void)lookUp;
+/// Has the page's DevTools select the element clicked, once they're attached if they aren't yet.
+- (void)inspect;
+@end
+
 @class RCBrowserView;
 @protocol RCBrowserViewDelegate <NSObject>
 /// The page's address, title, loading state or history changed.
@@ -111,8 +188,6 @@ typedef NS_OPTIONS(NSUInteger, RCPermission) {
 /// `browserView:openURL:disposition:userGesture:` does instead.
 - (BOOL)browserView:(RCBrowserView *)browserView adoptPopup:(RCBrowserView *)popup url:(NSURL *)url
         userGesture:(BOOL)userGesture;
-/// "Open Link in Peek" from the page's context menu.
-- (void)browserView:(RCBrowserView *)browserView openLinkInPeek:(NSURL *)url;
 /// A Rise script posted `body` to `handler`. `reply` is set for handlers added with replies,
 /// and must be called once.
 - (void)browserView:(RCBrowserView *)browserView
@@ -144,6 +219,27 @@ typedef NS_OPTIONS(NSUInteger, RCPermission) {
 - (void)browserViewDidCrash:(RCBrowserView *)browserView;
 /// A link for another app, such as mailto:, which the page doesn't open itself.
 - (void)browserView:(RCBrowserView *)browserView openInOtherApp:(NSURL *)url;
+/// The page was right-clicked; Rise shows its menu for `menu`.
+- (void)browserView:(RCBrowserView *)browserView
+    showContextMenu:(RCContextMenu *)menu NS_SWIFT_NAME(browserView(_:showContextMenu:));
+/// The page, at `origin`, asks for a dialog; call `completion` once, with whether it was accepted
+/// and, for a prompt, the text.
+- (void)browserView:(RCBrowserView *)browserView
+          runDialog:(RCDialogKind)kind
+            message:(NSString *)message
+        defaultText:(NSString *)defaultText
+             origin:(nullable NSURL *)origin
+         completion:(void (^)(BOOL accepted, NSString *_Nullable text))completion;
+/// The page's dialog is no longer wanted, as when it navigated away: close it without completing.
+- (void)browserViewDidCancelDialog:(RCBrowserView *)browserView;
+/// The page asks for files; call `completion` once, with those chosen or nil. `extensions`, if
+/// any, are the kinds of file it takes, such as "png".
+- (void)browserView:(RCBrowserView *)browserView
+        chooseFiles:(RCFileChooserMode)mode
+              title:(NSString *)title
+        defaultPath:(NSString *)defaultPath
+         extensions:(NSArray<NSString *> *)extensions
+         completion:(void (^)(NSArray<NSURL *> *_Nullable urls))completion;
 @end
 
 /// A page drawn by Chromium, filling this view. Rise lays it out, clips and animates it like
@@ -193,6 +289,8 @@ typedef NS_OPTIONS(NSUInteger, RCPermission) {
 - (void)reloadIgnoringCache;
 - (void)stopLoading;
 - (void)setAudioMuted:(BOOL)muted;
+/// Downloads `url` as the page would, into Rise's downloads.
+- (void)downloadURL:(NSURL *)url NS_SWIFT_NAME(download(_:));
 /// Runs `functionBody` as the body of an async function with `arguments` as its parameters,
 /// in the isolated script world `world`, which the page's own scripts can't see. Completes
 /// with the returned value, as JSON allows, or nil if it threw or the page went away.

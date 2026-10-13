@@ -1,0 +1,110 @@
+--- a/include/cef_browser.h
++++ b/include/cef_browser.h
+@@ -695,6 +695,28 @@
+   ///
+   /*--cef(added=experimental)--*/
+   virtual bool AttachDevToolsFrontend(CefRefPtr<CefBrowserHost> frontend) = 0;
++
++  ///
++  /// Copies the image at |x|, |y| in |frame|, in the browser's view
++  /// coordinates as a context menu reports them, to the clipboard. Must be
++  /// called on the UI thread.
++  ///
++  /*--cef(added=experimental)--*/
++  virtual void CopyImageAt(CefRefPtr<CefFrame> frame, int x, int y) = 0;
++
++  ///
++  /// Has the DevTools attached to this browser select the element at |x|, |y|
++  /// in |frame|, in view coordinates. Must be called on the UI thread.
++  ///
++  /*--cef(added=experimental)--*/
++  virtual void InspectElementAt(CefRefPtr<CefFrame> frame, int x, int y) = 0;
++
++  ///
++  /// Shows the system dictionary's definition of the text selected in |frame|,
++  /// at the selection, as Look Up does. Must be called on the UI thread.
++  ///
++  /*--cef(added=experimental)--*/
++  virtual void LookUpSelection(CefRefPtr<CefFrame> frame) = 0;
+ 
+   ///
+   /// If a misspelled word is currently selected in an editable node calling
+--- a/libcef/browser/browser_host_base.h
++++ b/libcef/browser/browser_host_base.h
+@@ -270,6 +270,9 @@
+   CefRefPtr<CefBinaryValue> GetNavigationState() override;
+   bool RestoreNavigationState(CefRefPtr<CefBinaryValue> state) override;
+   bool AttachDevToolsFrontend(CefRefPtr<CefBrowserHost> frontend) override;
++  void CopyImageAt(CefRefPtr<CefFrame> frame, int x, int y) override;
++  void InspectElementAt(CefRefPtr<CefFrame> frame, int x, int y) override;
++  void LookUpSelection(CefRefPtr<CefFrame> frame) override;
+   CefRefPtr<CefNavigationEntry> GetVisibleNavigationEntry() override;
+   void SetAutoResizeEnabled(bool enabled,
+                             const CefSize& min_size,
+--- a/libcef/browser/browser_host_base.cc
++++ b/libcef/browser/browser_host_base.cc
+@@ -36,6 +36,8 @@
+ #include "base/pickle.h"
+ #include "chrome/browser/devtools/devtools_ui_bindings.h"
+ #include "content/public/browser/devtools_agent_host.h"
++#include "content/public/browser/render_widget_host.h"
++#include "content/public/browser/render_widget_host_view.h"
+ #include "components/sessions/content/content_serialized_navigation_builder.h"
+ #include "components/sessions/core/serialized_navigation_entry.h"
+ #include "content/public/browser/navigation_entry.h"
+@@ -833,8 +835,55 @@
+   }
+   bindings->AttachTo(content::DevToolsAgentHost::GetOrCreateFor(inspected));
+   return true;
++}
++
++namespace {
++
++// The frame a client names, if it's this process's and still there.
++content::RenderFrameHost* FrameHost(CefRefPtr<CefFrame> frame) {
++  auto impl = frame ? static_cast<CefFrameHostImpl*>(frame.get()) : nullptr;
++  return impl ? impl->GetRenderFrameHost() : nullptr;
++}
++
++}  // namespace
++
++void CefBrowserHostBase::CopyImageAt(CefRefPtr<CefFrame> frame, int x, int y) {
++  if (!CEF_CURRENTLY_ON_UIT()) {
++    DCHECK(false) << "called on invalid thread";
++    return;
++  }
++  if (auto* host = FrameHost(frame)) {
++    host->CopyImageAt(x, y);
++  }
+ }
+ 
++void CefBrowserHostBase::InspectElementAt(CefRefPtr<CefFrame> frame,
++                                          int x,
++                                          int y) {
++  if (!CEF_CURRENTLY_ON_UIT()) {
++    DCHECK(false) << "called on invalid thread";
++    return;
++  }
++  auto contents = GetWebContents();
++  auto* host = FrameHost(frame);
++  if (contents && host) {
++    content::DevToolsAgentHost::GetOrCreateFor(contents)->InspectElement(host,
++                                                                       x, y);
++  }
++}
++
++void CefBrowserHostBase::LookUpSelection(CefRefPtr<CefFrame> frame) {
++  if (!CEF_CURRENTLY_ON_UIT()) {
++    DCHECK(false) << "called on invalid thread";
++    return;
++  }
++  auto* host = FrameHost(frame);
++  auto* view = host ? host->GetRenderWidgetHost()->GetView() : nullptr;
++  if (view) {
++    view->ShowDefinitionForSelection();
++  }
++}
++
+ bool CefBrowserHostBase::RestoreNavigationState(
+     CefRefPtr<CefBinaryValue> state) {
+   if (!CEF_CURRENTLY_ON_UIT()) {

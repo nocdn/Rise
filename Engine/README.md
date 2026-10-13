@@ -46,9 +46,10 @@ The checkout lives outside the repo: `RISE_CHROMIUM_ROOT`, by default
 | `cef/0002-attach-devtools-frontend.patch` | Chrome's DevTools front end, loaded in a page of Rise's own, inspects another page; CEF can't put its own DevTools window inside an app's view on macOS, so Rise's DevTools slide in beside the page this way |
 | `cef/0003-allow-settings-page.patch` | Chrome's settings open in Rise's own pages, as rise://settings (CEF otherwise only allows a short list of chrome:// pages there) |
 | `cef/0004-default-search-engine.patch` | Rise's address bar searches with the default search engine chosen in Chrome's Search engine section of rise://settings |
+| `cef/0005-context-menu-actions.patch` | What Rise's page menu needs that CEF doesn't offer: copying the image clicked, inspecting the element clicked in DevTools, and Look Up on the selection |
 | `chromium/0001-hide-web-contents-after-a-turn.patch` | Rise moves pages between views (Peek, split, ⌘Z); a page out of its window for an instant no longer blanks for several frames when it's back |
 | `chromium/0002-rise-settings-sections.patch` | Chrome's settings leave out what Rise's pages don't use or Rise does its own way (Google sign-in, autofill and passwords, extensions, startup, performance, AI, Safety Check, downloads, and Appearance's rows for Chrome's own window: theme, toolbar, mode, tab strip, side panel, quitting and split view) and the update status of Chrome's updater |
-| `chromium/0003-rise-settings-rows.patch` | Rise's own settings in Chrome's settings page: rows Rise describes (so a new Rise setting needs no engine change), at the end of Appearance, System and Privacy, and in new Tabs and AI sections |
+| `chromium/0003-rise-settings-rows.patch` | Rise's own settings in Chrome's settings page: rows Rise describes (so a new Rise setting needs no engine change), at the end of Appearance, System and Privacy, and in new Tabs and AI sections, and Rise's mark for About Rise |
 
 ## Stages
 
@@ -99,10 +100,15 @@ On Chromium tabs these work, also for frames of other sites:
   controls' ⋯ opens them. The address bar searches with Chrome's default search engine.
 - Developer Mode: Chrome's DevTools with ⌥⌘J, on Elements, sliding in from the right as the
   docked sidebar does from the left; the JavaScript Console, View Source and the screenshots.
+- Rise's page menu, as WebKit's: links (with Open Link in Peek), images, video, selected text
+  (Look Up and a search), spelling suggestions, editing and Writing Tools, and Inspect Element
+  opening DevTools on the element. Pages' alert, confirm and prompt, leaving with unsaved changes
+  and file choosers ask in Rise's sheets, as on WebKit; a page navigating away closes its dialog.
+- Pinch zoom (which the Peek allows for), force-click Look Up, and Chromium's own picture in
+  picture for protected video, where WebKit's pages use WebKit's.
 
 Rise's page scripts reach every frame through Chromium's DevTools protocol, inside the app.
-Still WebKit-only: Rise's own page menu and WebKit's own picture in picture for encrypted
-video. Not carried over yet: the WebKit profile's cookies and sign-ins.
+Not carried over yet: the WebKit profile's cookies and sign-ins.
 
 Ad blocking uses the filter lists WebKit's rules are made from (`Filters/Sources`, plus
 Rise's own rules in `Engine/adblock/rise.txt`), one engine per list so each keeps its own

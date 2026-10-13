@@ -69,7 +69,9 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
     }
 
     func run() async {
-        do { try await checks() } catch { check(false, "\(error)") }
+        do {
+            try await checks()
+        } catch { check(false, "\(error)") }
     }
 
     /// How many times the first site's server was asked for `path`.
@@ -169,6 +171,229 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         _ = await waitUntil("And runs its scripts") { self.requests("/script-ran") == 1 }
         check(requests("/warm.css") == 1, "Taking the style from the cache: \(requests("/warm.html")) page and \(requests("/warm.css")) style requests")
         browser.linkPreloader.setEnabled(false)
+    }
+
+    /// Right-clicks the point `locate` returns, as [x, y] in the page, and gives back the menu Rise shows.
+    func rightClick(_ locate: String, in page: WebPage, _ what: String) async -> NSMenu? {
+        guard let window = browser.window, let at = await value(locate, in: page) as? [Double] else { check(false, "\(what) is there"); return nil }
+        let view = page.view
+        let point = view.convert(NSPoint(x: at[0], y: view.isFlipped ? at[1] : view.bounds.height-at[1]), to: nil)
+        var shown: NSMenu?
+        browser.presentContextMenu = { menu, _, _ in shown = menu }
+        for type in [NSEvent.EventType.rightMouseDown, .rightMouseUp] {
+            if let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                              windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
+                                              pressure: type == .rightMouseDown ? 1 : 0) { window.sendEvent(event) }
+        }
+        _ = await waitUntil("A right-click on \(what) opens Rise's menu") { shown != nil }
+        return shown
+    }
+    func titles(_ menu: NSMenu?) -> [String] { menu?.items.filter { !$0.isSeparatorItem }.map(\.title) ?? [] }
+    func choose(_ title: String, in menu: NSMenu?) {
+        guard let item = menu?.items.first(where: { $0.title == title }), let action = item.action else { check(false, "The menu has “\(title)”"); return }
+        NSApp.sendAction(action, to: item.target, from: item)
+    }
+    func center(_ selector: String) -> String {
+        "const r = document.querySelector('\(selector)').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]"
+    }
+    /// The Chromium view taking the page's events and text input.
+    func inputView(of page: WebPage) -> NSView? {
+        func find(_ view: NSView) -> NSView? {
+            if String(describing: type(of: view)).contains("RenderWidgetHostViewCocoa") { return view }
+            return view.subviews.lazy.compactMap(find).first
+        }
+        return find(page.view)
+    }
+
+    /// Rise's page menu, the page's dialogs and file chooser, spelling, Look Up, Writing Tools,
+    /// pinch zoom and Chromium's own picture in picture.
+    func menusAndDialogs() async throws {
+        let pasteboard = NSPasteboard.general
+        let kept = pasteboard.pasteboardItems?.compactMap { item -> NSPasteboardItem? in
+            let copy = NSPasteboardItem()
+            for type in item.types { if let data = item.data(forType: type) { copy.setData(data, forType: type) } }
+            return copy
+        } ?? []
+        defer { pasteboard.clearContents(); pasteboard.writeObjects(kept) }
+
+        let menus = await open(try page("menus", """
+        <p id=text style='font-size:20px'>The quick brown fox jumps over the lazy dog.</p>
+        <p><a id=link href='https://example.com/linked'>A link somewhere</a></p>
+        <p><a id=pic href='https://example.com/pictured'><img id=img src=picture.png width=120></a></p>
+        <div id=field contenteditable spellcheck=true style='font-size:20px;padding:4px;border:1px solid'>Ths is wrng</div>
+        <div id=blank style='height:120px'></div>
+        <input id=file type=file>
+        """))
+        _ = await waitUntil("The menu page's picture loads") { await self.value("return document.querySelector('#img').complete", in: menus.page) as? Bool == true }
+
+        // A link: Rise's items, as on WebKit, with Peek and DevTools.
+        let link = await rightClick(center("#link"), in: menus.page, "a link")
+        check(["Open Link", "Open Link in New Tab", "Open Link in Peek", "Download Linked File", "Copy Link", "Inspect Element"]
+              .allSatisfy(titles(link).contains), "A link's menu: \(titles(link))")
+        choose("Copy Link", in: link)
+        check(pasteboard.string(forType: .string) == "https://example.com/linked", "Copy Link copies its address")
+
+        // An image in a link: the link's items and the image's.
+        let image = await rightClick(center("#img"), in: menus.page, "an image")
+        check(["Open Link", "Open Image in New Tab", "Download Image", "Copy Image Address", "Copy Image"].allSatisfy(titles(image).contains),
+              "An image's menu: \(titles(image))")
+        pasteboard.clearContents()
+        choose("Copy Image", in: image)
+        _ = await waitUntil("Copy Image copies its picture") { pasteboard.canReadObject(forClasses: [NSImage.self], options: nil) }
+
+        // Selected text: Look Up, a search and Copy.
+        _ = await value("const range = document.createRange(); range.selectNodeContents(document.querySelector('#text').firstChild);" +
+                        "getSelection().removeAllRanges(); getSelection().addRange(range); return 0", in: menus.page)
+        let text = await rightClick(center("#text"), in: menus.page, "selected text")
+        check(titles(text).contains { $0.hasPrefix("Look Up “The quick brown fox") } && titles(text).contains("Search with \(browser.searchProvider.title)")
+              && titles(text).contains("Copy"), "Selected text's menu: \(titles(text))")
+        pasteboard.clearContents()
+        choose("Copy", in: text)
+        _ = await waitUntil("Copy copies the selection") { pasteboard.string(forType: .string)?.hasPrefix("The quick brown fox") == true }
+        let windows = Set(NSApp.windows.map(ObjectIdentifier.init))
+        if let item = text?.items.first(where: { $0.title.hasPrefix("Look Up") }) { choose(item.title, in: text) }
+        _ = await waitUntil("Look Up shows the dictionary") { NSApp.windows.contains { !windows.contains(ObjectIdentifier($0)) && $0.isVisible && String(describing: type(of: $0)).contains("Popover") } }
+        browser.window?.makeKeyAndOrderFront(nil)
+        try await Task.sleep(for: .milliseconds(300))
+
+        // A misspelling: Chromium's spellchecker, its suggestions, and Writing Tools in a field.
+        _ = await value("const field = document.querySelector('#field'); field.textContent = ''; field.focus();" +
+                        "document.execCommand('insertText', false, 'Ths is wrng '); return 0", in: menus.page)
+        try await Task.sleep(for: .seconds(1.5))
+        let wordAt = "const node = document.querySelector('#field').firstChild, range = document.createRange(); range.setStart(node, 7); range.setEnd(node, 11);" +
+            "const r = range.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]"
+        let spelling = await rightClick(wordAt, in: menus.page, "a misspelled word")
+        check(titles(spelling).contains("wrong") && titles(spelling).contains("Learn Spelling") && titles(spelling).contains("Paste"),
+              "A misspelled word's menu: \(titles(spelling))")
+        if #available(macOS 15.2, *), let tools = NSMenuItem.writingToolsItems.first {
+            check(titles(spelling).contains(tools.title), "With Writing Tools")
+        }
+        if let input = inputView(of: menus.page) {
+            check(input.validRequestor(forSendType: .string, returnType: .string) != nil, "The field takes text back from Writing Tools and Services")
+        } else { check(false, "Chromium's input view is there") }
+        choose("wrong", in: spelling)
+        _ = await waitUntil("Choosing a suggestion corrects the word") {
+            (await self.value("return document.querySelector('#field').textContent", in: menus.page) as? String)?.hasPrefix("Ths is wrong") == true
+        }
+
+        // The page itself: Back, Forward and Reload.
+        _ = await value("getSelection().removeAllRanges(); document.activeElement.blur(); return 0", in: menus.page)
+        let blank = await rightClick(center("#blank"), in: menus.page, "the page")
+        check(Array(titles(blank).prefix(3)) == ["Back", "Forward", "Reload"], "The page's menu: \(titles(blank))")
+
+        // Inspect Element opens DevTools on the element.
+        let inspect = await rightClick(center("#link"), in: menus.page, "a link to inspect")
+        choose("Inspect Element", in: inspect)
+        let selected = "const find = (root, selector) => [...root.querySelectorAll(selector)].concat(...[...root.querySelectorAll('*')].filter(n => n.shadowRoot).map(n => find(n.shadowRoot, selector)));" +
+            "return find(document, 'li.selected').map(n => n.textContent).join(' ')"
+        _ = await waitUntil("Inspect Element selects the link in DevTools", 20) {
+            guard let frontend = self.browser.devTools.clip.subviews.first as? RCBrowserView else { return false }
+            return (await self.value(selected, in: frontend) as? String)?.replacingOccurrences(of: "\u{200B}", with: "").contains("example.com/linked") == true
+        }
+        browser.closeDevTools()
+        _ = await waitUntil("DevTools close") { self.browser.devTools.shadow.isHidden && self.browser.devTools.tabID == nil }
+        browser.presentContextMenu = { menu, point, view in menu.popUp(positioning: nil, at: point, in: view) }
+
+        // Dialogs ask in Rise's sheets.
+        guard let window = browser.window else { return }
+        func sheet() async -> NSWindow? {
+            _ = await waitUntil("The page's dialog shows as a sheet") { window.attachedSheet != nil }
+            return window.attachedSheet
+        }
+        _ = await value("setTimeout(() => window.answer = confirm('Sure?')); return 0", in: menus.page)
+        if let confirm = await sheet() {
+            check(confirm.contentView?.subviews.contains { ($0 as? NSTextField)?.stringValue == "Sure?" } == true, "confirm() shows its message")
+            window.endSheet(confirm, returnCode: .alertFirstButtonReturn)
+            _ = await waitUntil("OK answers true") { await self.value("return window.answer", in: menus.page) as? Bool == true }
+        }
+        _ = await value("setTimeout(() => window.answer = prompt('Name?', 'Rise')); return 0", in: menus.page)
+        if let prompt = await sheet() {
+            window.endSheet(prompt, returnCode: .alertFirstButtonReturn)
+            _ = await waitUntil("prompt() answers its text") { await self.value("return window.answer", in: menus.page) as? String == "Rise" }
+        }
+        // A page leaving while it asks takes its dialog with it.
+        _ = await value("setTimeout(() => alert('Going')); return 0", in: menus.page)
+        if await sheet() != nil {
+            menus.page.load(try page("after", "<h1>After</h1>"))
+            _ = await waitUntil("Navigating away closes the dialog") { window.attachedSheet == nil }
+        }
+        _ = await waitUntil("The next page loads") { menus.page.url?.lastPathComponent == "after.html" && !menus.page.isLoading }
+        // Unsaved changes ask before a reload.
+        menus.page.load(try page("unsaved", "<h1>Unsaved</h1><script>onbeforeunload = event => { event.preventDefault(); event.returnValue = '' }</script>"))
+        _ = await waitUntil("The unsaved page loads") { menus.page.url?.lastPathComponent == "unsaved.html" && !menus.page.isLoading }
+        _ = await value("document.body.click(); return 0", in: menus.page)
+        menus.page.reload()
+        if let leave = await sheet() {
+            check(leave.contentView?.subviews.contains { ($0 as? NSTextField)?.stringValue == "Reload this page?" } == true, "Reloading asks first")
+            window.endSheet(leave, returnCode: .alertSecondButtonReturn)
+            try await Task.sleep(for: .milliseconds(500))
+            check(window.attachedSheet == nil, "Cancel keeps the page")
+        }
+        _ = await value("onbeforeunload = null; return 0", in: menus.page)
+        // A file input opens Rise's panel.
+        let files = await open(URL(string: "\(site)/menus.html")!)
+        _ = await value("const input = document.querySelector('#file'); input.addEventListener('cancel', () => window.cancelled = true); input.click(); return 0", in: files.page)
+        if let panel = await sheet() {
+            check(panel is NSOpenPanel, "A file input opens an open panel")
+            window.endSheet(panel, returnCode: .cancel)
+            _ = await waitUntil("Cancelling it tells the page") { await self.value("return window.cancelled === true", in: files.page) as? Bool == true }
+        }
+
+        // A pinch zooms the page in, and Rise knows it has.
+        NSApp.activate(ignoringOtherApps: true); window.makeKeyAndOrderFront(nil)
+        try await Task.sleep(for: .milliseconds(300))
+        if let input = inputView(of: files.page), let screen = NSScreen.screens.first {
+            let center = input.convert(NSPoint(x: input.bounds.midX, y: input.bounds.midY), to: nil)
+            func pinch(_ phase: Int64, _ amount: Double) -> NSEvent? {
+                guard let event = CGEvent(source: nil), let gesture = CGEventType(rawValue: 29) else { return nil }
+                event.type = gesture
+                event.setIntegerValueField(CGEventField(rawValue: 110)!, value: 8)
+                event.setDoubleValueField(CGEventField(rawValue: 113)!, value: amount)
+                event.setIntegerValueField(CGEventField(rawValue: 132)!, value: phase)
+                // Made without a window, its location reads as the window's own coordinates when
+                // the window is given it, as the window server gives a real pinch.
+                event.location = CGPoint(x: center.x, y: screen.frame.maxY-center.y)
+                return NSEvent(cgEvent: event)
+            }
+            for (phase, amount) in [(Int64(1), 0.0), (2, 0.3), (2, 0.3), (4, 0)] {
+                if let event = pinch(phase, amount) { window.sendEvent(event) }
+                try await Task.sleep(for: .milliseconds(40))
+            }
+            NSApp.activate(ignoringOtherApps: true); window.makeKeyAndOrderFront(nil)
+            try await Task.sleep(for: .milliseconds(300))
+            _ = await waitUntil("A pinch zooms the page in") { (await self.value("return visualViewport.scale", in: files.page) as? Double ?? 1) > 1.1 }
+            _ = await waitUntil("And Rise knows the page is pinched in") { files.page.isMagnified }
+            // A new page starts unpinched (a reload keeps the pinch, as in Chrome).
+            files.page.load(URL(string: "\(site)/menus.html?again")!)
+            _ = await waitUntil("A new page starts unpinched") { files.page.url?.query == "again" && !files.page.isLoading && !files.page.isMagnified }
+        }
+        if let input = inputView(of: files.page), let at = await value(center("#text"), in: files.page) as? [Double] {
+            let point = files.page.view.convert(NSPoint(x: at[0] - 120, y: files.page.view.isFlipped ? at[1] : files.page.view.bounds.height-at[1]), to: nil)
+            let before = Set(NSApp.windows.map(ObjectIdentifier.init))
+            if let event = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                              windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                input.quickLook(with: event)
+            }
+            _ = await waitUntil("A force click looks the word up") {
+                NSApp.windows.contains { !before.contains(ObjectIdentifier($0)) && $0.isVisible && String(describing: type(of: $0)).contains("Popover") }
+            }
+            window.makeKeyAndOrderFront(nil)
+        }
+
+        // Protected video, which Rise's floating window would show as black, floats in Chromium's
+        // own picture in picture when its tab is left, and comes back with the tab.
+        let video = await open(try page("protected", "<video src=clip.mp4 autoplay loop playsinline style='width:480px'></video>"))
+        _ = await waitUntil("The protected page's video plays with sound") { video.page.isPlayingAudio }
+        _ = await value("document.querySelector('video').dispatchEvent(new Event('encrypted')); return 0", in: video.page)
+        try await Task.sleep(for: .milliseconds(500))
+        _ = await open(try page("elsewhere", "<h1>Elsewhere</h1>"))
+        _ = await waitUntil("Leaving its tab floats it in Chromium's picture in picture") {
+            await self.value("return document.pictureInPictureElement?.tagName ?? null", in: video.page) as? String == "VIDEO"
+        }
+        browser.select(video.id)
+        _ = await waitUntil("And it's back in the page with its tab") {
+            await self.value("return document.pictureInPictureElement === null && !document.querySelector('video').paused", in: video.page) as? Bool == true
+        }
     }
 
     /// Runs a script in a page that isn't a tab's, such as DevTools' own.
@@ -402,6 +627,8 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         NSColor.systemTeal.setFill(); NSRect(x: 0, y: 0, width: 240, height: 160).fill()
         NSGraphicsContext.restoreGraphicsState()
         try picture.representation(using: .png, properties: [:])!.write(to: folder.appendingPathComponent("picture.png"))
+        try await menusAndDialogs()
+
         // macOS runs one drag at a time, and Chromium starts the next only once it hears the last
         // one ended, at the mouse's real release, which window events can't give; so one drag here.
         let dragPage = try page("drag", "<a id=l href='https://example.com/dragged'><img src=picture.png width=240></a>")

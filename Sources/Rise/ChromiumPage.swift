@@ -97,7 +97,24 @@ enum RisePages {
         hasLoaded = browserView != nil
         super.init()
         self.browserView.delegate = self
+        // Chromium zooms a pinch into the visual viewport, which only the page knows about.
+        addMessageHandler("riseMagnified", world: .named("Rise.Magnify")) { [weak self] message in
+            guard message.frame.isMain else { return }
+            self?.magnified = message.body as? Bool ?? false
+        }
+        addUserScript("""
+        if (window.visualViewport) {
+          let magnified = false;
+          const report = () => {
+            const now = Math.abs(visualViewport.scale - 1) > 0.01;
+            if (now !== magnified) { magnified = now; riseHandlers.riseMagnified.postMessage(now); }
+          };
+          visualViewport.addEventListener('resize', report);
+          riseHandlers.riseMagnified.postMessage(false);
+        }
+        """, world: .named("Rise.Magnify"), mainFrameOnly: true, handlers: ["riseMagnified"])
     }
+    private var magnified = false
     /// A window this page opens itself, still its popup; returns whether Rise took it.
     var onPopup: ((_ popup: ChromiumPage, URL) -> Bool)?
     nonisolated func browserView(_ browserView: RCBrowserView, adoptPopup popup: RCBrowserView, url: URL, userGesture: Bool) -> Bool {
@@ -112,8 +129,50 @@ enum RisePages {
     nonisolated func browserView(_ browserView: RCBrowserView, open url: URL, disposition: RCOpenDisposition, userGesture: Bool) -> Bool {
         MainActor.assumeIsolated { onOpenElsewhere?(url, disposition == .backgroundTab) ?? false }
     }
-    nonisolated func browserView(_ browserView: RCBrowserView, openLinkInPeek url: URL) {
-        MainActor.assumeIsolated { onOpenInPeek?(url) }
+    /// A right-click, for Rise's menu.
+    var onContextMenu: ((RCContextMenu) -> Void)?
+    nonisolated func browserView(_ browserView: RCBrowserView, showContextMenu menu: RCContextMenu) {
+        MainActor.assumeIsolated { onContextMenu?(menu) }
+    }
+    /// A dialog the page asks for: `finish` takes whether it was accepted and a prompt's text.
+    /// Returns the sheet showing it, or nil if it couldn't be shown (having finished it).
+    var onDialog: ((PageDialog, _ finish: @escaping (Bool, String?) -> Void) -> NSWindow?)?
+    private var dialog: (token: UUID, sheet: NSWindow?, completion: (Bool, String?) -> Void)?
+    nonisolated func browserView(_ browserView: RCBrowserView, runDialog kind: RCDialogKind, message: String, defaultText: String,
+                                 origin: URL?, completion: @escaping (Bool, String?) -> Void) {
+        MainActor.assumeIsolated {
+            let token = UUID()
+            dialog = (token, nil, completion)
+            let finish: (Bool, String?) -> Void = { [weak self] accepted, text in
+                // A dialog closed for the page, below, was answered then.
+                guard let self, self.dialog?.token == token else { return }
+                self.dialog = nil
+                completion(accepted, text)
+            }
+            guard let onDialog else { finish(false, nil); return }
+            let sheet = onDialog(PageDialog(kind: kind, message: message, defaultText: defaultText), finish)
+            if dialog?.token == token { dialog?.sheet = sheet }
+        }
+    }
+    nonisolated func browserViewDidCancelDialog(_ browserView: RCBrowserView) {
+        MainActor.assumeIsolated { dismissDialog() }
+    }
+    /// Closes the page's dialog as cancelled: the page is going elsewhere, as Chrome closes one
+    /// for a tab that navigates. The page waits for an answer until it has one.
+    private func dismissDialog() {
+        guard let open = dialog else { return }
+        dialog = nil
+        if let sheet = open.sheet { (sheet.sheetParent ?? browserView.window)?.endSheet(sheet) }
+        open.completion(false, nil)
+    }
+    /// The page asks for files: `finish` takes those chosen, or nil.
+    var onChooseFiles: ((RCFileChooserMode, _ defaultPath: String, _ finish: @escaping ([URL]?) -> Void) -> Void)?
+    nonisolated func browserView(_ browserView: RCBrowserView, chooseFiles mode: RCFileChooserMode, title: String, defaultPath: String,
+                                 extensions: [String], completion: @escaping ([URL]?) -> Void) {
+        MainActor.assumeIsolated {
+            guard let onChooseFiles else { completion(nil); return }
+            onChooseFiles(mode, defaultPath, completion)
+        }
     }
     nonisolated func browserView(_ browserView: RCBrowserView, didReceiveMessage body: Any, handler: String, frame: RCFrame,
                                  reply: ((Any?, String?) -> Void)?) {
@@ -144,7 +203,10 @@ enum RisePages {
         MainActor.assumeIsolated { onPermissionWithdrawn?() }
     }
     nonisolated func browserView(_ browserView: RCBrowserView, willNavigate kind: RCNavigationKind) {
-        MainActor.assumeIsolated { onEvent?(.willNavigate(kind == .history ? .history : kind == .reload ? .reload : .newPage)) }
+        MainActor.assumeIsolated {
+            dismissDialog()
+            onEvent?(.willNavigate(kind == .history ? .history : kind == .reload ? .reload : .newPage))
+        }
     }
     nonisolated func browserViewDidFinishLoad(_ browserView: RCBrowserView) {
         MainActor.assumeIsolated { onEvent?(.finished) }
@@ -228,7 +290,7 @@ enum RisePages {
             window.leave()
         }
     }
-    var isMagnified: Bool { false }
+    var isMagnified: Bool { magnified }
     var isCovered: Bool {
         get { browserView.covered }
         set { browserView.covered = newValue }

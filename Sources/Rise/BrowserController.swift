@@ -143,6 +143,10 @@ import RiseCore
     let sessionURL: URL
     let preferences: UserDefaults
     let aiKeys = AIKeys()
+    /// Shows a page's menu at a point in its view; replaced in tests, as the menu tracks modally.
+    var presentContextMenu: (NSMenu, NSPoint, NSView) -> Void = { menu, point, view in
+        menu.popUp(positioning: nil, at: point, in: view)
+    }
     var lastSaved: BrowserSession?
     /// The page, as its view, whose load failed.
     var errorWebView: NSView?
@@ -501,6 +505,18 @@ import RiseCore
         if let chromium = page as? ChromiumPage {
             chromium.onDownload = { [weak self] download, name in self?.beginChromiumDownload(download, suggestedName: name) }
             installRiseSettings(on: chromium)
+            chromium.onContextMenu = { [weak self, weak chromium] info in
+                guard let self, let chromium else { return }
+                self.showContextMenu(info, in: chromium)
+            }
+            chromium.onDialog = { [weak self, weak chromium] dialog, finish in
+                guard let self, let chromium else { finish(false, nil); return nil }
+                return self.showDialog(dialog, from: chromium, finish: finish)
+            }
+            chromium.onChooseFiles = { [weak self] mode, path, finish in
+                guard let self else { finish(nil); return }
+                self.chooseFiles(mode, defaultPath: path, finish: finish)
+            }
             chromium.onPopup = { [weak self, weak chromium] popup, url in
                 // Chrome's own pages go as other links do, above.
                 guard let self, let chromium, url.scheme?.lowercased() != "chrome" else { return false }

@@ -254,14 +254,26 @@ import WebKit
         pause() { (selected || choose())?.pause(); },
         enterNative() {
           const video = floatable() && chooseEncrypted();
-          if (!video || !video.webkitSupportsPresentationMode?.('picture-in-picture') || video.webkitPresentationMode !== 'inline') return false;
-          try { video.webkitSetPresentationMode('picture-in-picture'); } catch { return false; }
+          if (!video) return false;
+          if (video.webkitSupportsPresentationMode) {
+            if (!video.webkitSupportsPresentationMode('picture-in-picture') || video.webkitPresentationMode !== 'inline') return false;
+            try { video.webkitSetPresentationMode('picture-in-picture'); } catch { return false; }
+          } else {
+            // Chromium: the standard picture in picture, its own window.
+            if (!document.pictureInPictureEnabled || video.disablePictureInPicture || document.pictureInPictureElement === video) return false;
+            video.requestPictureInPicture().catch(() => { if (nativeVideo === video) nativeVideo = null; });
+          }
           nativeVideo = video; return true;
         },
         exitNative(pause) {
           const video = nativeVideo; nativeVideo = null;
           if (!video) return;
           if (pause) video.pause();
+          if (!video.webkitSupportsPresentationMode) {
+            // Leaving it, Chromium's carries on playing in the page.
+            if (document.pictureInPictureElement === video) document.exitPictureInPicture().catch(() => {});
+            return;
+          }
           const resume = !video.paused;
           const inline = () => {
             // Floated again meanwhile.

@@ -4,7 +4,7 @@ import Security
 /// API keys for AI providers, in the login keychain. Each is read at most once per launch, so a
 /// rebuilt app asks for access once rather than on every request.
 @MainActor final class AIKeys {
-    static let service = "Rise AI API Key"
+    nonisolated static let service = "Rise AI API Key"
     private var cache: [AIProvider: String?] = [:]
     /// Replaced in tests, which mustn't touch the real keychain.
     var read: (AIProvider) -> String? = AIKeys.keychainRead

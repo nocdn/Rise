@@ -121,18 +121,33 @@ import RiseChromium
         if panel.isOpen, panel.tabID == tab.id { closeDevTools(); return }
         #if RISE_CHROMIUM
         guard let page = tab.page as? ChromiumPage else { NSSound.beep(); return }
-        if panel.tabID != tab.id || panel.frontend == nil { showDevTools(for: tab, page: page) }
+        if panel.tabID != tab.id || panel.frontend == nil { showDevTools(for: tab, page: page, picking: true) }
         // Opened again before they'd gone, they're ready to pick an element again too.
         else if let frontend = panel.frontend as? RCBrowserView {
             frontend.evaluateFunctionBody(DevToolsPanel.pickElement + "return await pick();", arguments: [:], frame: nil, world: nil) { _, _ in }
         }
-        panel.configureOpen(); panel.slide.target = 1
-        animateDevTools()
-        if let frontend = panel.frontend { window?.makeFirstResponder(frontend) }
+        openDevTools()
         #else
         NSSound.beep()
         #endif
     }
+    private func openDevTools() {
+        let panel = devTools
+        panel.configureOpen(); panel.slide.target = 1
+        animateDevTools()
+        if let frontend = panel.frontend { window?.makeFirstResponder(frontend) }
+    }
+    #if RISE_CHROMIUM
+    /// "Inspect Element": the page's DevTools, open on the element right-clicked.
+    func inspectElement(_ info: RCContextMenu, in page: ChromiumPage) {
+        guard let tab = tabs.first(where: { $0.page === page }) else { return }
+        if tab.id != selectedID { select(tab.id) }
+        let panel = devTools
+        if panel.tabID != tab.id || panel.frontend == nil { showDevTools(for: tab, page: page, picking: false) }
+        info.inspect()
+        openDevTools()
+    }
+    #endif
     func closeDevTools() {
         let panel = devTools
         guard panel.isOpen else { return }
@@ -145,7 +160,7 @@ import RiseChromium
     }
 
     #if RISE_CHROMIUM
-    private func showDevTools(for tab: BrowserTab, page: ChromiumPage) {
+    private func showDevTools(for tab: BrowserTab, page: ChromiumPage, picking: Bool) {
         let panel = devTools
         tearDownDevTools()
         let frontend = page.browserView.makeDevTools()
@@ -154,9 +169,11 @@ import RiseChromium
         frontend.pageBackgroundColor = theme.page
         // DevTools paint the page's size on it as it's resized, which Rise's slide does on every frame.
         frontend.addUserScript(DevToolsPanel.quietResizes, world: nil, mainFrameOnly: true, handlers: [])
-        // They open ready to pick an element in the page.
-        frontend.addUserScript(DevToolsPanel.pickElement + "if (document.readyState === 'complete') pick(); else addEventListener('load', pick);",
-                               world: nil, mainFrameOnly: true, handlers: [])
+        // They open ready to pick an element in the page, unless one was picked to open them.
+        if picking {
+            frontend.addUserScript(DevToolsPanel.pickElement + "if (document.readyState === 'complete') pick(); else addEventListener('load', pick);",
+                                   world: nil, mainFrameOnly: true, handlers: [])
+        }
         frontend.frame = panel.clip.bounds
         panel.clip.addSubview(frontend)
         panel.tabID = tab.id; panel.frontend = frontend

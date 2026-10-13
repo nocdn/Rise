@@ -137,28 +137,16 @@ import RiseCore
         permissionCoordinator.request(in: webView, origin: SitePermissions.origin(origin), capabilities: [.location]) { decisionHandler($0 ? .grant : .deny) }
     }
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
-        let alert = NSAlert(); alert.messageText = AddressResolver.displayHost(webView.url); alert.informativeText = message
-        guard let window else { completionHandler(); return }
-        alert.beginSheetModal(for: window) { _ in completionHandler() }
+        showPageAlert(message, from: webView.url, completion: completionHandler)
     }
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
-        let alert = NSAlert(); alert.messageText = AddressResolver.displayHost(webView.url); alert.informativeText = message
-        alert.addButton(withTitle: "OK"); alert.addButton(withTitle: "Cancel")
-        guard let window else { completionHandler(false); return }
-        alert.beginSheetModal(for: window) { completionHandler($0 == .alertFirstButtonReturn) }
+        showPageConfirm(message, from: webView.url, completion: completionHandler)
     }
     func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
-        let alert = NSAlert(); alert.messageText = prompt
-        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 26)); input.stringValue = defaultText ?? ""; alert.accessoryView = input
-        alert.addButton(withTitle: "OK"); alert.addButton(withTitle: "Cancel")
-        guard let window else { completionHandler(nil); return }
-        alert.beginSheetModal(for: window) { completionHandler($0 == .alertFirstButtonReturn ? input.stringValue : nil) }
+        showPagePrompt(prompt, defaultText: defaultText, completion: completionHandler)
     }
     func webView(_ webView: WKWebView, runOpenPanelWith parameters: WKOpenPanelParameters, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping ([URL]?) -> Void) {
-        let panel = NSOpenPanel(); panel.allowsMultipleSelection = parameters.allowsMultipleSelection
-        panel.canChooseDirectories = parameters.allowsDirectories; panel.canChooseFiles = true
-        guard let window else { completionHandler(nil); return }
-        panel.beginSheetModal(for: window) { completionHandler($0 == .OK ? panel.urls : nil) }
+        showPageOpenPanel(multiple: parameters.allowsMultipleSelection, directories: parameters.allowsDirectories, completion: completionHandler)
     }
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { registerDownload(download); launchDownloadFlight() }
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { registerDownload(download); launchDownloadFlight() }
