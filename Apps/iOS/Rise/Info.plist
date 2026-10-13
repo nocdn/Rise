@@ -21,7 +21,7 @@
     <key>NSMicrophoneUsageDescription</key><string>Hold New Page to say what to search for.</string>
     <key>NSSpeechRecognitionUsageDescription</key><string>What you say while holding New Page is transcribed on your iPhone into a search.</string>
     <key>UIAppFonts</key>
-    <array><string>OpenRunde-Medium.otf</string></array>
+    <array><string>OpenRunde-Medium.otf</string><string>OpenRunde-Semibold.otf</string></array>
     <key>UISupportedInterfaceOrientations</key>
     <array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
     <key>UISupportedInterfaceOrientations~ipad</key>

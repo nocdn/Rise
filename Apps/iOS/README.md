@@ -52,13 +52,30 @@ transcribed on the device by iOS's newest speech-to-text model, `SpeechAnalyzer`
 `SpeechTranscriber` (iOS 26 and later; `DictationTranscriber` where that model isn't available),
 whose assets are fetched at launch. The first hold asks for the microphone and speech recognition
 instead of listening. More, the ellipsis
-circle on the right, grows the bar the same way into a panel about a third as tall, the page
+circle on the right, grows the bar the same way into a smaller panel, the page
 behind receding only as far as that growth takes it at the same rate. The bar's buttons
 swap the same way for the page's address, styled like the search field: Back and Forward
-close together, each only if there's a page that way, the host behind a green padlock on HTTPS pages, then Reload. Under it,
+close together, each only if there's a page that way, the host behind a green padlock on HTTPS pages, then Reload.
+The 14.5-point history chevrons keep their normal tap areas. When the only available direction
+changes from Back to Forward or back, the chevron turns a half-circle on a quick, lightly bouncing
+0.32-second spring, carrying on from its current angle if reversed before it finishes. Under it,
 buttons a little less tall than wide, each just a symbol: Share, Summarise, Find (on page) and Copy (the link). Back and Forward keep the
 panel open (Back also returns to a page a Peek or search replaced); Reload, Share and
-Copy close it; Summarise is below. Tapping the address grows More into a New Page-sized
+Copy close it; Summarise is below. A full-width Site settings button sits beneath the four
+icons, with its gear and title centred, using their fill, press effects and outline weight.
+It swaps More's contents with the same blurred crossfade as returning to the bar, while the panel
+grows on the closing spring. Settings has an Open Runde Semibold title at the left and the address
+editor's X at the right, returning to More with the same animated swap. Beneath it, a joined group
+of 60-point rows offers Block ads, Block trackers and Block cookie banners in Open Runde Medium,
+with the supplied Tabler icons, inset hairline dividers and blue native switches. The ads icon is
+red, trackers orange and cookies green; switching a protection off mutes its icon to 35% opacity.
+Tracker and cookie icons are slightly smaller, centred in the same icon column. The rows darken
+while pressed without scaling.
+Rapid panel changes keep all earlier visible contents in the outgoing fade, so tapping More then
+Site settings before the first swap finishes cannot leave the compact toolbar behind.
+The switches start on and only change their appearance for now; WebKit's protections are unchanged.
+Tapping the page or swiping down still closes the panel.
+Tapping the address grows More into a New Page-sized
 editor on the same spring, receding the page further while the tiles blur and fade away. The
 address bar itself stays intact: the full URL slides from the center to the left as the sheet
 grows, the padlock and history buttons fade, and Reload swaps to a clear X with the same blur,
@@ -115,10 +132,11 @@ the finger, as Summarise's pinch does: its bottom edge follows the finger and th
 from where it started stays under it, its corners the screen's own from the start and easing to
 the card's, the page cropping towards its card
 as it goes, its title riding under it and fading in, with the others', over the last part of the
-way. Let go past a quarter of the way or flicked, it flies on at the speed it was going
-and curves round into its card on Summarise's springs, a hard flick shrinking past the card's
+way. The drag and flight are held at 120 Hz on ProMotion iPhones. Let go past a quarter of the
+way or flicked, it flies on at the speed it was going, including its crop and corners, and curves
+round into its card on Summarise's springs without a release haptic, a hard flick shrinking past the card's
 size first; a short one springs back. Each flight is worked out as it starts and played by Core
-Animation, held at 120 Hz from takeoff to landing, so it carries on smoothly while the app is busy, as when New Page is
+Animation, so it carries on smoothly while the app is busy, as when New Page is
 pressed straight after Tabs and brings the keyboard up; the page flies as a quick copy of the
 screen, and its card's picture is drawn once it's on its way. Every move
 turns around from wherever it has got to, carrying on from its speed, so Tabs can be pressed as

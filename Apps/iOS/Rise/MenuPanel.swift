@@ -11,8 +11,8 @@ final class AddressBar: UIControl {
     /// How small a button gets while pressed.
     static let pressedScale: CGFloat = 0.85
 
-    let backButton = AddressBar.button("chevron.left", size: 15, label: "Back")
-    let forwardButton = AddressBar.button("chevron.right", size: 15, label: "Forward")
+    let backButton = HistoryChevronButton(.back)
+    let forwardButton = HistoryChevronButton(.forward)
     let reloadButton = AnimatedSymbolButton(symbol: "arrow.clockwise", pointSize: 14, weight: .bold)
     let lock = UIImageView(image: UIImage(systemName: "lock.fill", withConfiguration:
         UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)))
@@ -23,17 +23,7 @@ final class AddressBar: UIControl {
     private var editingContentsAligned = false
     private var url: URL?
     private var canGoBack = false, canGoForward = false
-
-    private static func button(_ symbol: String, size: CGFloat, weight: UIImage.SymbolWeight = .semibold,
-                               label: String) -> UIButton {
-        let button = UIButton(type: .system)
-        button.setImage(UIImage(systemName: symbol, withConfiguration:
-            UIImage.SymbolConfiguration(pointSize: size, weight: weight)), for: .normal)
-        button.tintColor = .label
-        button.accessibilityLabel = label
-        button.shrinksWhenPressed(to: pressedScale)
-        return button
-    }
+    private var shownHistory = (back: false, forward: false)
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -71,10 +61,26 @@ final class AddressBar: UIControl {
         host.text = name
         host.accessibilityLabel = url?.scheme == "https" ? "Secure, \(name)" : name
         lock.isHidden = url?.scheme?.lowercased() != "https" || name.isEmpty
-        // Only the ways there are to go show, from the left.
-        backButton.isHidden = !canGoBack
-        forwardButton.isHidden = !canGoForward
         setNeedsLayout()
+    }
+
+    /// WebKit delivers Back and Forward availability separately. Resolve them together during
+    /// layout so a temporary neither/both state cannot break the sole chevron's turn.
+    private func updateHistoryButtons() {
+        defer {
+            backButton.isHidden = !canGoBack
+            forwardButton.isHidden = !canGoForward
+        }
+        guard shownHistory.back != canGoBack || shownHistory.forward != canGoForward else { return }
+        let previous = shownHistory.back != shownHistory.forward ? (shownHistory.back ? backButton : forwardButton) : nil
+        let next = canGoBack != canGoForward ? (canGoBack ? backButton : forwardButton) : nil
+        if let previous, let next, previous !== next, window != nil, (superview?.alpha ?? 0) > 0 {
+            next.turn(from: previous)
+        } else {
+            backButton.resetDirection()
+            forwardButton.resetDirection()
+        }
+        shownHistory = (canGoBack, canGoForward)
     }
 
     /// Keep the bar intact: its label moves with the sheet while the editor already owns keyboard focus.
@@ -137,6 +143,7 @@ final class AddressBar: UIControl {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        if !isEditingURL { updateHistoryButtons() }
         // By bounds and center, as pressed buttons are scaled.
         let width = Self.buttonWidth, height = bounds.height
         let centres = [Self.outerCentre, Self.outerCentre+Self.pairSpacing, bounds.width-Self.outerCentre]
@@ -176,15 +183,20 @@ final class MenuPanel: UIView {
     static let top: CGFloat = 14
     static let cornerRadius: CGFloat = 20
     static let pressedScale: CGFloat = 0.94
-    /// The address and the tiles.
-    static func height(width: CGFloat) -> CGFloat { SearchPanel.fieldHeight+top+tileSize(width: width).height }
+    static let settingsButtonHeight: CGFloat = 48
+    /// The address, icon tiles and full-width Site settings button.
+    static func height(width: CGFloat) -> CGFloat {
+        SearchPanel.fieldHeight+top+tileSize(width: width).height+spacing+settingsButtonHeight
+    }
 
     let address = AddressBar()
-    let shareTile = MenuTile(symbol: "square.and.arrow.up", label: "Share")
-    let summariseTile = MenuTile(symbol: "text.line.3.summary", label: "Summarise")
-    let findTile = MenuTile(symbol: "doc.text.magnifyingglass", label: "Find on Page")
+    let shareTile = MenuTile(symbol: "square.and.arrow.up", label: "Share", symbolOffsetY: -1)
+    let summariseTile = MenuTile(image: MenuIcons.summarise, label: "Summarise")
+    let findTile = MenuTile(image: MenuIcons.findOnPage, label: "Find on Page")
     let copyTile = MenuTile(symbol: "link", label: "Copy Link")
+    let siteSettingsButton = MenuTile(image: MenuIcons.siteSettings, label: "Site settings", showsLabel: true)
     var tiles: [MenuTile] { [shareTile, summariseTile, findTile, copyTile] }
+    var buttons: [UIButton] { tiles+[siteSettingsButton] }
     /// The tiles' height, as a share of their width.
     static let tileProportion: CGFloat = 0.85
 
@@ -198,7 +210,7 @@ final class MenuPanel: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         addSubview(address)
-        tiles.forEach(addSubview)
+        buttons.forEach(addSubview)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -217,22 +229,43 @@ final class MenuPanel: UIView {
             tile.center = CGPoint(x: x+size.width/2, y: SearchPanel.fieldHeight+Self.top+size.height/2)
             x += size.width+Self.spacing
         }
+        siteSettingsButton.bounds = CGRect(x: 0, y: 0, width: used, height: Self.settingsButtonHeight)
+        siteSettingsButton.center = CGPoint(x: bounds.midX,
+            y: SearchPanel.fieldHeight+Self.top+size.height+Self.spacing+Self.settingsButtonHeight/2)
     }
 }
 
 /// A button in More's panel: a symbol, filled like the search field.
 final class MenuTile: UIButton {
     private let symbol = UIImageView()
+    private let symbolOffsetY: CGFloat
+    private let title: UILabel?
 
-    init(symbol name: String, label: String) {
+    convenience init(symbol name: String, label: String, symbolOffsetY: CGFloat = 0) {
+        self.init(image: UIImage(systemName: name, withConfiguration:
+            UIImage.SymbolConfiguration(pointSize: 20, weight: .medium)), label: label, symbolOffsetY: symbolOffsetY)
+    }
+
+    init(image: UIImage?, label: String, symbolOffsetY: CGFloat = 0, showsLabel: Bool = false) {
+        self.symbolOffsetY = symbolOffsetY
+        title = showsLabel ? UILabel() : nil
         super.init(frame: .zero)
         layer.cornerCurve = .continuous
         layer.cornerRadius = MenuPanel.cornerRadius
-        symbol.image = UIImage(systemName: name, withConfiguration: UIImage.SymbolConfiguration(pointSize: 20, weight: .medium))
+        symbol.image = image
         symbol.tintColor = .label
         symbol.contentMode = .center
         symbol.isUserInteractionEnabled = false
         addSubview(symbol)
+        if let title {
+            title.text = label
+            title.font = SearchPanel.roundedFont(ofSize: 16, weight: .semibold)
+            title.adjustsFontForContentSizeCategory = true
+            title.textColor = .label
+            title.isUserInteractionEnabled = false
+            title.isAccessibilityElement = false
+            addSubview(title)
+        }
         accessibilityLabel = label
         shrinksWhenPressed(to: MenuPanel.pressedScale, filled: true)
     }
@@ -243,6 +276,11 @@ final class MenuTile: UIButton {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        symbol.frame = bounds
+        guard let title else { symbol.frame = bounds.offsetBy(dx: 0, dy: symbolOffsetY); return }
+        let iconSide: CGFloat = 28, gap: CGFloat = 10
+        let size = title.sizeThatFits(CGSize(width: max(0, bounds.width-iconSide-gap-32), height: bounds.height))
+        let x = bounds.midX-(iconSide+gap+size.width)/2
+        symbol.frame = CGRect(x: x, y: bounds.midY-iconSide/2+symbolOffsetY, width: iconSide, height: iconSide)
+        title.frame = CGRect(x: x+iconSide+gap, y: bounds.midY-size.height/2, width: size.width, height: size.height)
     }
 }

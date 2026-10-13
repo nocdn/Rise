@@ -94,11 +94,11 @@ enum SummariseMotion {
     // The backdrop's glows, circling each other until the reveal.
     static let orbitPeriod = 4.0
     static let glowBlur = 40.0
-    static let purpleSize = 380.0
-    static let pinkSize = 400.0
+    static let coolGlowSize = 460.0
+    static let warmGlowSize = 480.0
     static let settle = 1.8
-    static let pinkFade = 1.1
-    static let purpleRest = 0.25
+    static let warmGlowFade = 1.1
+    static let coolGlowRest = 0.25
 
     // Tapping the card grows it back into the page.
     static let close = SummariseSpring(9.5, 1, 11.5)
@@ -295,7 +295,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate {
 
     // The backdrop, which stays put as everything else scrolls over it.
     private let backdrop = UIView()
-    private let wash = CAGradientLayer(), fade = CAGradientLayer(), purple = CALayer(), pink = CALayer()
+    private let wash = CAGradientLayer(), fade = CAGradientLayer(), coolGlow = CALayer(), warmGlow = CALayer()
     private let scroll = UIScrollView()
     private let content = UIView()
     // The card: the page, cropped, with a card peeking out behind.
@@ -319,7 +319,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate {
         self.reveal = reveal
         summaryHost = UIHostingController(rootView: SummaryBlocks(reveal: reveal))
         super.init(frame: CGRect(origin: .zero, size: size))
-        // The backdrop is always light, as in Arc.
+        // A light canvas keeps the summary readable over Rise's pale icon colours.
         overrideUserInterfaceStyle = .light
         accessibilityViewIsModal = true
 
@@ -329,24 +329,25 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate {
         // linear-gradient(100deg, …): the line runs through the middle, long enough to reach the corners.
         let angle = 100*degrees, direction = CGPoint(x: sin(angle), y: -cos(angle))
         let half = (abs(size.width*direction.x)+abs(size.height*direction.y))/2
-        wash.colors = [Self.color(0xD8D4F5), Self.color(0xE9D7EE), Self.color(0xFBDAE1)]
+        // Rise.icon's cream, mint and lilac, softened towards white.
+        wash.colors = [Self.color(0xFFF8EC), Self.color(0xF1FCFB), Self.color(0xF9F4FE)]
         wash.locations = [0, 0.5, 1]
         wash.startPoint = CGPoint(x: 0.5-direction.x*half/size.width, y: 0.5-direction.y*half/size.height)
         wash.endPoint = CGPoint(x: 0.5+direction.x*half/size.width, y: 0.5+direction.y*half/size.height)
         wash.frame = bounds
-        for glow in [purple, pink] { glow.opacity = 0 }
-        purple.contents = Self.purpleGlow
-        pink.contents = Self.pinkGlow
-        for glow in [purple, pink] {
+        for glow in [coolGlow, warmGlow] { glow.opacity = 0 }
+        coolGlow.contents = Self.coolGlowImage
+        warmGlow.contents = Self.warmGlowImage
+        for glow in [coolGlow, warmGlow] {
             guard let image = glow.contents.map({ $0 as! CGImage }) else { continue }
             glow.bounds.size = CGSize(width: image.width, height: image.height)
         }
         // Lighter towards the bottom.
-        fade.colors = [Self.color(0xE4E3FB, alpha: 0), Self.color(0xE4E3FB)]
+        fade.colors = [Self.color(0xF9FAFD, alpha: 0), Self.color(0xF9FAFD)]
         fade.startPoint = CGPoint(x: 0.5, y: 0.68)
         fade.endPoint = CGPoint(x: 0.5, y: 1)
         fade.frame = bounds
-        for layer in [wash, purple, pink, fade] { backdrop.layer.addSublayer(layer) }
+        for layer in [wash, coolGlow, warmGlow, fade] { backdrop.layer.addSublayer(layer) }
 
         scroll.frame = bounds
         scroll.contentInsetAdjustmentBehavior = .never
@@ -363,7 +364,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate {
         back.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         back.opacity = 0
         for shadow in [shadowWide, shadowNear] {
-            shadow.shadowColor = UIColor(red: 40/255, green: 20/255, blue: 90/255, alpha: 1).cgColor
+            shadow.shadowColor = Self.color(0x343232)
             shadow.shadowOpacity = 0
         }
         shadowWide.shadowRadius = 17; shadowWide.shadowOffset = CGSize(width: 0, height: 10)
@@ -921,21 +922,22 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate {
 
     private func renderBackdrop(_ t: Double) {
         let a = orbitAngle(t), w = width, h = height
-        // The measured paths, as shares of the screen: purple circles wide, pink opposite and flatter.
-        purple.position = CGPoint(x: (0.5+0.34*cos(a))*w, y: (0.41+0.22*sin(a))*h)
-        pink.position = CGPoint(x: (0.5+0.31*cos(a+Double.pi))*w, y: (0.44+0.11*sin(a+Double.pi))*h)
-        var purpleAlpha = 1.0, pinkAlpha = 1.0
+        // The measured paths: the cool glow circles wide, the warm one opposite and flatter.
+        coolGlow.position = CGPoint(x: (0.5+0.34*cos(a))*w, y: (0.41+0.22*sin(a))*h)
+        warmGlow.position = CGPoint(x: (0.5+0.31*cos(a+Double.pi))*w, y: (0.44+0.11*sin(a+Double.pi))*h)
+        var coolAlpha = 1.0, warmAlpha = 1.0
         if let revealT, mode == .card {
-            purpleAlpha = lerp(1, M.purpleRest, easeOut((t-revealT)/M.settle, 1))
-            pinkAlpha = 1-easeOut((t-revealT)/M.pinkFade, 0.6)
+            coolAlpha = lerp(1, M.coolGlowRest, easeOut((t-revealT)/M.settle, 1))
+            warmAlpha = 1-easeOut((t-revealT)/M.warmGlowFade, 0.6)
         }
-        purple.opacity = Float(purpleAlpha); pink.opacity = Float(pinkAlpha)
+        coolGlow.opacity = Float(coolAlpha); warmGlow.opacity = Float(warmAlpha)
     }
 
     /// Drawn once, as blurring them takes a moment: early, so the first summary doesn't wait.
-    static func prepareGlows() { _ = purpleGlow; _ = pinkGlow }
-    private static let purpleGlow = glow(size: M.purpleSize, inner: (112, 82, 208), outer: (132, 108, 224))
-    private static let pinkGlow = glow(size: M.pinkSize, inner: (236, 118, 156), outer: (244, 154, 176))
+    static func prepareGlows() { _ = coolGlowImage; _ = warmGlowImage }
+    // Sampled from Assets/AppIcon/Rise.icon/Assets/Rise.png: mint/blue and cream/blush.
+    private static let coolGlowImage = glow(size: M.coolGlowSize, inner: (197, 242, 239), outer: (206, 231, 251))
+    private static let warmGlowImage = glow(size: M.warmGlowSize, inner: (254, 234, 202), outer: (254, 208, 232))
 
     /// A soft elliptical glow, as `radial-gradient(closest-side, …)` under `blur(40px)` in the playground.
     private static func glow(size: Double, inner: (Double, Double, Double), outer: (Double, Double, Double)) -> CGImage? {
@@ -946,7 +948,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate {
         let shape = UIGraphicsImageRenderer(size: canvas, format: format).image { context in
             let c = context.cgContext
             let rgb = { (color: (Double, Double, Double), alpha: Double) in
-                CGColor(srgbRed: color.0/255, green: color.1/255, blue: color.2/255, alpha: alpha)
+                CGColor(srgbRed: color.0/255, green: color.1/255, blue: color.2/255, alpha: alpha*0.55)
             }
             // Fading the outer colour itself out, as browsers blend premultiplied.
             let colors = [rgb(inner, 1), rgb(inner, 1), rgb(outer, 0.7), rgb(outer, 0)] as CFArray

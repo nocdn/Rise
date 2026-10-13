@@ -545,6 +545,118 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertEqual(browser.content.transform, .identity)
     }
 
+    @MainActor func testSoleHistoryChevronTurnsBetweenBackAndForwardAndKeepsBothActions() async throws {
+        let browser = BrowserViewController(startURL: nil)
+        let window = try host(browser)
+        defer { window.isHidden = true }
+        let fixture = FileManager.default.temporaryDirectory.appendingPathComponent("rise-history-\(UUID().uuidString).html")
+        try "<html><body>A local history fixture.</body></html>".write(to: fixture, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        browser.webView.loadFileURL(fixture, allowingReadAccessTo: fixture.deletingLastPathComponent())
+        for _ in 0..<250 where browser.webView.isLoading || browser.webView.url != fixture {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(browser.webView.url, fixture)
+        try await browser.webView.evaluateJavaScript("location.hash = 'detail'")
+        for _ in 0..<100 where !browser.webView.canGoBack { try await Task.sleep(for: .milliseconds(10)) }
+        let address = browser.bottomBar.menu.address
+        browser.openPanel(.menu)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertFalse(address.backButton.isHidden)
+        XCTAssertTrue(address.forwardButton.isHidden)
+        let slot = address.backButton.center
+
+        address.backButton.sendActions(for: .primaryActionTriggered)
+        for _ in 0..<100 where address.forwardButton.isHidden { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(address.backButton.isHidden)
+        XCTAssertFalse(address.forwardButton.isHidden)
+        XCTAssertEqual(address.forwardButton.center, slot, "The sole arrow keeps its tap area")
+        XCTAssertEqual(address.forwardButton.accessibilityLabel, "Forward")
+        try await Task.sleep(for: .milliseconds(40))
+        let forwardGlyph = try XCTUnwrap(address.forwardButton.subviews.first { $0 is UIImageView })
+        let turningForward = try XCTUnwrap(forwardGlyph.layer.presentation()?.affineTransform())
+        XCTAssertGreaterThan(abs(turningForward.b), 0.1, "The glyph turns instead of instantly swapping")
+
+        // Reverse before the first turn has finished: the new Back glyph starts at that angle.
+        address.forwardButton.sendActions(for: .primaryActionTriggered)
+        for _ in 0..<100 where address.backButton.isHidden { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(address.backButton.isHidden)
+        XCTAssertTrue(address.forwardButton.isHidden)
+        XCTAssertEqual(address.backButton.center, slot)
+        XCTAssertEqual(address.backButton.accessibilityLabel, "Back")
+        try await Task.sleep(for: .milliseconds(40))
+        let backGlyph = try XCTUnwrap(address.backButton.subviews.first { $0 is UIImageView })
+        XCTAssertGreaterThan(abs(try XCTUnwrap(backGlyph.layer.presentation()?.affineTransform().b)), 0.1)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(backGlyph.transform, .identity)
+        XCTAssertTrue(browser.isPanelOpen, "History navigation leaves More open")
+        XCTAssertTrue(browser.webView.canGoBack)
+        XCTAssertFalse(browser.webView.canGoForward)
+
+        // With more history there are still two distinct, correctly directed controls.
+        try await browser.webView.evaluateJavaScript("location.hash = 'second'")
+        try await Task.sleep(for: .milliseconds(100))
+        address.backButton.sendActions(for: .primaryActionTriggered)
+        for _ in 0..<100 where address.forwardButton.isHidden { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(address.backButton.isHidden)
+        XCTAssertFalse(address.forwardButton.isHidden)
+        XCTAssertEqual(address.forwardButton.center.x-address.backButton.center.x, AddressBar.pairSpacing)
+        XCTAssertEqual(backGlyph.transform, .identity)
+        XCTAssertEqual(forwardGlyph.transform.a, -1, accuracy: 0.001)
+
+        // Editing temporarily hides both arrows; returning restores the same availability.
+        address.sendActions(for: .touchUpInside)
+        try await Task.sleep(for: .milliseconds(400))
+        browser.closePanel()
+        try await Task.sleep(for: .milliseconds(400))
+        browser.openPanel(.menu)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertFalse(address.backButton.isHidden)
+        XCTAssertFalse(address.forwardButton.isHidden)
+        browser.closePanel()
+    }
+
+    @MainActor func testRapidMoreThenSiteSettingsDoesNotLeaveTheCompactBarVisible() async throws {
+        let browser = BrowserViewController(startURL: nil)
+        let window = try host(browser)
+        defer { window.isHidden = true }
+        let bar = browser.bottomBar
+
+        for delay in [50, 100] {
+            bar.moreButton.sendActions(for: .primaryActionTriggered)
+            try await Task.sleep(for: .milliseconds(delay))
+            XCTAssertGreaterThan(try XCTUnwrap(bar.home.layer.presentation()?.opacity), 0,
+                                 "The second tap interrupts the compact bar's fade")
+            bar.menu.siteSettingsButton.sendActions(for: .primaryActionTriggered)
+            XCTAssertTrue(bar.shown === bar.siteSettings)
+            XCTAssertTrue(bar.siteSettings.isUserInteractionEnabled, "Rapid input stays responsive")
+            try await Task.sleep(for: .milliseconds(400))
+
+            XCTAssertEqual(bar.siteSettings.alpha, 1)
+            XCTAssertEqual(bar.siteSettings.transform, .identity)
+            for inactive in [bar.home, bar.menu, bar.search, bar.find] {
+                XCTAssertEqual(inactive.alpha, 0, "Earlier contents must not remain above Site settings")
+                XCTAssertEqual(inactive.transform, .identity)
+                XCTAssertTrue(inactive.accessibilityElementsHidden)
+                XCTAssertFalse(inactive.subviews.contains { $0 is UIImageView }, "No blurred snapshots are left over")
+            }
+
+            // Interrupt the return to More as well, without waiting for its crossfade to finish.
+            bar.siteSettings.closeButton.sendActions(for: .primaryActionTriggered)
+            try await Task.sleep(for: .milliseconds(50))
+            bar.menu.siteSettingsButton.sendActions(for: .primaryActionTriggered)
+            try await Task.sleep(for: .milliseconds(400))
+            XCTAssertEqual(bar.home.alpha, 0)
+            XCTAssertEqual(bar.menu.alpha, 0)
+            XCTAssertEqual(bar.siteSettings.alpha, 1)
+            browser.closePanel()
+            try await Task.sleep(for: .milliseconds(400))
+            XCTAssertEqual(bar.home.alpha, 1)
+            XCTAssertEqual(bar.siteSettings.alpha, 0)
+        }
+    }
+
     @MainActor func testTabsShrinkIntoCardsUnderTheBarAndASwipeUpDropsThePageIn() async throws {
         let browser = BrowserViewController(startURL: nil)
         let window = try host(browser)

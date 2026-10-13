@@ -60,6 +60,11 @@ final class FindPanel: UIView, UITextFieldDelegate {
     private static let counterGap: CGFloat = 8
     private static let sendGap: CGFloat = 4
     private static let sendWidth: CGFloat = 36
+    /// A subtle inset button in light mode too; dark mode keeps its existing translucent fill.
+    private static let modeButtonFill = UIColor { traits in
+        traits.userInterfaceStyle == .dark ? SearchPanel.fill.resolvedColor(with: traits)
+            : UIColor(red: 242/255, green: 243/255, blue: 246/255, alpha: 1)
+    }
     private static func titleWidth(_ title: String) -> CGFloat {
         ceil((title as NSString).size(withAttributes: [.font:
             SearchPanel.roundedFont(ofSize: 15, weight: .semibold, scaled: false)]).width)+20
@@ -113,7 +118,7 @@ final class FindPanel: UIView, UITextFieldDelegate {
         nextButton.addAction(UIAction { [weak self] _ in self?.search(.next) }, for: .primaryActionTriggered)
         modeButton.layer.cornerCurve = .continuous
         modeButton.layer.cornerRadius = (SearchPanel.cornerRadius*30/SearchPanel.fieldHeight).rounded()
-        modeButton.shrinksWhenPressed(to: BottomBar.pressedScale, filled: true)
+        modeButton.shrinksWhenPressed(to: BottomBar.pressedScale, filled: true, restingFill: Self.modeButtonFill)
         modeButton.accessibilityLabel = "Ask about the Page"
         titleHost.view.backgroundColor = .clear
         titleHost.view.isUserInteractionEnabled = false

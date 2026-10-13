@@ -29,7 +29,14 @@ import UIKit
     static func runIfRequested(in controller: BrowserViewController) {
         let arguments = ProcessInfo.processInfo.arguments
         guard let index = arguments.firstIndex(of: argument) else { return }
-        let folder = arguments.indices.contains(index+1) ? URL(fileURLWithPath: arguments[index+1]) : nil
+        let destination = arguments.indices.contains(index+1) ? arguments[index+1] : nil
+        let folder = destination.map { path in
+            if path.hasPrefix("caches:") {
+                return FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                    .appendingPathComponent(String(path.dropFirst("caches:".count)))
+            }
+            return URL(fileURLWithPath: path)
+        }
         let kind = arguments.indices.contains(index+2) ? arguments[index+2] : ""
         Task {
             let result = switch kind {
@@ -39,6 +46,8 @@ import UIKit
             case "regrab": await run(in: controller, savingFramesTo: folder, regrab: true)
             case "timing": await timeStart(in: controller)
             case "tabs": await swipeToTabs(in: controller, savingTo: folder)
+            case "tabsDrag": await swipeToTabs(in: controller, savingTo: folder, slowDrag: true)
+            case "tabsFlick": await swipeToTabs(in: controller, savingTo: folder, fastFlick: true)
             case "tabsNew": await tabsThenNewPage(in: controller)
             case "more": await openMore(in: controller)
             case "tabsPress": await pressTabs(in: controller)
@@ -165,12 +174,14 @@ import UIKit
     /// Swipes up the bar to the tabs in real time, a hard flick up and to the left from the right,
     /// a short swipe that springs back, and a tap on the card that grows it back, noting the moving
     /// page's frame every frame in `tabs.csv`.
-    static func swipeToTabs(in controller: BrowserViewController, savingTo folder: URL?) async -> Result {
+    static func swipeToTabs(in controller: BrowserViewController, savingTo folder: URL?, slowDrag: Bool = false,
+                            fastFlick: Bool = false) async -> Result {
         controller.webView.loadHTMLString(page, baseURL: URL(string: "https://lalinsky.com/"))
         for _ in 0..<250 where controller.webView.isLoading { try? await Task.sleep(for: .milliseconds(20)) }
         try? await Task.sleep(for: .milliseconds(800))
         let size = controller.view.bounds.size, start = CGPoint(x: size.width*0.75, y: size.height-40)
-        var rows = ["t,move,x,y,width,height,title,titleY"]
+        let replayStart = CACurrentMediaTime()
+        var rows = ["t,move,x,y,width,height,title,titleY,elapsed"]
         func sample(_ name: String, for seconds: Double, swipe: ((Double) -> Void)? = nil) async {
             let began = CACurrentMediaTime()
             while CACurrentMediaTime()-began < seconds {
@@ -180,11 +191,40 @@ import UIKit
                 if let card = controller.tabSwitcher.moving?.layer.presentation(), let cell = controller.tabSwitcher.cells.first,
                    let caption = cell.caption.layer.presentation(), let grid = controller.tabSwitcher.grid.layer.presentation() {
                     let titleY = caption.convert(caption.bounds, to: controller.tabSwitcher.layer.presentation()).midY
-                    rows.append(String(format: "%.4f,%@,%.1f,%.1f,%.1f,%.1f,%.2f,%.1f", t, name, card.position.x, card.position.y,
-                                       card.bounds.width, card.bounds.height, Double(caption.opacity*grid.opacity), titleY))
+                    rows.append(String(format: "%.4f,%@,%.1f,%.1f,%.1f,%.1f,%.2f,%.1f,%.4f", t, name, card.position.x, card.position.y,
+                                       card.bounds.width, card.bounds.height, Double(caption.opacity*grid.opacity), titleY,
+                                       CACurrentMediaTime()-replayStart))
                 }
                 try? await Task.sleep(for: .milliseconds(4))
             }
+        }
+        if fastFlick {
+            // A short, sharp flick: the final touch arrives just before release, before its pose
+            // has necessarily reached the screen. This exposes a skipped first flight frame.
+            for round in 0..<3 {
+                controller.beginTabSwipe()
+                await sample("fast-drag-\(round)", for: 0.05) { t in
+                    controller.updateTabSwipe(CGPoint(x: -10*t/0.05, y: -60*t/0.05), from: start)
+                }
+                controller.updateTabSwipe(CGPoint(x: -15, y: -90), from: start)
+                controller.endTabSwipe(velocity: CGPoint(x: -300, y: -2400))
+                await sample("fast-flight-\(round)", for: 1.1)
+                controller.selectTab(controller.tabIndex)
+                await sample("fast-return-\(round)", for: 0.9)
+            }
+        }
+        // Slow enough to outlast the bar's own animation, then reverse under the finger. No
+        // recording display link: it would ask for 120 Hz itself and hide the drag's actual rate.
+        if slowDrag {
+            controller.beginTabSwipe()
+            await sample("drag", for: 1.2) { t in
+                controller.updateTabSwipe(CGPoint(x: -30*t/1.2, y: -280*t/1.2), from: start)
+            }
+            await sample("reverse", for: 0.7) { t in
+                controller.updateTabSwipe(CGPoint(x: -30+25*t/0.7, y: -280+240*t/0.7), from: start)
+            }
+            controller.endTabSwipe(velocity: CGPoint(x: 36, y: 343))
+            await sample("cancel", for: 0.8)
         }
         // A hard flick, 0.12 s up and to the left, let go still going.
         controller.beginTabSwipe()
@@ -203,6 +243,21 @@ import UIKit
         }
         controller.endTabSwipe(velocity: CGPoint(x: 0, y: -60))
         await sample("short", for: 0.8)
+        if slowDrag {
+            // Catch a card growing back into the page, drag it again, and return all the way.
+            controller.showTabSwitcher()
+            await sample("press", for: 0.3)
+            controller.selectTab(controller.tabIndex)
+            await sample("return-before-catch", for: 0.1)
+            controller.beginTabSwipe()
+            await sample("caught-drag", for: 0.35) { t in
+                controller.updateTabSwipe(CGPoint(x: 30*t/0.35, y: -110*t/0.35), from: start)
+            }
+            controller.endTabSwipe(velocity: CGPoint(x: 86, y: -314))
+            await sample("caught-land", for: 1.1)
+            controller.selectTab(controller.tabIndex)
+            await sample("caught-return", for: 1.0)
+        }
         if let folder {
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             try? rows.joined(separator: "\n").write(to: folder.appendingPathComponent("tabs.csv"), atomically: true, encoding: .utf8)

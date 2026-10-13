@@ -99,7 +99,8 @@ These came out of many rounds of trying things on the phone. Follow them by defa
 - **At the reveal:** "one fairly short, strong but dull (not the sharp) haptic" (transient,
   intensity 1, sharpness 0.12). It ends the hum.
 - **Nothing while pinching.**
-- The tab switcher's commit keeps its rigid impact at 0.5 intensity.
+- **Nothing when releasing a swipe into the tab switcher.** Its rigid commit impact was removed
+  after he asked for a silent release.
 
 ---
 
@@ -228,7 +229,7 @@ gets its speed by finite difference over 1/240 s. Never restart from a fixed pos
 - wide: radius 17, offset 10;
 - near: radius 1.5, offset 1, at 0.8 of the wide one's strength.
 
-Both are coloured (40, 20, 90) and use a `shadowPath`. Their strength is `shadow` 0.16 ×
+Both use Rise's charcoal (#343232) and a `shadowPath`. Their strength is `shadow` 0.16 ×
 `(1 − s)/(1 − revealScale)`, so the shadow comes in as the page leaves the screen's edges.
 
 **Back card:** a grey (#C7C7CB) card peeks `backPeek` 12 pt above, inset `backInset` 6 pt. It
@@ -259,18 +260,25 @@ fades in `backDelay` 0.38 s after the card starts settling, over `backDuration` 
 
 ### The backdrop
 
-- **Wash:** a 100° linear gradient #D8D4F5 → #E9D7EE → #FBDAE1, always light (as in Arc, even in
-  dark mode). It lightens towards the bottom with #E4E3FB from 68% down.
-- **Glows:** a purple one (380 pt; inner (112, 82, 208), outer (132, 108, 224)) and a pink one
-  (400 pt; inner (236, 118, 156), outer (244, 154, 176)).
+- **Palette:** Bartosz asked for Rise's app icon colours, with a subtler background while loading
+  and after the reveal. The palette is sampled from `Assets/AppIcon/Rise.icon/Assets/Rise.png`.
+- **Wash:** a 100° linear gradient #FFF8EC → #F1FCFB → #F9F4FE (cream, mint and lilac softened
+  towards white), always light, even in dark mode. It lightens towards the bottom with #F9FAFD
+  from 68% down.
+- **Glows:** a cool one (460 pt; mint inner (197, 242, 239), blue outer (206, 231, 251)) and a
+  warm one (480 pt; cream inner (254, 234, 202), blush outer (254, 208, 232)). Bartosz asked for
+  slightly larger orbs, allowing them to overlap; these are about 20% wider than the original
+  380/400 pt sizes. Their baked-in opacity is 0.55, keeping both backgrounds gentle.
   - **Shape:** elliptical (0.85 tall), radial stops at 0, 0.28, 0.62 and 1, blurred σ 40.
   - **Pre-rendered:** drawn once at launch (`prepareGlows`), because blurring them at the start
     stalled frames.
 - **Orbit:** they circle each other every `orbitPeriod` 4 s:
-  - purple at `(0.5 + 0.34 cos a)·W, (0.41 + 0.22 sin a)·H`;
-  - pink opposite at `(0.5 + 0.31 cos(a+π))·W, (0.44 + 0.11 sin(a+π))·H`.
-- **After the reveal:** the orbit eases (cubic) to a stop on the left over `settle` 1.8 s. Purple
-  dims to `purpleRest` 0.25 and pink fades out over `pinkFade` 1.1 s.
+  - cool at `(0.5 + 0.34 cos a)·W, (0.41 + 0.22 sin a)·H`;
+  - warm opposite at `(0.5 + 0.31 cos(a+π))·W, (0.44 + 0.11 sin(a+π))·H`.
+- **After the reveal:** the orbit eases (cubic) to a stop on the left over `settle` 1.8 s. The cool
+  glow dims to `coolGlowRest` 0.25 and the warm one fades out over `warmGlowFade` 1.1 s.
+- The original Arc wash (#D8D4F5 → #E9D7EE → #FBDAE1), purple/pink glows and violet shadows were
+  replaced visually, and the glows enlarged at Bartosz's request; paths and timings remain as measured.
 
 ### The reveal
 
@@ -341,21 +349,26 @@ The swipe up the bottom bar (from anywhere on it, even New Page) uses the same m
 - **Behind it:** a solid, faintly warm grey, #F3F1F0 (#1A1918 in dark mode), opaque from the
   start. It replaced a blur of the page, which was awkward because it was slow to come in. The
   grid fades in with progress and grows from 0.96.
+- **Refresh rate:** the 120 Hz display link is held from the start of the drag through its
+  release and landing, including when catching a growing page. Requesting it only for the
+  flight left the finger tracking at 60 Hz.
 
 ### When let go
 
 - **Commit:** if flicked up faster than 400 pt/s, or let go past 25% while not moving down faster
   than 400.
 - **Committed:** it flies to its card at the swipe's speed:
-  - size on `releaseScale`, place on `releaseMove`, crop and corners on `placeCrop`;
+  - size on `releaseScale`, place on `releaseMove`, crop and corners on `placeCrop`, each
+    carrying its velocity. Stopping the uncropped height at release changed both edges' speed
+    abruptly even though the centre and scale kept moving, making a flick feel like a wall;
   - a hard flick dips past the card's size (in the replay: down to 136 pt wide against the card's
     179) before curving into it in about half a second;
-  - a rigid haptic at 0.5.
+  - no release haptic.
 - **Not committed:** it springs back to the page on `cancel` from its speed.
 - **Tabs button:** the page goes to its card on the same springs, as progress from rest.
 - **Choosing a card:** the card grows to the page on `close`, as progress.
 - **Turning around** (Tabs again, a tap on the landing page, a swipe as it grows back): it carries
-  on from the flight's current speed.
+  on from the flight's current speed, including its height, crop and corners.
 - **Landing:** the flight runs on Core Animation, not a display link. Nothing but a new touch
   changes it, so its whole path is worked out when it starts, sampled every 1/120 s until it's
   within 0.5 pt (and 0.01 of crop) of its place and moving under 0.1 pt a frame. It's then played
@@ -363,6 +376,11 @@ The swipe up the bottom bar (from anywhere on it, even New Page) uses the same m
   position inside it; and, on the way in, every title's opacity and transform. The model values
   jump to the end at once, and the real cell takes over when the animations finish. Interrupting
   reads the flight's function at the current time, removes the animations and starts from there.
+  - A finger's release starts from the presentation layers' visible page and strip crop. The
+    last touch can update the model without that pose displaying, and starting from that
+    unseen pose made a short, strong flick jump in one frame.
+  - The keyframes are all prepared before their shared start time is set. Starting their clock
+    before that work let the first visible frame skip ahead on fast flicks.
 - **The page in flight** is a `snapshotView` replica (about 5 ms), scaled from the window's size.
   Its card's picture (`drawHierarchy` of the page plus the strip's colour, about 25 ms) is drawn
   only once the flight is with the render server (`onFlight`, after a `CATransaction.flush()`),
@@ -437,6 +455,11 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
   the flight (0.75 s into the card, 0.52 s back). A display link that does nothing, asking for
   120 Hz, held from the flight's start to its landing, keeps every frame at 120 Hz. The replays
   that record frames with a display link hide this, as their own link holds the screen at 120.
+- **Finger tracking needed the same rate request.** An Animation Hitches trace of `tabsDrag`
+  showed the slow drag and reversal at 60 Hz, then 120 only after letting go. Holding the
+  switcher's own rate link from `prepare` through dragging, catching and landing changes both
+  of those tracking phases to 120 Hz on the iPhone. The replay polls the presentation layers
+  without a display link so its measurement cannot make the screen faster itself.
 - **Opening the panel's keyboard** still costs the main thread about 160 ms, and closing it
   (`resignFirstResponder`) about 47 ms. Only what runs on Core Animation stays smooth through
   that.
@@ -476,8 +499,10 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
   - **Controls:** dials grouped by phase; a scrubber that moves the simulation and the Arc video
     together; replays "as in video" for the pinch and menu runs; Copy values.
   - **Out of date:** its pinch dials describe the old fold and unfold, which the app no longer
-    has. Its card, swing, reveal, backdrop, bar and close dials still match `SummariseMotion` by
-    name.
+    has. It keeps Arc's original backdrop palette for reference; the app uses Rise's softer
+    icon palette. Its backdrop's purple/pink names correspond to the app's cool/warm glow names,
+    with the same paths and timings. Its other card, swing, reveal, bar and close dials still match
+    `SummariseMotion` by name.
   - **Headless check:** `--headless=new --virtual-time-budget`, with a unique `--user-data-dir`
     per run.
 - **In-app replays (DEBUG):**
@@ -493,6 +518,14 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
     springs back) and writes the moving page's frame and its title's opacity and place each frame
     to `tabs.csv`, as shown (the presentation layers), since the flight's model values jump to the
     end.
+  - `tabsDrag`: adds a 1.2 s slow drag, a reversal and cancellation, then catches a page growing
+    back and drags it into its card again. It records presentation layers by polling, with no
+    recording display link to mask the real refresh rate. For a device, a destination such as
+    `caches:tabs-drag` saves under the app's `Library/Caches`, which `devicectl device copy from`
+    can fetch; absolute paths still work for Simulator replays.
+  - `tabsFlick`: adds three short, strong flicks, each with a final touch update immediately
+    followed by release, before its new pose can display. This checks the drag-to-flight
+    handoff rather than only a long drag whose last pose has already reached the screen.
   - `more`: opens More over Hacker News and leaves it open, to look at the receded page's corners
     (concentric with the screen's: its corner radius, read from UIKit, less the page's inset).
   - `tabsPress`: presses Tabs and taps the card back three times on Hacker News with nothing else

@@ -322,6 +322,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             if bottomBar.panel == .find, touched.isDescendant(of: bottomBar.find.field)
                 || touched.isDescendant(of: bottomBar.find.answerView) { return false }
             if bottomBar.panel == .search, touched.isDescendant(of: bottomBar.search.field) { return false }
+            if bottomBar.panel == .siteSettings,
+               bottomBar.siteSettings.switches.contains(where: { touched.isDescendant(of: $0) }) { return false }
         }
         return true
     }
@@ -455,7 +457,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             (menu.shareTile, { $0.closePanel(); $0.share() }),
             (menu.summariseTile, { $0.summariseFromMenu() }),
             (menu.findTile, { $0.openFind() }),
-            (menu.copyTile, { $0.closePanel(); $0.copyLink() }),
+            (menu.copyTile, { $0.copyLink() }),
+            (menu.siteSettingsButton, { $0.openSiteSettings() }),
+            (bottomBar.siteSettings.closeButton, { $0.closeSiteSettings() }),
         ]
         for (control, action) in actions {
             control.addAction(UIAction { [weak self] _ in if let self { action(self) } }, for: .primaryActionTriggered)
@@ -518,6 +522,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         case .search: (view.bounds.height*Self.panelHeightFraction).rounded()
         case .menu: BottomBar.menuHeight(width: view.bounds.width, safeBottom: safeBottom)
         case .find: BottomBar.findHeight(keyboard: keyboardHeight, safeBottom: safeBottom, answer: bottomBar.find.answerHeight)
+        case .siteSettings: BottomBar.siteSettingsHeight(width: view.bounds.width, safeBottom: safeBottom)
         }
         return max(1, height-open)
     }
@@ -611,6 +616,28 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
 
     @objc private func closePanelOnTap() { closePanel() }
+
+    /// More fades away with its usual blurred swap as the settings surface grows a little.
+    func openSiteSettings() {
+        guard isPanelOpen, bottomBar.panel == .menu else { return }
+        swapMenuPanel(to: .siteSettings)
+    }
+
+    /// Settings' X returns to More, keeping the panel open and carrying its current animation on.
+    func closeSiteSettings() {
+        guard isPanelOpen, bottomBar.panel == .siteSettings else { return }
+        swapMenuPanel(to: .menu)
+    }
+
+    private func swapMenuPanel(to panel: BottomBar.Panel) {
+        bottomBar.panel = panel
+        bottomBar.showContents(of: panel)
+        let change = { self.setPanel(1); self.setNeedsStatusBarAppearanceUpdate() }
+        guard !UIAccessibility.isReduceMotionEnabled else { change(); return }
+        let spring = PeekPresentationController.closeSpring
+        UIView.animate(springDuration: spring.duration, bounce: spring.bounce, initialSpringVelocity: 0, delay: 0,
+                       options: [.beginFromCurrentState, .allowUserInteraction], animations: change)
+    }
 
     /// More's Find turns its panel into a find field, the panel moving to just above the keyboard
     /// as its contents swap, and the page coming forward to show its matches.
@@ -1032,6 +1059,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         case .changed:
             updateTabSwipe(translation, from: start)
         case .ended, .cancelled, .failed:
+            updateTabSwipe(translation, from: start)
             endTabSwipe(velocity: pan.state == .ended ? pan.velocity(in: view) : .zero, cancelled: pan.state != .ended)
         default: break
         }
@@ -1058,9 +1086,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         isSwipingToTabs = false
         let progress = tabSwitcher.swipeProgress
         let commit = !cancelled && (velocity.y < -400 || (progress > 0.25 && velocity.y < 400))
-        if commit {
-            UIImpactFeedbackGenerator(style: .rigid).impactOccurred(intensity: 0.5)
-        } else {
+        if !commit {
             isTabSwitcherOpen = false
             bottomBar.tabsButton.setShowsSwitcher(false, animated: true)
             UIView.animate(withDuration: 0.25) { self.setNeedsStatusBarAppearanceUpdate() }
@@ -1094,6 +1120,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private func copyLink() {
         guard let url = shareableURL else { return }
         UIPasteboard.general.url = url
+        bottomBar.showCopySuccess()
+        closePanel()
     }
 
     private func share() {
