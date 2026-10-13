@@ -606,7 +606,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         UIView.animate(springDuration: back.duration, bounce: back.bounce, initialSpringVelocity: 0, delay: 0,
                        options: [.beginFromCurrentState, .allowUserInteraction]) {
             PageRecede.apply(0, to: self.content)
-        }
+        } completion: { _ in PageRecede.settle(self.content) }
         bottomBar.showContents(of: nil)
     }
 
@@ -624,7 +624,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         UIView.animate(springDuration: back.duration, bounce: back.bounce, initialSpringVelocity: 0, delay: 0,
                        options: [.beginFromCurrentState, .allowUserInteraction]) {
             PageRecede.apply(0, to: self.content)
-        }
+        } completion: { _ in PageRecede.settle(self.content) }
     }
 
     /// Find's panel follows the keyboard up and down.

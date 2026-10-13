@@ -483,6 +483,8 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
     springs back) and writes the moving page's frame and its title's opacity and place each frame
     to `tabs.csv`, as shown (the presentation layers), since the flight's model values jump to the
     end.
+  - `more`: opens More over Hacker News and leaves it open, to look at the receded page's corners
+    (concentric with the screen's: its corner radius, read from UIKit, less the page's inset).
   - `tabsNew`: on a real page, six rounds of Tabs and then New Page 100 ms later, New Page alone
     and Tabs alone, printing each press's main-thread cost and every frame the main thread
     dropped. Its drops show the main thread, not the screen: check what showed with an Animation

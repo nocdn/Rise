@@ -19,7 +19,10 @@ grey rather than black in dark mode, whatever the page, so its buttons and panel
 The app follows the system's light or dark appearance. Tabs, on the left, shows the top of the current page as a
 small square card over a tilted one behind it. New Page, the light grey rounded button in
 the middle, grows the bar into a panel 70% of the window's height, with Peek's quick spring:
-its top corners round as it grows, and the page recedes behind it, dimmed. The bar's
+its top corners round as it grows, and the page recedes behind it, dimmed, its corners following
+the screen's own, as far in as the page has moved, so it never looks cut square into them: they
+round the moment the panel starts opening, stay round as the page comes back, and square off
+only once it's full size again. The bar's
 buttons swap for the panel's contents, and back, as a Motion transition on the web would:
 the incoming side fades in, grows from 96% and sharpens from a 1-point blur over 0.27 s
 (`cubic-bezier(0.26, 0.08, 0.25, 1)`), while the outgoing side fades in 0.19 s as it shrinks
