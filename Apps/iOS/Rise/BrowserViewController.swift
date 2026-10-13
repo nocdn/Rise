@@ -985,13 +985,14 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
 
     @objc private func swipeToTabs(_ pan: UIPanGestureRecognizer) {
-        let translation = pan.translation(in: view)
+        let translation = pan.translation(in: view), location = pan.location(in: view)
+        let start = CGPoint(x: location.x-translation.x, y: location.y-translation.y)
         switch pan.state {
         case .began:
             beginTabSwipe()
-            updateTabSwipe(translation)
+            updateTabSwipe(translation, from: start)
         case .changed:
-            updateTabSwipe(translation)
+            updateTabSwipe(translation, from: start)
         case .ended, .cancelled, .failed:
             endTabSwipe(velocity: pan.state == .ended ? pan.velocity(in: view) : .zero, cancelled: pan.state != .ended)
         default: break
@@ -1009,9 +1010,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         if growing { tabSwitcher.catchPage() }
     }
 
-    func updateTabSwipe(_ translation: CGPoint) {
+    func updateTabSwipe(_ translation: CGPoint, from start: CGPoint? = nil) {
         guard isSwipingToTabs else { return }
-        tabSwitcher.update(swipe: translation)
+        tabSwitcher.update(swipe: translation, from: start.map { view.convert($0, to: tabSwitcher) })
     }
 
     func endTabSwipe(velocity: CGPoint, cancelled: Bool = false) {

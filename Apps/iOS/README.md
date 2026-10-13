@@ -107,10 +107,15 @@ loads (SVGs can't be drawn here), else the site's `favicon.ico`. The bottom bar 
 Page and More, and Tabs becomes a rounded square filled like them that shows how many tabs there
 are. Tapping a card grows it back into the page; its close button closes the tab (the last one
 stays). A swipe up anywhere on the bottom bar, even starting on New Page, shrinks the page with
-the finger and drops it into its card when let go past a quarter of the way or flicked; a short
-one springs back. Every move turns around from wherever it has got to, so Tabs can be pressed as
+the finger, as Summarise's pinch does: its bottom edge follows the finger and the spot across
+from where it started stays under it, the corners rounding and the page cropping towards its card
+as it goes, its title riding under it and fading in, with the others', over the last part of the
+way. Let go past a quarter of the way or flicked, it flies on at the speed it was going
+and curves round into its card on Summarise's springs, a hard flick shrinking past the card's
+size first; a short one springs back. The page moves frame by frame at up to 120 Hz. Every move
+turns around from wherever it has got to, carrying on from its speed, so Tabs can be pressed as
 quickly as wanted: a page landing in its card can be tapped to grow it back, and a swipe up as a
-card grows back catches the page where it is.
+card grows back catches the page where it is. Going back to the page, the titles fade out quickly.
 
 Pull down from the top of the page to reload. An eight-spoke spinner charges up one
 spoke at a time in the gap, complete at 115 points, while light haptic ticks every

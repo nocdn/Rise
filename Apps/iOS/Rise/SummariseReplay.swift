@@ -38,6 +38,7 @@ import UIKit
             case "gentle": await run(in: controller, savingFramesTo: folder, pinch: .gentle)
             case "regrab": await run(in: controller, savingFramesTo: folder, regrab: true)
             case "timing": await timeStart(in: controller)
+            case "tabs": await swipeToTabs(in: controller, savingTo: folder)
             default: await run(in: controller, savingFramesTo: folder)
             }
             let report = "revealed \(result.revealed), bar \(result.barWhileLoading), summary \(result.summaryHeight), finished \(result.finished), page moved \(result.pageMoved)"
@@ -156,6 +157,52 @@ import UIKit
         summarise.finish()
         result.finished = controller.summarise == nil
         return result
+    }
+
+    /// Swipes up the bar to the tabs in real time, a hard flick up and to the left from the right,
+    /// a short swipe that springs back, and a tap on the card that grows it back, noting the moving
+    /// page's frame every frame in `tabs.csv`.
+    static func swipeToTabs(in controller: BrowserViewController, savingTo folder: URL?) async -> Result {
+        controller.webView.loadHTMLString(page, baseURL: URL(string: "https://lalinsky.com/"))
+        for _ in 0..<250 where controller.webView.isLoading { try? await Task.sleep(for: .milliseconds(20)) }
+        try? await Task.sleep(for: .milliseconds(800))
+        let size = controller.view.bounds.size, start = CGPoint(x: size.width*0.75, y: size.height-40)
+        var rows = ["t,move,x,y,width,height,title,titleY"]
+        func sample(_ name: String, for seconds: Double, swipe: ((Double) -> Void)? = nil) async {
+            let began = CACurrentMediaTime()
+            while CACurrentMediaTime()-began < seconds {
+                let t = CACurrentMediaTime()-began
+                swipe?(t)
+                if let card = controller.tabSwitcher.moving, let cell = controller.tabSwitcher.cells.first {
+                    let caption = cell.caption.convert(cell.caption.bounds, to: controller.tabSwitcher)
+                    rows.append(String(format: "%.4f,%@,%.1f,%.1f,%.1f,%.1f,%.2f,%.1f", t, name, card.frame.midX, card.frame.midY,
+                                       card.frame.width, card.frame.height, cell.caption.alpha*controller.tabSwitcher.grid.alpha, caption.midY))
+                }
+                try? await Task.sleep(for: .milliseconds(4))
+            }
+        }
+        // A hard flick, 0.12 s up and to the left, let go still going.
+        controller.beginTabSwipe()
+        await sample("flick", for: 0.12) { t in
+            controller.updateTabSwipe(CGPoint(x: -70*t/0.12, y: -380*t/0.12), from: start)
+        }
+        controller.endTabSwipe(velocity: CGPoint(x: -580, y: -3200))
+        await sample("flick", for: 1.2)
+        // A tap on its card grows it back.
+        controller.selectTab(controller.tabIndex)
+        await sample("grow", for: 1.0)
+        // A short, slow swipe that springs back.
+        controller.beginTabSwipe()
+        await sample("short", for: 0.3) { t in
+            controller.updateTabSwipe(CGPoint(x: 20*t/0.3, y: -70*t/0.3), from: start)
+        }
+        controller.endTabSwipe(velocity: CGPoint(x: 0, y: -60))
+        await sample("short", for: 0.8)
+        if let folder {
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try? rows.joined(separator: "\n").write(to: folder.appendingPathComponent("tabs.csv"), atomically: true, encoding: .utf8)
+        }
+        return Result(finished: controller.tabSwitcher.isHidden)
     }
 
     /// Pinches in real time on a real page, printing the gaps between frames, for the console.

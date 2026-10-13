@@ -204,8 +204,10 @@ final class TabCell: UIView {
 /// The tabs as cards in two columns over a blur of the page, as in Safari. The current page shrinks
 /// into its card as the blur comes in and the other cards fade, grow and sharpen in around it, their
 /// titles last; choosing a card grows it back into the page. A swipe up the bottom bar shrinks the
-/// page with the finger, and drops it into its card when let go. Every move can be turned around
-/// partway: Tabs again, a tap on the landing page, or a swipe up as it grows back.
+/// page with the finger, the spot under it staying under it, and when let go it flies on at the
+/// speed it was going and curves round into its card, on Summarise's springs. Every move can be
+/// turned around partway, carrying on from its speed: Tabs again, a tap on the landing page, or a
+/// swipe up as it grows back.
 final class TabSwitcherView: UIView {
     static let inset: CGFloat = 16
     static let spacing: CGFloat = 14
@@ -215,10 +217,13 @@ final class TabSwitcherView: UIView {
     static let titleHeight: CGFloat = 32
     static let cornerRadius: CGFloat = 18
     static let closeSize: CGFloat = 24
-    /// As quick as the app's other springs, with a little bounce as the page lands in its card.
+    /// The grid's own fade and growth.
     static let spring = (duration: 0.3, bounce: 0.14)
-    /// Growing back into the page, without overshoot, which would fall outside the screen.
     static let returnSpring = (duration: 0.28, bounce: 0.0)
+    /// The page's corners as it starts to shrink, which ease down to the card's.
+    static let swipeRadius = 28.8
+    /// How far into its shrinking, as a share of the way to its card, the titles start to come in.
+    static let captionFrom = 0.35
     static let blur = UIBlurEffect(style: .systemMaterial)
     /// How far up the swipe goes, as a share of the height, for the page to shrink all it will.
     static let swipeTravel: CGFloat = 0.45
@@ -244,9 +249,48 @@ final class TabSwitcherView: UIView {
     private var blurAnimator: UIViewPropertyAnimator?
     /// How far a swipe up has shrunk the page, from 0 to 1.
     private(set) var swipeProgress: CGFloat = 0
-    /// A page the swipe caught as it moved: how far it had shrunk, and where it was, which it leaves
+    /// A page the swipe caught as it moved: how far it had shrunk, and how it was, which it leaves
     /// for under the finger as the finger moves.
-    private var caught: (progress: CGFloat, frame: CGRect, crop: CGFloat, radius: CGFloat)?
+    private var caught: (progress: CGFloat, shape: Shape)?
+
+    /// The moving page: its middle, its width as a share of the window's, how much of the page
+    /// shows below its top, in the page's own points, how much of the strip is cropped, and its corners.
+    private struct Shape {
+        var x, y, scale, height, crop, radius: Double
+        static func lerp(_ a: Shape, _ b: Shape, _ k: Double) -> Shape {
+            func mix(_ a: Double, _ b: Double) -> Double { a+(b-a)*k }
+            return Shape(x: mix(a.x, b.x), y: mix(a.y, b.y), scale: mix(a.scale, b.scale), height: mix(a.height, b.height),
+                         crop: mix(a.crop, b.crop), radius: mix(a.radius, b.radius))
+        }
+    }
+    /// A move of the page on Summarise's springs. Let go, its size and place carry on at the speed
+    /// they were going (`release`), so it doesn't follow a set path; its crop and corners settle on
+    /// `shape`. Otherwise every part runs on one spring's progress.
+    private struct Flight {
+        var from: Shape, to: Shape, t0: Double
+        var velocity: (x: Double, y: Double, scale: Double)?
+        var scale: SummariseSpring, place: SummariseSpring, shape: SummariseSpring
+        var done: () -> Void
+
+        func at(_ t: Double) -> Shape {
+            func released(_ key: KeyPath<Shape, Double>, _ spring: SummariseSpring, _ speed: Double?) -> Double {
+                guard let speed else { return from[keyPath: key]+(to[keyPath: key]-from[keyPath: key])*spring(t) }
+                return spring.value(from: from[keyPath: key], to: to[keyPath: key], velocity: speed, at: t)
+            }
+            let settled = Shape.lerp(from, to, shape(t))
+            return Shape(x: released(\.x, place, velocity?.x), y: released(\.y, place, velocity?.y),
+                         scale: released(\.scale, scale, velocity?.scale),
+                         height: settled.height, crop: settled.crop, radius: settled.radius)
+        }
+    }
+    private var flight: Flight?
+    private var link: CADisplayLink?
+    /// The page's last frame in a flight, to tell when it has come to rest.
+    private var lastShape: Shape?
+    /// Where the page has been under the finger, for the speed it was going when let go.
+    private var history: [(t: Double, x: Double, y: Double, scale: Double)] = []
+    /// Where the finger started, across: the spot on the page there stays under it.
+    private var anchorX: Double = 0
     var pageSize = CGSize(width: 1, height: 1)
     var stripHeight: CGFloat = 0
     /// Clear of the status bar, and of the bottom bar.
@@ -373,6 +417,7 @@ final class TabSwitcherView: UIView {
         blurAnimator = blur
         caught = nil
         swipeProgress = 0
+        history = []
     }
 
     /// Shrinks the page into its card, after `prepare`, or turns it back into its card from
@@ -391,36 +436,42 @@ final class TabSwitcherView: UIView {
         freeze(card)
         BlurCrossfade.stop(in: scroll)
         blurAnimator?.pauseAnimation()
-        let progress = min(1, max(0, (1-card.frame.width/max(1, bounds.width))/0.5))
-        caught = (progress, card.frame, card.crop, card.layer.cornerRadius)
+        let shape = shape(of: card)
+        let progress = min(1, max(0, (1-shape.scale)/0.5))
+        caught = (progress, shape)
         swipeProgress = progress
+        history = []
     }
 
-    /// Shrinks the page with a swipe up, its bottom edge following the finger. A caught page starts
-    /// where it was and comes under the finger as it moves.
-    func update(swipe translation: CGPoint) {
+    /// Shrinks the page with a swipe up, its bottom edge following the finger and the spot across
+    /// from where the finger started staying under it, the corners rounding and the page cropping
+    /// towards its card as it goes. A caught page starts where it was and comes under the finger as
+    /// it moves.
+    func update(swipe translation: CGPoint, from start: CGPoint? = nil) {
         guard let card = moving else { return }
+        if history.isEmpty { anchorX = Double(start?.x ?? bounds.midX) }
         let travel = bounds.height*Self.swipeTravel
         let rise = (caught?.progress ?? 0)*travel-translation.y
-        let progress = min(1, max(0, rise/travel))
-        swipeProgress = progress
-        let scale = 1-0.5*progress
-        let size = CGSize(width: bounds.width*scale, height: bounds.height*scale)
-        let bottom = bounds.maxY-max(0, rise)
-        var frame = CGRect(x: bounds.midX+translation.x*0.4-size.width/2, y: bottom-size.height, width: size.width, height: size.height)
-        var crop: CGFloat = 0, radius = min(1, progress*4)*Self.cornerRadius*1.6
+        let progress = max(0, rise/travel)
+        swipeProgress = min(1, progress)
+        // Half the size at the end of the travel, and a little past it, giving.
+        let s = progress <= 1 ? 1-0.5*progress : 0.5*exp(-(progress-1))
+        let target = cardShape(current), width = Double(bounds.width), height = Double(bounds.height)
+        let k = pow(min(1, max(0, (1-s)/(1-target.scale))), SummariseMotion.pinchEasing)
+        var shape = Shape(x: anchorX+Double(translation.x)-(anchorX-width/2)*s, y: 0, scale: s,
+                          height: height+(target.height-height)*k, crop: k,
+                          radius: (Self.swipeRadius+(Double(Self.cornerRadius)-Self.swipeRadius)*k)*min(1, k/SummariseMotion.pinchRounding))
+        shape.y = height-max(0, Double(rise))-shape.height*s/2
         if let caught {
             let held = max(0, 1-hypot(translation.x, translation.y)/Self.catchTravel)
-            let from = caught.frame.offsetBy(dx: translation.x, dy: translation.y)
-            frame = CGRect(x: frame.minX+(from.minX-frame.minX)*held, y: frame.minY+(from.minY-frame.minY)*held,
-                           width: frame.width+(from.width-frame.width)*held, height: frame.height+(from.height-frame.height)*held)
-            crop = caught.crop*held
-            radius += (caught.radius-radius)*held
+            var from = caught.shape
+            from.x += Double(translation.x); from.y += Double(translation.y)
+            shape = Shape.lerp(shape, from, Double(held))
         }
-        card.frame = frame
-        card.crop = crop
-        card.layer.cornerRadius = radius
-        card.layoutIfNeeded()
+        apply(shape, to: card)
+        let now = CACurrentMediaTime()
+        history.append((now, shape.x, shape.y, shape.scale))
+        history.removeAll { now-$0.t > SummariseMotion.velocityWindow }
         if let blur = blurAnimator {
             blur.pauseAnimation()
             blur.isReversed = false
@@ -435,6 +486,8 @@ final class TabSwitcherView: UIView {
     func finishSwipe(commit: Bool, completion: @escaping () -> Void = {}) {
         guard let card = moving else { return }
         caught = nil
+        let velocity = swipeVelocity()
+        history = []
         if commit {
             setBlur(on: true)
             UIView.animate(springDuration: Self.spring.duration, bounce: 0, initialSpringVelocity: 0, delay: 0,
@@ -442,7 +495,7 @@ final class TabSwitcherView: UIView {
                 self.grid.alpha = 1
                 self.grid.transform = .identity
             }
-            settle()
+            settle(velocity: velocity)
             completion()
             return
         }
@@ -452,7 +505,24 @@ final class TabSwitcherView: UIView {
             self.grid.alpha = 0
             self.grid.transform = CGAffineTransform(scaleX: 0.96, y: 0.96)
         }
-        grow(card, completion: completion)
+        // Short, it springs back to the page from wherever it was going, as a short pinch does.
+        fadeCaptions()
+        grow(card, velocity: velocity, completion: completion)
+    }
+
+    /// Going back to the page, the titles go quickly.
+    private func fadeCaptions() {
+        UIView.animate(withDuration: 0.12, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+            self.cells.forEach { $0.caption.alpha = 0 }
+        }
+    }
+
+    /// How fast the page was going under the finger as it was let go.
+    private func swipeVelocity() -> (x: Double, y: Double, scale: Double) {
+        guard let first = history.first, let last = history.last, last.t-first.t > 0.008 else { return (0, 0, 0) }
+        let dt = last.t-first.t, move = SummariseMotion.maxMoveSpeed, scale = SummariseMotion.maxScaleSpeed
+        return (min(move, max(-move, (last.x-first.x)/dt)), min(move, max(-move, (last.y-first.y)/dt)),
+                min(scale, max(-scale, (last.scale-first.scale)/dt)))
     }
 
     /// Grows a tab's card back into the page, as the rest blur and fade away; a page still landing
@@ -469,17 +539,13 @@ final class TabSwitcherView: UIView {
             card = moving
         } else {
             card = makeMovingCard(image: cell.card.image.image)
-            card.frame = cardFrame(index)
-            card.layer.cornerRadius = Self.cornerRadius
-            card.layoutIfNeeded()
+            apply(cardShape(index), to: card)
         }
         cell.card.alpha = 0
         cell.closeButton.alpha = 0
         anchorGridOnScreen()
         BlurCrossfade.swap(from: grid, to: nil)
-        UIView.animate(withDuration: 0.12, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
-            self.cells.forEach { $0.caption.alpha = 0 }
-        }
+        fadeCaptions()
         setBlur(on: false)
         grow(card, completion: completion)
     }
@@ -528,52 +594,143 @@ final class TabSwitcherView: UIView {
         if heading == .card { onSelect(current) }
     }
 
-    /// Moves the page into its card, with the titles coming in after it.
-    private func settle() {
+    /// Moves the page into its card, with the titles coming in after it: let go, at the speed it
+    /// was going, and otherwise turning round from however it was already moving.
+    private func settle(velocity: (x: Double, y: Double, scale: Double)? = nil) {
         guard let card = moving, cells.indices.contains(current) else { return }
         move += 1
-        let move = move, target = cardFrame(current)
+        let move = move
         heading = .card
-        UIView.animate(springDuration: Self.spring.duration, bounce: Self.spring.bounce, initialSpringVelocity: 0, delay: 0,
-                       options: [.allowUserInteraction, .beginFromCurrentState]) {
-            card.frame = target
-            card.crop = 1
-            card.layer.cornerRadius = Self.cornerRadius
-            card.layoutIfNeeded()
-        } completion: { [weak self] _ in
+        let M = SummariseMotion.self
+        fly(card, to: cardShape(current), velocity: velocity ?? flightVelocity(),
+            scale: M.releaseScale, place: M.releaseMove, shape: M.placeCrop) { [weak self] in
             guard let self, self.move == move else { return }
             land()
         }
-        UIView.animate(withDuration: 0.25, delay: 0.1, options: [.curveEaseOut, .allowUserInteraction, .beginFromCurrentState]) {
-            for cell in self.cells {
-                cell.caption.alpha = 1
-                cell.caption.transform = .identity
-            }
-        }
     }
 
-    /// Grows the page to fill the window, then hides the switcher.
-    private func grow(_ card: TabCard, completion: @escaping () -> Void) {
+    /// Grows the page to fill the window, then hides the switcher: as Summarise's card grows back,
+    /// or, let go short, springing back from the speed it was going.
+    private func grow(_ card: TabCard, velocity: (x: Double, y: Double, scale: Double)? = nil, completion: @escaping () -> Void) {
         move += 1
         let move = move
         heading = .page
-        UIView.animate(springDuration: Self.returnSpring.duration, bounce: Self.returnSpring.bounce, initialSpringVelocity: 0,
-                       delay: 0, options: [.allowUserInteraction, .beginFromCurrentState]) {
-            card.frame = self.bounds
-            card.crop = 0
-            card.layer.cornerRadius = 0
-            card.layoutIfNeeded()
-        } completion: { [weak self] _ in
+        let M = SummariseMotion.self
+        let done = { [weak self] in
             guard let self, self.move == move else { return }
             hide()
             completion()
         }
+        // Already moving, it turns round from that speed.
+        if let speed = velocity ?? (flight != nil ? flightVelocity() : nil) {
+            fly(card, to: pageShape, velocity: speed, scale: M.cancel, place: M.cancel, shape: M.cancel, done: done)
+        } else {
+            fly(card, to: pageShape, velocity: nil, scale: M.close, place: M.close, shape: M.close, done: done)
+        }
+    }
+
+    // MARK: The page's flight
+
+    private var pageShape: Shape {
+        Shape(x: Double(bounds.midX), y: Double(bounds.midY), scale: 1, height: Double(bounds.height), crop: 0, radius: 0)
+    }
+
+    /// A tab's card, settled.
+    private func cardShape(_ index: Int) -> Shape {
+        let frame = cardFrame(index), scale = Double(frame.width/max(1, bounds.width))
+        return Shape(x: Double(frame.midX), y: Double(frame.midY), scale: scale, height: Double(frame.height)/scale,
+                     crop: 1, radius: Double(Self.cornerRadius))
+    }
+
+    private func shape(of card: TabCard) -> Shape {
+        let frame = card.frame, scale = max(0.01, Double(frame.width/max(1, bounds.width)))
+        return Shape(x: Double(frame.midX), y: Double(frame.midY), scale: scale, height: Double(frame.height)/scale,
+                     crop: Double(card.crop), radius: Double(card.layer.cornerRadius))
+    }
+
+    private func apply(_ shape: Shape, to card: TabCard) {
+        card.bounds = CGRect(x: 0, y: 0, width: bounds.width*shape.scale, height: max(0, shape.height*shape.scale))
+        card.center = CGPoint(x: shape.x, y: shape.y)
+        card.crop = min(1, max(0, shape.crop))
+        card.layer.cornerRadius = max(0, shape.radius)
+        card.layoutIfNeeded()
+        if card === moving, heading != .page { placeCaptions(for: shape) }
+    }
+
+    /// The titles come in as the page shrinks into its card: its own rides under it, and they all
+    /// fade in over the last part of the way, rising a little into place.
+    private func placeCaptions(for shape: Shape) {
+        guard cells.indices.contains(current) else { return }
+        let target = cardShape(current)
+        let k = min(1, max(0, ((1-shape.scale)/max(0.01, 1-target.scale)-Self.captionFrom)/(1-Self.captionFrom)))
+        let shown = k*k*(3-2*k)
+        for cell in cells {
+            cell.caption.alpha = shown
+            cell.caption.transform = CGAffineTransform(translationX: 0, y: 6*(1-shown))
+        }
+        // Under the page, wherever it is, rather than under its card.
+        let height = shape.height*shape.scale
+        cells[current].caption.transform = CGAffineTransform(translationX: shape.x-target.x,
+            y: (shape.y+height/2)-(target.y+target.height*target.scale/2)+6*(1-shown))
+    }
+
+    private func fly(_ card: TabCard, to target: Shape, velocity: (x: Double, y: Double, scale: Double)?,
+                     scale: SummariseSpring, place: SummariseSpring, shape: SummariseSpring, done: @escaping () -> Void) {
+        flight = Flight(from: self.shape(of: card), to: target, t0: CACurrentMediaTime(), velocity: velocity,
+                        scale: scale, place: place, shape: shape, done: done)
+        lastShape = nil
+        if link == nil {
+            let link = CADisplayLink(target: FrameTicker { [weak self] in self?.nextFrame() }, selector: #selector(FrameTicker.tick))
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+            link.add(to: .main, forMode: .common)
+            self.link = link
+        }
+    }
+
+    /// How fast the page is going in its flight now, for a new one to carry on from.
+    private func flightVelocity() -> (x: Double, y: Double, scale: Double)? {
+        guard let flight else { return nil }
+        let t = (link?.targetTimestamp ?? CACurrentMediaTime())-flight.t0, dt = 1.0/240
+        let a = flight.at(t-dt), b = flight.at(t)
+        return ((b.x-a.x)/dt, (b.y-a.y)/dt, (b.scale-a.scale)/dt)
+    }
+
+    private func nextFrame() {
+        guard let flight, let card = moving, let link else { stopFlight(); return }
+        let shape = flight.at(link.targetTimestamp-flight.t0)
+        apply(shape, to: card)
+        // At rest once within half a point of its place and barely moving.
+        let to = flight.to, width = Double(bounds.width)
+        func near(_ a: Shape, _ b: Shape, _ points: Double) -> Bool {
+            abs(a.x-b.x) < points && abs(a.y-b.y) < points && abs(a.scale-b.scale)*width < points
+                && abs(a.height*a.scale-b.height*b.scale) < points && abs(a.crop-b.crop) < 0.01 && abs(a.radius-b.radius) < points
+        }
+        let resting = near(shape, to, 0.5) && lastShape.map { near(shape, $0, 0.1) } == true
+        lastShape = shape
+        guard resting else { return }
+        apply(to, to: card)
+        stopFlight()
+        flight.done()
+    }
+
+    private func stopFlight() {
+        flight = nil
+        lastShape = nil
+        link?.invalidate()
+        link = nil
     }
 
     /// Puts the moving page in its card at once.
     private func land() {
         guard let card = moving else { return }
+        stopFlight()
         let cell = cells.indices.contains(current) ? cells[current] : nil
+        if heading != .page {
+            for cell in cells {
+                cell.caption.alpha = 1
+                cell.caption.transform = .identity
+            }
+        }
         cell?.card.alpha = 1
         card.removeFromSuperview()
         moving = nil
@@ -581,18 +738,9 @@ final class TabSwitcherView: UIView {
         UIView.animate(withDuration: 0.15, delay: 0, options: [.allowUserInteraction]) { cell?.closeButton.alpha = 1 }
     }
 
-    /// Leaves the page where it shows, its animations dropped.
+    /// Leaves the page where it shows, its flight dropped.
     private func freeze(_ card: TabCard) {
-        guard let shown = card.layer.presentation() else { return }
-        let frame = shown.frame, radius = shown.cornerRadius
-        let imageTop = card.image.layer.presentation()?.frame.minY ?? card.image.frame.minY
-        card.layer.removeAllAnimations()
-        card.image.layer.removeAllAnimations()
-        card.frame = frame
-        card.layer.cornerRadius = radius
-        let strip = stripHeight*frame.width/max(1, pageSize.width)
-        card.crop = strip > 0 ? min(1, max(0, -imageTop/strip)) : 0
-        card.layoutIfNeeded()
+        stopFlight()
     }
 
     /// Blurs the page in, or out, from however blurred it is.
@@ -606,6 +754,8 @@ final class TabSwitcherView: UIView {
     /// Ends whatever was moving, so a new move starts clean.
     private func stop() {
         move += 1
+        stopFlight()
+        history = []
         moving?.removeFromSuperview()
         moving = nil
         heading = nil
