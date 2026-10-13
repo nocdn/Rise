@@ -39,6 +39,7 @@ import UIKit
             case "regrab": await run(in: controller, savingFramesTo: folder, regrab: true)
             case "timing": await timeStart(in: controller)
             case "tabs": await swipeToTabs(in: controller, savingTo: folder)
+            case "tabsNew": await tabsThenNewPage(in: controller)
             default: await run(in: controller, savingFramesTo: folder)
             }
             let report = "revealed \(result.revealed), bar \(result.barWhileLoading), summary \(result.summaryHeight), finished \(result.finished), page moved \(result.pageMoved)"
@@ -173,10 +174,12 @@ import UIKit
             while CACurrentMediaTime()-began < seconds {
                 let t = CACurrentMediaTime()-began
                 swipe?(t)
-                if let card = controller.tabSwitcher.moving, let cell = controller.tabSwitcher.cells.first {
-                    let caption = cell.caption.convert(cell.caption.bounds, to: controller.tabSwitcher)
-                    rows.append(String(format: "%.4f,%@,%.1f,%.1f,%.1f,%.1f,%.2f,%.1f", t, name, card.frame.midX, card.frame.midY,
-                                       card.frame.width, card.frame.height, cell.caption.alpha*controller.tabSwitcher.grid.alpha, caption.midY))
+                // As shown: the page flies on Core Animation, its own frame already where it's going.
+                if let card = controller.tabSwitcher.moving?.layer.presentation(), let cell = controller.tabSwitcher.cells.first,
+                   let caption = cell.caption.layer.presentation(), let grid = controller.tabSwitcher.grid.layer.presentation() {
+                    let titleY = caption.convert(caption.bounds, to: controller.tabSwitcher.layer.presentation()).midY
+                    rows.append(String(format: "%.4f,%@,%.1f,%.1f,%.1f,%.1f,%.2f,%.1f", t, name, card.position.x, card.position.y,
+                                       card.bounds.width, card.bounds.height, Double(caption.opacity*grid.opacity), titleY))
                 }
                 try? await Task.sleep(for: .milliseconds(4))
             }
@@ -203,6 +206,68 @@ import UIKit
             try? rows.joined(separator: "\n").write(to: folder.appendingPathComponent("tabs.csv"), atomically: true, encoding: .utf8)
         }
         return Result(finished: controller.tabSwitcher.isHidden)
+    }
+
+    /// Presses Tabs, then New Page 100 ms later, as quickly as a person might, on a real page,
+    /// printing every frame's gap for a second and what each press cost, for the console.
+    static func tabsThenNewPage(in controller: BrowserViewController) async -> Result {
+        controller.webView.load(URLRequest(url: URL(string: "https://www.apple.com/iphone/")!))
+        for _ in 0..<500 where controller.webView.isLoading { try? await Task.sleep(for: .milliseconds(20)) }
+        try? await Task.sleep(for: .milliseconds(1500))
+        // Both, then New Page on its own, then Tabs on its own.
+        for round in 0..<6 {
+            let tabs = round < 2 || round >= 4, newPage = round < 4
+            let recorder = FrameRecorder()
+            recorder.start()
+            try? await Task.sleep(for: .milliseconds(100))
+            var began = CACurrentMediaTime()
+            if tabs {
+                controller.bottomBar.tabsButton.sendActions(for: .primaryActionTriggered)
+                recorder.mark("tabs", cost: CACurrentMediaTime()-began)
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+            began = CACurrentMediaTime()
+            if newPage {
+                controller.bottomBar.newPageButton.sendActions(for: .primaryActionTriggered)
+                recorder.mark("new page", cost: CACurrentMediaTime()-began)
+            }
+            try? await Task.sleep(for: .milliseconds(900))
+            print("Rise iOS tabsNew \(round) \(tabs ? "tabs" : "")\(tabs && newPage ? "+" : "")\(newPage ? "new page" : ""): " + recorder.stop())
+            controller.closePanel()
+            try? await Task.sleep(for: .milliseconds(700))
+            if controller.isTabSwitcherOpen { controller.selectTab(controller.tabIndex) }
+            try? await Task.sleep(for: .milliseconds(900))
+        }
+        return Result()
+    }
+
+    /// Notes every frame's gap and when things happened between them.
+    @MainActor final class FrameRecorder: NSObject {
+        private var link: CADisplayLink?, t0 = CACurrentMediaTime(), last: CFTimeInterval?
+        private var lines: [String] = []
+        func start() {
+            let link = CADisplayLink(target: self, selector: #selector(frame(_:)))
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+            link.add(to: .main, forMode: .common)
+            self.link = link
+            t0 = CACurrentMediaTime()
+        }
+        func mark(_ name: String, cost: Double) {
+            lines.append(String(format: "[%@ at %.3f s took %.1f ms]", name, CACurrentMediaTime()-t0-cost, cost*1000))
+        }
+        @objc private func frame(_ link: CADisplayLink) {
+            if let last {
+                let gap = (link.timestamp-last)*1000
+                if gap > (link.targetTimestamp-link.timestamp)*1000*1.5 {
+                    lines.append(String(format: "DROP %.0f ms at %.3f s", gap, link.timestamp-t0))
+                }
+            }
+            last = link.timestamp
+        }
+        func stop() -> String {
+            link?.invalidate()
+            return lines.joined(separator: "  ")
+        }
     }
 
     /// Pinches in real time on a real page, printing the gaps between frames, for the console.

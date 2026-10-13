@@ -379,6 +379,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.tabsButton.count = tabs.count
         tabSwitcher.onSelect = { [weak self] index in self?.selectTab(index) }
         tabSwitcher.onClose = { [weak self] index in self?.closeTab(index) }
+        tabSwitcher.onFlight = { [weak self] in
+            guard self?.pendingCard != nil else { return }
+            // Once the flight is with the render server.
+            CATransaction.flush()
+            self?.drawPendingCard()
+        }
         bottomBar.newPageButton.addAction(UIAction { [weak self] _ in self?.openPanel() }, for: .primaryActionTriggered)
         newPageHold.minimumPressDuration = 0.3
         newPageHold.delegate = self
@@ -546,6 +552,13 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.accessibilityViewIsModal = true
         bottomBar.showContents(of: panel)
         settlePanelOpen()
+        if panel == .search {
+            // The keyboard holds up the main thread for a while: the panel's spring goes to the
+            // render server first, so it opens smoothly through that, and anything else in flight
+            // on Core Animation, such as the tab switcher's page, carries on too.
+            CATransaction.flush()
+            bottomBar.search.focus()
+        }
     }
 
     private func settlePanelOpen(velocity: CGFloat = 0, alongside: (() -> Void)? = nil, completion: (() -> Void)? = nil) {
@@ -931,10 +944,13 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private func prepareTabSwitcher() {
         if tabSwitcher.isHidden {
             setBottomBarCollapsed(false)
-            let snapshot = snapshotPage()
-            currentTab.snapshot = snapshot
+            // Drawing the page for its card holds up the main thread for a couple of frames: the
+            // page shrinks as a replica, quick to take, and its card's picture is drawn once it's
+            // on its way on Core Animation.
+            let replica = content.snapshotView(afterScreenUpdates: false)
+            pendingCard = currentTab
             tabSwitcher.load(tabs, current: tabIndex)
-            tabSwitcher.prepare(backdrop: snapshot)
+            tabSwitcher.prepare(page: replica)
         }
         isTabSwitcherOpen = true
         bottomBar.tabsButton.setShowsSwitcher(true, animated: true)
@@ -951,7 +967,27 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         UIView.animate(withDuration: 0.25) { self.setNeedsStatusBarAppearanceUpdate() }
     }
 
+    /// The tab whose card's picture is still to be drawn, as its page shrinks into it.
+    private var pendingCard: BrowserTab?
+
+    /// Draws the picture for the card of the page that just went into the switcher, as the page and
+    /// its strip, without the switcher now over them.
+    private func drawPendingCard() {
+        guard let tab = pendingCard else { return }
+        pendingCard = nil
+        guard let index = tabs.firstIndex(where: { $0 === tab }), tab.webView.window != nil else { return }
+        let bounds = content.bounds, strip = topStrip.backgroundColor ?? .systemBackground, frame = pageFrame
+        let image = UIGraphicsImageRenderer(bounds: bounds).image { context in
+            strip.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: bounds.width, height: stripHeight))
+            tab.webView.drawHierarchy(in: frame, afterScreenUpdates: false)
+        }
+        tab.snapshot = image
+        tabSwitcher.setPicture(image, at: index)
+    }
+
     private func closeTabSwitcherAtOnce() {
+        drawPendingCard()
         tabSwitcher.hide()
         isTabSwitcherOpen = false
         bottomBar.tabsButton.setShowsSwitcher(false, animated: true)
@@ -960,6 +996,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     /// Puts a tab's page in place, under the switcher.
     private func switchTab(to index: Int) {
+        drawPendingCard()
         let previous = webView
         tabIndex = index
         webView.transform = .identity
@@ -971,6 +1008,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// Closes a tab from its card; the last one stays.
     private func closeTab(_ index: Int) {
         guard isTabSwitcherOpen, tabs.count > 1, tabs.indices.contains(index) else { return }
+        drawPendingCard()
         let closing = tabs.remove(at: index)
         if index < tabIndex {
             tabIndex -= 1

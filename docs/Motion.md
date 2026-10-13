@@ -71,6 +71,8 @@ These came out of many rounds of trying things on the phone. Follow them by defa
 - **Text materialises with the motion it belongs to.** Tab titles ride under the shrinking page
   and fade in as it nears its card, rather than already being there. Going back, they fade out
   quickly.
+- **Plain, immediate backgrounds.** The tab switcher sits on a solid grey from the first frame,
+  not a blur of the page fading in.
 - **Only what moves should move.** When the summary closes, only the summary text sinks back; the
   backdrop stays put.
 - **Scroll everything together.** The card and the summary scroll as one page, not a text box.
@@ -333,8 +335,9 @@ The swipe up the bottom bar (from anywhere on it, even New Page) uses the same m
     `x = startX + Δx − (startX − W/2)·s`.
 - **Catching it mid-flight:** a caught page starts where it was, moving with the finger. It comes
   under the finger as the finger moves over 120 pt (`catchTravel`).
-- **Behind it:** the grid fades in with progress and grows from 0.96, and the blur scrubs with a
-  paused property animator.
+- **Behind it:** a solid, faintly warm grey, #F3F1F0 (#1A1918 in dark mode), opaque from the
+  start. It replaced a blur of the page, which was awkward because it was slow to come in. The
+  grid fades in with progress and grows from 0.96.
 
 ### When let go
 
@@ -350,9 +353,17 @@ The swipe up the bottom bar (from anywhere on it, even New Page) uses the same m
 - **Choosing a card:** the card grows to the page on `close`, as progress.
 - **Turning around** (Tabs again, a tap on the landing page, a swipe as it grows back): it carries
   on from the flight's current speed.
-- **Landing:** the flight is driven by a display link at up to 120 Hz. It counts as landed once
-  within 0.5 pt (and 0.01 of crop) of its place and moving under 0.1 pt a frame. Then the real
-  cell takes over.
+- **Landing:** the flight runs on Core Animation, not a display link. Nothing but a new touch
+  changes it, so its whole path is worked out when it starts, sampled every 1/120 s until it's
+  within 0.5 pt (and 0.01 of crop) of its place and moving under 0.1 pt a frame. It's then played
+  as linear keyframes: the card's bounds, position and corners; the page picture's bounds and
+  position inside it; and, on the way in, every title's opacity and transform. The model values
+  jump to the end at once, and the real cell takes over when the animations finish. Interrupting
+  reads the flight's function at the current time, removes the animations and starts from there.
+- **The page in flight** is a `snapshotView` replica (about 5 ms), scaled from the window's size.
+  Its card's picture (`drawHierarchy` of the page plus the strip's colour, about 25 ms) is drawn
+  only once the flight is with the render server (`onFlight`, after a `CATransaction.flush()`),
+  or sooner if a tab is chosen, closed or opened first.
 
 ### Titles
 
@@ -371,6 +382,10 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
   `CADisableMinimumFrameDurationOnPhone` = YES. Display links ask for 60–120 Hz, preferring 120.
 - **Drive frames from the display link, on its `targetTimestamp`.** Compute every value as a pure
   function of time, which also makes it replayable.
+- **But a display link stops whenever the main thread does.** Anything that has to keep moving
+  through other work, such as the tab switcher's flight while New Page brings the keyboard up,
+  should be precomputed from the same function and handed to Core Animation as keyframes, which
+  run on the render server.
 - **A fast pinch is over in about 0.1 s.** Any stall at its start loses the whole gesture: the
   page sat still, then appeared as an already-small card ("it kinda skips the animation").
   - `drawHierarchy` of the page cost 26–34 ms.
@@ -392,6 +407,29 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
 - **Real pinches dropped single frames** with Rise's own work at 0.1 ms. WebKit was busy following
   the same fingers, which is why its pinch and pan are now ended when Summarise takes over.
 - **The close itself** runs at a steady 120 Hz: 88 of 88 frames on a real close.
+- **Tabs, then New Page within 100 ms** hitched (he noticed; it was real). Measured with the
+  `tabsNew` replay and Time Profiler:
+  - The Tabs press held the main thread 45–75 ms: `drawHierarchy` for the card (about 27 ms) and
+    blurred copies for the grid's crossfade.
+  - New Page held it about 90 ms, then dropped about 160 ms more. Of that, about 37 ms was
+    `BlurCrossfade` drawing the bar's contents at 3× and blurring them on Core Image, and the
+    rest was the keyboard: `becomeFirstResponder` and `UIKeyboardSceneDelegate` reloading the
+    input views. That's system code that can't be moved off the main thread.
+  - New Page alone did the same; together it showed because the switcher's display-link flight
+    froze through it.
+  - Fixes:
+    - The switcher's flight moved to Core Animation keyframes.
+    - The panel's spring is flushed to the render server before the field is focused
+      (`SearchPanel.focus()`).
+    - Blurred copies are drawn at 1.5 px per point of blur (1.5× for the panels' 1 pt), so
+      about 4× fewer pixels to draw and blur.
+    - The moving page is a replica, and its card's picture is drawn after takeoff.
+  - After the fixes, an Animation Hitches trace of all six rounds shows no Tabs+New Page or New
+    Page frame later than 8 ms. Tabs alone still has a late first frame (about 30 ms of work
+    before its first commit, from rest), with a steady 120 Hz after it.
+- **Opening the panel's keyboard** still costs the main thread about 160 ms, and closing it
+  (`resignFirstResponder`) about 47 ms. Only what runs on Core Animation stays smooth through
+  that.
 
 ---
 
@@ -414,6 +452,9 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
   caught, not only when no Summarise is running.
 - **Stale `summary` task on catch.** The close cancels the request; the catch must clear the task
   so a new one (or the reuse path) can start.
+- **A Core Animation flight's model is already at the end.** Read `layer.presentation()` for where
+  it shows, or the flight's own function of time. Finishing must check the flight is still the
+  current one, as removed animations call their completion too.
 
 ---
 
@@ -440,7 +481,12 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
     printing the frame gaps by phase.
   - `tabs`: swipes up the bar in real time (a hard flick, the card tapped back, a short swipe that
     springs back) and writes the moving page's frame and its title's opacity and place each frame
-    to `tabs.csv`.
+    to `tabs.csv`, as shown (the presentation layers), since the flight's model values jump to the
+    end.
+  - `tabsNew`: on a real page, six rounds of Tabs and then New Page 100 ms later, New Page alone
+    and Tabs alone, printing each press's main-thread cost and every frame the main thread
+    dropped. Its drops show the main thread, not the screen: check what showed with an Animation
+    Hitches trace of the same replay.
 - **The on-device log:** every Summarise is recorded (the last 40, in the app's caches).
   - **Contents:** its events with times, every frame during the pinch, flight, reveal and close
     (otherwise only dropped ones), and half a second of the page's frames after it ends.

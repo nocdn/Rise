@@ -149,15 +149,20 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         }
     }
 
-    /// Each time the panel opens, the field starts empty and focused.
+    /// Each time the panel opens, the field starts empty; `focus` then brings the keyboard up.
     func begin() {
         fetch?.cancel()
         opening += 1
         stopTranscribing()
         field.text = ""
         show([])
-        field.becomeFirstResponder()
         click.prepare()
+    }
+
+    /// Brings the keyboard up for the field. iOS takes the better part of a quarter of a second
+    /// over it on the main thread, so the panel's opening is under way first.
+    func focus() {
+        field.becomeFirstResponder()
     }
 
     /// Shows a small spinner where the clear button would be until `finishTranscribing`, which

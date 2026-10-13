@@ -89,6 +89,9 @@ import UIKit
         let alpha = view.alpha
         view.alpha = 1
         let format = UIGraphicsImageRendererFormat(for: view.traitCollection)
+        // Blurred, it needs no more than a pixel and a half for a point of blur: fewer pixels to
+        // draw and blur keep the swap from holding up the frame it starts on.
+        format.scale = max(1, min(format.scale, 1.5/radius))
         let image = UIGraphicsImageRenderer(size: size, format: format).image { view.layer.render(in: $0.cgContext) }
         view.alpha = alpha
         guard let source = image.cgImage else { return nil }

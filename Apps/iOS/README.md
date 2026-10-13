@@ -98,8 +98,9 @@ reaching either end of the page or tapping the strip opens it again. Pages scrol
 of the open bar through extra safe area.
 
 New Page opens what's chosen in a new tab after the current one. Tabs shrinks the page into a
-Safari-style tab switcher over a blur of it: the page springs into its card in a two-column
-grid as the system material blurs in behind and the other cards fade, grow and sharpen in
+Safari-style tab switcher over a solid, faintly warm grey (#F3F1F0, or #1A1918 in dark mode),
+there from the start rather than a blur of the page that would be slow to come in: the page
+springs into its card in a two-column grid as the other cards fade, grow and sharpen in
 around it, their titles revealed last, each with the page's favicon in line with it. As on the
 Mac, the icon's corners are clipped a little (4 points in 16), so square icons round off, and a
 page without one shows a blank grey square. Icons are the first bitmap the page declares that
@@ -112,7 +113,10 @@ from where it started stays under it, the corners rounding and the page cropping
 as it goes, its title riding under it and fading in, with the others', over the last part of the
 way. Let go past a quarter of the way or flicked, it flies on at the speed it was going
 and curves round into its card on Summarise's springs, a hard flick shrinking past the card's
-size first; a short one springs back. The page moves frame by frame at up to 120 Hz. Every move
+size first; a short one springs back. Each flight is worked out as it starts and played by Core
+Animation at up to 120 Hz, so it carries on smoothly while the app is busy, as when New Page is
+pressed straight after Tabs and brings the keyboard up; the page flies as a quick copy of the
+screen, and its card's picture is drawn once it's on its way. Every move
 turns around from wherever it has got to, carrying on from its speed, so Tabs can be pressed as
 quickly as wanted: a page landing in its card can be tapped to grow it back, and a swipe up as a
 card grows back catches the page where it is. Going back to the page, the titles fade out quickly.
