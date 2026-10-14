@@ -88,7 +88,11 @@ final class PeekPresentationController: UIPresentationController, UIGestureRecog
     }
 
     override func dismissalTransitionDidEnd(_ completed: Bool) {
-        if completed { dimming.removeFromSuperview() }
+        if completed {
+            dimming.removeFromSuperview()
+            let browser = presentingViewController as? BrowserViewController
+            DispatchQueue.main.async { [weak browser] in browser?.applyPendingSharedTabs() }
+        }
     }
 
     override func containerViewWillLayoutSubviews() {

@@ -1,0 +1,66 @@
+import AppKit
+import RiseCore
+
+@MainActor extension BrowserController {
+    var sharedTabsSnapshot: [SharedBrowserTab] {
+        tabs.compactMap { tab in
+            let address = tab.url?.absoluteString
+            let value = SharedBrowserTab(id: tab.id, url: address == "about:blank" ? nil : address, title: tab.title)
+            return value.isShareable ? value : nil
+        }
+    }
+
+    func startTabSync() {
+        let sync = SharedTabsSync(cacheURL: sessionURL.deletingLastPathComponent().appendingPathComponent("SharedTabs.json"), preferences: preferences)
+        tabSync = sync
+        sync.onTabsChange = { [weak self] in self?.applySharedTabs($0) }
+        sync.start(tabs: sharedTabsSnapshot)
+    }
+
+    var canApplySharedTabs: Bool {
+        !isApplyingSharedTabs && !palette.isPresented && peekTab == nil && !isSwitchingTabs
+            && sidebar.drag == nil && !historySwipe.isActive && window?.attachedSheet == nil
+    }
+
+    func applyPendingSharedTabs() {
+        guard hasPendingSharedTabs, let tabSync, tabSync.isEnabled else { return }
+        applySharedTabs(tabSync.tabs)
+    }
+
+    func applySharedTabs(_ incoming: [SharedBrowserTab]) {
+        guard canApplySharedTabs else { hasPendingSharedTabs = true; return }
+        isApplyingSharedTabs = true; hasPendingSharedTabs = false
+        let selected = selectedID, index = tabs.firstIndex { $0.id == selected } ?? 0
+        let existing = Dictionary(uniqueKeysWithValues: tabs.map { ($0.id, $0) })
+        let displayed = Dictionary(uniqueKeysWithValues: sharedTabsSnapshot.map { ($0.id, $0) })
+        let sharedIDs = Set(displayed.keys)
+        let localTabs = tabs.filter { !sharedIDs.contains($0.id) }
+        let next = incoming.map { value -> BrowserTab in
+            if let tab = existing[value.id], displayed[value.id]?.url == value.url {
+                if tab.customTitle == nil { tab.title = value.title ?? "New Tab" }
+                return tab
+            }
+            var saved = existing[value.id]?.saved ?? SavedTab(id: value.id, url: "about:blank", title: "New Tab")
+            saved.url = value.url ?? "about:blank"; saved.title = value.title ?? "New Tab"
+            saved.sessionState = nil; saved.faviconData = nil; saved.darkFaviconData = nil; saved.faviconOrigin = nil
+            return configure(BrowserTab(saved: saved))
+        } + localTabs
+        for old in tabs where !next.contains(where: { $0 === old }) {
+            old.onChange = nil; old.onThumbnailChange = nil; old.onFullscreenChange = nil
+            pictureInPicture.remove(old); tabMedia.remove(old.id)
+            pageFullscreen.setActive(false, in: old.webView)
+            releaseHeldPages(of: old); permissionCoordinator.cancel(for: old.webView)
+            old.cancelLoad(); old.webView.removeFromSuperview()
+            findBars.removeValue(forKey: old.id)?.discard()
+        }
+        tabs = next
+        let ids = Set(tabs.map(\.id))
+        splitGroups.removeAll { !ids.contains($0.leftID) || !ids.contains($0.rightID) }
+        recentTabIDs.removeAll { !ids.contains($0) }
+        selectedID = selected.flatMap { ids.contains($0) ? $0 : nil } ?? (tabs.isEmpty ? nil : tabs[min(index, tabs.count-1)].id)
+        tabSync?.acknowledge(sharedTabsSnapshot)
+        attachVisiblePages(); update()
+        isApplyingSharedTabs = false
+        saveNow()
+    }
+}

@@ -1,9 +1,19 @@
 # Rise for iOS
 
-On a fresh launch, New Page's plus dialog opens and focuses its search field while
-`https://news.ycombinator.com/` loads behind it in a persistent `WKWebView`. This happens
-once for a newly created scene, including relaunching after the process was killed.
+With no saved session, New Page's plus dialog opens and focuses its search field while
+`https://news.ycombinator.com/` loads behind it in a persistent `WKWebView`. Later launches
+restore the open tabs in order and resume the selected page without opening that dialog.
+Addresses, titles and selection are saved atomically in Application Support on tab and
+navigation changes, including History API changes in background tabs. Scene lifecycle
+events flush pending writes; ordinary app updates retain the file. Only the selected
+restored tab loads at launch; other tabs retain their saved title/address and load when
+selected. Temporary Peek pages and DEBUG replays/audits have no session store. This
+restores page addresses, rather than live form contents or WebKit's back/forward history.
 Returning to the app while it's still in memory preserves the existing page and panel.
+Tabs also form one shared list with the Mac app through the user's existing iCloud
+account. Sync is enabled by default under **More → Site settings → App settings**;
+there is no app login. See [Shared tabs with iCloud](../../docs/TabSync.md) for the
+merge behavior, signing setup and verification.
 Web links navigate normally; new-window links use the
 same page, and WebKit's native back/forward gestures remain available. UIKit and
 WebKit manage safe areas, rotation, the keyboard and scrolling.
@@ -275,6 +285,15 @@ python3 scripts/ios.py test --device "Your iPhone"
 Use `--configuration Release` for a release build, or add `--console` to the restart
 command to stream app logs while debugging. Build products and local signing
 profiles are ignored by Git; the source project, scheme and original icon are tracked.
+
+`BrowserSessionTests` exercises ordered atomic saves, invalid/corrupt records, tab opening
+and closing, selection, background History API/title changes, lazy restoration, and Peek
+adoption/Back using real on-device WebKit and HTTP. All four tests passed on iPhone 14 Pro
+on 13 October 2026, alongside the existing address-editing, Peek and fresh-launch checks.
+The existing `testTabsShrinkIntoCardsUnderTheBarAndASwipeUpDropsThePageIn` timing check
+failed on both this build and an isolated build of the preceding commit (`c2956b5`).
+The normal phone session's tab identities, addresses and selection also survived installation
+and relaunch with the restart script.
 
 ## Input focus and zoom
 

@@ -30,7 +30,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     let voice = VoiceInput()
     private var isSwipingToTabs = false
     private lazy var backSwipe = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(swipeBack))
-    private let startURL: URL?
+    private let sessionStore: MobileBrowserSessionStore?
+    private var lastSavedSession: MobileBrowserSession?
+    let tabSync: SharedTabsSync?
+    let tabPreviews: BackgroundTabPreviews?
+    private var isApplyingSharedTabs = false
+    private var hasPendingSharedTabs = false
     private let allowsPeek: Bool
     private var opensSearchOnFirstAppearance: Bool
     /// Fills the area behind the status bar with the colour along the page's top edge, as Arc
@@ -84,14 +89,113 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private lazy var collapsedBarTap = UITapGestureRecognizer(target: self, action: #selector(openCollapsedBar))
 
     init(startURL: URL? = BrowserViewController.homeURL, allowsPeek: Bool = true,
-         opensSearchOnFirstAppearance: Bool = false, adBlocker: MobileAdBlocker = .shared) {
+         opensSearchOnFirstAppearance: Bool = false, adBlocker: MobileAdBlocker = .shared,
+         sessionStore: MobileBrowserSessionStore? = nil, tabSync: SharedTabsSync? = nil,
+         previewCacheURL: URL? = nil) {
         self.adBlocker = adBlocker
-        self.startURL = startURL
+        self.sessionStore = allowsPeek ? sessionStore : nil
+        self.tabSync = allowsPeek ? tabSync : nil
+        tabPreviews = allowsPeek ? previewCacheURL.map { BackgroundTabPreviews(cacheURL: $0, adBlocker: adBlocker) } : nil
         self.allowsPeek = allowsPeek
-        self.opensSearchOnFirstAppearance = opensSearchOnFirstAppearance
-        tabs = [BrowserTab(webView: Self.makeWebView())]
+        let restored = self.sessionStore?.load()
+        self.opensSearchOnFirstAppearance = opensSearchOnFirstAppearance && restored == nil
+        if let restored {
+            tabs = restored.tabs.map { BrowserTab(webView: Self.makeWebView(), restoring: $0) }
+            tabIndex = restored.tabs.firstIndex { $0.id == restored.selectedTabID } ?? 0
+        } else {
+            tabs = [BrowserTab(webView: Self.makeWebView(), restoring: .init(url: startURL))]
+        }
         super.init(nibName: nil, bundle: nil)
-        adoptDelegates(of: webView)
+        for tab in tabs { track(tab) }
+        self.tabSync?.onTabsChange = { [weak self] in self?.applySharedTabs($0) }
+        self.tabSync?.onStatusChange = { [weak self] _ in self?.updateAppSettings() }
+    }
+
+    private func track(_ tab: BrowserTab) {
+        adoptDelegates(of: tab.webView)
+        if sessionStore != nil { tab.onPageChange = { [weak self] in self?.saveSession() } }
+    }
+
+    /// Save on tab/navigation changes as well as lifecycle events: an update can terminate the
+    /// process without another background callback. Test and Peek browsers have no session store.
+    func saveSession(flush: Bool = false) {
+        guard let sessionStore else { return }
+        let session = MobileBrowserSession(tabs: tabs.map(\.sessionTab), selectedTabID: currentTab.id)
+        if flush || session != lastSavedSession {
+            sessionStore.save(session)
+            lastSavedSession = session
+        }
+        if flush { sessionStore.flush() }
+        if !isApplyingSharedTabs { tabSync?.capture(sharedTabsSnapshot) }
+        if flush { tabSync?.flush() }
+        refreshTabPreviews()
+    }
+
+    private var sharedTabsSnapshot: [SharedBrowserTab] {
+        tabs.filter { !$0.isSyncPlaceholder }.map {
+            let saved = $0.sessionTab
+            return SharedBrowserTab(id: saved.id, url: saved.url?.absoluteString, title: saved.title)
+        }
+    }
+
+    private func updateAppSettings() {
+        bottomBar.appSettings.showSync(enabled: tabSync?.isEnabled ?? true,
+                                      message: tabSync?.status.message ?? SharedTabsSync.Status.ready.message)
+    }
+
+    private func applySharedTabs(_ incoming: [SharedBrowserTab]) {
+        guard isViewLoaded, !isSwipingToTabs, !isTabSwitcherOpen, tabSwitcher.isHidden,
+              summarise == nil, !isPanelOpen, presentedViewController == nil else {
+            hasPendingSharedTabs = true; return
+        }
+        isApplyingSharedTabs = true
+        hasPendingSharedTabs = false
+        let previous = webView, selected = currentTab.id, previousIndex = tabIndex
+        let existing = Dictionary(uniqueKeysWithValues: tabs.map { ($0.id, $0) })
+        var next = incoming.map { saved -> BrowserTab in
+            if let tab = existing[saved.id], tab.sessionTab.url?.absoluteString == saved.url {
+                tab.rememberSharedTitle(saved.title)
+                return tab
+            }
+            let tab = BrowserTab(webView: Self.makeWebView(), restoring: .init(
+                id: saved.id, url: saved.url.flatMap(URL.init(string:)), title: saved.title))
+            track(tab)
+            return tab
+        }
+        if next.isEmpty {
+            let blank = BrowserTab(webView: Self.makeWebView())
+            blank.isSyncPlaceholder = true
+            track(blank); next = [blank]
+        }
+        for old in tabs where !next.contains(where: { $0 === old }) {
+            old.onPageChange = nil
+            for page in [old.webView] + old.previousPages {
+                page.stopLoading(); page.navigationDelegate = nil; page.uiDelegate = nil
+            }
+        }
+        tabs = next
+        tabIndex = tabs.firstIndex { $0.id == selected } ?? min(previousIndex, tabs.count-1)
+        if previous !== webView { install(webView); previous.removeFromSuperview() }
+        bottomBar.tabsButton.count = tabs.count
+        tabSync?.acknowledge(sharedTabsSnapshot)
+        pageChanged()
+        isApplyingSharedTabs = false
+        saveSession()
+    }
+
+    func applyPendingSharedTabs() {
+        guard hasPendingSharedTabs, let tabSync, tabSync.isEnabled else { return }
+        applySharedTabs(tabSync.tabs)
+    }
+
+    func refreshTabPreviews() {
+        guard isViewLoaded, view.window != nil else { return }
+        tabPreviews?.update(tabs: tabs, selected: currentTab, viewport: view.bounds.size, stripHeight: stripHeight)
+    }
+
+    func setTabPreviewsActive(_ active: Bool) {
+        tabPreviews?.setActive(active)
+        if active { refreshTabPreviews() }
     }
 
     static func makeWebView() -> WKWebView {
@@ -148,6 +252,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        applyPendingSharedTabs()
+        tabPreviews?.setActive(true)
+        refreshTabPreviews()
         // Only a freshly created scene opts in. Consume it once, so returning to the app or
         // dismissing a presented controller preserves whatever the person was doing.
         guard opensSearchOnFirstAppearance else { return }
@@ -155,10 +262,24 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         openPanel()
     }
 
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        tabPreviews?.setActive(false)
+    }
+
     override func loadView() {
         view = UIView()
         // Only shows around the page as it recedes behind the panel.
         view.backgroundColor = .black
+        if let tabPreviews {
+            view.addSubview(tabPreviews.host)
+            tabPreviews.canRender = { [weak self] in
+                guard let self else { return false }
+                return view.window?.windowScene?.activationState == .foregroundActive
+                    && !isSwipingToTabs && tabSwitcher.moving == nil && summarise == nil
+                    && !isPanelOpen && presentedViewController == nil
+            }
+        }
         content.backgroundColor = .systemBackground
         content.clipsToBounds = true
         view.addSubview(content)
@@ -198,6 +319,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         // Frames ignore transforms, so lay out the content, which recedes, by bounds and center.
         content.bounds = view.bounds
         content.center = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
+        tabPreviews?.host.frame = view.bounds
         dimming.frame = view.bounds
         topStrip.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: stripHeight)
         for page in [webView]+previousPages where page.superview === content {
@@ -286,6 +408,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             webView.observe(\.canGoForward) { [weak self] _, _ in MainActor.assumeIsolated { self?.updateAddress() } },
         ]
         updateAddress()
+        saveSession()
+        currentTab.loadIfNeeded()
     }
 
     /// Back in More's panel also returns past the start of the page's history to the page it replaced.
@@ -478,6 +602,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             (menu.copyTile, { $0.copyLink() }),
             (menu.siteSettingsButton, { $0.openSiteSettings() }),
             (bottomBar.siteSettings.closeButton, { $0.closeSiteSettings() }),
+            (bottomBar.siteSettings.appSettingsRow, { $0.openAppSettings() }),
+            (bottomBar.appSettings.closeButton, { $0.closeAppSettings() }),
             (menu.downloadsButton, { $0.openDownloads() }),
             (bottomBar.downloads.closeButton, { $0.closeDownloads() }),
         ]
@@ -485,6 +611,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             control.addAction(UIAction { [weak self] _ in if let self { action(self) } }, for: .primaryActionTriggered)
         }
         bottomBar.siteSettings.onAdBlockingChanged = { [weak self] enabled in self?.changeAdBlocking(enabled) }
+        bottomBar.appSettings.onSyncChanged = { [weak self] enabled in
+            self?.tabSync?.setEnabled(enabled)
+            self?.updateAppSettings()
+        }
         if allowsPeek { setUpDownloads() }
     }
 
@@ -545,6 +675,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         case .menu: BottomBar.menuHeight(width: view.bounds.width, safeBottom: safeBottom)
         case .find: BottomBar.findHeight(keyboard: keyboardHeight, safeBottom: safeBottom, answer: bottomBar.find.answerHeight)
         case .siteSettings: BottomBar.siteSettingsHeight(width: view.bounds.width, safeBottom: safeBottom)
+        case .appSettings: BottomBar.appSettingsHeight(width: view.bounds.width, safeBottom: safeBottom)
         case .downloads: BottomBar.downloadsHeight(width: view.bounds.width, safeBottom: safeBottom,
                                                    rows: bottomBar.downloads.rowCount)
         }
@@ -620,7 +751,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         dimming.isUserInteractionEnabled = false
         bottomBar.accessibilityViewIsModal = false
         guard !UIAccessibility.isReduceMotionEnabled else {
-            setPanel(0); bottomBar.showContents(of: nil, animated: false); setNeedsStatusBarAppearanceUpdate(); return
+            setPanel(0); bottomBar.showContents(of: nil, animated: false); setNeedsStatusBarAppearanceUpdate()
+            applyPendingSharedTabs(); return
         }
         // As with Peek, the bar returns without overshoot while the page's bounce shows its return.
         let close = PeekPresentationController.closeSpring
@@ -635,7 +767,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         UIView.animate(springDuration: back.duration, bounce: back.bounce, initialSpringVelocity: 0, delay: 0,
                        options: [.beginFromCurrentState, .allowUserInteraction]) {
             PageRecede.apply(0, to: self.content)
-        } completion: { _ in PageRecede.settle(self.content) }
+        } completion: { _ in PageRecede.settle(self.content); self.applyPendingSharedTabs() }
         bottomBar.showContents(of: nil)
     }
 
@@ -652,6 +784,17 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     func closeSiteSettings() {
         guard isPanelOpen, bottomBar.panel == .siteSettings else { return }
         swapMenuPanel(to: .menu)
+    }
+
+    func openAppSettings() {
+        guard isPanelOpen, bottomBar.panel == .siteSettings else { return }
+        updateAppSettings()
+        swapMenuPanel(to: .appSettings)
+    }
+
+    func closeAppSettings() {
+        guard isPanelOpen, bottomBar.panel == .appSettings else { return }
+        swapMenuPanel(to: .siteSettings)
     }
 
     /// Downloads opens as Site settings does, showing what's under way and what's done.
@@ -811,10 +954,11 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             guard let self else { return }
             PageRecede.apply(0, to: content)
             setPanel(0, recedingPage: false)
-            openInNewTab(page, topColor: color)
+            openInNewTab(page, topColor: color, initialURL: url)
             arrival.removeFromSuperview()
             view.isUserInteractionEnabled = true
             bottomBar.showContents(of: nil)
+            applyPendingSharedTabs()
         }
         guard !UIAccessibility.isReduceMotionEnabled else { grow(); land(); return }
         bottomBar.hideContents()
@@ -977,6 +1121,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             bottomBar.transform = .identity
             bottomBar.isUserInteractionEnabled = true
             setNeedsStatusBarAppearanceUpdate()
+            applyPendingSharedTabs()
         }
         view.insertSubview(summarise, belowSubview: bottomBar)
         if attachingHost { summaryHost.didMove(toParent: self) }
@@ -988,10 +1133,13 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     // MARK: Tabs
 
     /// Opens a page chosen in New Page's panel in a new tab after this one.
-    private func openInNewTab(_ page: WKWebView, topColor: UIColor?) {
+    private func openInNewTab(_ page: WKWebView, topColor: UIColor?, initialURL: URL) {
         if !tabSwitcher.isHidden { closeTabSwitcherAtOnce() } else { currentTab.snapshot = snapshotPage() }
+        tabPreviews?.save(currentTab)
         let previous = webView
-        tabs.insert(BrowserTab(webView: page), at: tabIndex+1)
+        let tab = BrowserTab(webView: page, initialURL: initialURL)
+        track(tab)
+        tabs.insert(tab, at: tabIndex+1)
         tabIndex += 1
         bottomBar.tabsButton.count = tabs.count
         page.transform = .identity
@@ -1043,7 +1191,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         if index != tabIndex { switchTab(to: index) }
         isTabSwitcherOpen = false
         bottomBar.tabsButton.setShowsSwitcher(false, animated: true)
-        tabSwitcher.dismiss(to: index) { [weak self] in self?.updateTabsPreview() }
+        tabSwitcher.dismiss(to: index) { [weak self] in
+            self?.updateTabsPreview(); self?.applyPendingSharedTabs()
+        }
         UIView.animate(withDuration: 0.25) { self.setNeedsStatusBarAppearanceUpdate() }
     }
 
@@ -1063,6 +1213,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             tab.webView.drawHierarchy(in: frame, afterScreenUpdates: false)
         }
         tab.snapshot = image
+        tabPreviews?.save(tab)
         tabSwitcher.setPicture(image, at: index)
     }
 
@@ -1100,6 +1251,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         }
         tabSwitcher.remove(at: index, current: tabIndex)
         bottomBar.tabsButton.count = tabs.count
+        saveSession()
     }
 
     @objc private func swipeToTabs(_ pan: UIPanGestureRecognizer) {
@@ -1144,7 +1296,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             bottomBar.tabsButton.setShowsSwitcher(false, animated: true)
             UIView.animate(withDuration: 0.25) { self.setNeedsStatusBarAppearanceUpdate() }
         }
-        tabSwitcher.finishSwipe(commit: commit)
+        tabSwitcher.finishSwipe(commit: commit) { [weak self] in self?.applyPendingSharedTabs() }
     }
 
     /// The current page, small, as the top card of the Tabs button.
@@ -1180,6 +1332,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private func share() {
         guard let url = shareableURL else { return }
         let share = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        share.completionWithItemsHandler = { [weak self] _, _, _, _ in
+            DispatchQueue.main.async { self?.applyPendingSharedTabs() }
+        }
         share.popoverPresentationController?.sourceView = bottomBar.moreButton
         present(share, animated: true)
     }
@@ -1194,7 +1349,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             VoiceInput.prepare()
             DispatchQueue.main.async { SummariseView.prepareGlows() }
         }
-        if let startURL { webView.load(URLRequest(url: startURL)) }
+        currentTab.loadIfNeeded()
+        updateAppSettings()
+        tabSync?.start(tabs: sharedTabsSnapshot)
     }
 
     @objc private func holdNewPage(_ hold: UILongPressGestureRecognizer) {

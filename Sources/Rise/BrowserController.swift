@@ -157,6 +157,9 @@ import RiseCore
     let sessionURL: URL
     let preferences: UserDefaults
     var lastSaved: BrowserSession?
+    var tabSync: SharedTabsSync?
+    var isApplyingSharedTabs = false
+    var hasPendingSharedTabs = false
     var errorWebView: WKWebView?
     let adBlocker: AdBlocker
     var blockingChangeGeneration = 0
@@ -174,6 +177,7 @@ import RiseCore
     var pendingMiddleTabID: UUID?
 
     init(sessionURL: URL? = nil, restore: Bool = true, preferences: UserDefaults = .standard, searchSuggestions: GoogleSearchSuggestions? = nil) {
+        let syncTabs = sessionURL == nil && restore && Bundle.main.bundleIdentifier == "dev.bartosz.Rise"
         self.preferences = preferences
         googleSearchSuggestions = searchSuggestions ?? GoogleSearchSuggestions()
         sitePermissions = SitePermissions(preferences: preferences)
@@ -272,6 +276,7 @@ import RiseCore
         }
         if let selectedID { select(selectedID) }
         update(); layoutChrome()
+        if syncTabs { startTabSync() }
     }
     required init?(coder: NSCoder) { fatalError() }
     func buildChrome() {
@@ -553,11 +558,18 @@ import RiseCore
         developerAddress.updateURL(selectedTab?.url?.absoluteString ?? "")
         errorSurface.isHidden = errorWebView == nil || errorWebView !== selectedTab?.webView
         layoutChrome(); refreshTabSwitcher(); scheduleSave()
+        if !isApplyingSharedTabs { tabSync?.capture(sharedTabsSnapshot) }
+        if hasPendingSharedTabs, canApplySharedTabs { applyPendingSharedTabs() }
     }
     @objc func newTab() { paletteCreatesTab = true; showPalette(text: "") }
     @objc func focusAddress() { paletteCreatesTab = false; showPalette(text: selectedTab?.url?.absoluteString == "about:blank" ? "" : selectedTab?.url?.absoluteString ?? "") }
     func showPalette(text: String) { if searchEngine == .google { googleSearchSuggestions.warmUp() }; historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); permissionCoordinator.cancel(); dismissArea.isHidden = false; palette.currentPage = selectedTab.flatMap { tab in tab.url.map { ($0.absoluteString, tab.favicon(for: theme)) } }; palette.show(text: text, theme: theme, createsTab: paletteCreatesTab); layoutChrome() }
-    func hidePalette() { googleSearchSuggestions.cancel(); suggestionFavicons.cancelPreview(); guard palette.isPresented else { return }; palette.hide(); dismissArea.isHidden = true; window?.makeFirstResponder(selectedTab?.webView) }
+    func hidePalette() {
+        googleSearchSuggestions.cancel(); suggestionFavicons.cancelPreview()
+        guard palette.isPresented else { return }
+        palette.hide(); dismissArea.isHidden = true; window?.makeFirstResponder(selectedTab?.webView)
+        DispatchQueue.main.async { [weak self] in self?.applyPendingSharedTabs() }
+    }
     func submitAddress(_ text: String, suggestion: AddressSuggestion?) {
         hidePalette()
         if let command = suggestion?.command {
@@ -602,7 +614,11 @@ import RiseCore
         }
         attachVisiblePages(); update()
     }
-    @objc func reopenTab() { guard let saved = closedTabs.popLast() else { return }; let tab = configure(BrowserTab(saved: saved)); tabs.insert(tab, at: 0); select(tab.id) }
+    @objc func reopenTab() {
+        guard var saved = closedTabs.popLast() else { return }
+        if tabSync?.isClosed(saved.id) == true { saved.id = UUID() }
+        let tab = configure(BrowserTab(saved: saved)); tabs.insert(tab, at: 0); select(tab.id)
+    }
     @objc func goBack() { navigateHistory(.back) }
     @objc func goForward() { navigateHistory(.forward) }
     private func navigateHistory(_ direction: HistoryDirection) {
@@ -687,6 +703,8 @@ import RiseCore
         DispatchQueue.main.asyncAfter(deadline: .now()+0.4, execute: work)
     }
     func saveNow() {
+        if !isApplyingSharedTabs { tabSync?.capture(sharedTabsSnapshot) }
+        tabSync?.flush()
         suggestionFavicons.save()
         do { try browsingHistory.save(); try siteSearchLearner.searches.save() }
         catch { NSLog("Rise history save failed: %@", error.localizedDescription) }

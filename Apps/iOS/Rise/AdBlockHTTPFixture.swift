@@ -45,8 +45,17 @@ final class AdBlockHTTPFixture: @unchecked Sendable {
             if shouldFail { connection.cancel(); return }
             let body: String, type: String
             if route == "/" || route == "/replacement" { lock.lock(); requests += 1; lock.unlock(); body = Self.html(); type = "text/html" }
+            else if route.hasPrefix("/preview/") && !route.hasSuffix(".png") {
+                lock.lock(); requests += 1; lock.unlock()
+                let colour = route.contains("red") ? "#dc3545" : "#1676de"
+                body = "<html><head><meta name='viewport' content='width=device-width,initial-scale=1'><link rel='icon' href='/preview/icon.png'><title>Preview article</title></head><body style='margin:0;background:\(colour);color:white;font:24px sans-serif'><h1>Background article</h1><p>This page was rendered without selecting its tab.</p></body></html>"
+                type = "text/html"
+            }
+            else if route == "/preview/icon.png" { body = ""; type = "image/png" }
             else { body = route.contains("prepare/ads") ? "window.adLoaded=true;" : "window.normalLoaded=true;"; type = "application/javascript" }
-            let bytes = Data(body.utf8)
+            let bytes = route == "/preview/icon.png"
+                ? Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR4nGNQmHAXK2IYWhIAmMJjQXFQF3IAAAAASUVORK5CYII=")!
+                : Data(body.utf8)
             let headers = Data("HTTP/1.1 200 OK\r\nContent-Type: \(type)\r\nContent-Length: \(bytes.count)\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n".utf8)
             // A short delay keeps the native spinner observable during a real reload.
             queue.asyncAfter(deadline: .now()+0.15) {

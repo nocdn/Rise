@@ -4,22 +4,103 @@ import WebKit
 
 /// A tab: its page, the pages a Peek replaced in it (held for Back), how it last looked, and its icon.
 @MainActor final class BrowserTab {
-    var webView: WKWebView
+    let id: UUID
+    var webView: WKWebView {
+        didSet {
+            pendingURL = nil
+            rememberedURL = nil
+            rememberedTitle = nil
+            snapshot = nil
+            favicon = nil
+            observePage()
+        }
+    }
+    /// Restored tabs keep their address/title while their page waits to be selected and loaded.
+    private var rememberedURL: URL?
+    private var rememberedTitle: String?
+    private var pendingURL: URL?
+    private var pageObservations: [NSKeyValueObservation] = []
+    var onPageChange: (() -> Void)?
+    var isSyncPlaceholder = false
+    func rememberSharedTitle(_ title: String?) { rememberedTitle = title }
     var previousPages: [WKWebView] = []
     /// The page, strip included, as it was when last left, for its card in the tab switcher.
-    var snapshot: UIImage?
+    var snapshot: UIImage? { didSet { onSnapshotChange?() } }
+    var onSnapshotChange: (() -> Void)?
     /// The page's icon, or nil for the blank square.
     private(set) var favicon: UIImage? { didSet { onFaviconChange?() } }
     var onFaviconChange: (() -> Void)?
+    func restoreFavicon(_ image: UIImage?) { if favicon == nil { favicon = image } }
     /// The page the icon was looked up for, so it's looked up once a page.
     private var faviconPage: URL?
     private static var icons: [URL: UIImage] = [:]
 
-    init(webView: WKWebView) { self.webView = webView }
+    init(webView: WKWebView, restoring tab: MobileBrowserSession.Tab? = nil, initialURL: URL? = nil) {
+        self.webView = webView
+        id = tab?.id ?? UUID()
+        isSyncPlaceholder = tab?.isSyncPlaceholder == true
+        rememberedURL = (tab?.url ?? initialURL).flatMap { MobileBrowserSession.canRestore($0) ? $0 : nil }
+        rememberedTitle = tab?.title
+        pendingURL = tab?.url
+        observePage()
+    }
+
+    var sessionTab: MobileBrowserSession.Tab {
+        MobileBrowserSession.Tab(id: id, url: rememberedURL, title: rememberedTitle, isSyncPlaceholder: isSyncPlaceholder ? true : nil)
+    }
+
+    func loadIfNeeded() {
+        guard let url = pendingURL else { return }
+        pendingURL = nil
+        webView.load(URLRequest(url: url))
+    }
+
+    private func observePage() {
+        rememberAddress()
+        if let title = webView.title, !title.isEmpty { rememberedTitle = title }
+        pageObservations = [
+            webView.observe(\.url) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.pageDidChange() }
+            },
+            webView.observe(\.title) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.pageDidChange() }
+            },
+        ]
+        onPageChange?()
+    }
+
+    /// WebKit can deliver title and address notifications in either order. Read the pair
+    /// together so a later address notification cannot clear the already updated title.
+    private func pageDidChange() {
+        rememberAddress()
+        rememberedTitle = webView.title.flatMap { $0.isEmpty ? nil : $0 }
+        onPageChange?()
+    }
+
+    private func rememberAddress() {
+        guard let url = webView.url else { return }
+        if url.absoluteString == "about:blank" {
+            rememberedURL = nil
+            rememberedTitle = nil
+            snapshot = nil
+            favicon = nil
+            return
+        }
+        guard MobileBrowserSession.canRestore(url) else { return }
+        isSyncPlaceholder = false
+        if rememberedURL != url {
+            rememberedTitle = nil
+            snapshot = nil
+            favicon = nil
+            faviconPage = nil
+        }
+        rememberedURL = url
+    }
 
     var title: String {
+        if let title = rememberedTitle, !title.isEmpty { return title }
         if let title = webView.title, !title.isEmpty { return title }
-        return webView.url?.host() ?? "New Page"
+        return rememberedURL?.host() ?? "New Page"
     }
 
     /// The icons the page declares, as bitmaps can be drawn here, in the page's own order.
@@ -41,25 +122,31 @@ import WebKit
         guard let page = web.url, page != faviconPage else { return }
         faviconPage = page
         guard ["http", "https"].contains(page.scheme?.lowercased() ?? "") else { favicon = nil; return }
-        web.evaluateJavaScript(Self.iconScript) { [weak self] result, _ in
+        Task { [weak self] in
+            let image = await Self.favicon(for: web)
             guard let self, webView === web, faviconPage == page else { return }
-            var candidates = ((result as? [String]) ?? []).compactMap(URL.init(string:))
-                .filter { ["http", "https", "data"].contains($0.scheme?.lowercased() ?? "") }
-            if let fallback = URL(string: "/favicon.ico", relativeTo: page)?.absoluteURL { candidates.append(fallback) }
-            Task { [weak self] in
-                for url in candidates {
-                    guard let image = await Self.icon(at: url) else { continue }
-                    if let self, faviconPage == page { favicon = image }
-                    return
-                }
-                if let self, faviconPage == page { favicon = nil }
-            }
+            favicon = image
         }
+    }
+
+    /// Used by the temporary preview page too, without changing a real tab's address/history.
+    static func favicon(for web: WKWebView) async -> UIImage? {
+        guard let page = web.url, MobileBrowserSession.canRestore(page) else { return nil }
+        let result = try? await web.evaluateJavaScript(iconScript)
+        var candidates = ((result as? [String]) ?? []).compactMap(URL.init(string:))
+            .filter { ["http", "https", "data"].contains($0.scheme?.lowercased() ?? "") }
+        candidates = Array(candidates.prefix(4))
+        if let fallback = URL(string: "/favicon.ico", relativeTo: page)?.absoluteURL { candidates.append(fallback) }
+        for url in candidates {
+            guard !Task.isCancelled else { return nil }
+            if let image = await icon(at: url) { return image }
+        }
+        return nil
     }
 
     private static func icon(at url: URL) async -> UIImage? {
         if let icon = icons[url] { return icon }
-        guard let loaded = try? await URLSession.shared.data(from: url),
+        guard let loaded = try? await URLSession.shared.data(for: URLRequest(url: url, timeoutInterval: 5)),
               (loaded.1 as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true,
               let icon = decode(loaded.0) else { return nil }
         icons[url] = icon
@@ -396,6 +483,7 @@ final class TabSwitcherView: UIView {
         cells = tabs.map { tab in
             let cell = TabCell()
             cell.card.image.image = tab.snapshot
+            tab.onSnapshotChange = { [weak tab, weak cell] in cell?.card.image.image = tab?.snapshot }
             cell.card.pageSize = pageSize
             cell.card.stripHeight = stripHeight
             cell.title.text = tab.title

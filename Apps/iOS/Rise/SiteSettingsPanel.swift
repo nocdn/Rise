@@ -5,23 +5,25 @@ final class SiteSettingsPanel: UIView {
     static let headerHeight = PanelHeader.height
     static let rowsTop = headerHeight+MenuPanel.top
     static let rowHeight: CGFloat = 60
+    static let appSettingsRowHeight: CGFloat = 68
     /// Between the protections and Bypass paywall, set apart below them.
     static let groupGap: CGFloat = 18
-    static var height: CGFloat { rowsTop+3*rowHeight+groupGap+rowHeight }
+    static var height: CGFloat { rowsTop+4*rowHeight+2*groupGap+appSettingsRowHeight }
     /// The reference screenshot's blue, sampled in its Display P3 colour space.
     static let switchBlue = UIColor(displayP3Red: 63/255, green: 141/255, blue: 247/255, alpha: 1)
 
     private let header = PanelHeader(title: "Site settings")
     var closeButton: AnimatedSymbolButton { header.closeButton }
     private let group = UIView()
-    private let rows = [Row("Block ads", icon: MenuIcons.blockAds, colour: .systemRed),
-                        Row("Block trackers", icon: MenuIcons.blockTrackers, colour: .systemOrange, iconSide: 26),
-                        Row("Block cookie banners", icon: MenuIcons.blockCookieBanners, colour: .systemGreen, iconSide: 26)]
+    private let rows = [SettingsToggleRow("Block ads", icon: MenuIcons.blockAds, colour: .systemRed),
+                        SettingsToggleRow("Block trackers", icon: MenuIcons.blockTrackers, colour: .systemOrange, iconSide: 26),
+                        SettingsToggleRow("Block cookie banners", icon: MenuIcons.blockCookieBanners, colour: .systemGreen, iconSide: 26)]
     private let dividers = [UIView(), UIView()]
     /// Off by default, and for now it changes nothing.
     private let paywallGroup = UIView()
-    private let paywallRow = Row("Bypass paywall", icon: MenuIcons.bypassPaywall, colour: .systemBlue, iconSide: 26, on: false)
-    var buttons: [UIButton] { [closeButton]+rows+[paywallRow] }
+    private let paywallRow = SettingsToggleRow("Bypass paywall", icon: MenuIcons.bypassPaywall, colour: .systemBlue, iconSide: 26, on: false)
+    let appSettingsRow = SettingsNavigationRow("App settings")
+    var buttons: [UIButton] { [closeButton]+rows+[paywallRow, appSettingsRow] }
     var switches: [UISwitch] { (rows+[paywallRow]).map(\.toggle) }
     var onAdBlockingChanged: ((Bool) -> Void)?
     var isUpdatingAdBlocking: Bool { rows[0].spinner.isAnimating }
@@ -39,6 +41,7 @@ final class SiteSettingsPanel: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         addSubview(header)
+        addSubview(appSettingsRow)
         for group in [group, paywallGroup] {
             group.layer.cornerCurve = .continuous
             group.layer.cornerRadius = MenuPanel.cornerRadius
@@ -74,76 +77,12 @@ final class SiteSettingsPanel: UIView {
         paywallGroup.frame = CGRect(x: group.frame.minX, y: group.frame.maxY+Self.groupGap, width: width, height: Self.rowHeight)
         paywallRow.bounds = CGRect(x: 0, y: 0, width: width, height: Self.rowHeight)
         paywallRow.center = CGPoint(x: width/2, y: Self.rowHeight/2)
+        appSettingsRow.bounds = CGRect(x: 0, y: 0, width: width, height: Self.appSettingsRowHeight)
+        appSettingsRow.center = CGPoint(x: bounds.midX, y: paywallGroup.frame.maxY+Self.groupGap+Self.appSettingsRowHeight/2)
         let hairline = 1/max(1, traitCollection.displayScale)
         for (index, divider) in dividers.enumerated() {
             divider.frame = CGRect(x: 16, y: CGFloat(index+1)*Self.rowHeight-hairline/2, width: width-32, height: hairline)
         }
     }
 
-    private final class Row: UIButton {
-        let toggle = UISwitch()
-        let spinner = UIActivityIndicatorView(style: .medium)
-        var onChanged: ((Bool) -> Void)?
-        private let symbol = UIImageView()
-        private let label = UILabel()
-        private let iconSide: CGFloat
-
-        init(_ title: String, icon: UIImage?, colour: UIColor, iconSide: CGFloat = 28, on: Bool = true) {
-            self.iconSide = iconSide
-            super.init(frame: .zero)
-            isAccessibilityElement = false
-            symbol.image = icon
-            symbol.tintColor = colour
-            symbol.contentMode = .scaleAspectFit
-            symbol.isAccessibilityElement = false
-            addSubview(symbol)
-            label.text = title
-            label.font = PanelHeader.font("OpenRunde-Medium", size: 16, fallbackWeight: .medium)
-            label.adjustsFontForContentSizeCategory = true
-            label.textColor = .label
-            label.isUserInteractionEnabled = false
-            label.isAccessibilityElement = false
-            addSubview(label)
-            toggle.isOn = on
-            symbol.alpha = on ? 1 : 0.35
-            toggle.accessibilityLabel = title
-            toggle.addAction(UIAction { [weak self] _ in
-                guard let self else { return }
-                updateIcon()
-                onChanged?(toggle.isOn)
-            }, for: .valueChanged)
-            addSubview(toggle)
-            spinner.hidesWhenStopped = true
-            spinner.transform = CGAffineTransform(scaleX: 0.9, y: 0.9)
-            spinner.isUserInteractionEnabled = false
-            addSubview(spinner)
-            darkensWhenPressed()
-            addAction(UIAction { [weak self] _ in
-                guard let self else { return }
-                toggle.setOn(!toggle.isOn, animated: true)
-                updateIcon()
-                onChanged?(toggle.isOn)
-            }, for: .primaryActionTriggered)
-        }
-
-        required init?(coder: NSCoder) { fatalError() }
-
-        func updateIcon() {
-            UIView.animate(withDuration: 0.2, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
-                self.symbol.alpha = self.toggle.isOn ? 1 : 0.35
-            }
-        }
-
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            toggle.bounds.size = toggle.intrinsicContentSize
-            toggle.center = CGPoint(x: bounds.width-16-toggle.bounds.width/2, y: bounds.midY)
-            spinner.bounds.size = spinner.intrinsicContentSize
-            spinner.center = CGPoint(x: toggle.frame.minX-21, y: bounds.midY)
-            let iconColumn: CGFloat = 28, textX: CGFloat = 16+iconColumn+10
-            symbol.frame = CGRect(x: 16+(iconColumn-iconSide)/2, y: bounds.midY-iconSide/2,
-                                  width: iconSide, height: iconSide)
-            label.frame = CGRect(x: textX, y: 0, width: max(0, toggle.frame.minX-12-textX), height: bounds.height)
-        }
-    }
 }

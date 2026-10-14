@@ -16,6 +16,8 @@
         </dict>
     </dict>
     <key>UILaunchScreen</key><dict/>
+    <key>RiseCloudKitEnabled</key><true/>
+    <key>UIBackgroundModes</key><array><string>remote-notification</string></array>
     <!-- Downloads land in Documents/Downloads, shown in Files under On My iPhone › Rise. -->
     <key>UIFileSharingEnabled</key><true/>
     <key>LSSupportsOpeningDocumentsInPlace</key><true/>
