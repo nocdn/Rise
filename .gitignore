@@ -8,3 +8,4 @@ __pycache__/
 *.mobileprovision
 xcuserdata/
 *.xcuserstate
+.build-fork/

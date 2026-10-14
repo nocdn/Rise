@@ -2,10 +2,15 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+// What the engine's framework offers Rise, where the engine is a framework (Rise's fork).
+#ifndef RC_EXPORT
+#define RC_EXPORT
+#endif
+
 /// Chromium's browser process inside Rise: started once, before any page.
 /// Ad and tracker blocking for every Chromium page, from Brave's adblock engine built with the
 /// filter lists WebKit's rules come from. Requests go out unchecked until the lists are loaded.
-@interface RCAdBlock : NSObject
+RC_EXPORT @interface RCAdBlock : NSObject
 /// Whether this build has it.
 @property (class, readonly) BOOL available;
 /// Whether requests are checked; off lets everything through.
@@ -19,7 +24,7 @@ NS_ASSUME_NONNULL_BEGIN
                                            ids:(nullable NSArray<NSString *> *)ids;
 @end
 
-@interface RCEngine : NSObject
+RC_EXPORT @interface RCEngine : NSObject
 /// The default search engine chosen in Chrome's settings (rise://settings), by name; nil if none.
 + (nullable NSString *)defaultSearchName;
 /// Where a search for `terms` goes with that engine; nil if none.
@@ -38,7 +43,11 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 /// The application class Chromium needs: it tells Chromium when AppKit is delivering an event.
-@interface RCApplication : NSApplication
+// The engine's own application class, where it has one (Chrome's, on Rise's fork).
+#ifndef RC_APPLICATION_SUPERCLASS
+#define RC_APPLICATION_SUPERCLASS NSApplication
+#endif
+RC_EXPORT @interface RCApplication : RC_APPLICATION_SUPERCLASS
 @end
 
 /// Where a page asks for a link to open.
@@ -51,7 +60,7 @@ typedef NS_ENUM(NSInteger, RCOpenDisposition) {
 
 /// A frame a Rise script posted from, to run scripts in again: Chromium's DevTools session for
 /// its process (empty for the page's own) and the script's execution context there.
-@interface RCFrame : NSObject
+RC_EXPORT @interface RCFrame : NSObject
 @property (nonatomic, readonly) NSString *session;
 @property (nonatomic, readonly) NSInteger context;
 @property (nonatomic, readonly) BOOL isMain;
@@ -67,7 +76,7 @@ typedef NS_ENUM(NSInteger, RCDownloadState) {
   RCDownloadStateCancelled,
   RCDownloadStateFailed,
 };
-@interface RCDownload : NSObject
+RC_EXPORT @interface RCDownload : NSObject
 @property (nonatomic, readonly) NSURL *url;
 @property (nonatomic, readonly) RCDownloadState state;
 @property (nonatomic, readonly) int64_t receivedBytes;
@@ -144,7 +153,7 @@ typedef NS_ENUM(NSInteger, RCEditCommand) {
 
 /// What a right-click in a page was on, for Rise to build its menu from, and what that menu can
 /// do there. Actions apply to the frame clicked in.
-@interface RCContextMenu : NSObject
+RC_EXPORT @interface RCContextMenu : NSObject
 /// Where, in the page's view, from its top left.
 @property (nonatomic, readonly) NSPoint point;
 @property (nonatomic, readonly, nullable) NSURL *linkURL;
@@ -246,7 +255,7 @@ typedef NS_ENUM(NSInteger, RCEditCommand) {
 
 /// A page drawn by Chromium, filling this view. Rise lays it out, clips and animates it like
 /// any other view.
-@interface RCBrowserView : NSView
+RC_EXPORT @interface RCBrowserView : NSView
 - (instancetype)initWithFrame:(NSRect)frame URL:(nullable NSURL *)url NS_DESIGNATED_INITIALIZER;
 - (instancetype)initWithFrame:(NSRect)frameRect NS_UNAVAILABLE;
 - (nullable instancetype)initWithCoder:(NSCoder *)coder NS_UNAVAILABLE;
@@ -358,7 +367,7 @@ typedef NS_ENUM(NSInteger, RCEditCommand) {
 
 /// A Rise window as Chrome extensions see it: a browser window holding its tabs, which the tabs
 /// and windows APIs list and act on.
-@interface RCTabStrip : NSObject
+RC_EXPORT @interface RCTabStrip : NSObject
 - (instancetype)initWithDelegate:(id<RCTabStripDelegate>)delegate NS_DESIGNATED_INITIALIZER;
 - (instancetype)init NS_UNAVAILABLE;
 /// The window's id, as extensions see it.
@@ -375,7 +384,7 @@ typedef NS_ENUM(NSInteger, RCEditCommand) {
 @end
 
 /// A Chrome extension's toolbar button. Values for a tab take its page; nil gives the defaults.
-@interface RCExtensionAction : NSObject
+RC_EXPORT @interface RCExtensionAction : NSObject
 @property (nonatomic, readonly) NSString *extensionID;
 @property (nonatomic, readonly) NSString *name;
 - (NSString *)titleForTab:(nullable RCBrowserView *)tab;
@@ -391,7 +400,7 @@ typedef NS_ENUM(NSInteger, RCEditCommand) {
 @end
 
 /// The toolbar buttons of the extensions installed in Rise's profile.
-@interface RCExtensions : NSObject
+RC_EXPORT @interface RCExtensions : NSObject
 @property (class, readonly) NSArray<RCExtensionAction *> *actions;
 /// Calls `changed` on the main thread whenever buttons are added, removed or change, until the
 /// returned object goes away.

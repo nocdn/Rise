@@ -45,6 +45,24 @@ are most of them.
    `main` with Rise's `NSApplication`; one `Browser` with a `RiseBrowserWindow`; one tab's page in
    a Rise view. It passes the Peek, split, ⌘Z and handle-drag frame comparisons that CEF passed in
    stage 3. **Stop here if it can't.** Then nothing else is worth doing.
+   **Result (passed).** The fork's patches are `Engine/fork/patches/` (on Chromium 156.0.8078.17).
+   `RISE_ENGINE_FORK=1 ./scripts/build.sh` makes `build/RiseFork.app`, and
+   `RISE_ENGINE_FORK=1 python3 scripts/test-chromium-live.py peek` checks it. All 14 Peek checks
+   pass, three runs in a row. Frame by frame, every scene matches CEF's as closely as CEF's
+   matched WebKit's, or closer. A page loading in a Peek first shows at about 0.15 s, as on CEF
+   and before WebKit. What it took:
+   - **A flag for an embedder's window:** Chrome allows a window of someone else's only in
+     tests, so `BrowserWindowCreateParams` gets an `embedder_window` flag.
+   - **The full-screen context:** Rise's window is its own `ExclusiveAccessContext`. Chrome's
+     input handling reached for it on the first mouse move: the first of stage 4's reach-ins.
+   - **Making the app first:** Rise makes the app before Chrome reads its command line, so
+     Chrome's app class waits until it has before applying its forced text direction.
+   - **The exports:** Rise's classes join Chrome's framework export and order lists.
+
+   Two things to know when checking: the first run after a rebuild starts pages slowly while
+   macOS checks the newly signed helpers, and Chromium stops drawing pages in a window that's
+   behind others, so the check's window must stay in front.
+
 1. **The engine API.** Everything `RiseChromium.h` offers today, on the fork:
    - Navigation, and saving and restoring back and forward history.
    - Sound playing; zoom and pinch.

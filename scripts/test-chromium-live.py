@@ -26,18 +26,28 @@ if check not in checks:
 
 root = Path(__file__).resolve().parents[1]
 engine = Path(os.environ.get("RISE_CHROMIUM_ROOT", root.parent / "rise-chromium"))
-app = root / "build/Rise.app"
-if not (app / "Contents/Frameworks/Chromium Embedded Framework.framework").exists():
-    raise SystemExit("build/Rise.app has no Chromium; build the engine and run ./scripts/build.sh first.")
+# RISE_ENGINE_FORK=1 checks Rise on its own Chromium fork (Engine/fork-plan.md), from
+# build/RiseFork.app (made by RISE_ENGINE_FORK=1 ./scripts/build.sh).
+fork = os.environ.get("RISE_ENGINE_FORK") == "1"
+app = root / ("build/RiseFork.app" if fork else "build/Rise.app")
+framework = "Chromium Framework.framework" if fork else "Chromium Embedded Framework.framework"
+if not (app / "Contents/Frameworks" / framework).exists():
+    raise SystemExit(f"{app.name} has no Chromium; build the engine and run ./scripts/build.sh first.")
 sdk = subprocess.check_output(["xcrun", "--sdk", "macosx", "--show-sdk-version"], text=True).strip()
 linker = ["-Xlinker", "-platform_version", "-Xlinker", "macos", "-Xlinker", "14.0", "-Xlinker", sdk]
-subprocess.run(["swift", "build", "--build-tests", *linker], cwd=root, check=True)
-debug = root / ".build/debug"
+build_path = ".build-fork" if fork else ".build"
+subprocess.run(["swift", "build", "--build-tests", "--build-path", build_path, *linker], cwd=root, check=True)
+debug = root / build_path / "debug"
 sources = {path.name for path in (root / "Sources/Rise").glob("*.swift")} - {"RiseApp.swift"}
 objects = [str(path) for path in (debug / "Rise.build").glob("*.swift.o")
            if path.name[:-2] in sources or path.name == "resource_bundle_accessor.swift.o"]
 objects += [str(path) for path in (debug / "RiseCore.build").glob("*.o")]
-objects += [str(debug / "RiseChromium.build/RiseChromium.mm.o")]
+objects += [str(path) for path in (debug / "RiseChromium.build").glob("*.o")]
+# The engine itself: CEF's wrapper and Rise's bridge to it, or the fork's framework.
+engine_linking = (["-F", str(app / "Contents/Frameworks"), "-framework", "Chromium Framework",
+                   "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"] if fork else
+                  [str(engine / "bridge-build/wrapper/libcef_dll_wrapper/libcef_dll_wrapper.a"), "-lc++",
+                   *([str(engine / "adblock-build/release/librise_adblock.a")] if (engine / "adblock-build/release/librise_adblock.a").exists() else [])])
 
 keep = os.environ.get("RISE_PEEK_OUT")
 folder = Path(keep) if keep else Path(tempfile.mkdtemp(prefix="rise-chromium-peek-"))
@@ -50,9 +60,7 @@ executable = probe / "Contents/MacOS/Rise"
 subprocess.run(["swiftc", "-target", f"{platform.machine()}-apple-macos14.0", "-parse-as-library", "-module-name", "ChromiumPeekCheck",
                 str(root / "Tests/Live" / checks[check]), "-I", str(debug / "Modules"),
                 "-Xcc", f"-fmodule-map-file={debug / 'RiseChromium.build/module.modulemap'}",
-                "-I", str(root / "Sources/RiseChromium/include"), *objects,
-                str(engine / "bridge-build/wrapper/libcef_dll_wrapper/libcef_dll_wrapper.a"), "-lc++",
-                *([str(engine / "adblock-build/release/librise_adblock.a")] if (engine / "adblock-build/release/librise_adblock.a").exists() else []),
+                "-I", str(root / "Sources/RiseChromium/include"), *objects, *engine_linking,
                 *linker, "-o", str(executable)], cwd=root, check=True)
 subprocess.run(["codesign", "--force", "--sign", "-", str(executable)], check=True, capture_output=True)
 subprocess.run(["codesign", "--force", "--sign", "-", str(probe)], check=True, capture_output=True)

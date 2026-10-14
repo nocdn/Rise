@@ -1,0 +1,2264 @@
+diff --git a/chrome/app/framework.exports b/chrome/app/framework.exports
+index 37c881f5d2..c4f7e25336 100644
+--- a/chrome/app/framework.exports
++++ b/chrome/app/framework.exports
+@@ -19,3 +19,25 @@
+ _ChromeAppModeStart_v8
+ _ChromeMain
+ _ChromeWebAppShortcutCopierMain
++
++# Rise's engine interface (chrome/browser/rise/RiseChromium.h), which Rise links.
++_OBJC_CLASS_$_RCAdBlock
++_OBJC_METACLASS_$_RCAdBlock
++_OBJC_CLASS_$_RCEngine
++_OBJC_METACLASS_$_RCEngine
++_OBJC_CLASS_$_RCApplication
++_OBJC_METACLASS_$_RCApplication
++_OBJC_CLASS_$_RCFrame
++_OBJC_METACLASS_$_RCFrame
++_OBJC_CLASS_$_RCDownload
++_OBJC_METACLASS_$_RCDownload
++_OBJC_CLASS_$_RCContextMenu
++_OBJC_METACLASS_$_RCContextMenu
++_OBJC_CLASS_$_RCBrowserView
++_OBJC_METACLASS_$_RCBrowserView
++_OBJC_CLASS_$_RCTabStrip
++_OBJC_METACLASS_$_RCTabStrip
++_OBJC_CLASS_$_RCExtensionAction
++_OBJC_METACLASS_$_RCExtensionAction
++_OBJC_CLASS_$_RCExtensions
++_OBJC_METACLASS_$_RCExtensions
+diff --git a/chrome/app/framework.order b/chrome/app/framework.order
+index 6dbc3aeff3..0a518e6be3 100644
+--- a/chrome/app/framework.order
++++ b/chrome/app/framework.order
+@@ -31,3 +31,26 @@ _ChromeWebAppShortcutCopierMain
+ 
+ # _ChromeMain must be listed last.  That's the whole point of this file.
+ _ChromeMain
++
++# Rise's engine interface (chrome/browser/rise/RiseChromium.h), which Rise links.
++# Its classes are data, which follows _ChromeMain's code in the binary.
++_OBJC_CLASS_$_RCAdBlock
++_OBJC_METACLASS_$_RCAdBlock
++_OBJC_CLASS_$_RCEngine
++_OBJC_METACLASS_$_RCEngine
++_OBJC_CLASS_$_RCApplication
++_OBJC_METACLASS_$_RCApplication
++_OBJC_CLASS_$_RCFrame
++_OBJC_METACLASS_$_RCFrame
++_OBJC_CLASS_$_RCDownload
++_OBJC_METACLASS_$_RCDownload
++_OBJC_CLASS_$_RCContextMenu
++_OBJC_METACLASS_$_RCContextMenu
++_OBJC_CLASS_$_RCBrowserView
++_OBJC_METACLASS_$_RCBrowserView
++_OBJC_CLASS_$_RCTabStrip
++_OBJC_METACLASS_$_RCTabStrip
++_OBJC_CLASS_$_RCExtensionAction
++_OBJC_METACLASS_$_RCExtensionAction
++_OBJC_CLASS_$_RCExtensions
++_OBJC_METACLASS_$_RCExtensions
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+index 33a6696fd8..4cc5ec9a9f 100644
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -1546,6 +1546,8 @@ source_set("core") {
+       "//chrome/browser/enterprise/connectors/device_trust/key_management/core/mac",
+       "//chrome/browser/mac",
+       "//chrome/browser/mac:impl",
++      "//chrome/browser/rise",
++      "//chrome/browser/rise:impl",
+       "//chrome/browser/renderer_host:delegate",
+       "//chrome/browser/renderer_host:delegate_impl",
+       "//chrome/browser/renderer_host:history_swiper",
+diff --git a/chrome/browser/chrome_browser_application_mac.mm b/chrome/browser/chrome_browser_application_mac.mm
+index 823b03b27c..b9c7c89bb0 100644
+--- a/chrome/browser/chrome_browser_application_mac.mm
++++ b/chrome/browser/chrome_browser_application_mac.mm
+@@ -148,7 +148,11 @@ + (void)initialize {
+   }
+   InstallObjcExceptionPreprocessor();
+ 
+-  cocoa_l10n_util::ApplyForcedRTL();
++  // An embedder (Rise) may make the app before Chrome's main has read the
++  // command line; it applies this once Chrome has.
++  if (base::CommandLine::InitializedForCurrentProcess()) {
++    cocoa_l10n_util::ApplyForcedRTL();
++  }
+ }
+ 
+ - (void)orderFrontCharacterPalette:sender {
+diff --git a/chrome/browser/chrome_browser_main.cc b/chrome/browser/chrome_browser_main.cc
+index b2619baa8f..41d4cd4a22 100644
+--- a/chrome/browser/chrome_browser_main.cc
++++ b/chrome/browser/chrome_browser_main.cc
+@@ -224,6 +224,7 @@
+ #include "chrome/browser/infobars/browser_infobar_manager.h"
+ #include "chrome/browser/infobars/infobar_features.h"
+ #include "chrome/browser/mac/chrome_browser_main_extra_parts_mac.h"
++#include "chrome/browser/rise/chrome_browser_main_extra_parts_rise.h"
+ #include "chrome/browser/shutdown_watchdog_mac.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+ #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
+@@ -821,6 +822,8 @@ std::unique_ptr<content::BrowserMainParts> ChromeBrowserMainParts::Create(
+ 
+ #if BUILDFLAG(IS_MAC)
+   main_parts->AddParts(std::make_unique<ChromeBrowserMainExtraPartsMac>());
++  // Rise makes its windows once the browser has started.
++  main_parts->AddParts(std::make_unique<ChromeBrowserMainExtraPartsRise>());
+ #endif
+ 
+ #if BUILDFLAG(IS_CHROMEOS)
+diff --git a/chrome/browser/rise/BUILD.gn b/chrome/browser/rise/BUILD.gn
+new file mode 100644
+index 0000000000..f2b9fa32bd
+--- /dev/null
++++ b/chrome/browser/rise/BUILD.gn
+@@ -0,0 +1,45 @@
++# Copyright 2026 The Rise Authors. All rights reserved.
++# Use of this source code is governed by a BSD-style license that can be
++# found in the LICENSE file.
++
++# Rise's engine, in Chrome: Rise's window for a Browser and the interface Rise
++# talks to (RiseChromium.h). See Engine/fork-plan.md in Rise.
++
++assert(is_mac)
++
++# What the browser's start-up sees; split out, as //chrome/browser/mac is.
++source_set("rise") {
++  public = [ "chrome_browser_main_extra_parts_rise.h" ]
++  sources = public
++  public_deps = [ "//chrome/browser:main_extra_parts" ]
++}
++
++source_set("impl") {
++  sources = [
++    "RiseChromium.h",
++    "chrome_browser_main_extra_parts_rise.cc",
++    "rise_bridge.mm",
++    "rise_browser_window.cc",
++    "rise_browser_window.h",
++  ]
++  deps = [
++    ":rise",
++    "//base",
++    "//chrome/browser:chrome_browser_application_mac",
++    "//chrome/browser/profiles:profile",
++    "//chrome/browser/search_engines",
++    "//chrome/browser/ui",
++    "//chrome/browser/ui/browser_window",
++    "//chrome/browser/ui/browser_window:create_browser_window",
++    "//chrome/browser/ui/tabs:tab_strip",
++    "//components/search_engines",
++    "//content/public/browser",
++    "//skia",
++    "//third_party/blink/public/common",
++    "//ui/gfx",
++  ]
++  frameworks = [
++    "AppKit.framework",
++    "QuartzCore.framework",
++  ]
++}
+diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
+new file mode 100644
+index 0000000000..9a9c618b02
+--- /dev/null
++++ b/chrome/browser/rise/RiseChromium.h
+@@ -0,0 +1,419 @@
++#import <AppKit/AppKit.h>
++
++NS_ASSUME_NONNULL_BEGIN
++
++// What the engine's framework offers Rise, where the engine is a framework (Rise's fork).
++#ifndef RC_EXPORT
++#define RC_EXPORT
++#endif
++
++/// Chromium's browser process inside Rise: started once, before any page.
++/// Ad and tracker blocking for every Chromium page, from Brave's adblock engine built with the
++/// filter lists WebKit's rules come from. Requests go out unchecked until the lists are loaded.
++RC_EXPORT @interface RCAdBlock : NSObject
++/// Whether this build has it.
++@property (class, readonly) BOOL available;
++/// Whether requests are checked; off lets everything through.
++@property (class) BOOL enabled;
++/// Loads the lists, off the main thread.
+++ (void)load;
++/// Selectors to hide on a document at `url`; given the class and id names the document uses,
++/// the general selectors for those names instead.
+++ (NSArray<NSString *> *)hiddenSelectorsForURL:(NSURL *)url
++                                       classes:(nullable NSArray<NSString *> *)classes
++                                           ids:(nullable NSArray<NSString *> *)ids;
++@end
++
++RC_EXPORT @interface RCEngine : NSObject
++/// The default search engine chosen in Chrome's settings (rise://settings), by name; nil if none.
+++ (nullable NSString *)defaultSearchName;
++/// Where a search for `terms` goes with that engine; nil if none.
+++ (nullable NSURL *)searchURLForTerms:(NSString *)terms;
++/// Loads the Chromium framework from the app bundle and starts it, keeping website data in
++/// `cachePath`. Call on the main thread after `RCApplication.sharedApplication`, before the
++/// run loop starts. Returns NO if Chromium couldn't start.
++///
++/// Chromium encrypts cookies and saved data with a key it keeps in the Keychain, in Rise's own
++/// item ("Rise Safe Storage"). A throwaway profile, such as a test's, passes `keychain` NO: its
++/// key is made up in memory and the Keychain is never asked, so it can't prompt for a password.
+++ (BOOL)startWithCachePath:(NSString *)cachePath keychain:(BOOL)keychain;
++@property (class, readonly) BOOL isRunning;
++/// Stops Chromium; call as the app terminates.
+++ (void)shutdown;
++@end
++
++/// The application class Chromium needs: it tells Chromium when AppKit is delivering an event.
++// The engine's own application class, where it has one (Chrome's, on Rise's fork).
++#ifndef RC_APPLICATION_SUPERCLASS
++#define RC_APPLICATION_SUPERCLASS NSApplication
++#endif
++RC_EXPORT @interface RCApplication : RC_APPLICATION_SUPERCLASS
++@end
++
++/// Where a page asks for a link to open.
++typedef NS_ENUM(NSInteger, RCOpenDisposition) {
++  RCOpenDispositionForegroundTab,
++  RCOpenDispositionBackgroundTab,
++  RCOpenDispositionWindow,
++  RCOpenDispositionPopup,
++};
++
++/// A frame a Rise script posted from, to run scripts in again: Chromium's DevTools session for
++/// its process (empty for the page's own) and the script's execution context there.
++RC_EXPORT @interface RCFrame : NSObject
++@property (nonatomic, readonly) NSString *session;
++@property (nonatomic, readonly) NSInteger context;
++@property (nonatomic, readonly) BOOL isMain;
++/// As the frame reports it: "https://example.com", or "null" for an opaque origin.
++@property (nonatomic, readonly) NSString *origin;
++@end
++
++/// A file the page is downloading.
++typedef NS_ENUM(NSInteger, RCDownloadState) {
++  RCDownloadStateDownloading,
++  RCDownloadStatePaused,
++  RCDownloadStateFinished,
++  RCDownloadStateCancelled,
++  RCDownloadStateFailed,
++};
++RC_EXPORT @interface RCDownload : NSObject
++@property (nonatomic, readonly) NSURL *url;
++@property (nonatomic, readonly) RCDownloadState state;
++@property (nonatomic, readonly) int64_t receivedBytes;
++/// -1 while unknown.
++@property (nonatomic, readonly) int64_t totalBytes;
++/// Called on the main thread whenever the state or the byte counts change.
++@property (nonatomic, copy, nullable) void (^onUpdate)(RCDownload *download);
++- (void)pause;
++- (void)resume;
++- (void)cancel;
++@end
++
++/// How the page is going somewhere.
++typedef NS_ENUM(NSInteger, RCNavigationKind) {
++  RCNavigationKindNewPage,
++  RCNavigationKindHistory,
++  RCNavigationKindReload,
++};
++
++/// What a page asks permission for.
++typedef NS_OPTIONS(NSUInteger, RCPermission) {
++  RCPermissionCamera = 1 << 0,
++  RCPermissionMicrophone = 1 << 1,
++  RCPermissionLocation = 1 << 2,
++};
++
++/// A dialog a page asks for: `alert()`, `confirm()`, `prompt()`, or, leaving or reloading a page
++/// with changes it hasn't saved, whether to.
++typedef NS_ENUM(NSInteger, RCDialogKind) {
++  RCDialogKindAlert,
++  RCDialogKindConfirm,
++  RCDialogKindPrompt,
++  RCDialogKindLeave,
++  RCDialogKindReload,
++};
++
++/// What a page's file chooser picks.
++typedef NS_ENUM(NSInteger, RCFileChooserMode) {
++  RCFileChooserModeOpen,
++  RCFileChooserModeOpenMultiple,
++  RCFileChooserModeOpenFolder,
++  RCFileChooserModeSave,
++};
++
++/// What was right-clicked as media.
++typedef NS_ENUM(NSInteger, RCMediaKind) {
++  RCMediaKindNone,
++  RCMediaKindImage,
++  RCMediaKindVideo,
++  RCMediaKindAudio,
++};
++
++/// What an editable field right-clicked in can do.
++typedef NS_OPTIONS(NSUInteger, RCEditFlags) {
++  RCEditFlagsCanUndo = 1 << 0,
++  RCEditFlagsCanRedo = 1 << 1,
++  RCEditFlagsCanCut = 1 << 2,
++  RCEditFlagsCanCopy = 1 << 3,
++  RCEditFlagsCanPaste = 1 << 4,
++  RCEditFlagsCanDelete = 1 << 5,
++  RCEditFlagsCanSelectAll = 1 << 6,
++};
++
++typedef NS_ENUM(NSInteger, RCEditCommand) {
++  RCEditCommandUndo,
++  RCEditCommandRedo,
++  RCEditCommandCut,
++  RCEditCommandCopy,
++  RCEditCommandPaste,
++  RCEditCommandPasteAndMatchStyle,
++  RCEditCommandDelete,
++  RCEditCommandSelectAll,
++};
++
++/// What a right-click in a page was on, for Rise to build its menu from, and what that menu can
++/// do there. Actions apply to the frame clicked in.
++RC_EXPORT @interface RCContextMenu : NSObject
++/// Where, in the page's view, from its top left.
++@property (nonatomic, readonly) NSPoint point;
++@property (nonatomic, readonly, nullable) NSURL *linkURL;
++/// The image, video or audio's address.
++@property (nonatomic, readonly, nullable) NSURL *sourceURL;
++@property (nonatomic, readonly) RCMediaKind mediaKind;
++/// Whether the image's picture is there to copy.
++@property (nonatomic, readonly) BOOL hasImageContents;
++@property (nonatomic, readonly) NSString *selectionText;
++@property (nonatomic, readonly) BOOL editable;
++@property (nonatomic, readonly) RCEditFlags editFlags;
++/// The misspelled word clicked, and the spellchecker's suggestions for it.
++@property (nonatomic, readonly) NSString *misspelledWord;
++@property (nonatomic, readonly) NSArray<NSString *> *suggestions;
++- (instancetype)init NS_UNAVAILABLE;
++- (void)perform:(RCEditCommand)command;
++- (void)replaceMisspellingWith:(NSString *)word;
++/// Adds the misspelled word to the spelling dictionary.
++- (void)learnMisspelledWord;
++- (void)copyImage;
++/// Shows the dictionary's definition of the selection, at it.
++- (void)lookUp;
++/// Has the page's DevTools select the element clicked, once they're attached if they aren't yet.
++- (void)inspect;
++@end
++
++@class RCBrowserView;
++@protocol RCBrowserViewDelegate <NSObject>
++/// The page's address, title, loading state or history changed.
++- (void)browserViewDidChange:(RCBrowserView *)browserView;
++@optional
++/// The pointer moved onto a link, or off one (nil).
++- (void)browserView:(RCBrowserView *)browserView didHoverLink:(nullable NSURL *)url;
++/// The page wants `url` somewhere other than itself, a new tab or window. Return YES once
++/// Rise has opened it; NO lets it open in this page instead.
++- (BOOL)browserView:(RCBrowserView *)browserView openURL:(NSURL *)url disposition:(RCOpenDisposition)disposition
++        userGesture:(BOOL)userGesture;
++/// A window the page opens itself, by script or a link to a new window, made in `popup` with this
++/// page as its opener, so the two can still talk (as sign-ins and Gmail's popped-out emails
++/// need). Return YES once Rise has put `popup` somewhere; NO opens `url` as
++/// `browserView:openURL:disposition:userGesture:` does instead.
++- (BOOL)browserView:(RCBrowserView *)browserView adoptPopup:(RCBrowserView *)popup url:(NSURL *)url
++        userGesture:(BOOL)userGesture;
++/// A Rise script posted `body` to `handler`. `reply` is set for handlers added with replies,
++/// and must be called once.
++- (void)browserView:(RCBrowserView *)browserView
++    didReceiveMessage:(id)body
++              handler:(NSString *)handler
++                frame:(RCFrame *)frame
++                reply:(nullable void (^)(id _Nullable value, NSString *_Nullable error))reply;
++/// The page wants to save a file named `suggestedName`: return where, or nil not to.
++- (nullable NSURL *)browserView:(RCBrowserView *)browserView
++         destinationForDownload:(RCDownload *)download
++                  suggestedName:(NSString *)suggestedName;
++/// `origin` asks for `permissions`; call `decide` once with those allowed (none to deny).
++- (void)browserView:(RCBrowserView *)browserView
++    requestPermissions:(RCPermission)permissions
++                origin:(NSString *)origin
++                decide:(void (^)(RCPermission allowed))decide;
++/// A permission request was withdrawn, as by navigating away, before it was decided.
++- (void)browserViewDidWithdrawPermissionRequest:(RCBrowserView *)browserView;
++/// The page is about to go somewhere, before its request goes out.
++- (void)browserView:(RCBrowserView *)browserView willNavigate:(RCNavigationKind)kind;
++/// The page has finished loading.
++- (void)browserViewDidFinishLoad:(RCBrowserView *)browserView;
++/// The page failed to load `url`; `code` is Chromium's network error.
++- (void)browserView:(RCBrowserView *)browserView
++    didFailLoadWithCode:(NSInteger)code
++            description:(NSString *)description
++                    url:(nullable NSURL *)url;
++/// The page's renderer process ended; it shows nothing until it's loaded again.
++- (void)browserViewDidCrash:(RCBrowserView *)browserView;
++/// A link for another app, such as mailto:, which the page doesn't open itself.
++- (void)browserView:(RCBrowserView *)browserView openInOtherApp:(NSURL *)url;
++/// The page is closing without Rise having asked, as when an extension closes its tab.
++- (void)browserViewDidRequestClose:(RCBrowserView *)browserView;
++/// The page was right-clicked; Rise shows its menu for `menu`.
++- (void)browserView:(RCBrowserView *)browserView
++    showContextMenu:(RCContextMenu *)menu NS_SWIFT_NAME(browserView(_:showContextMenu:));
++/// The page, at `origin`, asks for a dialog; call `completion` once, with whether it was accepted
++/// and, for a prompt, the text.
++- (void)browserView:(RCBrowserView *)browserView
++          runDialog:(RCDialogKind)kind
++            message:(NSString *)message
++        defaultText:(NSString *)defaultText
++             origin:(nullable NSURL *)origin
++         completion:(void (^)(BOOL accepted, NSString *_Nullable text))completion;
++/// The page's dialog is no longer wanted, as when it navigated away: close it without completing.
++- (void)browserViewDidCancelDialog:(RCBrowserView *)browserView;
++/// The page asks for files; call `completion` once, with those chosen or nil. `extensions`, if
++/// any, are the kinds of file it takes, such as "png".
++- (void)browserView:(RCBrowserView *)browserView
++        chooseFiles:(RCFileChooserMode)mode
++              title:(NSString *)title
++        defaultPath:(NSString *)defaultPath
++         extensions:(NSArray<NSString *> *)extensions
++         completion:(void (^)(NSArray<NSURL *> *_Nullable urls))completion;
++@end
++
++/// A page drawn by Chromium, filling this view. Rise lays it out, clips and animates it like
++/// any other view.
++RC_EXPORT @interface RCBrowserView : NSView
++- (instancetype)initWithFrame:(NSRect)frame URL:(nullable NSURL *)url NS_DESIGNATED_INITIALIZER;
++- (instancetype)initWithFrame:(NSRect)frameRect NS_UNAVAILABLE;
++- (nullable instancetype)initWithCoder:(NSCoder *)coder NS_UNAVAILABLE;
++@property (nonatomic, weak, nullable) id<RCBrowserViewDelegate> delegate;
++@property (nonatomic, readonly, nullable) NSURL *URL;
++@property (nonatomic, readonly, nullable) NSString *title;
++@property (nonatomic, readonly) BOOL isLoading;
++@property (nonatomic, readonly) BOOL canGoBack;
++@property (nonatomic, readonly) BOOL canGoForward;
++@property (nonatomic, readonly) double progress;
++/// Whether the page makes sound now.
++@property (nonatomic, readonly) BOOL audible;
++/// Whether the page shows an element full screen, through the Fullscreen API; Rise makes the
++/// view fill the screen while it does.
++@property (nonatomic, readonly) BOOL fullscreen;
++/// Takes the page out of full screen, as Escape does.
++- (void)exitFullscreen;
++/// Loads without running the page's scripts, as a page loaded out of sight only to warm the
++/// cache does. Set before the view's first turn of the run loop.
++@property (nonatomic) BOOL scriptsDisabled;
++/// A Chrome extension's popup, as extensions see it (a "popup" view, not a tab). Set it before
++/// the page loads.
++@property (nonatomic) BOOL extensionPopup;
++/// The back/forward history, with scroll positions and forms, for restoring at the next launch.
++@property (nonatomic, readonly, nullable) NSData *navigationState;
++/// Gives a page that hasn't loaded anything that history and loads its current entry, or loads
++/// `fallback` if it can't use it.
++- (void)restoreNavigationState:(NSData *)state fallback:(NSURL *)fallback;
++/// The link under the pointer.
++@property (nonatomic, readonly, nullable) NSURL *hoveredURL;
++/// Under something else, such as a Peek: the page takes no hover and sets no cursor, though
++/// mouse tracking would otherwise reach it through whatever covers it.
++@property (nonatomic) BOOL covered;
++/// Page zoom as a factor, 1 for 100%.
++@property (nonatomic) double zoom;
++/// The color shown where the page hasn't painted yet.
++@property (nonatomic, copy) NSColor *pageBackgroundColor;
++/// Whether the page should look dark, as its `prefers-color-scheme` reports, whatever macOS's
++/// own appearance; nil follows macOS.
++@property (nonatomic, copy, nullable) NSNumber *prefersDark;
++- (void)loadURL:(NSURL *)url NS_SWIFT_NAME(open(_:));
++- (void)goBack;
++- (void)goForward;
++- (void)reload;
++- (void)reloadIgnoringCache;
++- (void)stopLoading;
++- (void)setAudioMuted:(BOOL)muted;
++/// Downloads `url` as the page would, into Rise's downloads.
++- (void)downloadURL:(NSURL *)url NS_SWIFT_NAME(download(_:));
++/// Runs `functionBody` as the body of an async function with `arguments` as its parameters,
++/// in the isolated script world `world`, which the page's own scripts can't see. Completes
++/// with the returned value, as JSON allows, or nil if it threw or the page went away.
++- (void)evaluateFunctionBody:(NSString *)functionBody
++                   arguments:(NSDictionary<NSString *, id> *)arguments
++                       world:(NSString *)world
++                  completion:(void (^)(id _Nullable result))completion;
++/// Runs `source` in `world` at the start of every document this page loads from now on,
++/// and in the current one.
++- (void)addScriptToEveryDocument:(NSString *)source world:(NSString *)world;
++/// Lets Rise scripts in `world` (nil: the page's own) post to `name`, as
++/// `riseHandlers.<name>.postMessage(body)`, which returns a promise of the reply when `replies`.
++/// Add handlers before the scripts that use them.
++- (void)addMessageHandler:(NSString *)name world:(nullable NSString *)world replies:(BOOL)replies;
++/// Runs `source` at the start of every document, in every frame (or only the main one), in
++/// `world` (nil: the page's own), with `riseHandlers` holding the message handlers it's given.
++/// Frames of other sites, in processes of their own, run it too.
++- (void)addUserScript:(NSString *)source
++                world:(nullable NSString *)world
++        mainFrameOnly:(BOOL)mainFrameOnly
++             handlers:(NSArray<NSString *> *)handlers;
++/// Runs `expression` in the page as a console does, statements, `let` and `await` included,
++/// with the value of the last; or the error it threw.
++- (void)evaluateConsoleExpression:(NSString *)expression
++                       completion:(void (^)(id _Nullable value, NSString *_Nullable error))completion;
++/// A page showing Chromium's DevTools for this one, opened on the Elements panel. It inspects
++/// this page from when its front end loads; `close` it when it's done.
++- (RCBrowserView *)makeDevToolsView;
++/// Stops running user scripts whose source starts with `prefix` on documents to come.
++- (void)removeUserScriptsWithPrefix:(NSString *)prefix;
++/// As `evaluateFunctionBody:arguments:world:completion:`, in `frame` (nil: the main one) and
++/// `world` (nil: the page's own), reporting why it failed.
++- (void)evaluateFunctionBody:(NSString *)functionBody
++                   arguments:(NSDictionary<NSString *, id> *)arguments
++                       frame:(nullable RCFrame *)frame
++                       world:(nullable NSString *)world
++                  completion:(void (^)(id _Nullable result, NSString *_Nullable error))completion;
++/// The page's live picture, `rect` of it (in this view's coordinates), for showing elsewhere in
++/// the window, as a Peek's card does on its way to and from its link: Chromium draws into it as
++/// into the page, with nothing copied. Nil until the page has drawn. Scale it with a transform.
++- (nullable CALayer *)liveLayerShowing:(NSRect)rect;
++/// A picture of what the page shows now, the size of this view.
++- (void)snapshotWithCompletion:(void (^)(NSImage *_Nullable image))completion;
++/// Closes the page for good; the view shows nothing after.
++- (void)close;
++@end
++
++/// What Chrome extensions ask of a Rise window: tabs opened, brought forward, moved, pinned or
++/// closed. Called on the main thread.
++@protocol RCTabStripDelegate <NSObject>
++/// Opens `url` in a new tab at `index` (-1: the end), in front if `active`; returns its page,
++/// once it's among the window's tabs, or nil not to open one.
++- (nullable RCBrowserView *)tabStripOpenTabWithURL:(NSURL *)url index:(NSInteger)index active:(BOOL)active;
++- (void)tabStripActivateTab:(RCBrowserView *)tab;
++- (void)tabStripCloseTab:(RCBrowserView *)tab;
++- (void)tabStripMoveTab:(RCBrowserView *)tab toIndex:(NSInteger)index;
++- (void)tabStripSetTab:(RCBrowserView *)tab pinned:(BOOL)pinned;
++- (void)tabStripActivateWindow;
++@end
++
++/// A Rise window as Chrome extensions see it: a browser window holding its tabs, which the tabs
++/// and windows APIs list and act on.
++RC_EXPORT @interface RCTabStrip : NSObject
++- (instancetype)initWithDelegate:(id<RCTabStripDelegate>)delegate NS_DESIGNATED_INITIALIZER;
++- (instancetype)init NS_UNAVAILABLE;
++/// The window's id, as extensions see it.
++@property (nonatomic, readonly) NSInteger windowID;
++/// The window's tabs in order, the first `pinnedCount` pinned, the one at `activeIndex` in front
++/// (-1: none). Pages still being made join once they exist.
++- (void)setTabs:(NSArray<RCBrowserView *> *)tabs pinnedCount:(NSInteger)pinnedCount activeIndex:(NSInteger)activeIndex;
++/// Whether it's the window in front.
++@property (nonatomic) BOOL active;
++/// Its frame on screen, in AppKit's coordinates.
++@property (nonatomic) NSRect frame;
++/// Removes the window, as when it closes.
++- (void)close;
++@end
++
++/// A Chrome extension's toolbar button. Values for a tab take its page; nil gives the defaults.
++RC_EXPORT @interface RCExtensionAction : NSObject
++@property (nonatomic, readonly) NSString *extensionID;
++@property (nonatomic, readonly) NSString *name;
++- (NSString *)titleForTab:(nullable RCBrowserView *)tab;
++/// Empty for no badge.
++- (NSString *)badgeTextForTab:(nullable RCBrowserView *)tab;
++- (NSColor *)badgeColorForTab:(nullable RCBrowserView *)tab;
++/// Nil while it's still loading; observers hear when it's ready.
++- (nullable NSImage *)iconForTab:(nullable RCBrowserView *)tab;
++- (BOOL)isEnabledForTab:(nullable RCBrowserView *)tab;
++/// Clicks it in `tab`, giving the extension the tab if it asks for the active one: the popup's
++/// address for Rise to show, or nil if the extension took the click itself.
++- (nullable NSURL *)clickInTab:(RCBrowserView *)tab;
++@end
++
++/// The toolbar buttons of the extensions installed in Rise's profile.
++RC_EXPORT @interface RCExtensions : NSObject
++@property (class, readonly) NSArray<RCExtensionAction *> *actions;
++/// Calls `changed` on the main thread whenever buttons are added, removed or change, until the
++/// returned object goes away.
+++ (id)observeActions:(void (^)(void))changed;
++/// Installs the Chrome Web Store's extension `extensionID`, after the install prompt asks;
++/// `completion` hears how it went.
+++ (void)installFromWebStore:(NSString *)extensionID
++                 completion:(nullable void (^)(BOOL success, NSString *_Nullable error))completion;
++/// Asks the person before any extension is installed, in place of Chrome's dialog: `prompt` shows
++/// the title (such as “Add uBlock Origin Lite?”), the icon and what it will be able to do, and calls
++/// `answer` once. Nil gives Chrome's dialog back.
+++ (void)setInstallPrompt:(nullable void (^)(NSString *title, NSImage *_Nullable icon, NSArray<NSString *> *permissions,
++                                            NSString *acceptLabel, void (^answer)(BOOL accept)))prompt;
++@end
++
++NS_ASSUME_NONNULL_END
+diff --git a/chrome/browser/rise/chrome_browser_main_extra_parts_rise.cc b/chrome/browser/rise/chrome_browser_main_extra_parts_rise.cc
+new file mode 100644
+index 0000000000..0e3c0166c3
+--- /dev/null
++++ b/chrome/browser/rise/chrome_browser_main_extra_parts_rise.cc
+@@ -0,0 +1,9 @@
++// Copyright 2026 The Rise Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/rise/chrome_browser_main_extra_parts_rise.h"
++
++void ChromeBrowserMainExtraPartsRise::PostBrowserStart() {
++  rise::BrowserStarted();
++}
+diff --git a/chrome/browser/rise/chrome_browser_main_extra_parts_rise.h b/chrome/browser/rise/chrome_browser_main_extra_parts_rise.h
+new file mode 100644
+index 0000000000..cabcb68258
+--- /dev/null
++++ b/chrome/browser/rise/chrome_browser_main_extra_parts_rise.h
+@@ -0,0 +1,29 @@
++// Copyright 2026 The Rise Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_RISE_CHROME_BROWSER_MAIN_EXTRA_PARTS_RISE_H_
++#define CHROME_BROWSER_RISE_CHROME_BROWSER_MAIN_EXTRA_PARTS_RISE_H_
++
++#include "chrome/browser/chrome_browser_main_extra_parts.h"
++
++// Hands the app to Rise once the browser has started: Rise makes its windows,
++// whose tabs are this browser's.
++class ChromeBrowserMainExtraPartsRise : public ChromeBrowserMainExtraParts {
++ public:
++  ChromeBrowserMainExtraPartsRise() = default;
++  ChromeBrowserMainExtraPartsRise(const ChromeBrowserMainExtraPartsRise&) =
++      delete;
++  ChromeBrowserMainExtraPartsRise& operator=(
++      const ChromeBrowserMainExtraPartsRise&) = delete;
++
++  // ChromeBrowserMainExtraParts:
++  void PostBrowserStart() override;
++};
++
++namespace rise {
++// Defined by Rise's bridge (rise_bridge.mm).
++void BrowserStarted();
++}  // namespace rise
++
++#endif  // CHROME_BROWSER_RISE_CHROME_BROWSER_MAIN_EXTRA_PARTS_RISE_H_
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+new file mode 100644
+index 0000000000..94fc9ab0a0
+--- /dev/null
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -0,0 +1,847 @@
++// Copyright 2026 The Rise Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++// Rise's engine interface (RiseChromium.h, the same one Rise's CEF bridge
++// offers), on this fork: Rise's pages are real Chrome tabs, in a Browser whose
++// window is Rise's (RiseBrowserWindow).
++//
++// Stage 0 of Engine/fork-plan.md: tabs, navigation, scripts, snapshots and live
++// layers are real; what the motion gate doesn't use answers as if absent.
++
++#include "chrome/browser/chrome_browser_application_mac.h"
++
++// Rise's classes are what the framework offers Rise, so their symbols are seen
++// (and listed in chrome/app/framework.exports).
++#define RC_APPLICATION_SUPERCLASS BrowserCrApplication
++#define RC_EXPORT __attribute__((visibility("default")))
++#import "chrome/browser/rise/RiseChromium.h"
++
++#include <memory>
++#include <string>
++#include <vector>
++
++#include "base/functional/bind.h"
++#include "base/json/json_reader.h"
++#include "base/json/json_writer.h"
++#include "base/no_destructor.h"
++#include "base/strings/sys_string_conversions.h"
++#include "base/strings/utf_string_conversions.h"
++#include "chrome/browser/ui/cocoa/l10n_util.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/profiles/profile_manager.h"
++#include "chrome/browser/rise/chrome_browser_main_extra_parts_rise.h"
++#include "chrome/browser/rise/rise_browser_window.h"
++#include "chrome/browser/search_engines/template_url_service_factory.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "components/viz/common/frame_sinks/copy_output_result.h"
++#include "chrome/browser/ui/browser_window/public/create_browser_window.h"
++#include "chrome/browser/ui/tabs/tab_strip_model.h"
++#include "components/search_engines/template_url.h"
++#include "components/search_engines/template_url_service.h"
++#include "content/browser/renderer_host/render_frame_host_impl.h"
++#include "content/public/browser/host_zoom_map.h"
++#include "content/public/browser/navigation_controller.h"
++#include "content/public/browser/navigation_handle.h"
++#include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/render_widget_host_view.h"
++#include "content/public/browser/web_contents.h"
++#include "content/public/browser/web_contents_observer.h"
++#include "content/public/common/isolated_world_ids.h"
++#include "skia/ext/skia_utils_mac.h"
++#include "third_party/blink/public/common/page/page_zoom.h"
++#include "ui/gfx/native_ui_types.h"
++#include "url/gurl.h"
++
++extern "C" int ChromeMain(int argc, const char** argv);
++
++namespace {
++
++bool g_start_requested = false;
++bool g_started = false;
++std::vector<std::string>& Arguments() {
++  static base::NoDestructor<std::vector<std::string>> arguments;
++  return *arguments;
++}
++// Rise's app delegate, until Chrome's AppController is in place and the
++// browser has started; then it hears that the app finished launching.
++id<NSApplicationDelegate> g_rise_delegate = nil;
++NSMutableArray<void (^)(void)>* g_waiting_for_start = nil;
++
++Profile* RiseProfile() {
++  return g_started ? ProfileManager::GetLastUsedProfile() : nullptr;
++}
++
++// Every Rise page so far is a tab in one Browser, whose window is Rise's. Stage
++// 1 gives each Rise window its own (RCTabStrip).
++BrowserWindowInterface* SharedBrowser() {
++  static BrowserWindowInterface* browser = nullptr;
++  if (!browser && RiseProfile()) {
++    BrowserWindowCreateParams params(RiseProfile(), /*from_user_gesture=*/false);
++    // A window of Rise's: Chrome makes the Browser, not a window of its own.
++    params.window = new RiseBrowserWindow();
++    params.embedder_window = true;
++    browser = CreateBrowserWindow(std::move(params));
++  }
++  return browser;
++}
++
++NSURL* ToNSURL(const GURL& url) {
++  return url.is_valid() ? [NSURL URLWithString:base::SysUTF8ToNSString(url.spec())]
++                        : nil;
++}
++
++// Chromium's values, as Foundation's, through JSON.
++id ToObject(const base::Value& value) {
++  std::optional<std::string> json = base::WriteJson(value);
++  if (!json) {
++    return nil;
++  }
++  NSData* data = [base::SysUTF8ToNSString(*json) dataUsingEncoding:NSUTF8StringEncoding];
++  return [NSJSONSerialization JSONObjectWithData:data
++                                         options:NSJSONReadingFragmentsAllowed
++                                           error:nil];
++}
++
++NSString* ToJSON(id object) {
++  if (!object) {
++    return @"null";
++  }
++  NSData* data = [NSJSONSerialization dataWithJSONObject:object
++                                                 options:NSJSONWritingFragmentsAllowed
++                                                   error:nil];
++  return data ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding]
++              : @"null";
++}
++
++// A world of Rise's own for each name: the page's scripts can't see it.
++int32_t WorldID(NSString* world) {
++  static NSMutableDictionary<NSString*, NSNumber*>* ids =
++      [NSMutableDictionary dictionary];
++  if (!world.length) {
++    return content::ISOLATED_WORLD_ID_GLOBAL;
++  }
++  NSNumber* known = ids[world];
++  if (!known) {
++    known = @(1000 + (int)ids.count);
++    ids[world] = known;
++  }
++  return known.intValue;
++}
++
++// The layer Chromium shows its GPU process's frames through, in the page's
++// layers.
++CALayer* ContentHost(CALayer* layer) {
++  if ([NSStringFromClass(layer.class) isEqualToString:@"CALayerHost"]) {
++    return layer;
++  }
++  for (CALayer* sublayer in layer.sublayers) {
++    if (CALayer* host = ContentHost(sublayer)) {
++      return host;
++    }
++  }
++  return nil;
++}
++
++}  // namespace
++
++@interface RCBrowserView ()
++- (void)browserStarted;
++- (void)contentsChanged;
++- (void)willNavigate:(RCNavigationKind)kind;
++- (void)finishedLoad;
++- (void)crashed;
++@end
++
++namespace {
++
++// What a tab does, told to its Rise view.
++class TabObserver : public content::WebContentsObserver {
++ public:
++  TabObserver(RCBrowserView* view, content::WebContents* contents)
++      : WebContentsObserver(contents), view_(view) {}
++
++  void TitleWasSet(content::NavigationEntry* entry) override { Changed(); }
++  void DidStartLoading() override { Changed(); }
++  void DidStopLoading() override { Changed(); }
++  void LoadProgressChanged(double progress) override { Changed(); }
++  void NavigationEntryCommitted(
++      const content::LoadCommittedDetails& details) override {
++    Changed();
++  }
++  void DidStartNavigation(content::NavigationHandle* navigation) override {
++    if (!navigation->IsInPrimaryMainFrame() ||
++        navigation->IsSameDocument()) {
++      return;
++    }
++    RCNavigationKind kind = RCNavigationKindNewPage;
++    if (navigation->GetReloadType() != content::ReloadType::NONE) {
++      kind = RCNavigationKindReload;
++    } else if (navigation->GetPageTransition() &
++               ui::PAGE_TRANSITION_FORWARD_BACK) {
++      kind = RCNavigationKindHistory;
++    }
++    [view_ willNavigate:kind];
++  }
++  void DidFinishLoad(content::RenderFrameHost* frame,
++                     const GURL& validated_url) override {
++    if (frame->IsInPrimaryMainFrame()) {
++      [view_ finishedLoad];
++    }
++  }
++  void PrimaryMainFrameRenderProcessGone(
++      base::TerminationStatus status) override {
++    [view_ crashed];
++  }
++
++ private:
++  void Changed() { [view_ contentsChanged]; }
++  __weak RCBrowserView* view_;
++};
++
++}  // namespace
++
++namespace rise {
++
++void BrowserStarted() {
++  g_started = true;
++  NSArray* waiting = g_waiting_for_start;
++  g_waiting_for_start = nil;
++  // On the next turn, with the main loop running, as AppKit would.
++  dispatch_async(dispatch_get_main_queue(), ^{
++    for (void (^block)(void) in waiting) {
++      block();
++    }
++    if ([g_rise_delegate respondsToSelector:@selector
++                         (applicationDidFinishLaunching:)]) {
++      [g_rise_delegate
++          applicationDidFinishLaunching:
++              [NSNotification
++                  notificationWithName:NSApplicationDidFinishLaunchingNotification
++                                object:NSApp]];
++    }
++  });
++}
++
++}  // namespace rise
++
++// MARK: The app
++
++// Chrome's application class (see RC_APPLICATION_SUPERCLASS), so Chrome takes it
++// as its own, run by Chrome's main from Rise's.
++@implementation RCApplication {
++  BOOL _running;
++}
++
++- (void)setDelegate:(id<NSApplicationDelegate>)delegate {
++  // Chrome's AppController is the app's delegate, as Chrome needs; Rise's hears
++  // what it needs from the bridge.
++  if (delegate && ![NSStringFromClass([(id)delegate class])
++                      isEqualToString:@"AppController"]) {
++    g_rise_delegate = delegate;
++    return;
++  }
++  [super setDelegate:delegate];
++}
++
++- (void)run {
++  if (_running) {
++    // Chrome's main loop, now that Chrome has read its command line: what the
++    // app class does first, when Chrome makes the app itself.
++    cocoa_l10n_util::ApplyForcedRTL();
++    [super run];
++    return;
++  }
++  if (!g_start_requested) {
++    [super run];
++    return;
++  }
++  _running = YES;
++  NSArray<NSString*>* processArguments = NSProcessInfo.processInfo.arguments;
++  std::vector<std::string>& arguments = Arguments();
++  arguments.insert(arguments.begin(), processArguments.firstObject.UTF8String);
++  for (NSUInteger i = 1; i < processArguments.count; i++) {
++    arguments.push_back(processArguments[i].UTF8String);
++  }
++  std::vector<const char*> argv;
++  for (const std::string& argument : arguments) {
++    argv.push_back(argument.c_str());
++  }
++  exit(ChromeMain(static_cast<int>(argv.size()), argv.data()));
++}
++
++@end
++
++@implementation RCEngine
++
+++ (BOOL)startWithCachePath:(NSString*)cachePath keychain:(BOOL)keychain {
++  g_start_requested = true;
++  std::vector<std::string>& arguments = Arguments();
++  arguments.push_back("--user-data-dir=" + base::SysNSStringToUTF8(cachePath));
++  arguments.push_back("--no-startup-window");
++  arguments.push_back("--no-first-run");
++  arguments.push_back("--no-default-browser-check");
++  if (!keychain) {
++    arguments.push_back("--use-mock-keychain");
++  }
++  return YES;
++}
++
+++ (BOOL)isRunning {
++  return g_start_requested;
++}
++
+++ (void)shutdown {}
++
+++ (NSString*)defaultSearchName {
++  Profile* profile = RiseProfile();
++  TemplateURLService* service =
++      profile ? TemplateURLServiceFactory::GetForProfile(profile) : nullptr;
++  const TemplateURL* engine =
++      service ? service->GetDefaultSearchProvider() : nullptr;
++  return engine ? base::SysUTF16ToNSString(engine->short_name()) : nil;
++}
++
+++ (NSURL*)searchURLForTerms:(NSString*)terms {
++  Profile* profile = RiseProfile();
++  TemplateURLService* service =
++      profile ? TemplateURLServiceFactory::GetForProfile(profile) : nullptr;
++  const TemplateURL* engine =
++      service ? service->GetDefaultSearchProvider() : nullptr;
++  if (!engine) {
++    return nil;
++  }
++  TemplateURLRef::SearchTermsArgs search(base::SysNSStringToUTF16(terms));
++  return ToNSURL(GURL(engine->url_ref().ReplaceSearchTerms(
++      search, service->search_terms_data())));
++}
++
++@end
++
++// MARK: Pages
++
++// A crop of a page's live picture, shown elsewhere: the GPU process's layer,
++// hosted again (as Rise's CEF bridge does).
++@interface RCLiveLayer : CALayer <CALayerDelegate>
++- (instancetype)initWithPage:(RCBrowserView*)page rect:(NSRect)rect;
++@end
++
++@implementation RCLiveLayer {
++  __weak RCBrowserView* _page;
++  NSRect _rect;
++  CALayer* _content;
++  CALayer* _flip;
++  CALayer* _host;
++}
++- (instancetype)initWithPage:(RCBrowserView*)page rect:(NSRect)rect {
++  if (!(self = [super init])) {
++    return nil;
++  }
++  _page = page;
++  _rect = rect;
++  self.anchorPoint = CGPointZero;
++  self.bounds = CGRectMake(0, 0, rect.size.width, rect.size.height);
++  self.masksToBounds = YES;
++  _content = [CALayer layer];
++  _flip = [CALayer layer];
++  _host = [[NSClassFromString(@"CALayerHost") alloc] init];
++  for (CALayer* layer in @[ _content, _flip, _host ]) {
++    layer.anchorPoint = CGPointZero;
++    layer.delegate = (id<CALayerDelegate>)self;
++  }
++  [_flip addSublayer:_host];
++  [_content addSublayer:_flip];
++  [self addSublayer:_content];
++  [self setNeedsLayout];
++  return self;
++}
++- (id<CAAction>)actionForLayer:(CALayer*)layer forKey:(NSString*)event {
++  return (id<CAAction>)NSNull.null;
++}
++- (void)layoutSublayers {
++  [super layoutSublayers];
++  RCBrowserView* page = _page;
++  CALayer* original = page ? ContentHost(page.layer) : nil;
++  if (!original) {
++    return;
++  }
++  [_host setValue:[original valueForKey:@"contextId"] forKey:@"contextId"];
++  NSSize size = page.bounds.size;
++  CGFloat top = page.isFlipped ? NSMinY(_rect) : size.height - NSMaxY(_rect);
++  CGFloat y = self.contentsAreFlipped ? -top : NSHeight(_rect) + top - size.height;
++  _content.frame = CGRectMake(-NSMinX(_rect), y, size.width, size.height);
++  _flip.geometryFlipped = NO;
++  _flip.frame = _content.bounds;
++  if (_flip.contentsAreFlipped != original.superlayer.contentsAreFlipped) {
++    _flip.geometryFlipped = YES;
++  }
++}
++@end
++
++@implementation RCBrowserView {
++  raw_ptr<content::WebContents> _contents;
++  std::unique_ptr<TabObserver> _observer;
++  NSURL* _pendingURL;
++  BOOL _closed;
++}
++
++@synthesize delegate = _delegate;
++@synthesize scriptsDisabled = _scriptsDisabled;
++@synthesize extensionPopup = _extensionPopup;
++@synthesize covered = _covered;
++@synthesize zoom = _zoom;
++@synthesize pageBackgroundColor = _pageBackgroundColor;
++@synthesize prefersDark = _prefersDark;
++
++- (instancetype)initWithFrame:(NSRect)frame URL:(NSURL*)url {
++  if (!(self = [super initWithFrame:frame])) {
++    return nil;
++  }
++  _pendingURL = url;
++  _zoom = 1;
++  _pageBackgroundColor = NSColor.whiteColor;
++  self.wantsLayer = YES;
++  // Made on the next turn, so what Rise sets on the new view first, such as
++  // its theme's colour for before the page draws, is what Chromium starts with.
++  __weak RCBrowserView* weakSelf = self;
++  void (^make)(void) = ^{
++    [weakSelf browserStarted];
++  };
++  if (g_started) {
++    dispatch_async(dispatch_get_main_queue(), make);
++  } else {
++    if (!g_waiting_for_start) {
++      g_waiting_for_start = [NSMutableArray array];
++    }
++    [g_waiting_for_start addObject:make];
++  }
++  return self;
++}
++
++- (void)dealloc {
++  [self close];
++}
++
++- (BOOL)isFlipped {
++  return YES;
++}
++
++- (void)browserStarted {
++  BrowserWindowInterface* browser = SharedBrowser();
++  if (_closed || _contents || !browser) {
++    return;
++  }
++  std::unique_ptr<content::WebContents> contents =
++      content::WebContents::Create(content::WebContents::CreateParams(
++          browser->GetProfile()));
++  _contents = contents.get();
++  // A tab of the Browser: Chrome's tab helpers, extensions and the rest see it
++  // as one.
++  browser->GetTabStripModel()->AppendWebContents(std::move(contents),
++                                                 /*foreground=*/false);
++  _observer = std::make_unique<TabObserver>(self, _contents);
++  _contents->SetPageBaseBackgroundColor(
++      skia::NSDeviceColorToSkColor([_pageBackgroundColor
++          colorUsingColorSpace:NSColorSpace.deviceRGBColorSpace]));
++  NSView* page = _contents->GetNativeView().GetNativeNSView();
++  page.frame = self.bounds;
++  page.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
++  [self addSubview:page];
++  if (_zoom != 1) {
++    self.zoom = _zoom;
++  }
++  if (_pendingURL) {
++    NSURL* url = _pendingURL;
++    _pendingURL = nil;
++    [self loadURL:url];
++  }
++}
++
++- (void)contentsChanged {
++  if ([_delegate respondsToSelector:@selector(browserViewDidChange:)]) {
++    [_delegate browserViewDidChange:self];
++  }
++}
++- (void)willNavigate:(RCNavigationKind)kind {
++  if ([_delegate respondsToSelector:@selector(browserView:willNavigate:)]) {
++    [_delegate browserView:self willNavigate:kind];
++  }
++}
++- (void)finishedLoad {
++  if ([_delegate respondsToSelector:@selector(browserViewDidFinishLoad:)]) {
++    [_delegate browserViewDidFinishLoad:self];
++  }
++}
++- (void)crashed {
++  if ([_delegate respondsToSelector:@selector(browserViewDidCrash:)]) {
++    [_delegate browserViewDidCrash:self];
++  }
++}
++
++- (NSURL*)URL {
++  return _contents ? ToNSURL(_contents->GetVisibleURL()) : _pendingURL;
++}
++- (NSString*)title {
++  return _contents ? base::SysUTF16ToNSString(_contents->GetTitle()) : nil;
++}
++- (BOOL)isLoading {
++  return _contents ? _contents->IsLoading() : _pendingURL != nil;
++}
++- (BOOL)canGoBack {
++  return _contents && _contents->GetController().CanGoBack();
++}
++- (BOOL)canGoForward {
++  return _contents && _contents->GetController().CanGoForward();
++}
++- (double)progress {
++  return _contents ? _contents->GetLoadProgress() : 0;
++}
++- (BOOL)audible {
++  return _contents && _contents->IsCurrentlyAudible();
++}
++- (BOOL)fullscreen {
++  return NO;
++}
++- (void)exitFullscreen {}
++- (NSData*)navigationState {
++  return nil;
++}
++- (void)restoreNavigationState:(NSData*)state fallback:(NSURL*)fallback {
++  [self loadURL:fallback];
++}
++- (NSURL*)hoveredURL {
++  return nil;
++}
++
++- (void)setZoom:(double)zoom {
++  _zoom = zoom;
++  if (_contents) {
++    content::HostZoomMap::SetZoomLevel(_contents,
++                                       blink::ZoomFactorToZoomLevel(zoom));
++  }
++}
++
++- (void)setPageBackgroundColor:(NSColor*)color {
++  _pageBackgroundColor = color.copy;
++  if (_contents) {
++    _contents->SetPageBaseBackgroundColor(skia::NSDeviceColorToSkColor(
++        [color colorUsingColorSpace:NSColorSpace.deviceRGBColorSpace]));
++  }
++}
++
++- (void)loadURL:(NSURL*)url {
++  if (!_contents) {
++    _pendingURL = url;
++    return;
++  }
++  content::NavigationController::LoadURLParams params(
++      GURL(base::SysNSStringToUTF8(url.absoluteString)));
++  params.transition_type = ui::PAGE_TRANSITION_TYPED;
++  _contents->GetController().LoadURLWithParams(params);
++}
++- (void)goBack {
++  if (_contents && _contents->GetController().CanGoBack()) {
++    _contents->GetController().GoBack();
++  }
++}
++- (void)goForward {
++  if (_contents && _contents->GetController().CanGoForward()) {
++    _contents->GetController().GoForward();
++  }
++}
++- (void)reload {
++  if (_contents) {
++    _contents->GetController().Reload(content::ReloadType::NORMAL, true);
++  }
++}
++- (void)reloadIgnoringCache {
++  if (_contents) {
++    _contents->GetController().Reload(content::ReloadType::BYPASSING_CACHE,
++                                      true);
++  }
++}
++- (void)stopLoading {
++  if (_contents) {
++    _contents->Stop();
++  }
++}
++- (void)setAudioMuted:(BOOL)muted {
++  if (_contents) {
++    _contents->SetAudioMuted(muted);
++  }
++}
++- (void)downloadURL:(NSURL*)url {}
++
++- (void)evaluateFunctionBody:(NSString*)functionBody
++                   arguments:(NSDictionary<NSString*, id>*)arguments
++                       world:(NSString*)world
++                  completion:(void (^)(id))completion {
++  [self evaluateFunctionBody:functionBody
++                   arguments:arguments
++                       frame:nil
++                       world:world
++                  completion:^(id result, NSString* error) {
++                    completion(result);
++                  }];
++}
++
++- (void)evaluateFunctionBody:(NSString*)functionBody
++                   arguments:(NSDictionary<NSString*, id>*)arguments
++                       frame:(RCFrame*)frame
++                       world:(NSString*)world
++                  completion:(void (^)(id, NSString*))completion {
++  content::RenderFrameHost* host =
++      _contents ? _contents->GetPrimaryMainFrame() : nullptr;
++  if (!host || !host->IsRenderFrameLive()) {
++    completion(nil, @"The page isn't there");
++    return;
++  }
++  NSMutableArray* names = [NSMutableArray array];
++  NSMutableArray* values = [NSMutableArray array];
++  [arguments enumerateKeysAndObjectsUsingBlock:^(NSString* name, id value, BOOL*) {
++    [names addObject:name];
++    [values addObject:ToJSON(value)];
++  }];
++  // The body of an async function; its result, as JSON gives it back.
++  NSString* script = [NSString
++      stringWithFormat:@"(async function(%@) {\n%@\n})(%@)",
++                       [names componentsJoinedByString:@", "], functionBody,
++                       [values componentsJoinedByString:@", "]];
++  static_cast<content::RenderFrameHostImpl*>(host)->ExecuteJavaScriptForTests(
++      base::SysNSStringToUTF16(script), /*has_user_gesture=*/false,
++      /*resolve_promises=*/true, /*honor_js_content_settings=*/false,
++      WorldID(world),
++      base::BindOnce(
++          [](void (^completion)(id, NSString*),
++             blink::mojom::JavaScriptExecutionResultType type,
++             base::Value value) {
++            if (type == blink::mojom::JavaScriptExecutionResultType::kSuccess) {
++              completion(ToObject(value), nil);
++            } else {
++              completion(nil, value.is_string()
++                                  ? base::SysUTF8ToNSString(value.GetString())
++                                  : @"The script threw");
++            }
++          },
++          completion));
++}
++
++- (void)addScriptToEveryDocument:(NSString*)source world:(NSString*)world {}
++- (void)addMessageHandler:(NSString*)name
++                    world:(NSString*)world
++                  replies:(BOOL)replies {}
++- (void)addUserScript:(NSString*)source
++                world:(NSString*)world
++        mainFrameOnly:(BOOL)mainFrameOnly
++             handlers:(NSArray<NSString*>*)handlers {}
++- (void)evaluateConsoleExpression:(NSString*)expression
++                       completion:(void (^)(id, NSString*))completion {
++  completion(nil, @"Not on this engine yet");
++}
++- (RCBrowserView*)makeDevToolsView {
++  return [[RCBrowserView alloc] initWithFrame:NSZeroRect URL:nil];
++}
++- (void)removeUserScriptsWithPrefix:(NSString*)prefix {}
++
++- (CALayer*)liveLayerShowing:(NSRect)rect {
++  if (!ContentHost(self.layer) || NSIsEmptyRect(rect)) {
++    return nil;
++  }
++  return [[RCLiveLayer alloc] initWithPage:self rect:rect];
++}
++
++- (void)snapshotWithCompletion:(void (^)(NSImage*))completion {
++  content::RenderWidgetHostView* view =
++      _contents ? _contents->GetRenderWidgetHostView() : nullptr;
++  if (!view) {
++    completion(nil);
++    return;
++  }
++  NSSize size = self.bounds.size;
++  view->CopyFromSurface(
++      gfx::Rect(), gfx::Size(), base::Seconds(5),
++      base::BindOnce(
++          [](void (^completion)(NSImage*), NSSize size,
++             const content::CopyFromSurfaceResult& result) {
++            NSImage* image =
++                result.has_value() ? skia::SkBitmapToNSImage(result->bitmap)
++                                   : nil;
++            if (image && size.width > 0 && size.height > 0) {
++              image.size = size;
++            }
++            completion(image);
++          },
++          completion, size));
++}
++
++- (void)close {
++  if (_closed) {
++    return;
++  }
++  _closed = YES;
++  _observer.reset();
++  content::WebContents* contents = _contents;
++  _contents = nullptr;
++  BrowserWindowInterface* browser = SharedBrowser();
++  if (!contents || !browser) {
++    return;
++  }
++  [contents->GetNativeView().GetNativeNSView() removeFromSuperview];
++  TabStripModel* tabs = browser->GetTabStripModel();
++  int index = tabs->GetIndexOfWebContents(contents);
++  if (index != TabStripModel::kNoTab) {
++    tabs->DetachAndDeleteWebContentsAt(index);
++  }
++}
++
++@end
++
++// MARK: What the motion gate doesn't use yet
++
++@implementation RCAdBlock
+++ (BOOL)available {
++  return NO;
++}
+++ (BOOL)enabled {
++  return NO;
++}
+++ (void)setEnabled:(BOOL)enabled {}
+++ (void)load {}
+++ (NSArray<NSString*>*)hiddenSelectorsForURL:(NSURL*)url
++                                     classes:(NSArray<NSString*>*)classes
++                                         ids:(NSArray<NSString*>*)ids {
++  return @[];
++}
++@end
++
++@implementation RCFrame
++- (NSString*)session {
++  return @"";
++}
++- (NSInteger)context {
++  return 0;
++}
++- (BOOL)isMain {
++  return YES;
++}
++- (NSString*)origin {
++  return @"null";
++}
++@end
++
++@implementation RCDownload
++@synthesize onUpdate = _onUpdate;
++- (NSURL*)url {
++  return [NSURL URLWithString:@"about:blank"];
++}
++- (RCDownloadState)state {
++  return RCDownloadStateCancelled;
++}
++- (int64_t)receivedBytes {
++  return 0;
++}
++- (int64_t)totalBytes {
++  return -1;
++}
++- (void)pause {}
++- (void)resume {}
++- (void)cancel {}
++@end
++
++@implementation RCContextMenu
++- (NSPoint)point {
++  return NSZeroPoint;
++}
++- (NSURL*)linkURL {
++  return nil;
++}
++- (NSURL*)sourceURL {
++  return nil;
++}
++- (RCMediaKind)mediaKind {
++  return (RCMediaKind)0;
++}
++- (BOOL)hasImageContents {
++  return NO;
++}
++- (NSString*)selectionText {
++  return @"";
++}
++- (BOOL)editable {
++  return NO;
++}
++- (RCEditFlags)editFlags {
++  return 0;
++}
++- (NSString*)misspelledWord {
++  return @"";
++}
++- (NSArray<NSString*>*)suggestions {
++  return @[];
++}
++- (void)perform:(RCEditCommand)command {}
++- (void)replaceMisspellingWith:(NSString*)word {}
++- (void)learnMisspelledWord {}
++- (void)copyImage {}
++- (void)lookUp {}
++- (void)inspect {}
++@end
++
++@implementation RCTabStrip
++@synthesize active = _active;
++@synthesize frame = _frame;
++- (instancetype)initWithDelegate:(id<RCTabStripDelegate>)delegate {
++  return [super init];
++}
++- (NSInteger)windowID {
++  return -1;
++}
++- (void)setTabs:(NSArray<RCBrowserView*>*)tabs
++    pinnedCount:(NSInteger)pinnedCount
++    activeIndex:(NSInteger)activeIndex {}
++- (void)close {}
++@end
++
++@implementation RCExtensionAction
++- (NSString*)extensionID {
++  return @"";
++}
++- (NSString*)name {
++  return @"";
++}
++- (NSString*)titleForTab:(RCBrowserView*)tab {
++  return @"";
++}
++- (NSString*)badgeTextForTab:(RCBrowserView*)tab {
++  return @"";
++}
++- (NSColor*)badgeColorForTab:(RCBrowserView*)tab {
++  return NSColor.clearColor;
++}
++- (NSImage*)iconForTab:(RCBrowserView*)tab {
++  return nil;
++}
++- (BOOL)isEnabledForTab:(RCBrowserView*)tab {
++  return NO;
++}
++- (NSURL*)clickInTab:(RCBrowserView*)tab {
++  return nil;
++}
++@end
++
++@implementation RCExtensions
+++ (NSArray<RCExtensionAction*>*)actions {
++  return @[];
++}
+++ (id)observeActions:(void (^)(void))changed {
++  return [NSObject new];
++}
+++ (void)installFromWebStore:(NSString*)extensionID
++                 completion:(void (^)(BOOL, NSString*))completion {
++  if (completion) {
++    completion(NO, @"Not on this engine yet");
++  }
++}
+++ (void)setInstallPrompt:(void (^)(NSString*, NSImage*, NSArray<NSString*>*,
++                                   NSString*, void (^)(BOOL)))prompt {}
++@end
+diff --git a/chrome/browser/rise/rise_browser_window.cc b/chrome/browser/rise/rise_browser_window.cc
+new file mode 100644
+index 0000000000..cf14a62344
+--- /dev/null
++++ b/chrome/browser/rise/rise_browser_window.cc
+@@ -0,0 +1,415 @@
++// Copyright 2012 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/rise/rise_browser_window.h"
++
++#include <utility>
++
++#include "base/feature_list.h"
++#include "base/values.h"
++#include "build/build_config.h"
++#include "chrome/browser/ui/browser_init_state.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_features.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/create_browser_window.h"
++#include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
++#include "chrome/browser/ui/find_bar/find_bar.h"
++#include "chrome/browser/ui/user_education/browser_user_education_interface.h"
++#include "chrome/browser/ui/views/bubble_anchor_util_views.h"
++#include "components/sharing_message/sharing_dialog_data.h"
++#include "components/user_education/common/new_badge/new_badge_controller.h"
++#include "content/public/browser/keyboard_event_processing_result.h"
++#include "components/tabs/public/tab_interface.h"
++#include "content/public/browser/web_contents.h"
++#include "ui/base/mojom/window_show_state.mojom.h"
++#include "ui/color/color_provider_key.h"
++#include "ui/color/color_provider_manager.h"
++#include "ui/gfx/geometry/rect.h"
++
++// Helpers --------------------------------------------------------------------
++
++
++// RiseBrowserWindow::TestLocationBar -----------------------------------------
++
++OmniboxView* RiseBrowserWindow::TestLocationBar::GetOmniboxView() {
++  return nullptr;
++}
++
++OmniboxPopupView* RiseBrowserWindow::TestLocationBar::GetOmniboxPopupView() {
++  return nullptr;
++}
++
++OmniboxController* RiseBrowserWindow::TestLocationBar::GetOmniboxController() {
++  return nullptr;
++}
++
++bool RiseBrowserWindow::TestLocationBar::ShouldCloseOmniboxPopup(
++    ui::MouseEvent* event) {
++  return false;
++}
++
++ChipController* RiseBrowserWindow::TestLocationBar::GetChipController() {
++  return nullptr;
++}
++
++LocationBarTesting*
++RiseBrowserWindow::TestLocationBar::GetLocationBarForTesting() {
++  return nullptr;
++}
++
++LocationBarModel* RiseBrowserWindow::TestLocationBar::GetLocationBarModel() {
++  return nullptr;
++}
++
++content::WebContents* RiseBrowserWindow::TestLocationBar::GetWebContents() {
++  return nullptr;
++}
++
++std::optional<bubble_anchor_util::AnchorConfiguration>
++RiseBrowserWindow::TestLocationBar::GetChipAnchor() {
++  return {};
++}
++
++ui::TrackedElement* RiseBrowserWindow::TestLocationBar::GetAnchorOrNull() {
++  return nullptr;
++}
++
++BrowserWindowInterface* RiseBrowserWindow::TestLocationBar::GetBrowser() {
++  return nullptr;
++}
++
++Profile* RiseBrowserWindow::TestLocationBar::GetProfile() {
++  return nullptr;
++}
++
++bool RiseBrowserWindow::TestLocationBar::IsInitialized() const {
++  return true;
++}
++
++bool RiseBrowserWindow::TestLocationBar::IsVisible() const {
++  return true;
++}
++
++bool RiseBrowserWindow::TestLocationBar::IsDrawn() const {
++  return true;
++}
++
++bool RiseBrowserWindow::TestLocationBar::IsFullscreen() const {
++  return false;
++}
++
++bool RiseBrowserWindow::TestLocationBar::IsEditingOrEmpty() const {
++  return false;
++}
++
++bool RiseBrowserWindow::TestLocationBar::IsMouseHovered() const {
++  return false;
++}
++
++bool RiseBrowserWindow::TestLocationBar::IsFocusWithin() const {
++  return false;
++}
++
++gfx::Rect RiseBrowserWindow::TestLocationBar::Bounds() const {
++  return gfx::Rect();
++}
++
++gfx::Rect RiseBrowserWindow::TestLocationBar::BoundsInScreen() const {
++  return gfx::Rect();
++}
++
++gfx::Size RiseBrowserWindow::TestLocationBar::MinimumSize() const {
++  return gfx::Size();
++}
++
++gfx::Size RiseBrowserWindow::TestLocationBar::PreferredSize() const {
++  return gfx::Size();
++}
++
++bool RiseBrowserWindow::TestLocationBar::HasSecurityStateChanged() {
++  return false;
++}
++
++// RiseBrowserWindow ----------------------------------------------------------
++
++RiseBrowserWindow::RiseBrowserWindow() {
++  // RiseBrowserWindow will always be instantiated before its Browser.
++  // TODO(crbug.com/413168662): This can be removed once Browser is updated to
++  // always own its BrowserWindow.
++  browser_collection_observation_.Observe(
++      GlobalBrowserCollection::GetInstance());
++}
++
++RiseBrowserWindow::~RiseBrowserWindow() {
++  if (browser_) {
++    // BrowserWindow implementations are expected to call
++    // TearDownPreBrowserWindowDestruction() before destruction.
++    browser_->GetFeatures().TearDownPreBrowserWindowDestruction();
++    browser_ = nullptr;
++  }
++}
++
++void RiseBrowserWindow::Close() {
++  if (close_callback_) {
++    std::move(close_callback_).Run();
++  }
++  is_closed_ = true;
++}
++
++bool RiseBrowserWindow::IsActive() const {
++  return is_active_;
++}
++
++ui::ZOrderLevel RiseBrowserWindow::GetZOrderLevel() const {
++  return ui::ZOrderLevel::kNormal;
++}
++
++gfx::NativeWindow RiseBrowserWindow::GetNativeWindow() const {
++  return native_window_;
++}
++
++bool RiseBrowserWindow::IsOnCurrentWorkspace() const {
++  return true;
++}
++
++bool RiseBrowserWindow::IsVisibleOnScreen() const {
++  return true;
++}
++
++void RiseBrowserWindow::SetTopControlsShownRatio(
++    content::WebContents* web_contents,
++    float ratio) {}
++
++bool RiseBrowserWindow::DoBrowserControlsShrinkRendererSize(
++    const content::WebContents* contents) const {
++  return false;
++}
++
++ui::NativeTheme* RiseBrowserWindow::GetNativeTheme() {
++  return nullptr;
++}
++
++const ui::ThemeProvider* RiseBrowserWindow::GetThemeProvider() const {
++  return nullptr;
++}
++
++const ui::ColorProvider* RiseBrowserWindow::GetColorProvider() const {
++  return ui::ColorProviderManager::Get().GetColorProviderFor(
++      ui::ColorProviderKey());
++}
++
++int RiseBrowserWindow::GetTopControlsHeight() const {
++  return 0;
++}
++
++void RiseBrowserWindow::SetTopControlsGestureScrollInProgress(
++    bool in_progress) {}
++
++std::vector<StatusBubble*> RiseBrowserWindow::GetStatusBubbles() {
++  return {};
++}
++
++gfx::Rect RiseBrowserWindow::GetRestoredBounds() const {
++  return gfx::Rect();
++}
++
++ui::mojom::WindowShowState RiseBrowserWindow::GetRestoredState() const {
++  return ui::mojom::WindowShowState::kDefault;
++}
++
++gfx::Rect RiseBrowserWindow::GetBounds() const {
++  return gfx::Rect();
++}
++
++gfx::Size RiseBrowserWindow::GetContentsSize() const {
++  return gfx::Size();
++}
++
++void RiseBrowserWindow::SetContentsSize(const gfx::Size& size) {}
++
++bool RiseBrowserWindow::IsMaximized() const {
++  return false;
++}
++
++bool RiseBrowserWindow::IsMinimized() const {
++  return is_minimized_;
++}
++
++bool RiseBrowserWindow::GetCanResize() {
++  return false;
++}
++
++ui::mojom::WindowShowState RiseBrowserWindow::GetWindowShowState() const {
++  return ui::mojom::WindowShowState::kDefault;
++}
++
++bool RiseBrowserWindow::IsFullscreen() const {
++  return false;
++}
++
++bool RiseBrowserWindow::UpdateToolbarSecurityState() {
++  return false;
++}
++
++bool RiseBrowserWindow::IsVisible() const {
++  return true;
++}
++
++LocationBar* RiseBrowserWindow::GetLocationBar() const {
++  return const_cast<TestLocationBar*>(&location_bar_);
++}
++
++ui::AcceleratorProvider* RiseBrowserWindow::GetAcceleratorProvider() {
++  return nullptr;
++}
++
++PinnedToolbarActions* RiseBrowserWindow::GetPinnedToolbarActions() {
++  return nullptr;
++}
++
++autofill::AutofillBubbleHandler* RiseBrowserWindow::GetAutofillBubbleHandler() {
++  return nullptr;
++}
++
++content::KeyboardEventProcessingResult
++RiseBrowserWindow::PreHandleKeyboardEvent(
++    const input::NativeWebKeyboardEvent& event) {
++  return content::KeyboardEventProcessingResult::NOT_HANDLED;
++}
++
++bool RiseBrowserWindow::HandleKeyboardEvent(
++    const input::NativeWebKeyboardEvent& event) {
++  return false;
++}
++
++bool RiseBrowserWindow::IsTabStripEditable() const {
++  return false;
++}
++
++void RiseBrowserWindow::DisableTabStripEditingForTesting() {
++  is_tab_strip_editable_ = false;
++}
++
++bool RiseBrowserWindow::IsToolbarVisible() const {
++  return false;
++}
++
++bool RiseBrowserWindow::IsToolbarShowing() const {
++  return false;
++}
++
++bool RiseBrowserWindow::IsLocationBarVisible() const {
++  return false;
++}
++
++bool RiseBrowserWindow::IsUnframedModeEnabled() const {
++  return false;
++}
++
++BrowserView* RiseBrowserWindow::AsBrowserView() {
++  return nullptr;
++}
++
++void RiseBrowserWindow::DeleteBrowserWindow() {
++  delete this;
++}
++
++ShowTranslateBubbleResult RiseBrowserWindow::ShowTranslateBubble(
++    content::WebContents* contents,
++    translate::TranslateStep step,
++    const std::string& source_language,
++    const std::string& target_language,
++    translate::TranslateErrors error_type,
++    bool is_user_gesture) {
++  return ShowTranslateBubbleResult::kSuccess;
++}
++
++#if BUILDFLAG(IS_CHROMEOS)
++void RiseBrowserWindow::ToggleMultitaskMenu() {
++  return;
++}
++#endif  // BUILDFLAG(IS_CHROMEOS)
++
++DownloadBubbleUIController* RiseBrowserWindow::GetDownloadBubbleUIController() {
++  return nullptr;
++}
++
++std::unique_ptr<FindBar> RiseBrowserWindow::CreateFindBar() {
++  return nullptr;
++}
++
++web_modal::WebContentsModalDialogHost*
++RiseBrowserWindow::GetWebContentsModalDialogHost() {
++  return nullptr;
++}
++
++web_modal::WebContentsModalDialogHost*
++RiseBrowserWindow::GetWebContentsModalDialogHostFor(
++    content::WebContents* web_contents) {
++  return nullptr;
++}
++
++ExclusiveAccessContext* RiseBrowserWindow::GetExclusiveAccessContext() {
++  return this;
++}
++
++Profile* RiseBrowserWindow::GetProfile() {
++  return browser_ ? browser_->GetProfile() : nullptr;
++}
++
++void RiseBrowserWindow::UpdateExclusiveAccessBubble(
++    const ExclusiveAccessBubbleParams& params,
++    ExclusiveAccessBubbleHideCallback first_hide_callback) {
++  // Rise shows no bubble of Chrome's.
++  if (first_hide_callback) {
++    std::move(first_hide_callback)
++        .Run(ExclusiveAccessBubbleHideReason::kNotShown);
++  }
++}
++
++bool RiseBrowserWindow::IsExclusiveAccessBubbleDisplayed() const {
++  return false;
++}
++
++content::WebContents* RiseBrowserWindow::GetWebContentsForExclusiveAccess() {
++  tabs::TabInterface* tab = browser_ ? browser_->GetActiveTabInterface() : nullptr;
++  return tab ? tab->GetContents() : nullptr;
++}
++
++bool RiseBrowserWindow::CanUserEnterFullscreen() const {
++  return true;
++}
++
++bool RiseBrowserWindow::CanUserExitFullscreen() const {
++  return true;
++}
++
++std::string RiseBrowserWindow::GetWorkspace() const {
++  return workspace_;
++}
++
++bool RiseBrowserWindow::IsVisibleOnAllWorkspaces() const {
++  return visible_on_all_workspaces_;
++}
++
++std::unique_ptr<content::EyeDropper> RiseBrowserWindow::OpenEyeDropper(
++    content::RenderFrameHost* frame,
++    content::EyeDropperListener* listener) {
++  return nullptr;
++}
++
++void RiseBrowserWindow::SetNativeWindow(gfx::NativeWindow window) {
++  native_window_ = window;
++}
++
++void RiseBrowserWindow::SetCloseCallback(base::OnceClosure close_callback) {
++  close_callback_ = std::move(close_callback);
++}
++
++void RiseBrowserWindow::OnBrowserCreated(BrowserWindowInterface* browser) {
++  if (BrowserInitState::From(browser)->create_params().window == this) {
++    browser_ = browser;
++    browser_collection_observation_.Reset();
++  }
++}
+diff --git a/chrome/browser/rise/rise_browser_window.h b/chrome/browser/rise/rise_browser_window.h
+new file mode 100644
+index 0000000000..4085524ef3
+--- /dev/null
++++ b/chrome/browser/rise/rise_browser_window.h
+@@ -0,0 +1,310 @@
++// Copyright 2026 The Rise Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++//
++// Made from Chromium's TestBrowserWindow (chrome/test/base), whose copyright
++// and licence follow.
++//
++// Copyright 2012 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_RISE_RISE_BROWSER_WINDOW_H_
++#define CHROME_BROWSER_RISE_RISE_BROWSER_WINDOW_H_
++
++#include <memory>
++#include <string>
++#include <vector>
++
++#include "base/functional/callback_helpers.h"
++#include "base/scoped_observation.h"
++#include "build/build_config.h"
++#include "chrome/browser/ui/browser_window.h"
++#include "chrome/browser/ui/exclusive_access/exclusive_access_context.h"
++#include "chrome/browser/ui/browser_window/public/browser_collection_observer.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/dialogs/browser_dialogs.h"
++#include "chrome/browser/ui/location_bar/location_bar.h"
++#include "chrome/browser/ui/translate/partial_translate_bubble_model.h"
++#include "chrome/browser/ui/unload_controller.h"
++#include "chrome/browser/ui/webui/tab_search/tab_search.mojom.h"
++#include "chrome/common/buildflags.h"
++#include "components/user_education/common/new_badge/new_badge_controller.h"
++#include "content/public/browser/web_contents.h"
++#include "ui/base/mojom/window_show_state.mojom-forward.h"
++
++#if !BUILDFLAG(IS_ANDROID)
++#include "components/apps/link_capturing/intent_picker_info.h"
++#endif  //  !BUILDFLAG(IS_ANDROID)
++
++class LocationBarTesting;
++class GlobalBrowserCollection;
++class OmniboxView;
++struct BrowserWindowCreateParams;
++
++// Rise's window, as a Browser sees it: Rise draws the window, its sidebar and
++// where each tab's page goes; Chrome draws none of it.
++class RiseBrowserWindow : public BrowserWindow,
++                          public ExclusiveAccessContext,
++                          public BrowserCollectionObserver {
++ public:
++  RiseBrowserWindow();
++  RiseBrowserWindow(const RiseBrowserWindow&) = delete;
++  RiseBrowserWindow& operator=(const RiseBrowserWindow&) = delete;
++  ~RiseBrowserWindow() override;
++
++  // BrowserWindow:
++  void Show() override {}
++  void ShowInactive() override {}
++  void Hide() override {}
++  bool IsVisible() const override;
++  void SetBounds(const gfx::Rect& bounds) override {}
++  void Close() override;
++  void Activate() override {}
++  void Deactivate() override {}
++  bool IsActive() const override;
++  void FlashFrame(bool flash) override {}
++  ui::ZOrderLevel GetZOrderLevel() const override;
++  void SetZOrderLevel(ui::ZOrderLevel order) override {}
++  gfx::NativeWindow GetNativeWindow() const override;
++  bool IsOnCurrentWorkspace() const override;
++  bool IsVisibleOnScreen() const override;
++  void SetTopControlsShownRatio(content::WebContents* web_contents,
++                                float ratio) override;
++  bool DoBrowserControlsShrinkRendererSize(
++      const content::WebContents* contents) const override;
++  ui::NativeTheme* GetNativeTheme() override;
++  const ui::ThemeProvider* GetThemeProvider() const override;
++  const ui::ColorProvider* GetColorProvider() const override;
++  int GetTopControlsHeight() const override;
++  void SetTopControlsGestureScrollInProgress(bool in_progress) override;
++  std::vector<StatusBubble*> GetStatusBubbles() override;
++  void UpdateTitleBar() override {}
++  void UpdateLoadingAnimations(bool is_visible) override {}
++  void OnActiveTabChanged(content::WebContents* old_contents,
++                          content::WebContents* new_contents,
++                          int index,
++                          int reason) override {}
++  void OnTabDetached(content::WebContents* contents, bool was_active) override {
++  }
++
++  gfx::Rect GetRestoredBounds() const override;
++  ui::mojom::WindowShowState GetRestoredState() const override;
++  gfx::Rect GetBounds() const override;
++  gfx::Size GetContentsSize() const override;
++  void SetContentsSize(const gfx::Size& size) override;
++  bool IsMaximized() const override;
++  bool IsMinimized() const override;
++#if BUILDFLAG(IS_ANDROID)
++  bool CanResize(ui::WindowResizePrecheckResult& result) const override {
++    result = ui::WindowResizePrecheckResult::kOk;
++    return true;
++  }
++#endif
++  void Maximize() override {}
++  void Minimize() override {}
++  void Restore() override {}
++  bool GetCanResize() override;
++  ui::mojom::WindowShowState GetWindowShowState() const override;
++  bool IsFullscreen() const override;
++  LocationBar* GetLocationBar() const override;
++  ui::AcceleratorProvider* GetAcceleratorProvider() override;
++  PinnedToolbarActions* GetPinnedToolbarActions() override;
++  autofill::AutofillBubbleHandler* GetAutofillBubbleHandler() override;
++  void SetFocusToLocationBar(bool is_user_initiated) override {}
++  void UpdateReloadStopState(bool is_loading, bool force) override {}
++  void UpdateToolbar(content::WebContents* contents) override {}
++  bool UpdateToolbarSecurityState() override;
++  void UpdateCustomTabBarVisibility(bool visible, bool animate) override {}
++  void ResetToolbarTabState(content::WebContents* contents) override {}
++  void FocusToolbar() override {}
++  void ToolbarSizeChanged(bool is_animating) override {}
++  void TabDraggingStatusChanged(bool is_dragging) override {}
++  void LinkOpeningFromGesture(WindowOpenDisposition disposition) override {}
++  void FocusAppMenu() override {}
++  void ShowAppMenu() override {}
++  void PreHandleDragUpdate(const content::DropData& drop_data,
++                           const gfx::PointF& point) override {}
++
++  void PreHandleDragExit() override {}
++  void HandleDragEnded() override {}
++  content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
++      const input::NativeWebKeyboardEvent& event) override;
++  bool HandleKeyboardEvent(const input::NativeWebKeyboardEvent& event) override;
++  bool IsTabStripEditable() const override;
++  void DisableTabStripEditingForTesting() override;
++  void SetIsTabStripEditable(bool is_editable);
++  bool IsToolbarVisible() const override;
++  bool IsLocationBarVisible() const override;
++  bool IsToolbarShowing() const override;
++  bool IsUnframedModeEnabled() const override;
++  void ShowChromeLabs() override {}
++  BrowserView* AsBrowserView() override;
++  void ShowUpdateChromeDialog() override {}
++  void ShowBookmarkBubble(const GURL& url, bool already_bookmarked) override {}
++#if !BUILDFLAG(IS_ANDROID)
++  void ShowIntentPickerBubble(
++      std::vector<apps::IntentPickerAppInfo> app_info,
++      bool show_stay_in_chrome,
++      bool show_remember_selection,
++      apps::IntentPickerBubbleType bubble_type,
++      const std::optional<url::Origin>& initiating_origin,
++      IntentPickerResponse callback) override {}
++#endif  //  !define(OS_ANDROID)
++#if BUILDFLAG(IS_CHROMEOS)
++  void ToggleMultitaskMenu() override;
++#endif  // BUILDFLAG(IS_CHROMEOS)
++  ShowTranslateBubbleResult ShowTranslateBubble(
++      content::WebContents* contents,
++      translate::TranslateStep step,
++      const std::string& source_language,
++      const std::string& target_language,
++      translate::TranslateErrors error_type,
++      bool is_user_gesture) override;
++
++  DownloadBubbleUIController* GetDownloadBubbleUIController() override;
++  void ConfirmBrowserCloseWithPendingDownloads(
++      int download_count,
++      UnloadController::DownloadCloseType dialog_type,
++      base::OnceCallback<void(bool)> callback) override {}
++
++  std::unique_ptr<FindBar> CreateFindBar() override;
++  web_modal::WebContentsModalDialogHost* GetWebContentsModalDialogHost()
++      override;
++  web_modal::WebContentsModalDialogHost* GetWebContentsModalDialogHostFor(
++      content::WebContents* web_contents) override;
++  void ShowAvatarBubbleFromAvatarButton(bool is_source_keyboard) override {}
++  void MaybeShowProfileSwitchIPH() override {}
++  void MaybeShowSupervisedUserProfileSignInIPH() override {}
++
++#if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || \
++    BUILDFLAG(IS_LINUX)
++  void ShowHatsDialog(
++      const std::string& site_id,
++      const std::optional<std::string>& hats_histogram_name,
++      const std::optional<uint64_t> hats_survey_ukm_id,
++      base::OnceClosure success_callback,
++      base::OnceClosure failure_callback,
++      const SurveyBitsData& product_specific_bits_data,
++      const SurveyStringData& product_specific_string_data) override {}
++
++  void ShowIncognitoClearBrowsingDataDialog() override {}
++  void ShowIncognitoHistoryDisclaimerDialog() override {}
++#endif
++
++  ExclusiveAccessContext* GetExclusiveAccessContext() override;
++
++  // ExclusiveAccessContext: page full screen, pointer and keyboard lock, which
++  // Rise shows itself.
++  // (IsFullscreen() is BrowserWindow's too, above.)
++  Profile* GetProfile() override;
++  void EnterFullscreen(const url::Origin& origin,
++                       ExclusiveAccessBubbleType bubble_type,
++                       FullscreenTabParams fullscreen_tab_params) override {}
++  void ExitFullscreen() override {}
++  void UpdateExclusiveAccessBubble(
++      const ExclusiveAccessBubbleParams& params,
++      ExclusiveAccessBubbleHideCallback first_hide_callback) override;
++  bool IsExclusiveAccessBubbleDisplayed() const override;
++  void OnExclusiveAccessUserInput() override {}
++  content::WebContents* GetWebContentsForExclusiveAccess() override;
++  bool CanUserEnterFullscreen() const override;
++  bool CanUserExitFullscreen() const override;
++  std::string GetWorkspace() const override;
++  bool IsVisibleOnAllWorkspaces() const override;
++  void ShowEmojiPanel() override {}
++  void ShowCaretBrowsingDialog() override {}
++  std::unique_ptr<content::EyeDropper> OpenEyeDropper(
++      content::RenderFrameHost* frame,
++      content::EyeDropperListener* listener) override;
++
++  void SetNativeWindow(gfx::NativeWindow window);
++
++  void SetCloseCallback(base::OnceClosure close_callback);
++
++  void CreateTabSearchBubble() override {}
++  void CloseTabSearchBubble() override {}
++
++  void set_workspace(std::string workspace) { workspace_ = workspace; }
++  void set_visible_on_all_workspaces(bool visible_on_all_workspaces) {
++    visible_on_all_workspaces_ = visible_on_all_workspaces;
++  }
++  void set_is_active(bool active) { is_active_ = active; }
++  void set_is_minimized(bool minimized) { is_minimized_ = minimized; }
++
++  bool IsClosed() const { return is_closed_; }
++
++ protected:
++  void DeleteBrowserWindow() final;
++
++ private:
++  class TestLocationBar : public LocationBar {
++   public:
++    TestLocationBar() : LocationBar(/*command_updater=*/nullptr) {}
++    TestLocationBar(const TestLocationBar&) = delete;
++    TestLocationBar& operator=(const TestLocationBar&) = delete;
++    ~TestLocationBar() override = default;
++
++    // LocationBar:
++    void FocusLocation(bool select_all, bool clear_focus_if_failed) override {}
++    void FocusSearch() override {}
++    void UpdateFocusBehavior(bool toolbar_visible) override {}
++    void UpdateContentSettingsIcons() override {}
++    void SaveStateToContents(content::WebContents* contents) override {}
++    void Revert() override {}
++    OmniboxView* GetOmniboxView() override;
++    OmniboxPopupView* GetOmniboxPopupView() override;
++    OmniboxController* GetOmniboxController() override;
++    bool ShouldCloseOmniboxPopup(ui::MouseEvent* event) override;
++    ChipController* GetChipController() override;
++    LocationBarTesting* GetLocationBarForTesting() override;
++    LocationBarModel* GetLocationBarModel() override;
++    content::WebContents* GetWebContents() override;
++    std::optional<bubble_anchor_util::AnchorConfiguration> GetChipAnchor()
++        override;
++    void OnChanged() override {}
++    void UpdateWithoutTabRestore() override {}
++    ui::TrackedElement* GetAnchorOrNull() override;
++    BrowserWindowInterface* GetBrowser() override;
++    Profile* GetProfile() override;
++    bool IsInitialized() const override;
++    bool IsVisible() const override;
++    bool IsDrawn() const override;
++    bool IsFullscreen() const override;
++    bool IsEditingOrEmpty() const override;
++    bool IsMouseHovered() const override;
++    bool IsFocusWithin() const override;
++    void InvalidateLayout() override {}
++    gfx::Rect Bounds() const override;
++    gfx::Rect BoundsInScreen() const override;
++    gfx::Size MinimumSize() const override;
++    gfx::Size PreferredSize() const override;
++    void Update(content::WebContents* contents) override {}
++    void ResetTabState(content::WebContents* contents) override {}
++    bool HasSecurityStateChanged() override;
++    void AnnounceAlert(const std::u16string& announcement) override {}
++  };
++
++  // BrowserCollectionObserver:
++  void OnBrowserCreated(BrowserWindowInterface* browser) override;
++
++  TestLocationBar location_bar_;
++  gfx::NativeWindow native_window_ = gfx::NativeWindow();
++
++  std::string workspace_;
++  bool visible_on_all_workspaces_ = false;
++  bool is_minimized_ = false;
++  bool is_active_ = false;
++  bool is_closed_ = false;
++  bool is_tab_strip_editable_ = true;
++
++  base::ScopedObservation<GlobalBrowserCollection, BrowserCollectionObserver>
++      browser_collection_observation_{this};
++  raw_ptr<BrowserWindowInterface> browser_;
++  base::OnceClosure close_callback_;
++};
++
++// Helper that handle the lifetime of RiseBrowserWindow instances.
++
++
++#endif  // CHROME_BROWSER_RISE_RISE_BROWSER_WINDOW_H_
+diff --git a/chrome/browser/ui/browser.cc b/chrome/browser/ui/browser.cc
+index 07de580deb..900819bca4 100644
+--- a/chrome/browser/ui/browser.cc
++++ b/chrome/browser/ui/browser.cc
+@@ -284,6 +284,7 @@ Browser::Browser(BrowserWindowCreateParams params)
+   const bool user_gesture = params.from_user_gesture;
+   const bool in_tab_dragging = params.in_tab_dragging;
+   BrowserWindow* const custom_window = params.window;
++  const bool embedder_window = params.embedder_window;
+ 
+   // Constructed first so that downstream features and window setup (e.g.
+   // BrowserWindowFeatures and the window sizer) can query the creation and
+@@ -306,7 +307,7 @@ Browser::Browser(BrowserWindowCreateParams params)
+   features_ = std::make_unique<BrowserWindowFeatures>();
+   features_->Init(this);
+ 
+-  if (custom_window) {
++  if (custom_window && !embedder_window) {
+     CHECK_IS_TEST() << "BrowserWindowCreateParams::window is a test-only param";
+   }
+   window_ =
+diff --git a/chrome/browser/ui/browser_window/public/create_browser_window.h b/chrome/browser/ui/browser_window/public/create_browser_window.h
+index 6ecba965f8..f743dfabb7 100644
+--- a/chrome/browser/ui/browser_window/public/create_browser_window.h
++++ b/chrome/browser/ui/browser_window/public/create_browser_window.h
+@@ -146,6 +146,10 @@ struct BrowserWindowCreateParams {
+   // default. Intended for testing.
+   raw_ptr<BrowserWindow, DanglingUntriaged> window = nullptr;
+ 
++  // Whether `window` is an embedder's own window, which draws the browser
++  // itself (as Rise's does), rather than a test's.
++  bool embedder_window = false;
++
+   // User-set title of this browser window, if there is one.
+   std::string user_title;
+ 

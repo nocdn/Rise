@@ -8,7 +8,12 @@ let engineRoot = ProcessInfo.processInfo.environment["RISE_CHROMIUM_ROOT"]
     ?? URL(fileURLWithPath: Context.packageDirectory).deletingLastPathComponent().appendingPathComponent("rise-chromium").path
 let cef = engineRoot + "/distrib/current"
 let cefWrapper = engineRoot + "/bridge-build/wrapper/libcef_dll_wrapper/libcef_dll_wrapper.a"
-let hasChromium = FileManager.default.fileExists(atPath: cef + "/include/cef_app.h") && FileManager.default.fileExists(atPath: cefWrapper)
+// RISE_ENGINE_FORK=1 builds on Rise's own Chromium fork instead (Engine/fork-plan.md), whose
+// framework holds the engine interface, so Rise only takes its header.
+let forkFrameworks = engineRoot + "/fork/src/out/Release/Chromium.app/Contents/Frameworks"
+let onFork = ProcessInfo.processInfo.environment["RISE_ENGINE_FORK"] == "1"
+    && FileManager.default.fileExists(atPath: forkFrameworks + "/Chromium Framework.framework")
+let hasChromium = onFork || (FileManager.default.fileExists(atPath: cef + "/include/cef_app.h") && FileManager.default.fileExists(atPath: cefWrapper))
 // Ad blocking for Chromium pages, built from Engine/adblock by scripts/build.sh where cargo is.
 let adBlock = engineRoot + "/adblock-build/release/librise_adblock.a"
 let hasAdBlock = FileManager.default.fileExists(atPath: adBlock)
@@ -26,7 +31,11 @@ var targets: [Target] = [
                 swiftSettings: hasChromium ? [.define("RISE_CHROMIUM")] : []),
 ]
 var products: [Product] = [.executable(name: "Rise", targets: ["Rise"])]
-if hasChromium {
+if onFork {
+    targets.append(.target(name: "RiseChromium", path: "Sources/RiseFork",
+                           linkerSettings: [.unsafeFlags(["-F", forkFrameworks, "-framework", "Chromium Framework",
+                                                          "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]))
+} else if hasChromium {
     targets += [
         .target(name: "RiseChromium", cxxSettings: cefFlags + (hasAdBlock ? [.define("RISE_ADBLOCK")] : []),
                 linkerSettings: cefLinking + (hasAdBlock ? [.unsafeFlags([adBlock])] : [])),
