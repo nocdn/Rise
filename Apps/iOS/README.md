@@ -28,7 +28,7 @@ As in Arc Search, a toolbar spans the bottom edge with a hairline on top: white,
 grey rather than black in dark mode, whatever the page, so its buttons and panels stand out.
 The app follows the system's light or dark appearance. Tabs, on the left, shows the top of the current page as a
 small square card over a tilted one behind it. New Page, the light grey rounded button in
-the middle, grows the bar into a panel 70% of the window's height, with Peek's quick spring:
+the middle, grows the bar into a panel 73% of the window's height, with Peek's quick spring:
 its top corners round as it grows, and the page recedes behind it, dimmed, its corners following
 the screen's own, as far in as the page has moved, so it never looks cut square into them: they
 round the moment the panel starts opening, stay round as the page comes back, and square off
@@ -44,8 +44,7 @@ and rounded like New Page (#F8F9FA, 14-point corners) with semibold rounded text
 focused at once, so the keyboard comes up alongside. Shaking the phone while typing there clears the field with two sharp taps,
 instead of offering to undo the typing. Google's
 suggestions appear under it as you type, the latest query's only, each shrinking a little
-while pressed. They're set in [Open Runde](https://github.com/lauridskern/open-runde) Medium,
-bundled with its SIL Open Font License in `Rise/Fonts`, beside a grey magnifying glass drawn
+while pressed. Their titles use the standard iOS font at medium weight, beside a grey magnifying glass drawn
 like the system's bold one, its handle as thick as its ring and about as long.
 At the field's end, the address editor's bold X is always there: it clears the
 field, clicking once, and on an empty field closes the panel. Clearing clicks once; Go or choosing a suggestion clicks twice in quick succession. Choosing one searches
@@ -85,6 +84,18 @@ Rapid panel changes keep all earlier visible contents in the outgoing fade, so t
 Site settings before the first swap finishes cannot leave the compact toolbar behind.
 The switches start on and only change their appearance for now; WebKit's protections are unchanged.
 Tapping the page or swiping down still closes the panel.
+The Downloads button fills horizontally with translucent light blue while files download.
+Progress combines the current batch by byte count when sizes are known; completed files keep
+their share until the remaining transfers finish. Unknown sizes reserve a share until measured
+or finished. Updates animate from the visible fill over 0.25 s. Completion fills the button,
+then fades it back to normal over 0.18 s; a new transfer safely interrupts that fade.
+Confirming Download produces one sharp impact. Each
+successful WebKit completion plays three brief rising haptic pulses. Concurrent completions
+queue separate patterns; confirming, cancelling, failing or restoring a saved file does not
+play completion feedback. Files and the finished list retain their existing storage paths.
+Cancelling removes the row immediately and deletes the partial file after WebKit stops
+writing, including a cancellation before the destination is handed over. Its filename stays
+reserved until cleanup completes, so cleanup cannot delete a newer transfer's file.
 Tapping the address grows More into a New Page-sized
 editor on the same spring, receding the page further while the tiles blur and fade away. The
 address bar itself stays intact: the full URL slides from the center to the left as the sheet
@@ -130,14 +141,22 @@ of the open bar through extra safe area.
 New Page opens what's chosen in a new tab after the current one. Tabs shrinks the page into a
 Safari-style tab switcher over a solid, faintly warm grey (#F3F1F0, or #1A1918 in dark mode),
 there from the start rather than a blur of the page that would be slow to come in: the page
-springs into its card in a two-column grid as the other cards fade, grow and sharpen in
-around it, their titles revealed last, each with the page's favicon in line with it. As on the
+springs into its card in a two-column grid with the other cards and their titles already
+visible on button entry. Only the moving page's title rides in, each with the page's favicon
+in line with it. Cards have slightly less rounded 16-point corners and a subtle shadow that
+forms during the flight, handing off smoothly on landing. Pressing a tab shrinks it to 97%,
+then opens it immediately from that visible size. As on the
 Mac, the icon's corners are clipped a little (4 points in 16), so square icons round off, and a
 page without one shows a blank grey square. Icons are the first bitmap the page declares that
 loads (SVGs can't be drawn here), else the site's `favicon.ico`. The bottom bar stays, with New
 Page and More, and Tabs becomes a rounded square filled like them that shows how many tabs there
 are. Tapping a card grows it back into the page; its close button closes the tab (the last one
-stays). A swipe up anywhere on the bottom bar, even starting on New Page, shrinks the page with
+stays). More in the switcher opens a smaller panel with just History, using the same blurred
+contents swap and sheet spring. Its supplied Tabler icon and title are centred in a button
+with the URL row's width, 48-point height and 14-point corners, plus the normal press fill,
+scale and haptic. History has no navigation action yet; dismissing this panel keeps the grid
+open. More over a live page keeps the normal page menu. A swipe up anywhere on the bottom bar,
+even starting on New Page, shrinks the page with
 the finger, as Summarise's pinch does: its bottom edge follows the finger and the spot across
 from where it started stays under it, its corners the screen's own from the start and easing to
 the card's, the page cropping towards its card

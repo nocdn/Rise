@@ -417,7 +417,8 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertEqual(traits?[.weight] as? CGFloat, UIFont.Weight.semibold.rawValue)
         XCTAssertTrue(font.fontName.lowercased().contains("rounded"), font.fontName)
         XCTAssertNil(bar.search.field.leftView?.subviews.first, "No magnifying glass in the field")
-        XCTAssertEqual(SearchPanel.font.fontName, "OpenRunde-Medium", "The suggestions are in Open Runde")
+        XCTAssertEqual(SearchPanel.font.fontName, UIFont.systemFont(ofSize: 17, weight: .medium).fontName,
+                       "Suggestion titles use the standard iOS font")
         XCTAssertEqual(browser.content.transform.a, PageRecede.scale, accuracy: 0.001)
         XCTAssertEqual(browser.content.transform.ty, PageRecede.drop, accuracy: 0.5)
         XCTAssertTrue(browser.webView === original, "Plus doesn't replace the page")

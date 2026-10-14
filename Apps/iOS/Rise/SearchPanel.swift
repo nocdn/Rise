@@ -3,7 +3,7 @@ import UIKit
 /// Shared learned links and remote suggestions, with immediate inline completion and site-search mode.
 final class SearchPanel: UIView, UITextFieldDelegate {
     static let fieldHeight: CGFloat = 48
-    static let rowHeight: CGFloat = 48
+    static let rowHeight: CGFloat = 56
     /// Between the field and the first suggestion.
     static let rowsGap: CGFloat = 10
     /// As many as fit above the keyboard on an iPhone.
@@ -26,12 +26,10 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     /// The magnifying glass's colour, beside each suggestion.
     static let iconColor = UIColor { $0.userInterfaceStyle == .dark
         ? UIColor(white: 1, alpha: 0.5) : UIColor(red: 165/255, green: 167/255, blue: 172/255, alpha: 1) }
-    /// The field's text is the system's semibold rounded; the suggestions are Open Runde Medium,
-    /// bundled under the SIL Open Font License.
+    /// The field keeps its rounded semibold text; suggestion titles use the standard iOS face.
     static var fieldFont: UIFont { roundedFont(weight: .semibold) }
     static var font: UIFont {
-        let font = UIFont(name: "OpenRunde-Medium", size: 17) ?? roundedFont(ofSize: 17, weight: .medium, scaled: false)
-        return UIFontMetrics(forTextStyle: .body).scaledFont(for: font)
+        UIFontMetrics(forTextStyle: .body).scaledFont(for: .systemFont(ofSize: 17, weight: .medium))
     }
     static func roundedFont(ofSize size: CGFloat = 17, weight: UIFont.Weight, scaled: Bool = true) -> UIFont {
         let font = UIFont.systemFont(ofSize: size, weight: weight)
@@ -78,6 +76,13 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     private var suppressCompletion = false
     private var active = false
     private var currentAddress: URL?
+    private struct SearchDraft {
+        let text: String
+        let completion: String?
+        let completionPrefix: String?
+        let selection: NSRange
+    }
+    private var previousSearch: SearchDraft?
     var source: MobileAddressSuggestions? {
         didSet { source?.icons.onLoad = { [weak self] in self?.refresh() } }
     }
@@ -88,6 +93,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     let clearButton = AnimatedSymbolButton(symbol: "xmark", pointSize: 14, weight: .bold)
     let transcribing = UIActivityIndicatorView(style: .medium)
     var onClose: @MainActor () -> Void = {}
+    var onSiteSearchChanged: @MainActor () -> Void = {}
     private var opening = 0
     var onOpen: @MainActor (URL) -> Void = { _ in }
 
@@ -151,10 +157,11 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         clearButton.isHidden = transcribing.isAnimating
     }
     private func clearOrClose() {
-        if (field.text ?? "").isEmpty, siteSearch != nil { leaveSiteSearch(); return }
+        if siteSearch != nil { leaveSiteSearch(); return }
         guard !(field.text ?? "").isEmpty else { onClose(); return }
         field.text = ""; field.inlineCompletion = nil; completionPrefix = nil; suppressCompletion = true
-        queryChanged(); click.impactOccurred(intensity: 0.5)
+        // The bar provides the X's single haptic on touch-down, including URL editing.
+        queryChanged()
     }
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -173,13 +180,16 @@ final class SearchPanel: UIView, UITextFieldDelegate {
             row.bounds = CGRect(x: 0, y: 0, width: width, height: Self.rowHeight)
             row.center = CGPoint(x: bounds.midX, y: Self.fieldHeight+Self.rowsGap+(CGFloat(index+offset)+0.5)*Self.rowHeight)
             row.isHidden = index+offset >= count
-            row.accessibilityElementsHidden = row.isHidden
+            row.isUserInteractionEnabled = siteSearch == nil
+            row.accessibilityElementsHidden = row.isHidden || siteSearch != nil
         }
+        siteRow.isUserInteractionEnabled = offeredSite != nil && siteSearch == nil
+        siteRow.accessibilityElementsHidden = offeredSite == nil || siteSearch != nil
     }
     func begin() {
         remote.cancel(); opening += 1; active = true; changingText = false; stopTranscribing()
-        siteSearch = nil; currentAddress = nil; completionPrefix = nil; field.inlineCompletion = nil; query = ""; field.text = ""
-        field.placeholder = "Search or enter URL"
+        siteSearch = nil; previousSearch = nil; currentAddress = nil; completionPrefix = nil; field.inlineCompletion = nil; query = ""; field.text = ""
+        showPlaceholder()
         updateResults(allowCompletion: false)
         remote.warmUp(); click.prepare()
     }
@@ -201,7 +211,8 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     }
     func beginEditingAddress(_ address: AddressBar, url: URL?) {
         remote.cancel(); opening += 1; active = true; changingText = false; stopTranscribing()
-        siteSearch = nil; completionPrefix = nil; field.inlineCompletion = nil; currentAddress = url
+        siteSearch = nil; previousSearch = nil; completionPrefix = nil; field.inlineCompletion = nil; currentAddress = url
+        showPlaceholder()
         editingAddress = address; addSubview(address); field.text = url?.absoluteString ?? ""; query = field.text ?? ""
         address.prepareEditing(field, url: url); clearButton.isHidden = true
         updateResults(allowCompletion: false); remote.warmUp(); click.prepare()
@@ -224,6 +235,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         clearOrClose(); _ = field.becomeFirstResponder()
     }
     func end() {
+        previousSearch = nil
         active = false; remote.cancel(); opening += 1; stopTranscribing(); _ = field.resignFirstResponder()
     }
     /// Late icons, learned templates and remote results never replace the person's text/selection.
@@ -260,7 +272,9 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     private func updateResults(allowCompletion: Bool) {
         guard let source else { candidates = []; suggestions = []; return }
         if siteSearch != nil {
-            candidates = []; renderRows([]); updateSite(nil)
+            // Freeze the suggestions from the original query, including their view identities
+            // and full-width frames. They are covered by the keyboard in the smaller sheet.
+            showPlaceholder()
             return
         }
         let composing = field.markedTextRange != nil
@@ -310,39 +324,81 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         offeredSite = site
         if let site {
             let icon = image(for: site.homeURL)
-            let color = MobileSuggestionFavicons.color(in: icon)
-                ?? site.color.map { UIColor(red: CGFloat(($0 >> 16)&255)/255, green: CGFloat(($0 >> 8)&255)/255, blue: CGFloat($0&255)/255, alpha: 1) }
-            siteRow.showSite(site, image: icon, color: color)
+            siteRow.showSite(site, image: icon, color: brandColor(for: site, icon: icon))
         }
         guard changed else { return }
         let visible = site != nil
-        siteRow.isHidden = false; siteRow.isUserInteractionEnabled = visible
-        siteRow.accessibilityElementsHidden = !visible
-        if visible { siteRow.transform = CGAffineTransform(translationX: 0, y: -8) }
-        setNeedsLayout()
-        let changes = {
+        UIView.performWithoutAnimation {
             self.siteRow.alpha = visible ? 1 : 0
             self.siteRow.transform = .identity
+            self.siteRow.isHidden = !visible
+            self.siteRow.isUserInteractionEnabled = visible
+            self.siteRow.accessibilityElementsHidden = !visible
+            self.setNeedsLayout()
             self.layoutIfNeeded()
         }
-        guard window != nil, !UIAccessibility.isReduceMotionEnabled else {
-            changes(); siteRow.isHidden = !visible; return
+    }
+    private func brandColor(for site: PopularSite, icon: UIImage?) -> UIColor? {
+        MobileSuggestionFavicons.color(in: icon)
+            ?? site.color.map { UIColor(red: CGFloat(($0 >> 16)&255)/255, green: CGFloat(($0 >> 8)&255)/255, blue: CGFloat($0&255)/255, alpha: 1) }
+    }
+    private func showPlaceholder() {
+        guard let siteSearch else {
+            field.attributedPlaceholder = nil
+            field.placeholder = "Search or enter URL"
+            return
         }
-        UIView.animate(springDuration: 0.28, bounce: 0.16, initialSpringVelocity: 0, delay: 0,
-            options: [.beginFromCurrentState,.allowUserInteraction], animations: changes) { [weak self] _ in
-                self?.siteRow.isHidden = self?.offeredSite == nil
-            }
+        let font = field.font ?? Self.fieldFont
+        let title = NSMutableAttributedString(string: "Search in ", attributes: [.font: font, .foregroundColor: UIColor.placeholderText])
+        let brand = brandColor(for: siteSearch, icon: image(for: siteSearch.homeURL))
+        let muted = brand?.withAlphaComponent(0.45) ?? .placeholderText
+        title.append(NSAttributedString(string: siteSearch.name, attributes: [.font: font, .foregroundColor: muted]))
+        field.attributedPlaceholder = title
     }
     func enterSiteSearch() {
-        guard let site = offeredSite else { return }
+        guard siteSearch == nil, let site = offeredSite else { return }
+        // Complete any layout requested by the final keystroke before the sheet's spring starts.
+        UIView.performWithoutAnimation { self.layoutIfNeeded() }
+        let text = field.text ?? ""
+        let selection = field.selectedTextRange.map { range in
+            NSRange(location: field.offset(from: field.beginningOfDocument, to: range.start),
+                    length: field.offset(from: range.start, to: range.end))
+        } ?? NSRange(location: text.utf16.count, length: 0)
+        previousSearch = SearchDraft(text: text, completion: field.inlineCompletion,
+                                     completionPrefix: completionPrefix, selection: selection)
         click.impactOccurred(intensity: 0.5); remote.cancel(); siteSearch = site
         completionPrefix = nil; field.inlineCompletion = nil; query = ""; field.text = ""
-        field.placeholder = "Search in \(site.name)"
+        showPlaceholder()
         updateResults(allowCompletion: false); _ = field.becomeFirstResponder()
+        setNeedsLayout()
+        onSiteSearchChanged()
     }
     private func leaveSiteSearch() {
-        siteSearch = nil; field.placeholder = "Search or enter URL"
-        queryChanged(); click.impactOccurred(intensity: 0.5)
+        let draft = previousSearch
+        previousSearch = nil
+        siteSearch = nil; showPlaceholder()
+        UIView.performWithoutAnimation {
+            applyingCompletion = true
+            field.inlineCompletion = nil
+            field.text = draft?.text ?? ""
+            query = field.text ?? ""
+            completionPrefix = draft?.completionPrefix
+            field.inlineCompletion = draft?.completion
+            if let selection = draft?.selection,
+               let start = field.position(from: field.beginningOfDocument, offset: selection.location),
+               let end = field.position(from: start, offset: selection.length) {
+                field.selectedTextRange = field.textRange(from: start, to: end)
+            }
+            changingText = false; suppressCompletion = false
+            // The original rows are still here. Preserve their content and geometry during
+            // expansion instead of rebuilding them from a possibly different remote answer.
+            setNeedsLayout()
+            layoutIfNeeded()
+            field.layoutIfNeeded()
+            applyingCompletion = false
+        }
+        _ = remote.suggestions(for: query)
+        onSiteSearchChanged()
     }
     func choose(_ value: AddressCandidate) {
         guard let url = value.url else { return }

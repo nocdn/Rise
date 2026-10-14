@@ -12,6 +12,7 @@ import UIKit
     static let bypassPaywall = UIImage(named: "MenuBypassPaywall")
     /// The arrow from Tabler's cloud download, enlarged slightly and centred.
     static let downloads = UIImage(named: "MenuDownloads")
+    static let history = UIImage(named: "MenuHistory")
     static let syncTabs = UIImage(named: "MenuSyncTabs")
 
     static let summarise: UIImage = {

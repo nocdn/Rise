@@ -46,6 +46,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     let topStrip = UIView()
     /// Holds the strip and the pages, so they recede together behind the bar's panel.
     let content = UIView()
+    /// Preview WebKit pages remain in the window to paint, behind an opaque black cover.
+    private let previewBackdrop = UIView()
     let navigationStatus = BrowserNavigationStatus()
     /// Darkens the receded page; tapping it closes the panel.
     private let dimming = UIView()
@@ -65,7 +67,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// How far the page has scrolled in its current direction, to collapse or open the bar.
     private var scrollTravel: CGFloat = 0, lastScrollOffset: CGFloat = 0
     /// The panel New Page grows the bar into, as a share of the window's height.
-    static let panelHeightFraction: CGFloat = 0.7
+    static let panelHeightFraction: CGFloat = 0.73
     private(set) var isPanelOpen = false
     /// Growing from the panel to fill the window with a page chosen in it: quicker than a Peek
     /// expanding, and likewise without overshoot, which would fall outside the screen.
@@ -332,6 +334,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         view.backgroundColor = .black
         if let tabPreviews {
             view.addSubview(tabPreviews.host)
+            previewBackdrop.backgroundColor = .black
+            previewBackdrop.isUserInteractionEnabled = false
+            view.addSubview(previewBackdrop)
             tabPreviews.canRender = { [weak self] in
                 guard let self else { return false }
                 return view.window?.windowScene?.activationState == .foregroundActive
@@ -381,6 +386,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         content.bounds = view.bounds
         content.center = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
         tabPreviews?.host.frame = view.bounds
+        previewBackdrop.frame = view.bounds
         dimming.frame = view.bounds
         navigationStatus.frame = pageFrame
         topStrip.frame = CGRect(x: 0, y: 0, width: view.bounds.width, height: stripHeight)
@@ -611,6 +617,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         }
         bottomBar.search.onOpen = { [weak self] url in self?.openFromPanel(url) }
         bottomBar.search.onClose = { [weak self] in self?.closePanel() }
+        bottomBar.search.onSiteSearchChanged = { [weak self] in
+            guard let self, isPanelOpen, bottomBar.panel == .search else { return }
+            settlePanelOpen()
+        }
         bottomBar.moreButton.addAction(UIAction { [weak self] _ in self?.openPanel(.menu) }, for: .primaryActionTriggered)
         bottomBar.find.find = { [weak self] query, direction in
             await self?.find(query, direction: direction) ?? PageFind.Matches(count: 0, index: -1)
@@ -669,7 +679,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             // While editing the address, X clears it, or closes the dialog once it's empty.
             (address.reloadButton, {
                 if !$0.bottomBar.menu.address.isEditingURL { $0.closePanel(); $0.reloadPage() }
-                else if ($0.bottomBar.search.field.text ?? "").isEmpty { $0.closePanel() }
+                else if $0.bottomBar.search.siteSearch == nil && ($0.bottomBar.search.field.text ?? "").isEmpty { $0.closePanel() }
                 else { $0.bottomBar.search.clearAddress() }
             }),
             (menu.shareTile, { $0.closePanel(); $0.share() }),
@@ -748,8 +758,11 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let safeBottom = view.window?.safeAreaInsets.bottom ?? 0
         let open = BottomBar.height(collapsed: false, safeBottom: safeBottom)
         let height = switch panel {
-        case .search: (view.bounds.height*Self.panelHeightFraction).rounded()
+        case .search: bottomBar.search.siteSearch == nil
+            ? (view.bounds.height*Self.panelHeightFraction).rounded()
+            : BottomBar.findHeight(keyboard: keyboardHeight, safeBottom: safeBottom)
         case .menu: BottomBar.menuHeight(width: view.bounds.width, safeBottom: safeBottom)
+        case .tabMenu: BottomBar.tabMenuHeight(safeBottom: safeBottom)
         case .find: BottomBar.findHeight(keyboard: keyboardHeight, safeBottom: safeBottom, answer: bottomBar.find.answerHeight)
         case .siteSettings: BottomBar.siteSettingsHeight(width: view.bounds.width, safeBottom: safeBottom)
         case .appSettings: BottomBar.appSettingsHeight(width: view.bounds.width, safeBottom: safeBottom)
@@ -762,7 +775,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// How far the page recedes behind the open panel: fully behind New Page's, and behind smaller
     /// panels as far as the same rate of growth takes it. Find leaves the page where it is, to show
     /// its matches.
-    private var panelRecede: CGFloat { bottomBar.panel == .find ? 0 : panelTravel/travel(of: .search) }
+    private var panelRecede: CGFloat {
+        let safeBottom = view.window?.safeAreaInsets.bottom ?? 0
+        let fullSearchTravel = (view.bounds.height*Self.panelHeightFraction).rounded()
+            - BottomBar.height(collapsed: false, safeBottom: safeBottom)
+        return bottomBar.panel == .find ? 0 : panelTravel/max(1, fullSearchTravel)
+    }
 
     /// Grows the bar and rounds its top corners as its buttons fade, setting the page back behind it.
     private func setPanel(_ expansion: CGFloat, recedingPage: Bool = true) {
@@ -779,12 +797,14 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// New Page grows the bar into a panel, as quickly and springily as a Peek opens, with an empty
     /// search field focused so the keyboard comes up alongside it. More grows it a little, into the
     /// page's address and a few actions. The bar's buttons swap for the panel's contents as it grows.
-    func openPanel(_ panel: BottomBar.Panel = .search) {
+    func openPanel(_ requested: BottomBar.Panel = .search) {
         guard allowsPeek, !isPanelOpen, presentedViewController == nil else { return }
+        let panel: BottomBar.Panel = requested == .menu && isTabSwitcherOpen ? .tabMenu : requested
         isPanelOpen = true
         bottomBar.restoreAddress()
         bottomBar.panel = panel
-        if panel == .search { bottomBar.search.begin() } else { updateAddress() }
+        if panel == .search { bottomBar.search.begin() }
+        else if panel != .tabMenu { updateAddress() }
         dimming.isUserInteractionEnabled = true
         bottomBar.accessibilityViewIsModal = true
         bottomBar.showContents(of: panel)
@@ -891,6 +911,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     func downloadsChanged() {
         let rows = bottomBar.downloads.rowCount
         bottomBar.downloads.reload(MobileDownloads.shared.items)
+        bottomBar.menu.updateDownloadProgress(MobileDownloads.shared.items)
         guard isPanelOpen, bottomBar.panel == .downloads, bottomBar.downloads.rowCount != rows else { return }
         swapMenuPanel(to: .downloads)
     }
@@ -920,20 +941,25 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         } completion: { _ in PageRecede.settle(self.content) }
     }
 
-    /// Find's panel follows the keyboard up and down.
+    /// Find and compact site search follow the keyboard up and down.
     @objc private func keyboardWillChange(_ note: Notification) {
         guard let end = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue,
               let screen = view.window?.screen else { return }
         let frame = view.convert(end, from: screen.coordinateSpace)
         keyboardHeight = frame.minY < view.bounds.maxY ? view.bounds.maxY-frame.minY : 0
-        guard isPanelOpen, bottomBar.panel == .find else { return }
+        guard isPanelOpen, bottomBar.panel == .find
+            || bottomBar.panel == .search && bottomBar.search.siteSearch != nil else { return }
         let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
         let curve = note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt ?? 7
         UIView.animate(withDuration: duration, delay: 0, options: [UIView.AnimationOptions(rawValue: curve << 16),
                                                                   .beginFromCurrentState, .allowUserInteraction]) {
-            self.bottomBar.find.maximumAnswerHeight = max(80, min(300, self.view.bounds.height-self.keyboardHeight-160))
-            self.layoutBottomBar()
-            self.bottomBar.layoutIfNeeded()
+            if self.bottomBar.panel == .find {
+                self.bottomBar.find.maximumAnswerHeight = max(80, min(300, self.view.bounds.height-self.keyboardHeight-160))
+                self.layoutBottomBar()
+                self.bottomBar.layoutIfNeeded()
+            } else {
+                self.setPanel(self.panelExpansion)
+            }
         }
     }
 
@@ -1265,12 +1291,14 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// Grows a tab's card back into the page, making it the current tab.
     func selectTab(_ index: Int) {
         guard isTabSwitcherOpen, !isSwipingToTabs, tabs.indices.contains(index) else { return }
-        if index != tabIndex { switchTab(to: index) }
         isTabSwitcherOpen = false
-        bottomBar.tabsButton.setShowsSwitcher(false, animated: true)
         tabSwitcher.dismiss(to: index) { [weak self] in
             self?.updateTabsPreview(); self?.applyPendingChanges()
         }
+        // The selected card is already flying on Core Animation before WebKit/tint tracking,
+        // thumbnail requests and session/sync work for its live page start underneath it.
+        if index != tabIndex { switchTab(to: index) }
+        bottomBar.tabsButton.setShowsSwitcher(false, animated: true)
         UIView.animate(withDuration: 0.25) { self.setNeedsStatusBarAppearanceUpdate() }
     }
 

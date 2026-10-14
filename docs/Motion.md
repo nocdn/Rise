@@ -70,7 +70,8 @@ These came out of many rounds of trying things on the phone. Follow them by defa
   very small amount to make it move quickly".
 - **Text materialises with the motion it belongs to.** Only the moving tab's title rides under
   the shrinking page and fades in as it nears its card. The stationary cards' titles are already
-  in place when their cards appear, with no separate fade or rise. Going back, they fade out quickly.
+  in place when their cards appear, with no separate fade or rise. Button entry shows the other
+  cards fully from the first frame, without a grid fade-in. Going back, they fade out quickly.
 - **Plain, immediate backgrounds.** The tab switcher sits on a solid grey from the first frame,
   not a blur of the page fading in.
 - **Only what moves should move.** When the summary closes, only the summary text sinks back; the
@@ -337,9 +338,10 @@ The swipe up the bottom bar (from anywhere on it, even New Page) uses the same m
 - **Shape:** as with the pinch, by `k = clamp((1 − s)/(1 − cardScale))^1.3`:
   - Crop: the height goes to the card's 1.42 aspect, and the strip is cropped off.
   - Corners: the screen's own (`_displayCornerRadius`, 28.8 if it can't be read) from the very
-    start, all four, easing by `k` to the card's 18. He didn't want the page square at first and
+    start, all four, easing by `k` to the card's 16. He didn't want the page square at first and
     rounding only a little way in. The Tabs press starts from them too, and growing back ends on
-    them, so the real page takes over unseen behind the screen's corners.
+    them, so the real page takes over unseen behind the screen's corners. Resting corners are now
+    16 pt (slightly less rounded than the original 18 pt).
 - **Place:**
   - The bottom edge follows the finger.
   - Horizontally, the spot across from where the finger started stays under it:
@@ -367,7 +369,9 @@ The swipe up the bottom bar (from anywhere on it, even New Page) uses the same m
 - **Not committed:** it springs back to the page on `cancel` from its speed.
 - **Tabs button:** the page goes to its card on the same springs, as progress from rest, with
   frequency and initial progress velocity multiplied by 1.15. This makes button entry about 13%
-  quicker without changing damping or the path. Swipes retain the original spring timings.
+  quicker without changing damping or the path. The grid is opaque at its full size before
+  the first flight commit, including when turning a closing page around. Swipes retain the
+  original progress-driven grid appearance and spring timings.
 - **Choosing a card:** the card grows to the page on `close`, as progress.
 - **Turning around** (Tabs again, a tap on the landing page, a swipe as it grows back): it carries
   on from the flight's current speed, including its height, crop and corners.
@@ -390,10 +394,17 @@ The swipe up the bottom bar (from anywhere on it, even New Page) uses the same m
 
 ### Card styling
 
-- The resting cards have a subtle black shadow (opacity 0.10, radius 6 pt, y offset
+- Cards have 16 pt corners and a subtle black shadow (opacity 0.10, radius 6 pt, y offset
   2 pt). A separate layer with an explicit rounded shadow path avoids sampling the
-  webpage's contents. It hides with the resting card during the flight and returns
-  on landing; the existing motion curves and timings are unchanged.
+  webpage's contents. The moving page has its own matching shadow, sharing its bounds,
+  position and corner-path keyframes. Opacity follows smoothstep of the scale's progress
+  from the full page to the card, from 0 to 0.10; it reverses while reopening and follows
+  the finger during a swipe. At landing it hands off to the resting shadow at the same
+  opacity and geometry, rather than introducing a shadow after landing.
+- A tab is a button with the app's 0.97 press scale and release spring. Card, shadow,
+  caption and close button scale together; release opens immediately from the card's
+  presentation-layer size/position. The scroll view sends touch-down immediately but
+  cancels the press for scrolling. Tab and Close remain separate VoiceOver targets.
 - Close buttons are 22 pt (previously 24), with a light 0.96-white fill and a
   0.36-white cross at 9 pt. Their hit area extends 9 pt beyond the visual.
 
@@ -476,6 +487,17 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
   - After the fixes, an Animation Hitches trace of all six rounds shows no Tabs+New Page or New
     Page frame later than 8 ms. Tabs alone still has a late first frame (about 30 ms of work
     before its first commit, from rest), with a steady 120 Hz after it.
+- **Delayed button/card takeoff (14 October 2026):** the grid's blurred snapshot still ran
+  before `settle`/`grow`, and selecting another tab did WebKit/tint/session setup before
+  `dismiss`. The native `InteractionAudit` measured action-to-render-server commit at
+  50–57 ms on the simulator. `fly` now explicitly flushes its keyframes before preparing
+  the grid crossfade; selecting the live page happens after `dismiss` starts its flight.
+  The same audit measured about 13–28 ms for button entry and 1–3 ms for opening cards.
+  These are simulator commit timings, not physical display latency. Springs, durations,
+  120 Hz requests, and catching/turnaround remain the same. Subsequent feedback asked for the
+  other cards to be waiting behind the shrinking page. Button entry now sets the grid fully
+  visible before committing the flight and makes no incoming blurred copy. The outgoing
+  grid crossfade when choosing a tab still runs after the flight's first commit.
 - **Core Animation keyframes play at 60 Hz unless asked.** Measured with the `tabsPress` replay
   (nothing else asking for frames): the switcher's flights ran at 60 Hz except while the grid's
   UIKit crossfade ran alongside. With `preferredFrameRateRange` 80–120 on each keyframe animation

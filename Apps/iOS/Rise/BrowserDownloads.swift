@@ -2,7 +2,7 @@ import QuickLook
 import UIKit
 import WebKit
 
-/// Pages' downloads: asked about as Safari does, then saved to Downloads without any animation,
+/// Pages' downloads: asked about as Safari does, then saved to Downloads with toolbar progress,
 /// and listed in More's Downloads.
 extension BrowserViewController {
     func setUpDownloads() {
@@ -16,7 +16,7 @@ extension BrowserViewController {
                                           preferredStyle: .alert)
             alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in answer(false) })
             alert.addAction(UIAlertAction(title: "Download", style: .default) { _ in
-                UINotificationFeedbackGenerator().notificationOccurred(.success)
+                UIImpactFeedbackGenerator(style: .rigid).impactOccurred(intensity: 1)
                 answer(true)
             })
             topPresenter.present(alert, animated: true)
@@ -28,11 +28,16 @@ extension BrowserViewController {
             topPresenter.present(alert, animated: true)
         }
         downloads.onListChange = { [weak self] in self?.downloadsChanged() }
-        downloads.onProgress = { [weak self] item in self?.bottomBar.downloads.update(item) }
+        downloads.onProgress = { [weak self, weak downloads] item in
+            guard let self, let downloads else { return }
+            bottomBar.downloads.update(item)
+            bottomBar.menu.updateDownloadProgress(downloads.items)
+        }
         bottomBar.downloads.open = { [weak self] item in self?.quickLook(item.url) }
         bottomBar.downloads.menu = { [weak self] item, button in self?.downloadMenu(for: item, from: button) ?? [] }
         bottomBar.downloads.listMenu = { [weak self] in self?.downloadsListMenu() ?? [] }
         bottomBar.downloads.reload(downloads.items)
+        bottomBar.menu.updateDownloadProgress(downloads.items)
     }
 
     /// Pages WebKit can't show, and files sent as attachments, download rather than open.

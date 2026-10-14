@@ -7,7 +7,7 @@ import UIKit
 /// page's address and a few actions, whose Find turns it into a find field above the keyboard.
 /// Either way the bar's contents swap with a quick, blurred crossfade.
 final class BottomBar: UIView {
-    enum Panel { case search, menu, find, siteSettings, appSettings, downloads }
+    enum Panel { case search, menu, tabMenu, find, siteSettings, appSettings, downloads }
 
     /// The buttons' row, and the space above it.
     static let rowHeight: CGFloat = 42
@@ -37,6 +37,7 @@ final class BottomBar: UIView {
     let search = SearchPanel()
     /// More's panel: the page's address, with large buttons under it.
     let menu = MenuPanel()
+    let tabMenu = TabMenuPanel()
     /// More's Find: a find field.
     let find = FindPanel()
     /// Site protections, currently a visual preview.
@@ -61,7 +62,7 @@ final class BottomBar: UIView {
     private var copySuccessTask: Task<Void, Never>?
     /// Whichever of the row, the search and the menu is showing, if any.
     private(set) var shown: UIView?
-    private var contents: [UIView] { [home, search, menu, find, siteSettings, appSettings, downloads] }
+    private var contents: [UIView] { [home, search, menu, tabMenu, find, siteSettings, appSettings, downloads] }
     /// Collapsed, only the strip remains; set it inside an animation to animate.
     var isCollapsed = false {
         didSet {
@@ -93,6 +94,10 @@ final class BottomBar: UIView {
     /// More's panel's height: the address, icon tiles, Settings and Downloads above the safe area.
     static func menuHeight(width: CGFloat, safeBottom: CGFloat) -> CGFloat {
         searchTop+MenuPanel.height(width: width)+max(safeBottom, 16)
+    }
+
+    static func tabMenuHeight(safeBottom: CGFloat) -> CGFloat {
+        searchTop+SearchPanel.fieldHeight+max(safeBottom, 16)
     }
 
     static func siteSettingsHeight(width: CGFloat, safeBottom: CGFloat) -> CGFloat {
@@ -153,7 +158,7 @@ final class BottomBar: UIView {
         }
 
         for button in [tabsButton, newPageButton, moreButton] { row.addSubview(button) }
-        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton]+menu.buttons+siteSettings.buttons+appSettings.buttons+downloads.buttons+find.buttons+[find.modeButton, find.sendButton] {
+        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton, tabMenu.historyButton]+menu.buttons+siteSettings.buttons+appSettings.buttons+downloads.buttons+find.buttons+[find.modeButton, find.sendButton] {
             // A light, crisp tap as the finger lands, rather than a soft thud; actions wait for it to lift.
             button.addAction(UIAction { [weak self] _ in self?.tap.impactOccurred(intensity: 0.5) }, for: .touchDown)
         }
@@ -185,6 +190,7 @@ final class BottomBar: UIView {
         let view: UIView? = switch panel {
         case .search: search
         case .menu: menu
+        case .tabMenu: tabMenu
         case .find: find
         case .siteSettings: siteSettings
         case .appSettings: appSettings
@@ -286,8 +292,11 @@ final class BottomBar: UIView {
             view.center = CGPoint(x: self.bounds.midX, y: top+height/2)
         }
         place(home, 0, Self.rowTop+Self.rowHeight)
+        // Compact site search only moves the sheet. Its result rows keep their full layout
+        // beneath the keyboard, so expanding carries them up rather than resizing each row.
         place(search, Self.searchTop, SearchPanel.height)
         place(menu, Self.searchTop, MenuPanel.height(width: bounds.width))
+        place(tabMenu, Self.searchTop, SearchPanel.fieldHeight)
         place(find, Self.searchTop, SearchPanel.fieldHeight+find.answerHeight)
         place(siteSettings, Self.searchTop, SiteSettingsPanel.height)
         place(appSettings, Self.searchTop, AppSettingsPanel.height)
@@ -297,15 +306,17 @@ final class BottomBar: UIView {
 
 extension UIControl {
     /// Darkens at once under the finger, and fades back as it lifts, without scaling.
-    func darkensWhenPressed(restingFill: UIColor = SearchPanel.fill, pressedFill: UIColor = SearchPanel.pressedFill) {
-        backgroundColor = restingFill
-        addAction(UIAction { [weak self] _ in
-            self?.backgroundColor = pressedFill
+    func darkensWhenPressed(restingFill: UIColor = SearchPanel.fill, pressedFill: UIColor = SearchPanel.pressedFill,
+                            fillView: UIView? = nil) {
+        let background = fillView ?? self
+        background.backgroundColor = restingFill
+        addAction(UIAction { [weak background] _ in
+            background?.backgroundColor = pressedFill
         }, for: [.touchDown, .touchDragEnter])
-        addAction(UIAction { [weak self] _ in
-            guard let self else { return }
+        addAction(UIAction { [weak background] _ in
+            guard let background else { return }
             UIView.animate(withDuration: 0.2, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
-                self.backgroundColor = restingFill
+                background.backgroundColor = restingFill
             }
         }, for: [.touchUpInside, .touchUpOutside, .touchDragExit, .touchCancel])
     }
@@ -314,8 +325,8 @@ extension UIControl {
     /// out by bounds and center, as frames ignore the scale. `filled` controls take the search
     /// field's fill by default, a little darker while pressed, as native buttons do.
     func shrinksWhenPressed(to scale: CGFloat, filled: Bool = false, restingFill: UIColor = SearchPanel.fill,
-                            pressedFill: UIColor = SearchPanel.pressedFill) {
-        if filled { darkensWhenPressed(restingFill: restingFill, pressedFill: pressedFill) }
+                            pressedFill: UIColor = SearchPanel.pressedFill, fillView: UIView? = nil) {
+        if filled { darkensWhenPressed(restingFill: restingFill, pressedFill: pressedFill, fillView: fillView) }
         let press = { [weak self] (pressed: Bool) in
             guard let self else { return }
             guard !UIAccessibility.isReduceMotionEnabled else { return }

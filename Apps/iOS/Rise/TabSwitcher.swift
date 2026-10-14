@@ -303,6 +303,7 @@ final class FaviconView: UIView {
 /// strip off as the page settles into a card.
 final class TabCard: UIView {
     let image = UIImageView()
+    var onActivate: (() -> Void)?
     /// The page's size in the window, strip included, and the strip's height.
     var pageSize = CGSize(width: 1, height: 1) { didSet { setNeedsLayout() } }
     var stripHeight: CGFloat = 0 { didSet { setNeedsLayout() } }
@@ -329,6 +330,12 @@ final class TabCard: UIView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    override func accessibilityActivate() -> Bool {
+        guard let onActivate else { return super.accessibilityActivate() }
+        onActivate()
+        return true
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         let page = Self.pageLayout(width: bounds.width, crop: crop, pageSize: pageSize, stripHeight: stripHeight)
@@ -348,7 +355,7 @@ final class TabCard: UIView {
 }
 
 /// A tab in the switcher: its card, with a close button on it, and its icon and title under it.
-final class TabCell: UIView {
+final class TabCell: UIButton {
     let card = TabCard()
     let closeButton = TabCloseButton(type: .system)
     let cardShadow = UIView()
@@ -359,20 +366,31 @@ final class TabCell: UIView {
     var onSelect: () -> Void = {}
     var onClose: () -> Void = {}
     private static let iconGap: CGFloat = 6
+    static let pressedScale: CGFloat = 0.97
+
+    static func styleShadow(_ view: UIView) {
+        view.isUserInteractionEnabled = false
+        view.layer.shadowColor = UIColor.black.cgColor
+        view.layer.shadowOpacity = 0.10
+        view.layer.shadowRadius = 6
+        view.layer.shadowOffset = CGSize(width: 0, height: 2)
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        cardShadow.isUserInteractionEnabled = false
-        cardShadow.layer.shadowColor = UIColor.black.cgColor
-        cardShadow.layer.shadowOpacity = 0.10
-        cardShadow.layer.shadowRadius = 6
-        cardShadow.layer.shadowOffset = CGSize(width: 0, height: 2)
+        Self.styleShadow(cardShadow)
         addSubview(cardShadow)
         card.layer.cornerRadius = TabSwitcherView.cornerRadius
         card.isAccessibilityElement = true
         card.accessibilityTraits = .button
-        card.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(cardTapped)))
+        // The cell tracks the press; the close button remains a separate touch/VoiceOver target.
+        card.isUserInteractionEnabled = false
+        card.onActivate = { [weak self] in self?.onSelect() }
         addSubview(card)
+        isAccessibilityElement = false
+        accessibilityElements = [card, closeButton]
+        shrinksWhenPressed(to: Self.pressedScale)
+        addAction(UIAction { [weak self] _ in self?.onSelect() }, for: .primaryActionTriggered)
         closeButton.setImage(UIImage(systemName: "xmark", withConfiguration:
             UIImage.SymbolConfiguration(pointSize: 9, weight: .bold)), for: .normal)
         closeButton.tintColor = UIColor(white: 0.36, alpha: 1)
@@ -393,7 +411,13 @@ final class TabCell: UIView {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    @objc private func cardTapped() { onSelect() }
+    /// Carries the visible press scale into the opening flight, even during the release spring.
+    func shownCardFrame(in view: UIView) -> CGRect {
+        if let shown = card.layer.presentation(), let destination = view.layer.presentation() {
+            return shown.convert(shown.bounds, to: destination)
+        }
+        return card.convert(card.bounds, to: view)
+    }
     func setCardOpacity(_ opacity: CGFloat) {
         card.alpha = opacity
         cardShadow.alpha = opacity
@@ -419,8 +443,8 @@ final class TabCell: UIView {
 }
 
 /// The tabs as cards in two columns over a solid grey, as in Safari. The current page shrinks
-/// into its card as the other cards fade, grow and sharpen in around it with their titles
-/// already in place; choosing a card grows it back into the page. A swipe up the bottom bar shrinks the
+/// into its card with the other cards and titles already in place; choosing a card grows it
+/// back into the page from its pressed size. A swipe up the bottom bar shrinks the
 /// page with the finger, the spot under it staying under it, and when let go it flies on at the
 /// speed it was going and curves round into its card, on Summarise's springs. Every move can be
 /// turned around partway, carrying on from its speed: Tabs again, a tap on the landing page, or a
@@ -432,7 +456,7 @@ final class TabSwitcherView: UIView {
     /// The cards' height for their width.
     static let cardAspect: CGFloat = 1.42
     static let titleHeight: CGFloat = 32
-    static let cornerRadius: CGFloat = 18
+    static let cornerRadius: CGFloat = 16
     static let closeSize: CGFloat = 22
     /// The grid's own fade and growth.
     static let spring = (duration: 0.3, bounce: 0.14)
@@ -456,7 +480,7 @@ final class TabSwitcherView: UIView {
 
     private enum Heading { case card, page }
 
-    let scroll = UIScrollView()
+    let scroll = TabGridScrollView()
     /// Holds the cards, so they can fade, grow and sharpen in as one.
     let grid = UIView()
     private(set) var cells: [TabCell] = []
@@ -464,6 +488,7 @@ final class TabSwitcherView: UIView {
     /// The page on its way into, or out of, its card, and which way it's going; nil while a finger
     /// holds it.
     private(set) var moving: TabCard?
+    private(set) var movingShadow: UIView?
     private var heading: Heading?
     /// Counts the page's moves, so one that's been turned around doesn't finish.
     private var move = 0
@@ -518,6 +543,10 @@ final class TabSwitcherView: UIView {
     /// Called as each flight starts, on Core Animation, when the main thread can be busy for a
     /// moment without it showing.
     var onFlight: () -> Void = {}
+    #if DEBUG
+    /// Native audit's boundary, before any snapshot work that follows the first commit.
+    var onFlightCommit: () -> Void = {}
+    #endif
     /// Where the page has been under the finger, for the speed it was going when let go.
     private var history: [(t: Double, shape: Shape)] = []
     /// Where the finger started, across: the spot on the page there stays under it.
@@ -535,6 +564,7 @@ final class TabSwitcherView: UIView {
         isHidden = true
         backgroundColor = Self.background
         scroll.alwaysBounceVertical = true
+        scroll.delaysContentTouches = false
         scroll.contentInsetAdjustmentBehavior = .never
         addSubview(scroll)
         scroll.addSubview(grid)
@@ -576,7 +606,9 @@ final class TabSwitcherView: UIView {
         grid.bounds = CGRect(x: 0, y: 0, width: bounds.width, height: height)
         grid.center = CGPoint(x: bounds.midX, y: grid.layer.anchorPoint.y*height)
         for (index, cell) in cells.enumerated() {
-            cell.frame = cellFrame(index)
+            let frame = cellFrame(index)
+            cell.bounds = CGRect(origin: .zero, size: frame.size)
+            cell.center = CGPoint(x: frame.midX, y: frame.midY)
             cell.closeButton.isHidden = cells.count < 2
         }
     }
@@ -652,8 +684,13 @@ final class TabSwitcherView: UIView {
     /// Shrinks the page into its card, after `prepare`, or turns it back into its card from
     /// wherever it has grown to.
     func present() {
+        BlurCrossfade.stop(in: scroll)
+        UIView.performWithoutAnimation {
+            grid.layer.removeAllAnimations()
+            grid.alpha = 1
+            grid.transform = .identity
+        }
         showStationaryCaptions()
-        BlurCrossfade.swap(from: nil, to: grid)
         settle(speed: Self.buttonEntrySpeed)
     }
 
@@ -778,14 +815,15 @@ final class TabSwitcherView: UIView {
             card = moving
         } else {
             card = makeMovingCard(image: cell.card.image.image)
-            apply(cardShape(index), to: card)
+            apply(cardShape(index, asShown: true), to: card)
         }
         cell.setCardOpacity(0)
         cell.closeButton.alpha = 0
         anchorGridOnScreen()
-        BlurCrossfade.swap(from: grid, to: nil)
-        fadeCaptions()
-        grow(card, completion: completion)
+        grow(card, alongside: {
+            BlurCrossfade.swap(from: self.grid, to: nil)
+            self.fadeCaptions()
+        }, completion: completion)
     }
 
     /// Closes a tab's card, the others moving up to fill its place.
@@ -816,6 +854,12 @@ final class TabSwitcherView: UIView {
 
     private func makeMovingCard(image: UIImage?) -> TabCard {
         moving?.removeFromSuperview()
+        movingShadow?.removeFromSuperview()
+        let shadow = UIView()
+        TabCell.styleShadow(shadow)
+        shadow.layer.shadowOpacity = 0
+        addSubview(shadow)
+        movingShadow = shadow
         let card = TabCard()
         card.image.image = image
         card.pageSize = pageSize
@@ -833,7 +877,7 @@ final class TabSwitcherView: UIView {
 
     /// Moves the page into its card, with its own title coming in after it: let go, at the speed it
     /// was going, and otherwise turning round from however it was already moving.
-    private func settle(velocity: Shape? = nil, speed: Double = 1) {
+    private func settle(velocity: Shape? = nil, speed: Double = 1, alongside: () -> Void = {}) {
         guard let card = moving, cells.indices.contains(current) else { return }
         move += 1
         let move = move
@@ -843,7 +887,7 @@ final class TabSwitcherView: UIView {
             SummariseSpring(spring.w*speed, spring.z, spring.v0*speed)
         }
         fly(card, to: cardShape(current), velocity: velocity ?? flightVelocity(),
-            scale: paced(M.releaseScale), place: paced(M.releaseMove), shape: paced(M.placeCrop)) { [weak self] in
+            scale: paced(M.releaseScale), place: paced(M.releaseMove), shape: paced(M.placeCrop), alongside: alongside) { [weak self] in
             guard let self, self.move == move else { return }
             land()
         }
@@ -851,7 +895,7 @@ final class TabSwitcherView: UIView {
 
     /// Grows the page to fill the window, then hides the switcher: as Summarise's card grows back,
     /// or, let go short, springing back from the speed it was going.
-    private func grow(_ card: TabCard, velocity: Shape? = nil, completion: @escaping () -> Void) {
+    private func grow(_ card: TabCard, velocity: Shape? = nil, alongside: () -> Void = {}, completion: @escaping () -> Void) {
         move += 1
         let move = move
         heading = .page
@@ -863,9 +907,9 @@ final class TabSwitcherView: UIView {
         }
         // Already moving, it turns round from that speed.
         if let speed = velocity ?? (flight != nil ? flightVelocity() : nil) {
-            fly(card, to: pageShape, velocity: speed, scale: M.cancel, place: M.cancel, shape: M.cancel, done: done)
+            fly(card, to: pageShape, velocity: speed, scale: M.cancel, place: M.cancel, shape: M.cancel, alongside: alongside, done: done)
         } else {
-            fly(card, to: pageShape, velocity: nil, scale: M.close, place: M.close, shape: M.close, done: done)
+            fly(card, to: pageShape, velocity: nil, scale: M.close, place: M.close, shape: M.close, alongside: alongside, done: done)
         }
     }
 
@@ -883,10 +927,19 @@ final class TabSwitcherView: UIView {
     }
 
     /// A tab's card, settled.
-    private func cardShape(_ index: Int) -> Shape {
-        let frame = cardFrame(index), scale = Double(frame.width/max(1, bounds.width))
+    private func cardShape(_ index: Int, asShown: Bool = false) -> Shape {
+        let frame = asShown ? cells[index].shownCardFrame(in: self) : cardFrame(index)
+        let scale = Double(frame.width/max(1, bounds.width))
+        let pressScale = asShown ? frame.width/max(1, cardSize.width) : 1
         return Shape(x: Double(frame.midX), y: Double(frame.midY), scale: scale, height: Double(frame.height)/scale,
-                     crop: 1, radius: Double(Self.cornerRadius))
+                     crop: 1, radius: Double(Self.cornerRadius*pressScale))
+    }
+
+    /// The shadow grows smoothly as the full page becomes a card, and fades as it reopens.
+    private func shadowOpacity(for shape: Shape) -> Float {
+        let target = cardShape(current).scale
+        let progress = min(1, max(0, (1-shape.scale)/max(0.01, 1-target)))
+        return Float(progress*progress*(3-2*progress))*0.10
     }
 
     private func shape(of card: TabCard, asShown: Bool = false) -> Shape {
@@ -908,6 +961,12 @@ final class TabSwitcherView: UIView {
         card.crop = min(1, max(0, shape.crop))
         card.layer.cornerRadius = max(0, shape.radius)
         card.layoutIfNeeded()
+        if card === moving, let shadow = movingShadow {
+            shadow.bounds = card.bounds
+            shadow.center = card.center
+            shadow.layer.shadowPath = UIBezierPath(roundedRect: shadow.bounds, cornerRadius: card.layer.cornerRadius).cgPath
+            shadow.layer.shadowOpacity = shadowOpacity(for: shape)
+        }
         if card === moving, heading != .page { placeCaptions(for: shape) }
     }
 
@@ -932,7 +991,8 @@ final class TabSwitcherView: UIView {
     /// as nothing but a new touch changes it, and played as keyframes 120 times a second, so it
     /// carries on smoothly while the main thread is busy, as it is for the keyboard coming up.
     private func fly(_ card: TabCard, to target: Shape, velocity: Shape?,
-                     scale: SummariseSpring, place: SummariseSpring, shape: SummariseSpring, done: @escaping () -> Void) {
+                     scale: SummariseSpring, place: SummariseSpring, shape: SummariseSpring,
+                     alongside: () -> Void = {}, done: @escaping () -> Void) {
         let now = CACurrentMediaTime(), from = flight.map { $0.at(now-$0.t0) } ?? self.shape(of: card, asShown: true)
         stopFlight()
         flights += 1
@@ -966,6 +1026,13 @@ final class TabSwitcherView: UIView {
         self.flight?.t0 = animate(card, along: path, duration: Double(path.count-1)*step)
         CATransaction.commit()
         holdRate(true)
+        // Commit the moving page before drawing/filtering the grid's blurred copies. The
+        // render server can start its 120 Hz flight while that CPU work runs on the main thread.
+        CATransaction.flush()
+        #if DEBUG
+        onFlightCommit()
+        #endif
+        alongside()
         onFlight()
     }
 
@@ -989,6 +1056,15 @@ final class TabSwitcherView: UIView {
         keyframes(card.layer, "bounds", frames.map { NSValue(cgRect: CGRect(origin: .zero, size: $0.size)) })
         keyframes(card.layer, "position", frames.map { NSValue(cgPoint: CGPoint(x: $0.midX, y: $0.midY)) })
         keyframes(card.layer, "cornerRadius", path.map { max(0, $0.radius) })
+        if let shadow = movingShadow {
+            let bounds = frames.map { CGRect(origin: .zero, size: $0.size) }
+            keyframes(shadow.layer, "bounds", bounds.map { NSValue(cgRect: $0) })
+            keyframes(shadow.layer, "position", frames.map { NSValue(cgPoint: CGPoint(x: $0.midX, y: $0.midY)) })
+            keyframes(shadow.layer, "shadowPath", zip(bounds,path).map { frame, shape in
+                UIBezierPath(roundedRect: frame, cornerRadius: max(0, shape.radius)).cgPath
+            })
+            keyframes(shadow.layer, "shadowOpacity", path.map { shadowOpacity(for: $0) })
+        }
         let pages = zip(path, frames).map { shape, frame in
             TabCard.pageLayout(width: frame.width, crop: min(1, max(0, shape.crop)), pageSize: card.pageSize, stripHeight: card.stripHeight)
         }
@@ -1046,6 +1122,7 @@ final class TabSwitcherView: UIView {
         self.flight = nil
         guard let card = moving else { return }
         var layers = [card.layer, card.image.layer]+cells.map(\.caption.layer)
+        if let shadow = movingShadow { layers.append(shadow.layer) }
         if let replica = card.replica { layers.append(replica.layer) }
         for layer in layers {
             for key in layer.animationKeys() ?? [] where key.hasPrefix(Self.flightKey) { layer.removeAnimation(forKey: key) }
@@ -1067,6 +1144,8 @@ final class TabSwitcherView: UIView {
         }
         cell?.setCardOpacity(1)
         card.removeFromSuperview()
+        movingShadow?.removeFromSuperview()
+        movingShadow = nil
         moving = nil
         heading = nil
         UIView.animate(withDuration: 0.15, delay: 0, options: [.allowUserInteraction]) { cell?.closeButton.alpha = 1 }
@@ -1084,6 +1163,8 @@ final class TabSwitcherView: UIView {
         holdRate(false)
         history = []
         moving?.removeFromSuperview()
+        movingShadow?.removeFromSuperview()
+        movingShadow = nil
         moving = nil
         heading = nil
         caught = nil
@@ -1106,6 +1187,11 @@ final class TabSwitcherView: UIView {
         grid.layer.anchorPoint = CGPoint(x: 0.5, y: min(1, max(0, middle/height)))
         grid.center = CGPoint(x: bounds.midX, y: grid.layer.anchorPoint.y*height)
     }
+}
+
+/// A tab's press starts immediately, but dragging it still hands control to grid scrolling.
+final class TabGridScrollView: UIScrollView {
+    override func touchesShouldCancel(in view: UIView) -> Bool { true }
 }
 
 /// The smaller visual keeps a forgiving hit area over the card corner.

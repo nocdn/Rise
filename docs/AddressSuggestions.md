@@ -20,14 +20,29 @@ remote answers, row favicons and iCloud template updates preserve typed text and
 the suggestion. Exact matching open tabs are reused, including query/fragment.
 The input has a fixed left inset and no favicon; result rows retain their favicons.
 
-A searchable site's extra row enters over 0.28 seconds with
-0.16 bounce. It uses the same Open Runde Medium typography as other results, its favicon,
+A searchable site's extra row appears and disappears immediately as the query changes,
+like the other suggestions. All rows are 56 pt tall, including single-line searches
+and site searches; link titles and subtitles form a centred group with a slightly tighter gap.
+The search and URL-editing panel fills 73% of the window. The site row uses the same
+standard iOS typography as other results, its favicon,
 and the primary non-neutral colour from that favicon (with a catalog brand colour
 as a fallback before the image loads). Tapping enters site-search mode;
 Go sends the escaped terms through that site's template. Further keys that still
 match the same site keep the row still; UIKit's intermediate cursor notification
-during text replacement does not dismiss and re-enter it. X clears terms, then leaves
-empty site-search mode. Reduce Motion makes the extra row appear immediately.
+during text replacement does not dismiss and re-enter it. X leaves site-search mode. Selecting the site row springs the panel down to the input
+just above the keyboard and brings the page forward at the same rate. Its placeholder
+names the selected site, with its name in the favicon's brand colour at 45% opacity
+and the prefix in the native placeholder colour. The suggestions retain their full-sized
+views below the input while compact, covered by the keyboard; they do not accept touches
+or VoiceOver focus there. Expanding carries these same rows up with the sheet, without
+animating their widths or recreating them. X exits this mode even when terms are present, restores
+the original typed prefix, completion and cursor position alongside the full panel
+and suggestions, and keeps input focus. Its sole haptic comes from
+the bar's touch-down feedback. Compact site search follows keyboard height changes,
+including hardware keyboards. Normal search keeps its 73% panel height.
+
+Rows retain their content positions and touch bounds while their pressed fill extends
+6 pt beyond each horizontal edge; the original colour, scale and release effect remain.
 
 Favicon fetches go directly to site origins, without browser cookies or a third-party
 favicon service. In-progress literal addresses wait 300 ms before fetching. Icons

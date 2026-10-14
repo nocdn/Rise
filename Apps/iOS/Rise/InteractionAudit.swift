@@ -32,6 +32,7 @@ import WebKit
                 for _ in 0..<100 where browser.webView.isLoading { try await Task.sleep(for: .milliseconds(20)) }
                 browser.openPanel(.menu)
                 try await Task.sleep(for: .milliseconds(650))
+                for (name, valid) in try await MenuDownloadsAudit.exercise(browser, folder: folder) { try check(name, valid) }
                 // Test the real menu controls without triggering Share/Find navigation on release.
                 let controls = MenuPanel(frame: browser.bottomBar.menu.frame)
                 browser.bottomBar.addSubview(controls)
@@ -65,6 +66,17 @@ import WebKit
                 browser.closePanel()
                 try await Task.sleep(for: .milliseconds(400))
                 let switcher = browser.tabSwitcher
+                // Measure action-to-render-server commit, rather than the duration of the spring.
+                // The callback's bitmap work deliberately follows this boundary.
+                var actionStart: CFTimeInterval = 0
+                var actionName = ""
+                var onset: [String: Double] = [:]
+                switcher.onFlightCommit = {
+                    if actionStart > 0 {
+                        onset[actionName] = (CACurrentMediaTime()-actionStart)*1000
+                        actionStart = 0
+                    }
+                }
                 func stationary() -> Bool {
                     switcher.cells.enumerated().filter { $0.offset != switcher.current }.allSatisfy { _, cell in
                         cell.caption.alpha == 1 && cell.caption.transform == .identity
@@ -72,24 +84,48 @@ import WebKit
                             && abs((cell.caption.layer.presentation()?.opacity ?? 1)-1) < 0.001
                     }
                 }
-                browser.showTabSwitcher()
+                actionName = "first-button-entry"; actionStart = CACurrentMediaTime()
+                browser.bottomBar.tabsButton.sendActions(for: .primaryActionTriggered)
                 try check("stationary-at-button-entry", stationary())
+                try check("button-entry-shows-the-whole-grid-immediately", switcher.grid.alpha == 1
+                          && switcher.grid.transform == .identity && switcher.grid.layer.animation(forKey: "opacity") == nil
+                          && switcher.grid.subviews.allSatisfy { !($0 is UIImageView) })
                 guard let button = switcher.moving?.layer.animation(forKey: "flight.bounds") else { throw Failure(check: "button-flight") }
                 let buttonDuration = button.duration
+                guard let shadow = switcher.movingShadow,
+                      let shadowFlight = shadow.layer.animation(forKey: "flight.shadowOpacity") as? CAKeyframeAnimation else {
+                    throw Failure(check: "moving-shadow-flight")
+                }
+                let shadowValues = shadowFlight.values?.compactMap { ($0 as? NSNumber)?.floatValue } ?? []
+                try check("moving-shadow-forms-during-flight", shadowValues.first == 0
+                          && abs((shadowValues.last ?? 0)-0.10) < 0.001
+                          && shadowValues.contains { $0 > 0.02 && $0 < 0.08 }
+                          && shadowFlight.duration == buttonDuration)
+                try check("moving-shadow-shape-and-position-follow-the-page", ["bounds", "position", "shadowPath"].allSatisfy {
+                    shadow.layer.animation(forKey: "flight."+$0)?.duration == buttonDuration
+                })
                 try check("moving-title-animation", switcher.cells[2].caption.layer.animation(forKey: "flight.opacity") != nil)
                 var samples: [[String: Any]] = []
                 let began = CACurrentMediaTime()
                 while CACurrentMediaTime()-began < 0.8 {
                     try check("stationary-through-button-flight", stationary())
+                    try check("grid-stays-opaque-through-button-flight", abs((switcher.grid.layer.presentation()?.opacity ?? 1)-1) < 0.001)
                     samples.append(["time": CACurrentMediaTime()-began,
                                     "movingTitle": switcher.cells[2].caption.layer.presentation()?.opacity ?? 1,
-                                    "stationaryTitle": switcher.cells[0].caption.layer.presentation()?.opacity ?? 1])
+                                    "stationaryTitle": switcher.cells[0].caption.layer.presentation()?.opacity ?? 1,
+                                    "shadow": switcher.movingShadow?.layer.presentation()?.shadowOpacity ?? 0])
                     try await Task.sleep(for: .milliseconds(8))
                 }
                 try check("button-landed", switcher.moving == nil)
+                try check("landing-hands-the-shadow-to-the-grid-without-a-remnant", switcher.movingShadow == nil
+                          && switcher.cells[switcher.current].cardShadow.alpha == 1)
+                try check("tab-corners-are-slightly-less-rounded", switcher.cells.allSatisfy { $0.card.layer.cornerRadius == 16 })
                 let opacity = samples.compactMap { $0["movingTitle"] as? Float }
                 try check("moving-title-still-reveals", (opacity.min() ?? 1) < 0.2 && (opacity.max() ?? 0) > 0.9)
-                browser.selectTab(browser.tabIndex)
+                let shadows = samples.compactMap { $0["shadow"] as? Float }
+                try check("shadow-is-visible-before-the-page-lands", shadows.contains { $0 > 0.02 && $0 < 0.08 })
+                actionName = "current-card-open"; actionStart = CACurrentMediaTime()
+                switcher.cells[browser.tabIndex].onSelect()
                 try await Task.sleep(for: .milliseconds(50))
                 browser.showTabSwitcher()
                 try check("stationary-on-turnaround", stationary())
@@ -105,12 +141,60 @@ import WebKit
                 try await Task.sleep(for: .milliseconds(850))
                 browser.beginTabSwipe()
                 try check("stationary-at-drag-entry", stationary())
-                switcher.finishSwipe(commit: true)
+                browser.endTabSwipe(velocity: CGPoint(x: 0, y: -700))
                 guard let swipe = switcher.moving?.layer.animation(forKey: "flight.bounds") else { throw Failure(check: "swipe-flight") }
                 checks["buttonDuration"] = buttonDuration
                 checks["swipeDuration"] = swipe.duration
                 try check("button-entry-quicker", buttonDuration < swipe.duration*0.92)
                 try check("swipe-timing-preserved", abs(buttonDuration*TabSwitcherView.buttonEntrySpeed-swipe.duration) < 0.03)
+                try await Task.sleep(for: .milliseconds(850))
+                let hitCell = switcher.cells[switcher.current]
+                let hitCard = hitCell.card.convert(CGPoint(x: hitCell.card.bounds.midX, y: hitCell.card.bounds.midY), to: switcher)
+                let hitClose = hitCell.closeButton.convert(CGPoint(x: hitCell.closeButton.bounds.midX, y: hitCell.closeButton.bounds.midY), to: switcher)
+                try check("card-touches-reach-the-pressing-button", switcher.hitTest(hitCard, with: nil) === hitCell)
+                try check("close-button-touches-stay-separate", switcher.hitTest(hitClose, with: nil) === hitCell.closeButton)
+                let cell = switcher.cells[0], selection = cell.onSelect
+                let cellBounds = cell.bounds
+                var selections = 0
+                cell.onSelect = { selections += 1 }
+                for end in [UIControl.Event.touchCancel, .touchDragExit, .touchUpOutside] {
+                    cell.sendActions(for: .touchDown)
+                    try await Task.sleep(for: .milliseconds(150))
+                    try check("tab-press-scales-the-card-shadow-and-close-button", abs(cell.transform.a-TabCell.pressedScale) < 0.001
+                              && cell.bounds == cellBounds && cell.cardShadow.superview === cell && cell.closeButton.superview === cell)
+                    cell.sendActions(for: end)
+                    try await Task.sleep(for: .milliseconds(350))
+                    try check("cancelled-tab-press-returns-without-opening", cell.transform == .identity && selections == 0)
+                }
+                try check("tab-press-does-not-delay-or-prevent-grid-scrolling", !switcher.scroll.delaysContentTouches
+                          && switcher.scroll.touchesShouldCancel(in: cell))
+                try check("voiceover-keeps-separate-tab-and-close-targets", !cell.isAccessibilityElement
+                          && cell.card.isAccessibilityElement && cell.closeButton.isAccessibilityElement
+                          && cell.card.accessibilityActivate() && selections == 1)
+                cell.onSelect = selection
+                cell.sendActions(for: .touchDown)
+                try await Task.sleep(for: .milliseconds(150))
+                let pressedFrame = cell.shownCardFrame(in: switcher)
+                actionName = "different-card-open"; actionStart = CACurrentMediaTime()
+                cell.sendActions(for: .primaryActionTriggered)
+                let firstBounds = (switcher.moving?.layer.animation(forKey: "flight.bounds") as? CAKeyframeAnimation)?
+                    .values?.first as? NSValue
+                let firstPosition = (switcher.moving?.layer.animation(forKey: "flight.position") as? CAKeyframeAnimation)?
+                    .values?.first as? NSValue
+                try check("opening-flight-starts-at-the-visible-pressed-size", abs((firstBounds?.cgRectValue.width ?? 0)-pressedFrame.width) < 0.5
+                          && abs((firstBounds?.cgRectValue.height ?? 0)-pressedFrame.height) < 0.5
+                          && abs((firstPosition?.cgPointValue.x ?? 0)-pressedFrame.midX) < 0.5
+                          && abs((firstPosition?.cgPointValue.y ?? 0)-pressedFrame.midY) < 0.5)
+                cell.sendActions(for: .touchUpInside)
+                try await Task.sleep(for: .milliseconds(850))
+                checks["onsetMilliseconds"] = onset
+                try check("different-tab-opens-and-finishes", browser.tabIndex == 0 && switcher.isHidden)
+                actionName = "repeat-button-entry"; actionStart = CACurrentMediaTime()
+                browser.bottomBar.tabsButton.sendActions(for: .primaryActionTriggered)
+                try await Task.sleep(for: .milliseconds(850))
+                actionStart = 0
+                checks["onsetMilliseconds"] = onset
+                switcher.onFlightCommit = {}
                 try JSONSerialization.data(withJSONObject: samples, options: [.prettyPrinted]).write(to: folder.appendingPathComponent("frames.json"))
                 try JSONSerialization.data(withJSONObject: checks, options: [.prettyPrinted,.sortedKeys]).write(to: folder.appendingPathComponent("checks.json"))
                 try "Passed\n".write(to: folder.appendingPathComponent("done.txt"), atomically: true, encoding: .utf8)

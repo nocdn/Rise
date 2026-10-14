@@ -243,6 +243,7 @@ final class MenuPanel: UIView {
     let copyTile = MenuTile(symbol: "link", label: "Copy Link")
     let siteSettingsButton = MenuTile(image: MenuIcons.siteSettings, label: "Settings", showsLabel: true)
     let downloadsButton = MenuTile(image: MenuIcons.downloads, label: "Downloads", showsLabel: true)
+    let downloadProgress = DownloadButtonProgress()
     var tiles: [MenuTile] { [shareTile, summariseTile, findTile, copyTile] }
     var buttons: [UIButton] { tiles+[siteSettingsButton, downloadsButton] }
     /// The tiles' height, as a share of their width.
@@ -259,6 +260,8 @@ final class MenuPanel: UIView {
         super.init(frame: frame)
         addSubview(address)
         buttons.forEach(addSubview)
+        downloadsButton.clipsToBounds = true
+        downloadsButton.insertSubview(downloadProgress, at: 0)
         shareTile.pressedIconColor = .systemBlue
         summariseTile.pressedIconColor = .systemRed
         findTile.pressedIconColor = .systemPurple
@@ -266,6 +269,14 @@ final class MenuPanel: UIView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    func updateDownloadProgress(_ items: [MobileDownloads.Item]) {
+        switch downloadProgress.update(items) {
+        case .running(_, let count): downloadsButton.accessibilityValue = count == 1 ? "1 download in progress" : "\(count) downloads in progress"
+        case .ended: downloadsButton.accessibilityValue = nil
+        case .idle: break
+        }
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -288,6 +299,23 @@ final class MenuPanel: UIView {
             button.bounds = CGRect(x: 0, y: 0, width: half, height: Self.settingsButtonHeight)
             button.center = CGPoint(x: start+CGFloat(index)*(half+Self.spacing)+half/2, y: y)
         }
+        downloadProgress.frame = downloadsButton.bounds
+    }
+}
+
+/// More in the tab switcher, using the address row's exact geometry and the usual button feedback.
+final class TabMenuPanel: UIView {
+    let historyButton = MenuTile(image: MenuIcons.history, label: "History", showsLabel: true, labelFont: SearchPanel.fieldFont)
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        historyButton.layer.cornerRadius = SearchPanel.cornerRadius
+        addSubview(historyButton)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        historyButton.bounds = CGRect(x: 0, y: 0, width: max(0, bounds.width-2*MenuPanel.inset), height: SearchPanel.fieldHeight)
+        historyButton.center = CGPoint(x: bounds.midX, y: SearchPanel.fieldHeight/2)
     }
 }
 
@@ -303,7 +331,8 @@ final class MenuTile: UIButton {
             UIImage.SymbolConfiguration(pointSize: 20, weight: .medium)), label: label, symbolOffsetY: symbolOffsetY)
     }
 
-    init(image: UIImage?, label: String, symbolOffsetY: CGFloat = 0, showsLabel: Bool = false, symbolOpacity: CGFloat = 1) {
+    init(image: UIImage?, label: String, symbolOffsetY: CGFloat = 0, showsLabel: Bool = false, symbolOpacity: CGFloat = 1,
+         labelFont: UIFont? = nil) {
         self.symbolOffsetY = symbolOffsetY
         title = showsLabel ? UILabel() : nil
         super.init(frame: .zero)
@@ -317,7 +346,7 @@ final class MenuTile: UIButton {
         addSubview(symbol)
         if let title {
             title.text = label
-            title.font = SearchPanel.roundedFont(ofSize: 16, weight: .semibold)
+            title.font = labelFont ?? SearchPanel.roundedFont(ofSize: 16, weight: .semibold)
             title.adjustsFontForContentSizeCategory = true
             title.textColor = .label
             title.isUserInteractionEnabled = false

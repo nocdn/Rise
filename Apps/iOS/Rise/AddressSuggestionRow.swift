@@ -2,6 +2,7 @@ import UIKit
 
 /// Reused rows keep their press state when an icon or remote answer arrives.
 final class AddressSuggestionRow: UIButton {
+    let pressBackground = UIView()
     let icon = UIImageView()
     let titleLabelView = UILabel()
     let addressLabel = UILabel()
@@ -17,9 +18,12 @@ final class AddressSuggestionRow: UIButton {
         for label in [titleLabelView, addressLabel] {
             label.adjustsFontForContentSizeCategory = true; label.lineBreakMode = .byTruncatingTail
         }
-        [icon, titleLabelView, addressLabel].forEach { $0.isUserInteractionEnabled = false; addSubview($0) }
+        pressBackground.layer.cornerRadius = SearchPanel.cornerRadius
+        pressBackground.layer.cornerCurve = .continuous
+        [pressBackground, icon, titleLabelView, addressLabel].forEach { $0.isUserInteractionEnabled = false; addSubview($0) }
         layer.cornerRadius = SearchPanel.cornerRadius; layer.cornerCurve = .continuous
-        shrinksWhenPressed(to: SearchPanel.pressedScale, filled: true, restingFill: .clear)
+        clipsToBounds = false
+        shrinksWhenPressed(to: SearchPanel.pressedScale, filled: true, restingFill: .clear, fillView: pressBackground)
         addAction(UIAction { [weak self] _ in self?.choose?() }, for: .primaryActionTriggered)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -50,14 +54,18 @@ final class AddressSuggestionRow: UIButton {
     }
     override func layoutSubviews() {
         super.layoutSubviews()
+        // More breathing room around the pressed fill; row bounds and content stay put.
+        pressBackground.frame = bounds.insetBy(dx: -6, dy: 0)
         icon.frame = CGRect(x: SearchPanel.rowIndent+(20-iconSide)/2, y: bounds.midY-iconSide/2, width: iconSide, height: iconSide)
         let x = SearchPanel.rowIndent+20+12, width = max(0, bounds.width-x-12)
         if (addressLabel.text ?? "").isEmpty {
             titleLabelView.frame = CGRect(x: x, y: 0, width: width, height: bounds.height)
             addressLabel.frame = .zero
         } else {
-            titleLabelView.frame = CGRect(x: x, y: 4, width: width, height: 24)
-            addressLabel.frame = CGRect(x: x, y: 27, width: width, height: 16)
+            // A slightly tighter pair than the original, centred in the padded row.
+            let y = (bounds.height-38)/2
+            titleLabelView.frame = CGRect(x: x, y: y, width: width, height: 24)
+            addressLabel.frame = CGRect(x: x, y: y+22, width: width, height: 16)
         }
     }
 }

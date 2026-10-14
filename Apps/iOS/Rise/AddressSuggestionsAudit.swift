@@ -79,6 +79,7 @@ import WebKit
         try check("empty-query-offers-links", panel.candidates.contains { $0.url == fixture })
         let rest = field.editingRect(forBounds: field.bounds).minX
         field.insertText("l"); field.insertText("a")
+        try check("site-row-appears-immediately", panel.offeredSite?.name == "Lamp Shop" && !panel.siteRow.isHidden && panel.siteRow.alpha == 1)
         try await Task.sleep(for: .milliseconds(350))
         try check("completion-is-immediate-and-keeps-typed-text", field.text == "la" && field.inlineCompletion == "lamps.example")
         let selected = field.selectedTextRange!
@@ -93,6 +94,33 @@ import WebKit
                   && (attributed.attribute(.font, at: 0, effectiveRange: nil) as? UIFont) == SearchPanel.font
                   && (attributed.attribute(.font, at: "Search in ".utf16.count, effectiveRange: nil) as? UIFont) == SearchPanel.font)
         try check("site-row-uses-favicon", panel.siteRow.icon.image === icon)
+        panel.layoutIfNeeded()
+        let visibleRows = panel.subviews.compactMap { $0 as? AddressSuggestionRow }.filter { !$0.isHidden }
+        visibleRows.forEach { $0.layoutIfNeeded() }
+        try check("all-suggestion-rows-share-the-taller-height", visibleRows.allSatisfy { $0.bounds.height == 56 })
+        try check("suggestion-titles-use-the-standard-ios-font", visibleRows.allSatisfy {
+            $0.titleLabelView.font.fontName == UIFont.systemFont(ofSize: 17, weight: .medium).fontName
+        })
+        try check("pressed-background-widens-without-widening-the-row", visibleRows.allSatisfy {
+            $0.pressBackground.frame.minX == -6 && $0.pressBackground.bounds.width == $0.bounds.width+12
+                && !$0.point(inside: CGPoint(x: -2, y: $0.bounds.midY), with: nil)
+        })
+        try check("single-line-rows-stay-centred", visibleRows.filter { ($0.addressLabel.text ?? "").isEmpty }.allSatisfy {
+            $0.titleLabelView.frame.midY == $0.bounds.midY
+        })
+        try check("link-title-and-subtitle-stay-centred-together", visibleRows.filter { !($0.addressLabel.text ?? "").isEmpty }.allSatisfy {
+            abs(($0.titleLabelView.frame.minY+$0.addressLabel.frame.maxY)/2-$0.bounds.midY) < 0.5
+        })
+        let fullHeight = browser.bottomBar.bounds.height, fullPageScale = browser.content.transform.a
+        let rowBounds = panel.siteRow.bounds, rowCentreBeforePress = panel.siteRow.center
+        panel.siteRow.sendActions(for: .touchDown)
+        try await Task.sleep(for: .milliseconds(250))
+        try check("row-press-keeps-fill-scale-and-layout", panel.siteRow.pressBackground.backgroundColor == SearchPanel.pressedFill
+                  && panel.siteRow.bounds == rowBounds && panel.siteRow.center == rowCentreBeforePress
+                  && abs(panel.siteRow.transform.a-SearchPanel.pressedScale) < 0.001)
+        try capture("pressed-site-row")
+        panel.siteRow.sendActions(for: .touchCancel)
+        try await Task.sleep(for: .milliseconds(350))
         let selectionBefore = field.offset(from: field.beginningOfDocument, to: field.selectedTextRange!.start)
         panel.refresh()
         try check("late-results-preserve-text-and-selection", field.text == "la" && field.inlineCompletion == "lamps.example"
@@ -105,6 +133,7 @@ import WebKit
         field.insertText("n")
         try check("replacing-prefix-stays-natural", field.text == "lan" && field.inlineCompletion == nil)
         try check("site-row-leaves-on-a-different-query", panel.offeredSite == nil)
+        try check("site-row-disappears-immediately", panel.siteRow.isHidden && panel.siteRow.alpha == 0)
         panel.clearButton.sendActions(for: .primaryActionTriggered)
         for character in "lamps.example/d" { field.insertText(String(character)) }
         try check("path-completion-keeps-full-path", field.text == "lamps.example/d" && field.inlineCompletion == "lamps.example/docs/lighting")
@@ -112,8 +141,51 @@ import WebKit
         field.insertText("lamps.example")
         try check("pasted-address-is-not-rewritten", field.text == "lamps.example" && panel.completionPrefix == nil)
         try await Task.sleep(for: .milliseconds(300))
+        let retainedRows = panel.subviews.compactMap { $0 as? AddressSuggestionRow }.filter { !$0.isHidden }
+        let retainedFrames = retainedRows.map(\.frame)
+        let retainedTitles = retainedRows.map { $0.titleLabelView.bounds }
+        let siteColour = panel.siteRow.titleLabelView.attributedText?.attribute(.foregroundColor, at: "Search in ".utf16.count,
+                                                                              effectiveRange: nil) as? UIColor
         panel.siteRow.sendActions(for: .primaryActionTriggered)
         try check("tap-enters-site-search", panel.siteSearch?.name == "Lamp Shop" && field.text == "" && field.placeholder == "Search in Lamp Shop")
+        let placeholder = field.attributedPlaceholder
+        try check("site-placeholder-keeps-the-input-font", (placeholder?.attribute(.font, at: 0, effectiveRange: nil) as? UIFont) == field.font)
+        try check("site-placeholder-mutes-the-favicon-brand-colour", (placeholder?.attribute(.foregroundColor, at: "Search in ".utf16.count,
+            effectiveRange: nil) as? UIColor) == siteColour?.withAlphaComponent(0.45))
+        try check("site-placeholder-prefix-keeps-native-placeholder-colour", (placeholder?.attribute(.foregroundColor, at: 0,
+            effectiveRange: nil) as? UIColor) == .placeholderText)
+        try await Task.sleep(for: .milliseconds(350))
+        try check("site-search-shrinks-the-sheet-without-resizing-results", panel.bounds.height == SearchPanel.height
+                  && browser.bottomBar.bounds.height < fullHeight-80 && !panel.siteRow.isHidden)
+        try check("compact-site-search-keeps-every-row-and-its-geometry", retainedRows.allSatisfy { $0.superview === panel }
+                  && zip(retainedRows,retainedFrames).allSatisfy { $0.frame == $1 }
+                  && zip(retainedRows,retainedTitles).allSatisfy { $0.titleLabelView.bounds == $1 })
+        try check("covered-results-cannot-be-tapped-or-read-by-voiceover", retainedRows.allSatisfy {
+            !$0.isUserInteractionEnabled && $0.accessibilityElementsHidden
+        })
+        let placeholderImage = UIGraphicsImageRenderer(bounds: field.bounds).image { _ in
+            field.drawHierarchy(in: field.bounds, afterScreenUpdates: true)
+        }
+        try placeholderImage.pngData()?.write(to: folder.appendingPathComponent("site-placeholder-light.png"))
+        try check("site-search-resize-keeps-keyboard-focus", field.isFirstResponder)
+        try check("page-scales-forward-with-the-smaller-panel", browser.content.transform.a > fullPageScale)
+        // Use the real keyboard-frame handler to check both docked and hardware keyboards.
+        func keyboardFrame(_ height: CGFloat) async throws {
+            let frame = browser.view.convert(CGRect(x: 0, y: browser.view.bounds.height-height,
+                width: browser.view.bounds.width, height: height), to: browser.view.window!.screen.coordinateSpace)
+            NotificationCenter.default.post(name: UIResponder.keyboardWillChangeFrameNotification, object: nil,
+                userInfo: [UIResponder.keyboardFrameEndUserInfoKey: NSValue(cgRect: frame),
+                           UIResponder.keyboardAnimationDurationUserInfoKey: 0.12])
+            try await Task.sleep(for: .milliseconds(180))
+        }
+        try await keyboardFrame(350)
+        let inputBottom = field.convert(field.bounds, to: browser.view).maxY
+        try check("site-search-input-sits-just-above-the-keyboard", abs(browser.view.bounds.height-350-inputBottom-12) < 1)
+        try await keyboardFrame(0)
+        try check("site-search-fits-with-a-hardware-keyboard", abs(browser.bottomBar.bounds.height
+                  - BottomBar.findHeight(keyboard: 0, safeBottom: browser.view.window!.safeAreaInsets.bottom)) < 1)
+        try await keyboardFrame(350)
+        try capture("compact-site-search")
         var opened: URL?
         let onOpen = panel.onOpen
         panel.onOpen = { opened = $0 }
@@ -123,9 +195,33 @@ import WebKit
         try check("site-search-submits-unicode-and-special-characters", result?.host == "lamps.example"
                   && result?.queryItems?.first?.value == "floor lamp & café")
         panel.onOpen = onOpen
-        field.text = ""; field.sendActions(for: .editingChanged)
         panel.clearButton.sendActions(for: .primaryActionTriggered)
-        try check("clear-exits-empty-site-search", panel.siteSearch == nil)
+        try check("clear-exits-site-search-even-with-terms", panel.siteSearch == nil && field.text == "lamps.example")
+        for _ in 0..<24 {
+            try check("expanding-results-keep-full-width-and-title-size", zip(retainedRows,retainedFrames).allSatisfy { row, frame in
+                abs((row.layer.presentation()?.bounds.width ?? row.bounds.width)-frame.width) < 0.5
+            } && zip(retainedRows,retainedTitles).allSatisfy { row, title in
+                abs((row.titleLabelView.layer.presentation()?.bounds.width ?? row.titleLabelView.bounds.width)-title.width) < 0.5
+            })
+            try await Task.sleep(for: .milliseconds(8))
+        }
+        try check("x-restores-the-original-row-identities-and-native-placeholder", retainedRows.allSatisfy {
+            $0.superview === panel && $0.isUserInteractionEnabled && !$0.accessibilityElementsHidden
+        } && field.placeholder == "Search or enter URL"
+          && (field.attributedPlaceholder == nil || field.attributedPlaceholder?.string == "Search or enter URL"))
+        try await Task.sleep(for: .milliseconds(350))
+        try check("clear-restores-the-full-panel-and-suggestions", abs(browser.bottomBar.bounds.height-fullHeight) < 1
+                  && panel.bounds.height == SearchPanel.height && !panel.candidates.isEmpty && field.isFirstResponder)
+        for _ in 0..<3 {
+            field.text = "lamps.example"; field.sendActions(for: .editingChanged)
+            panel.siteRow.sendActions(for: .primaryActionTriggered)
+            try await Task.sleep(for: .milliseconds(20))
+            panel.clearButton.sendActions(for: .primaryActionTriggered)
+        }
+        try await Task.sleep(for: .milliseconds(350))
+        try check("rapid-site-search-resizes-settle-back-to-the-full-panel", panel.siteSearch == nil
+                  && abs(browser.bottomBar.bounds.height-fullHeight) < 1
+                  && panel.bounds.height == SearchPanel.height && !panel.candidates.isEmpty)
         panel.end(); panel.begin()
         field.setMarkedText("am", selectedRange: NSRange(location: 2, length: 0))
         field.sendActions(for: .editingChanged)
@@ -141,6 +237,15 @@ import WebKit
         try check("url-editor-replaces-selected-address", field.text == "https://different.example/path")
         panel.clearAddress()
         try check("url-editor-clear-preserves-focus", field.text == "" && field.isFirstResponder)
+        field.insertText("lamps.example")
+        panel.siteRow.sendActions(for: .primaryActionTriggered)
+        try await Task.sleep(for: .milliseconds(350))
+        try check("url-editor-also-shrinks-for-site-search", panel.siteSearch != nil && panel.bounds.height == SearchPanel.height
+                  && browser.bottomBar.bounds.height < fullHeight-80)
+        browser.bottomBar.menu.address.reloadButton.sendActions(for: .primaryActionTriggered)
+        try await Task.sleep(for: .milliseconds(350))
+        try check("url-editor-x-restores-the-panel-instead-of-closing-it", browser.isPanelOpen
+                  && panel.siteSearch == nil && abs(browser.bottomBar.bounds.height-fullHeight) < 1)
         panel.end(); browser.bottomBar.restoreAddress(); panel.begin(); panel.focus()
         try check("address-return-leaves-no-overlay", browser.bottomBar.menu.address.superview === browser.bottomBar.menu)
         for character in "ama" { field.insertText(String(character)) }
@@ -166,7 +271,16 @@ import WebKit
         field.acceptCompletion?()
         try check("completion-can-be-accepted-for-editing", field.text == completion && field.inlineCompletion == nil)
         panel.clearButton.sendActions(for: .primaryActionTriggered)
-        for character in "amazon" { field.insertText(String(character)) }
+        for character in "amazo" { field.insertText(String(character)) }
+        let previousCompletion = field.inlineCompletion
+        let previousCursor = field.offset(from: field.beginningOfDocument, to: field.selectedTextRange!.start)
+        panel.siteRow.sendActions(for: .primaryActionTriggered)
+        field.insertText("costume")
+        panel.clearButton.sendActions(for: .primaryActionTriggered)
+        try check("site-search-x-restores-the-amazo-prefix-and-completion", field.text == "amazo"
+                  && field.inlineCompletion == previousCompletion && panel.completionPrefix == "amazo")
+        try check("site-search-x-restores-the-cursor-and-offered-site", panel.offeredSite?.name == "Amazon"
+                  && field.offset(from: field.beginningOfDocument, to: field.selectedTextRange!.start) == previousCursor)
         var completedDestination: URL?
         let completionOpen = panel.onOpen, completionSwitch = panel.onSwitchToTab
         panel.onOpen = { completedDestination = $0 }
@@ -192,6 +306,20 @@ import WebKit
         try await Task.sleep(for: .milliseconds(350))
         try check("site-row-works-in-dark-mode", panel.offeredSite?.name == "Amazon" && panel.siteRow.alpha == 1)
         try capture("amazon-dark")
+        let darkBrand = panel.siteRow.titleLabelView.attributedText?.attribute(.foregroundColor, at: "Search in ".utf16.count,
+                                                                             effectiveRange: nil) as? UIColor
+        panel.siteRow.sendActions(for: .primaryActionTriggered)
+        // Compare at selection: a favicon arriving later may legitimately replace the
+        // catalogue fallback in the placeholder while the old result rows remain frozen.
+        try check("dark-site-placeholder-also-mutes-the-same-brand-colour", (field.attributedPlaceholder?.attribute(.foregroundColor,
+            at: "Search in ".utf16.count, effectiveRange: nil) as? UIColor) == darkBrand?.withAlphaComponent(0.45))
+        try await Task.sleep(for: .milliseconds(350))
+        let darkPlaceholder = UIGraphicsImageRenderer(bounds: field.bounds).image { _ in
+            field.drawHierarchy(in: field.bounds, afterScreenUpdates: true)
+        }
+        try darkPlaceholder.pngData()?.write(to: folder.appendingPathComponent("site-placeholder-dark.png"))
+        panel.clearButton.sendActions(for: .primaryActionTriggered)
+        try await Task.sleep(for: .milliseconds(350))
         panel.overrideUserInterfaceStyle = .unspecified
         field.text = "amazon.com"; field.sendActions(for: .editingChanged)
         return checks

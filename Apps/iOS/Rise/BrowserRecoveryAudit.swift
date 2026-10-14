@@ -99,6 +99,60 @@ import WebKit
             cancelled.view.drawHierarchy(in: cancelled.view.bounds, afterScreenUpdates: true)
         }
         try image.pngData()?.write(to: folder.appendingPathComponent("tab-cards.png"))
+        // A preview can already be rendering when Search opens. Its live page must never
+        // show through the edges of the receded foreground page.
+        let previewStore = MobileBrowserSessionStore(fileURL: URL.temporaryDirectory.appendingPathComponent("RiseBackdrop-\(UUID())/session.json"))
+        let redTab = MobileBrowserSession.Tab(url: server.url.appendingPathComponent("preview/red"))
+        let blueTab = MobileBrowserSession.Tab(url: server.url.appendingPathComponent("preview/blue"))
+        previewStore.save(.init(tabs: [redTab, blueTab], selectedTabID: redTab.id)); previewStore.flush()
+        let previewBrowser = BrowserViewController(sessionStore: previewStore,
+            previewCacheURL: previewStore.fileURL.deletingLastPathComponent().appendingPathComponent("previews"))
+        window.rootViewController = previewBrowser
+        previewBrowser.view.layoutIfNeeded()
+        // The beta audit runner can leave its scene foreground-inactive. Exercise
+        // the live renderer in this isolated window, still pausing while Search is open.
+        previewBrowser.tabPreviews!.canRender = { [weak previewBrowser] in
+            previewBrowser?.isPanelOpen == false
+        }
+        previewBrowser.setTabPreviewsActive(true)
+        defer { previewBrowser.setTabPreviewsActive(false) }
+        let previewHost = previewBrowser.tabPreviews!.host
+        do {
+            try await wait {
+                previewHost.subviews.compactMap { $0 as? WKWebView }.contains {
+                    $0.title == "Preview article" && !$0.isLoading
+                }
+            }
+        } catch {
+            let state: [String: Any] = ["hostAttached": previewHost.window != nil,
+                "foreground": window.windowScene?.activationState.rawValue ?? -1,
+                "canRender": previewBrowser.tabPreviews!.canRender(),
+                "width": previewBrowser.view.bounds.width, "children": previewHost.subviews.count,
+                "mainURL": previewBrowser.webView.url?.absoluteString ?? "none",
+                "hasSnapshot": previewBrowser.tabs[1].snapshot != nil,
+                "previewURLs": previewHost.subviews.compactMap { ($0 as? WKWebView)?.url?.absoluteString }]
+            try JSONSerialization.data(withJSONObject: state).write(to: folder.appendingPathComponent("preview-state.json"))
+            throw error
+        }
+        try check("a-real-background-preview-is-painting", !previewHost.subviews.isEmpty)
+        previewBrowser.openPanel()
+        try await Task.sleep(for: .milliseconds(350))
+        let backdrop = UIGraphicsImageRenderer(bounds: previewBrowser.view.bounds).image { _ in
+            previewBrowser.view.drawHierarchy(in: previewBrowser.view.bounds, afterScreenUpdates: true)
+        }
+        try backdrop.pngData()?.write(to: folder.appendingPathComponent("backdrop-with-preview.png"))
+        let scale = backdrop.scale, y = previewBrowser.view.safeAreaInsets.top+100
+        let edge = backdrop.cgImage!.cropping(to: CGRect(x: 0, y: y*scale, width: 4*scale, height: 40*scale))!
+        let edgeColor = PageEdgeColor.dominantColor(of: edge)!
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0
+        edgeColor.getRed(&r, green: &g, blue: &b, alpha: &alpha)
+        try check("receded-page-backdrop-stays-black-during-preview-rendering", r < 0.03 && g < 0.03 && b < 0.03)
+        previewBrowser.closePanel()
+        try await wait { previewBrowser.tabs[1].snapshot != nil && previewBrowser.tabs[1].favicon != nil }
+        let pictureColor = PageEdgeColor.dominantColor(of: previewBrowser.tabs[1].snapshot!.cgImage!)!
+        pictureColor.getRed(&r, green: &g, blue: &b, alpha: &alpha)
+        try check("covered-preview-still-captures-the-blue-page", b > r+0.3)
+        try check("preview-capture-still-keeps-background-tabs-lazy", previewBrowser.tabs[1].webView.url == nil)
         return checks
     }
     static func run(in host: BrowserViewController) {

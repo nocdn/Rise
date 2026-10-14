@@ -1,5 +1,9 @@
 # Shared tabs with iCloud
 
+Mobile preview renderers stay attached behind an opaque black cover. Opening a
+panel can shrink the foreground page while a preview is still rendering; the cover
+keeps that temporary page out of the exposed backdrop without interrupting capture.
+
 Rise uses the user's existing system iCloud account. There is no Rise account, login
 screen or password to enter. Sync is on by default. Both devices need the same iCloud
 account and a build signed for the same CloudKit container and environment.
