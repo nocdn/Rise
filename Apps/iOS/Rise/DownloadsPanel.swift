@@ -10,9 +10,9 @@ final class DownloadsPanel: UIView {
     /// A little taller than Site settings' rows, for a file's two lines.
     static let rowHeight: CGFloat = 64
     static let maximumVisibleRows = 4
-    /// A touch darker than More's tiles in light mode, and lighter in dark mode.
+    /// A pale fill in light mode, and a soft highlight in dark mode.
     static let rowFill = UIColor { $0.userInterfaceStyle == .dark
-        ? UIColor(white: 1, alpha: 0.07) : UIColor(red: 243/255, green: 244/255, blue: 247/255, alpha: 1) }
+        ? UIColor(white: 1, alpha: 0.07) : UIColor(red: 248/255, green: 249/255, blue: 251/255, alpha: 1) }
     static let pressedRowFill = UIColor { $0.userInterfaceStyle == .dark
         ? UIColor(white: 1, alpha: 0.14) : UIColor(red: 230/255, green: 231/255, blue: 235/255, alpha: 1) }
     static let pressedScale: CGFloat = 0.97

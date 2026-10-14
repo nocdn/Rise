@@ -45,4 +45,49 @@ final class LearnedSearchesTests: XCTestCase {
         XCTAssertEqual(searches.site(forAddress: "instagram.com")?.searchURL(for: "dogs")?.absoluteString,
                        "https://www.instagram.com/explore/search/keyword/?q=dogs")
     }
+    func testConcurrentDevicesMergeTemplatesAndClearCannotBeUndoneByAnOfflineDevice() throws {
+        let a = LearnedSearches(storageURL: storage()), b = LearnedSearches(storageURL: storage())
+        XCTAssertTrue(a.learn(from: URL(string: "https://shop.example/search?q=lamps")!, terms: ["lamps"], name: "Shop"))
+        XCTAssertTrue(b.learn(from: URL(string: "https://docs.example/find?term=swift")!, terms: ["swift"], name: "Docs"))
+        let first = a.snapshot.merging(b.snapshot), reversed = b.snapshot.merging(a.snapshot)
+        XCTAssertEqual(first, reversed)
+        XCTAssertEqual(first.searches.count, 2)
+        a.merge(first); b.merge(first)
+        let offline = b.snapshot
+        try a.clear()
+        b.merge(a.snapshot)
+        XCTAssertTrue(b.searches.isEmpty)
+        a.merge(offline)
+        XCTAssertTrue(a.searches.isEmpty)
+        XCTAssertTrue(a.learn(from: URL(string: "https://shop.example/search?q=chairs")!, terms: ["chairs"], name: "Shop"))
+        b.merge(a.snapshot)
+        XCTAssertEqual(b.site(forAddress: "shop.example")?.searchURL(for: "table")?.absoluteString, "https://shop.example/search?q=table")
+        try b.save()
+        XCTAssertEqual(LearnedSearches(storageURL: b.storageURL).snapshot, b.snapshot)
+    }
+    func testLegacyStorageMigratesAndMalformedCloudTemplatesAreRejected() throws {
+        let file = storage(); defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let saved = LearnedSearches.Search(name: "Shop", template: "https://shop.example/search?q={q}", learned: Date())
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(["shop.example": saved]).write(to: file)
+        let migrated = LearnedSearches(storageURL: file)
+        XCTAssertNotNil(migrated.site(forAddress: "shop.example"))
+        let invalid = ["javascript:alert('{q}')", "https://other.example/?q={q}", "https://u:p@shop.example/?q={q}", "https://shop.example/?q={q}&other={q}"]
+        for template in invalid {
+            let incoming = LearnedSearches.Snapshot(searches: ["shop.example": .init(name: "Bad", template: template, learned: Date().addingTimeInterval(1))])
+            XCTAssertFalse(migrated.merge(incoming))
+        }
+        let newer = LearnedSearches.Snapshot(searches: ["shop.example": .init(name: "New shop", template: "https://shop.example/find/{q}", learned: Date().addingTimeInterval(2))])
+        XCTAssertTrue(migrated.merge(newer))
+        XCTAssertFalse(migrated.merge(newer), "Applying the same cloud edit twice is idempotent")
+        XCTAssertFalse(migrated.learn(from: URL(string: "https://shop.example/"+String(repeating: "x", count: 1100)+"?q=lamps")!,
+                                      terms: ["lamps"], name: "Shop"), "A bounded set of templates fits CloudKit's record limit")
+    }
+    func testSameTimeDomainConflictsConvergeEvenWhenConcatenatedFieldsAreEqual() {
+        let date = Date()
+        let a = LearnedSearches.Snapshot(searches: ["shop.example": .init(name: "b", template: "https://shop.example/?q={q}a", learned: date)])
+        let b = LearnedSearches.Snapshot(searches: ["shop.example": .init(name: "ab", template: "https://shop.example/?q={q}", learned: date)])
+        XCTAssertEqual(a.merging(b), b.merging(a))
+        XCTAssertEqual(a.merging(b).merging(a), a.merging(b))
+    }
 }

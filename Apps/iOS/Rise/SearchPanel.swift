@@ -1,8 +1,6 @@
 import UIKit
 
-/// The panel's search: a rounded field like the New Page button, with Google's suggestions
-/// underneath as the person types. Choosing a suggestion searches Google for it; Go opens what
-/// was typed, as an address when it looks like one.
+/// Shared learned links and remote suggestions, with immediate inline completion and site-search mode.
 final class SearchPanel: UIView, UITextFieldDelegate {
     static let fieldHeight: CGFloat = 48
     static let rowHeight: CGFloat = 48
@@ -67,38 +65,66 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     let field = SearchField()
     private(set) var editingAddress: AddressBar?
     private(set) var suggestions: [String] = []
-    private var rows: [UIButton] = []
-    private var fetch: Task<Void, Never>?
-    /// One soft click for clearing; two in quick succession for opening a page.
+    private(set) var candidates: [AddressCandidate] = []
+    private(set) var offeredSite: PopularSite?
+    private(set) var siteSearch: PopularSite?
+    private(set) var query = ""
+    private(set) var completionPrefix: String?
+    private let remote = GoogleSearchSuggestions()
+    private var rows: [AddressSuggestionRow] = []
+    let siteRow = AddressSuggestionRow()
+    private var applyingCompletion = false
+    private var changingText = false
+    private var suppressCompletion = false
+    private var active = false
+    private var currentAddress: URL?
+    var source: MobileAddressSuggestions? {
+        didSet { source?.icons.onLoad = { [weak self] in self?.refresh() } }
+    }
+    var openTabs: () -> [AddressSuggestionTab] = { [] }
+    var tabIcon: (URL) -> UIImage? = { _ in nil }
+    var onSwitchToTab: (UUID) -> Void = { _ in }
     private let click = UIImpactFeedbackGenerator(style: .rigid)
-    /// The address editor's X, always at the field's end: it clears the field, or once it's empty
-    /// closes the panel.
     let clearButton = AnimatedSymbolButton(symbol: "xmark", pointSize: 14, weight: .bold)
-    /// Stands in for the X while a held New Page's speech is transcribed.
     let transcribing = UIActivityIndicatorView(style: .medium)
-    /// Closes the panel, as X does on an empty field.
     var onClose: @MainActor () -> Void = {}
-    /// Counts openings, so a transcription lands only in the opening it was said for.
     private var opening = 0
-    /// Opens a page the person chose.
     var onOpen: @MainActor (URL) -> Void = { _ in }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         field.backgroundColor = Self.fill
-        field.layer.cornerCurve = .continuous
-        field.layer.cornerRadius = Self.cornerRadius
-        field.placeholder = "Search or enter URL"
-        field.font = Self.fieldFont
+        field.layer.cornerCurve = .continuous; field.layer.cornerRadius = Self.cornerRadius
+        field.placeholder = "Search or enter URL"; field.font = Self.fieldFont
         field.adjustsFontForContentSizeCategory = true
-        field.leftView = UIView(frame: CGRect(x: 0, y: 0, width: 18, height: 1))
+        field.leftView = UIView(frame: CGRect(x: 0, y: 0, width: 18, height: Self.fieldHeight))
         field.leftViewMode = .always
-        field.keyboardType = .webSearch
-        field.returnKeyType = .go
-        field.autocorrectionType = .no
-        field.autocapitalizationType = .none
-        field.spellCheckingType = .no
+        field.keyboardType = .webSearch; field.returnKeyType = .go
+        field.autocorrectionType = .no; field.autocapitalizationType = .none; field.spellCheckingType = .no
         field.delegate = self
+        field.handleDeleteBackward = { [weak self] in
+            guard let self else { return false }
+            suppressCompletion = true
+            guard field.inlineCompletion != nil else { return false }
+            UIView.performWithoutAnimation {
+                self.field.inlineCompletion = nil
+                self.completionPrefix = nil
+                self.queryChanged()
+            }
+            return true
+        }
+        field.acceptCompletion = { [weak self] in
+            guard let self, let completed = field.inlineCompletion else { return }
+            UIView.performWithoutAnimation {
+                self.applyingCompletion = true
+                self.field.inlineCompletion = nil
+                self.field.text = completed
+                self.completionPrefix = nil
+                self.query = completed
+                self.updateResults(allowCompletion: false)
+                self.applyingCompletion = false
+            }
+        }
         field.addAction(UIAction { [weak self] _ in self?.queryChanged() }, for: .editingChanged)
         addSubview(field)
         useClearButton()
@@ -106,249 +132,258 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         clearButton.shrinksWhenPressed(to: AddressBar.pressedScale)
         clearButton.addAction(UIAction { [weak self] _ in self?.clearOrClose() }, for: .primaryActionTriggered)
         addSubview(clearButton)
-        transcribing.hidesWhenStopped = true
-        transcribing.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
-        transcribing.accessibilityLabel = "Transcribing"
-        addSubview(transcribing)
+        transcribing.hidesWhenStopped = true; transcribing.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
+        transcribing.accessibilityLabel = "Transcribing"; addSubview(transcribing)
+        siteRow.alpha = 0; siteRow.isHidden = true
+        siteRow.choose = { [weak self] in self?.enterSiteSearch() }
+        addSubview(siteRow)
+        remote.onLoad = { [weak self] text in
+            guard let self, active, query == text, siteSearch == nil, field.markedTextRange == nil else { return }
+            refresh()
+        }
     }
+    required init?(coder: NSCoder) { fatalError() }
 
-    /// The field's own clear button gives way to the X, with room kept for it.
     private func useClearButton() {
         field.clearButtonMode = .never
         field.rightView = UIView(frame: CGRect(x: 0, y: 0, width: 44, height: Self.fieldHeight))
         field.rightViewMode = .always
         clearButton.isHidden = transcribing.isAnimating
     }
-
-    /// Clears what's typed, as the address editor's X does, or closes the panel if there's nothing.
     private func clearOrClose() {
+        if (field.text ?? "").isEmpty, siteSearch != nil { leaveSiteSearch(); return }
         guard !(field.text ?? "").isEmpty else { onClose(); return }
-        field.text = ""
-        queryChanged()
-        click.impactOccurred(intensity: 0.5)
+        field.text = ""; field.inlineCompletion = nil; completionPrefix = nil; suppressCompletion = true
+        queryChanged(); click.impactOccurred(intensity: 0.5)
     }
-
-    required init?(coder: NSCoder) { fatalError() }
-
     override func layoutSubviews() {
         super.layoutSubviews()
-        let width = bounds.width-2*Self.inset
+        let width = max(0, bounds.width-2*Self.inset)
         let frame = CGRect(x: Self.inset, y: 0, width: width, height: Self.fieldHeight)
-        if let editingAddress {
-            editingAddress.frame = frame
-            editingAddress.layoutIfNeeded()
-        } else { field.frame = frame }
-        // Where the address editor's X sits. By bounds and center, as it shrinks while pressed.
+        if let editingAddress { editingAddress.frame = frame; editingAddress.layoutIfNeeded() }
+        else { field.frame = frame }
         clearButton.bounds = CGRect(x: 0, y: 0, width: AddressBar.buttonWidth, height: Self.fieldHeight)
         clearButton.center = CGPoint(x: frame.maxX-AddressBar.outerCentre, y: frame.midY)
         transcribing.center = clearButton.center
+        let count = max(0, Int((bounds.height-Self.fieldHeight-Self.rowsGap)/Self.rowHeight))
+        let offset = offeredSite == nil ? 0 : 1
+        siteRow.bounds = CGRect(x: 0, y: 0, width: width, height: Self.rowHeight)
+        siteRow.center = CGPoint(x: bounds.midX, y: Self.fieldHeight+Self.rowsGap+Self.rowHeight/2)
         for (index, row) in rows.enumerated() {
-            // By bounds and center, as a pressed row is scaled.
             row.bounds = CGRect(x: 0, y: 0, width: width, height: Self.rowHeight)
-            row.center = CGPoint(x: bounds.midX, y: Self.fieldHeight+Self.rowsGap+(CGFloat(index)+0.5)*Self.rowHeight)
+            row.center = CGPoint(x: bounds.midX, y: Self.fieldHeight+Self.rowsGap+(CGFloat(index+offset)+0.5)*Self.rowHeight)
+            row.isHidden = index+offset >= count
+            row.accessibilityElementsHidden = row.isHidden
         }
     }
-
-    /// Each time the panel opens, the field starts empty; `focus` then brings the keyboard up.
     func begin() {
-        fetch?.cancel()
-        opening += 1
-        stopTranscribing()
-        field.text = ""
-        show([])
-        click.prepare()
+        remote.cancel(); opening += 1; active = true; changingText = false; stopTranscribing()
+        siteSearch = nil; currentAddress = nil; completionPrefix = nil; field.inlineCompletion = nil; query = ""; field.text = ""
+        field.placeholder = "Search or enter URL"
+        updateResults(allowCompletion: false)
+        remote.warmUp(); click.prepare()
     }
-
-    /// Brings the keyboard up for the field. iOS takes the better part of a quarter of a second
-    /// over it on the main thread, so the panel's opening is under way first.
-    func focus() {
-        field.becomeFirstResponder()
-    }
-
-    /// Shows a small spinner where the clear button would be until `finishTranscribing`, which
-    /// is ignored if the panel has since closed or opened again.
+    func focus() { _ = field.becomeFirstResponder() }
     func beginTranscribing() -> Int {
-        clearButton.isHidden = true
-        transcribing.startAnimating()
-        return opening
+        clearButton.isHidden = true; transcribing.startAnimating(); return opening
     }
-
-    /// Puts what was said in the field, after anything typed meanwhile, ready for Go.
     func finishTranscribing(_ text: String, for opening: Int) {
         guard opening == self.opening, transcribing.isAnimating else { return }
-        stopTranscribing()
-        guard !text.isEmpty else { return }
-        let typed = (field.text ?? "").trimmingCharacters(in: .whitespaces)
-        field.text = typed.isEmpty ? text : typed+" "+text
+        stopTranscribing(); guard !text.isEmpty else { return }
+        let typed = (completionPrefix ?? field.text ?? "").trimmingCharacters(in: .whitespaces)
+        field.inlineCompletion = nil; field.text = typed.isEmpty ? text : typed+" "+text; completionPrefix = nil
         field.selectedTextRange = field.textRange(from: field.endOfDocument, to: field.endOfDocument)
-        queryChanged()
-        click.impactOccurred(intensity: 0.5)
+        suppressCompletion = true; queryChanged(); click.impactOccurred(intensity: 0.5)
     }
-
     private func stopTranscribing() {
         guard transcribing.isAnimating else { return }
-        transcribing.stopAnimating()
-        clearButton.isHidden = editingAddress != nil
+        transcribing.stopAnimating(); clearButton.isHidden = editingAddress != nil
     }
-
-    /// The address is carried into this panel, rather than crossfading to a duplicate field.
     func beginEditingAddress(_ address: AddressBar, url: URL?) {
-        fetch?.cancel()
-        opening += 1
-        stopTranscribing()
-        show([])
-        editingAddress = address
-        addSubview(address)
-        field.text = url?.absoluteString ?? ""
-        address.prepareEditing(field, url: url)
-        // The address has its own X.
-        clearButton.isHidden = true
-        click.prepare()
+        remote.cancel(); opening += 1; active = true; changingText = false; stopTranscribing()
+        siteSearch = nil; completionPrefix = nil; field.inlineCompletion = nil; currentAddress = url
+        editingAddress = address; addSubview(address); field.text = url?.absoluteString ?? ""; query = field.text ?? ""
+        address.prepareEditing(field, url: url); clearButton.isHidden = true
+        updateResults(allowCompletion: false); remote.warmUp(); click.prepare()
     }
-
     func focusAddress() {
         guard editingAddress != nil else { return }
-        field.isUserInteractionEnabled = true
-        field.becomeFirstResponder()
+        field.isUserInteractionEnabled = true; _ = field.becomeFirstResponder()
         field.selectedTextRange = field.textRange(from: field.beginningOfDocument, to: field.endOfDocument)
     }
-
     func finishAddressTransition() { editingAddress?.finishEditing() }
-
-    /// Restore the regular New Page field and return the address to More before another opening.
     func releaseAddress() {
         guard let address = editingAddress else { return }
-        editingAddress = nil
-        address.endEditingAddress()
-        addSubview(field)
-        bringSubviewToFront(clearButton)
-        bringSubviewToFront(transcribing)
-        field.backgroundColor = Self.fill
-        useClearButton()
-        field.alpha = 1
-        field.isUserInteractionEnabled = true
+        editingAddress = nil; address.endEditingAddress()
+        addSubview(field); bringSubviewToFront(clearButton); bringSubviewToFront(transcribing)
+        field.backgroundColor = Self.fill; useClearButton(); field.alpha = 1; field.isUserInteractionEnabled = true
         setNeedsLayout()
     }
-
     func clearAddress() {
-        guard let editingAddress else { return }
-        editingAddress.host.text = ""
-        field.text = ""
-        queryChanged()
-        field.becomeFirstResponder()
-        click.impactOccurred(intensity: 0.5)
+        editingAddress?.host.text = ""
+        clearOrClose(); _ = field.becomeFirstResponder()
     }
-
     func end() {
-        fetch?.cancel()
-        opening += 1
-        stopTranscribing()
-        field.resignFirstResponder()
+        active = false; remote.cancel(); opening += 1; stopTranscribing(); _ = field.resignFirstResponder()
     }
-
+    /// Late icons, learned templates and remote results never replace the person's text/selection.
+    func refresh() {
+        guard active else { return }
+        updateResults(allowCompletion: false)
+    }
     private func queryChanged() {
-        // Input can arrive while the spring is still running: show it immediately without
-        // selecting it again when the label's animation finishes.
+        guard active else { return }
         editingAddress?.finishEditing()
-        fetch?.cancel()
-        let query = (field.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty, let url = Self.suggestionsURL(for: query) else { show([]); return }
-        fetch = Task { [weak self] in
-            let response = try? await URLSession.shared.data(from: url)
-            // Only the latest query's suggestions show, however the responses arrive.
-            guard let data = response?.0, !Task.isCancelled, let self,
-                  (field.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines) == query
-            else { return }
-            show(Self.suggestions(from: data))
-        }
+        UIView.performWithoutAnimation { self.field.inlineCompletion = nil }
+        completionPrefix = nil; query = field.text ?? ""
+        updateResults(allowCompletion: !suppressCompletion)
+        suppressCompletion = false
+        changingText = false
     }
-
-    private func show(_ suggestions: [String]) {
-        let suggestions = Array(suggestions.prefix(Self.maximumSuggestions))
-        guard suggestions != self.suggestions else { return }
-        self.suggestions = suggestions
-        rows.forEach { $0.removeFromSuperview() }
-        rows = suggestions.map { suggestion in
-            var configuration = UIButton.Configuration.plain()
-            configuration.title = suggestion
-            configuration.image = Self.searchIcon
-            configuration.imagePadding = 12
-            configuration.baseForegroundColor = .label
-            // The field's grey, rather than the title's colour.
-            configuration.imageColorTransformer = UIConfigurationColorTransformer { _ in SearchPanel.iconColor }
-            configuration.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: Self.rowIndent, bottom: 0, trailing: 18)
-            configuration.titleLineBreakMode = .byTruncatingTail
-            configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
-                var attributes = attributes
-                attributes.font = SearchPanel.font
-                return attributes
-            }
-            let row = UIButton(configuration: configuration, primaryAction: UIAction { [weak self] _ in
-                self?.choose(suggestion)
-            })
-            row.contentHorizontalAlignment = .leading
-            row.shrinksWhenPressed(to: Self.pressedScale)
-            addSubview(row)
-            return row
-        }
-        setNeedsLayout()
-    }
-
-    /// Searches Google for a suggestion.
-    func choose(_ suggestion: String) {
-        guard let url = Self.searchURL(for: suggestion) else { return }
-        open(url)
-    }
-
-    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
-        if let url = Self.destination(for: textField.text ?? "") { open(url) }
-        return false
-    }
-
-    func textFieldShouldClear(_ textField: UITextField) -> Bool {
-        click.impactOccurred(intensity: 0.5)
+    func textField(_ textField: UITextField, shouldChangeCharactersIn range: NSRange, replacementString string: String) -> Bool {
+        changingText = true
+        let length = (textField.text ?? "").utf16.count
+        suppressCompletion = string.isEmpty || string.count > 1 || NSMaxRange(range) < length || textField.markedTextRange != nil
         return true
     }
-
+    func textFieldDidChangeSelection(_ textField: UITextField) {
+        // UIKit moves its cursor between shouldChange and editingChanged. That intermediate
+        // state must not remove and re-enter a site's row on every additional character.
+        guard !applyingCompletion, !changingText, field.inlineCompletion != nil,
+              let selection = field.selectedTextRange else { return }
+        let end = field.offset(from: field.beginningOfDocument, to: selection.end)
+        if !selection.isEmpty || end != (field.text ?? "").utf16.count {
+            UIView.performWithoutAnimation { self.field.inlineCompletion = nil }
+            completionPrefix = nil; query = field.text ?? ""; refresh()
+        }
+    }
+    private func updateResults(allowCompletion: Bool) {
+        guard let source else { candidates = []; suggestions = []; return }
+        if siteSearch != nil {
+            candidates = []; renderRows([]); updateSite(nil)
+            return
+        }
+        let composing = field.markedTextRange != nil
+        let local = AddressSuggestionEngine.suggestions(for: query, history: source.history, tabs: openTabs(),
+            currentURL: currentAddress, editingCurrentAddress: editingAddress != nil && query == currentAddress?.absoluteString,
+            limit: Self.maximumSuggestions)
+        let terms = composing ? [] : remote.suggestions(for: query)
+        candidates = AddressSuggestionEngine.merging(terms, into: local, limit: Self.maximumSuggestions, tabs: openTabs())
+        if allowCompletion || composing {
+            let completed = !composing ? candidates.first?.completion : nil
+            UIView.performWithoutAnimation {
+                self.applyingCompletion = true
+                self.field.inlineCompletion = completed
+                self.completionPrefix = completed == nil ? nil : self.query
+                self.field.layoutIfNeeded()
+                self.applyingCompletion = false
+            }
+        }
+        let fieldAddress = field.inlineCompletion ?? field.text ?? ""
+        let siteAddress = field.inlineCompletion ?? candidates.first?.completion ?? fieldAddress
+        let site = PopularSites.site(forAddress: siteAddress) ?? source.learner.searches.site(forAddress: siteAddress)
+        updateSite(site?.isSearchable == true && !composing ? site : nil)
+        let url = (candidates.first?.symbol == "globe" && candidates.first?.isTypedAction == true)
+            ? candidates.first?.url : (fieldAddress == currentAddress?.absoluteString ? currentAddress : nil)
+        let fetchIcon = candidates.first?.fetchFavicon != false
+        source.icons.previewCandidate(fetchIcon ? nil : url)
+        let visible = candidates.filter { !$0.isAutofill }
+        suggestions = visible.map(\.title)
+        renderRows(Array(visible.prefix(Self.maximumSuggestions-(offeredSite == nil ? 0 : 1))))
+    }
+    private func image(for url: URL?, fetch: Bool = true) -> UIImage? {
+        guard let url else { return nil }
+        if let image = tabIcon(url) { source?.icons.remember(image, for: url); return image }
+        return source?.icons.image(for: url, fetch: fetch)
+    }
+    private func renderRows(_ values: [AddressCandidate]) {
+        while rows.count > values.count { rows.removeLast().removeFromSuperview() }
+        while rows.count < values.count { let row = AddressSuggestionRow(); rows.append(row); addSubview(row) }
+        for (row, value) in zip(rows, values) {
+            row.show(value, image: value.symbol == "globe" ? image(for: value.url, fetch: value.fetchFavicon) : nil)
+            row.choose = { [weak self] in self?.choose(value) }
+        }
+        setNeedsLayout()
+    }
+    private func updateSite(_ site: PopularSite?) {
+        let changed = offeredSite?.domain != site?.domain
+        offeredSite = site
+        if let site {
+            let icon = image(for: site.homeURL)
+            let color = MobileSuggestionFavicons.color(in: icon)
+                ?? site.color.map { UIColor(red: CGFloat(($0 >> 16)&255)/255, green: CGFloat(($0 >> 8)&255)/255, blue: CGFloat($0&255)/255, alpha: 1) }
+            siteRow.showSite(site, image: icon, color: color)
+        }
+        guard changed else { return }
+        let visible = site != nil
+        siteRow.isHidden = false; siteRow.isUserInteractionEnabled = visible
+        siteRow.accessibilityElementsHidden = !visible
+        if visible { siteRow.transform = CGAffineTransform(translationX: 0, y: -8) }
+        setNeedsLayout()
+        let changes = {
+            self.siteRow.alpha = visible ? 1 : 0
+            self.siteRow.transform = .identity
+            self.layoutIfNeeded()
+        }
+        guard window != nil, !UIAccessibility.isReduceMotionEnabled else {
+            changes(); siteRow.isHidden = !visible; return
+        }
+        UIView.animate(springDuration: 0.28, bounce: 0.16, initialSpringVelocity: 0, delay: 0,
+            options: [.beginFromCurrentState,.allowUserInteraction], animations: changes) { [weak self] _ in
+                self?.siteRow.isHidden = self?.offeredSite == nil
+            }
+    }
+    func enterSiteSearch() {
+        guard let site = offeredSite else { return }
+        click.impactOccurred(intensity: 0.5); remote.cancel(); siteSearch = site
+        completionPrefix = nil; field.inlineCompletion = nil; query = ""; field.text = ""
+        field.placeholder = "Search in \(site.name)"
+        updateResults(allowCompletion: false); _ = field.becomeFirstResponder()
+    }
+    private func leaveSiteSearch() {
+        siteSearch = nil; field.placeholder = "Search or enter URL"
+        queryChanged(); click.impactOccurred(intensity: 0.5)
+    }
+    func choose(_ value: AddressCandidate) {
+        guard let url = value.url else { return }
+        if let id = value.tabID { click.impactOccurred(intensity: 0.5); onSwitchToTab(id) }
+        else { open(url) }
+    }
+    func choose(_ suggestion: String) { if let url = Self.searchURL(for: suggestion) { open(url) } }
+    func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+        if let siteSearch {
+            let terms = (field.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !terms.isEmpty, let url = siteSearch.searchURL(for: terms) { open(url) }
+        } else if let completed = field.inlineCompletion {
+            if let value = candidates.first(where: { $0.completion == completed }) { choose(value) }
+            else if let url = Self.destination(for: completed) { open(url) }
+        }
+        else if let url = Self.destination(for: field.text ?? "") {
+            if let tab = AddressSuggestionEngine.openTab(for: url, in: openTabs()), editingAddress == nil { onSwitchToTab(tab.id) }
+            else { open(url) }
+        }
+        return false
+    }
+    func textFieldShouldClear(_ textField: UITextField) -> Bool { click.impactOccurred(intensity: 0.5); return true }
     private func open(_ url: URL) {
         click.impactOccurred(intensity: 0.5)
         DispatchQueue.main.asyncAfter(deadline: .now()+0.07) { [click] in click.impactOccurred(intensity: 0.5) }
         onOpen(url)
     }
-
-    static func suggestionsURL(for query: String) -> URL? {
-        var components = URLComponents(string: "https://suggestqueries.google.com/complete/search")
-        components?.queryItems = [URLQueryItem(name: "client", value: "firefox"), URLQueryItem(name: "ie", value: "utf-8"),
-                                  URLQueryItem(name: "oe", value: "utf-8"), URLQueryItem(name: "q", value: query)]
-        return components?.url
-    }
-
-    /// Google's suggestions come back as `[query, [suggestion, …], …]`.
-    static func suggestions(from data: Data) -> [String] {
-        guard let response = try? JSONSerialization.jsonObject(with: data) as? [Any], response.count > 1 else { return [] }
-        return response[1] as? [String] ?? []
-    }
-
-    static func searchURL(for query: String) -> URL? {
-        var components = URLComponents(string: "https://www.google.com/search")
-        components?.queryItems = [URLQueryItem(name: "q", value: query)]
-        return components?.url
-    }
-
-    /// An address when the text looks like one, such as `example.com` or `https://…`, and a
-    /// Google search otherwise.
+    static func searchURL(for query: String) -> URL? { SearchEngine.google.searchURL(for: query) }
     static func destination(for text: String) -> URL? {
-        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return nil }
-        if let url = URL(string: text), let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme),
-           url.host != nil {
-            return url
-        }
-        if !text.contains(" "), text.contains("."), !text.hasPrefix("."), !text.hasSuffix("."),
-           let url = URL(string: "https://"+text), url.host?.contains(".") == true {
-            return url
-        }
-        return searchURL(for: text)
+        guard let url = AddressResolver.resolve(text), ["http","https"].contains(url.scheme ?? "") else { return nil }
+        return url
+    }
+    // Kept for fixture compatibility; production uses the shared bounded remote client.
+    static func suggestionsURL(for query: String) -> URL? {
+        var url = URLComponents(string: "https://suggestqueries.google.com/complete/search")
+        url?.queryItems = [URLQueryItem(name: "client", value: "firefox"), URLQueryItem(name: "q", value: query)]
+        return url?.url
+    }
+    static func suggestions(from data: Data) -> [String] {
+        guard let values = try? JSONSerialization.jsonObject(with: data) as? [Any], values.count > 1 else { return [] }
+        return values[1] as? [String] ?? []
     }
 }
 
@@ -357,6 +392,72 @@ final class SearchPanel: UIView, UITextFieldDelegate {
 /// undo the typing.
 final class SearchField: UITextField {
     private let shake = UIImpactFeedbackGenerator(style: .rigid)
+    private let completionClip = UIView()
+    private let completionLabel = UILabel()
+    private var completionTint: UIColor?
+    /// The full completed address. `text` always remains exactly what the person typed.
+    var inlineCompletion: String? {
+        didSet {
+            if inlineCompletion != nil, oldValue == nil {
+                completionTint = tintColor
+                tintColor = .clear
+            } else if inlineCompletion == nil {
+                tintColor = completionTint ?? tintColor
+                completionTint = nil
+            }
+            completionClip.isHidden = inlineCompletion == nil
+            setNeedsLayout()
+        }
+    }
+    var acceptCompletion: (() -> Void)?
+    #if DEBUG
+    var inlineCompletionFrame: CGRect { completionLabel.convert(completionLabel.bounds, to: self) }
+    #endif
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        completionClip.isUserInteractionEnabled = false
+        completionClip.clipsToBounds = true
+        completionClip.isHidden = true
+        completionLabel.isAccessibilityElement = false
+        completionLabel.lineBreakMode = .byClipping
+        completionLabel.textColor = .label
+        completionLabel.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.18)
+        completionClip.addSubview(completionLabel)
+        addSubview(completionClip)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard let completed = inlineCompletion, let text, completed.hasPrefix(text), completed.count > text.count else {
+            completionClip.isHidden = true; return
+        }
+        let rect = super.editingRect(forBounds: bounds)
+        // During editingChanged the native caret can still describe the previous key.
+        // Measuring the current prefix keeps the suffix in place on the same frame.
+        let prefixWidth = (text as NSString).size(withAttributes: [.font: font ?? UIFont.systemFont(ofSize: 17)]).width
+        completionClip.frame = rect
+        completionLabel.font = font
+        completionLabel.text = String(completed.dropFirst(text.count))
+        let width = completionLabel.intrinsicContentSize.width
+        let height = ceil(completionLabel.font.lineHeight)
+        completionLabel.frame = CGRect(x: prefixWidth, y: (rect.height-height)/2, width: width, height: height)
+        completionClip.isHidden = false
+    }
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if inlineCompletion != nil { acceptCompletion?() }
+        super.touchesBegan(touches, with: event)
+    }
+    override var keyCommands: [UIKeyCommand]? {
+        guard inlineCompletion != nil else { return super.keyCommands }
+        let right = UIKeyCommand(input: UIKeyCommand.inputRightArrow, modifierFlags: [], action: #selector(acceptInlineCompletion))
+        right.wantsPriorityOverSystemBehavior = true
+        return [right]
+    }
+    @objc private func acceptInlineCompletion() { acceptCompletion?() }
+    var handleDeleteBackward: (() -> Bool)?
+    override func deleteBackward() {
+        if handleDeleteBackward?() != true { super.deleteBackward() }
+    }
 
     override func becomeFirstResponder() -> Bool {
         let became = super.becomeFirstResponder()

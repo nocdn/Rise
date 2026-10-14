@@ -9,6 +9,7 @@ import WebKit
     nonisolated static let scriptMarker = "// Rise.AdBlock\n"
     private static let preferenceKey = "Rise.iOS.AdBlocking.DisabledSites"
     private let preferences: UserDefaults
+    let cookieBanners: MobileCookieBannerBlocker
     // Pages can move between browser owners (Peek -> full tab). A single ledger also
     // prevents an old owner's pending preparation from undoing the new owner's policy.
     private static let versions = NSMapTable<WKWebView, NSNumber>.weakToStrongObjects()
@@ -61,6 +62,7 @@ import WebKit
 
     init(preferences: UserDefaults = .standard) {
         self.preferences = preferences
+        cookieBanners = MobileCookieBannerBlocker(preferences: preferences)
         _ = Self.compilation // Prepare the immutable catalog while the initial UI opens.
     }
 
@@ -92,6 +94,8 @@ import WebKit
 
     func prepare(_ page: WKWebView, for url: URL?) async throws {
         let id = beginPreparation(on: page)
+        try await cookieBanners.prepare(page, for: url)
+        guard !Task.isCancelled, Self.versions.object(forKey: page)?.intValue == id else { throw CancellationError() }
         guard isEnabled(for: url) else { apply(false, to: page); return }
         _ = try await Self.compilation.value
         guard !Task.isCancelled, Self.versions.object(forKey: page)?.intValue == id else { throw CancellationError() }
@@ -102,6 +106,7 @@ import WebKit
     /// decisions synchronously: an unnecessary async decision can race stopLoading().
     func prepareIfReady(_ page: WKWebView, for url: URL?) -> Bool {
         _ = beginPreparation(on: page)
+        guard cookieBanners.prepareIfReady(page, for: url) else { return false }
         let enabled = isEnabled(for: url)
         guard !enabled || Self.compiledCatalog != nil else { return false }
         apply(enabled, to: page)

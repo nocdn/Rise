@@ -7,7 +7,9 @@ import WebKit
     let id: UUID
     var webView: WKWebView {
         didSet {
-            pendingURL = nil
+            pendingURL = nil; restoreNavigation = nil; activeNavigation = nil
+            cancellationRetries = 0
+            navigationError = nil; hasCommittedDocument = webView.url != nil
             rememberedURL = nil
             rememberedTitle = nil
             snapshot = nil
@@ -19,6 +21,20 @@ import WebKit
     private var rememberedURL: URL?
     private var rememberedTitle: String?
     private var pendingURL: URL?
+    private var restoreNavigation: WKNavigation?
+    private var activeNavigation: WKNavigation?
+    private var cancellationRetries = 0
+    #if DEBUG
+    var restorationHasStarted: Bool {
+        restoreNavigation != nil && activeNavigation === restoreNavigation
+    }
+    #endif
+    private(set) var hasCommittedDocument = false
+    private(set) var navigationError: Error?
+    var addressURL: URL? {
+        if let url = webView.url, MobileBrowserSession.canRestore(url) { return url }
+        return rememberedURL
+    }
     private var pageObservations: [NSKeyValueObservation] = []
     var onPageChange: (() -> Void)?
     var isSyncPlaceholder = false
@@ -37,6 +53,7 @@ import WebKit
 
     init(webView: WKWebView, restoring tab: MobileBrowserSession.Tab? = nil, initialURL: URL? = nil) {
         self.webView = webView
+        hasCommittedDocument = webView.url != nil
         id = tab?.id ?? UUID()
         isSyncPlaceholder = tab?.isSyncPlaceholder == true
         rememberedURL = (tab?.url ?? initialURL).flatMap { MobileBrowserSession.canRestore($0) ? $0 : nil }
@@ -50,9 +67,65 @@ import WebKit
     }
 
     func loadIfNeeded() {
-        guard let url = pendingURL else { return }
-        pendingURL = nil
-        webView.load(URLRequest(url: url))
+        guard let url = pendingURL, restoreNavigation == nil, !webView.isLoading, navigationError == nil else { return }
+        restoreNavigation = webView.load(URLRequest(url: url))
+    }
+    func didStart(_ navigation: WKNavigation) {
+        activeNavigation = navigation
+        navigationError = nil
+        if let restoring = restoreNavigation, restoring !== navigation {
+            // A new user navigation supersedes the restored request, rather than reopening it later.
+            restoreNavigation = nil; pendingURL = nil
+        }
+    }
+    func didCommit(_ navigation: WKNavigation) {
+        if let active = activeNavigation, active !== navigation { return }
+        if let restoring = restoreNavigation, restoring !== navigation { return }
+        hasCommittedDocument = true
+        cancellationRetries = 0
+        navigationError = nil
+        pendingURL = nil; restoreNavigation = nil
+        rememberAddress()
+    }
+    /// A cancelled startup request gets one retry; ordinary failures keep the destination for Retry.
+    func didFail(_ navigation: WKNavigation?, error: Error) -> Bool {
+        if let restoring = restoreNavigation, let navigation, restoring !== navigation { return false }
+        if let active = activeNavigation, let navigation, active !== navigation { return false }
+        let restoring = pendingURL != nil && !hasCommittedDocument
+        restoreNavigation = nil; activeNavigation = nil
+        let cancelled = (error as NSError).domain == NSURLErrorDomain && (error as NSError).code == NSURLErrorCancelled
+        if cancelled, restoring, cancellationRetries < 1 {
+            cancellationRetries += 1
+            return true
+        }
+        if !cancelled || restoring { navigationError = error }
+        return false
+    }
+    func reload() {
+        let failed = navigationError != nil
+        navigationError = nil; cancellationRetries = 0
+        if hasCommittedDocument && !failed, webView.url != nil {
+            webView.reload()
+        } else if let url = addressURL {
+            restoreNavigation = nil; activeNavigation = nil
+            pendingURL = url
+            webView.stopLoading()
+            loadIfNeeded()
+        }
+    }
+    func processTerminated() {
+        pendingURL = addressURL
+        restoreNavigation = nil; activeNavigation = nil
+        hasCommittedDocument = false; navigationError = nil
+        cancellationRetries = 0
+    }
+    func retryUncommittedPage() {
+        guard !hasCommittedDocument, !webView.isLoading, restoreNavigation == nil,
+              let url = pendingURL ?? addressURL else { return }
+        pendingURL = url
+        navigationError = nil
+        cancellationRetries = 0
+        loadIfNeeded()
     }
 
     private func observePage() {
@@ -65,21 +138,44 @@ import WebKit
             webView.observe(\.title) { [weak self] _, _ in
                 MainActor.assumeIsolated { self?.pageDidChange() }
             },
+            webView.observe(\.isLoading, options: [.old, .new]) { [weak self] _, change in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if change.oldValue == true && change.newValue == false { self.loadingStopped() }
+                    self.onPageChange?()
+                }
+            },
         ]
         onPageChange?()
+    }
+
+    /// An early stop can leave WebKit idle without a navigation failure callback. Let
+    /// the usual commit/failure callbacks settle before recovering the same request.
+    private func loadingStopped() {
+        guard let navigation = restoreNavigation, pendingURL != nil, !hasCommittedDocument else { return }
+        let page = webView
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self, weak page] in
+            guard let self, let page, self.webView === page,
+                  self.restoreNavigation === navigation, self.pendingURL != nil,
+                  !self.hasCommittedDocument, !page.isLoading else { return }
+            let cancelled = NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)
+            if self.didFail(navigation, error: cancelled) { self.loadIfNeeded() }
+            self.onPageChange?()
+        }
     }
 
     /// WebKit can deliver title and address notifications in either order. Read the pair
     /// together so a later address notification cannot clear the already updated title.
     private func pageDidChange() {
         rememberAddress()
-        rememberedTitle = webView.title.flatMap { $0.isEmpty ? nil : $0 }
+        if let title = webView.title, !title.isEmpty { rememberedTitle = title }
         onPageChange?()
     }
 
     private func rememberAddress() {
         guard let url = webView.url else { return }
         if url.absoluteString == "about:blank" {
+            if pendingURL != nil && !hasCommittedDocument { return }
             rememberedURL = nil
             rememberedTitle = nil
             snapshot = nil
@@ -254,7 +350,8 @@ final class TabCard: UIView {
 /// A tab in the switcher: its card, with a close button on it, and its icon and title under it.
 final class TabCell: UIView {
     let card = TabCard()
-    let closeButton = UIButton(type: .system)
+    let closeButton = TabCloseButton(type: .system)
+    let cardShadow = UIView()
     /// The icon and title, side by side and centred, revealed together.
     let caption = UIView()
     let favicon = FaviconView()
@@ -265,15 +362,21 @@ final class TabCell: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
+        cardShadow.isUserInteractionEnabled = false
+        cardShadow.layer.shadowColor = UIColor.black.cgColor
+        cardShadow.layer.shadowOpacity = 0.10
+        cardShadow.layer.shadowRadius = 6
+        cardShadow.layer.shadowOffset = CGSize(width: 0, height: 2)
+        addSubview(cardShadow)
         card.layer.cornerRadius = TabSwitcherView.cornerRadius
         card.isAccessibilityElement = true
         card.accessibilityTraits = .button
         card.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(cardTapped)))
         addSubview(card)
         closeButton.setImage(UIImage(systemName: "xmark", withConfiguration:
-            UIImage.SymbolConfiguration(pointSize: 10, weight: .bold)), for: .normal)
-        closeButton.tintColor = .white
-        closeButton.backgroundColor = UIColor.black.withAlphaComponent(0.4)
+            UIImage.SymbolConfiguration(pointSize: 9, weight: .bold)), for: .normal)
+        closeButton.tintColor = UIColor(white: 0.36, alpha: 1)
+        closeButton.backgroundColor = UIColor(white: 0.96, alpha: 0.95)
         closeButton.layer.cornerRadius = TabSwitcherView.closeSize/2
         closeButton.accessibilityLabel = "Close Tab"
         closeButton.addAction(UIAction { [weak self] _ in self?.onClose() }, for: .primaryActionTriggered)
@@ -291,10 +394,17 @@ final class TabCell: UIView {
     required init?(coder: NSCoder) { fatalError() }
 
     @objc private func cardTapped() { onSelect() }
+    func setCardOpacity(_ opacity: CGFloat) {
+        card.alpha = opacity
+        cardShadow.alpha = opacity
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         card.frame = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height-TabSwitcherView.titleHeight)
+        cardShadow.frame = card.frame
+        cardShadow.layer.shadowPath = UIBezierPath(roundedRect: cardShadow.bounds,
+            cornerRadius: TabSwitcherView.cornerRadius).cgPath
         card.accessibilityLabel = title.text
         let close = TabSwitcherView.closeSize
         closeButton.frame = CGRect(x: card.frame.maxX-7-close, y: 7, width: close, height: close)
@@ -309,8 +419,8 @@ final class TabCell: UIView {
 }
 
 /// The tabs as cards in two columns over a solid grey, as in Safari. The current page shrinks
-/// into its card as the other cards fade, grow and sharpen in around it, their
-/// titles last; choosing a card grows it back into the page. A swipe up the bottom bar shrinks the
+/// into its card as the other cards fade, grow and sharpen in around it with their titles
+/// already in place; choosing a card grows it back into the page. A swipe up the bottom bar shrinks the
 /// page with the finger, the spot under it staying under it, and when let go it flies on at the
 /// speed it was going and curves round into its card, on Summarise's springs. Every move can be
 /// turned around partway, carrying on from its speed: Tabs again, a tap on the landing page, or a
@@ -323,14 +433,16 @@ final class TabSwitcherView: UIView {
     static let cardAspect: CGFloat = 1.42
     static let titleHeight: CGFloat = 32
     static let cornerRadius: CGFloat = 18
-    static let closeSize: CGFloat = 24
+    static let closeSize: CGFloat = 22
     /// The grid's own fade and growth.
     static let spring = (duration: 0.3, bounce: 0.14)
     static let returnSpring = (duration: 0.28, bounce: 0.0)
+    /// A little quicker from the Tabs button, with the same damping and curved path.
+    static let buttonEntrySpeed = 1.15
     /// The page's corners as it starts to shrink, which ease down to the card's, if the screen's
     /// can't be read.
     static let swipeRadius = 28.8
-    /// How far into its shrinking, as a share of the way to its card, the titles start to come in.
+    /// How far into shrinking the moving page's own title starts to come in.
     static let captionFrom = 0.35
     /// Behind the cards: a solid, faintly warm grey, the same from the start, rather than a blur
     /// of the page that would be slow to come in.
@@ -515,11 +627,10 @@ final class TabSwitcherView: UIView {
         anchorGridOnScreen()
         grid.alpha = 0
         grid.transform = .identity
-        for cell in cells {
-            cell.caption.alpha = 0
-            cell.caption.transform = CGAffineTransform(translationX: 0, y: 6)
-        }
-        cells[current].card.alpha = 0
+        showStationaryCaptions()
+        cells[current].caption.alpha = 0
+        cells[current].caption.transform = CGAffineTransform(translationX: 0, y: 6)
+        cells[current].setCardOpacity(0)
         cells[current].closeButton.alpha = 0
         let card = makeMovingCard(image: nil)
         card.replica = replica
@@ -541,8 +652,9 @@ final class TabSwitcherView: UIView {
     /// Shrinks the page into its card, after `prepare`, or turns it back into its card from
     /// wherever it has grown to.
     func present() {
+        showStationaryCaptions()
         BlurCrossfade.swap(from: nil, to: grid)
-        settle()
+        settle(speed: Self.buttonEntrySpeed)
     }
 
     /// Catches the page as it grows back out of its card, for a swipe to shrink it again from there.
@@ -551,6 +663,7 @@ final class TabSwitcherView: UIView {
         move += 1
         heading = nil
         freeze(card)
+        showStationaryCaptions()
         holdRate(true)
         BlurCrossfade.stop(in: scroll)
         let shape = shape(of: card)
@@ -627,6 +740,17 @@ final class TabSwitcherView: UIView {
         }
     }
 
+    /// The stationary cards already have their titles, including when a closing flight is caught.
+    private func showStationaryCaptions() {
+        UIView.performWithoutAnimation {
+            for (index, cell) in cells.enumerated() where index != current {
+                cell.caption.layer.removeAllAnimations()
+                cell.caption.alpha = 1
+                cell.caption.transform = .identity
+            }
+        }
+    }
+
     /// How fast the page was going under the finger as it was let go.
     private func swipeVelocity() -> Shape {
         guard let first = history.first, let last = history.last, last.t-first.t > 0.008 else {
@@ -656,7 +780,7 @@ final class TabSwitcherView: UIView {
             card = makeMovingCard(image: cell.card.image.image)
             apply(cardShape(index), to: card)
         }
-        cell.card.alpha = 0
+        cell.setCardOpacity(0)
         cell.closeButton.alpha = 0
         anchorGridOnScreen()
         BlurCrossfade.swap(from: grid, to: nil)
@@ -685,7 +809,7 @@ final class TabSwitcherView: UIView {
         grid.alpha = 0
         grid.transform = .identity
         for cell in cells {
-            cell.card.alpha = 1
+            cell.setCardOpacity(1)
             cell.closeButton.alpha = 1
         }
     }
@@ -707,16 +831,19 @@ final class TabSwitcherView: UIView {
         if heading == .card { onSelect(current) }
     }
 
-    /// Moves the page into its card, with the titles coming in after it: let go, at the speed it
+    /// Moves the page into its card, with its own title coming in after it: let go, at the speed it
     /// was going, and otherwise turning round from however it was already moving.
-    private func settle(velocity: Shape? = nil) {
+    private func settle(velocity: Shape? = nil, speed: Double = 1) {
         guard let card = moving, cells.indices.contains(current) else { return }
         move += 1
         let move = move
         heading = .card
         let M = SummariseMotion.self
+        func paced(_ spring: SummariseSpring) -> SummariseSpring {
+            SummariseSpring(spring.w*speed, spring.z, spring.v0*speed)
+        }
         fly(card, to: cardShape(current), velocity: velocity ?? flightVelocity(),
-            scale: M.releaseScale, place: M.releaseMove, shape: M.placeCrop) { [weak self] in
+            scale: paced(M.releaseScale), place: paced(M.releaseMove), shape: paced(M.placeCrop)) { [weak self] in
             guard let self, self.move == move else { return }
             land()
         }
@@ -784,25 +911,21 @@ final class TabSwitcherView: UIView {
         if card === moving, heading != .page { placeCaptions(for: shape) }
     }
 
-    /// The titles come in as the page shrinks into its card: its own rides under it, and they all
-    /// fade in over the last part of the way, rising a little into place.
+    /// Only the moving page's title rides under it and fades in as it reaches its card.
     private func placeCaptions(for shape: Shape) {
         guard let captions = captions(for: shape) else { return }
-        for (index, cell) in cells.enumerated() {
-            cell.caption.alpha = captions.alpha
-            cell.caption.transform = index == current ? captions.current : captions.others
-        }
+        cells[current].caption.alpha = captions.alpha
+        cells[current].caption.transform = captions.transform
     }
 
-    private func captions(for shape: Shape) -> (alpha: Double, current: CGAffineTransform, others: CGAffineTransform)? {
+    private func captions(for shape: Shape) -> (alpha: Double, transform: CGAffineTransform)? {
         guard cells.indices.contains(current) else { return nil }
         let target = cardShape(current)
         let k = min(1, max(0, ((1-shape.scale)/max(0.01, 1-target.scale)-Self.captionFrom)/(1-Self.captionFrom)))
         let shown = k*k*(3-2*k)
         // Its own under the page, wherever it is, rather than under its card.
         let height = shape.height*shape.scale
-        return (shown, CGAffineTransform(translationX: shape.x-target.x, y: (shape.y+height/2)-(target.y+target.height*target.scale/2)+6*(1-shown)),
-                CGAffineTransform(translationX: 0, y: 6*(1-shown)))
+        return (shown, CGAffineTransform(translationX: shape.x-target.x, y: (shape.y+height/2)-(target.y+target.height*target.scale/2)+6*(1-shown)))
     }
 
     /// Flies the page along its springs on Core Animation: the whole path is worked out at once,
@@ -875,15 +998,14 @@ final class TabSwitcherView: UIView {
             keyframes(replica.layer, "transform", pages.map { NSValue(caTransform3D: CATransform3DMakeScale($0.scale, $0.scale, 1)) })
             keyframes(replica.layer, "position", pages.map { NSValue(cgPoint: CGPoint(x: $0.frame.midX, y: $0.frame.midY)) })
         }
-        // The titles ride along on the way in.
+        // Only the moving page's title rides along on the way in.
         if heading != .page {
             let titles = path.compactMap { captions(for: $0) }
             if titles.count == path.count {
-                for (index, cell) in cells.enumerated() {
-                    keyframes(cell.caption.layer, "opacity", titles.map { Float($0.alpha) })
-                    keyframes(cell.caption.layer, "transform",
-                              titles.map { NSValue(caTransform3D: CATransform3DMakeAffineTransform(index == current ? $0.current : $0.others)) })
-                }
+                let caption = cells[current].caption.layer
+                keyframes(caption, "opacity", titles.map { Float($0.alpha) })
+                keyframes(caption, "transform",
+                          titles.map { NSValue(caTransform3D: CATransform3DMakeAffineTransform($0.transform)) })
             }
         }
         // Start the clock after preparing the keyframes. On a strong flick, even a few ms spent
@@ -943,7 +1065,7 @@ final class TabSwitcherView: UIView {
                 cell.caption.transform = .identity
             }
         }
-        cell?.card.alpha = 1
+        cell?.setCardOpacity(1)
         card.removeFromSuperview()
         moving = nil
         heading = nil
@@ -983,5 +1105,12 @@ final class TabSwitcherView: UIView {
         let middle = scroll.contentOffset.y+topInset+(bounds.height-topInset-bottomInset)/2
         grid.layer.anchorPoint = CGPoint(x: 0.5, y: min(1, max(0, middle/height)))
         grid.center = CGPoint(x: bounds.midX, y: grid.layer.anchorPoint.y*height)
+    }
+}
+
+/// The smaller visual keeps a forgiving hit area over the card corner.
+final class TabCloseButton: UIButton {
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        bounds.insetBy(dx: -9, dy: -9).contains(point)
     }
 }

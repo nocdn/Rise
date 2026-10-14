@@ -223,6 +223,11 @@ final class MenuPanel: UIView {
     static let top: CGFloat = 14
     static let cornerRadius: CGFloat = 20
     static let pressedScale: CGFloat = 0.94
+    private static let copyIconGreen = UIColor { traits in
+        var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+        UIColor.systemGreen.resolvedColor(with: traits).getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        return UIColor(red: red*0.92, green: green*0.92, blue: blue*0.92, alpha: alpha)
+    }
     static let settingsButtonHeight: CGFloat = 52
     /// Between the tiles and Settings and Downloads, a little more than between the tiles.
     static let settingsGap: CGFloat = 14
@@ -254,6 +259,10 @@ final class MenuPanel: UIView {
         super.init(frame: frame)
         addSubview(address)
         buttons.forEach(addSubview)
+        shareTile.pressedIconColor = .systemBlue
+        summariseTile.pressedIconColor = .systemRed
+        findTile.pressedIconColor = .systemPurple
+        copyTile.pressedIconColor = Self.copyIconGreen
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -287,6 +296,7 @@ final class MenuTile: UIButton {
     private let symbol = UIImageView()
     private let symbolOffsetY: CGFloat
     private let title: UILabel?
+    var pressedIconColor: UIColor = .label
 
     convenience init(symbol name: String, label: String, symbolOffsetY: CGFloat = 0) {
         self.init(image: UIImage(systemName: name, withConfiguration:
@@ -316,11 +326,28 @@ final class MenuTile: UIButton {
         }
         accessibilityLabel = label
         shrinksWhenPressed(to: MenuPanel.pressedScale, filled: true)
+        addAction(UIAction { [weak self] _ in
+            guard let self, isEnabled else { return }
+            symbol.tintColor = pressedIconColor
+        }, for: [.touchDown, .touchDragEnter])
+        addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            UIView.animate(withDuration: 0.2, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+                self.symbol.tintColor = .label
+            }
+        }, for: [.touchUpInside, .touchUpOutside, .touchDragExit, .touchCancel])
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    override var isEnabled: Bool { didSet { alpha = isEnabled ? 1 : 0.4 } }
+    func setIconColor(_ color: UIColor) { symbol.tintColor = color }
+
+    override var isEnabled: Bool {
+        didSet {
+            alpha = isEnabled ? 1 : 0.4
+            if !isEnabled { symbol.tintColor = .label }
+        }
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()

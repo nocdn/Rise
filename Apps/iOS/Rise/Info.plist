@@ -16,6 +16,12 @@
         </dict>
     </dict>
     <key>UILaunchScreen</key><dict/>
+    <!-- Needed to be offered as the default browser, which also lets pages use passkeys. -->
+    <key>CFBundleURLTypes</key>
+    <array><dict>
+        <key>CFBundleURLName</key><string>Web site URL</string>
+        <key>CFBundleURLSchemes</key><array><string>http</string><string>https</string></array>
+    </dict></array>
     <key>RiseCloudKitEnabled</key><true/>
     <key>UIBackgroundModes</key><array><string>remote-notification</string></array>
     <!-- Downloads land in Documents/Downloads, shown in Files under On My iPhone › Rise. -->

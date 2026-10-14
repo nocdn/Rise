@@ -14,7 +14,11 @@ import RiseCore
         let sync = SharedTabsSync(cacheURL: sessionURL.deletingLastPathComponent().appendingPathComponent("SharedTabs.json"), preferences: preferences)
         tabSync = sync
         sync.onTabsChange = { [weak self] in self?.applySharedTabs($0) }
-        sync.start(tabs: sharedTabsSnapshot)
+        sync.onSearchesChange = { [weak self] in
+            guard let self, self.palette.isPresented else { return }
+            self.palette.refresh()
+        }
+        sync.start(tabs: sharedTabsSnapshot, learnedSearches: siteSearchLearner.searches)
     }
 
     var canApplySharedTabs: Bool {

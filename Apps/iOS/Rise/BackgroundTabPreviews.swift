@@ -161,7 +161,9 @@ import WebKit
                 webView.load(URLRequest(url: url, timeoutInterval: 15))
             }
             // Let fonts, image decoding and client-rendered articles reach their first paint.
-            try await Task.sleep(for: .milliseconds(800))
+            // Includes the first consent-API fallback, so closed-shadow banners aren't
+            // baked into restored/synced cards before their acceptance callback finishes.
+            try await Task.sleep(for: .milliseconds(1400))
             try Task.checkCancellation()
             if let failure { throw failure }
             guard !cancelled else { throw CancellationError() }

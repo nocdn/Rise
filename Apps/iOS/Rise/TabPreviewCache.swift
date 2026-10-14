@@ -2,7 +2,7 @@ import UIKit
 
 /// Local, disposable previews. URLs are checked before reuse; pictures never enter CloudKit.
 final class TabPreviewCache: Sendable {
-    private static let formatVersion = 2
+    private static let formatVersion = 3
     struct Entry: Codable, Sendable {
         let version: Int
         let url: URL

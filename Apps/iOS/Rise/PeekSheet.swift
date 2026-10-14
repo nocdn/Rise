@@ -91,7 +91,7 @@ final class PeekPresentationController: UIPresentationController, UIGestureRecog
         if completed {
             dimming.removeFromSuperview()
             let browser = presentingViewController as? BrowserViewController
-            DispatchQueue.main.async { [weak browser] in browser?.applyPendingSharedTabs() }
+            DispatchQueue.main.async { [weak browser] in browser?.applyPendingChanges() }
         }
     }
 

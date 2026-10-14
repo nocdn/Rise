@@ -68,9 +68,9 @@ These came out of many rounds of trying things on the phone. Follow them by defa
   generously.
 - **Gradual progress.** A small pinch should move the page only a little; it shouldn't take "a
   very small amount to make it move quickly".
-- **Text materialises with the motion it belongs to.** Tab titles ride under the shrinking page
-  and fade in as it nears its card, rather than already being there. Going back, they fade out
-  quickly.
+- **Text materialises with the motion it belongs to.** Only the moving tab's title rides under
+  the shrinking page and fades in as it nears its card. The stationary cards' titles are already
+  in place when their cards appear, with no separate fade or rise. Going back, they fade out quickly.
 - **Plain, immediate backgrounds.** The tab switcher sits on a solid grey from the first frame,
   not a blur of the page fading in.
 - **Only what moves should move.** When the summary closes, only the summary text sinks back; the
@@ -365,7 +365,9 @@ The swipe up the bottom bar (from anywhere on it, even New Page) uses the same m
     179) before curving into it in about half a second;
   - no release haptic.
 - **Not committed:** it springs back to the page on `cancel` from its speed.
-- **Tabs button:** the page goes to its card on the same springs, as progress from rest.
+- **Tabs button:** the page goes to its card on the same springs, as progress from rest, with
+  frequency and initial progress velocity multiplied by 1.15. This makes button entry about 13%
+  quicker without changing damping or the path. Swipes retain the original spring timings.
 - **Choosing a card:** the card grows to the page on `close`, as progress.
 - **Turning around** (Tabs again, a tap on the landing page, a swipe as it grows back): it carries
   on from the flight's current speed, including its height, crop and corners.
@@ -373,7 +375,7 @@ The swipe up the bottom bar (from anywhere on it, even New Page) uses the same m
   changes it, so its whole path is worked out when it starts, sampled every 1/120 s until it's
   within 0.5 pt (and 0.01 of crop) of its place and moving under 0.1 pt a frame. It's then played
   as linear keyframes: the card's bounds, position and corners; the page picture's bounds and
-  position inside it; and, on the way in, every title's opacity and transform. The model values
+  position inside it; and, on the way in, the moving tab's title opacity and transform. The model values
   jump to the end at once, and the real cell takes over when the animations finish. Interrupting
   reads the flight's function at the current time, removes the animations and starts from there.
   - A finger's release starts from the presentation layers' visible page and strip crop. The
@@ -386,11 +388,22 @@ The swipe up the bottom bar (from anywhere on it, even New Page) uses the same m
   only once the flight is with the render server (`onFlight`, after a `CATransaction.flush()`),
   or sooner if a tab is chosen, closed or opened first.
 
+### Card styling
+
+- The resting cards have a subtle black shadow (opacity 0.10, radius 6 pt, y offset
+  2 pt). A separate layer with an explicit rounded shadow path avoids sampling the
+  webpage's contents. It hides with the resting card during the flight and returns
+  on landing; the existing motion curves and timings are unchanged.
+- Close buttons are 22 pt (previously 24), with a light 0.96-white fill and a
+  0.36-white cross at 9 pt. Their hit area extends 9 pt beyond the visual.
+
 ### Titles
 
 - **Coming in:** the current tab's title (favicon and title) rides under the moving page: 7 pt
-  below its bottom edge, centred on it. Every title fades in by a smoothstep over the last 65% of
-  the way to card size (`captionFrom` 0.35), rising 6 pt into place, and lands with the page.
+  below its bottom edge, centred on it. It fades in by a smoothstep over the last 65% of the way
+  to card size (`captionFrom` 0.35), rising 6 pt into place, and lands with the page. Stationary
+  cards keep their captions fully opaque and at their resting position from the start; this is
+  also restored immediately when an outgoing flight is turned around or caught.
 - **Going back to the page:** they fade out in 0.12 s.
 
 ---

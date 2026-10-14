@@ -51,7 +51,9 @@ import Foundation
             var two = SharedBrowserTab(id: UUID(), url: "https://example.org/two", title: "Two")
             a.onTabsChange = { [weak a] in a?.acknowledge($0) }
             b.onTabsChange = { [weak b] in b?.acknowledge($0) }
-            a.start(tabs: [one]); b.start(tabs: [two])
+            let searchesA = LearnedSearches(storageURL: directory.appendingPathComponent("searches-a.json"))
+            let searchesB = LearnedSearches(storageURL: directory.appendingPathComponent("searches-b.json"))
+            a.start(tabs: [one], learnedSearches: searchesA); b.start(tabs: [two], learnedSearches: searchesB)
             try await require({ Set(a.tabs.map(\.id)) == [one.id, two.id] && a.tabs == b.tabs }, "simultaneous inserts converge")
             two.url = "https://example.org/navigated"; two.title = "Navigated"
             a.capture([two, one])
@@ -69,7 +71,19 @@ import Foundation
                 throw NSError(domain: "Rise.TabSyncAudit", code: 2, userInfo: [NSLocalizedDescriptionKey: "A stale saved session resurrected a closed tab"])
             }
             print("PASS: persisted state keeps closed tabs closed after relaunch")
-            print("Live tab sync integration passed")
+            _ = searchesA.learn(from: URL(string: "https://shop.example/search?q=lamps")!, terms: ["lamps"], name: "Shop")
+            _ = searchesB.learn(from: URL(string: "https://docs.example/find?term=swift")!, terms: ["swift"], name: "Docs")
+            a.captureSearches(); b.captureSearches()
+            try await require({ searchesA.searches.count == 2 && searchesA.snapshot == searchesB.snapshot }, "concurrent learned searches merge through real CloudKit")
+            b.setEnabled(false)
+            try searchesA.clear(); a.captureSearches()
+            _ = await a.refreshAndWait()
+            b.captureSearches(); b.setEnabled(true)
+            try await require({ searchesA.searches.isEmpty && searchesB.searches.isEmpty }, "an offline device cannot resurrect cleared searches")
+            _ = searchesB.learn(from: URL(string: "https://shop.example/find?query=chairs")!, terms: ["chairs"], name: "Shop")
+            b.captureSearches()
+            try await require({ searchesA.site(forAddress: "shop.example")?.searchURL(for: "table")?.path == "/find" }, "searches learned after clearing sync normally")
+            print("Live tabs and learned-search sync integration passed")
         } catch { print("FAIL: \(error.localizedDescription)"); result = 1 }
         a.onTabsChange = nil; b.onTabsChange = nil
         a.setEnabled(false); b.setEnabled(false)

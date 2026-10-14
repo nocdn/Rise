@@ -397,7 +397,7 @@ final class WebKitBehaviorTests: XCTestCase {
         bar.search.field.text = "swift"
         bar.search.field.motionEnded(.motionShake, with: nil)
         XCTAssertEqual(bar.search.field.text, "")
-        XCTAssertEqual(bar.search.suggestions, [])
+        XCTAssertTrue(bar.search.candidates.contains { $0.symbol == "globe" && $0.url != nil }, "An empty field offers learned/recent links")
         XCTAssertEqual(SearchPanel.searchIcon.size, CGSize(width: 16, height: 16))
         try await Task.sleep(for: .milliseconds(600))
         let panel = (bounds.height*BrowserViewController.panelHeightFraction).rounded()
@@ -466,7 +466,7 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertEqual(search.queryItems?.first { $0.name == "q" }?.value, "swift concurrency")
         bar.newPageButton.sendActions(for: .primaryActionTriggered)
         XCTAssertEqual(bar.search.field.text, "")
-        XCTAssertEqual(bar.search.suggestions, [])
+        XCTAssertTrue(bar.search.candidates.contains { $0.symbol == "globe" && $0.url != nil }, "An empty field offers learned/recent links")
         browser.closePanel()
 
         // More grows the bar a little, its buttons swapping for the page's address over large
@@ -693,6 +693,10 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertFalse(switcher.isHidden)
         try await Task.sleep(for: .milliseconds(80))
         let shrinking = try XCTUnwrap(switcher.subviews.last as? TabCard, "The page on its way into its card")
+        XCTAssertEqual(switcher.cells[0].caption.alpha, 1, "A stationary card's title is already visible")
+        XCTAssertEqual(switcher.cells[0].caption.transform, .identity)
+        XCTAssertNil(switcher.cells[0].caption.layer.animation(forKey: "flight.opacity"))
+        XCTAssertNotNil(switcher.cells[1].caption.layer.animation(forKey: "flight.opacity"), "Only the moving title reveals")
         XCTAssertLessThan(try XCTUnwrap(shrinking.layer.presentation()).frame.width, browser.view.bounds.width)
         try await Task.sleep(for: .milliseconds(600))
         XCTAssertFalse(switcher.subviews.contains { $0 is TabCard }, "The page has landed in its card")
@@ -876,7 +880,7 @@ final class WebKitBehaviorTests: XCTestCase {
         attachment.name = "Expanded URL editor"; attachment.lifetime = .keepAlways; add(attachment)
         address.reloadButton.sendActions(for: .primaryActionTriggered)
         XCTAssertEqual(bar.search.field.text, "")
-        XCTAssertEqual(bar.search.suggestions, [])
+        XCTAssertTrue(bar.search.candidates.contains { $0.symbol == "globe" && $0.url != nil }, "An empty field offers learned/recent links")
         XCTAssertTrue(bar.search.field.isFirstResponder)
         XCTAssertTrue(browser.webView === original)
         XCTAssertEqual(bar.tabsButton.count, 1)

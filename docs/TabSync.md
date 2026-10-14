@@ -10,7 +10,13 @@ transition. On Mac, use **Rise → Sync Tabs with iCloud**. Turning sync off ret
 the local tabs; turning it back on merges local changes with the shared list.
 
 The private CloudKit database in `iCloud.dev.bartosz.Rise`, zone `RiseSharedTabs`,
-stores tab IDs, HTTP(S) addresses, titles and order. Selection, page history,
+stores tab IDs, HTTP(S) addresses, titles and order. It also stores learned site-search
+names and URL templates in a `RiseSearches` record (`payload: Bytes`), controlled by
+the same sync switch. Submitted search terms and browsing history stay local.
+Templates merge per domain by their learning time with deterministic conflict ties;
+a saved clear timestamp prevents an offline device from restoring cleared searches.
+Existing `searches.json` dictionaries migrate automatically to the version with that
+timestamp. Only same-site HTTP(S) templates with one `{q}` substitution are accepted. Selection, page history,
 cookies, logins, snapshots, pinned/custom Mac metadata and local files stay on the
 device. Ordinary tab opens, navigation, moves and closes sync automatically.
 Each device keeps its current selection where possible and lazily loads restored
@@ -26,6 +32,13 @@ Pictures and icons are cached locally in `Library/Caches/TabPreviews`, checked a
 the tab's URL on restore and removed when the tab closes. Rendering pauses while the
 app is inactive and waits for panels, gestures and tab flights to finish. Failed loads
 retain any existing preview and can retry on a later update/foreground activation.
+
+Restored mobile tabs keep their pending destination until WebKit commits a real
+document. A failed first load preserves that URL in the address menu and saved
+session and shows a native Retry state. Reload explicitly loads the saved URL if
+there is no live document; one cancelled startup request can retry automatically.
+Web-content process termination marks the tab for restoration again. A transient
+`about:blank` before commit cannot erase the saved destination or title.
 
 The local session and sync cache are separate atomic files in Application Support.
 `SharedTabsLedger` merges independent content and position versions. Closure
@@ -65,7 +78,7 @@ it. It does not claim the restricted browser-passkey entitlement without Apple's
 approval. Unsigned/test builds do not create a CloudKit container.
 
 Before shipping through TestFlight/App Store or Developer ID, deploy the `RiseTab`
-schema (`payload: Bytes`) to Production in CloudKit Console and sign both clients
+and `RiseSearches` schemas (`payload: Bytes`) to Production in CloudKit Console and sign both clients
 for Production. Local Release Mac builds deliberately use Development, matching
 the locally installed Debug iOS app. CloudKit environments have separate data.
 

@@ -26,7 +26,19 @@ final class SiteSettingsPanel: UIView {
     var buttons: [UIButton] { [closeButton]+rows+[paywallRow, appSettingsRow] }
     var switches: [UISwitch] { (rows+[paywallRow]).map(\.toggle) }
     var onAdBlockingChanged: ((Bool) -> Void)?
+    var onCookieBannersChanged: ((Bool) -> Void)?
     var isUpdatingAdBlocking: Bool { rows[0].spinner.isAnimating }
+    var isUpdatingCookieBanners: Bool { rows[2].spinner.isAnimating }
+
+    func setCookieBanners(enabled: Bool, available: Bool, busy: Bool) {
+        let row = rows[2]
+        row.toggle.setOn(enabled, animated: window != nil)
+        row.isEnabled = available && !busy
+        row.toggle.isEnabled = available && !busy
+        row.toggle.accessibilityHint = "Automatically accepts cookie banners."
+        if busy { row.spinner.startAnimating() } else { row.spinner.stopAnimating() }
+        row.updateIcon()
+    }
 
     func setAdBlocking(enabled: Bool, available: Bool, busy: Bool, isYouTube: Bool = false) {
         let row = rows[0]
@@ -55,6 +67,7 @@ final class SiteSettingsPanel: UIView {
         paywallRow.toggle.onTintColor = Self.switchBlue
         paywallGroup.addSubview(paywallRow)
         rows[0].onChanged = { [weak self] enabled in self?.onAdBlockingChanged?(enabled) }
+        rows[2].onChanged = { [weak self] enabled in self?.onCookieBannersChanged?(enabled) }
         for divider in dividers {
             divider.backgroundColor = .separator
             divider.isUserInteractionEnabled = false

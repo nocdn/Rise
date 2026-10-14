@@ -5,17 +5,28 @@ extension BrowserViewController {
     func updateAdBlockingSettings() {
         let url = webView.url
         bottomBar.siteSettings.setAdBlocking(enabled: adBlocker.isEnabled(for: url),
-            available: url?.host != nil && !MobileAdBlocker.isYouTube(url), busy: adBlockingPage === webView,
+            available: url?.host != nil && !MobileAdBlocker.isYouTube(url) && (!reloadingCookieBanners || adBlockingPage == nil), busy: adBlockingPage === webView && !reloadingCookieBanners,
             isYouTube: MobileAdBlocker.isYouTube(url))
+        bottomBar.siteSettings.setCookieBanners(enabled: adBlocker.cookieBanners.isEnabled(for: url),
+            available: url?.host != nil && ["http","https"].contains(url?.scheme ?? "") && (reloadingCookieBanners || adBlockingPage == nil),
+            busy: adBlockingPage === webView && reloadingCookieBanners)
     }
 
     func changeAdBlocking(_ enabled: Bool) {
+        changePageProtection(enabled, cookieBanners: false)
+    }
+    func changeCookieBanners(_ enabled: Bool) {
+        changePageProtection(enabled, cookieBanners: true)
+    }
+    private func changePageProtection(_ enabled: Bool, cookieBanners: Bool) {
         let page = webView
-        guard let url = page.url, !MobileAdBlocker.isYouTube(url), adBlockingPage == nil else { updateAdBlockingSettings(); return }
-        let previous = adBlocker.isEnabled(for: url)
+        guard let url = page.url, (cookieBanners || !MobileAdBlocker.isYouTube(url)), adBlockingPage == nil else { updateAdBlockingSettings(); return }
+        let previous = cookieBanners ? adBlocker.cookieBanners.isEnabled(for: url) : adBlocker.isEnabled(for: url)
         let id = UUID()
         adBlockingID = id
-        adBlocker.setEnabled(enabled, for: url)
+        if cookieBanners { adBlocker.cookieBanners.setEnabled(enabled, for: url) }
+        else { adBlocker.setEnabled(enabled, for: url) }
+        reloadingCookieBanners = cookieBanners
         adBlockingPage = page
         updateAdBlockingSettings()
         adBlockingTask = Task { [weak self, weak page] in
@@ -38,7 +49,8 @@ extension BrowserViewController {
             }
             catch {
                 guard adBlockingID == id else { return }
-                adBlocker.setEnabled(previous, for: url)
+                if cookieBanners { adBlocker.cookieBanners.setEnabled(previous, for: url) }
+                else { adBlocker.setEnabled(previous, for: url) }
                 finishAdBlockingReload(on: page)
                 showAdBlockingError(error)
             }
@@ -51,6 +63,7 @@ extension BrowserViewController {
         adBlockingPage = nil
         adBlockingNavigation = nil
         adBlockingID = nil
+        reloadingCookieBanners = false
         adBlockingTask?.cancel()
         adBlockingTask = nil
         updateAdBlockingSettings()
@@ -58,7 +71,7 @@ extension BrowserViewController {
 
     func showAdBlockingError(_ error: Error) {
         guard presentedViewController == nil else { return }
-        let alert = UIAlertController(title: "Couldn't update ad blocking", message: error.localizedDescription, preferredStyle: .alert)
+        let alert = UIAlertController(title: "Couldn't update site settings", message: error.localizedDescription, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "OK", style: .default))
         present(alert, animated: true)
     }
@@ -92,11 +105,16 @@ extension BrowserViewController {
 
     func webView(_ page: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         finishAdBlockingReload(on: page, navigation: navigation)
+        handlePageFailure(page, navigation: navigation, error: error)
     }
 
     func webView(_ page: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         finishAdBlockingReload(on: page, navigation: navigation)
+        handlePageFailure(page, navigation: navigation, error: error)
     }
 
-    func webViewWebContentProcessDidTerminate(_ page: WKWebView) { finishAdBlockingReload(on: page) }
+    func webViewWebContentProcessDidTerminate(_ page: WKWebView) {
+        finishAdBlockingReload(on: page)
+        handlePageProcessTermination(page)
+    }
 }

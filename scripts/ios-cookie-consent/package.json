@@ -1,0 +1,9 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "node build.mjs" },
+  "dependencies": {
+    "@duckduckgo/autoconsent": "16.52.0",
+    "esbuild": "0.28.2"
+  }
+}

@@ -109,7 +109,9 @@ final class BrowserSessionTests: XCTestCase {
         window.rootViewController = restored
         restored.view.layoutIfNeeded()
         try await waitForPage(restored.webView)
-        XCTAssertFalse(restored.isPanelOpen, "A saved session resumes the selected page without opening New Page")
+        XCTAssertTrue(restored.isPanelOpen, "A fresh launch opens New Page above the restored session")
+        XCTAssertEqual(restored.bottomBar.panel, .search)
+        restored.closePanel()
         XCTAssertEqual(restored.webView.url, second)
         XCTAssertEqual(fixture.pageRequests, requests+1, "Only the selected tab should load at launch")
         XCTAssertNil(restored.tabs[0].webView.url)

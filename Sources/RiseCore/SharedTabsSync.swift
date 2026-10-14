@@ -29,9 +29,15 @@ import Foundation
         var engineState: CKSyncEngine.State.Serialization?
         var systemFields: [UUID: Data] = [:]
         var dirtyIDs: Set<UUID> = []
+        var learnedSearches: LearnedSearches.Snapshot?
+        var searchSystemFields: Data?
+        var searchesDirty: Bool?
         var lastStatus: String?
         var lastError: String?
     }
+    nonisolated private static let searchesRecordName = "learned-site-searches"
+    private var searchStore: LearnedSearches?
+    public var onSearchesChange: (() -> Void)?
     public var onTabsChange: (([SharedBrowserTab]) -> Void)?
     public var onStatusChange: ((Status) -> Void)?
     public private(set) var status: Status = .ready {
@@ -66,9 +72,10 @@ import Foundation
         cache = (try? Data(contentsOf: cacheURL)).flatMap { try? JSONDecoder().decode(Cache.self, from: $0) } ?? Cache()
     }
 
-    public func start(tabs: [SharedBrowserTab]) {
+    public func start(tabs: [SharedBrowserTab], learnedSearches: LearnedSearches? = nil) {
         guard !started else { return }
         started = true
+        searchStore = learnedSearches
         capture(tabs)
         if isEnabled, self.tabs != tabs { onTabsChange?(self.tabs) }
         accountObserver = NotificationCenter.default.addObserver(forName: .CKAccountChanged, object: nil, queue: .main) { [weak self] _ in
@@ -78,11 +85,46 @@ import Foundation
     }
 
     public func capture(_ tabs: [SharedBrowserTab]) {
+        captureSearches()
         let changed = cache.ledger.capture(tabs)
         guard !changed.isEmpty else { return }
         cache.dirtyIDs.formUnion(changed)
         persist()
         if isEnabled { enqueue(changed) }
+    }
+
+    public func captureSearches() {
+        guard let store = searchStore else { return }
+        let merged = (cache.learnedSearches ?? .init()).merging(store.snapshot)
+        if isEnabled, store.merge(merged) { saveSearches(); onSearchesChange?() }
+        guard cache.learnedSearches != merged else { return }
+        cache.learnedSearches = merged; cache.searchesDirty = true
+        persist(); if isEnabled { enqueueSearches() }
+    }
+    private func saveSearches() {
+        do { try searchStore?.save() } catch { NSLog("Rise learned searches couldn't be saved: %@", error.localizedDescription) }
+    }
+    private var searchesRecordID: CKRecord.ID { .init(recordName: Self.searchesRecordName, zoneID: zoneID) }
+    private func enqueueSearches() {
+        guard cache.searchesDirty == true else { return }
+        engine?.state.add(pendingRecordZoneChanges: [.saveRecord(searchesRecordID)])
+    }
+    private func mergeSearches(_ record: CKRecord) {
+        guard record.recordID == searchesRecordID, let data = record["payload"] as? Data, data.count <= 1_000_000,
+              let incoming = try? JSONDecoder().decode(LearnedSearches.Snapshot.self, from: data) else { return }
+        let merged = (cache.learnedSearches ?? .init()).merging(incoming)
+        cache.learnedSearches = merged
+        let archive = NSKeyedArchiver(requiringSecureCoding: true)
+        record.encodeSystemFields(with: archive); archive.finishEncoding(); cache.searchSystemFields = archive.encodedData
+        if merged != incoming { cache.searchesDirty = true; enqueueSearches() }
+        if searchStore?.merge(merged) == true { saveSearches(); onSearchesChange?() }
+    }
+    private func receivedSearchSave(_ record: CKRecord) {
+        mergeSearches(record)
+        if let data = record["payload"] as? Data,
+           let saved = try? JSONDecoder().decode(LearnedSearches.Snapshot.self, from: data), saved == cache.learnedSearches {
+            cache.searchesDirty = false
+        } else { enqueueSearches() }
     }
 
     /// Called only after an adapter has installed the remote list, including deferred UI updates.
@@ -117,7 +159,7 @@ import Foundation
         guard self.engine === engine, isEnabled else { return false }
         switch result {
         case .success:
-            if cache.dirtyIDs.isEmpty { cache.lastError = nil; status = .ready }
+            if cache.dirtyIDs.isEmpty, cache.searchesDirty != true { cache.lastError = nil; status = .ready }
             return true
         case .failure(let error): syncFailed(error, from: engine); return false
         }
@@ -155,6 +197,7 @@ import Foundation
                     let current = cache.ledger.observedTabs
                     cache = Cache(); _ = cache.ledger.capture(current)
                     cache.dirtyIDs = Set(cache.ledger.records.keys)
+                    captureSearches()
                 }
                 cache.accountID = identity
                 var configuration = CKSyncEngine.Configuration(database: container.privateCloudDatabase,
@@ -163,7 +206,7 @@ import Foundation
                 let created = CKSyncEngine(configuration)
                 engine = created
                 created.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))])
-                enqueue(cache.dirtyIDs)
+                enqueue(cache.dirtyIDs); enqueueSearches()
                 persist()
                 if automaticallySync { refresh() }
             } catch {
@@ -219,9 +262,17 @@ import Foundation
             }
         case .fetchedRecordZoneChanges(let event):
             var changed = false
-            for modification in event.modifications { changed = merge(modification.record) || changed }
+            for modification in event.modifications {
+                if modification.record.recordID == searchesRecordID { mergeSearches(modification.record) }
+                else { changed = merge(modification.record) || changed }
+            }
             // Ordinary closes use durable tombstones. External record/zone deletion is also a close.
             for deletion in event.deletions {
+                if deletion.recordID == searchesRecordID {
+                    cache.searchSystemFields = nil
+                    if cache.learnedSearches != nil { cache.searchesDirty = true; enqueueSearches() }
+                    continue
+                }
                 guard deletion.recordID.zoneID == zoneID, let id = UUID(uuidString: deletion.recordID.recordName),
                       var record = cache.ledger.records[id] else { continue }
                 record.closedAt = cache.ledger.nextVersion(); cache.ledger.records[id] = record
@@ -231,6 +282,8 @@ import Foundation
         case .fetchedDatabaseChanges(let event):
             if event.deletions.contains(where: { $0.zoneID == zoneID }) {
                 cache.systemFields = [:]; cache.engineState = nil
+                cache.searchSystemFields = nil
+                if cache.learnedSearches != nil { cache.searchesDirty = true; enqueueSearches() }
                 for id in Array(cache.ledger.records.keys) {
                     let version = cache.ledger.nextVersion()
                     cache.ledger.records[id]?.closedAt = version
@@ -241,6 +294,7 @@ import Foundation
             }
         case .sentRecordZoneChanges(let event):
             for saved in event.savedRecords {
+                if saved.recordID == searchesRecordID { receivedSearchSave(saved); continue }
                 guard saved.recordID.zoneID == zoneID, let id = UUID(uuidString: saved.recordID.recordName) else { continue }
                 rememberFields(saved, id: id)
                 if let payload = saved["payload"] as? Data, let record = try? JSONDecoder().decode(SharedTabRecord.self, from: payload),
@@ -253,6 +307,19 @@ import Foundation
                 }
             }
             for failure in event.failedRecordSaves {
+                if failure.record.recordID == searchesRecordID {
+                    switch failure.error.code {
+                    case .serverRecordChanged:
+                        if let server = failure.error.serverRecord { mergeSearches(server) }
+                        enqueueSearches()
+                    case .zoneNotFound:
+                        cache.searchSystemFields = nil
+                        source.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))]); enqueueSearches()
+                    case .unknownItem: cache.searchSystemFields = nil; enqueueSearches()
+                    default: cache.lastError = failure.error.localizedDescription; status = Self.status(for: failure.error)
+                    }
+                    continue
+                }
                 guard failure.record.recordID.zoneID == zoneID, let id = UUID(uuidString: failure.record.recordID.recordName) else { continue }
                 switch failure.error.code {
                 case .serverRecordChanged:
@@ -299,18 +366,26 @@ import Foundation
         let snapshot = await batchSnapshot(for: syncEngine)
         let changes = syncEngine.state.pendingRecordZoneChanges.filter { context.options.scope.contains($0) }
         return await CKSyncEngine.RecordZoneChangeBatch(pendingChanges: changes) { id in
-            guard let uuid = UUID(uuidString: id.recordName), let payload = snapshot.0[uuid] else { return nil }
+            guard let payload = snapshot.0[id.recordName] else { return nil }
             var record: CKRecord?
-            if let fields = snapshot.1[uuid], let decoder = try? NSKeyedUnarchiver(forReadingFrom: fields) {
+            if let fields = snapshot.1[id.recordName], let decoder = try? NSKeyedUnarchiver(forReadingFrom: fields) {
                 decoder.requiresSecureCoding = true; record = CKRecord(coder: decoder); decoder.finishDecoding()
             }
-            let value = record ?? CKRecord(recordType: "RiseTab", recordID: id)
+            let value = record ?? CKRecord(recordType: id.recordName == Self.searchesRecordName ? "RiseSearches" : "RiseTab", recordID: id)
             value["payload"] = payload as CKRecordValue
             return value
         }
     }
-    private func batchSnapshot(for source: CKSyncEngine) -> ([UUID: Data], [UUID: Data]) {
+    private func batchSnapshot(for source: CKSyncEngine) -> ([String: Data], [String: Data]) {
         guard source === engine, isEnabled else { return ([:], [:]) }
-        return (cache.ledger.records.compactMapValues { try? JSONEncoder().encode($0) }, cache.systemFields)
+        var payloads = Dictionary(uniqueKeysWithValues: cache.ledger.records.compactMap { id, record in
+            (try? JSONEncoder().encode(record)).map { (id.uuidString, $0) }
+        })
+        var fields = Dictionary(uniqueKeysWithValues: cache.systemFields.map { ($0.key.uuidString, $0.value) })
+        if let searches = cache.learnedSearches {
+            payloads[Self.searchesRecordName] = try? JSONEncoder().encode(searches)
+            fields[Self.searchesRecordName] = cache.searchSystemFields
+        }
+        return (payloads, fields)
     }
 }

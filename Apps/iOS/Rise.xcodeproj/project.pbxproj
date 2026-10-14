@@ -4,6 +4,24 @@
     classes = {};
     objectVersion = 77;
     objects = {
+        A00000000000000000000110 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = FaviconDiscovery.swift; path = ../../Sources/RiseCore/FaviconDiscovery.swift; sourceTree = "<group>"; };
+        A00000000000000000000111 = { isa = PBXBuildFile; fileRef = A00000000000000000000110; };
+        A00000000000000000000100 /* BrowserState.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = BrowserState.swift; path = ../../Sources/RiseCore/BrowserState.swift; sourceTree = "<group>"; };
+        A00000000000000000000101 /* BrowserState.swift in Sources */ = { isa = PBXBuildFile; fileRef = A00000000000000000000100; };
+        A00000000000000000000102 /* SearchEngine.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SearchEngine.swift; path = ../../Sources/RiseCore/SearchEngine.swift; sourceTree = "<group>"; };
+        A00000000000000000000103 /* SearchEngine.swift in Sources */ = { isa = PBXBuildFile; fileRef = A00000000000000000000102; };
+        A00000000000000000000104 /* PopularSites.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PopularSites.swift; path = ../../Sources/RiseCore/PopularSites.swift; sourceTree = "<group>"; };
+        A00000000000000000000105 /* PopularSites.swift in Sources */ = { isa = PBXBuildFile; fileRef = A00000000000000000000104; };
+        A00000000000000000000106 /* BrowsingHistory.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = BrowsingHistory.swift; path = ../../Sources/RiseCore/BrowsingHistory.swift; sourceTree = "<group>"; };
+        A00000000000000000000107 /* BrowsingHistory.swift in Sources */ = { isa = PBXBuildFile; fileRef = A00000000000000000000106; };
+        A00000000000000000000108 /* LearnedSearches.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LearnedSearches.swift; path = ../../Sources/RiseCore/LearnedSearches.swift; sourceTree = "<group>"; };
+        A00000000000000000000109 /* LearnedSearches.swift in Sources */ = { isa = PBXBuildFile; fileRef = A00000000000000000000108; };
+        A0000000000000000000010A /* AddressSuggestionEngine.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AddressSuggestionEngine.swift; path = ../../Sources/RiseCore/AddressSuggestionEngine.swift; sourceTree = "<group>"; };
+        A0000000000000000000010B /* AddressSuggestionEngine.swift in Sources */ = { isa = PBXBuildFile; fileRef = A0000000000000000000010A; };
+        A0000000000000000000010C /* GoogleSearchSuggestions.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = GoogleSearchSuggestions.swift; path = ../../Sources/RiseCore/GoogleSearchSuggestions.swift; sourceTree = "<group>"; };
+        A0000000000000000000010D /* GoogleSearchSuggestions.swift in Sources */ = { isa = PBXBuildFile; fileRef = A0000000000000000000010C; };
+        A0000000000000000000010E /* SiteSearchLearner.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SiteSearchLearner.swift; path = ../../Sources/RiseCore/SiteSearchLearner.swift; sourceTree = "<group>"; };
+        A0000000000000000000010F /* SiteSearchLearner.swift in Sources */ = { isa = PBXBuildFile; fileRef = A0000000000000000000010E; };
         A00000000000000000000070 /* SharedTabsLedger.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SharedTabsLedger.swift; path = ../../Sources/RiseCore/SharedTabsLedger.swift; sourceTree = "<group>"; };
         A00000000000000000000071 /* SharedTabsLedger.swift in Sources */ = { isa = PBXBuildFile; fileRef = A00000000000000000000070; };
         A00000000000000000000072 /* SharedTabsSync.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SharedTabsSync.swift; path = ../../Sources/RiseCore/SharedTabsSync.swift; sourceTree = "<group>"; };
@@ -76,7 +94,7 @@
         A00000000000000000000009 /* Main group */ = {
             isa = PBXGroup;
             children = (A00000000000000000000007, A00000000000000000000008,
-                        A0000000000000000000000A, A00000000000000000000002, A0000000000000000000000C, A00000000000000000000060, A00000000000000000000062, A00000000000000000000064, A00000000000000000000066, A00000000000000000000068, A00000000000000000000070, A00000000000000000000072, A0000000000000000000000B,);
+                        A0000000000000000000000A, A00000000000000000000002, A0000000000000000000000C, A00000000000000000000060, A00000000000000000000062, A00000000000000000000064, A00000000000000000000066, A00000000000000000000068, A00000000000000000000070, A00000000000000000000072, A00000000000000000000110, A00000000000000000000100, A00000000000000000000102, A00000000000000000000104, A00000000000000000000106, A00000000000000000000108, A0000000000000000000010A, A0000000000000000000010C, A0000000000000000000010E, A0000000000000000000000B,);
             sourceTree = "<group>";
         };
         A0000000000000000000000A /* Configuration */ = {
@@ -119,7 +137,7 @@
             remoteGlobalIDString = A00000000000000000000010;
             remoteInfo = RiseiOS;
         };
-        A00000000000000000000020 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A0000000000000000000000D, A00000000000000000000061, A00000000000000000000063, A00000000000000000000065, A00000000000000000000067, A00000000000000000000069, A00000000000000000000071, A00000000000000000000073,); runOnlyForDeploymentPostprocessing = 0; };
+        A00000000000000000000020 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A0000000000000000000000D, A00000000000000000000061, A00000000000000000000063, A00000000000000000000065, A00000000000000000000067, A00000000000000000000069, A00000000000000000000071, A00000000000000000000073, A00000000000000000000111, A00000000000000000000101, A00000000000000000000103, A00000000000000000000105, A00000000000000000000107, A00000000000000000000109, A0000000000000000000010B, A0000000000000000000010D, A0000000000000000000010F,); runOnlyForDeploymentPostprocessing = 0; };
         A00000000000000000000021 = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
         A00000000000000000000022 = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000001,); runOnlyForDeploymentPostprocessing = 0; };
         A00000000000000000000023 = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
