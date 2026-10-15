@@ -1,11 +1,12 @@
 """Rise's features on Chromium pages in an actual Rise window.
 
-    python3 scripts/test-chromium-live.py [peek|features]
+    python3 scripts/test-chromium-live.py [peek|features|extensions|scripts]
 
 peek: Peek's motion, frame by frame (Tests/Live/ChromiumPeekBenchmarks.swift).
 features: history after a relaunch, downloads, find, permissions, picture in picture and the
 tab's media and sound (Tests/Live/ChromiumFeatureChecks.swift), with pages served from two local
 sites so one can hold a frame of the other.
+scripts: Rise's page scripts and messages, in frames of both sites (Tests/Live/ChromiumScriptChecks.swift).
 
 Chromium only runs from an app bundle with its helpers, so the check runs as the main program of
 a copy of build/Rise.app (made by ./scripts/build.sh with the engine built). Frames are kept in
@@ -19,7 +20,8 @@ import sys
 import socket
 import tempfile
 
-checks = {"peek": "ChromiumPeekBenchmarks.swift", "features": "ChromiumFeatureChecks.swift", "extensions": "ChromiumExtensionChecks.swift"}
+checks = {"peek": "ChromiumPeekBenchmarks.swift", "features": "ChromiumFeatureChecks.swift", "extensions": "ChromiumExtensionChecks.swift",
+          "scripts": "ChromiumScriptChecks.swift"}
 check = sys.argv[1] if len(sys.argv) > 1 else "peek"
 if check not in checks:
     raise SystemExit(f"Unknown check {check}; choose from {', '.join(checks)}.")
@@ -67,10 +69,12 @@ subprocess.run(["codesign", "--force", "--sign", "-", str(probe)], check=True, c
 environment = dict(os.environ, RISE_PEEK_OUT=str(folder), PACKAGE_RESOURCE_BUNDLE_PATH=str(debug))
 arguments, servers = [], []
 if check == "features":
-    # A short clip with sound, and two sites: localhost and 127.0.0.1 are different sites.
+    # A short clip with sound.
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=30", "-f", "lavfi",
                     "-i", "sine=frequency=440", "-t", "30", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
                     "-shortest", str(folder / "clip.mp4")], check=True)
+if check in ("features", "scripts"):
+    # Two sites: localhost and 127.0.0.1 are different sites.
     ports = []
     for _ in range(2):
         with socket.socket() as probe_socket:
@@ -80,6 +84,7 @@ if check == "features":
                                 stdout=subprocess.DEVNULL, stderr=open(folder / f"server-{index}.log", "w"))
                for index, port in enumerate(ports)]
     environment["RISE_CHECK_PORTS"] = ",".join(map(str, ports))
+if check == "features":
     # Media plays without a click, and the camera is Chromium's made-up one, so no real camera is asked for.
     # rise-check.test is an ordinary site to the filter lists, which leave local addresses alone.
     arguments = ["--autoplay-policy=no-user-gesture-required", "--use-fake-device-for-media-stream",

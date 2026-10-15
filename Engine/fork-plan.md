@@ -79,6 +79,19 @@ are most of them.
      takes it as the current window.
    - **Chrome's history swipe is off:** it took Rise's swipe gesture now and then.
 
+   **Page scripts in Chrome's renderer (done).** Rise's scripts no longer go through DevTools. A
+   small agent in each frame (`chrome/renderer/rise`) runs them as each document starts, from
+   Chrome's own document-start hook, before the page's scripts and before extensions'. Each
+   script gets its own `riseHandlers`, which nothing else in the page can reach. The browser
+   sends a frame its scripts, and where its messages go, just before each navigation in it
+   commits (`chrome/common/rise/rise_frame.mojom`), so a new document never starts without
+   them, in frames of other sites too. Messages say which frame sent them from the browser's
+   side, not the page's. Only the page's process needed a hook in Chrome's code: the
+   browser hands each frame its connection back to Rise itself. Checked by
+   `python3 scripts/test-chromium-live.py scripts`, which passes on the fork. On CEF it shows
+   where the DevTools route falls short: scripts in Rise's own worlds run after the page's
+   first script, and frames often miss them.
+
 1. **The engine API.** Everything `RiseChromium.h` offers today, on the fork:
    - Navigation, and saving and restoring back and forward history.
    - Sound playing; zoom and pinch.

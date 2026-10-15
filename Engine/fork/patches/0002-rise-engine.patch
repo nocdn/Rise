@@ -250,10 +250,10 @@ index 3a0283de31..13f045738f 100644
  }
 diff --git a/chrome/browser/rise/BUILD.gn b/chrome/browser/rise/BUILD.gn
 new file mode 100644
-index 0000000000..07947aafa9
+index 0000000000..6bc85718a3
 --- /dev/null
 +++ b/chrome/browser/rise/BUILD.gn
-@@ -0,0 +1,46 @@
+@@ -0,0 +1,48 @@
 +# Copyright 2026 The Rise Authors. All rights reserved.
 +# Use of this source code is governed by a BSD-style license that can be
 +# found in the LICENSE file.
@@ -289,8 +289,10 @@ index 0000000000..07947aafa9
 +    "//chrome/browser/ui/browser_window",
 +    "//chrome/browser/ui/browser_window:create_browser_window",
 +    "//chrome/browser/ui/tabs:tab_strip",
++    "//chrome/common/rise:mojom",
 +    "//components/search_engines",
 +    "//content/public/browser",
++    "//mojo/public/cpp/bindings",
 +    "//skia",
 +    "//third_party/blink/public/common",
 +    "//ui/gfx",
@@ -777,10 +779,10 @@ index 0000000000..cabcb68258
 +#endif  // CHROME_BROWSER_RISE_CHROME_BROWSER_MAIN_EXTRA_PARTS_RISE_H_
 diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
 new file mode 100644
-index 0000000000..8a330f2d52
+index 0000000000..99972c3857
 --- /dev/null
 +++ b/chrome/browser/rise/rise_bridge.mm
-@@ -0,0 +1,1166 @@
+@@ -0,0 +1,1437 @@
 +// Copyright 2026 The Rise Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -825,6 +827,11 @@ index 0000000000..8a330f2d52
 +#include "chrome/browser/ui/tabs/tab_model.h"
 +#include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
 +#include "chrome/browser/ui/unload_controller.h"
++#include "chrome/common/rise/rise_frame.mojom.h"
++#include "content/public/browser/global_routing_id.h"
++#include "mojo/public/cpp/bindings/associated_receiver.h"
++#include "mojo/public/cpp/bindings/associated_remote.h"
++#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 +#include "components/tabs/public/tab_interface.h"
 +#include "components/viz/common/frame_sinks/copy_output_result.h"
 +#include "chrome/browser/ui/browser_window/public/create_browser_window.h"
@@ -965,6 +972,13 @@ index 0000000000..8a330f2d52
 +              : @"null";
 +}
 +
++base::Value ToValue(id object) {
++  std::optional<base::Value> value =
++      base::JSONReader::Read(base::SysNSStringToUTF8(ToJSON(object)),
++                             base::JSON_PARSE_RFC);
++  return value ? std::move(*value) : base::Value();
++}
++
 +// A world of Rise's own for each name: the page's scripts can't see it.
 +int32_t WorldID(NSString* world) {
 +  static NSMutableDictionary<NSString*, NSNumber*>* ids =
@@ -974,7 +988,8 @@ index 0000000000..8a330f2d52
 +  }
 +  NSNumber* known = ids[world];
 +  if (!known) {
-+    known = @(1000 + (int)ids.count);
++    // Above the worlds Chrome numbers for itself and extensions.
++    known = @((1 << 28) + (int)ids.count);
 +    ids[world] = known;
 +  }
 +  return known.intValue;
@@ -996,7 +1011,19 @@ index 0000000000..8a330f2d52
 +
 +}  // namespace
 +
++@interface RCFrame ()
++- (instancetype)initWithFrame:(content::RenderFrameHost*)frame
++                        world:(int32_t)world;
++- (content::GlobalRenderFrameHostId)frameID;
++@end
++
 +@interface RCBrowserView ()
++- (std::vector<rise::mojom::ScriptPtr>)frameScripts;
++- (void)receivedMessage:(base::Value)body
++                handler:(const std::string&)handler
++                  world:(int32_t)world
++                  frame:(content::GlobalRenderFrameHostId)frameID
++                  reply:(void (^)(id, NSString*))reply;
 +- (void)browserStarted;
 +- (content::WebContents*)contents;
 +- (void)contentsGone;
@@ -1008,11 +1035,86 @@ index 0000000000..8a330f2d52
 +
 +namespace {
 +
++// What Rise's scripts in one frame post, for its Rise view.
++class FrameHost : public rise::mojom::RiseFrameHost {
++ public:
++  FrameHost(RCBrowserView* view, content::GlobalRenderFrameHostId frame)
++      : view_(view), frame_(frame) {}
++
++  mojo::PendingAssociatedRemote<rise::mojom::RiseFrameHost> Bind() {
++    return receiver_.BindNewEndpointAndPassRemote();
++  }
++  bool is_bound() const { return receiver_.is_bound(); }
++
++  void PostMessage(const std::string& handler,
++                   int32_t world_id,
++                   base::Value body) override {
++    [view_ receivedMessage:std::move(body)
++                   handler:handler
++                     world:world_id
++                     frame:frame_
++                     reply:nil];
++  }
++  void PostMessageWithReply(const std::string& handler,
++                            int32_t world_id,
++                            base::Value body,
++                            PostMessageWithReplyCallback callback) override {
++    auto waiting =
++        std::make_shared<PostMessageWithReplyCallback>(std::move(callback));
++    void (^reply)(id, NSString*) = ^(id value, NSString* error) {
++      if (!*waiting) {
++        return;
++      }
++      std::move(*waiting).Run(
++          error ? base::Value() : ToValue(value),
++          error ? std::optional<std::string>(base::SysNSStringToUTF8(error))
++                : std::nullopt);
++    };
++    RCBrowserView* view = view_;
++    if (!view) {
++      reply(nil, @"The page went away");
++      return;
++    }
++    [view receivedMessage:std::move(body)
++                  handler:handler
++                    world:world_id
++                    frame:frame_
++                    reply:reply];
++  }
++
++ private:
++  __weak RCBrowserView* view_;
++  content::GlobalRenderFrameHostId frame_;
++  mojo::AssociatedReceiver<rise::mojom::RiseFrameHost> receiver_{this};
++};
++
++// Rise's agent in a frame, in the page's process.
++mojo::AssociatedRemote<rise::mojom::RiseFrame> AgentOf(
++    content::RenderFrameHost* frame) {
++  mojo::AssociatedRemote<rise::mojom::RiseFrame> agent;
++  frame->GetRemoteAssociatedInterfaces()->GetInterface(&agent);
++  return agent;
++}
++
 +// What a tab does, told to its Rise view.
 +class TabObserver : public content::WebContentsObserver {
 + public:
 +  TabObserver(RCBrowserView* view, content::WebContents* contents)
 +      : WebContentsObserver(contents), view_(view) {}
++
++  // Each frame has Rise's scripts before a document of a navigation in it
++  // starts: sent before the commit, they arrive before it.
++  void ReadyToCommitNavigation(content::NavigationHandle* navigation) override {
++    SendScripts(navigation->GetRenderFrameHost(), /*fresh=*/false);
++  }
++  // A frame made in its page's process, as by a script, or made again after
++  // a crash.
++  void RenderFrameCreated(content::RenderFrameHost* frame) override {
++    SendScripts(frame, /*fresh=*/true);
++  }
++  void RenderFrameDeleted(content::RenderFrameHost* frame) override {
++    hosts_.erase(frame->GetGlobalId());
++  }
 +
 +  void TitleWasSet(content::NavigationEntry* entry) override { Changed(); }
 +  void DidStartLoading() override { Changed(); }
@@ -1051,7 +1153,25 @@ index 0000000000..8a330f2d52
 +
 + private:
 +  void Changed() { [view_ contentsChanged]; }
++
++  void SendScripts(content::RenderFrameHost* frame, bool fresh) {
++    RCBrowserView* view = view_;
++    if (!view || !frame || !frame->IsRenderFrameLive()) {
++      return;
++    }
++    // Where its scripts post, once a frame (again for a frame made anew).
++    mojo::PendingAssociatedRemote<rise::mojom::RiseFrameHost> remote;
++    std::unique_ptr<FrameHost>& host = hosts_[frame->GetGlobalId()];
++    if (fresh || !host || !host->is_bound()) {
++      host = std::make_unique<FrameHost>(view, frame->GetGlobalId());
++      remote = host->Bind();
++    }
++    AgentOf(frame)->SetScripts([view frameScripts], std::move(remote));
++  }
++
 +  __weak RCBrowserView* view_;
++  std::map<content::GlobalRenderFrameHostId, std::unique_ptr<FrameHost>>
++      hosts_;
 +};
 +
 +}  // namespace
@@ -1243,6 +1363,11 @@ index 0000000000..8a330f2d52
 +  std::unique_ptr<TabObserver> _observer;
 +  NSURL* _pendingURL;
 +  BOOL _closed;
++  // Rise's scripts for the page's documents, in order: source, world (none
++  // for the page's own), mainFrameOnly, and handlers as [name, replies].
++  NSMutableArray<NSDictionary*>* _scripts;
++  // Rise's message handlers, by name: world and replies.
++  NSMutableDictionary<NSString*, NSDictionary*>* _handlers;
 +}
 +
 +@synthesize delegate = _delegate;
@@ -1258,6 +1383,8 @@ index 0000000000..8a330f2d52
 +    return nil;
 +  }
 +  _pendingURL = url;
++  _scripts = [NSMutableArray array];
++  _handlers = [NSMutableDictionary dictionary];
 +  _zoom = 1;
 +  _pageBackgroundColor = NSColor.whiteColor;
 +  self.wantsLayer = YES;
@@ -1471,9 +1598,12 @@ index 0000000000..8a330f2d52
 +                       world:(NSString*)world
 +                  completion:(void (^)(id, NSString*))completion {
 +  content::RenderFrameHost* host =
-+      _contents ? _contents->GetPrimaryMainFrame() : nullptr;
-+  if (!host || !host->IsRenderFrameLive()) {
-+    completion(nil, @"The page isn't there");
++      !_contents ? nullptr
++      : frame    ? content::RenderFrameHost::FromID([frame frameID])
++                 : _contents->GetPrimaryMainFrame();
++  if (!host || !host->IsRenderFrameLive() ||
++      content::WebContents::FromRenderFrameHost(host) != _contents) {
++    completion(nil, frame ? @"The frame isn't there" : @"The page isn't there");
 +    return;
 +  }
 +  NSMutableArray* names = [NSMutableArray array];
@@ -1488,7 +1618,9 @@ index 0000000000..8a330f2d52
 +                       [names componentsJoinedByString:@", "], functionBody,
 +                       [values componentsJoinedByString:@", "]];
 +  static_cast<content::RenderFrameHostImpl*>(host)->ExecuteJavaScriptForTests(
-+      base::SysNSStringToUTF16(script), /*has_user_gesture=*/false,
++      // Rise runs these for the user, as a button of its own does: media
++      // plays and windows open as they would from a click.
++      base::SysNSStringToUTF16(script), /*has_user_gesture=*/true,
 +      /*resolve_promises=*/true, /*honor_js_content_settings=*/false,
 +      WorldID(world),
 +      base::BindOnce(
@@ -1506,14 +1638,122 @@ index 0000000000..8a330f2d52
 +          completion));
 +}
 +
-+- (void)addScriptToEveryDocument:(NSString*)source world:(NSString*)world {}
++// MARK: Rise's scripts
++
++- (rise::mojom::ScriptPtr)frameScript:(NSDictionary*)script {
++  auto result = rise::mojom::Script::New();
++  NSString* world = script[@"world"];
++  result->source = base::SysNSStringToUTF8(script[@"source"]);
++  result->world_id = WorldID(world);
++  result->world_name = world ? base::SysNSStringToUTF8(world) : "";
++  result->main_frame_only = [script[@"mainFrameOnly"] boolValue];
++  for (NSArray* handler in script[@"handlers"]) {
++    result->handlers.push_back(rise::mojom::Handler::New(
++        base::SysNSStringToUTF8(handler[0]), [handler[1] boolValue]));
++  }
++  return result;
++}
++
++- (std::vector<rise::mojom::ScriptPtr>)frameScripts {
++  std::vector<rise::mojom::ScriptPtr> scripts;
++  for (NSDictionary* script in _scripts) {
++    scripts.push_back([self frameScript:script]);
++  }
++  return scripts;
++}
++
++// Tells every frame of the page: a new script runs in documents already
++// started as well as those to come; otherwise, the whole list again, for
++// documents to come.
++- (void)sendScripts:(NSDictionary*)added {
++  if (!_contents) {
++    return;
++  }
++  _contents->ForEachRenderFrameHost([&](content::RenderFrameHost* frame) {
++    if (!frame->IsRenderFrameLive()) {
++      return;
++    }
++    if (added && frame->IsActive()) {
++      AgentOf(frame)->AddScript([self frameScript:added]);
++    } else {
++      AgentOf(frame)->SetScripts([self frameScripts], mojo::NullAssociatedRemote());
++    }
++  });
++}
++
++- (void)addScript:(NSString*)source
++            world:(NSString*)world
++    mainFrameOnly:(BOOL)mainFrameOnly
++         handlers:(NSArray<NSString*>*)handlers {
++  NSMutableArray* given = [NSMutableArray array];
++  for (NSString* name in handlers) {
++    NSDictionary* handler = _handlers[name];
++    // A handler is for scripts in its own world.
++    if (handler && WorldID(handler[@"world"]) == WorldID(world)) {
++      [given addObject:@[ name, handler[@"replies"] ]];
++    }
++  }
++  NSMutableDictionary* script = [@{
++    @"source" : source ?: @"",
++    @"mainFrameOnly" : @(mainFrameOnly),
++    @"handlers" : given
++  } mutableCopy];
++  if (world.length) {
++    script[@"world"] = world;
++  }
++  [_scripts addObject:script];
++  [self sendScripts:script];
++}
++
++- (void)addScriptToEveryDocument:(NSString*)source world:(NSString*)world {
++  [self addScript:source world:world mainFrameOnly:NO handlers:@[]];
++}
 +- (void)addMessageHandler:(NSString*)name
 +                    world:(NSString*)world
-+                  replies:(BOOL)replies {}
++                  replies:(BOOL)replies {
++  NSMutableDictionary* handler = [@{@"replies" : @(replies)} mutableCopy];
++  if (world.length) {
++    handler[@"world"] = world;
++  }
++  _handlers[name] = handler;
++}
 +- (void)addUserScript:(NSString*)source
 +                world:(NSString*)world
 +        mainFrameOnly:(BOOL)mainFrameOnly
-+             handlers:(NSArray<NSString*>*)handlers {}
++             handlers:(NSArray<NSString*>*)handlers {
++  [self addScript:source
++            world:world
++    mainFrameOnly:mainFrameOnly
++         handlers:handlers];
++}
++
++- (void)receivedMessage:(base::Value)body
++                handler:(const std::string&)handler
++                  world:(int32_t)world
++                  frame:(content::GlobalRenderFrameHostId)frameID
++                  reply:(void (^)(id, NSString*))reply {
++  NSString* name = base::SysUTF8ToNSString(handler);
++  NSDictionary* registered = _handlers[name];
++  content::RenderFrameHost* frame = content::RenderFrameHost::FromID(frameID);
++  // Only from scripts the handler was given to: in its world, and asking for
++  // a reply only if it replies.
++  if (!registered || !frame ||
++      content::WebContents::FromRenderFrameHost(frame) != _contents ||
++      WorldID(registered[@"world"]) != world ||
++      [registered[@"replies"] boolValue] != (reply != nil) ||
++      ![_delegate respondsToSelector:@selector
++                  (browserView:didReceiveMessage:handler:frame:reply:)]) {
++    if (reply) {
++      reply(nil, @"No handler");
++    }
++    return;
++  }
++  [_delegate browserView:self
++       didReceiveMessage:ToObject(body) ?: NSNull.null
++                 handler:name
++                   frame:[[RCFrame alloc] initWithFrame:frame world:world]
++                   reply:reply];
++}
 +- (void)evaluateConsoleExpression:(NSString*)expression
 +                       completion:(void (^)(id, NSString*))completion {
 +  completion(nil, @"Not on this engine yet");
@@ -1521,7 +1761,17 @@ index 0000000000..8a330f2d52
 +- (RCBrowserView*)makeDevToolsView {
 +  return [[RCBrowserView alloc] initWithFrame:NSZeroRect URL:nil];
 +}
-+- (void)removeUserScriptsWithPrefix:(NSString*)prefix {}
++- (void)removeUserScriptsWithPrefix:(NSString*)prefix {
++  NSIndexSet* matching = [_scripts
++      indexesOfObjectsPassingTest:^BOOL(NSDictionary* script, NSUInteger, BOOL*) {
++        return [script[@"source"] hasPrefix:prefix];
++      }];
++  if (!matching.count) {
++    return;
++  }
++  [_scripts removeObjectsAtIndexes:matching];
++  [self sendScripts:nil];
++}
 +
 +- (CALayer*)liveLayerShowing:(NSRect)rect {
 +  if (!ContentHost(self.layer) || NSIsEmptyRect(rect)) {
@@ -1595,18 +1845,41 @@ index 0000000000..8a330f2d52
 +}
 +@end
 +
-+@implementation RCFrame
++@implementation RCFrame {
++  content::GlobalRenderFrameHostId _frameID;
++  int32_t _world;
++  BOOL _main;
++  NSString* _origin;
++}
++- (instancetype)initWithFrame:(content::RenderFrameHost*)frame
++                        world:(int32_t)world {
++  if (!(self = [super init])) {
++    return nil;
++  }
++  _frameID = frame->GetGlobalId();
++  _world = world;
++  _main = !frame->GetParentOrOuterDocument();
++  const url::Origin& origin = frame->GetLastCommittedOrigin();
++  _origin = origin.opaque() ? @"null" : base::SysUTF8ToNSString(origin.Serialize());
++  return self;
++}
++- (content::GlobalRenderFrameHostId)frameID {
++  return _frameID;
++}
++// The frame, as its process and number there; empty for a main one.
 +- (NSString*)session {
-+  return @"";
++  return _main ? @""
++               : [NSString stringWithFormat:@"%d:%d", _frameID.child_id.value(),
++                                            _frameID.frame_routing_id];
 +}
 +- (NSInteger)context {
-+  return 0;
++  return _world;
 +}
 +- (BOOL)isMain {
-+  return YES;
++  return _main;
 +}
 +- (NSString*)origin {
-+  return @"null";
++  return _origin;
 +}
 +@end
 +
@@ -2798,3 +3071,555 @@ index ad579aa818..2fa56bd6b3 100644
  const BrowserWindow* BrowserWindow::FromBrowser(
      const BrowserWindowInterface* browser) {
    // See https://crbug.com/496674143 for the umbrella effort to remove
+diff --git a/chrome/common/rise/BUILD.gn b/chrome/common/rise/BUILD.gn
+new file mode 100644
+index 0000000000..685f476c66
+--- /dev/null
++++ b/chrome/common/rise/BUILD.gn
+@@ -0,0 +1,11 @@
++# Copyright 2026 The Rise Authors. All rights reserved.
++# Use of this source code is governed by a BSD-style license that can be
++# found in the LICENSE file.
++
++import("//mojo/public/tools/bindings/mojom.gni")
++
++# How Rise's page scripts reach each frame, and its messages come back.
++mojom("mojom") {
++  sources = [ "rise_frame.mojom" ]
++  public_deps = [ "//mojo/public/mojom/base" ]
++}
+diff --git a/chrome/common/rise/rise_frame.mojom b/chrome/common/rise/rise_frame.mojom
+new file mode 100644
+index 0000000000..1221ad8fe0
+--- /dev/null
++++ b/chrome/common/rise/rise_frame.mojom
+@@ -0,0 +1,46 @@
++// Copyright 2026 The Rise Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++module rise.mojom;
++
++import "mojo/public/mojom/base/values.mojom";
++
++// A handler Rise's script can post to, as riseHandlers.<name>.postMessage().
++struct Handler {
++  string name;
++  // Whether postMessage() returns a promise of Rise's reply.
++  bool replies;
++};
++
++// One of Rise's scripts, run as each document starts, before the page's own.
++struct Script {
++  string source;
++  // 0 for the page's own world; otherwise one of Rise's, which the page's
++  // scripts can't see, named `world_name`.
++  int32 world_id;
++  string world_name;
++  bool main_frame_only;
++  // Given to the script as `riseHandlers`; nothing else sees them.
++  array<Handler> handlers;
++};
++
++// Rise's agent in a frame, in the page's process. The browser sends a frame
++// its scripts before each navigation in it commits, so its documents never
++// start without them.
++interface RiseFrame {
++  // The scripts for the frame's documents from the next one on, and where
++  // their messages go.
++  SetScripts(array<Script> scripts,
++             pending_associated_remote<RiseFrameHost>? host);
++  // One more, run in the current document too if it has started.
++  AddScript(Script script);
++};
++
++// Rise, in the browser, for one frame: what its scripts post.
++interface RiseFrameHost {
++  PostMessage(string handler, int32 world_id, mojo_base.mojom.Value body);
++  PostMessageWithReply(string handler, int32 world_id,
++                       mojo_base.mojom.Value body)
++      => (mojo_base.mojom.Value reply, string? error);
++};
+diff --git a/chrome/renderer/BUILD.gn b/chrome/renderer/BUILD.gn
+index df80dfe84a..a069e7e80d 100644
+--- a/chrome/renderer/BUILD.gn
++++ b/chrome/renderer/BUILD.gn
+@@ -243,6 +243,10 @@ static_library("renderer") {
+     deps += [ "//components/webapps/isolated_web_apps:scheme" ]
+   }
+ 
++  if (is_mac) {
++    deps += [ "//chrome/renderer/rise" ]
++  }
++
+   data_deps = [ "//tools/v8_context_snapshot" ]
+ 
+   configs += [ "//build/config/compiler:wexit_time_destructors" ]
+diff --git a/chrome/renderer/chrome_content_renderer_client.cc b/chrome/renderer/chrome_content_renderer_client.cc
+index d460c0fb69..2071421df5 100644
+--- a/chrome/renderer/chrome_content_renderer_client.cc
++++ b/chrome/renderer/chrome_content_renderer_client.cc
+@@ -216,6 +216,10 @@
+ #include "chrome/renderer/media/chrome_speech_recognition_client.h"
+ #endif  // BUILDFLAG(ENABLE_SPEECH_SERVICE)
+ 
++#if BUILDFLAG(IS_MAC)
++#include "chrome/renderer/rise/rise_frame_agent.h"
++#endif
++
+ #if BUILDFLAG(IS_WIN)
+ #include "chrome/renderer/render_frame_font_family_accessor.h"
+ #endif
+@@ -656,6 +660,10 @@ void ChromeContentRendererClient::RenderFrameCreated(
+   service_manager::BinderRegistry* registry = render_frame_observer->registry();
+ 
+   new prerender::NoStatePrefetchRenderFrameObserver(render_frame);
++#if BUILDFLAG(IS_MAC)
++  // Rise's page scripts, from its browser.
++  new rise::RiseFrameAgent(render_frame);
++#endif
+ 
+   auto content_settings_delegate =
+       std::make_unique<ChromeContentSettingsAgentDelegate>(render_frame);
+@@ -1487,6 +1495,12 @@ ChromeContentRendererClient::CreateSpeechRecognitionClient(
+ 
+ void ChromeContentRendererClient::RunScriptsAtDocumentStart(
+     content::RenderFrame* render_frame) {
++#if BUILDFLAG(IS_MAC)
++  // Rise's first; nothing more if they closed the frame.
++  if (!rise::RiseFrameAgent::RunScriptsAtDocumentStart(render_frame)) {
++    return;
++  }
++#endif
+ #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+   extensions::ExtensionsRendererClient::Get()->RunScriptsAtDocumentStart(
+       render_frame);
+diff --git a/chrome/renderer/rise/BUILD.gn b/chrome/renderer/rise/BUILD.gn
+new file mode 100644
+index 0000000000..7310286748
+--- /dev/null
++++ b/chrome/renderer/rise/BUILD.gn
+@@ -0,0 +1,21 @@
++# Copyright 2026 The Rise Authors. All rights reserved.
++# Use of this source code is governed by a BSD-style license that can be
++# found in the LICENSE file.
++
++# Rise's page scripts, in the page's process. See Engine/fork-plan.md in Rise.
++source_set("rise") {
++  sources = [
++    "rise_frame_agent.cc",
++    "rise_frame_agent.h",
++  ]
++  public_deps = [
++    "//chrome/common/rise:mojom",
++    "//content/public/renderer",
++  ]
++  deps = [
++    "//base",
++    "//mojo/public/cpp/bindings",
++    "//third_party/blink/public:blink",
++    "//v8",
++  ]
++}
+diff --git a/chrome/renderer/rise/rise_frame_agent.cc b/chrome/renderer/rise/rise_frame_agent.cc
+new file mode 100644
+index 0000000000..c5ec7051b7
+--- /dev/null
++++ b/chrome/renderer/rise/rise_frame_agent.cc
+@@ -0,0 +1,298 @@
++// Copyright 2026 The Rise Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/renderer/rise/rise_frame_agent.h"
++
++#include <memory>
++#include <set>
++#include <tuple>
++#include <utility>
++
++#include "base/no_destructor.h"
++#include "content/public/renderer/render_frame.h"
++#include "content/public/renderer/v8_value_converter.h"
++#include "mojo/public/cpp/bindings/clone_traits.h"
++#include "third_party/blink/public/platform/scheduler/web_agent_group_scheduler.h"
++#include "third_party/blink/public/platform/web_isolated_world_info.h"
++#include "third_party/blink/public/platform/web_string.h"
++#include "third_party/blink/public/web/web_local_frame.h"
++#include "third_party/blink/public/web/web_script_source.h"
++#include "v8/include/v8-container.h"
++#include "v8/include/v8-context.h"
++#include "v8/include/v8-exception.h"
++#include "v8/include/v8-function-callback.h"
++#include "v8/include/v8-function.h"
++#include "v8/include/v8-isolate.h"
++#include "v8/include/v8-microtask-queue.h"
++#include "v8/include/v8-object.h"
++#include "v8/include/v8-primitive.h"
++#include "v8/include/v8-promise.h"
++
++namespace rise {
++
++namespace {
++
++v8::Local<v8::String> V8String(v8::Isolate* isolate, const std::string& text) {
++  return v8::String::NewFromUtf8(isolate, text.data(),
++                                 v8::NewStringType::kNormal,
++                                 static_cast<int>(text.size()))
++      .ToLocalChecked();
++}
++
++// Gives one of Rise's worlds its name, as DevTools lists it, once a process.
++void NameWorld(int32_t world_id, const std::string& name) {
++  static base::NoDestructor<std::set<int32_t>> named;
++  if (!named->insert(world_id).second) {
++    return;
++  }
++  blink::WebIsolatedWorldInfo info;
++  info.human_readable_name = blink::WebString::FromUtf8(name);
++  info.stable_id = blink::WebString::FromUtf8("rise:" + name);
++  blink::SetIsolatedWorldInfo(world_id, info);
++}
++
++// riseHandlers.<name>.postMessage(body). Its data holds the handler's name,
++// whether it replies and the world, as own properties the page can't change.
++void PostMessage(const v8::FunctionCallbackInfo<v8::Value>& info) {
++  v8::Isolate* isolate = info.GetIsolate();
++  v8::Local<v8::Context> context = isolate->GetCurrentContext();
++  if (!info.Data()->IsArray()) {
++    return;
++  }
++  v8::Local<v8::Array> data = info.Data().As<v8::Array>();
++  v8::Local<v8::Value> name, replies, world;
++  if (!data->Get(context, 0).ToLocal(&name) ||
++      !data->Get(context, 1).ToLocal(&replies) ||
++      !data->Get(context, 2).ToLocal(&world) || !name->IsString()) {
++    return;
++  }
++  blink::WebLocalFrame* web_frame =
++      blink::WebLocalFrame::FrameForContext(context);
++  content::RenderFrame* frame =
++      web_frame ? content::RenderFrame::FromWebFrame(web_frame) : nullptr;
++  RiseFrameAgent* agent = frame ? RiseFrameAgent::Get(frame) : nullptr;
++  if (!agent) {
++    return;
++  }
++  std::unique_ptr<base::Value> body = content::V8ValueConverter::Create()->FromV8Value(
++      info.Length() ? info[0] : v8::Undefined(isolate).As<v8::Value>(), context);
++  v8::Local<v8::Promise::Resolver> reply;
++  if (replies->IsTrue()) {
++    if (!v8::Promise::Resolver::New(context).ToLocal(&reply)) {
++      return;
++    }
++    info.GetReturnValue().Set(reply->GetPromise());
++  }
++  agent->Post(*v8::String::Utf8Value(isolate, name),
++              world->Int32Value(context).FromMaybe(0),
++              body ? std::move(*body) : base::Value(), context, reply);
++}
++
++}  // namespace
++
++RiseFrameAgent::Reply::Reply() = default;
++RiseFrameAgent::Reply::Reply(Reply&&) = default;
++RiseFrameAgent::Reply::~Reply() = default;
++
++RiseFrameAgent::RiseFrameAgent(content::RenderFrame* render_frame)
++    : content::RenderFrameObserver(render_frame),
++      content::RenderFrameObserverTracker<RiseFrameAgent>(render_frame) {
++  // A frame made in this process, as by a page's script, starts with its
++  // parent's scripts, before the browser sends them.
++  blink::WebFrame* parent = render_frame->GetWebFrame()->Parent();
++  if (parent && parent->IsWebLocalFrame()) {
++    if (RiseFrameAgent* agent = Get(
++            content::RenderFrame::FromWebFrame(parent->ToWebLocalFrame()))) {
++      scripts_ = mojo::Clone(agent->scripts_);
++    }
++  }
++}
++
++RiseFrameAgent::~RiseFrameAgent() = default;
++
++bool RiseFrameAgent::OnAssociatedInterfaceRequestForFrame(
++    const std::string& interface_name,
++    mojo::ScopedInterfaceEndpointHandle* handle) {
++  if (interface_name != mojom::RiseFrame::Name_) {
++    return false;
++  }
++  receivers_.Add(this, mojo::PendingAssociatedReceiver<mojom::RiseFrame>(
++                           std::move(*handle)));
++  return true;
++}
++
++void RiseFrameAgent::DidCreateNewDocument() {
++  started_ = false;
++  // Replies to the document before go nowhere.
++  replies_.clear();
++}
++
++// static
++bool RiseFrameAgent::RunScriptsAtDocumentStart(
++    content::RenderFrame* render_frame) {
++  RiseFrameAgent* agent = Get(render_frame);
++  if (!agent) {
++    return true;
++  }
++  base::WeakPtr<RiseFrameAgent> alive = agent->weak_factory_.GetWeakPtr();
++  agent->DocumentStarted();
++  return !!alive;
++}
++
++void RiseFrameAgent::DocumentStarted() {
++  started_ = true;
++  std::vector<mojom::ScriptPtr> scripts = mojo::Clone(scripts_);
++  for (const mojom::ScriptPtr& script : scripts) {
++    Run(*script);
++  }
++}
++
++void RiseFrameAgent::OnDestruct() {
++  delete this;
++}
++
++void RiseFrameAgent::SetScripts(
++    std::vector<mojom::ScriptPtr> scripts,
++    mojo::PendingAssociatedRemote<mojom::RiseFrameHost> host) {
++  scripts_ = std::move(scripts);
++  if (!host) {
++    return;
++  }
++  host_.reset();
++  host_.Bind(std::move(host));
++  std::vector<base::OnceClosure> waiting = std::move(waiting_);
++  for (base::OnceClosure& send : waiting) {
++    std::move(send).Run();
++  }
++}
++
++void RiseFrameAgent::AddScript(mojom::ScriptPtr script) {
++  if (started_) {
++    Run(*script);
++  }
++  scripts_.push_back(std::move(script));
++}
++
++void RiseFrameAgent::Run(const mojom::Script& script) {
++  content::RenderFrame* frame = render_frame();
++  if (script.main_frame_only &&
++      (!frame->IsMainFrame() || frame->IsInFencedFrameTree())) {
++    return;
++  }
++  blink::WebLocalFrame* web_frame = frame->GetWebFrame();
++  v8::Isolate* isolate = web_frame->GetAgentGroupScheduler()->Isolate();
++  v8::HandleScope handle_scope(isolate);
++  // The script runs as the body of a function given its handlers, so they're
++  // its alone.
++  blink::WebScriptSource source(blink::WebString::FromUtf8(
++      "(function(riseHandlers) {\n" + script.source + "\n})"));
++  v8::Local<v8::Value> function;
++  v8::Local<v8::Context> context;
++  if (script.world_id == 0) {
++    function = web_frame->ExecuteScriptAndReturnValue(source);
++    context = web_frame->MainWorldScriptContext();
++  } else {
++    NameWorld(script.world_id, script.world_name);
++    function = web_frame->ExecuteScriptInIsolatedWorldAndReturnValue(
++        script.world_id, source, blink::BackForwardCacheAware::kAllow);
++    context = web_frame->GetScriptContextFromWorldId(isolate, script.world_id);
++  }
++  if (function.IsEmpty() || !function->IsFunction() || context.IsEmpty()) {
++    return;
++  }
++  v8::Context::Scope context_scope(context);
++  v8::Local<v8::Object> handlers = v8::Object::New(isolate);
++  for (const mojom::HandlerPtr& handler : script.handlers) {
++    v8::Local<v8::Array> data = v8::Array::New(isolate, 3);
++    v8::Local<v8::Function> post;
++    v8::Local<v8::Object> entry = v8::Object::New(isolate);
++    if (data->CreateDataProperty(context, 0, V8String(isolate, handler->name))
++            .IsNothing() ||
++        data->CreateDataProperty(context, 1,
++                                 v8::Boolean::New(isolate, handler->replies))
++            .IsNothing() ||
++        data->CreateDataProperty(context, 2,
++                                 v8::Integer::New(isolate, script.world_id))
++            .IsNothing() ||
++        !v8::Function::New(context, &PostMessage, data, 1).ToLocal(&post) ||
++        entry->CreateDataProperty(context, V8String(isolate, "postMessage"), post)
++            .IsNothing() ||
++        handlers->CreateDataProperty(context, V8String(isolate, handler->name),
++                                     entry)
++            .IsNothing()) {
++      continue;
++    }
++  }
++  v8::Local<v8::Value> argv[] = {handlers};
++  std::ignore = web_frame->ExecuteMethodAndReturnValue(
++      function.As<v8::Function>(), v8::Undefined(isolate), 1, argv);
++}
++
++void RiseFrameAgent::Post(const std::string& handler,
++                          int32_t world_id,
++                          base::Value body,
++                          v8::Local<v8::Context> context,
++                          v8::Local<v8::Promise::Resolver> reply) {
++  int id = 0;
++  if (!reply.IsEmpty()) {
++    id = ++next_reply_;
++    v8::Isolate* isolate = v8::Isolate::GetCurrent();
++    Reply& waiting = replies_[id];
++    waiting.context.Reset(isolate, context);
++    waiting.resolver.Reset(isolate, reply);
++  }
++  base::OnceClosure send = base::BindOnce(
++      [](base::WeakPtr<RiseFrameAgent> agent, std::string handler,
++         int32_t world_id, base::Value body, int id) {
++        if (!agent || !agent->host_) {
++          return;
++        }
++        if (!id) {
++          agent->host_->PostMessage(handler, world_id, std::move(body));
++          return;
++        }
++        agent->host_->PostMessageWithReply(
++            handler, world_id, std::move(body),
++            base::BindOnce(&RiseFrameAgent::Replied, agent, id));
++      },
++      weak_factory_.GetWeakPtr(), handler, world_id, std::move(body), id);
++  if (host_) {
++    std::move(send).Run();
++  } else {
++    waiting_.push_back(std::move(send));
++  }
++}
++
++void RiseFrameAgent::Replied(int id,
++                             base::Value reply,
++                             const std::optional<std::string>& error) {
++  auto it = replies_.find(id);
++  if (it == replies_.end()) {
++    return;
++  }
++  Reply waiting = std::move(it->second);
++  replies_.erase(it);
++  blink::WebLocalFrame* web_frame = render_frame()->GetWebFrame();
++  v8::Isolate* isolate = web_frame->GetAgentGroupScheduler()->Isolate();
++  v8::HandleScope handle_scope(isolate);
++  v8::Local<v8::Context> context = waiting.context.Get(isolate);
++  // Only to the document that asked.
++  if (context.IsEmpty() ||
++      blink::WebLocalFrame::FrameForContext(context) != web_frame) {
++    return;
++  }
++  v8::Context::Scope context_scope(context);
++  v8::MicrotasksScope microtasks(context,
++                                 v8::MicrotasksScope::kRunMicrotasks);
++  v8::Local<v8::Promise::Resolver> resolver = waiting.resolver.Get(isolate);
++  if (error) {
++    std::ignore = resolver->Reject(
++        context, v8::Exception::Error(V8String(isolate, *error)));
++  } else {
++    std::ignore = resolver->Resolve(
++        context, content::V8ValueConverter::Create()->ToV8Value(reply, context));
++  }
++}
++
++}  // namespace rise
+diff --git a/chrome/renderer/rise/rise_frame_agent.h b/chrome/renderer/rise/rise_frame_agent.h
+new file mode 100644
+index 0000000000..5e2bb3773d
+--- /dev/null
++++ b/chrome/renderer/rise/rise_frame_agent.h
+@@ -0,0 +1,92 @@
++// Copyright 2026 The Rise Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_RENDERER_RISE_RISE_FRAME_AGENT_H_
++#define CHROME_RENDERER_RISE_RISE_FRAME_AGENT_H_
++
++#include <map>
++#include <string>
++#include <vector>
++
++#include "base/functional/callback.h"
++#include "base/memory/weak_ptr.h"
++#include "base/values.h"
++#include "chrome/common/rise/rise_frame.mojom.h"
++#include "content/public/renderer/render_frame_observer.h"
++#include "content/public/renderer/render_frame_observer_tracker.h"
++#include "mojo/public/cpp/bindings/associated_receiver_set.h"
++#include "mojo/public/cpp/bindings/associated_remote.h"
++#include "v8/include/v8-forward.h"
++#include "v8/include/v8-persistent-handle.h"
++#include "v8/include/v8-promise.h"
++
++namespace rise {
++
++// Rise's page scripts in one frame: run as each document starts, before the
++// page's own, each given the message handlers it may post to as
++// `riseHandlers`, which nothing else in the page can reach.
++class RiseFrameAgent
++    : public content::RenderFrameObserver,
++      public content::RenderFrameObserverTracker<RiseFrameAgent>,
++      public mojom::RiseFrame {
++ public:
++  explicit RiseFrameAgent(content::RenderFrame* render_frame);
++  RiseFrameAgent(const RiseFrameAgent&) = delete;
++  RiseFrameAgent& operator=(const RiseFrameAgent&) = delete;
++  ~RiseFrameAgent() override;
++
++  // Runs Rise's scripts as a document starts, its element there and before
++  // the page's own scripts; false if they closed the frame.
++  static bool RunScriptsAtDocumentStart(content::RenderFrame* render_frame);
++
++  // A script's riseHandlers.<handler>.postMessage(body); `reply` is set for
++  // handlers that reply.
++  void Post(const std::string& handler,
++            int32_t world_id,
++            base::Value body,
++            v8::Local<v8::Context> context,
++            v8::Local<v8::Promise::Resolver> reply);
++
++ private:
++  // content::RenderFrameObserver:
++  bool OnAssociatedInterfaceRequestForFrame(
++      const std::string& interface_name,
++      mojo::ScopedInterfaceEndpointHandle* handle) override;
++  void DidCreateNewDocument() override;
++  void OnDestruct() override;
++
++  // mojom::RiseFrame:
++  void SetScripts(
++      std::vector<mojom::ScriptPtr> scripts,
++      mojo::PendingAssociatedRemote<mojom::RiseFrameHost> host) override;
++  void AddScript(mojom::ScriptPtr script) override;
++
++  void DocumentStarted();
++  void Run(const mojom::Script& script);
++  void Replied(int id, base::Value reply, const std::optional<std::string>& error);
++
++  // Rise's scripts for the frame's documents.
++  std::vector<mojom::ScriptPtr> scripts_;
++  // Whether the current document has started, running them.
++  bool started_ = false;
++  mojo::AssociatedRemote<mojom::RiseFrameHost> host_;
++  // What scripts post before the browser has said where to.
++  std::vector<base::OnceClosure> waiting_;
++  // Promises of replies, by the number their message went with.
++  struct Reply {
++    Reply();
++    Reply(Reply&&);
++    ~Reply();
++    v8::Global<v8::Context> context;
++    v8::Global<v8::Promise::Resolver> resolver;
++  };
++  std::map<int, Reply> replies_;
++  int next_reply_ = 0;
++  mojo::AssociatedReceiverSet<mojom::RiseFrame> receivers_;
++  base::WeakPtrFactory<RiseFrameAgent> weak_factory_{this};
++};
++
++}  // namespace rise
++
++#endif  // CHROME_RENDERER_RISE_RISE_FRAME_AGENT_H_
