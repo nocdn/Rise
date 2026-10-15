@@ -13,8 +13,9 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
 @main @MainActor struct ChromiumFeatureMain {
     static func main() {
         setvbuf(stdout, nil, _IONBF, 0)
-        // A check that hangs reports it rather than holding everything up.
-        DispatchQueue.main.asyncAfter(deadline: .now()+240) { print("FAIL the check stopped answering"); exit(1) }
+        // A check that hangs reports it rather than holding everything up (RISE_CHECK_TIMEOUT: seconds).
+        let limit = Double(ProcessInfo.processInfo.environment["RISE_CHECK_TIMEOUT"] ?? "") ?? 240
+        DispatchQueue.main.asyncAfter(deadline: .now()+limit) { print("FAIL the check stopped answering"); exit(1) }
         let app = RCApplication.shared
         let folder = ProcessInfo.processInfo.environment["RISE_PEEK_OUT"]!
         guard RCEngine.start(withCachePath: folder + "/chromium", keychain: false) else { print("FAIL Chromium didn't start"); exit(1) }

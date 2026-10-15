@@ -103,6 +103,26 @@ are most of them.
    Checked by `python3 scripts/test-chromium-live.py app` (and with `RISE_QUIT_BY_CLOSING=1`,
    quitting by closing the last window).
 
+   **Rise's sheets and the first features (stage 1 under way).** Each Rise page carries
+   `EmbedderTabHooks` (`chrome/browser/ui/browser_web_contents_delegate`), which Chrome asks first
+   wherever it would otherwise show its own interface for a tab:
+   - page dialogs (alert, confirm, prompt, leaving or reloading), as a `JavaScriptDialogManager`
+     of Rise's
+   - file choosers, folders included
+   - where downloads go (in Chrome's download target determiner), followed by `RCDownload`
+   - links and windows a page opens elsewhere (Rise places popups, keeping their opener)
+   - full screen, which Rise shows itself
+   - links for other apps, asked before Chrome's own handling
+   - crashed pages, which Rise reloads instead of Chrome's sad tab
+
+   Camera, microphone and location requests go to Rise's prompt through Chrome's per-tab
+   permission manager, which takes another prompt maker. Rise grants for the page only, and
+   Chrome keeps no denial, so Rise stays the one that remembers decisions. The `features` live
+   check (with `RISE_CHECK_TIMEOUT=900` while features are missing) runs to the end on the fork.
+   Still to do: ad blocking, Preload Links without scripts, DevTools in Rise's panel,
+   rise://settings with Rise's sections and name, the page menu, and saving and restoring a
+   tab's history.
+
 1. **The engine API.** Everything `RiseChromium.h` offers today, on the fork:
    - Navigation, and saving and restoring back and forward history.
    - Sound playing; zoom and pinch.

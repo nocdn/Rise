@@ -380,6 +380,80 @@ index b269f1610a..91d841073b 100644
    [app_controller mainMenuCreated];
  
    return content::RESULT_CODE_NORMAL_EXIT;
+diff --git a/chrome/browser/download/download_target_determiner.cc b/chrome/browser/download/download_target_determiner.cc
+index 0e2ffe2ae7..f98f0fbfac 100644
+--- a/chrome/browser/download/download_target_determiner.cc
++++ b/chrome/browser/download/download_target_determiner.cc
+@@ -10,6 +10,7 @@
+ 
+ #include "base/files/file_path.h"
+ #include "base/functional/bind.h"
++#include "base/task/bind_post_task.h"
+ #include "base/location.h"
+ #include "base/metrics/histogram_functions.h"
+ #include "base/rand_util.h"
+@@ -28,6 +29,7 @@
+ #include "chrome/browser/history/history_service_factory.h"
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/safe_browsing/safe_browsing_metrics_collector_factory.h"
++#include "chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h"
+ #include "chrome/common/pref_names.h"
+ #include "chrome/grit/generated_resources.h"
+ #include "components/download/public/common/download_interrupt_reasons.h"
+@@ -646,6 +648,27 @@ DownloadTargetDeterminer::DoRequestConfirmation() {
+     }
+ #endif
+ 
++    // An embedder with downloads of its own (Rise) says where its tabs' go.
++    if (EmbedderTabHooks* hooks = EmbedderTabHooks::FromWebContents(
++            content::DownloadItemUtils::GetWebContents(download_));
++        hooks && !download_->IsTransient() &&
++        hooks->ChooseDownloadPath(
++            download_, virtual_path_,
++            // On a later turn, however soon the embedder answers.
++            base::BindPostTaskToCurrentDefault(base::BindOnce(
++                [](base::WeakPtr<DownloadTargetDeterminer> determiner,
++                   std::optional<base::FilePath> path) {
++                  if (determiner) {
++                    determiner->RequestConfirmationDone(
++                        path ? DownloadConfirmationResult::CONFIRMED
++                             : DownloadConfirmationResult::CANCELED,
++                        ui::SelectedFileInfo(path.value_or(base::FilePath())));
++                  }
++                },
++                weak_ptr_factory_.GetWeakPtr())))) {
++      return QUIT_DOLOOP;
++    }
++
+     // If there is a non-neutral confirmation reason, prompt the user.
+     if (confirmation_reason_ != DownloadConfirmationReason::NONE) {
+       base::FilePath sanitized_path = virtual_path_;
+diff --git a/chrome/browser/external_protocol/external_protocol_handler.cc b/chrome/browser/external_protocol/external_protocol_handler.cc
+index 1f269b2237..cd4986290c 100644
+--- a/chrome/browser/external_protocol/external_protocol_handler.cc
++++ b/chrome/browser/external_protocol/external_protocol_handler.cc
+@@ -30,6 +30,7 @@
+ #include "chrome/browser/external_protocol/features.h"
+ #include "chrome/browser/platform_util.h"
+ #include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h"
+ #include "chrome/common/pref_names.h"
+ #include "components/prefs/pref_registry_simple.h"
+ #include "components/prefs/pref_service.h"
+@@ -524,6 +525,13 @@ void ExternalProtocolHandler::LaunchUrl(
+ ) {
+   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+ 
++  // An embedder (Rise) asks about every link for another app its own way.
++  if (EmbedderTabHooks* hooks =
++          EmbedderTabHooks::FromWebContents(web_contents_getter.Run());
++      hooks && hooks->OpenInOtherApp(url)) {
++    return;
++  }
++
+   // Disable anti-flood protection if the user is invoking a bookmark or
+   // navigating directly using the omnibox.
+   if (!g_accept_requests &&
 diff --git a/chrome/browser/renderer_host/chrome_render_widget_host_view_mac_delegate.h b/chrome/browser/renderer_host/chrome_render_widget_host_view_mac_delegate.h
 index ee322f39a9..8b7dc8ef9c 100644
 --- a/chrome/browser/renderer_host/chrome_render_widget_host_view_mac_delegate.h
@@ -439,10 +513,10 @@ index 3a0283de31..13f045738f 100644
  }
 diff --git a/chrome/browser/rise/BUILD.gn b/chrome/browser/rise/BUILD.gn
 new file mode 100644
-index 0000000000..6bc85718a3
+index 0000000000..0e7eca2867
 --- /dev/null
 +++ b/chrome/browser/rise/BUILD.gn
-@@ -0,0 +1,48 @@
+@@ -0,0 +1,54 @@
 +# Copyright 2026 The Rise Authors. All rights reserved.
 +# Use of this source code is governed by a BSD-style license that can be
 +# found in the LICENSE file.
@@ -478,10 +552,16 @@ index 0000000000..6bc85718a3
 +    "//chrome/browser/ui/browser_window",
 +    "//chrome/browser/ui/browser_window:create_browser_window",
 +    "//chrome/browser/ui/tabs:tab_strip",
++    "//chrome/browser/content_settings:content_settings_factory",
++    "//chrome/browser/ui/browser_web_contents_delegate",
 +    "//chrome/common/rise:mojom",
++    "//components/content_settings/core/browser",
++    "//components/download/public/common:public",
++    "//components/permissions",
 +    "//components/search_engines",
 +    "//content/public/browser",
 +    "//mojo/public/cpp/bindings",
++    "//net",
 +    "//skia",
 +    "//third_party/blink/public/common",
 +    "//ui/gfx",
@@ -968,10 +1048,10 @@ index 0000000000..cabcb68258
 +#endif  // CHROME_BROWSER_RISE_CHROME_BROWSER_MAIN_EXTRA_PARTS_RISE_H_
 diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
 new file mode 100644
-index 0000000000..d32e2caf07
+index 0000000000..ad8393a02b
 --- /dev/null
 +++ b/chrome/browser/rise/rise_bridge.mm
-@@ -0,0 +1,1504 @@
+@@ -0,0 +1,2388 @@
 +// Copyright 2026 The Rise Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -996,6 +1076,9 @@ index 0000000000..d32e2caf07
 +#include <vector>
 +
 +#include "base/check_is_test.h"
++#include "base/files/file_enumerator.h"
++#include "base/strings/string_util.h"
++#include "base/task/thread_pool.h"
 +#include "base/functional/bind.h"
 +#include "base/json/json_reader.h"
 +#include "base/json/json_writer.h"
@@ -1018,10 +1101,27 @@ index 0000000000..d32e2caf07
 +#include "chrome/browser/ui/unload_controller.h"
 +#include "chrome/browser/app_controller_mac.h"
 +#include "chrome/browser/lifetime/browser_shutdown.h"
++#include "chrome/browser/content_settings/host_content_settings_map_factory.h"
++#include "chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h"
 +#include "chrome/common/rise/rise_frame.mojom.h"
++#include "components/content_settings/core/browser/host_content_settings_map.h"
++#include "components/download/public/common/download_item.h"
++#include "components/permissions/permission_prompt.h"
++#include "components/permissions/permission_request.h"
++#include "components/permissions/permission_request_manager.h"
++#include "components/permissions/resolvers/permission_prompt_options.h"
++#include "content/public/browser/devtools_agent_host.h"
++#include "content/public/browser/devtools_agent_host_client.h"
++#include "content/public/browser/file_select_listener.h"
++#include "content/public/browser/javascript_dialog_manager.h"
++#include "net/base/mime_util.h"
++#include "third_party/blink/public/mojom/choosers/file_chooser.mojom.h"
 +#include "content/public/browser/global_routing_id.h"
 +#include "mojo/public/cpp/bindings/associated_receiver.h"
 +#include "mojo/public/cpp/bindings/associated_remote.h"
++#include "mojo/public/cpp/bindings/callback_helpers.h"
++#include "net/base/net_errors.h"
++#include "third_party/blink/public/mojom/window_features/window_features.mojom.h"
 +#include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
 +#include "components/tabs/public/tab_interface.h"
 +#include "components/viz/common/frame_sinks/copy_output_result.h"
@@ -1231,6 +1331,13 @@ index 0000000000..d32e2caf07
 +
 +}  // namespace
 +
++@interface RCDownload ()
++- (instancetype)initWithItem:(download::DownloadItem*)item;
++- (void)updateFrom:(download::DownloadItem*)item;
++- (void)itemGone;
++- (void)forget;
++@end
++
 +@interface RCFrame ()
 +- (instancetype)initWithFrame:(content::RenderFrameHost*)frame
 +                        world:(int32_t)world;
@@ -1239,12 +1346,41 @@ index 0000000000..d32e2caf07
 +
 +@interface RCBrowserView ()
 +- (std::vector<rise::mojom::ScriptPtr>)frameScripts;
++- (BOOL)runDialog:(RCDialogKind)kind
++          message:(NSString*)message
++      defaultText:(NSString*)text
++           origin:(NSURL*)origin
++       completion:(void (^)(BOOL accepted, NSString* text))completion;
++- (void)cancelDialog;
++- (BOOL)chooseFiles:(RCFileChooserMode)mode
++              title:(NSString*)title
++        defaultPath:(NSString*)path
++         extensions:(NSArray<NSString*>*)extensions
++         completion:(void (^)(NSArray<NSURL*>* urls))completion;
++- (BOOL)requestPermissions:(RCPermission)permissions
++                    origin:(NSString*)origin
++                    decide:(void (^)(RCPermission allowed))decide;
++- (void)withdrawPermissionRequest;
++- (BOOL)takesDownloads;
++- (NSURL*)destinationForDownload:(download::DownloadItem*)item
++                   suggestedName:(NSString*)name;
 +- (void)receivedMessage:(base::Value)body
 +                handler:(const std::string&)handler
 +                  world:(int32_t)world
 +                  frame:(content::GlobalRenderFrameHostId)frameID
 +                  reply:(void (^)(id, NSString*))reply;
 +- (void)browserStarted;
++- (instancetype)initWithFrame:(NSRect)frame
++                 openedContents:(content::WebContents*)contents;
++- (BOOL)openURL:(NSURL*)url
++    disposition:(RCOpenDisposition)disposition
++    userGesture:(BOOL)userGesture;
++- (BOOL)adoptPopup:(RCBrowserView*)popup
++               url:(NSURL*)url
++       userGesture:(BOOL)userGesture;
++- (void)updateFullscreen:(BOOL)fullscreen;
++- (BOOL)openInOtherApp:(NSURL*)url;
++- (void)loadFailed:(NSInteger)code text:(NSString*)text url:(NSURL*)url;
 +- (content::WebContents*)contents;
 +- (void)contentsGone;
 +- (void)contentsChanged;
@@ -1308,6 +1444,475 @@ index 0000000000..d32e2caf07
 +  mojo::AssociatedReceiver<rise::mojom::RiseFrameHost> receiver_{this};
 +};
 +
++// alert(), confirm(), prompt() and leaving or reloading a page with changes
++// it hasn't saved, asked in Rise's sheets, one at a time.
++class RiseDialogs : public content::JavaScriptDialogManager {
++ public:
++  explicit RiseDialogs(RCBrowserView* view) : view_(view) {}
++
++  void RunJavaScriptDialog(content::WebContents* contents,
++                           content::RenderFrameHost* frame,
++                           content::JavaScriptDialogType type,
++                           const std::u16string& message,
++                           const std::u16string& default_text,
++                           DialogClosedCallback callback,
++                           bool* did_suppress_message) override {
++    RCDialogKind kind = type == content::JAVASCRIPT_DIALOG_TYPE_ALERT
++                            ? RCDialogKindAlert
++                        : type == content::JAVASCRIPT_DIALOG_TYPE_CONFIRM
++                            ? RCDialogKindConfirm
++                            : RCDialogKindPrompt;
++    GURL origin =
++        frame ? frame->GetLastCommittedOrigin().GetURL() : GURL();
++    if (!Show(kind, message, default_text, ToNSURL(origin), std::move(callback),
++              /*unshown=*/false)) {
++      *did_suppress_message = true;
++    }
++  }
++  void RunBeforeUnloadDialog(content::WebContents* contents,
++                             content::RenderFrameHost* frame,
++                             bool is_reload,
++                             DialogClosedCallback callback) override {
++    // Pages can't word it themselves any more.
++    Show(is_reload ? RCDialogKindReload : RCDialogKindLeave, u"", u"", nil,
++         std::move(callback), /*unshown=*/true);
++  }
++  bool HandleJavaScriptDialog(content::WebContents* contents,
++                              bool accept,
++                              const std::u16string* prompt_override) override {
++    if (!callback_) {
++      return false;
++    }
++    [view_ cancelDialog];
++    std::move(callback_).Run(accept, prompt_override ? *prompt_override : u"");
++    return true;
++  }
++  // As when the page navigates away: Rise closes its sheet unanswered.
++  void CancelDialogs(content::WebContents* contents, bool reset_state) override {
++    if (!callback_) {
++      return;
++    }
++    callback_.Reset();
++    [view_ cancelDialog];
++  }
++
++ private:
++  // False if it couldn't be shown, answered with `unshown` (for leaving a
++  // page, yes).
++  bool Show(RCDialogKind kind,
++            const std::u16string& message,
++            const std::u16string& default_text,
++            NSURL* origin,
++            DialogClosedCallback callback,
++            bool unshown) {
++    RCBrowserView* view = view_;
++    if (!view || callback_) {
++      std::move(callback).Run(unshown, u"");
++      return false;
++    }
++    callback_ = std::move(callback);
++    int asked = ++asked_;
++    base::WeakPtr<RiseDialogs> weak = weak_factory_.GetWeakPtr();
++    BOOL shown = [view runDialog:kind
++                         message:base::SysUTF16ToNSString(message)
++                     defaultText:base::SysUTF16ToNSString(default_text)
++                          origin:origin
++                      completion:^(BOOL accepted, NSString* text) {
++                        if (weak && weak->asked_ == asked && weak->callback_) {
++                          std::move(weak->callback_)
++                              .Run(accepted,
++                                   base::SysNSStringToUTF16(text ?: @""));
++                        }
++                      }];
++    if (!shown) {
++      std::move(callback_).Run(unshown, u"");
++      return false;
++    }
++    return true;
++  }
++
++  __weak RCBrowserView* view_;
++  DialogClosedCallback callback_;
++  int asked_ = 0;
++  base::WeakPtrFactory<RiseDialogs> weak_factory_{this};
++};
++
++// The chosen files, as a page takes them.
++std::vector<blink::mojom::FileChooserFileInfoPtr> FileInfos(
++    const std::vector<base::FilePath>& paths) {
++  std::vector<blink::mojom::FileChooserFileInfoPtr> files;
++  for (const base::FilePath& path : paths) {
++    files.push_back(blink::mojom::FileChooserFileInfo::NewNativeFile(
++        blink::mojom::NativeFileInfo::New(
++            path, path.BaseName().LossyDisplayName(),
++            std::vector<std::u16string>())));
++  }
++  return files;
++}
++
++// What Rise shows itself for a page, in its own interface.
++class RiseTabHooks : public EmbedderTabHooks {
++ public:
++  explicit RiseTabHooks(RCBrowserView* view)
++      : view_(view), dialogs_(view) {}
++
++  content::JavaScriptDialogManager* GetJavaScriptDialogManager() override {
++    return &dialogs_;
++  }
++
++  // Rise loads a crashed page again itself.
++  bool ShowsCrashedPages() override { return true; }
++
++  // Links to new tabs and windows open where Rise puts them; others open
++  // in the page itself.
++  OpenURLResult OpenURL(const content::OpenURLParams& params) override {
++    RCOpenDisposition disposition;
++    switch (params.disposition) {
++      case WindowOpenDisposition::NEW_BACKGROUND_TAB:
++        disposition = RCOpenDispositionBackgroundTab;
++        break;
++      case WindowOpenDisposition::NEW_WINDOW:
++        disposition = RCOpenDispositionWindow;
++        break;
++      case WindowOpenDisposition::NEW_POPUP:
++        disposition = RCOpenDispositionPopup;
++        break;
++      case WindowOpenDisposition::SAVE_TO_DISK:
++      case WindowOpenDisposition::IGNORE_ACTION:
++        return OpenURLResult::kChrome;
++      default:
++        disposition = RCOpenDispositionForegroundTab;
++    }
++    NSURL* url = ToNSURL(params.url);
++    return url && [view_ openURL:url
++                     disposition:disposition
++                     userGesture:params.user_gesture]
++               ? OpenURLResult::kOpened
++               : OpenURLResult::kHere;
++  }
++
++  // A window the page opens itself, keeping it as its opener: Rise puts it
++  // somewhere, or it opens as a link to a new tab would.
++  bool AddNewContents(std::unique_ptr<content::WebContents>& contents,
++                      const GURL& target_url,
++                      WindowOpenDisposition disposition,
++                      const blink::mojom::WindowFeatures& features,
++                      bool user_gesture) override {
++    RCBrowserView* view = view_;
++    if (!view) {
++      return true;
++    }
++    RCBrowserView* popup =
++        [[RCBrowserView alloc] initWithFrame:view.bounds
++                              openedContents:contents.release()];
++    popup.pageBackgroundColor = view.pageBackgroundColor;
++    NSURL* url = ToNSURL(target_url);
++    if ([view adoptPopup:popup url:url userGesture:user_gesture]) {
++      return true;
++    }
++    [popup close];
++    if (url) {
++      [view openURL:url
++          disposition:RCOpenDispositionForegroundTab
++          userGesture:user_gesture];
++    }
++    return true;
++  }
++
++  // The page's element full screen fills its place in Rise's window.
++  bool HandlesFullscreen() override { return true; }
++  void SetFullscreen(bool fullscreen) override {
++    [view_ updateFullscreen:fullscreen];
++  }
++  bool IsFullscreen() override { return view_.fullscreen; }
++
++  bool OpenInOtherApp(const GURL& url) override {
++    NSURL* address = ToNSURL(url);
++    return address && [view_ openInOtherApp:address];
++  }
++
++  // Files the page saves go where Rise says, into its own downloads list.
++  bool ChooseDownloadPath(download::DownloadItem* item,
++                          const base::FilePath& suggested,
++                          DownloadPathCallback done) override {
++    RCBrowserView* view = view_;
++    if (![view takesDownloads]) {
++      return false;
++    }
++    NSURL* destination = [view
++        destinationForDownload:item
++                 suggestedName:base::SysUTF8ToNSString(suggested.BaseName().value())];
++    std::move(done).Run(
++        destination ? std::optional<base::FilePath>(base::FilePath(
++                          destination.path.fileSystemRepresentation))
++                    : std::nullopt);
++    return true;
++  }
++
++  // <input type=file> and the File System Access pickers open Rise's panels.
++  bool RunFileChooser(content::RenderFrameHost* frame,
++                      scoped_refptr<content::FileSelectListener> listener,
++                      const blink::mojom::FileChooserParams& params) override {
++    using Mode = blink::mojom::FileChooserParams::Mode;
++    RCBrowserView* view = view_;
++    if (!view) {
++      return false;
++    }
++    Mode mode = params.mode;
++    RCFileChooserMode chooser =
++        mode == Mode::kOpenMultiple ? RCFileChooserModeOpenMultiple
++        : mode == Mode::kUploadFolder || mode == Mode::kOpenDirectory
++            ? RCFileChooserModeOpenFolder
++        : mode == Mode::kSave ? RCFileChooserModeSave
++                              : RCFileChooserModeOpen;
++    // The kinds of file it takes, as extensions: ".png", or those of a type,
++    // such as image/*.
++    NSMutableOrderedSet<NSString*>* extensions = [NSMutableOrderedSet orderedSet];
++    for (const std::u16string& type : params.accept_types) {
++      std::string accept = base::ToLowerASCII(base::UTF16ToUTF8(type));
++      std::vector<base::FilePath::StringType> found;
++      if (accept.starts_with(".")) {
++        found.push_back(accept.substr(1));
++      } else {
++        net::GetExtensionsForMimeType(accept, &found);
++      }
++      for (const base::FilePath::StringType& extension : found) {
++        [extensions addObject:base::SysUTF8ToNSString(extension)];
++      }
++    }
++    return [view chooseFiles:chooser
++                       title:base::SysUTF16ToNSString(params.title)
++                 defaultPath:base::SysUTF8ToNSString(params.default_file_name.value())
++                  extensions:extensions.array
++                  completion:^(NSArray<NSURL*>* urls) {
++                    if (!urls.count) {
++                      listener->FileSelectionCanceled();
++                      return;
++                    }
++                    std::vector<base::FilePath> paths;
++                    for (NSURL* url in urls) {
++                      paths.emplace_back(url.path.fileSystemRepresentation);
++                    }
++                    if (mode != Mode::kUploadFolder) {
++                      listener->FileSelected(FileInfos(paths), base::FilePath(),
++                                             mode);
++                      return;
++                    }
++                    // A folder to upload gives the page every file in it.
++                    base::ThreadPool::PostTaskAndReplyWithResult(
++                        FROM_HERE,
++                        {base::MayBlock(), base::TaskPriority::USER_BLOCKING},
++                        base::BindOnce(
++                            [](base::FilePath folder) {
++                              std::vector<base::FilePath> files;
++                              base::FileEnumerator each(
++                                  folder, /*recursive=*/true,
++                                  base::FileEnumerator::FILES);
++                              for (base::FilePath file = each.Next();
++                                   !file.empty(); file = each.Next()) {
++                                files.push_back(file);
++                              }
++                              return files;
++                            },
++                            paths[0]),
++                        base::BindOnce(
++                            [](scoped_refptr<content::FileSelectListener> listener,
++                               base::FilePath folder,
++                               std::vector<base::FilePath> files) {
++                              listener->FileSelected(FileInfos(files), folder,
++                                                     Mode::kUploadFolder);
++                            },
++                            listener, paths[0]));
++                  }];
++  }
++
++ private:
++  __weak RCBrowserView* view_;
++  RiseDialogs dialogs_;
++};
++
++// A page's request for camera, microphone or location, asked in Rise's own
++// prompt, which keeps its decisions itself: Chrome grants for the page only,
++// and keeps no denial, so it asks again next time and Rise answers.
++class RisePermissionPrompt : public permissions::PermissionPrompt {
++ public:
++  RisePermissionPrompt(content::WebContents* contents, Delegate* delegate)
++      : delegate_(delegate->GetWeakPtr()), view_(ViewOf(contents)) {
++    RCPermission asked = 0;
++    bool others = false;
++    for (const auto& request : delegate->Requests()) {
++      switch (request->request_type()) {
++        case permissions::RequestType::kCameraStream:
++          asked |= RCPermissionCamera;
++          break;
++        case permissions::RequestType::kMicStream:
++          asked |= RCPermissionMicrophone;
++          break;
++        case permissions::RequestType::kGeolocation:
++          asked |= RCPermissionLocation;
++          break;
++        default:
++          others = true;
++      }
++    }
++    base::WeakPtr<RisePermissionPrompt> weak = weak_factory_.GetWeakPtr();
++    void (^decide)(RCPermission) = ^(RCPermission allowed) {
++      // Decided on a later turn: the request manager takes this prompt as
++      // its view once it's made.
++      base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++          FROM_HERE, base::BindOnce(&RisePermissionPrompt::Decide, weak,
++                                    allowed == asked && !others));
++    };
++    // The rest stay denied.
++    if (others || !asked ||
++        ![view_ requestPermissions:asked
++                            origin:base::SysUTF8ToNSString(
++                                       url::Origin::Create(
++                                           delegate->GetRequestingOrigin())
++                                           .Serialize())
++                            decide:decide]) {
++      decide(0);
++    }
++  }
++  ~RisePermissionPrompt() override {
++    if (!decided_) {
++      [view_ withdrawPermissionRequest];
++    }
++  }
++
++  bool UpdateAnchor() override { return true; }
++  TabSwitchingBehavior GetTabSwitchingBehavior() override {
++    return kKeepPromptAlive;
++  }
++  permissions::PermissionPromptDisposition GetPromptDisposition()
++      const override {
++    return permissions::PermissionPromptDisposition::CUSTOM_MODAL_DIALOG;
++  }
++  bool IsAskPrompt() const override { return true; }
++  std::optional<gfx::Rect> GetViewBoundsInScreen() const override {
++    return std::nullopt;
++  }
++  std::vector<permissions::ElementAnchoredBubbleVariant> GetPromptVariants()
++      const override {
++    return {};
++  }
++  std::optional<permissions::feature_params::PermissionElementPromptPosition>
++  GetPromptPosition() const override {
++    return std::nullopt;
++  }
++
++ private:
++  void Decide(bool allowed) {
++    Delegate* delegate = delegate_.get();
++    if (!delegate || decided_ || delegate->Requests().empty()) {
++      return;
++    }
++    decided_ = true;
++    // Location may come with a choice of how precisely; Rise's is precise.
++    bool options = delegate->Requests()[0]->GetContentSettingsType() ==
++                   ContentSettingsType::GEOLOCATION_WITH_OPTIONS;
++    PromptOptions prompt_options =
++        options ? PromptOptions(GeolocationPromptOptions{
++                      GeolocationAccuracy::kPrecise})
++                : PromptOptions(std::monostate());
++    if (allowed) {
++      delegate->AcceptThisTime(prompt_options);
++      return;
++    }
++    GURL origin = delegate->GetRequestingOrigin();
++    std::vector<ContentSettingsType> types;
++    for (const auto& request : delegate->Requests()) {
++      types.push_back(request->GetContentSettingsType());
++    }
++    content::WebContents* contents = delegate->GetAssociatedWebContents();
++    delegate->Deny(prompt_options);
++    if (!contents) {
++      return;
++    }
++    HostContentSettingsMap* settings =
++        HostContentSettingsMapFactory::GetForProfile(
++            contents->GetBrowserContext());
++    for (ContentSettingsType type : types) {
++      settings->SetContentSettingDefaultScope(origin, GURL(), type,
++                                              CONTENT_SETTING_DEFAULT);
++    }
++  }
++
++  base::WeakPtr<Delegate> delegate_;
++  __weak RCBrowserView* view_;
++  bool decided_ = false;
++  base::WeakPtrFactory<RisePermissionPrompt> weak_factory_{this};
++};
++
++std::unique_ptr<permissions::PermissionPrompt> MakePermissionPrompt(
++    content::WebContents* contents,
++    permissions::PermissionPrompt::Delegate* delegate) {
++  return std::make_unique<RisePermissionPrompt>(contents, delegate);
++}
++
++// Chrome's DevTools protocol for a page, in process: for what only DevTools
++// does, such as a console's evaluation. Attached when first used.
++class DevToolsSession : public content::DevToolsAgentHostClient {
++ public:
++  using Reply = void (^)(NSDictionary* result, NSDictionary* error);
++
++  explicit DevToolsSession(content::WebContents* contents)
++      : host_(content::DevToolsAgentHost::GetOrCreateFor(contents)) {
++    host_->AttachClient(this);
++  }
++  ~DevToolsSession() override {
++    if (host_) {
++      host_->DetachClient(this);
++    }
++  }
++
++  void Send(NSString* method, NSDictionary* params, Reply reply) {
++    if (!host_) {
++      reply(nil, @{@"message" : @"The page went away"});
++      return;
++    }
++    NSNumber* sent = @(++next_);
++    replies_[sent] = reply;
++    NSData* json = [NSJSONSerialization
++        dataWithJSONObject:@{@"id" : sent, @"method" : method, @"params" : params ?: @{}}
++                   options:0
++                     error:nil];
++    std::string text(static_cast<const char*>(json.bytes), json.length);
++    host_->DispatchProtocolMessage(this, base::as_byte_span(text));
++  }
++
++  void DispatchProtocolMessage(content::DevToolsAgentHost* host,
++                               base::span<const uint8_t> message) override {
++    NSDictionary* parsed = [NSJSONSerialization
++        JSONObjectWithData:[NSData dataWithBytes:message.data() length:message.size()]
++                   options:0
++                     error:nil];
++    NSNumber* answered =
++        [parsed isKindOfClass:NSDictionary.class] ? parsed[@"id"] : nil;
++    Reply reply = nil;
++    if (answered) {
++      reply = replies_[answered];
++    }
++    if (reply) {
++      [replies_ removeObjectForKey:answered];
++      reply(parsed[@"result"], parsed[@"error"]);
++    }
++  }
++  void AgentHostClosed(content::DevToolsAgentHost* host) override {
++    host_ = nullptr;
++    NSDictionary* waiting = replies_;
++    replies_ = [NSMutableDictionary dictionary];
++    for (NSNumber* sent in waiting) {
++      ((Reply)waiting[sent])(nil, @{@"message" : @"The page went away"});
++    }
++  }
++
++ private:
++  scoped_refptr<content::DevToolsAgentHost> host_;
++  NSMutableDictionary<NSNumber*, Reply>* replies_ = [NSMutableDictionary dictionary];
++  int next_ = 0;
++};
++
 +// Rise's agent in a frame, in the page's process.
 +mojo::AssociatedRemote<rise::mojom::RiseFrame> AgentOf(
 +    content::RenderFrameHost* frame) {
@@ -1364,9 +1969,27 @@ index 0000000000..d32e2caf07
 +      [view_ finishedLoad];
 +    }
 +  }
++  void OnAudioStateChanged(bool audible) override { Changed(); }
++  void DidFinishNavigation(content::NavigationHandle* navigation) override {
++    if (!navigation->IsInPrimaryMainFrame() || navigation->IsSameDocument()) {
++      return;
++    }
++    net::Error error = navigation->GetNetErrorCode();
++    if (error == net::OK || error == net::ERR_ABORTED) {
++      return;
++    }
++    [view_ loadFailed:error
++                 text:base::SysUTF8ToNSString(net::ErrorToString(error))
++                  url:ToNSURL(navigation->GetURL())];
++  }
 +  void PrimaryMainFrameRenderProcessGone(
 +      base::TerminationStatus status) override {
-+    [view_ crashed];
++    // On the next turn: Rise loads the page again, starting a new process,
++    // which must wait until Chrome has done with the old one.
++    __weak RCBrowserView* view = view_;
++    dispatch_async(dispatch_get_main_queue(), ^{
++      [view crashed];
++    });
 +  }
 +  // Chrome closed the tab itself, as for an extension's tabs.remove.
 +  void WebContentsDestroyed() override { [view_ contentsGone]; }
@@ -1614,6 +2237,8 @@ index 0000000000..d32e2caf07
 +  NSMutableArray<NSDictionary*>* _scripts;
 +  // Rise's message handlers, by name: world and replies.
 +  NSMutableDictionary<NSString*, NSDictionary*>* _handlers;
++  std::unique_ptr<DevToolsSession> _devTools;
++  BOOL _fullscreen;
 +}
 +
 +@synthesize delegate = _delegate;
@@ -1664,14 +2289,40 @@ index 0000000000..d32e2caf07
 +  if (_closed || _contents || !browser) {
 +    return;
 +  }
-+  std::unique_ptr<content::WebContents> contents =
-+      content::WebContents::Create(content::WebContents::CreateParams(
-+          browser->GetProfile()));
++  [self adopt:content::WebContents::Create(
++                  content::WebContents::CreateParams(browser->GetProfile()))];
++}
++
++// A page Chrome made, opened by another page's script.
++- (instancetype)initWithFrame:(NSRect)frame
++                 openedContents:(content::WebContents*)contents {
++  if (!(self = [self initWithFrame:frame URL:nil])) {
++    return nil;
++  }
++  [self adopt:std::unique_ptr<content::WebContents>(contents)];
++  return self;
++}
++
++// Takes `contents` as its page, a tab of the waiting Browser until its window
++// takes it.
++- (void)adopt:(std::unique_ptr<content::WebContents>)contents {
++  BrowserWindowInterface* browser = WaitingBrowser();
++  if (!browser) {
++    return;
++  }
 +  _contents = contents.get();
++  // Its dialogs and file choosers are Rise's sheets and panels.
++  EmbedderTabHooks::Attach(_contents, std::make_unique<RiseTabHooks>(self));
 +  // A tab of the Browser: Chrome's tab helpers, extensions and the rest see it
 +  // as one.
 +  browser->GetTabStripModel()->AppendWebContents(std::move(contents),
 +                                                 /*foreground=*/false);
++  // Its permission requests are asked in Rise's prompt.
++  if (auto* permissions =
++          permissions::PermissionRequestManager::FromWebContents(_contents)) {
++    permissions->set_view_factory_for_testing(
++        base::BindRepeating(&MakePermissionPrompt));
++  }
 +  _observer = std::make_unique<TabObserver>(self, _contents);
 +  [Views() setObject:self forKey:[NSValue valueWithPointer:_contents]];
 +  _contents->SetPageBaseBackgroundColor(
@@ -1754,9 +2405,57 @@ index 0000000000..d32e2caf07
 +  return _contents && _contents->IsCurrentlyAudible();
 +}
 +- (BOOL)fullscreen {
-+  return NO;
++  return _fullscreen;
 +}
-+- (void)exitFullscreen {}
++- (void)exitFullscreen {
++  if (_contents && _fullscreen) {
++    _contents->ExitFullscreen(/*will_cause_resize=*/true);
++  }
++}
++- (void)updateFullscreen:(BOOL)fullscreen {
++  if (fullscreen == _fullscreen) {
++    return;
++  }
++  _fullscreen = fullscreen;
++  [_delegate browserViewDidChange:self];
++}
++- (BOOL)openURL:(NSURL*)url
++    disposition:(RCOpenDisposition)disposition
++    userGesture:(BOOL)userGesture {
++  return [_delegate respondsToSelector:@selector
++                    (browserView:openURL:disposition:userGesture:)] &&
++         [_delegate browserView:self
++                        openURL:url
++                    disposition:disposition
++                    userGesture:userGesture];
++}
++- (BOOL)adoptPopup:(RCBrowserView*)popup
++               url:(NSURL*)url
++       userGesture:(BOOL)userGesture {
++  return !_closed &&
++         [_delegate respondsToSelector:@selector
++                    (browserView:adoptPopup:url:userGesture:)] &&
++         [_delegate browserView:self
++                     adoptPopup:popup
++                            url:url
++                    userGesture:userGesture];
++}
++- (BOOL)openInOtherApp:(NSURL*)url {
++  if (![_delegate respondsToSelector:@selector(browserView:openInOtherApp:)]) {
++    return NO;
++  }
++  [_delegate browserView:self openInOtherApp:url];
++  return YES;
++}
++- (void)loadFailed:(NSInteger)code text:(NSString*)text url:(NSURL*)url {
++  if ([_delegate respondsToSelector:@selector
++                 (browserView:didFailLoadWithCode:description:url:)]) {
++    [_delegate browserView:self
++        didFailLoadWithCode:code
++                description:text
++                        url:url];
++  }
++}
 +- (NSData*)navigationState {
 +  return nil;
 +}
@@ -1870,7 +2569,8 @@ index 0000000000..d32e2caf07
 +      base::SysNSStringToUTF16(script), /*has_user_gesture=*/true,
 +      /*resolve_promises=*/true, /*honor_js_content_settings=*/false,
 +      WorldID(world),
-+      base::BindOnce(
++      // Answered even if the frame goes away first, as when it navigates.
++      mojo::WrapCallbackWithDefaultInvokeIfNotRun(base::BindOnce(
 +          [](void (^completion)(id, NSString*),
 +             blink::mojom::JavaScriptExecutionResultType type,
 +             base::Value value) {
@@ -1882,7 +2582,9 @@ index 0000000000..d32e2caf07
 +                                  : @"The script threw");
 +            }
 +          },
-+          completion));
++          completion),
++          blink::mojom::JavaScriptExecutionResultType::kException,
++          base::Value("The frame went away")));
 +}
 +
 +// MARK: Rise's scripts
@@ -2001,13 +2703,148 @@ index 0000000000..d32e2caf07
 +                   frame:[[RCFrame alloc] initWithFrame:frame world:world]
 +                   reply:reply];
 +}
++// Sends a DevTools protocol command to the page; nil result if it failed.
++- (void)devTools:(NSString*)method
++          params:(NSDictionary*)params
++           reply:(void (^)(NSDictionary*, NSDictionary*))reply {
++  if (!_contents) {
++    reply(nil, @{@"message" : @"The page isn't there"});
++    return;
++  }
++  if (!_devTools) {
++    _devTools = std::make_unique<DevToolsSession>(_contents);
++  }
++  _devTools->Send(method, params, reply);
++}
++- (void)devTools:(NSString*)method
++          params:(NSDictionary*)params
++      completion:(void (^)(NSDictionary*))completion {
++  [self devTools:method
++          params:params
++           reply:^(NSDictionary* result, NSDictionary*) {
++             completion(result);
++           }];
++}
++
 +- (void)evaluateConsoleExpression:(NSString*)expression
 +                       completion:(void (^)(id, NSString*))completion {
-+  completion(nil, @"Not on this engine yet");
++  // As DevTools' console runs it: statements, let and await included.
++  NSDictionary* params = @{
++    @"expression" : expression,
++    @"replMode" : @YES,
++    @"awaitPromise" : @YES,
++    @"returnByValue" : @YES,
++    @"userGesture" : @YES
++  };
++  [self devTools:@"Runtime.evaluate"
++          params:params
++           reply:^(NSDictionary* result, NSDictionary* error) {
++             if (!result) {
++               completion(nil, error[@"message"] ?: @"The page went away");
++               return;
++             }
++             if (NSDictionary* exception = result[@"exceptionDetails"]) {
++               completion(nil, exception[@"exception"][@"description"]
++                                   ?: exception[@"text"]
++                                   ?: @"The script threw");
++               return;
++             }
++             NSDictionary* value = result[@"result"];
++             id shown = value[@"value"] ?: value[@"description"] ?: value[@"type"];
++             completion(shown == NSNull.null ? nil : shown, nil);
++           }];
 +}
 +- (RCBrowserView*)makeDevToolsView {
 +  return [[RCBrowserView alloc] initWithFrame:NSZeroRect URL:nil];
 +}
++// MARK: Dialogs, files and permissions, in Rise's sheets
++
++- (BOOL)runDialog:(RCDialogKind)kind
++          message:(NSString*)message
++      defaultText:(NSString*)text
++           origin:(NSURL*)origin
++       completion:(void (^)(BOOL, NSString*))completion {
++  if (![_delegate respondsToSelector:@selector
++                  (browserView:runDialog:message:defaultText:origin:completion:)]) {
++    return NO;
++  }
++  [_delegate browserView:self
++               runDialog:kind
++                 message:message
++             defaultText:text
++                  origin:origin
++              completion:completion];
++  return YES;
++}
++- (void)cancelDialog {
++  if ([_delegate respondsToSelector:@selector(browserViewDidCancelDialog:)]) {
++    [_delegate browserViewDidCancelDialog:self];
++  }
++}
++- (BOOL)chooseFiles:(RCFileChooserMode)mode
++              title:(NSString*)title
++        defaultPath:(NSString*)path
++         extensions:(NSArray<NSString*>*)extensions
++         completion:(void (^)(NSArray<NSURL*>*))completion {
++  if (![_delegate respondsToSelector:@selector
++                  (browserView:chooseFiles:title:defaultPath:extensions:completion:)]) {
++    return NO;
++  }
++  __block BOOL chosen = NO;
++  [_delegate browserView:self
++             chooseFiles:mode
++                   title:title
++             defaultPath:path
++              extensions:extensions
++              completion:^(NSArray<NSURL*>* urls) {
++                if (!chosen) {
++                  chosen = YES;
++                  completion(urls);
++                }
++              }];
++  return YES;
++}
++- (BOOL)requestPermissions:(RCPermission)permissions
++                    origin:(NSString*)origin
++                    decide:(void (^)(RCPermission))decide {
++  if (![_delegate respondsToSelector:@selector
++                  (browserView:requestPermissions:origin:decide:)]) {
++    return NO;
++  }
++  __block BOOL decided = NO;
++  [_delegate browserView:self
++      requestPermissions:permissions
++                  origin:origin
++                  decide:^(RCPermission allowed) {
++                    if (!decided) {
++                      decided = YES;
++                      decide(allowed);
++                    }
++                  }];
++  return YES;
++}
++- (BOOL)takesDownloads {
++  return [_delegate respondsToSelector:@selector
++                    (browserView:destinationForDownload:suggestedName:)];
++}
++- (NSURL*)destinationForDownload:(download::DownloadItem*)item
++                   suggestedName:(NSString*)name {
++  RCDownload* download = [[RCDownload alloc] initWithItem:item];
++  NSURL* destination = [_delegate browserView:self
++                       destinationForDownload:download
++                                suggestedName:name];
++  if (!destination) {
++    [download forget];
++  }
++  return destination;
++}
++- (void)withdrawPermissionRequest {
++  if ([_delegate respondsToSelector:@selector
++                 (browserViewDidWithdrawPermissionRequest:)]) {
++    [_delegate browserViewDidWithdrawPermissionRequest:self];
++  }
++}
++
 +- (void)removeUserScriptsWithPrefix:(NSString*)prefix {
 +  NSIndexSet* matching = [_scripts
 +      indexesOfObjectsPassingTest:^BOOL(NSDictionary* script, NSUInteger, BOOL*) {
@@ -2065,11 +2902,24 @@ index 0000000000..d32e2caf07
 +    return;
 +  }
 +  [contents->GetNativeView().GetNativeNSView() removeFromSuperview];
-+  TabStripModel* tabs = browser->GetTabStripModel();
-+  int index = tabs->GetIndexOfWebContents(contents);
-+  if (index != TabStripModel::kNoTab) {
-+    tabs->DetachAndDeleteWebContentsAt(index);
-+  }
++  // Deleted on the next turn: Rise may close a page from what the page is
++  // telling it, while Chrome is still telling everyone else.
++  base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++      FROM_HERE,
++      base::BindOnce(
++          [](base::WeakPtr<content::WebContents> contents) {
++            BrowserWindowInterface* browser =
++                contents ? BrowserOf(contents.get()) : nullptr;
++            if (!browser) {
++              return;
++            }
++            TabStripModel* tabs = browser->GetTabStripModel();
++            int index = tabs->GetIndexOfWebContents(contents.get());
++            if (index != TabStripModel::kNoTab) {
++              tabs->DetachAndDeleteWebContentsAt(index);
++            }
++          },
++          contents->GetWeakPtr()));
 +}
 +
 +@end
@@ -2130,23 +2980,137 @@ index 0000000000..d32e2caf07
 +}
 +@end
 +
-+@implementation RCDownload
++namespace {
++
++// What a download does, told to Rise's.
++class DownloadWatcher : public download::DownloadItem::Observer {
++ public:
++  DownloadWatcher(RCDownload* download, download::DownloadItem* item)
++      : download_(download) {
++    observation_.Observe(item);
++  }
++  void OnDownloadUpdated(download::DownloadItem* item) override {
++    [download_ updateFrom:item];
++  }
++  void OnDownloadDestroyed(download::DownloadItem* item) override {
++    observation_.Reset();
++    [download_ itemGone];
++  }
++
++ private:
++  __weak RCDownload* download_;
++  base::ScopedObservation<download::DownloadItem,
++                          download::DownloadItem::Observer>
++      observation_{this};
++};
++
++// Downloads under way, kept until they end.
++NSMutableSet<RCDownload*>* LiveDownloads() {
++  static NSMutableSet* downloads = [NSMutableSet set];
++  return downloads;
++}
++
++}  // namespace
++
++@implementation RCDownload {
++  raw_ptr<download::DownloadItem> _item;
++  std::unique_ptr<DownloadWatcher> _watcher;
++  NSURL* _url;
++  RCDownloadState _state;
++  int64_t _receivedBytes;
++  int64_t _totalBytes;
++  BOOL _cancelled;
++}
 +@synthesize onUpdate = _onUpdate;
++
++- (instancetype)initWithItem:(download::DownloadItem*)item {
++  if (!(self = [super init])) {
++    return nil;
++  }
++  _item = item;
++  _watcher = std::make_unique<DownloadWatcher>(self, item);
++  [LiveDownloads() addObject:self];
++  [self read:item];
++  return self;
++}
++
++- (void)read:(download::DownloadItem*)item {
++  _url = ToNSURL(item->GetURL()) ?: _url;
++  _receivedBytes = item->GetReceivedBytes();
++  _totalBytes = item->GetTotalBytes() > 0 ? item->GetTotalBytes() : -1;
++  switch (item->GetState()) {
++    case download::DownloadItem::COMPLETE:
++      _state = RCDownloadStateFinished;
++      break;
++    case download::DownloadItem::CANCELLED:
++      _state = _cancelled ? RCDownloadStateCancelled : RCDownloadStateFailed;
++      break;
++    case download::DownloadItem::INTERRUPTED:
++      _state = RCDownloadStateFailed;
++      break;
++    default:
++      _state = item->IsPaused() ? RCDownloadStatePaused
++                                : RCDownloadStateDownloading;
++  }
++}
++
++- (void)updateFrom:(download::DownloadItem*)item {
++  [self read:item];
++  if (_onUpdate) {
++    _onUpdate(self);
++  }
++  if (_state == RCDownloadStateFinished || _state == RCDownloadStateCancelled ||
++      _state == RCDownloadStateFailed) {
++    [self forget];
++  }
++}
++
++- (void)itemGone {
++  _item = nullptr;
++  if (_state == RCDownloadStateDownloading || _state == RCDownloadStatePaused) {
++    _state = RCDownloadStateFailed;
++    if (_onUpdate) {
++      _onUpdate(self);
++    }
++  }
++  [self forget];
++}
++
++// No longer followed: it ended, or Rise didn't take it.
++- (void)forget {
++  _watcher.reset();
++  _item = nullptr;
++  [LiveDownloads() removeObject:self];
++}
++
 +- (NSURL*)url {
-+  return [NSURL URLWithString:@"about:blank"];
++  return _url ?: [NSURL URLWithString:@"about:blank"];
 +}
 +- (RCDownloadState)state {
-+  return RCDownloadStateCancelled;
++  return _state;
 +}
 +- (int64_t)receivedBytes {
-+  return 0;
++  return _receivedBytes;
 +}
 +- (int64_t)totalBytes {
-+  return -1;
++  return _totalBytes;
 +}
-+- (void)pause {}
-+- (void)resume {}
-+- (void)cancel {}
++- (void)pause {
++  if (_item) {
++    _item->Pause();
++  }
++}
++- (void)resume {
++  if (_item) {
++    _item->Resume(/*user_resume=*/true);
++  }
++}
++- (void)cancel {
++  if (_item) {
++    _cancelled = YES;
++    _item->Cancel(/*user_cancel=*/true);
++  }
++}
 +@end
 +
 +@implementation RCContextMenu
@@ -2478,10 +3442,10 @@ index 0000000000..d32e2caf07
 +@end
 diff --git a/chrome/browser/rise/rise_browser_window.cc b/chrome/browser/rise/rise_browser_window.cc
 new file mode 100644
-index 0000000000..e5764ea07b
+index 0000000000..f809629592
 --- /dev/null
 +++ b/chrome/browser/rise/rise_browser_window.cc
-@@ -0,0 +1,447 @@
+@@ -0,0 +1,448 @@
 +// Copyright 2012 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -2796,7 +3760,8 @@ index 0000000000..e5764ea07b
 +}
 +
 +bool RiseBrowserWindow::IsTabStripEditable() const {
-+  return false;
++  // Rise's tabs move, close and open as it, and extensions, like.
++  return true;
 +}
 +
 +void RiseBrowserWindow::DisableTabStripEditingForTesting() {
@@ -3286,6 +4251,323 @@ index 07de580deb..900819bca4 100644
      CHECK_IS_TEST() << "BrowserWindowCreateParams::window is a test-only param";
    }
    window_ =
+diff --git a/chrome/browser/ui/browser_web_contents_delegate/BUILD.gn b/chrome/browser/ui/browser_web_contents_delegate/BUILD.gn
+index d4dacf5897..8f07451b35 100644
+--- a/chrome/browser/ui/browser_web_contents_delegate/BUILD.gn
++++ b/chrome/browser/ui/browser_web_contents_delegate/BUILD.gn
+@@ -10,6 +10,8 @@ if (!is_android) {
+     sources = [
+       "browser_web_contents_delegate.cc",
+       "browser_web_contents_delegate.h",
++      "embedder_tab_hooks.cc",
++      "embedder_tab_hooks.h",
+     ]
+     public_deps = [ "//chrome/browser:browser_public_dependencies" ]
+     deps = [
+diff --git a/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc b/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc
+index 3bc40bcc91..909b3e3025 100644
+--- a/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc
++++ b/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc
+@@ -32,6 +32,7 @@
+ #include "chrome/browser/ui/browser_commands.h"
+ #include "chrome/browser/ui/browser_tabstrip.h"
+ #include "chrome/browser/ui/browser_ui_controller/browser_ui_controller.h"
++#include "chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h"
+ #include "chrome/browser/ui/browser_window.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+@@ -541,6 +542,23 @@ content::WebContents* BrowserWebContentsDelegate::OpenURLFromTab(
+   DCHECK(params.Valid());
+ #endif
+ 
++  // An embedder's tab opening something elsewhere (a new tab or window).
++  if (EmbedderTabHooks* hooks = EmbedderTabHooks::FromWebContents(source);
++      hooks && params.disposition != WindowOpenDisposition::CURRENT_TAB) {
++    switch (hooks->OpenURL(params)) {
++      case EmbedderTabHooks::OpenURLResult::kOpened:
++        return nullptr;
++      case EmbedderTabHooks::OpenURLResult::kHere: {
++        content::OpenURLParams here = params;
++        here.disposition = WindowOpenDisposition::CURRENT_TAB;
++        return OpenURLFromTab(source, here,
++                              std::move(navigation_handle_callback));
++      }
++      case EmbedderTabHooks::OpenURLResult::kChrome:
++        break;
++    }
++  }
++
+   if ((browser_->GetType() == BrowserWindowInterface::Type::TYPE_DEVTOOLS)) {
+     DevToolsWindow* window = DevToolsWindow::AsDevToolsWindow(source);
+     DCHECK(window);
+@@ -672,6 +690,14 @@ content::WebContents* BrowserWebContentsDelegate::AddNewContents(
+     const blink::mojom::WindowFeatures& window_features,
+     bool user_gesture,
+     bool* was_blocked) {
++  // A window an embedder's tab opened, for the embedder to place.
++  if (EmbedderTabHooks* hooks = EmbedderTabHooks::FromWebContents(source)) {
++    content::WebContents* opened = new_contents.get();
++    if (hooks->AddNewContents(new_contents, target_url, disposition,
++                              window_features, user_gesture)) {
++      return new_contents ? nullptr : opened;
++    }
++  }
+   FullscreenController* fullscreen_controller =
+       exclusive_access_manager_->fullscreen_controller();
+ #if BUILDFLAG(IS_MAC)
+@@ -1113,6 +1139,12 @@ void BrowserWebContentsDelegate::RendererResponsive(
+ content::JavaScriptDialogManager*
+ BrowserWebContentsDelegate::GetJavaScriptDialogManager(
+     content::WebContents* source) {
++  if (EmbedderTabHooks* hooks = EmbedderTabHooks::FromWebContents(source)) {
++    if (content::JavaScriptDialogManager* manager =
++            hooks->GetJavaScriptDialogManager()) {
++      return manager;
++    }
++  }
+   return javascript_dialogs::TabModalDialogManager::FromWebContents(source);
+ }
+ 
+@@ -1127,6 +1159,11 @@ void BrowserWebContentsDelegate::RunFileChooser(
+     content::RenderFrameHost* render_frame_host,
+     scoped_refptr<content::FileSelectListener> listener,
+     const blink::mojom::FileChooserParams& params) {
++  if (EmbedderTabHooks* hooks = EmbedderTabHooks::FromWebContents(
++          content::WebContents::FromRenderFrameHost(render_frame_host));
++      hooks && hooks->RunFileChooser(render_frame_host, listener, params)) {
++    return;
++  }
+   FileSelectHelper::RunFileChooser(render_frame_host, std::move(listener),
+                                    params);
+ }
+@@ -1191,6 +1228,12 @@ bool BrowserWebContentsDelegate::CanEnterFullscreenModeForTab(
+     return false;
+   }
+ 
++  if (EmbedderTabHooks* hooks = EmbedderTabHooks::FromWebContents(
++          content::WebContents::FromRenderFrameHost(requesting_frame));
++      hooks && hooks->HandlesFullscreen()) {
++    return true;
++  }
++
+   return exclusive_access_manager_->fullscreen_controller()
+       ->CanEnterFullscreenModeForTab(requesting_frame);
+ }
+@@ -1198,12 +1241,23 @@ bool BrowserWebContentsDelegate::CanEnterFullscreenModeForTab(
+ void BrowserWebContentsDelegate::EnterFullscreenModeForTab(
+     content::RenderFrameHost* requesting_frame,
+     const blink::mojom::FullscreenOptions& options) {
++  if (EmbedderTabHooks* hooks = EmbedderTabHooks::FromWebContents(
++          content::WebContents::FromRenderFrameHost(requesting_frame));
++      hooks && hooks->HandlesFullscreen()) {
++    hooks->SetFullscreen(true);
++    return;
++  }
+   exclusive_access_manager_->fullscreen_controller()->EnterFullscreenModeForTab(
+       requesting_frame, FullscreenTabParams{options.display_id});
+ }
+ 
+ void BrowserWebContentsDelegate::ExitFullscreenModeForTab(
+     content::WebContents* web_contents) {
++  if (EmbedderTabHooks* hooks = EmbedderTabHooks::FromWebContents(web_contents);
++      hooks && hooks->HandlesFullscreen()) {
++    hooks->SetFullscreen(false);
++    return;
++  }
+   exclusive_access_manager_->fullscreen_controller()->ExitFullscreenModeForTab(
+       web_contents);
+ }
+@@ -1217,6 +1271,15 @@ bool BrowserWebContentsDelegate::IsFullscreenForTabOrPending(
+ 
+ content::FullscreenState BrowserWebContentsDelegate::GetFullscreenState(
+     const content::WebContents* web_contents) const {
++  if (EmbedderTabHooks* hooks = EmbedderTabHooks::FromWebContents(
++          const_cast<content::WebContents*>(web_contents));
++      hooks && hooks->HandlesFullscreen()) {
++    content::FullscreenState state;
++    state.target_mode = hooks->IsFullscreen()
++                            ? content::FullscreenMode::kContent
++                            : content::FullscreenMode::kWindowed;
++    return state;
++  }
+   return exclusive_access_manager_->fullscreen_controller()->GetFullscreenState(
+       web_contents);
+ }
+diff --git a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc
+new file mode 100644
+index 0000000000..082a7dafa2
+--- /dev/null
++++ b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc
+@@ -0,0 +1,78 @@
++// Copyright 2026 The Rise Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h"
++
++#include <utility>
++
++#include "content/public/browser/file_select_listener.h"
++#include "content/public/browser/web_contents.h"
++
++namespace {
++const char kEmbedderTabHooksKey[] = "EmbedderTabHooks";
++}  // namespace
++
++// static
++EmbedderTabHooks* EmbedderTabHooks::FromWebContents(
++    content::WebContents* contents) {
++  return contents ? static_cast<EmbedderTabHooks*>(
++                        contents->GetUserData(kEmbedderTabHooksKey))
++                  : nullptr;
++}
++
++// static
++void EmbedderTabHooks::Attach(content::WebContents* contents,
++                              std::unique_ptr<EmbedderTabHooks> hooks) {
++  contents->SetUserData(kEmbedderTabHooksKey, std::move(hooks));
++}
++
++content::JavaScriptDialogManager*
++EmbedderTabHooks::GetJavaScriptDialogManager() {
++  return nullptr;
++}
++
++EmbedderTabHooks::OpenURLResult EmbedderTabHooks::OpenURL(
++    const content::OpenURLParams& params) {
++  return OpenURLResult::kChrome;
++}
++
++bool EmbedderTabHooks::AddNewContents(
++    std::unique_ptr<content::WebContents>& contents,
++    const GURL& target_url,
++    WindowOpenDisposition disposition,
++    const blink::mojom::WindowFeatures& features,
++    bool user_gesture) {
++  return false;
++}
++
++bool EmbedderTabHooks::HandlesFullscreen() {
++  return false;
++}
++
++void EmbedderTabHooks::SetFullscreen(bool fullscreen) {}
++
++bool EmbedderTabHooks::IsFullscreen() {
++  return false;
++}
++
++bool EmbedderTabHooks::OpenInOtherApp(const GURL& url) {
++  return false;
++}
++
++bool EmbedderTabHooks::ShowsCrashedPages() {
++  return false;
++}
++
++bool EmbedderTabHooks::ChooseDownloadPath(download::DownloadItem* download,
++                                          const base::FilePath& suggested,
++                                          DownloadPathCallback done) {
++  return false;
++}
++
++bool EmbedderTabHooks::RunFileChooser(
++    content::RenderFrameHost* frame,
++    scoped_refptr<content::FileSelectListener> listener,
++    const blink::mojom::FileChooserParams& params) {
++  return false;
++}
+diff --git a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h
+new file mode 100644
+index 0000000000..be8faceb33
+--- /dev/null
++++ b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h
+@@ -0,0 +1,85 @@
++// Copyright 2026 The Rise Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_BROWSER_WEB_CONTENTS_DELEGATE_EMBEDDER_TAB_HOOKS_H_
++#define CHROME_BROWSER_UI_BROWSER_WEB_CONTENTS_DELEGATE_EMBEDDER_TAB_HOOKS_H_
++
++#include <memory>
++#include <optional>
++
++#include "base/files/file_path.h"
++#include "base/functional/callback_forward.h"
++#include "base/memory/scoped_refptr.h"
++#include "base/supports_user_data.h"
++#include "ui/base/window_open_disposition.h"
++#include "third_party/blink/public/mojom/choosers/file_chooser.mojom-forward.h"
++
++namespace download {
++class DownloadItem;
++}  // namespace download
++
++namespace blink::mojom {
++class WindowFeatures;
++}  // namespace blink::mojom
++
++class GURL;
++
++namespace content {
++class FileSelectListener;
++struct OpenURLParams;
++class JavaScriptDialogManager;
++class RenderFrameHost;
++class WebContents;
++}  // namespace content
++
++// What an embedder whose windows aren't Chrome's (Rise, on its fork) shows
++// itself for a tab, in its own interface: the tab's BrowserWebContentsDelegate
++// asks these first.
++class EmbedderTabHooks : public base::SupportsUserData::Data {
++ public:
++  static EmbedderTabHooks* FromWebContents(content::WebContents* contents);
++  static void Attach(content::WebContents* contents,
++                     std::unique_ptr<EmbedderTabHooks> hooks);
++
++  // The tab's page dialogs; null leaves them to Chrome.
++  virtual content::JavaScriptDialogManager* GetJavaScriptDialogManager();
++  // Whether the embedder shows the file chooser the page asks for.
++  virtual bool RunFileChooser(content::RenderFrameHost* frame,
++                              scoped_refptr<content::FileSelectListener> listener,
++                              const blink::mojom::FileChooserParams& params);
++  // A page opening `params` elsewhere than itself (a new tab or window): where
++  // it goes.
++  enum class OpenURLResult {
++    kChrome,  // Chrome opens it, as for its own windows.
++    kOpened,  // The embedder opened it.
++    kHere,    // The page opens it itself instead.
++  };
++  virtual OpenURLResult OpenURL(const content::OpenURLParams& params);
++  // A window the page opened itself, as by window.open(): whether the
++  // embedder took `contents` (or let it go; Chrome otherwise adds it).
++  virtual bool AddNewContents(std::unique_ptr<content::WebContents>& contents,
++                              const GURL& target_url,
++                              WindowOpenDisposition disposition,
++                              const blink::mojom::WindowFeatures& features,
++                              bool user_gesture);
++  // Whether the embedder shows the page's element full screen itself, in its
++  // own window, and if so whether it does now.
++  virtual bool HandlesFullscreen();
++  virtual void SetFullscreen(bool fullscreen);
++  virtual bool IsFullscreen();
++  // Whether the embedder asks itself before opening `url` in another app.
++  virtual bool OpenInOtherApp(const GURL& url);
++  // Whether the embedder shows a page whose process ended itself, instead of
++  // Chrome's sad tab.
++  virtual bool ShowsCrashedPages();
++  // Whether the embedder says where `download`, from the tab, goes, in its own
++  // downloads list: `done` with the path, or nothing not to download it.
++  using DownloadPathCallback =
++      base::OnceCallback<void(std::optional<base::FilePath>)>;
++  virtual bool ChooseDownloadPath(download::DownloadItem* download,
++                                  const base::FilePath& suggested,
++                                  DownloadPathCallback done);
++};
++
++#endif  // CHROME_BROWSER_UI_BROWSER_WEB_CONTENTS_DELEGATE_EMBEDDER_TAB_HOOKS_H_
 diff --git a/chrome/browser/ui/browser_window.h b/chrome/browser/ui/browser_window.h
 index 6e4b4388d9..bf7abea18a 100644
 --- a/chrome/browser/ui/browser_window.h
@@ -3317,6 +4599,30 @@ index 6ecba965f8..f743dfabb7 100644
    // User-set title of this browser window, if there is one.
    std::string user_title;
  
+diff --git a/chrome/browser/ui/sad_tab_helper.cc b/chrome/browser/ui/sad_tab_helper.cc
+index c0157e893f..d8494c52fa 100644
+--- a/chrome/browser/ui/sad_tab_helper.cc
++++ b/chrome/browser/ui/sad_tab_helper.cc
+@@ -8,6 +8,7 @@
+ #include "chrome/browser/lifetime/browser_shutdown.h"
+ #include "chrome/browser/preloading/prefetch/no_state_prefetch/chrome_no_state_prefetch_contents_delegate.h"
+ #include "chrome/browser/resource_coordinator/tab_lifecycle_unit_external.h"
++#include "chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h"
+ #include "chrome/browser/ui/sad_tab.h"
+ #include "chrome/browser/ui/tabs/tab_strip_model.h"
+ #include "components/performance_manager/public/mojom/lifecycle.mojom.h"
+@@ -91,6 +92,11 @@ void SadTabHelper::PrimaryMainFrameRenderProcessGone(
+   if (browser_shutdown::HasShutdownStarted()) {
+     return;
+   }
++  // An embedder (Rise) may show crashed pages its own way.
++  if (EmbedderTabHooks* hooks = EmbedderTabHooks::FromWebContents(web_contents());
++      hooks && hooks->ShowsCrashedPages()) {
++    return;
++  }
+ 
+   if (status == base::TERMINATION_STATUS_EVICTED_FOR_MEMORY) {
+     // If the renderer was terminated to prevent an browser OOM crash, discard
 diff --git a/chrome/browser/ui/unload_controller.cc b/chrome/browser/ui/unload_controller.cc
 index fd25e44754..ae2e25df2b 100644
 --- a/chrome/browser/ui/unload_controller.cc
