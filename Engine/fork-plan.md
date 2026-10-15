@@ -117,11 +117,29 @@ are most of them.
 
    Camera, microphone and location requests go to Rise's prompt through Chrome's per-tab
    permission manager, which takes another prompt maker. Rise grants for the page only, and
-   Chrome keeps no denial, so Rise stays the one that remembers decisions. The `features` live
-   check (with `RISE_CHECK_TIMEOUT=900` while features are missing) runs to the end on the fork.
-   Still to do: ad blocking, Preload Links without scripts, DevTools in Rise's panel,
-   rise://settings with Rise's sections and name, the page menu, and saving and restoring a
-   tab's history.
+   Chrome keeps no denial, so Rise stays the one that remembers decisions.
+
+   The rest of the features (done):
+   - **The page menu:** right-clicks go to the tab hooks; `RCContextMenu` copies, looks up,
+     corrects spelling and copies images through Chrome.
+   - **DevTools in Rise's panel:** the front end is a Rise page. Chrome's DevTools page makes its
+     own `DevToolsUIBindings` as it starts loading, which Rise then gives its delegate and the
+     inspected page, as Chrome's DevTools window does.
+   - **Pages without scripts** (Preload Links): the tab hooks override web preferences.
+   - **Tab history:** saved with Chrome's session format, tagged as the fork's; CEF's saved
+     history isn't readable, and a tab falls back to its address.
+   - **Ad blocking:** Rise's engine stays in Rise's app, with its own Rust, and hands the
+     framework its functions as Rise starts (`Sources/RiseFork/RiseFork.m`). Pages' URL loader
+     factories pass a filter of Rise's (an embedder hook in `WillCreateURLLoaderFactory`).
+   - **rise://settings:** Rise's settings patches (`0003`, `0004`, the same as CEF's) and
+     `scripts/engine/brand.py`, run on the tree after the patches, as for CEF. What `brand.py`
+     writes (strings, translations and logos) stays out of the patches.
+
+   Page scripts in the page's own world run through Blink's `RequestExecuteScript`, as
+   extensions' do, so they aren't taken as another origin's (their `import()` resolves against
+   the page). The `features` live check passes on the fork, 61 of 61. The two drag-out checks
+   fail now and then. `test-chromium-live.py` also runs any check file given as a path, for
+   one-off probes.
 
 1. **The engine API.** Everything `RiseChromium.h` offers today, on the fork:
    - Navigation, and saving and restoring back and forward history.

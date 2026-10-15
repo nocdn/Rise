@@ -33,8 +33,10 @@ var targets: [Target] = [
 var products: [Product] = [.executable(name: "Rise", targets: ["Rise"])]
 if onFork {
     targets.append(.target(name: "RiseChromium", path: "Sources/RiseFork",
+                           cSettings: hasAdBlock ? [.define("RISE_ADBLOCK")] : [],
                            linkerSettings: [.unsafeFlags(["-F", forkFrameworks, "-framework", "Chromium Framework",
-                                                          "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]))
+                                                          "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]
+                                                         + (hasAdBlock ? [adBlock] : []))]))
 } else if hasChromium {
     targets += [
         .target(name: "RiseChromium", cxxSettings: cefFlags + (hasAdBlock ? [.define("RISE_ADBLOCK")] : []),

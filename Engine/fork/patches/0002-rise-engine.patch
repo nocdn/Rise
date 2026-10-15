@@ -80,16 +80,17 @@ index 8bc5981f98..eb36c7932d 100644
  // In special cases, code should not execute in a test.
  #define CHECK_IS_NOT_TEST(...) \
 diff --git a/chrome/app/framework.exports b/chrome/app/framework.exports
-index 37c881f5d2..c4f7e25336 100644
+index 37c881f5d2..9ba99564b7 100644
 --- a/chrome/app/framework.exports
 +++ b/chrome/app/framework.exports
-@@ -19,3 +19,25 @@
+@@ -19,3 +19,26 @@
  _ChromeAppModeStart_v8
  _ChromeMain
  _ChromeWebAppShortcutCopierMain
 +
 +# Rise's engine interface (chrome/browser/rise/RiseChromium.h), which Rise links.
 +_OBJC_CLASS_$_RCAdBlock
++_RCAdBlockUseEngine
 +_OBJC_METACLASS_$_RCAdBlock
 +_OBJC_CLASS_$_RCEngine
 +_OBJC_METACLASS_$_RCEngine
@@ -110,13 +111,14 @@ index 37c881f5d2..c4f7e25336 100644
 +_OBJC_CLASS_$_RCExtensions
 +_OBJC_METACLASS_$_RCExtensions
 diff --git a/chrome/app/framework.order b/chrome/app/framework.order
-index 6dbc3aeff3..0a518e6be3 100644
+index 6dbc3aeff3..b48fccae54 100644
 --- a/chrome/app/framework.order
 +++ b/chrome/app/framework.order
-@@ -31,3 +31,26 @@ _ChromeWebAppShortcutCopierMain
+@@ -31,3 +31,27 @@ _ChromeWebAppShortcutCopierMain
  
  # _ChromeMain must be listed last.  That's the whole point of this file.
  _ChromeMain
++_RCAdBlockUseEngine
 +
 +# Rise's engine interface (chrome/browser/rise/RiseChromium.h), which Rise links.
 +# Its classes are data, which follows _ChromeMain's code in the binary.
@@ -380,6 +382,49 @@ index b269f1610a..91d841073b 100644
    [app_controller mainMenuCreated];
  
    return content::RESULT_CODE_NORMAL_EXIT;
+diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
+index 2e0f287290..44fca06364 100644
+--- a/chrome/browser/chrome_content_browser_client.cc
++++ b/chrome/browser/chrome_content_browser_client.cc
+@@ -198,6 +198,7 @@
+ #include "chrome/browser/translate/translate_service.h"
+ #include "chrome/browser/ui/blocked_content/blocked_window_params.h"
+ #include "chrome/browser/ui/blocked_content/chrome_popup_navigation_delegate.h"
++#include "chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h"
+ #include "chrome/browser/ui/color/chrome_color_id.h"
+ #include "chrome/browser/ui/login/http_auth_coordinator.h"
+ #include "chrome/browser/ui/navigator/browser_navigator.h"
+@@ -4995,6 +4996,11 @@ void ChromeContentBrowserClient::OverrideWebPreferences(
+ 
+   web_prefs->is_xslt_deprecation_banner_suppressed =
+       prefs->GetBoolean(prefs::kXSLTDeprecationBannerSuppressed);
++
++  // An embedder's (Rise's) own, last.
++  if (EmbedderTabHooks* hooks = EmbedderTabHooks::FromWebContents(web_contents)) {
++    hooks->OverrideWebPreferences(*web_prefs);
++  }
+ }
+ 
+ bool ChromeContentBrowserClientParts::OverrideWebPreferencesAfterNavigation(
+@@ -6798,6 +6804,18 @@ void ChromeContentBrowserClient::WillCreateURLLoaderFactory(
+     network::mojom::URLLoaderFactoryOverridePtr* factory_override,
+     scoped_refptr<base::SequencedTaskRunner> navigation_response_task_runner,
+     bool is_for_network_service) {
++  // An embedder's own filter (Rise's ad blocking) sees pages' requests first.
++  if (const EmbedderURLLoaderFactoryFilter& filter =
++          GetEmbedderURLLoaderFactoryFilter();
++      filter &&
++      (type == URLLoaderFactoryType::kNavigation ||
++       type == URLLoaderFactoryType::kDocumentSubResource ||
++       type == URLLoaderFactoryType::kWorkerSubResource ||
++       type == URLLoaderFactoryType::kServiceWorkerSubResource ||
++       type == URLLoaderFactoryType::kServiceWorkerScript)) {
++    filter.Run(frame, request_initiator, factory_builder);
++  }
++
+ #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+   auto* web_request_api =
+       extensions::BrowserContextKeyedAPIFactory<extensions::WebRequestAPI>::Get(
 diff --git a/chrome/browser/download/download_target_determiner.cc b/chrome/browser/download/download_target_determiner.cc
 index 0e2ffe2ae7..f98f0fbfac 100644
 --- a/chrome/browser/download/download_target_determiner.cc
@@ -513,10 +558,10 @@ index 3a0283de31..13f045738f 100644
  }
 diff --git a/chrome/browser/rise/BUILD.gn b/chrome/browser/rise/BUILD.gn
 new file mode 100644
-index 0000000000..0e7eca2867
+index 0000000000..aefb5133bc
 --- /dev/null
 +++ b/chrome/browser/rise/BUILD.gn
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,55 @@
 +# Copyright 2026 The Rise Authors. All rights reserved.
 +# Use of this source code is governed by a BSD-style license that can be
 +# found in the LICENSE file.
@@ -558,6 +603,7 @@ index 0000000000..0e7eca2867
 +    "//components/content_settings/core/browser",
 +    "//components/download/public/common:public",
 +    "//components/permissions",
++    "//components/sessions",
 +    "//components/search_engines",
 +    "//content/public/browser",
 +    "//mojo/public/cpp/bindings",
@@ -1048,10 +1094,10 @@ index 0000000000..cabcb68258
 +#endif  // CHROME_BROWSER_RISE_CHROME_BROWSER_MAIN_EXTRA_PARTS_RISE_H_
 diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
 new file mode 100644
-index 0000000000..ad8393a02b
+index 0000000000..eb79f1a469
 --- /dev/null
 +++ b/chrome/browser/rise/rise_bridge.mm
-@@ -0,0 +1,2388 @@
+@@ -0,0 +1,2935 @@
 +// Copyright 2026 The Rise Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -1071,11 +1117,13 @@ index 0000000000..ad8393a02b
 +#define RC_EXPORT __attribute__((visibility("default")))
 +#import "chrome/browser/rise/RiseChromium.h"
 +
++#include <atomic>
 +#include <memory>
 +#include <string>
 +#include <vector>
 +
 +#include "base/check_is_test.h"
++#include "base/pickle.h"
 +#include "base/files/file_enumerator.h"
 +#include "base/strings/string_util.h"
 +#include "base/task/thread_pool.h"
@@ -1102,11 +1150,24 @@ index 0000000000..ad8393a02b
 +#include "chrome/browser/app_controller_mac.h"
 +#include "chrome/browser/lifetime/browser_shutdown.h"
 +#include "chrome/browser/content_settings/host_content_settings_map_factory.h"
++#include "chrome/browser/devtools/devtools_ui_bindings.h"
++#include "chrome/browser/spellchecker/spellcheck_custom_dictionary.h"
++#include "chrome/browser/spellchecker/spellcheck_factory.h"
++#include "chrome/browser/spellchecker/spellcheck_service.h"
++#include "chrome/common/pref_names.h"
++#include "components/prefs/scoped_user_pref_update.h"
++#include "components/spellcheck/browser/spellcheck_platform.h"
++#include "components/spellcheck/common/spellcheck_features.h"
++#include "content/public/browser/context_menu_params.h"
++#include "third_party/blink/public/common/context_menu_data/edit_flags.h"
 +#include "chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h"
 +#include "chrome/common/rise/rise_frame.mojom.h"
 +#include "components/content_settings/core/browser/host_content_settings_map.h"
 +#include "components/download/public/common/download_item.h"
 +#include "components/permissions/permission_prompt.h"
++#include "components/sessions/content/content_serialized_navigation_builder.h"
++#include "components/sessions/core/serialized_navigation_entry.h"
++#include "third_party/blink/public/common/web_preferences/web_preferences.h"
 +#include "components/permissions/permission_request.h"
 +#include "components/permissions/permission_request_manager.h"
 +#include "components/permissions/resolvers/permission_prompt_options.h"
@@ -1114,6 +1175,13 @@ index 0000000000..ad8393a02b
 +#include "content/public/browser/devtools_agent_host_client.h"
 +#include "content/public/browser/file_select_listener.h"
 +#include "content/public/browser/javascript_dialog_manager.h"
++#include "mojo/public/cpp/bindings/receiver_set.h"
++#include "mojo/public/cpp/bindings/remote.h"
++#include "services/network/public/cpp/resource_request.h"
++#include "services/network/public/cpp/url_loader_completion_status.h"
++#include "services/network/public/cpp/url_loader_factory_builder.h"
++#include "services/network/public/mojom/url_loader.mojom.h"
++#include "services/network/public/mojom/url_loader_factory.mojom.h"
 +#include "net/base/mime_util.h"
 +#include "third_party/blink/public/mojom/choosers/file_chooser.mojom.h"
 +#include "content/public/browser/global_routing_id.h"
@@ -1132,6 +1200,7 @@ index 0000000000..ad8393a02b
 +#include "content/browser/renderer_host/render_frame_host_impl.h"
 +#include "content/public/browser/host_zoom_map.h"
 +#include "content/public/browser/navigation_controller.h"
++#include "content/public/browser/navigation_entry.h"
 +#include "content/public/browser/navigation_handle.h"
 +#include "content/public/browser/render_frame_host.h"
 +#include "content/public/browser/render_widget_host_view.h"
@@ -1144,6 +1213,9 @@ index 0000000000..ad8393a02b
 +#include "url/gurl.h"
 +
 +extern "C" int ChromeMain(int argc, const char** argv);
++
++// Puts Rise's ad blocking in front of pages' requests.
++void InstallAdBlocking();
 +
 +@interface RCTabStrip ()
 +// Chrome is closing the window's Browser itself, to quit.
@@ -1338,6 +1410,12 @@ index 0000000000..ad8393a02b
 +- (void)forget;
 +@end
 +
++@interface RCContextMenu ()
++- (instancetype)initWithParams:(const content::ContextMenuParams&)params
++                         frame:(content::RenderFrameHost*)frame
++                          view:(RCBrowserView*)view;
++@end
++
 +@interface RCFrame ()
 +- (instancetype)initWithFrame:(content::RenderFrameHost*)frame
 +                        world:(int32_t)world;
@@ -1382,6 +1460,12 @@ index 0000000000..ad8393a02b
 +- (BOOL)openInOtherApp:(NSURL*)url;
 +- (void)loadFailed:(NSInteger)code text:(NSString*)text url:(NSURL*)url;
 +- (content::WebContents*)contents;
++- (BOOL)showContextMenu:(RCContextMenu*)menu;
++- (void)inspectFrame:(content::GlobalRenderFrameHostId)frame
++                   x:(int)x
++                   y:(int)y;
++- (void)devToolsLoaded;
++- (RCBrowserView*)inspectedView;
 +- (void)contentsGone;
 +- (void)contentsChanged;
 +- (void)willNavigate:(RCNavigationKind)kind;
@@ -1562,6 +1646,23 @@ index 0000000000..ad8393a02b
 +
 +  // Rise loads a crashed page again itself.
 +  bool ShowsCrashedPages() override { return true; }
++
++  // A right-click shows Rise's menu.
++  bool HandleContextMenu(content::RenderFrameHost& frame,
++                         const content::ContextMenuParams& params) override {
++    RCBrowserView* view = view_;
++    return view && [view showContextMenu:[[RCContextMenu alloc]
++                                             initWithParams:params
++                                                      frame:&frame
++                                                       view:view]];
++  }
++
++  // A page loaded out of sight only to warm the cache runs no scripts.
++  void OverrideWebPreferences(blink::web_pref::WebPreferences& prefs) override {
++    if (view_.scriptsDisabled) {
++      prefs.javascript_enabled = false;
++    }
++  }
 +
 +  // Links to new tabs and windows open where Rise puts them; others open
 +  // in the page itself.
@@ -1850,6 +1951,60 @@ index 0000000000..ad8393a02b
 +  return std::make_unique<RisePermissionPrompt>(contents, delegate);
 +}
 +
++// Chrome's DevTools, in a page of Rise's for another page: what the front end
++// asks of its window, mostly nothing in Rise's panel.
++class DevToolsFrontend : public DevToolsUIBindings::Delegate {
++ public:
++  explicit DevToolsFrontend(RCBrowserView* frontend) : frontend_(frontend) {}
++
++  content::WebContents* GetInspectedWebContents() override {
++    return [[frontend_ inspectedView] contents];
++  }
++  void ActivateWindow() override {}
++  void CloseWindow() override { Close(); }
++  void Inspect(scoped_refptr<content::DevToolsAgentHost> host) override {}
++  void SetInspectedPageBounds(const gfx::Rect& rect) override {}
++  void InspectElementCompleted() override {}
++  void SetIsDocked(bool is_docked) override {}
++  void OpenInNewTab(const std::string& url) override {
++    NSURL* address = ToNSURL(GURL(url));
++    if (address) {
++      [[frontend_ inspectedView] openURL:address
++                             disposition:RCOpenDispositionForegroundTab
++                             userGesture:YES];
++    }
++  }
++  void OpenSearchResultsInNewTab(const std::string& query) override {}
++  void SetWhitelistedShortcuts(const std::string& message) override {}
++  void SetEyeDropperActive(bool active) override {}
++  void OpenNodeFrontend() override {}
++  void InspectedContentsClosing() override { Close(); }
++  void OnLoadCompleted() override { [[frontend_ inspectedView] devToolsLoaded]; }
++  void ReadyForTest() override {}
++  void ConnectionReady() override {}
++  void SetOpenNewWindowForPopups(bool value) override {}
++  infobars::ContentInfoBarManager* GetInfoBarManager() override {
++    return nullptr;
++  }
++  void RenderProcessGone(bool crashed) override {}
++  void ShowCertificateViewer(const std::string& cert_chain) override {}
++  int GetDockStateForLogging() override { return 0; }
++  int GetOpenedByForLogging() override { return 0; }
++  int GetClosedByForLogging() override { return 0; }
++
++ private:
++  // Rise closes its panel.
++  void Close() {
++    RCBrowserView* frontend = frontend_;
++    if ([frontend.delegate respondsToSelector:@selector
++                           (browserViewDidRequestClose:)]) {
++      [frontend.delegate browserViewDidRequestClose:frontend];
++    }
++  }
++
++  __weak RCBrowserView* frontend_;
++};
++
 +// Chrome's DevTools protocol for a page, in process: for what only DevTools
 +// does, such as a console's evaluation. Attached when first used.
 +class DevToolsSession : public content::DevToolsAgentHostClient {
@@ -2098,6 +2253,8 @@ index 0000000000..ad8393a02b
 +        }
 +        UnloadController::From(browser)->OnWindowClosing();
 +      }));
++  // Pages' requests pass Rise's ad blocking.
++  InstallAdBlocking();
 +  // As AppKit tells an app's delegate; Chrome posts it as it quits.
 +  [NSNotificationCenter.defaultCenter
 +      addObserverForName:NSApplicationWillTerminateNotification
@@ -2239,10 +2396,26 @@ index 0000000000..ad8393a02b
 +  NSMutableDictionary<NSString*, NSDictionary*>* _handlers;
 +  std::unique_ptr<DevToolsSession> _devTools;
 +  BOOL _fullscreen;
++  NSData* _pendingState;
++  // A DevTools front end's: the page it inspects.
++  __weak RCBrowserView* _inspected;
++  // An inspected page's: its front end, whether it has loaded, and an
++  // element to select once it has.
++  __weak RCBrowserView* _devToolsFrontend;
++  BOOL _devToolsLoaded;
++  std::optional<std::tuple<content::GlobalRenderFrameHostId, int, int>>
++      _pendingInspect;
 +}
 +
 +@synthesize delegate = _delegate;
 +@synthesize scriptsDisabled = _scriptsDisabled;
++
++- (void)setScriptsDisabled:(BOOL)disabled {
++  _scriptsDisabled = disabled;
++  if (_contents) {
++    _contents->OnWebPreferencesChanged();
++  }
++}
 +@synthesize extensionPopup = _extensionPopup;
 +@synthesize covered = _covered;
 +@synthesize zoom = _zoom;
@@ -2335,10 +2508,25 @@ index 0000000000..ad8393a02b
 +  if (_zoom != 1) {
 +    self.zoom = _zoom;
 +  }
-+  if (_pendingURL) {
++  if (_pendingState || _pendingURL) {
++    NSData* state = _pendingState;
 +    NSURL* url = _pendingURL;
++    _pendingState = nil;
 +    _pendingURL = nil;
-+    [self loadURL:url];
++    if (!state || ![self restore:state]) {
++      [self loadURL:url];
++    }
++  }
++  // A DevTools front end: its page makes Chrome's bindings as it starts
++  // loading, which then take the page it inspects, as for Chrome's own window.
++  RCBrowserView* inspected = _inspected;
++  if (DevToolsUIBindings* bindings =
++          inspected && [inspected contents]
++              ? DevToolsUIBindings::ForWebContents(_contents)
++              : nullptr) {
++    bindings->SetDelegate(new DevToolsFrontend(self));
++    bindings->AttachTo(
++        content::DevToolsAgentHost::GetOrCreateFor([inspected contents]));
 +  }
 +  [NSNotificationCenter.defaultCenter postNotificationName:kPageMadeNotification
 +                                                    object:self];
@@ -2456,11 +2644,77 @@ index 0000000000..ad8393a02b
 +                        url:url];
 +  }
 +}
++// MARK: History
++
++// What a saved history starts with, to tell it from another engine's.
++const char kHistoryFormat[] = "rise-fork-history-1";
++
 +- (NSData*)navigationState {
-+  return nil;
++  if (!_contents) {
++    return nil;
++  }
++  content::NavigationController& controller = _contents->GetController();
++  int count = controller.GetEntryCount();
++  if (!count || controller.GetLastCommittedEntry()->IsInitialEntry()) {
++    return nil;
++  }
++  // Chrome's own session format for each entry, scroll positions and forms
++  // included.
++  base::Pickle pickle;
++  pickle.WriteString(kHistoryFormat);
++  pickle.WriteInt(controller.GetLastCommittedEntryIndex());
++  pickle.WriteInt(count);
++  for (int i = 0; i < count; i++) {
++    sessions::ContentSerializedNavigationBuilder::FromNavigationEntry(
++        i, controller.GetEntryAtIndex(i))
++        .WriteToPickle(/*max_size=*/1 << 20, &pickle);
++  }
++  base::span<const uint8_t> bytes = pickle.AsBytes();
++  return [NSData dataWithBytes:bytes.data() length:bytes.size()];
 +}
++
++- (BOOL)restore:(NSData*)state {
++  content::NavigationController& controller = _contents->GetController();
++  if (!state.length || (controller.GetEntryCount() &&
++                        !controller.GetLastCommittedEntry()->IsInitialEntry())) {
++    return NO;
++  }
++  std::string saved(static_cast<const char*>(state.bytes), state.length);
++  base::Pickle pickle = base::Pickle::WithUnownedBuffer(base::as_byte_span(saved));
++  base::PickleIterator iterator(pickle);
++  std::string format;
++  int index = 0, count = 0;
++  if (!iterator.ReadString(&format) || format != kHistoryFormat ||
++      !iterator.ReadInt(&index) || !iterator.ReadInt(&count) || count <= 0 ||
++      index < 0 || index >= count) {
++    return NO;
++  }
++  std::vector<sessions::SerializedNavigationEntry> navigations(count);
++  for (sessions::SerializedNavigationEntry& navigation : navigations) {
++    if (!navigation.ReadFromPickle(&iterator)) {
++      return NO;
++    }
++  }
++  std::vector<std::unique_ptr<content::NavigationEntry>> entries =
++      sessions::ContentSerializedNavigationBuilder::ToNavigationEntries(
++          navigations, _contents->GetBrowserContext());
++  if (entries.size() != navigations.size()) {
++    return NO;
++  }
++  controller.Restore(index, content::RestoreType::kRestored, &entries);
++  controller.LoadIfNecessary();
++  return YES;
++}
++
 +- (void)restoreNavigationState:(NSData*)state fallback:(NSURL*)fallback {
-+  [self loadURL:fallback];
++  if (!_contents) {
++    _pendingState = state;
++    _pendingURL = fallback;
++    return;
++  }
++  if (![self restore:state]) {
++    [self loadURL:fallback];
++  }
 +}
 +- (NSURL*)hoveredURL {
 +  return nil;
@@ -2754,8 +3008,55 @@ index 0000000000..ad8393a02b
 +             completion(shown == NSNull.null ? nil : shown, nil);
 +           }];
 +}
++// MARK: DevTools and the page menu
++
 +- (RCBrowserView*)makeDevToolsView {
-+  return [[RCBrowserView alloc] initWithFrame:NSZeroRect URL:nil];
++  // DevTools opens on the panel it last showed; Rise's opens on Elements.
++  if (Profile* profile = RiseProfile()) {
++    ScopedDictPrefUpdate(profile->GetPrefs(), prefs::kDevToolsPreferences)
++        ->Set("panel-selectedTab", "\"elements\"");
++  }
++  RCBrowserView* frontend = [[RCBrowserView alloc]
++      initWithFrame:NSZeroRect
++                URL:[NSURL URLWithString:
++                               @"devtools://devtools/bundled/devtools_app.html"]];
++  frontend->_inspected = self;
++  _devToolsFrontend = frontend;
++  _devToolsLoaded = NO;
++  return frontend;
++}
++- (RCBrowserView*)inspectedView {
++  return _inspected;
++}
++- (void)devToolsLoaded {
++  _devToolsLoaded = YES;
++  if (_pendingInspect) {
++    auto [frame, x, y] = *_pendingInspect;
++    _pendingInspect.reset();
++    [self inspectFrame:frame x:x y:y];
++  }
++}
++// Has DevTools select the element at `x`, `y` in `frame`, once they've loaded.
++- (void)inspectFrame:(content::GlobalRenderFrameHostId)frame
++                   x:(int)x
++                   y:(int)y {
++  if (!_devToolsFrontend || !_devToolsLoaded) {
++    _pendingInspect = std::make_tuple(frame, x, y);
++    return;
++  }
++  content::RenderFrameHost* host = content::RenderFrameHost::FromID(frame);
++  if (_contents && host &&
++      content::WebContents::FromRenderFrameHost(host) == _contents) {
++    content::DevToolsAgentHost::GetOrCreateFor(_contents)->InspectElement(
++        host, x, y);
++  }
++}
++- (BOOL)showContextMenu:(RCContextMenu*)menu {
++  if (![_delegate respondsToSelector:@selector(browserView:showContextMenu:)]) {
++    return NO;
++  }
++  [_delegate browserView:self showContextMenu:menu];
++  return YES;
 +}
 +// MARK: Dialogs, files and permissions, in Rise's sheets
 +
@@ -2926,19 +3227,208 @@ index 0000000000..ad8393a02b
 +
 +// MARK: What the motion gate doesn't use yet
 +
++// MARK: Ad blocking
++
++namespace {
++
++// Rise's ad-blocking engine (Engine/adblock), which Rise's app holds and hands
++// over as it starts (Sources/RiseFork): the framework keeps Chrome's own Rust.
++struct AdBlockEngine {
++  bool (*load)() = nullptr;
++  bool (*blocks)(const char* url, const char* source, const char* kind) =
++      nullptr;
++  char* (*hidden)(const char* url, const char* classes, const char* ids) =
++      nullptr;
++  void (*free_string)(char* value) = nullptr;
++};
++AdBlockEngine g_ad_block;
++std::atomic<bool> g_ad_block_enabled{true};
++
++// The engine's name for what a request fetches; null for a page itself, which,
++// as on WebKit, is never blocked.
++const char* AdBlockKind(network::mojom::RequestDestination destination) {
++  using Destination = network::mojom::RequestDestination;
++  switch (destination) {
++    case Destination::kDocument:
++      return nullptr;
++    case Destination::kIframe:
++    case Destination::kFrame:
++    case Destination::kFencedframe:
++      return "sub_frame";
++    case Destination::kStyle:
++      return "stylesheet";
++    case Destination::kScript:
++    case Destination::kWorker:
++    case Destination::kSharedWorker:
++    case Destination::kServiceWorker:
++      return "script";
++    case Destination::kImage:
++      return "image";
++    case Destination::kFont:
++      return "font";
++    case Destination::kObject:
++    case Destination::kEmbed:
++      return "object";
++    case Destination::kAudio:
++    case Destination::kVideo:
++    case Destination::kTrack:
++      return "media";
++    case Destination::kEmpty:
++      return "xmlhttprequest";
++    case Destination::kReport:
++      return "csp_report";
++    default:
++      return "other";
++  }
++}
++
++// In front of Chrome's URL loader factory for a page or worker: what the
++// lists block fails as blocked, the rest goes on untouched.
++class AdBlockingFactory : public network::mojom::URLLoaderFactory {
++ public:
++  static void Start(content::RenderFrameHost* frame,
++                    const url::Origin& initiator,
++                    network::URLLoaderFactoryBuilder& builder) {
++    auto [receiver, target] = builder.Append();
++    new AdBlockingFactory(frame, initiator, std::move(receiver),
++                          std::move(target));
++  }
++
++  void CreateLoaderAndStart(
++      mojo::PendingReceiver<network::mojom::URLLoader> loader,
++      int32_t request_id,
++      uint32_t options,
++      const network::ResourceRequest& request,
++      mojo::PendingRemote<network::mojom::URLLoaderClient> client,
++      const net::MutableNetworkTrafficAnnotationTag& traffic_annotation)
++      override {
++    if (Blocks(request)) {
++      mojo::Remote<network::mojom::URLLoaderClient>(std::move(client))
++          ->OnComplete(
++              network::URLLoaderCompletionStatus(net::ERR_BLOCKED_BY_CLIENT));
++      return;
++    }
++    target_->CreateLoaderAndStart(std::move(loader), request_id, options,
++                                  request, std::move(client),
++                                  traffic_annotation);
++  }
++  void Clone(
++      mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver) override {
++    receivers_.Add(this, std::move(receiver));
++  }
++
++ private:
++  AdBlockingFactory(
++      content::RenderFrameHost* frame,
++      const url::Origin& initiator,
++      mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver,
++      mojo::PendingRemote<network::mojom::URLLoaderFactory> target)
++      : frame_(frame ? frame->GetGlobalId()
++                     : content::GlobalRenderFrameHostId()),
++        initiator_(initiator),
++        target_(std::move(target)) {
++    receivers_.Add(this, std::move(receiver));
++    receivers_.set_disconnect_handler(base::BindRepeating(
++        &AdBlockingFactory::OnDisconnect, base::Unretained(this)));
++    target_.set_disconnect_handler(base::BindOnce(
++        &AdBlockingFactory::OnTargetGone, base::Unretained(this)));
++  }
++
++  bool Blocks(const network::ResourceRequest& request) {
++    const char* kind = AdBlockKind(request.destination);
++    if (!kind || !g_ad_block.blocks || !g_ad_block_enabled) {
++      return false;
++    }
++    // Rules name sites by the page the person is on, as WebKit's do.
++    std::string source;
++    if (content::RenderFrameHost* frame =
++            content::RenderFrameHost::FromID(frame_)) {
++      source = frame->GetOutermostMainFrame()->GetLastCommittedURL().spec();
++    }
++    if (source.empty() || source == "about:blank") {
++      source = request.request_initiator
++                   ? request.request_initiator->GetURL().spec()
++                   : initiator_.GetURL().spec();
++    }
++    if (source.empty() || !request.url.SchemeIsHTTPOrHTTPS()) {
++      return false;
++    }
++    return g_ad_block.blocks(request.url.spec().c_str(), source.c_str(), kind);
++  }
++
++  void OnDisconnect() {
++    if (receivers_.empty()) {
++      delete this;
++    }
++  }
++  void OnTargetGone() { delete this; }
++
++  content::GlobalRenderFrameHostId frame_;
++  url::Origin initiator_;
++  mojo::ReceiverSet<network::mojom::URLLoaderFactory> receivers_;
++  mojo::Remote<network::mojom::URLLoaderFactory> target_;
++};
++
++}  // namespace
++
++void InstallAdBlocking() {
++  SetEmbedderURLLoaderFactoryFilter(base::BindRepeating(&AdBlockingFactory::Start));
++}
++
++// Given by Rise's app as it starts.
++extern "C" RC_EXPORT void RCAdBlockUseEngine(
++    bool (*load)(),
++    bool (*blocks)(const char*, const char*, const char*),
++    char* (*hidden)(const char*, const char*, const char*),
++    void (*free_string)(char*)) {
++  g_ad_block = {load, blocks, hidden, free_string};
++}
++
 +@implementation RCAdBlock
 ++ (BOOL)available {
-+  return NO;
++  return g_ad_block.blocks != nullptr;
 +}
 ++ (BOOL)enabled {
-+  return NO;
++  return g_ad_block_enabled;
 +}
-++ (void)setEnabled:(BOOL)enabled {}
-++ (void)load {}
+++ (void)setEnabled:(BOOL)enabled {
++  g_ad_block_enabled = enabled;
++}
+++ (void)load {
++  if (bool (*load)() = g_ad_block.load) {
++    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
++      load();
++    });
++  }
++}
 ++ (NSArray<NSString*>*)hiddenSelectorsForURL:(NSURL*)url
 +                                     classes:(NSArray<NSString*>*)classes
 +                                         ids:(NSArray<NSString*>*)ids {
-+  return @[];
++  if (!g_ad_block.hidden || !g_ad_block_enabled || !url.absoluteString) {
++    return @[];
++  }
++  NSString* (^json)(NSArray*) = ^NSString*(NSArray* names) {
++    NSData* data = names ? [NSJSONSerialization dataWithJSONObject:names
++                                                           options:0
++                                                             error:nil]
++                         : nil;
++    return data ? [[NSString alloc] initWithData:data
++                                        encoding:NSUTF8StringEncoding]
++                : nil;
++  };
++  NSString* classList = json(classes);
++  NSString* idList = json(ids);
++  char* result = g_ad_block.hidden(url.absoluteString.UTF8String,
++                                   classList.UTF8String, idList.UTF8String);
++  if (!result) {
++    return @[];
++  }
++  NSData* data = [NSData dataWithBytes:result length:strlen(result)];
++  g_ad_block.free_string(result);
++  NSArray* selectors = [NSJSONSerialization JSONObjectWithData:data
++                                                       options:0
++                                                         error:nil];
++  return [selectors isKindOfClass:NSArray.class] ? selectors : @[];
 +}
 +@end
 +
@@ -3113,43 +3603,146 @@ index 0000000000..ad8393a02b
 +}
 +@end
 +
-+@implementation RCContextMenu
-+- (NSPoint)point {
-+  return NSZeroPoint;
++@implementation RCContextMenu {
++  content::GlobalRenderFrameHostId _frame;
++  __weak RCBrowserView* _view;
++  int _x;
++  int _y;
 +}
-+- (NSURL*)linkURL {
-+  return nil;
++@synthesize point = _point;
++@synthesize linkURL = _linkURL;
++@synthesize sourceURL = _sourceURL;
++@synthesize mediaKind = _mediaKind;
++@synthesize hasImageContents = _hasImageContents;
++@synthesize selectionText = _selectionText;
++@synthesize editable = _editable;
++@synthesize editFlags = _editFlags;
++@synthesize misspelledWord = _misspelledWord;
++@synthesize suggestions = _suggestions;
++
++- (instancetype)initWithParams:(const content::ContextMenuParams&)params
++                         frame:(content::RenderFrameHost*)frame
++                          view:(RCBrowserView*)view {
++  if (!(self = [super init])) {
++    return nil;
++  }
++  _frame = frame->GetGlobalId();
++  _view = view;
++  _x = params.x;
++  _y = params.y;
++  _point = NSMakePoint(params.x, params.y);
++  _linkURL = params.link_url.is_empty() ? nil : ToNSURL(params.link_url);
++  _sourceURL = params.src_url.is_empty() ? nil : ToNSURL(params.src_url);
++  switch (params.media_type) {
++    case blink::mojom::ContextMenuDataMediaType::kImage:
++      _mediaKind = RCMediaKindImage;
++      break;
++    case blink::mojom::ContextMenuDataMediaType::kVideo:
++      _mediaKind = RCMediaKindVideo;
++      break;
++    case blink::mojom::ContextMenuDataMediaType::kAudio:
++      _mediaKind = RCMediaKindAudio;
++      break;
++    default:
++      _mediaKind = RCMediaKindNone;
++  }
++  _hasImageContents = params.has_image_contents;
++  _selectionText = base::SysUTF16ToNSString(params.selection_text);
++  _editable = params.is_editable;
++  const std::pair<int, RCEditFlags> flags[] = {
++      {blink::ContextMenuDataEditFlags::kCanUndo, RCEditFlagsCanUndo},
++      {blink::ContextMenuDataEditFlags::kCanRedo, RCEditFlagsCanRedo},
++      {blink::ContextMenuDataEditFlags::kCanCut, RCEditFlagsCanCut},
++      {blink::ContextMenuDataEditFlags::kCanCopy, RCEditFlagsCanCopy},
++      {blink::ContextMenuDataEditFlags::kCanPaste, RCEditFlagsCanPaste},
++      {blink::ContextMenuDataEditFlags::kCanDelete, RCEditFlagsCanDelete},
++      {blink::ContextMenuDataEditFlags::kCanSelectAll, RCEditFlagsCanSelectAll},
++  };
++  for (const auto& [chrome, rise] : flags) {
++    if (params.edit_flags & chrome) {
++      _editFlags |= rise;
++    }
++  }
++  _misspelledWord = base::SysUTF16ToNSString(params.misspelled_word);
++  NSMutableArray<NSString*>* words = [NSMutableArray array];
++  for (const std::u16string& word : params.dictionary_suggestions) {
++    [words addObject:base::SysUTF16ToNSString(word)];
++  }
++  _suggestions = words;
++  return self;
 +}
-+- (NSURL*)sourceURL {
-+  return nil;
++
++- (content::WebContents*)contents {
++  return [_view contents];
 +}
-+- (RCMediaKind)mediaKind {
-+  return (RCMediaKind)0;
++- (void)perform:(RCEditCommand)command {
++  content::WebContents* contents = [self contents];
++  if (!contents) {
++    return;
++  }
++  switch (command) {
++    case RCEditCommandUndo:
++      contents->Undo();
++      break;
++    case RCEditCommandRedo:
++      contents->Redo();
++      break;
++    case RCEditCommandCut:
++      contents->Cut();
++      break;
++    case RCEditCommandCopy:
++      contents->Copy();
++      break;
++    case RCEditCommandPaste:
++      contents->Paste();
++      break;
++    case RCEditCommandPasteAndMatchStyle:
++      contents->PasteAndMatchStyle();
++      break;
++    case RCEditCommandDelete:
++      contents->Delete();
++      break;
++    case RCEditCommandSelectAll:
++      contents->SelectAll();
++      break;
++  }
 +}
-+- (BOOL)hasImageContents {
-+  return NO;
++- (void)replaceMisspellingWith:(NSString*)word {
++  if (content::WebContents* contents = [self contents]) {
++    contents->ReplaceMisspelling(base::SysNSStringToUTF16(word));
++  }
 +}
-+- (NSString*)selectionText {
-+  return @"";
++- (void)learnMisspelledWord {
++  content::WebContents* contents = [self contents];
++  SpellcheckService* spellcheck =
++      contents ? SpellcheckServiceFactory::GetForContext(
++                     contents->GetBrowserContext())
++               : nullptr;
++  if (!spellcheck || !_misspelledWord.length) {
++    return;
++  }
++  spellcheck->GetCustomDictionary()->AddWord(
++      base::SysNSStringToUTF8(_misspelledWord));
++  if (spellcheck::UseBrowserSpellChecker()) {
++    spellcheck_platform::AddWord(spellcheck->platform_spell_checker(),
++                                 base::SysNSStringToUTF16(_misspelledWord));
++  }
 +}
-+- (BOOL)editable {
-+  return NO;
++- (void)copyImage {
++  if (content::RenderFrameHost* frame =
++          content::RenderFrameHost::FromID(_frame)) {
++    frame->CopyImageAt(_x, _y);
++  }
 +}
-+- (RCEditFlags)editFlags {
-+  return 0;
++- (void)lookUp {
++  content::WebContents* contents = [self contents];
++  if (contents && contents->GetRenderWidgetHostView()) {
++    contents->GetRenderWidgetHostView()->ShowDefinitionForSelection();
++  }
 +}
-+- (NSString*)misspelledWord {
-+  return @"";
++- (void)inspect {
++  [_view inspectFrame:_frame x:_x y:_y];
 +}
-+- (NSArray<NSString*>*)suggestions {
-+  return @[];
-+}
-+- (void)perform:(RCEditCommand)command {}
-+- (void)replaceMisspellingWith:(NSString*)word {}
-+- (void)learnMisspelledWord {}
-+- (void)copyImage {}
-+- (void)lookUp {}
-+- (void)inspect {}
 +@end
 +
 +@interface RCTabStrip ()
@@ -4265,7 +4858,7 @@ index d4dacf5897..8f07451b35 100644
      public_deps = [ "//chrome/browser:browser_public_dependencies" ]
      deps = [
 diff --git a/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc b/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc
-index 3bc40bcc91..909b3e3025 100644
+index 3bc40bcc91..d990591825 100644
 --- a/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc
 +++ b/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc
 @@ -32,6 +32,7 @@
@@ -4328,7 +4921,19 @@ index 3bc40bcc91..909b3e3025 100644
    return javascript_dialogs::TabModalDialogManager::FromWebContents(source);
  }
  
-@@ -1127,6 +1159,11 @@ void BrowserWebContentsDelegate::RunFileChooser(
+@@ -1123,10 +1155,23 @@ bool BrowserWebContentsDelegate::GuestSaveFrame(
+   return guest_view && guest_view->PluginDoSave();
+ }
+ 
++bool BrowserWebContentsDelegate::HandleContextMenu(
++    content::RenderFrameHost& render_frame_host,
++    const content::ContextMenuParams& params) {
++  EmbedderTabHooks* hooks = EmbedderTabHooks::FromWebContents(
++      content::WebContents::FromRenderFrameHost(&render_frame_host));
++  return hooks && hooks->HandleContextMenu(render_frame_host, params);
++}
++
+ void BrowserWebContentsDelegate::RunFileChooser(
      content::RenderFrameHost* render_frame_host,
      scoped_refptr<content::FileSelectListener> listener,
      const blink::mojom::FileChooserParams& params) {
@@ -4340,7 +4945,7 @@ index 3bc40bcc91..909b3e3025 100644
    FileSelectHelper::RunFileChooser(render_frame_host, std::move(listener),
                                     params);
  }
-@@ -1191,6 +1228,12 @@ bool BrowserWebContentsDelegate::CanEnterFullscreenModeForTab(
+@@ -1191,6 +1236,12 @@ bool BrowserWebContentsDelegate::CanEnterFullscreenModeForTab(
      return false;
    }
  
@@ -4353,7 +4958,7 @@ index 3bc40bcc91..909b3e3025 100644
    return exclusive_access_manager_->fullscreen_controller()
        ->CanEnterFullscreenModeForTab(requesting_frame);
  }
-@@ -1198,12 +1241,23 @@ bool BrowserWebContentsDelegate::CanEnterFullscreenModeForTab(
+@@ -1198,12 +1249,23 @@ bool BrowserWebContentsDelegate::CanEnterFullscreenModeForTab(
  void BrowserWebContentsDelegate::EnterFullscreenModeForTab(
      content::RenderFrameHost* requesting_frame,
      const blink::mojom::FullscreenOptions& options) {
@@ -4377,7 +4982,7 @@ index 3bc40bcc91..909b3e3025 100644
    exclusive_access_manager_->fullscreen_controller()->ExitFullscreenModeForTab(
        web_contents);
  }
-@@ -1217,6 +1271,15 @@ bool BrowserWebContentsDelegate::IsFullscreenForTabOrPending(
+@@ -1217,6 +1279,15 @@ bool BrowserWebContentsDelegate::IsFullscreenForTabOrPending(
  
  content::FullscreenState BrowserWebContentsDelegate::GetFullscreenState(
      const content::WebContents* web_contents) const {
@@ -4393,12 +4998,25 @@ index 3bc40bcc91..909b3e3025 100644
    return exclusive_access_manager_->fullscreen_controller()->GetFullscreenState(
        web_contents);
  }
+diff --git a/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.h b/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.h
+index 360d1abf0b..a7c2976561 100644
+--- a/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.h
++++ b/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.h
+@@ -195,6 +195,8 @@ class BrowserWebContentsDelegate : public content::WebContentsDelegate {
+   content::JavaScriptDialogManager* GetJavaScriptDialogManager(
+       content::WebContents* source) override;
+   bool GuestSaveFrame(content::WebContents* guest_web_contents) override;
++  bool HandleContextMenu(content::RenderFrameHost& render_frame_host,
++                         const content::ContextMenuParams& params) override;
+   void RunFileChooser(content::RenderFrameHost* render_frame_host,
+                       scoped_refptr<content::FileSelectListener> listener,
+                       const blink::mojom::FileChooserParams& params) override;
 diff --git a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc
 new file mode 100644
-index 0000000000..082a7dafa2
+index 0000000000..8b9dea0d03
 --- /dev/null
 +++ b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,102 @@
 +// Copyright 2026 The Rise Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -4407,12 +5025,27 @@ index 0000000000..082a7dafa2
 +
 +#include <utility>
 +
++#include "base/no_destructor.h"
++
 +#include "content/public/browser/file_select_listener.h"
 +#include "content/public/browser/web_contents.h"
 +
 +namespace {
 +const char kEmbedderTabHooksKey[] = "EmbedderTabHooks";
++
++EmbedderURLLoaderFactoryFilter& Filter() {
++  static base::NoDestructor<EmbedderURLLoaderFactoryFilter> filter;
++  return *filter;
++}
 +}  // namespace
++
++void SetEmbedderURLLoaderFactoryFilter(EmbedderURLLoaderFactoryFilter filter) {
++  Filter() = std::move(filter);
++}
++
++const EmbedderURLLoaderFactoryFilter& GetEmbedderURLLoaderFactoryFilter() {
++  return Filter();
++}
 +
 +// static
 +EmbedderTabHooks* EmbedderTabHooks::FromWebContents(
@@ -4461,6 +5094,9 @@ index 0000000000..082a7dafa2
 +  return false;
 +}
 +
++void EmbedderTabHooks::OverrideWebPreferences(
++    blink::web_pref::WebPreferences& prefs) {}
++
 +bool EmbedderTabHooks::ShowsCrashedPages() {
 +  return false;
 +}
@@ -4468,6 +5104,12 @@ index 0000000000..082a7dafa2
 +bool EmbedderTabHooks::ChooseDownloadPath(download::DownloadItem* download,
 +                                          const base::FilePath& suggested,
 +                                          DownloadPathCallback done) {
++  return false;
++}
++
++bool EmbedderTabHooks::HandleContextMenu(
++    content::RenderFrameHost& frame,
++    const content::ContextMenuParams& params) {
 +  return false;
 +}
 +
@@ -4479,10 +5121,10 @@ index 0000000000..082a7dafa2
 +}
 diff --git a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h
 new file mode 100644
-index 0000000000..be8faceb33
+index 0000000000..7e8124f041
 --- /dev/null
 +++ b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,114 @@
 +// Copyright 2026 The Rise Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -4494,7 +5136,7 @@ index 0000000000..be8faceb33
 +#include <optional>
 +
 +#include "base/files/file_path.h"
-+#include "base/functional/callback_forward.h"
++#include "base/functional/callback.h"
 +#include "base/memory/scoped_refptr.h"
 +#include "base/supports_user_data.h"
 +#include "ui/base/window_open_disposition.h"
@@ -4508,9 +5150,22 @@ index 0000000000..be8faceb33
 +class WindowFeatures;
 +}  // namespace blink::mojom
 +
++namespace blink::web_pref {
++struct WebPreferences;
++}  // namespace blink::web_pref
++
 +class GURL;
 +
++namespace network {
++class URLLoaderFactoryBuilder;
++}  // namespace network
++
++namespace url {
++class Origin;
++}  // namespace url
++
 +namespace content {
++struct ContextMenuParams;
 +class FileSelectListener;
 +struct OpenURLParams;
 +class JavaScriptDialogManager;
@@ -4529,6 +5184,9 @@ index 0000000000..be8faceb33
 +
 +  // The tab's page dialogs; null leaves them to Chrome.
 +  virtual content::JavaScriptDialogManager* GetJavaScriptDialogManager();
++  // Whether the embedder shows its own menu for a right-click in the page.
++  virtual bool HandleContextMenu(content::RenderFrameHost& frame,
++                                 const content::ContextMenuParams& params);
 +  // Whether the embedder shows the file chooser the page asks for.
 +  virtual bool RunFileChooser(content::RenderFrameHost* frame,
 +                              scoped_refptr<content::FileSelectListener> listener,
@@ -4555,6 +5213,9 @@ index 0000000000..be8faceb33
 +  virtual bool IsFullscreen();
 +  // Whether the embedder asks itself before opening `url` in another app.
 +  virtual bool OpenInOtherApp(const GURL& url);
++  // Changes the tab's web preferences, after Chrome's own (as for a page
++  // loaded without its scripts).
++  virtual void OverrideWebPreferences(blink::web_pref::WebPreferences& prefs);
 +  // Whether the embedder shows a page whose process ended itself, instead of
 +  // Chrome's sad tab.
 +  virtual bool ShowsCrashedPages();
@@ -4566,6 +5227,16 @@ index 0000000000..be8faceb33
 +                                  const base::FilePath& suggested,
 +                                  DownloadPathCallback done);
 +};
++
++// An embedder's own filter in front of the URL loader factories Chrome makes
++// for pages and their workers (Rise's ad blocking), which may add itself to
++// `builder`. `frame` is null for a worker's.
++using EmbedderURLLoaderFactoryFilter =
++    base::RepeatingCallback<void(content::RenderFrameHost* frame,
++                                 const url::Origin& request_initiator,
++                                 network::URLLoaderFactoryBuilder& builder)>;
++void SetEmbedderURLLoaderFactoryFilter(EmbedderURLLoaderFactoryFilter filter);
++const EmbedderURLLoaderFactoryFilter& GetEmbedderURLLoaderFactoryFilter();
 +
 +#endif  // CHROME_BROWSER_UI_BROWSER_WEB_CONTENTS_DELEGATE_EMBEDDER_TAB_HOOKS_H_
 diff --git a/chrome/browser/ui/browser_window.h b/chrome/browser/ui/browser_window.h
@@ -4806,10 +5477,10 @@ index 0000000000..7310286748
 +}
 diff --git a/chrome/renderer/rise/rise_frame_agent.cc b/chrome/renderer/rise/rise_frame_agent.cc
 new file mode 100644
-index 0000000000..c5ec7051b7
+index 0000000000..143d95c179
 --- /dev/null
 +++ b/chrome/renderer/rise/rise_frame_agent.cc
-@@ -0,0 +1,298 @@
+@@ -0,0 +1,349 @@
 +// Copyright 2026 The Rise Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -4822,6 +5493,7 @@ index 0000000000..c5ec7051b7
 +#include <utility>
 +
 +#include "base/no_destructor.h"
++#include "base/uuid.h"
 +#include "content/public/renderer/render_frame.h"
 +#include "content/public/renderer/v8_value_converter.h"
 +#include "mojo/public/cpp/bindings/clone_traits.h"
@@ -4830,6 +5502,7 @@ index 0000000000..c5ec7051b7
 +#include "third_party/blink/public/platform/web_string.h"
 +#include "third_party/blink/public/web/web_local_frame.h"
 +#include "third_party/blink/public/web/web_script_source.h"
++#include "third_party/blink/public/mojom/script/script_evaluation_params.mojom-shared.h"
 +#include "v8/include/v8-container.h"
 +#include "v8/include/v8-context.h"
 +#include "v8/include/v8-exception.h"
@@ -4909,7 +5582,8 @@ index 0000000000..c5ec7051b7
 +
 +RiseFrameAgent::RiseFrameAgent(content::RenderFrame* render_frame)
 +    : content::RenderFrameObserver(render_frame),
-+      content::RenderFrameObserverTracker<RiseFrameAgent>(render_frame) {
++      content::RenderFrameObserverTracker<RiseFrameAgent>(render_frame),
++      handlers_key_("__rise" + base::Uuid::GenerateRandomV4().AsLowercaseString()) {
 +  // A frame made in this process, as by a page's script, starts with its
 +  // parent's scripts, before the browser sends them.
 +  blink::WebFrame* parent = render_frame->GetWebFrame()->Parent();
@@ -4986,34 +5660,12 @@ index 0000000000..c5ec7051b7
 +  scripts_.push_back(std::move(script));
 +}
 +
-+void RiseFrameAgent::Run(const mojom::Script& script) {
-+  content::RenderFrame* frame = render_frame();
-+  if (script.main_frame_only &&
-+      (!frame->IsMainFrame() || frame->IsInFencedFrameTree())) {
-+    return;
-+  }
-+  blink::WebLocalFrame* web_frame = frame->GetWebFrame();
-+  v8::Isolate* isolate = web_frame->GetAgentGroupScheduler()->Isolate();
-+  v8::HandleScope handle_scope(isolate);
-+  // The script runs as the body of a function given its handlers, so they're
-+  // its alone.
-+  blink::WebScriptSource source(blink::WebString::FromUtf8(
-+      "(function(riseHandlers) {\n" + script.source + "\n})"));
-+  v8::Local<v8::Value> function;
-+  v8::Local<v8::Context> context;
-+  if (script.world_id == 0) {
-+    function = web_frame->ExecuteScriptAndReturnValue(source);
-+    context = web_frame->MainWorldScriptContext();
-+  } else {
-+    NameWorld(script.world_id, script.world_name);
-+    function = web_frame->ExecuteScriptInIsolatedWorldAndReturnValue(
-+        script.world_id, source, blink::BackForwardCacheAware::kAllow);
-+    context = web_frame->GetScriptContextFromWorldId(isolate, script.world_id);
-+  }
-+  if (function.IsEmpty() || !function->IsFunction() || context.IsEmpty()) {
-+    return;
-+  }
-+  v8::Context::Scope context_scope(context);
++namespace {
++
++// The handlers a script may post to, as riseHandlers, in `context`.
++v8::Local<v8::Object> MakeHandlers(v8::Isolate* isolate,
++                                   v8::Local<v8::Context> context,
++                                   const mojom::Script& script) {
 +  v8::Local<v8::Object> handlers = v8::Object::New(isolate);
 +  for (const mojom::HandlerPtr& handler : script.handlers) {
 +    v8::Local<v8::Array> data = v8::Array::New(isolate, 3);
@@ -5036,9 +5688,79 @@ index 0000000000..c5ec7051b7
 +      continue;
 +    }
 +  }
-+  v8::Local<v8::Value> argv[] = {handlers};
++  return handlers;
++}
++
++}  // namespace
++
++void RiseFrameAgent::Run(const mojom::Script& script) {
++  content::RenderFrame* frame = render_frame();
++  if (script.main_frame_only &&
++      (!frame->IsMainFrame() || frame->IsInFencedFrameTree())) {
++    return;
++  }
++  blink::WebLocalFrame* web_frame = frame->GetWebFrame();
++  v8::Isolate* isolate = web_frame->GetAgentGroupScheduler()->Isolate();
++  v8::HandleScope handle_scope(isolate);
++  if (script.world_id == 0) {
++    RunInPage(script);
++    return;
++  }
++  // In Rise's world, the script runs as the body of a function given its
++  // handlers, so they're its alone.
++  NameWorld(script.world_id, script.world_name);
++  v8::Local<v8::Value> function =
++      web_frame->ExecuteScriptInIsolatedWorldAndReturnValue(
++          script.world_id,
++          blink::WebScriptSource(blink::WebString::FromUtf8(
++              "(function(riseHandlers) {\n" + script.source + "\n})")),
++          blink::BackForwardCacheAware::kAllow);
++  v8::Local<v8::Context> context =
++      web_frame->GetScriptContextFromWorldId(isolate, script.world_id);
++  if (function.IsEmpty() || !function->IsFunction() || context.IsEmpty()) {
++    return;
++  }
++  v8::Context::Scope context_scope(context);
++  v8::Local<v8::Value> argv[] = {MakeHandlers(isolate, context, script)};
 +  std::ignore = web_frame->ExecuteMethodAndReturnValue(
 +      function.As<v8::Function>(), v8::Undefined(isolate), 1, argv);
++}
++
++// In the page's own world, as the page's own scripts run (so that, say, its
++// import()s resolve against the page): the handlers wait on the window under a
++// name of the agent's own, which the script takes and deletes as it starts,
++// before any of the page's scripts could see them.
++void RiseFrameAgent::RunInPage(const mojom::Script& script) {
++  blink::WebLocalFrame* web_frame = render_frame()->GetWebFrame();
++  v8::Isolate* isolate = web_frame->GetAgentGroupScheduler()->Isolate();
++  v8::Local<v8::Context> context = web_frame->MainWorldScriptContext();
++  if (context.IsEmpty()) {
++    return;
++  }
++  v8::Context::Scope context_scope(context);
++  v8::Local<v8::String> key = V8String(isolate, handlers_key_);
++  if (context->Global()
++          ->DefineOwnProperty(context, key,
++                              MakeHandlers(isolate, context, script),
++                              v8::DontEnum)
++          .IsNothing()) {
++    return;
++  }
++  std::string take = "(() => { const handlers = globalThis['" + handlers_key_ +
++                     "']; delete globalThis['" + handlers_key_ +
++                     "']; return handlers; })()";
++  blink::WebScriptSource source(blink::WebString::FromUtf8(
++      "(function(riseHandlers) {\n" + script.source + "\n})(" + take + ")"));
++  web_frame->RequestExecuteScript(
++      /*world_id=*/0, base::span_from_ref(source),
++      blink::mojom::UserActivationOption::kDoNotActivate,
++      blink::mojom::EvaluationTiming::kSynchronous,
++      blink::mojom::LoadEventBlockingOption::kDoNotBlock,
++      blink::WebScriptExecutionCallback(), blink::BackForwardCacheAware::kAllow,
++      blink::mojom::WantResultOption::kNoResult,
++      blink::mojom::PromiseResultOption::kDoNotWait, blink::WebString());
++  // Gone already, unless the script didn't run.
++  std::ignore = context->Global()->Delete(context, key);
 +}
 +
 +void RiseFrameAgent::Post(const std::string& handler,
@@ -5110,10 +5832,10 @@ index 0000000000..c5ec7051b7
 +}  // namespace rise
 diff --git a/chrome/renderer/rise/rise_frame_agent.h b/chrome/renderer/rise/rise_frame_agent.h
 new file mode 100644
-index 0000000000..5e2bb3773d
+index 0000000000..2288e82d0c
 --- /dev/null
 +++ b/chrome/renderer/rise/rise_frame_agent.h
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,95 @@
 +// Copyright 2026 The Rise Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -5180,8 +5902,11 @@ index 0000000000..5e2bb3773d
 +
 +  void DocumentStarted();
 +  void Run(const mojom::Script& script);
++  void RunInPage(const mojom::Script& script);
 +  void Replied(int id, base::Value reply, const std::optional<std::string>& error);
 +
++  // Where a script in the page's own world finds its handlers, briefly.
++  const std::string handlers_key_;
 +  // Rise's scripts for the frame's documents.
 +  std::vector<mojom::ScriptPtr> scripts_;
 +  // Whether the current document has started, running them.

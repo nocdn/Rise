@@ -1,6 +1,6 @@
 """Rise's features on Chromium pages in an actual Rise window.
 
-    python3 scripts/test-chromium-live.py [peek|features|extensions|scripts|app]
+    python3 scripts/test-chromium-live.py [peek|features|extensions|scripts|app|path/to/Check.swift]
 
 peek: Peek's motion, frame by frame (Tests/Live/ChromiumPeekBenchmarks.swift).
 features: history after a relaunch, downloads, find, permissions, picture in picture and the
@@ -24,7 +24,7 @@ import tempfile
 checks = {"peek": "ChromiumPeekBenchmarks.swift", "features": "ChromiumFeatureChecks.swift", "extensions": "ChromiumExtensionChecks.swift",
           "scripts": "ChromiumScriptChecks.swift", "app": "ChromiumAppChecks.swift"}
 check = sys.argv[1] if len(sys.argv) > 1 else "peek"
-if check not in checks:
+if check not in checks and not check.endswith(".swift"):
     raise SystemExit(f"Unknown check {check}; choose from {', '.join(checks)}.")
 
 root = Path(__file__).resolve().parents[1]
@@ -47,10 +47,10 @@ objects = [str(path) for path in (debug / "Rise.build").glob("*.swift.o")
 objects += [str(path) for path in (debug / "RiseCore.build").glob("*.o")]
 objects += [str(path) for path in (debug / "RiseChromium.build").glob("*.o")]
 # The engine itself: CEF's wrapper and Rise's bridge to it, or the fork's framework.
+ad_block = [str(engine / "adblock-build/release/librise_adblock.a")] if (engine / "adblock-build/release/librise_adblock.a").exists() else []
 engine_linking = (["-F", str(app / "Contents/Frameworks"), "-framework", "Chromium Framework",
-                   "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"] if fork else
-                  [str(engine / "bridge-build/wrapper/libcef_dll_wrapper/libcef_dll_wrapper.a"), "-lc++",
-                   *([str(engine / "adblock-build/release/librise_adblock.a")] if (engine / "adblock-build/release/librise_adblock.a").exists() else [])])
+                   "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks", *ad_block] if fork else
+                  [str(engine / "bridge-build/wrapper/libcef_dll_wrapper/libcef_dll_wrapper.a"), "-lc++", *ad_block])
 
 keep = os.environ.get("RISE_PEEK_OUT")
 folder = Path(keep) if keep else Path(tempfile.mkdtemp(prefix="rise-chromium-peek-"))
@@ -61,7 +61,7 @@ subprocess.run(["ditto", str(app), str(probe)], check=True)
 # The probe takes Rise's name, so Chromium finds the helpers as "Rise Helper".
 executable = probe / "Contents/MacOS/Rise"
 subprocess.run(["swiftc", "-target", f"{platform.machine()}-apple-macos14.0", "-parse-as-library", "-module-name", "ChromiumPeekCheck",
-                str(root / "Tests/Live" / checks[check]), "-I", str(debug / "Modules"),
+                str(Path(check) if check.endswith(".swift") else root / "Tests/Live" / checks[check]), "-I", str(debug / "Modules"),
                 "-Xcc", f"-fmodule-map-file={debug / 'RiseChromium.build/module.modulemap'}",
                 "-I", str(root / "Sources/RiseChromium/include"), *objects, *engine_linking,
                 *linker, "-o", str(executable)], cwd=root, check=True)
@@ -74,7 +74,7 @@ if check == "features":
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=30", "-f", "lavfi",
                     "-i", "sine=frequency=440", "-t", "30", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
                     "-shortest", str(folder / "clip.mp4")], check=True)
-if check in ("features", "scripts"):
+if check in ("features", "scripts") or check.endswith(".swift"):
     # Two sites: localhost and 127.0.0.1 are different sites.
     ports = []
     for _ in range(2):
@@ -85,7 +85,7 @@ if check in ("features", "scripts"):
                                 stdout=subprocess.DEVNULL, stderr=open(folder / f"server-{index}.log", "w"))
                for index, port in enumerate(ports)]
     environment["RISE_CHECK_PORTS"] = ",".join(map(str, ports))
-if check == "features":
+if check == "features" or check.endswith(".swift"):
     # Media plays without a click, and the camera is Chromium's made-up one, so no real camera is asked for.
     # rise-check.test is an ordinary site to the filter lists, which leave local addresses alone.
     arguments = ["--autoplay-policy=no-user-gesture-required", "--use-fake-device-for-media-stream",
