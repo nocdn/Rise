@@ -92,6 +92,17 @@ are most of them.
    where the DevTools route falls short: scripts in Rise's own worlds run after the page's
    first script, and frames often miss them.
 
+   **Sharing the app with Chrome (done).** Chrome's `AppController` stays the app's delegate, as
+   Chrome's code needs, with Rise's delegate as its `embedderDelegate`. It asks Rise's delegate
+   first about clicking the Dock icon, the Dock menu, links from other apps, pages handed off
+   from other devices, and quitting after the last window. Chrome builds no menu bar or menu
+   bridges of its own (Profiles, Bookmarks, History, Tab), so Rise's menu bar is the only one.
+   Quitting goes Chrome's way: leave-page handlers first, then Chrome closes each window. At
+   the first window, Rise hears `applicationWillTerminate` and saves while its tabs are all
+   still there. Rise's windows then close as Chrome's do, without Rise seeing its tabs go.
+   Checked by `python3 scripts/test-chromium-live.py app` (and with `RISE_QUIT_BY_CLOSING=1`,
+   quitting by closing the last window).
+
 1. **The engine API.** Everything `RiseChromium.h` offers today, on the fork:
    - Navigation, and saving and restoring back and forward history.
    - Sound playing; zoom and pinch.

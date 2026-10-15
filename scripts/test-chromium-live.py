@@ -1,12 +1,13 @@
 """Rise's features on Chromium pages in an actual Rise window.
 
-    python3 scripts/test-chromium-live.py [peek|features|extensions|scripts]
+    python3 scripts/test-chromium-live.py [peek|features|extensions|scripts|app]
 
 peek: Peek's motion, frame by frame (Tests/Live/ChromiumPeekBenchmarks.swift).
 features: history after a relaunch, downloads, find, permissions, picture in picture and the
 tab's media and sound (Tests/Live/ChromiumFeatureChecks.swift), with pages served from two local
 sites so one can hold a frame of the other.
 scripts: Rise's page scripts and messages, in frames of both sites (Tests/Live/ChromiumScriptChecks.swift).
+app: Rise's menus, Dock, links from other apps and quitting (Tests/Live/ChromiumAppChecks.swift).
 
 Chromium only runs from an app bundle with its helpers, so the check runs as the main program of
 a copy of build/Rise.app (made by ./scripts/build.sh with the engine built). Frames are kept in
@@ -21,7 +22,7 @@ import socket
 import tempfile
 
 checks = {"peek": "ChromiumPeekBenchmarks.swift", "features": "ChromiumFeatureChecks.swift", "extensions": "ChromiumExtensionChecks.swift",
-          "scripts": "ChromiumScriptChecks.swift"}
+          "scripts": "ChromiumScriptChecks.swift", "app": "ChromiumAppChecks.swift"}
 check = sys.argv[1] if len(sys.argv) > 1 else "peek"
 if check not in checks:
     raise SystemExit(f"Unknown check {check}; choose from {', '.join(checks)}.")

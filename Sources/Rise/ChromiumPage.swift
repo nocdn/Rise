@@ -47,8 +47,10 @@ enum RisePages {
     /// Starts Chromium if asked and packaged with the app; WebKit carries on otherwise.
     static func startIfRequested() {
         guard isRequested else { return }
-        let framework = Bundle.main.bundleURL.appendingPathComponent("Contents/Frameworks/Chromium Embedded Framework.framework")
-        guard FileManager.default.fileExists(atPath: framework.path) else {
+        // CEF's framework, or Rise's own Chromium's (see Engine/fork-plan.md).
+        let frameworks = ["Chromium Embedded Framework.framework", "Chromium Framework.framework"]
+            .map { Bundle.main.bundleURL.appendingPathComponent("Contents/Frameworks/\($0)") }
+        guard frameworks.contains(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
             NSLog("Rise: Chromium isn't packaged in this build; using WebKit"); return
         }
         let profile = (RiseProfile.directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Rise"))
