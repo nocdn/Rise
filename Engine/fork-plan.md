@@ -63,6 +63,22 @@ are most of them.
    macOS checks the newly signed helpers, and Chromium stops drawing pages in a window that's
    behind others, so the check's window must stay in front.
 
+   **One `Browser` per Rise window (done).** `RCTabStrip` owns its window's `Browser`. Tabs move
+   into it as Chrome moves dragged tabs between windows, keeping their pages; pages that aren't
+   tabs (a Peek, its standby page, DevTools) wait in a hidden `Browser`. What Chrome does to the
+   tabs itself (an extension switching, moving, pinning or closing them) is asked of Rise. The
+   Peek check still passes three runs in a row and matches CEF. What it took:
+   - **Chrome's test paths:** Chrome guards code that only tests' windows (which aren't Chrome's
+     own either) should reach with `CHECK_IS_TEST()`, about 400 of them. Rise declares that it
+     takes those paths (`base::SetEmbedderTakesTestPaths()`), and each one it takes is logged
+     once, for stage 4. `CHECK_IS_NOT_TEST()` still holds.
+   - **Empty windows stay open:** Chrome closes and deletes a `Browser` whose last tab leaves.
+     Rise's windows say they stay open (`BrowserWindow::StaysOpenWhenEmpty()`), and close the
+     way Chrome's do, through `UnloadController::OnWindowClosing()`.
+   - **Activation:** Rise's key window tells Chrome's `BrowserActiveStateManager`, so Chrome
+     takes it as the current window.
+   - **Chrome's history swipe is off:** it took Rise's swipe gesture now and then.
+
 1. **The engine API.** Everything `RiseChromium.h` offers today, on the fork:
    - Navigation, and saving and restoring back and forward history.
    - Sound playing; zoom and pinch.

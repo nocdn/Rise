@@ -144,7 +144,10 @@ if check == "extensions":
     arguments = [f"--load-extension={extension}"]
 try:
     # RISE_LLDB=1 runs the check under lldb, which prints where it crashed.
-    debugger = ["lldb", "--batch", "-o", "run", "-k", "bt 40", "-k", "quit 1", "--"] if os.environ.get("RISE_LLDB") else []
+    # RISE_LLDB_BREAK=<function> also prints where that function is called from, each time.
+    breaks = [arg for name in filter(None, os.environ.get("RISE_LLDB_BREAK", "").split(","))
+              for arg in ("-o", f"breakpoint set -n '{name}'", "-o", "breakpoint command add -o 'bt 25' -o continue 1")]
+    debugger = ["lldb", "--batch", *breaks, "-o", "run", "-k", "bt 40", "-k", "quit 1", "--"] if os.environ.get("RISE_LLDB") else []
     result = subprocess.run([*debugger, str(executable), *arguments], env=environment)
 finally:
     for server in servers:

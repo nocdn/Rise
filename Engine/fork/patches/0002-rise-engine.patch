@@ -1,3 +1,84 @@
+diff --git a/base/check_is_test.cc b/base/check_is_test.cc
+index ce54877fdd..b80435df49 100644
+--- a/base/check_is_test.cc
++++ b/base/check_is_test.cc
+@@ -4,18 +4,46 @@
+ 
+ #include "base/check_is_test.h"
+ 
++#include <set>
++#include <string>
++#include <utility>
++
+ #include "base/base_export.h"
++#include "base/logging.h"
++#include "base/no_destructor.h"
++#include "base/synchronization/lock.h"
+ 
+ namespace {
+ bool g_this_is_a_test = false;
++bool g_embedder_takes_test_paths = false;
+ }
+ 
+ namespace base::internal {
+ bool get_is_test_impl() {
+   return g_this_is_a_test;
+ }
++
++bool get_embedder_takes_test_path(const char* file, int line) {
++  if (!g_embedder_takes_test_paths) {
++    return false;
++  }
++  // Each place once, for the embedder to see which of tests' paths it takes.
++  static base::NoDestructor<base::Lock> lock;
++  static base::NoDestructor<std::set<std::pair<std::string, int>>> seen;
++  base::AutoLock hold(*lock);
++  if (seen->emplace(file, line).second) {
++    LOG(WARNING) << "Embedder takes the test path at " << file << ":" << line;
++  }
++  return true;
++}
+ }  // namespace base::internal
+ 
++namespace base {
++void SetEmbedderTakesTestPaths() {
++  g_embedder_takes_test_paths = true;
++}
++}  // namespace base
++
+ namespace base::test {
+ // base/test/allow_check_is_test_for_testing.h declares
+ // `AllowCheckIsTestForTesting`, but is only allowed to be included in test
+diff --git a/base/check_is_test.h b/base/check_is_test.h
+index 8bc5981f98..eb36c7932d 100644
+--- a/base/check_is_test.h
++++ b/base/check_is_test.h
+@@ -49,10 +49,23 @@
+ 
+ namespace base::internal {
+ BASE_EXPORT bool get_is_test_impl();
++// Whether the embedder takes the paths Chrome keeps for tests (see
++// SetEmbedderTakesTestPaths()), noting the place, `file` and `line`, the first
++// time it does.
++BASE_EXPORT bool get_embedder_takes_test_path(const char* file, int line);
+ }  // namespace base::internal
+ 
+-#define CHECK_IS_TEST(...) \
+-  CHECK(base::internal::get_is_test_impl() __VA_OPT__(, ) __VA_ARGS__)
++namespace base {
++// For an embedder whose browser windows aren't Chrome's own (Rise, on its
++// fork), as tests' windows aren't: CHECK_IS_TEST() passes, as the code behind
++// it then does what it does for tests, and CHECK_IS_NOT_TEST() still holds.
++BASE_EXPORT void SetEmbedderTakesTestPaths();
++}  // namespace base
++
++#define CHECK_IS_TEST(...)                                              \
++  CHECK(base::internal::get_is_test_impl() ||                           \
++        base::internal::get_embedder_takes_test_path(__FILE__, __LINE__) \
++            __VA_OPT__(, ) __VA_ARGS__)
+ 
+ // In special cases, code should not execute in a test.
+ #define CHECK_IS_NOT_TEST(...) \
 diff --git a/chrome/app/framework.exports b/chrome/app/framework.exports
 index 37c881f5d2..c4f7e25336 100644
 --- a/chrome/app/framework.exports
@@ -110,12 +191,69 @@ index b2619baa8f..41d4cd4a22 100644
  #endif
  
  #if BUILDFLAG(IS_CHROMEOS)
+diff --git a/chrome/browser/renderer_host/chrome_render_widget_host_view_mac_delegate.h b/chrome/browser/renderer_host/chrome_render_widget_host_view_mac_delegate.h
+index ee322f39a9..8b7dc8ef9c 100644
+--- a/chrome/browser/renderer_host/chrome_render_widget_host_view_mac_delegate.h
++++ b/chrome/browser/renderer_host/chrome_render_widget_host_view_mac_delegate.h
+@@ -16,6 +16,9 @@ class RenderWidgetHost;
+ @interface ChromeRenderWidgetHostViewMacDelegate
+     : NSObject <RenderWidgetHostViewMacDelegate>
+ 
++// Off for an embedder that swipes through history itself, as Rise does.
+++ (void)setHistorySwipesDisabled:(BOOL)disabled;
++
+ - (instancetype)initWithRenderWidgetHost:
+     (content::RenderWidgetHost*)renderWidgetHost;
+ 
+diff --git a/chrome/browser/renderer_host/chrome_render_widget_host_view_mac_delegate.mm b/chrome/browser/renderer_host/chrome_render_widget_host_view_mac_delegate.mm
+index 3a0283de31..13f045738f 100644
+--- a/chrome/browser/renderer_host/chrome_render_widget_host_view_mac_delegate.mm
++++ b/chrome/browser/renderer_host/chrome_render_widget_host_view_mac_delegate.mm
+@@ -37,6 +37,11 @@
+ #include "services/service_manager/public/cpp/interface_provider.h"
+ #include "ui/base/window_open_disposition.h"
+ 
++namespace {
++// An embedder that swipes through history itself (Rise) turns Chrome's off.
++bool g_history_swipes_disabled = false;
++}  // namespace
++
+ @interface ChromeRenderWidgetHostViewMacDelegate () <HistorySwiperDelegate>
+ 
+ @property(readonly) content::WebContents* webContents;
+@@ -58,16 +63,22 @@ @implementation ChromeRenderWidgetHostViewMacDelegate {
+   BOOL _resigningFirstResponder;
+ }
+ 
+++ (void)setHistorySwipesDisabled:(BOOL)disabled {
++  g_history_swipes_disabled = disabled;
++}
++
+ - (instancetype)initWithRenderWidgetHost:
+     (content::RenderWidgetHost*)renderWidgetHost {
+   self = [super init];
+   if (self) {
+     _widgetProcessId = renderWidgetHost->GetProcess()->GetDeprecatedID();
+     _widgetRoutingId = renderWidgetHost->GetRoutingID();
+-    _historySwiper = [[HistorySwiper alloc] initWithDelegate:self];
+-    // Clip bounds so history swiper navigation layer doesn't overflow the
+-    // bounds when in Split View or with a Side Panel open.
+-    [self viewThatWantsHistoryOverlay].clipsToBounds = YES;
++    if (!g_history_swipes_disabled) {
++      _historySwiper = [[HistorySwiper alloc] initWithDelegate:self];
++      // Clip bounds so history swiper navigation layer doesn't overflow the
++      // bounds when in Split View or with a Side Panel open.
++      [self viewThatWantsHistoryOverlay].clipsToBounds = YES;
++    }
+   }
+   return self;
+ }
 diff --git a/chrome/browser/rise/BUILD.gn b/chrome/browser/rise/BUILD.gn
 new file mode 100644
-index 0000000000..f2b9fa32bd
+index 0000000000..07947aafa9
 --- /dev/null
 +++ b/chrome/browser/rise/BUILD.gn
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,46 @@
 +# Copyright 2026 The Rise Authors. All rights reserved.
 +# Use of this source code is governed by a BSD-style license that can be
 +# found in the LICENSE file.
@@ -145,6 +283,7 @@ index 0000000000..f2b9fa32bd
 +    "//base",
 +    "//chrome/browser:chrome_browser_application_mac",
 +    "//chrome/browser/profiles:profile",
++    "//chrome/browser/renderer_host:delegate",
 +    "//chrome/browser/search_engines",
 +    "//chrome/browser/ui",
 +    "//chrome/browser/ui/browser_window",
@@ -638,10 +777,10 @@ index 0000000000..cabcb68258
 +#endif  // CHROME_BROWSER_RISE_CHROME_BROWSER_MAIN_EXTRA_PARTS_RISE_H_
 diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
 new file mode 100644
-index 0000000000..94fc9ab0a0
+index 0000000000..8a330f2d52
 --- /dev/null
 +++ b/chrome/browser/rise/rise_bridge.mm
-@@ -0,0 +1,847 @@
+@@ -0,0 +1,1166 @@
 +// Copyright 2026 The Rise Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -665,6 +804,7 @@ index 0000000000..94fc9ab0a0
 +#include <string>
 +#include <vector>
 +
++#include "base/check_is_test.h"
 +#include "base/functional/bind.h"
 +#include "base/json/json_reader.h"
 +#include "base/json/json_writer.h"
@@ -673,11 +813,19 @@ index 0000000000..94fc9ab0a0
 +#include "base/strings/utf_string_conversions.h"
 +#include "chrome/browser/ui/cocoa/l10n_util.h"
 +#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/renderer_host/chrome_render_widget_host_view_mac_delegate.h"
 +#include "chrome/browser/profiles/profile_manager.h"
 +#include "chrome/browser/rise/chrome_browser_main_extra_parts_rise.h"
 +#include "chrome/browser/rise/rise_browser_window.h"
 +#include "chrome/browser/search_engines/template_url_service_factory.h"
++#include "chrome/browser/ui/browser.h"
++#include "chrome/browser/ui/browser_active_state_manager/browser_active_state_manager.h"
 +#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/tabs/tab_enums.h"
++#include "chrome/browser/ui/tabs/tab_model.h"
++#include "chrome/browser/ui/tabs/tab_strip_model_observer.h"
++#include "chrome/browser/ui/unload_controller.h"
++#include "components/tabs/public/tab_interface.h"
 +#include "components/viz/common/frame_sinks/copy_output_result.h"
 +#include "chrome/browser/ui/browser_window/public/create_browser_window.h"
 +#include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -716,18 +864,77 @@ index 0000000000..94fc9ab0a0
 +  return g_started ? ProfileManager::GetLastUsedProfile() : nullptr;
 +}
 +
-+// Every Rise page so far is a tab in one Browser, whose window is Rise's. Stage
-+// 1 gives each Rise window its own (RCTabStrip).
-+BrowserWindowInterface* SharedBrowser() {
++// A Browser whose window is Rise's: Chrome makes the Browser, and no window of
++// its own. `delegate` answers for the Rise window; null for the one holding
++// pages that aren't tabs.
++BrowserWindowInterface* MakeBrowser(RiseBrowserWindow::Delegate* delegate) {
++  if (!RiseProfile()) {
++    return nullptr;
++  }
++  BrowserWindowCreateParams params(RiseProfile(), /*from_user_gesture=*/false);
++  auto* window = new RiseBrowserWindow();
++  window->set_delegate(delegate);
++  params.window = window;
++  params.embedder_window = true;
++  // Rise restores its own windows.
++  params.omit_from_session_restore = true;
++  return CreateBrowserWindow(std::move(params));
++}
++
++// Where Rise's pages wait while they aren't any window's tabs: new pages until
++// their window takes them, and a Peek, its standby page, DevTools and the like.
++BrowserWindowInterface* WaitingBrowser() {
 +  static BrowserWindowInterface* browser = nullptr;
-+  if (!browser && RiseProfile()) {
-+    BrowserWindowCreateParams params(RiseProfile(), /*from_user_gesture=*/false);
-+    // A window of Rise's: Chrome makes the Browser, not a window of its own.
-+    params.window = new RiseBrowserWindow();
-+    params.embedder_window = true;
-+    browser = CreateBrowserWindow(std::move(params));
++  if (!browser) {
++    browser = MakeBrowser(nullptr);
 +  }
 +  return browser;
++}
++
++// The Browser a page is a tab of.
++BrowserWindowInterface* BrowserOf(content::WebContents* contents) {
++  tabs::TabInterface* tab =
++      contents ? tabs::TabInterface::MaybeGetFromContents(contents) : nullptr;
++  return tab ? tab->GetBrowserWindowInterface() : nullptr;
++}
++
++// Moves `contents` into `to`'s tab strip at `index` (-1: the end), keeping its
++// page, as dragging a tab between Chrome's windows does. Returns where it went.
++int MoveTab(content::WebContents* contents,
++            BrowserWindowInterface* to,
++            int index,
++            bool pinned) {
++  TabStripModel* destination = to->GetTabStripModel();
++  int at = destination->GetIndexOfWebContents(contents);
++  if (at != TabStripModel::kNoTab) {
++    return at;
++  }
++  BrowserWindowInterface* from = BrowserOf(contents);
++  if (!from) {
++    return TabStripModel::kNoTab;
++  }
++  TabStripModel* source = from->GetTabStripModel();
++  std::unique_ptr<tabs::TabModel> tab =
++      source->DetachTabAtForInsertion(source->GetIndexOfWebContents(contents));
++  if (index < 0 || index > destination->count()) {
++    index = destination->count();
++  }
++  return destination->InsertDetachedTabAt(
++      index, std::move(tab),
++      pinned ? AddTabTypes::ADD_PINNED : AddTabTypes::ADD_NONE);
++}
++
++// Every page's Rise view, for what Chrome does to its tabs.
++NSMapTable<NSValue*, RCBrowserView*>* Views() {
++  static NSMapTable* views = [NSMapTable strongToWeakObjectsMapTable];
++  return views;
++}
++// A page's view has its page now, so its window can take it as a tab.
++NSString* const kPageMadeNotification = @"RisePageMade";
++
++RCBrowserView* ViewOf(content::WebContents* contents) {
++  return contents ? [Views() objectForKey:[NSValue valueWithPointer:contents]]
++                  : nil;
 +}
 +
 +NSURL* ToNSURL(const GURL& url) {
@@ -791,6 +998,8 @@ index 0000000000..94fc9ab0a0
 +
 +@interface RCBrowserView ()
 +- (void)browserStarted;
++- (content::WebContents*)contents;
++- (void)contentsGone;
 +- (void)contentsChanged;
 +- (void)willNavigate:(RCNavigationKind)kind;
 +- (void)finishedLoad;
@@ -837,6 +1046,8 @@ index 0000000000..94fc9ab0a0
 +      base::TerminationStatus status) override {
 +    [view_ crashed];
 +  }
++  // Chrome closed the tab itself, as for an extension's tabs.remove.
++  void WebContentsDestroyed() override { [view_ contentsGone]; }
 +
 + private:
 +  void Changed() { [view_ contentsChanged]; }
@@ -901,6 +1112,11 @@ index 0000000000..94fc9ab0a0
 +    return;
 +  }
 +  _running = YES;
++  // Rise's windows aren't Chrome's, as tests' windows aren't; Chrome's code
++  // takes the same paths for them.
++  base::SetEmbedderTakesTestPaths();
++  // Rise swipes through history itself, with its own arrow.
++  [ChromeRenderWidgetHostViewMacDelegate setHistorySwipesDisabled:YES];
 +  NSArray<NSString*>* processArguments = NSProcessInfo.processInfo.arguments;
 +  std::vector<std::string>& arguments = Arguments();
 +  arguments.insert(arguments.begin(), processArguments.firstObject.UTF8String);
@@ -1071,7 +1287,7 @@ index 0000000000..94fc9ab0a0
 +}
 +
 +- (void)browserStarted {
-+  BrowserWindowInterface* browser = SharedBrowser();
++  BrowserWindowInterface* browser = WaitingBrowser();
 +  if (_closed || _contents || !browser) {
 +    return;
 +  }
@@ -1084,6 +1300,7 @@ index 0000000000..94fc9ab0a0
 +  browser->GetTabStripModel()->AppendWebContents(std::move(contents),
 +                                                 /*foreground=*/false);
 +  _observer = std::make_unique<TabObserver>(self, _contents);
++  [Views() setObject:self forKey:[NSValue valueWithPointer:_contents]];
 +  _contents->SetPageBaseBackgroundColor(
 +      skia::NSDeviceColorToSkColor([_pageBackgroundColor
 +          colorUsingColorSpace:NSColorSpace.deviceRGBColorSpace]));
@@ -1098,6 +1315,25 @@ index 0000000000..94fc9ab0a0
 +    NSURL* url = _pendingURL;
 +    _pendingURL = nil;
 +    [self loadURL:url];
++  }
++  [NSNotificationCenter.defaultCenter postNotificationName:kPageMadeNotification
++                                                    object:self];
++}
++
++- (content::WebContents*)contents {
++  return _contents;
++}
++
++- (void)contentsGone {
++  _observer.reset();
++  [Views() removeObjectForKey:[NSValue valueWithPointer:_contents]];
++  _contents = nullptr;
++  if (_closed) {
++    return;
++  }
++  _closed = YES;
++  if ([_delegate respondsToSelector:@selector(browserViewDidRequestClose:)]) {
++    [_delegate browserViewDidRequestClose:self];
 +  }
 +}
 +
@@ -1326,7 +1562,8 @@ index 0000000000..94fc9ab0a0
 +  _observer.reset();
 +  content::WebContents* contents = _contents;
 +  _contents = nullptr;
-+  BrowserWindowInterface* browser = SharedBrowser();
++  [Views() removeObjectForKey:[NSValue valueWithPointer:contents]];
++  BrowserWindowInterface* browser = BrowserOf(contents);
 +  if (!contents || !browser) {
 +    return;
 +  }
@@ -1431,19 +1668,240 @@ index 0000000000..94fc9ab0a0
 +- (void)inspect {}
 +@end
 +
-+@implementation RCTabStrip
++@interface RCTabStrip ()
++@property(nonatomic, weak, readonly) id<RCTabStripDelegate> delegate;
++- (BOOL)isApplying;
++- (NSWindow*)nativeWindow;
++@end
++
++namespace {
++
++// Rise's window, as its Browser asks about it.
++class StripWindow : public RiseBrowserWindow::Delegate {
++ public:
++  explicit StripWindow(RCTabStrip* strip) : strip_(strip) {}
++  bool IsActive() const override { return strip_.active; }
++  gfx::Rect GetBounds() const override {
++    // Chromium measures screens from the top left of the main one.
++    NSRect frame = strip_.frame;
++    CGFloat top = NSMaxY(NSScreen.screens.firstObject.frame);
++    return gfx::Rect(frame.origin.x, top - NSMaxY(frame), frame.size.width,
++                     frame.size.height);
++  }
++  gfx::NativeWindow GetNativeWindow() const override {
++    return gfx::NativeWindow([strip_ nativeWindow]);
++  }
++  void Activate() override { [strip_.delegate tabStripActivateWindow]; }
++
++ private:
++  __weak RCTabStrip* strip_;
++};
++
++// What Chrome does to the window's tabs itself (an extension switching,
++// moving, pinning or closing them), asked of Rise, which keeps the order.
++class StripObserver : public TabStripModelObserver {
++ public:
++  explicit StripObserver(RCTabStrip* strip) : strip_(strip) {}
++  void OnTabStripModelChanged(TabStripModel* model,
++                              const TabStripModelChange& change,
++                              const TabStripSelectionChange& selection) override {
++    RCTabStrip* strip = strip_;
++    if (!strip || [strip isApplying]) {
++      return;
++    }
++    if (change.type() == TabStripModelChange::kMoved) {
++      const TabStripModelChange::Move* move = change.GetMove();
++      if (RCBrowserView* view = ViewOf(move->tab->GetContents())) {
++        [strip.delegate tabStripMoveTab:view toIndex:move->to_index];
++      }
++    }
++    if (selection.active_tab_changed() && selection.new_contents) {
++      if (RCBrowserView* view = ViewOf(selection.new_contents)) {
++        [strip.delegate tabStripActivateTab:view];
++      }
++    }
++  }
++  void OnTabPinnedStateChanged(tabs::TabInterface* tab, int index) override {
++    RCTabStrip* strip = strip_;
++    RCBrowserView* view = ViewOf(tab->GetContents());
++    if (strip && view && ![strip isApplying]) {
++      [strip.delegate tabStripSetTab:view pinned:tab->IsPinned()];
++    }
++  }
++
++ private:
++  __weak RCTabStrip* strip_;
++};
++
++}  // namespace
++
++@implementation RCTabStrip {
++  // Deleted when the window closes.
++  raw_ptr<BrowserWindowInterface> _browser;
++  std::unique_ptr<StripWindow> _window;
++  std::unique_ptr<StripObserver> _observer;
++  NSArray<RCBrowserView*>* _tabs;
++  NSInteger _pinnedCount;
++  NSInteger _activeIndex;
++  BOOL _applying;
++}
++
 +@synthesize active = _active;
 +@synthesize frame = _frame;
++@synthesize delegate = _delegate;
++
 +- (instancetype)initWithDelegate:(id<RCTabStripDelegate>)delegate {
-+  return [super init];
++  if (!(self = [super init])) {
++    return nil;
++  }
++  _delegate = delegate;
++  _tabs = @[];
++  _activeIndex = -1;
++  _window = std::make_unique<StripWindow>(self);
++  _observer = std::make_unique<StripObserver>(self);
++  [NSNotificationCenter.defaultCenter addObserver:self
++                                         selector:@selector(pageMade:)
++                                             name:kPageMadeNotification
++                                           object:nil];
++  return self;
 +}
++
++- (void)dealloc {
++  [NSNotificationCenter.defaultCenter removeObserver:self];
++  [self close];
++}
++
++- (void)pageMade:(NSNotification*)notification {
++  if ([_tabs containsObject:notification.object]) {
++    [self apply];
++  }
++}
++
++- (BOOL)isApplying {
++  return _applying;
++}
++
++- (NSWindow*)nativeWindow {
++  for (RCBrowserView* view in _tabs) {
++    if (view.window) {
++      return view.window;
++    }
++  }
++  return nil;
++}
++
++// The window's Browser, made once Chrome has started.
++- (BrowserWindowInterface*)browser {
++  if (!_browser && g_started) {
++    _browser = MakeBrowser(_window.get());
++    if (_browser) {
++      _browser->GetTabStripModel()->AddObserver(_observer.get());
++    }
++  }
++  return _browser;
++}
++
 +- (NSInteger)windowID {
-+  return -1;
++  BrowserWindowInterface* browser = [self browser];
++  return browser ? browser->GetSessionID().id() : -1;
 +}
++
 +- (void)setTabs:(NSArray<RCBrowserView*>*)tabs
 +    pinnedCount:(NSInteger)pinnedCount
-+    activeIndex:(NSInteger)activeIndex {}
-+- (void)close {}
++    activeIndex:(NSInteger)activeIndex {
++  _tabs = tabs.copy;
++  _pinnedCount = pinnedCount;
++  _activeIndex = activeIndex;
++  [self apply];
++}
++
++// Makes the Browser's tabs Rise's: the same pages in the same order, the
++// pinned ones first, the selected one active. Pages still being made join
++// once they are (RCBrowserView's browserStarted). Pages that leave go back to
++// the waiting Browser, unless they've closed.
++- (void)apply {
++  BrowserWindowInterface* browser = [self browser];
++  if (!browser) {
++    return;
++  }
++  _applying = YES;
++  TabStripModel* model = browser->GetTabStripModel();
++  int index = 0, active = TabStripModel::kNoTab;
++  for (NSUInteger i = 0; i < _tabs.count; i++) {
++    content::WebContents* contents = [_tabs[i] contents];
++    if (!contents) {
++      continue;
++    }
++    bool pinned = static_cast<NSInteger>(i) < _pinnedCount;
++    int at = MoveTab(contents, browser, index, pinned);
++    if (at == TabStripModel::kNoTab) {
++      continue;
++    }
++    if (model->IsTabPinned(at) != pinned) {
++      at = model->SetTabPinned(at, pinned);
++    }
++    if (at != index) {
++      at = model->MoveWebContentsAt(at, index, /*select_after_move=*/false);
++    }
++    if (static_cast<NSInteger>(i) == _activeIndex) {
++      active = at;
++    }
++    index++;
++  }
++  while (model->count() > index) {
++    content::WebContents* contents = model->GetWebContentsAt(model->count() - 1);
++    BrowserWindowInterface* waiting = WaitingBrowser();
++    if (!waiting || MoveTab(contents, waiting, -1, /*pinned=*/false) ==
++                        TabStripModel::kNoTab) {
++      break;
++    }
++  }
++  if (active != TabStripModel::kNoTab && model->active_index() != active) {
++    model->ActivateTabAt(active);
++  }
++  _applying = NO;
++}
++
++- (void)setActive:(BOOL)active {
++  if (active == _active) {
++    return;
++  }
++  _active = active;
++  BrowserWindowInterface* browser = [self browser];
++  BrowserActiveStateManager* state =
++      browser ? BrowserActiveStateManager::From(browser) : nullptr;
++  if (!state) {
++    return;
++  }
++  // Chrome's last active window is the one its extensions and the rest take
++  // as current, as when one of its own windows is brought forward.
++  if (active) {
++    state->DidBecomeActive();
++  } else {
++    state->DidBecomeInactive();
++  }
++}
++
++- (void)close {
++  BrowserWindowInterface* browser = _browser;
++  _browser = nullptr;
++  if (!browser) {
++    return;
++  }
++  TabStripModel* model = browser->GetTabStripModel();
++  model->RemoveObserver(_observer.get());
++  // Pages still open go back to waiting; Rise closes them.
++  while (!model->empty()) {
++    if (!WaitingBrowser() ||
++        MoveTab(model->GetWebContentsAt(0), WaitingBrowser(), -1, false) ==
++            TabStripModel::kNoTab) {
++      break;
++    }
++  }
++  // Closed as Chrome's windows are: with no tabs, Chrome then deletes it.
++  UnloadController::From(browser)->OnWindowClosing();
++}
++
 +@end
 +
 +@implementation RCExtensionAction
@@ -1491,10 +1949,10 @@ index 0000000000..94fc9ab0a0
 +@end
 diff --git a/chrome/browser/rise/rise_browser_window.cc b/chrome/browser/rise/rise_browser_window.cc
 new file mode 100644
-index 0000000000..cf14a62344
+index 0000000000..12e20e9a0f
 --- /dev/null
 +++ b/chrome/browser/rise/rise_browser_window.cc
-@@ -0,0 +1,415 @@
+@@ -0,0 +1,430 @@
 +// Copyright 2012 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -1502,6 +1960,7 @@ index 0000000000..cf14a62344
 +#include "chrome/browser/rise/rise_browser_window.h"
 +
 +#include <utility>
++
 +
 +#include "base/feature_list.h"
 +#include "base/values.h"
@@ -1655,7 +2114,17 @@ index 0000000000..cf14a62344
 +}
 +
 +bool RiseBrowserWindow::IsActive() const {
-+  return is_active_;
++  return delegate_ ? delegate_->IsActive() : is_active_;
++}
++
++void RiseBrowserWindow::Show() {
++  Activate();
++}
++
++void RiseBrowserWindow::Activate() {
++  if (delegate_) {
++    delegate_->Activate();
++  }
 +}
 +
 +ui::ZOrderLevel RiseBrowserWindow::GetZOrderLevel() const {
@@ -1663,7 +2132,7 @@ index 0000000000..cf14a62344
 +}
 +
 +gfx::NativeWindow RiseBrowserWindow::GetNativeWindow() const {
-+  return native_window_;
++  return delegate_ ? delegate_->GetNativeWindow() : native_window_;
 +}
 +
 +bool RiseBrowserWindow::IsOnCurrentWorkspace() const {
@@ -1708,7 +2177,7 @@ index 0000000000..cf14a62344
 +}
 +
 +gfx::Rect RiseBrowserWindow::GetRestoredBounds() const {
-+  return gfx::Rect();
++  return GetBounds();
 +}
 +
 +ui::mojom::WindowShowState RiseBrowserWindow::GetRestoredState() const {
@@ -1716,7 +2185,7 @@ index 0000000000..cf14a62344
 +}
 +
 +gfx::Rect RiseBrowserWindow::GetBounds() const {
-+  return gfx::Rect();
++  return delegate_ ? delegate_->GetBounds() : gfx::Rect();
 +}
 +
 +gfx::Size RiseBrowserWindow::GetContentsSize() const {
@@ -1750,7 +2219,7 @@ index 0000000000..cf14a62344
 +}
 +
 +bool RiseBrowserWindow::IsVisible() const {
-+  return true;
++  return delegate_ != nullptr;
 +}
 +
 +LocationBar* RiseBrowserWindow::GetLocationBar() const {
@@ -1806,6 +2275,10 @@ index 0000000000..cf14a62344
 +
 +BrowserView* RiseBrowserWindow::AsBrowserView() {
 +  return nullptr;
++}
++
++bool RiseBrowserWindow::StaysOpenWhenEmpty() const {
++  return true;
 +}
 +
 +void RiseBrowserWindow::DeleteBrowserWindow() {
@@ -1912,10 +2385,10 @@ index 0000000000..cf14a62344
 +}
 diff --git a/chrome/browser/rise/rise_browser_window.h b/chrome/browser/rise/rise_browser_window.h
 new file mode 100644
-index 0000000000..4085524ef3
+index 0000000000..1f7d2f4c5b
 --- /dev/null
 +++ b/chrome/browser/rise/rise_browser_window.h
-@@ -0,0 +1,310 @@
+@@ -0,0 +1,326 @@
 +// Copyright 2026 The Rise Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -1972,13 +2445,28 @@ index 0000000000..4085524ef3
 +  ~RiseBrowserWindow() override;
 +
 +  // BrowserWindow:
-+  void Show() override {}
++  // What Rise answers about the window it draws; null for a window of pages
++  // that aren't tabs (a Peek, DevTools), which isn't shown.
++  class Delegate {
++   public:
++    virtual ~Delegate() = default;
++    virtual bool IsActive() const = 0;
++    virtual gfx::Rect GetBounds() const = 0;
++    virtual gfx::NativeWindow GetNativeWindow() const = 0;
++    virtual void Activate() = 0;
++  };
++  void set_delegate(Delegate* delegate) { delegate_ = delegate; }
++
++  // Rise closes its windows itself, and keeps them open without tabs.
++  bool StaysOpenWhenEmpty() const override;
++
++  void Show() override;
 +  void ShowInactive() override {}
 +  void Hide() override {}
 +  bool IsVisible() const override;
 +  void SetBounds(const gfx::Rect& bounds) override {}
 +  void Close() override;
-+  void Activate() override {}
++  void Activate() override;
 +  void Deactivate() override {}
 +  bool IsActive() const override;
 +  void FlashFrame(bool flash) override {}
@@ -2220,6 +2708,7 @@ index 0000000000..4085524ef3
 +      browser_collection_observation_{this};
 +  raw_ptr<BrowserWindowInterface> browser_;
 +  base::OnceClosure close_callback_;
++  raw_ptr<Delegate> delegate_ = nullptr;
 +};
 +
 +// Helper that handle the lifetime of RiseBrowserWindow instances.
@@ -2247,6 +2736,22 @@ index 07de580deb..900819bca4 100644
      CHECK_IS_TEST() << "BrowserWindowCreateParams::window is a test-only param";
    }
    window_ =
+diff --git a/chrome/browser/ui/browser_window.h b/chrome/browser/ui/browser_window.h
+index 6e4b4388d9..bf7abea18a 100644
+--- a/chrome/browser/ui/browser_window.h
++++ b/chrome/browser/ui/browser_window.h
+@@ -515,6 +515,11 @@ class BrowserWindow : public ui::BaseWindow {
+   // https://crbug.com/360163254.
+   virtual BrowserView* AsBrowserView() = 0;
+ 
++  // Whether the window stays open, keeping its Browser, when its last tab
++  // closes or leaves: an embedder's window, whose tabs come and go with its
++  // own (Rise's). Chrome's windows close.
++  virtual bool StaysOpenWhenEmpty() const;
++
+  protected:
+   friend struct BrowserWindowDeleter;
+   // Deletes `this`. Note BrowserWindow will no longer be valid after this
 diff --git a/chrome/browser/ui/browser_window/public/create_browser_window.h b/chrome/browser/ui/browser_window/public/create_browser_window.h
 index 6ecba965f8..f743dfabb7 100644
 --- a/chrome/browser/ui/browser_window/public/create_browser_window.h
@@ -2262,3 +2767,34 @@ index 6ecba965f8..f743dfabb7 100644
    // User-set title of this browser window, if there is one.
    std::string user_title;
  
+diff --git a/chrome/browser/ui/unload_controller.cc b/chrome/browser/ui/unload_controller.cc
+index fd25e44754..ae2e25df2b 100644
+--- a/chrome/browser/ui/unload_controller.cc
++++ b/chrome/browser/ui/unload_controller.cc
+@@ -628,6 +628,11 @@ void UnloadController::OnTabStripModelChanged(
+ }
+ 
+ void UnloadController::TabStripEmpty() {
++  // An embedder's window closes when the embedder closes it.
++  if (BrowserWindow* window = BrowserWindow::FromBrowser(browser_);
++      window && window->StaysOpenWhenEmpty()) {
++    return;
++  }
+   // Set state_ here, so that extensions, etc, do not attempt to add tabs to the
+   // browser before it closes.
+   if (state_ == State::kIdle) {
+diff --git a/chrome/browser/ui/views/frame/browser_window_factory.cc b/chrome/browser/ui/views/frame/browser_window_factory.cc
+index ad579aa818..2fa56bd6b3 100644
+--- a/chrome/browser/ui/views/frame/browser_window_factory.cc
++++ b/chrome/browser/ui/views/frame/browser_window_factory.cc
+@@ -85,6 +85,10 @@ BrowserWindow::CreateBrowserWindow(BrowserWindowInterface* browser,
+ }
+ 
+ // static
++bool BrowserWindow::StaysOpenWhenEmpty() const {
++  return false;
++}
++
+ const BrowserWindow* BrowserWindow::FromBrowser(
+     const BrowserWindowInterface* browser) {
+   // See https://crbug.com/496674143 for the umbrella effort to remove
