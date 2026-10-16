@@ -153,7 +153,6 @@ final class SiteSettingRow: NSButton {
         guard let browser else { return 125 }
         var buttons: [NSButton] = []
         var addTitle = "Extensions"
-        #if RISE_CHROMIUM
         if ChromiumEngine.isRunning {
             addTitle = "Get Extensions"
             for action in browser.extensionActions {
@@ -168,28 +167,18 @@ final class SiteSettingRow: NSButton {
                 buttons.append(button)
             }
         }
-        #endif
         let add = PopoverActionButton(symbol: "plus", size: 15, scale: scale, title: addTitle, theme: theme) { [weak browser] in
             guard let browser else { return }
-            #if RISE_CHROMIUM
-            if ChromiumEngine.isRunning {
-                browser.siteControlsPopover.close()
-                browser.addTab(url: URL(string: "https://chromewebstore.google.com/category/extensions")!)
-                return
-            }
-            #endif
             browser.siteControlsPopover.close()
-            browser.showMessage("Extensions", "Rise uses Apple WebKit. Safari and Chrome extensions cannot be installed in this browser yet.")
+            browser.addTab(url: URL(string: "https://chromewebstore.google.com/category/extensions")!)
         }
-        add.toolTip = ChromiumEngine.isRunning ? "Get extensions from the Chrome Web Store" : "Extension support"
+        add.toolTip = "Get extensions from the Chrome Web Store"
         add.setAccessibilityLabel(addTitle)
-        #if RISE_CHROMIUM
         if ChromiumEngine.isRunning {
             let menu = NSMenu()
             menu.addItem(browser.menuItem("Manage Extensions…") { [weak browser] in browser?.showExtensions() })
             add.menu = menu
         }
-        #endif
         extensionsButton = add
         buttons.append(add)
         for (index, button) in buttons.enumerated() {
@@ -198,7 +187,6 @@ final class SiteSettingRow: NSButton {
             view.addSubview(button)
         }
         var y = 78+CGFloat((buttons.count+3)/4)*42+5
-        #if RISE_CHROMIUM
         if ChromiumEngine.isRunning, let id = BrowserController.webStoreExtensionID(browser.selectedTab?.url), !browser.isExtensionInstalled(id) {
             let name = (browser.selectedTab?.title ?? "").replacingOccurrences(of: " - Chrome Web Store", with: "")
             let row = SiteSettingRow(title: "Add to Rise", subtitle: name.isEmpty ? "From the Chrome Web Store" : name, symbol: "plus",
@@ -206,7 +194,6 @@ final class SiteSettingRow: NSButton {
             row.frame = NSRect(x: 14, y: y-4, width: 216, height: 43); view.addSubview(row); rows["Add to Rise"] = row
             y += 45
         }
-        #endif
         return y
     }
 }

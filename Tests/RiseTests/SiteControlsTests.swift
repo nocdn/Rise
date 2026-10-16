@@ -63,21 +63,21 @@ final class SiteControlsTests: XCTestCase {
         browser.showWindow(nil); browser.update()
         let origin = SitePermissions.origin(tab.url)!
         var replies: [Bool] = []
-        browser.permissionCoordinator.request(in: tab.webView, origin: origin, capabilities: [.camera]) { replies.append($0) }
+        browser.permissionCoordinator.request(in: tab.page.view, origin: origin, capabilities: [.camera]) { replies.append($0) }
         XCTAssertTrue(browser.permissionCoordinator.popover.isShown)
         let prompt = try XCTUnwrap(browser.permissionCoordinator.popover.contentViewController as? PermissionPromptController)
         XCTAssertEqual(prompt.message, "Allow example.com to use your camera?")
         prompt.notNowButton.performClick(nil)
         browser.permissionCoordinator.cancel()
         XCTAssertEqual(replies, [false]); XCTAssertEqual(browser.sitePermissions.permission(.camera, origin: origin), .ask)
-        browser.permissionCoordinator.request(in: tab.webView, origin: origin, capabilities: [.camera]) { replies.append($0) }
+        browser.permissionCoordinator.request(in: tab.page.view, origin: origin, capabilities: [.camera]) { replies.append($0) }
         (browser.permissionCoordinator.popover.contentViewController as? PermissionPromptController)?.allowButton.performClick(nil)
         XCTAssertEqual(replies, [false, true]); XCTAssertEqual(browser.sitePermissions.permission(.camera, origin: origin), .allow)
-        browser.permissionCoordinator.request(in: tab.webView, origin: origin, capabilities: [.camera, .microphone]) { replies.append($0) }
-        browser.permissionCoordinator.cancel(for: tab.webView); browser.permissionCoordinator.resolve(true)
+        browser.permissionCoordinator.request(in: tab.page.view, origin: origin, capabilities: [.camera, .microphone]) { replies.append($0) }
+        browser.permissionCoordinator.cancel(for: tab.page.view); browser.permissionCoordinator.resolve(true)
         XCTAssertEqual(replies, [false, true, false]); XCTAssertEqual(browser.sitePermissions.permission(.microphone, origin: origin), .ask)
         browser.sitePermissions.set(.block, for: .camera, origin: origin)
-        browser.permissionCoordinator.request(in: tab.webView, origin: origin, capabilities: [.camera]) { replies.append($0) }
+        browser.permissionCoordinator.request(in: tab.page.view, origin: origin, capabilities: [.camera]) { replies.append($0) }
         XCTAssertEqual(replies.last, false); XCTAssertFalse(browser.permissionCoordinator.popover.isShown)
         let hidden = WKWebView()
         browser.permissionCoordinator.request(in: hidden, origin: origin, capabilities: [.microphone]) { replies.append($0) }

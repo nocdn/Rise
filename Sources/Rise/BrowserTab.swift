@@ -1,15 +1,10 @@
 import AppKit
-import WebKit
 import RiseCore
 
 @MainActor final class BrowserTab: NSObject {
     let id: UUID
     /// The page on show. A Peek growing into the tab trades pages with it rather than loading again.
     private(set) var page: WebPage
-    /// The WebKit view behind `page`, for code not yet moved onto `WebPage`. A Chromium page
-    /// has an idle stand-in that never loads or shows, so that code does nothing for it.
-    var webView: WKWebView { (page as? WebKitPage)?.webView ?? standIn }
-    private lazy var standIn: WKWebView = LinkCursorWebView(frame: .zero)
     /// Earlier live pages, oldest first, that Back reaches once this page's own history runs out;
     /// and later ones Forward reaches. Each holder only keeps a page; it isn't a tab in the list.
     var backPages: [BrowserTab] = []
@@ -31,13 +26,8 @@ import RiseCore
     /// The page keeps playing, but without sound.
     private(set) var isAudioMuted = false
     var onChange: (() -> Void)?
-    var prepareForLoad: ((WebPage) async throws -> Void)?
-    var onLoadError: ((Error) -> Void)?
-    private var navigationTask: Task<Void, Never>?
-    private var loadGeneration = 0
     private(set) var hasAttemptedNavigation = false
-    var isPreparingNavigation: Bool { navigationTask != nil }
-    var isLoading: Bool { isPreparingNavigation || page.isLoading }
+    var isLoading: Bool { page.isLoading }
     var needsBlockingReload = false
     /// Set by a hard reload until the tab stops loading, so its progress shows in red.
     var isHardReloading = false
@@ -57,18 +47,15 @@ import RiseCore
     /// The engine's own fullscreen has the page in its window.
     var isInNativeFullscreen: Bool { page.isInNativeFullscreen }
     private var thumbnailCaptureInFlight = false
-    /// A page a site opens with its own WebKit configuration stays on WebKit.
+    /// Makes each tab's page: Chromium's, or a blank one where the engine isn't running, as in unit tests.
+    static func makePage() -> WebPage { ChromiumEngine.isRunning ? ChromiumPage() : BlankPage() }
     /// Given `page`, the tab shows that page, as a window a site opened.
-    init(saved: SavedTab? = nil, configuration: WKWebViewConfiguration? = nil, engine: WebEngine = .webKit, page: WebPage? = nil) {
+    init(saved: SavedTab? = nil, page: WebPage? = nil) {
         id = saved?.id ?? UUID(); customTitle = saved?.customTitle; title = saved?.customTitle ?? saved?.title ?? "New Tab"
         pinned = saved?.pinned ?? false; developer = saved?.developer ?? false
         requestedURL = saved.flatMap { URL(string: $0.url) }
         if let saved, let data = saved.sessionState { restoredState = (saved.url, data) }
-        #if RISE_CHROMIUM
-        self.page = page ?? (engine == .chromium && configuration == nil ? ChromiumPage() : WebKitPage(configuration: configuration))
-        #else
-        self.page = page ?? WebKitPage(configuration: configuration)
-        #endif
+        self.page = page ?? Self.makePage()
         super.init()
         if let data = saved?.faviconData, data.count <= FaviconSnapshot.maximumBytes,
            let origin = saved?.faviconOrigin, origin == SitePermissions.origin(requestedURL),
@@ -98,7 +85,6 @@ import RiseCore
     /// Trades live pages with `other`: each takes the other's page with its history, title and
     /// icon, and nothing loads. The tab itself keeps its id, place, pin and name.
     func exchangePages(with other: BrowserTab) {
-        for tab in [self, other] { tab.loadGeneration += 1; tab.navigationTask?.cancel(); tab.navigationTask = nil }
         swap(&page, &other.page)
         swap(&title, &other.title); swap(&requestedURL, &other.requestedURL)
         swap(&favicon, &other.favicon); swap(&darkFavicon, &other.darkFavicon); swap(&iconOrigin, &other.iconOrigin)
@@ -136,33 +122,17 @@ import RiseCore
         hasAttemptedNavigation = true
         requestedURL = url
         if AddressResolver.isLocal(url) { developer = true }
-        loadGeneration += 1; let generation = loadGeneration
-        navigationTask?.cancel()
-        navigationTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                try await self.prepareForLoad?(self.page)
-                guard !Task.isCancelled, self.loadGeneration == generation else { return }
-                self.navigationTask = nil
-                // A restored tab reopens its saved page with its back/forward history.
-                if let state = self.restoredState, state.url == url.absoluteString {
-                    self.restoredState = nil
-                    if self.page.restoreSession(state.data, fallback: url) { return }
-                }
-                self.restoredState = nil
-                self.page.load(url)
-            } catch {
-                guard !Task.isCancelled, self.loadGeneration == generation else { return }
-                self.navigationTask = nil; self.onLoadError?(error)
-            }
-        }
-        onChange?()
+        // A restored tab reopens its saved page with its back/forward history.
+        let state = restoredState; restoredState = nil
+        defer { onChange?() }
+        if let state, state.url == url.absoluteString, page.restoreSession(state.data, fallback: url) { return }
+        page.load(url)
     }
     func setAudioMuted(_ muted: Bool) {
         guard page.setAudioMuted(muted) else { return }
         isAudioMuted = muted; onChange?()
     }
-    func cancelLoad() { loadGeneration += 1; navigationTask?.cancel(); navigationTask = nil; page.stopLoading() }
+    func cancelLoad() { page.stopLoading() }
     func changed() {
         if AddressResolver.isLocal(url) { developer = true }
         if let customTitle { title = customTitle }
@@ -201,5 +171,5 @@ import RiseCore
         }
         iconTask?.resume()
     }
-    deinit { navigationTask?.cancel(); iconTask?.cancel() }
+    deinit { iconTask?.cancel() }
 }

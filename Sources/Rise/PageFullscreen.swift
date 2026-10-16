@@ -1,38 +1,19 @@
 import AppKit
-import WebKit
 import os
 
-/// Passes the fullscreen script's notes to the system log, while simulated fullscreen is new.
-private final class PageFullscreenLogBridge: NSObject, WKScriptMessageHandler {
-    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let text = message.body as? String else { return }
-        PageFullscreen.log.notice("\(String(text.prefix(600)), privacy: .public)")
-    }
-}
-
-@MainActor private final class PageFullscreenStateBridge: NSObject, WKScriptMessageHandler {
-    weak var owner: PageFullscreen?
-    init(_ owner: PageFullscreen) { self.owner = owner }
-    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard message.frameInfo.isMainFrame, let web = message.webView, let active = message.body as? Bool else { return }
-        owner?.setActive(active, in: web)
-    }
-}
-
-/// A page's fullscreen request, either WebKit's own (a separate Space with the macOS
+/// A page's fullscreen request, either the engine's own (a separate Space with the macOS
 /// animation) or simulated: the element is lifted over the page in the window, the way
 /// players without the Fullscreen API cover the viewport themselves. Simulated
-/// fullscreen falls back to WebKit's whenever the element can't be shown that way.
+/// fullscreen falls back to the engine's whenever the element can't be shown that way.
 @MainActor final class PageFullscreen {
     nonisolated static let log = Logger(subsystem: "Rise", category: "Fullscreen")
     static let simulatedKey = "Rise.SimulatedFullScreen"
     static let logHandler = "riseFullscreenLog"
     static let stateHandler = "riseFullscreenState"
     private let preferences: UserDefaults
-    private var controllers = NSHashTable<WKUserContentController>.weakObjects()
     /// Pages, as their views, whose element is simulated full screen.
     private let activeWebViews = NSHashTable<NSView>.weakObjects()
-    /// Chromium pages, whose script is swapped when the mode changes.
+    /// Pages, whose script is swapped when the mode changes.
     private let scriptedPages = NSHashTable<AnyObject>.weakObjects()
     private(set) var isSimulated: Bool
     var onChange: (() -> Void)?
@@ -43,30 +24,19 @@ private final class PageFullscreenLogBridge: NSObject, WKScriptMessageHandler {
     }
 
     func install(on page: WebPage) {
-        guard let web = (page as? WebKitPage)?.webView else {
-            scriptedPages.add(page)
-            page.addMessageHandler(Self.logHandler, world: .page) { message in
-                if let text = message.body as? String { Self.log.notice("\(String(text.prefix(600)), privacy: .public)") }
-            }
-            page.addMessageHandler(Self.stateHandler, world: .page) { [weak self] message in
-                guard message.frame.isMain, let active = message.body as? Bool, let view = message.page?.view else { return }
-                self?.setActive(active, in: view)
-            }
-            installScript(on: page)
-            return
+        scriptedPages.add(page)
+        // The script's notes go to the system log, while simulated fullscreen is new.
+        page.addMessageHandler(Self.logHandler, world: .page) { message in
+            if let text = message.body as? String { Self.log.notice("\(String(text.prefix(600)), privacy: .public)") }
         }
-        install(on: web)
+        page.addMessageHandler(Self.stateHandler, world: .page) { [weak self] message in
+            guard message.frame.isMain, let active = message.body as? Bool, let view = message.page?.view else { return }
+            self?.setActive(active, in: view)
+        }
+        installScript(on: page)
     }
     private func installScript(on page: WebPage) {
         page.addUserScript(Self.script(simulated: isSimulated), world: .page, mainFrameOnly: false, handlers: [Self.logHandler, Self.stateHandler])
-    }
-    func install(on web: WKWebView) {
-        let content = web.configuration.userContentController
-        guard !controllers.contains(content) else { return }
-        controllers.add(content)
-        content.add(PageFullscreenLogBridge(), contentWorld: .page, name: Self.logHandler)
-        content.add(PageFullscreenStateBridge(self), contentWorld: .page, name: Self.stateHandler)
-        content.addUserScript(Self.userScript(simulated: isSimulated))
     }
 
     func isActive(in web: NSView) -> Bool { activeWebViews.contains(web) }
@@ -86,26 +56,15 @@ private final class PageFullscreenLogBridge: NSObject, WKScriptMessageHandler {
         if !value { activeWebViews.removeAllObjects() }
         onChange?()
         Self.log.notice("Simulated fullscreen \(value ? "on" : "off", privacy: .public)")
-        for content in controllers.allObjects {
-            let others = content.userScripts.filter { !$0.source.hasPrefix(Self.marker) }
-            content.removeAllUserScripts()
-            others.forEach(content.addUserScript)
-            content.addUserScript(Self.userScript(simulated: value))
-        }
-        #if RISE_CHROMIUM
         for case let page as ChromiumPage in scriptedPages.allObjects {
             page.browserView.removeUserScripts(withPrefix: Self.marker)
             installScript(on: page)
         }
-        #endif
         for page in pages {
             page.evaluate("window.__riseFullscreen?.setMode(mode)", arguments: ["mode": value], in: nil, world: .page) { _ in }
         }
     }
 
-    static func userScript(simulated: Bool) -> WKUserScript {
-        WKUserScript(source: script(simulated: simulated), injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page)
-    }
     static func script(simulated: Bool) -> String {
         marker + "\n" + source.replacingOccurrences(of: "__RISE_SIMULATED__", with: simulated ? "true" : "false")
     }
@@ -116,16 +75,14 @@ private final class PageFullscreenLogBridge: NSObject, WKScriptMessageHandler {
     /// hold it back, and styles it as the UA styles `:fullscreen`. The page's own
     /// `:fullscreen` rules are copied to an attribute selector, since only real fullscreen
     /// matches the pseudo-class. A frame asks its parent to lift the frame element too.
-    /// Anything that goes wrong while the user's click still counts falls back to WebKit.
+    /// Anything that goes wrong while the user's click still counts falls back to the engine's own.
     static let source = #"""
     (() => {
       const KEY = '__riseFullscreen', MSG = '__riseFullscreen';
       if (Object.prototype.hasOwnProperty.call(window, KEY)) return;
       let simulated = __RISE_SIMULATED__;
       const isTop = window === window.top;
-      // Rise's handlers: WebKit's own, or those Chromium's pages get from Rise's script wrapper.
-      const handlers = typeof riseHandlers !== 'undefined' ? riseHandlers : window.webkit?.messageHandlers;
-      const handler = handlers?.riseFullscreenLog;
+      const handler = typeof riseHandlers !== 'undefined' ? riseHandlers.riseFullscreenLog : undefined;
       const log = (...parts) => {
         try { handler?.postMessage(`[${isTop ? 'top' : 'frame'} ${location.host || location.protocol}] ` + parts.map(String).join(' ')); } catch {}
       };
@@ -162,13 +119,13 @@ private final class PageFullscreenLogBridge: NSObject, WKScriptMessageHandler {
         stateReportPending = true;
         queueMicrotask(() => {
           stateReportPending = false;
-          try { handlers?.riseFullscreenState?.postMessage(!!active); } catch {}
+          try { riseHandlers?.riseFullscreenState?.postMessage(!!active); } catch {}
         });
       };
       const setActive = state => { active = state; reportState(); };
-      // A child frame's element shown through WebKit's fullscreen of the frame, after switching modes.
+      // A child frame's element shown through the native fullscreen of the frame, after switching modes.
       let nativeChild = null;
-      // An element leaving WebKit's fullscreen, to show simulated once it has.
+      // An element leaving the native fullscreen, to show simulated once it has.
       let pendingSimulated = null;
       let sawUnprefixedRequest = false;
 
@@ -381,7 +338,7 @@ private final class PageFullscreenLogBridge: NSObject, WKScriptMessageHandler {
       });
       const simulate = (el, options) => {
         if (native.enabled && !native.enabled.call(document)) return nativeRequest(el, options);
-        // Like WebKit's, only right after a click or key press; WebKit refuses the rest itself.
+        // Like the engine's, only right after a click or key press; the engine refuses the rest itself.
         if (!options.trusted && navigator.userActivation && !navigator.userActivation.isActive) {
           log('request without a user gesture for', describe(el));
           return nativeRequest(el, options);
@@ -420,7 +377,7 @@ private final class PageFullscreenLogBridge: NSObject, WKScriptMessageHandler {
         if (immediate) { announce(state, state.el); return Promise.resolve(); }
         return new Promise(resolve => frameAfter(() => { announce(state, state.el); resolve(); }));
       };
-      // The element stopped covering the window: show it with WebKit instead, or leave.
+      // The element stopped covering the window: show it in the native fullscreen instead, or leave.
       const fallBack = state => {
         if (active !== state) return;
         const el = state.el;
@@ -493,7 +450,7 @@ private final class PageFullscreenLogBridge: NSObject, WKScriptMessageHandler {
         if (active) leave(active, { announce: false });
       }, true);
 
-      // Escape leaves simulated fullscreen, as it does WebKit's, without reaching the page.
+      // Escape leaves simulated fullscreen, as it does the engine's, without reaching the page.
       const swallowEscape = event => {
         if (event.key !== 'Escape' || !active || event.isComposing) return;
         event.preventDefault(); event.stopImmediatePropagation();
@@ -501,7 +458,7 @@ private final class PageFullscreenLogBridge: NSObject, WKScriptMessageHandler {
       };
       window.addEventListener('keydown', swallowEscape, true);
 
-      // WebKit's own fullscreen ending, for an element waiting to be simulated or a child shown through its frame.
+      // The native fullscreen ending, for an element waiting to be simulated or a child shown through its frame.
       document.addEventListener('fullscreenchange', () => {
         if (nativeElement()) return;
         if (nativeChild) { try { nativeChild.postMessage({ [MSG]: 'exit' }, '*'); } catch {} nativeChild = null; }
@@ -522,7 +479,7 @@ private final class PageFullscreenLogBridge: NSObject, WKScriptMessageHandler {
           if (state.kind === 'own' && !isTop) return;
           setActive(null); unpin(state);
           if (state.kind === 'child') nativeChild = state.child;
-          // WebKit takes over the same element, so the page sees it stay fullscreen.
+          // The engine takes over the same element, so the page sees it stay fullscreen.
           nativeRequest(state.el, { nativeCall: native.request, args: [] }).catch(error => {
             log('switching to native fullscreen failed:', error && error.name);
             nativeChild = null;

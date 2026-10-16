@@ -1,5 +1,4 @@
 import AppKit
-import WebKit
 
 /// Floats a tab's video when the tab is left: YouTube's video pages, and on any
 /// other site a video that has played with sound, in the page or one of its frames.
@@ -19,7 +18,7 @@ import WebKit
     }
     /// Every frame's video, by tab and by the frame's own key.
     private var frameVideos: [UUID: [String: FrameVideo]] = [:]
-    /// Tabs whose encrypted video Rise put in WebKit's own picture in picture.
+    /// Tabs whose encrypted video Rise put in Chromium's own picture in picture.
     private var nativeFloats: [UUID: Target] = [:]
     private var previousVisible = Set<UUID>()
     private var dismissed = Set<UUID>()
@@ -38,7 +37,7 @@ import WebKit
         let playing: Bool
         let paused: Bool
         let ended: Bool
-        /// Draws as black, so it floats in WebKit's own picture in picture instead.
+        /// Draws as black, so it floats in Chromium's own picture in picture instead.
         let encrypted: Bool
         let aspect: CGFloat
     }
@@ -295,7 +294,7 @@ import WebKit
         }
     }
 
-    /// WebKit's own window can show encrypted video, which Rise's can't. It goes back
+    /// Chromium's own window can show encrypted video, which Rise's can't. It goes back
     /// inline when the tab is shown again; floating another video pauses it.
     private func floatNatively(_ tab: BrowserTab, target: Target) {
         if let old = current { departing[old.id] = old; current = nil; restore(old, animated: true, pause: true) }
@@ -319,7 +318,7 @@ import WebKit
 
     private func startPlaybackClock(_ session: Session) {
         guard session.playbackLink == nil, let screen = session.panel.screen ?? NSScreen.main else { return }
-        // WebKit pauses rAF/video presentation callbacks for this background
+        // The engine pauses rAF/video presentation callbacks for this background
         // player. The screen clock drives local painting without reading back,
         // encoding, transferring or decoding any video pixels.
         let link = screen.displayLink(target: self, selector: #selector(paintVideo(_:)))
@@ -420,17 +419,9 @@ import WebKit
         guard animated, session.panel.hasVideoFrame, let web, web.view.window === session.panel else { exit(); return }
         waiting += 1
         let size = session.panel.videoHost.bounds.size
-        if let webView = (web as? WebKitPage)?.webView {
-            // WebKit takes it as asked, ahead of the script that follows.
-            let configuration = WKSnapshotConfiguration()
-            configuration.rect = CGRect(origin: .zero, size: size)
-            webView.takeSnapshot(with: configuration) { image, _ in frozen = image; finish() }
-            exit()
-        } else {
-            // Chromium's comes from its GPU process, so the script waits for it.
-            let rect = CGRect(x: 0, y: web.view.isFlipped ? 0 : web.view.bounds.height-size.height, width: size.width, height: size.height)
-            Task { frozen = await web.snapshot(rect: rect); finish(); exit() }
-        }
+        // It comes from Chromium's GPU process, so the script waits for it.
+        let rect = CGRect(x: 0, y: web.view.isFlipped ? 0 : web.view.bounds.height-size.height, width: size.width, height: size.height)
+        Task { frozen = await web.snapshot(rect: rect); finish(); exit() }
     }
     /// A frame's video floats with the frames above it lifted over their pages.
     /// Putting them back from the top also covers a frame that has gone away.

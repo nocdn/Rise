@@ -1,5 +1,4 @@
 import AppKit
-import WebKit
 
 @MainActor extension BrowserController {
     func showHoveredLink(_ url: URL?, in webView: NSView, waitsForRefusal: Bool = true) {
@@ -20,13 +19,11 @@ import WebKit
             DispatchQueue.main.asyncAfter(deadline: .now()+0.25, execute: work)
             return
         }
-        if hoveredWebView !== webView || url == nil { (hoveredWebView as? LinkCursorWebView)?.keepPeekCursor(at: nil) }
         hoveredWebView = url == nil ? nil : webView
         linkStatus.show(url, theme: theme, peek: shouldPeek(modifiers: NSEvent.modifierFlags), blocked: hoversInsidePeek)
         root.addSubview(linkStatus, positioned: .below, relativeTo: dismissArea)
         layoutLinkStatus()
         if let url, linkPreloader.isComplete(url) { linkStatus.markReady(url) }
-        keepHoveredLinkCursor(modifiers: NSEvent.modifierFlags)
         updatePeekStandby()
     }
     /// Links inside the Peek can't open another Peek; there's only ever one.
@@ -35,27 +32,10 @@ import WebKit
         if let web = hoveredWebView, web.superview != nil, let url = linkStatus.url {
             linkStatus.show(url, theme: theme, peek: shouldPeek(modifiers: flags), blocked: hoversInsidePeek)
             linkStatus.place(in: web.convert(web.bounds, to: root))
-            keepHoveredLinkCursor(modifiers: flags)
         }
         updatePeekStandby(modifiers: flags)
     }
-    func updateHoveredLinkCursor(_ event: NSEvent) {
-        if event.type == .mouseMoved, shouldPeek(modifiers: event.modifierFlags) {
-            keepHoveredLinkCursor(modifiers: event.modifierFlags)
-        } else { (hoveredWebView as? LinkCursorWebView)?.keepPeekCursor(at: nil) }
-    }
-    private func keepHoveredLinkCursor(modifiers: NSEvent.ModifierFlags) {
-        guard let web = hoveredWebView as? LinkCursorWebView else { return }
-        guard linkStatus.url != nil, let window, window.isKeyWindow, !isSwitchingTabs, !palette.isPresented,
-              let container = root.superview,
-              let hit = root.hitTest(container.convert(window.mouseLocationOutsideOfEventStream, from: nil)),
-              hit.isDescendant(of: web) else { web.keepPeekCursor(at: nil); return }
-        let point = web.convert(window.mouseLocationOutsideOfEventStream, from: nil)
-        web.keepPeekCursor(at: shouldPeek(modifiers: modifiers) ? point : nil)
-        NSCursor.pointingHand.set()
-    }
     func hideLinkStatus() {
-        (hoveredWebView as? LinkCursorWebView)?.keepPeekCursor(at: nil)
         hoveredWebView = nil; linkStatus.show(nil, theme: theme)
     }
     func layoutLinkStatus() {

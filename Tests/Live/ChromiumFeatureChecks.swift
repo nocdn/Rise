@@ -405,7 +405,7 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
     /// Windows that keep their opener, site search learning, notifications, merge checks,
     /// DevTools, the JavaScript Console and View Source.
     func riseFeatures() async throws {
-        check(ChromiumEngine.isRequested, "Chromium is Rise's engine unless asked for WebKit")
+        check(ChromiumEngine.isRunning, "Chromium is running")
 
         // A window a page opens is still its popup, as sign-ins and Gmail's popped-out emails need.
         _ = try page("child", "<h1>Child</h1>")
@@ -697,7 +697,7 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
 
         // The tab's sound, and its play button pausing and resuming the page's media.
         let media = await open(try page("media", "<h1>Media</h1>\(video)"))
-        check(media.page.engine == .chromium, "Tabs open in Chromium")
+        check(media.page is ChromiumPage, "Tabs open in Chromium")
         _ = await waitUntil("Chromium reports the tab making sound") { media.page.isPlayingAudio }
         _ = await waitUntil("The tab's media reports itself playing") { browser.playbackPaused(media.id) == false }
         browser.togglePlayback(media.id)

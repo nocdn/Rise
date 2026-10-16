@@ -1,6 +1,5 @@
 import XCTest
 import AppKit
-import WebKit
 @testable import Rise
 
 final class GmailTooltipTests: XCTestCase {
@@ -205,46 +204,12 @@ final class GmailTooltipTests: XCTestCase {
         XCTAssertFalse(browser.tabHoverCards.gmailCard.isHidden)
         XCTAssertTrue(browser.tabHoverCards.pullRequestCard.isHidden)
         browser.cardPointerChanged(true)
-        XCTAssertTrue((tab.webView as? LinkCursorWebView)?.isCovered == true)
+        XCTAssertTrue(tab.page.isCovered)
         browser.tabPressed()
         XCTAssertNil(browser.tabHoverCards.shownID); XCTAssertTrue(browser.tabHoverCards.gmailCard.isHidden)
         browser.tabHoverChanged(tab.id, hovering: true)
         try await wait { browser.tabHoverCards.shownID == tab.id }
         tab.requestedURL = URL(string: "https://example.com/"); browser.refreshTabHoverCard()
         XCTAssertNil(browser.tabHoverCards.shownID)
-    }
-    @MainActor func testRealWebKitExtractionOnlyIncludesMailTextAndPagingState() async throws {
-        _ = NSApplication.shared
-        let web = WKWebView(frame: NSRect(x: 0, y: 0, width: 1000, height: 800))
-        defer { web.stopLoading() }
-        web.loadHTMLString("""
-        <table><tr class="zA"><td class="yW"><span email="a@example.com" name="Alice">Ali…</span></td>
-        <td><span class="bog"><span data-legacy-thread-id="abcdef">Subject &amp; details</span><img alt="image"></span>
-        <span class="y2"><span class="Zt"> - </span>Hello <b>there</b><img alt="ignored"><span aria-hidden="true">hidden</span>!\u{200b} More text.</span></td></tr></table>
-        <div role="button" id="older"><img class="amJ"></div>
-        <script>older.onclick = () => older.setAttribute('aria-disabled', 'true')</script>
-        """, baseURL: URL(string: "https://mail.google.com/mail/u/0/#search/in%3Ainbox+category%3Aupdates"))
-        try await wait { !web.isLoading }
-        let value = try await web.evaluateJavaScript(GmailPageReader.snapshot, contentWorld: .defaultClient)
-        let raw = try XCTUnwrap(value as? [String: Any])
-        let page = try JSONDecoder().decode(GmailPage.self, from: JSONSerialization.data(withJSONObject: raw))
-        XCTAssertEqual(page.emails, [GmailEmail(id: "abcdef", sender: "Alice", subject: "Subject & details", preview: "Hello there! More text.")])
-        XCTAssertTrue(page.hasMore); XCTAssertEqual(raw["ready"] as? Bool, true)
-        XCTAssertEqual(raw["query"] as? String, "in:inbox category:updates")
-        _ = try await web.evaluateJavaScript("window.shifted = []; document.querySelector('tr.zA').addEventListener('click', e => shifted.push(e.shiftKey))")
-        let popped = try await web.evaluateJavaScript(GmailPageReader.popOut("abcdef"), contentWorld: .page) as? Bool
-        XCTAssertEqual(popped, true)
-        let shifted = try await web.evaluateJavaScript("JSON.stringify(window.shifted)") as? String
-        XCTAssertEqual(shifted, "[true]", "Gmail gets one shift-click on the conversation's row")
-        let missing = try await web.evaluateJavaScript(GmailPageReader.popOut("123456"), contentWorld: .page) as? Bool
-        XCTAssertEqual(missing, false, "No row, no click")
-        let advanced = try await web.evaluateJavaScript(GmailPageReader.nextPage, contentWorld: .defaultClient) as? Bool
-        XCTAssertEqual(advanced, true)
-        let stopped = try await web.evaluateJavaScript(GmailPageReader.nextPage, contentWorld: .defaultClient) as? Bool
-        XCTAssertEqual(stopped, false)
-        _ = try await web.evaluateJavaScript("document.body.innerHTML = '<div class=ae4><div class=TC>No conversations found.</div></div>'")
-        let empty = try await web.evaluateJavaScript(GmailPageReader.snapshot, contentWorld: .defaultClient) as? [String: Any]
-        XCTAssertEqual(empty?["ready"] as? Bool, true, "An empty category finishes loading")
-        XCTAssertEqual(empty?["hasMore"] as? Bool, false)
     }
 }

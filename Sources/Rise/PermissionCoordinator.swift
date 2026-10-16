@@ -1,17 +1,5 @@
 import AppKit
-import WebKit
 import UserNotifications
-
-@MainActor private final class PermissionBridge: NSObject, WKScriptMessageHandlerWithReply {
-    weak var owner: PermissionCoordinator?
-    init(_ owner: PermissionCoordinator) { self.owner = owner }
-    func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage, replyHandler: @escaping (Any?, String?) -> Void) {
-        guard let owner else { replyHandler(nil, "Browser closed"); return }
-        guard let web = message.webView, message.frameInfo.isMainFrame else { replyHandler(nil, "Invalid origin"); return }
-        owner.receive(message.body, origin: SitePermissions.origin(message.frameInfo.securityOrigin), host: message.frameInfo.securityOrigin.host,
-                      in: web, reply: replyHandler)
-    }
-}
 
 /// A single native prompt owns its completion. Dismissal, tab changes and
 /// navigation deny it once; a permission can only be saved by choosing Allow.
@@ -21,7 +9,6 @@ import UserNotifications
     /// The page asking, as its view.
     private weak var requestingWebView: NSView?
     private var reply: ((Bool) -> Void)?
-    private var controllers = NSHashTable<WKUserContentController>.weakObjects()
     var requestNotificationAuthorization: (@escaping (Bool) -> Void) -> Void = { done in
         guard Bundle.main.bundleIdentifier != nil else { done(false); return }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { allowed, _ in
@@ -32,10 +19,8 @@ import UserNotifications
         self.browser = browser; super.init()
         popover.behavior = .transient; popover.animates = false; popover.delegate = self
     }
-    /// Pages of engines other than WebKit, which get the script through the page.
     private let pages = NSHashTable<AnyObject>.weakObjects()
     func install(on page: WebPage) {
-        if let webView = (page as? WebKitPage)?.webView { install(on: webView); return }
         guard !pages.contains(page) else { return }
         pages.add(page)
         page.addMessageHandler("riseSiteControls", world: .page) { [weak self] message, reply in
@@ -45,14 +30,7 @@ import UserNotifications
         }
         page.addUserScript(Self.script, world: .page, mainFrameOnly: true, handlers: ["riseSiteControls"])
     }
-    func install(on web: WKWebView) {
-        let content = web.configuration.userContentController
-        guard !controllers.contains(content) else { return }
-        controllers.add(content)
-        content.addScriptMessageHandler(PermissionBridge(self), contentWorld: .page, name: "riseSiteControls")
-        content.addUserScript(WKUserScript(source: Self.script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
-    }
-    /// `web` is the asking page's view, whichever engine draws it.
+    /// `web` is the asking page's view.
     func request(in web: NSView, origin: String?, capabilities: [SiteCapability], completion: @escaping (Bool) -> Void) {
         guard !capabilities.isEmpty, let browser, let origin, let url = URL(string: origin),
               url.scheme == "https" || ["localhost", "127.0.0.1", "::1", "[::1]"].contains(url.host ?? ""),
@@ -128,32 +106,28 @@ import UserNotifications
         completionHandler([.banner, .sound])
     }
 
-    // Public WKWebView has no web-push permission delegate. Supply page-open
-    // notifications through UserNotifications, without claiming Push API support.
+    // Pages' notifications, asked for in Rise's own prompt and shown through UserNotifications,
+    // without claiming Push API support.
     static let script = #"""
     (() => {
       if (window.riseSiteControls || !window.isSecureContext) return;
-      // WebKit's handlers, or the ones Rise's script wrapper gives a Chromium page.
-      const handlers = typeof riseHandlers !== 'undefined' ? riseHandlers : window.webkit.messageHandlers;
-      const send = body => handlers.riseSiteControls.postMessage(body);
+      const send = body => riseHandlers.riseSiteControls.postMessage(body);
       let permission = 'default', pip = true;
       const refresh = () => send({kind:'status'}).then(value => { permission = value.notifications; pip = value.pip; }).catch(() => {});
       window.riseSiteControls = { refresh, autoPiP() {
         if (!pip) return;
         // Runs when Rise leaves the foreground. Leaving a tab floats its video in
         // Rise's own player instead, on every site. Rise owns YouTube's player and
-        // its original web view, so WebKit's separate native PiP never starts there.
+        // its page, so the system's separate picture in picture never starts there.
         if (/(^|\.)youtube\.com$/.test(location.hostname)) return;
         // Only video with sound, so muted previews and background loops stay put.
         const video = [...document.querySelectorAll('video')].find(v => !v.paused && !v.ended && v.readyState >= 2 && !v.muted && v.volume > 0);
         if (!video) return;
         try {
-          if (video.webkitSupportsPresentationMode?.('picture-in-picture')) video.webkitSetPresentationMode('picture-in-picture');
-          else if (document.pictureInPictureEnabled && !document.pictureInPictureElement) video.requestPictureInPicture().catch(() => {});
+          if (document.pictureInPictureEnabled && !document.pictureInPictureElement) video.requestPictureInPicture().catch(() => {});
         } catch {}
       }};
       refresh();
-      // WKWebView can expose Notification without a public permission delegate.
       // Own the page-open API so every request uses the same native site prompt.
       class RiseNotification extends EventTarget {
         static get permission() { return permission; }

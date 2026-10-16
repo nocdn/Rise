@@ -1,4 +1,3 @@
-#if RISE_CHROMIUM
 import XCTest
 @testable import Rise
 
@@ -11,4 +10,3 @@ import XCTest
         XCTAssertNil(BrowserController.webStoreExtensionID(URL(string: "https://example.com/detail/x/\(id)")))
     }
 }
-#endif

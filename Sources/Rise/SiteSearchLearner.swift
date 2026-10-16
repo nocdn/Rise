@@ -8,7 +8,6 @@ typealias SiteSearchLearner = RiseCore.SiteSearchLearner
 
 extension SiteSearchLearner {
     func install(on page: WebPage) {
-        if let webView = (page as? WebKitPage)?.webView { install(on: webView); return }
         guard !chromiumPages.contains(page) else { return }
         chromiumPages.add(page)
         page.addMessageHandler("riseSiteSearch", world: .named(Self.worldName)) { [weak self] message in

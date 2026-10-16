@@ -1,5 +1,4 @@
 import AppKit
-import WebKit
 import RiseCore
 
 @MainActor final class MenuAction: NSObject {
@@ -49,7 +48,7 @@ import RiseCore
         for saved in closedTabs.suffix(15).reversed() {
             menu.addItem(menuItem(saved.title) { [weak self] in
                 guard let self else { return }; self.closedTabs.removeAll { $0.id == saved.id }
-                let tab = self.configure(BrowserTab(saved: saved, engine: ChromiumEngine.engineForNewTabs)); self.tabs.insert(tab, at: 0); self.select(tab.id)
+                let tab = self.configure(BrowserTab(saved: saved)); self.tabs.insert(tab, at: 0); self.select(tab.id)
             })
         }
         menu.popUp(positioning: nil, at: NSPoint(x: 12, y: sidebar.bounds.height-42), in: sidebar)
@@ -96,15 +95,13 @@ import RiseCore
         if existing == nil { discardPeekUndo() }
         let sourcePage = page(showing: source)
         let sourceID = tabs.first { $0.page.view === source }?.id ?? peekSourceTabID ?? selectedID
-        // The Peek uses the engine of the page it opens from, so it can become that tab without loading again.
-        let engine = sourcePage?.engine ?? tabs.first { $0.id == sourceID }?.page.engine ?? ChromiumEngine.engineForNewTabs
         cancelTabSwitch()
         closePeek(replacing: true); hideLinkStatus()
         peekSourceTabID = sourceID; peekOpensNewTab = opensNewTab
         let reveal = beginPeekReveal(from: sourcePage, standIn: standIn)
         // A page already rendering from a Shift-hover shows from the first frame.
         let standby = existing == nil ? takePeekStandby(for: url) : nil
-        let tab = existing ?? standby ?? configure(BrowserTab(engine: engine)); peekTab = tab
+        let tab = existing ?? standby ?? configure(BrowserTab()); peekTab = tab
         let backdrop = PeekBackdrop(color: theme.background.withAlphaComponent(0.72));
         backdrop.dismiss = { [weak self] in self?.closePeek(animated: true) }; backdrop.frame = pageClip.bounds
         // Dimming lives inside the page so it recedes with it and never covers the page's shadow.
@@ -225,40 +222,20 @@ import RiseCore
     @objc func javascriptConsole() {
         guard let tab = selectedTab, let window else { return }
         let alert = NSAlert(); alert.messageText = "JavaScript Console"
-        alert.informativeText = tab.page.engine == .chromium
-            ? "Evaluate JavaScript in the current page. The full DevTools open with ⌥⌘J."
-            : "Evaluate JavaScript in the current page. Full Web Inspector is available from Safari’s Develop menu while Developer Mode is enabled."
+        alert.informativeText = "Evaluate JavaScript in the current page. The full DevTools open with ⌥⌘J."
         let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 440, height: 28)); input.font = .monospacedSystemFont(ofSize: 12, weight: .regular); input.placeholderString = "document.title"
         alert.accessoryView = input; alert.addButton(withTitle: "Run"); alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { [weak self] result in
             guard result == .alertFirstButtonReturn else { return }
             let show = { (value: Any?, error: String?) in self?.showMessage("JavaScript Result", error ?? value.map { String(describing: $0) } ?? "undefined") }
-            #if RISE_CHROMIUM
-            if let chromium = tab.page as? ChromiumPage {
-                chromium.browserView.evaluateConsoleExpression(input.stringValue) { value, error in MainActor.assumeIsolated { show(value, error) } }
-                return
-            }
-            #endif
-            tab.webView.evaluateJavaScript(input.stringValue) { value, error in show(value, error?.localizedDescription) }
+            guard let chromium = tab.page as? ChromiumPage else { return }
+            chromium.browserView.evaluateConsoleExpression(input.stringValue) { value, error in MainActor.assumeIsolated { show(value, error) } }
         }; window.makeFirstResponder(input)
     }
+    /// The source as the server sent it, in a tab of its own.
     func viewSource() {
-        guard let tab = selectedTab else { return }
-        // Chromium shows the source as the server sent it, in a tab of its own.
-        if tab.page.engine == .chromium {
-            if let url = tab.page.url, ["http", "https", "file"].contains(url.scheme ?? ""), let source = URL(string: "view-source:" + url.absoluteString) {
-                addTab(url: source, opener: tab.id).returnsTo = tab.id
-            }
-            return
-        }
-        let webView = tab.webView
-        webView.evaluateJavaScript("document.documentElement.outerHTML") { [weak self] value, error in
-            guard let self, let html = value as? String else { return }
-            let source = self.addTab(); source.title = "Page Source"
-            let escaped = html.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
-            let background = self.theme == .dark ? "1c1c1c" : "fdfcfc"
-            let foreground = self.theme == .dark ? "d1d1d1" : "343434"
-            source.webView.loadHTMLString("<meta charset='utf-8'><style>body{margin:24px;background:#\(background);color:#\(foreground)}pre{font:12px Menlo;white-space:pre-wrap;word-break:break-word}</style><pre>\(escaped)</pre>", baseURL: nil)
-        }
+        guard let tab = selectedTab, let url = tab.page.url, ["http", "https", "file"].contains(url.scheme ?? ""),
+              let source = URL(string: "view-source:" + url.absoluteString) else { return }
+        addTab(url: source, opener: tab.id).returnsTo = tab.id
     }
 }

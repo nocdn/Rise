@@ -1,5 +1,4 @@
 import AppKit
-import WebKit
 
 /// One Peek at a time; the link pill says so when another is asked for from inside it.
 @MainActor extension BrowserController {
@@ -27,7 +26,6 @@ import WebKit
     }
     /// A page under a Peek, or rendering out of sight, takes no hover and sets no cursor.
     func setCovered(_ covered: Bool, _ tab: BrowserTab) {
-        (tab.webView as? LinkCursorWebView)?.isCovered = covered
         tab.page.isCovered = covered
     }
     /// The Peek's page once it has gone somewhere from where it opened.

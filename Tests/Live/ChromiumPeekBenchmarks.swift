@@ -11,10 +11,7 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
     static func main() {
         let app = RCApplication.shared
         let folder = ProcessInfo.processInfo.environment["RISE_PEEK_OUT"]!
-        // PEEK_ENGINE=webkit runs the same sequence on WebKit, to compare against.
-        if ProcessInfo.processInfo.environment["PEEK_ENGINE"] != "webkit" {
-            guard RCEngine.start(withCachePath: folder + "/chromium", keychain: false) else { print("FAIL Chromium didn't start"); exit(1) }
-        }
+        guard RCEngine.start(withCachePath: folder + "/chromium", keychain: false) else { print("FAIL Chromium didn't start"); exit(1) }
         let run = ChromiumPeekRun(folder: folder)
         app.delegate = run; app.setActivationPolicy(.regular); app.run()
         withExtendedLifetime(run) {}
@@ -99,8 +96,7 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         browser.window?.setContentSize(NSSize(width: 1200, height: 780)); browser.window?.center(); browser.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
         let tab = browser.addTab(url: source)
-        let engine: WebEngine = ProcessInfo.processInfo.environment["PEEK_ENGINE"] == "webkit" ? .webKit : .chromium
-        check(tab.page.engine == engine, "New tabs open in \(engine)")
+        check(tab.page is ChromiumPage, "New tabs open in Chromium")
         try await waitUntil { tab.page.title == "Source" && !tab.page.isLoading }
         try await Task.sleep(for: .milliseconds(600))
 
@@ -123,12 +119,12 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         await recording("1-open", for: 1.0) { self.browser.showPeek(url: target, from: tab.page.view) }
         browser.closePeek(); try await Task.sleep(for: .milliseconds(400))
         // As usual, after a Shift-hover has rendered the page out of sight.
-        browser.renderPeekStandby(target, engine: engine)
+        browser.renderPeekStandby(target)
         try await waitUntil { self.browser.peekStandby?.tab.page.title == "Target" }
         try await Task.sleep(for: .milliseconds(700))
         await recording("1-open-standby", for: 1.0) { self.browser.showPeek(url: target, from: tab.page.view) }
         check(browser.peekStandby == nil, "The Peek takes the page the Shift-hover rendered")
-        check(browser.peekTab?.page.engine == engine, "The Peek uses the engine of the page it opened from")
+        check(browser.peekTab?.page is ChromiumPage, "The Peek is a Chromium page, as the one it opened from")
         check(browser.peekOrigin?.page === tab.page, "The Peek remembers the link it grew out of")
         try await waitUntil { self.browser.peekTab?.page.title == "Target" }
         check(browser.peekCard?.alphaValue == 1, "The live card shows once the stand-in has landed")
@@ -168,18 +164,16 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         try await Task.sleep(for: .milliseconds(300))
         await recording("6-unsplit", for: 0.8) { _ = self.browser.undoPeekPromotion() }
         check(browser.activeSplitGroup == nil && browser.peekTab != nil, "⌘Z puts it back in the Peek")
-        if engine == .chromium {
-            // Chromium's frames sit in a flipped layer of its own, which must keep the page's size
-            // through all the resizing, or the page shows offset with a blank band.
-            func content(in layer: CALayer) -> CALayer? {
-                if layer.isGeometryFlipped, layer.anchorPoint == .zero { return layer }
-                return layer.sublayers?.lazy.compactMap(content).first
-            }
-            try await Task.sleep(for: .milliseconds(300))
-            let view = browser.peekTab!.page.view, frames = content(in: view.layer!)
-            check(frames.map { abs($0.bounds.width-view.bounds.width) < 1 && abs($0.bounds.height-view.bounds.height) < 1 } == true,
-                  "Chromium's picture fills the Peek's page after the resizes: \(frames.map { "\($0.bounds.size)" } ?? "none") in \(view.bounds.size)")
+        // Chromium's frames sit in a flipped layer of its own, which must keep the page's size
+        // through all the resizing, or the page shows offset with a blank band.
+        func content(in layer: CALayer) -> CALayer? {
+            if layer.isGeometryFlipped, layer.anchorPoint == .zero { return layer }
+            return layer.sublayers?.lazy.compactMap(content).first
         }
+        try await Task.sleep(for: .milliseconds(300))
+        let view = browser.peekTab!.page.view, frames = content(in: view.layer!)
+        check(frames.map { abs($0.bounds.width-view.bounds.width) < 1 && abs($0.bounds.height-view.bounds.height) < 1 } == true,
+              "Chromium's picture fills the Peek's page after the resizes: \(frames.map { "\($0.bounds.size)" } ?? "none") in \(view.bounds.size)")
 
         // 5. A two-finger swipe right dismisses it.
         try await Task.sleep(for: .milliseconds(500))

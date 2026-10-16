@@ -10,7 +10,7 @@ final class DeveloperChromeTests: XCTestCase {
     }
     @MainActor func clean(_ browser: BrowserController) {
         browser.developerMotion.cancel(); browser.siteInfoPopover.close(); browser.saveWork?.cancel()
-        browser.tabs.forEach { $0.webView.stopLoading() }; browser.window?.orderOut(nil)
+        browser.tabs.forEach { $0.page.stopLoading() }; browser.window?.orderOut(nil)
         try? FileManager.default.removeItem(at: browser.sessionURL.deletingLastPathComponent())
     }
     @MainActor func testDeveloperHeaderPushesTheViewportTogetherAndReversesWithoutJumping() async throws {
@@ -20,25 +20,25 @@ final class DeveloperChromeTests: XCTestCase {
         browser.developerMotion.reduceMotion = { false }
         let row = try XCTUnwrap(browser.sidebar.rows[tab.id]), titleY = row.titleField.frame.minY
         browser.toggleDeveloper()
-        XCTAssertEqual(tab.webView.frame.minY, 0, "Opening starts from the current viewport")
+        XCTAssertEqual(tab.page.view.frame.minY, 0, "Opening starts from the current viewport")
         if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             XCTAssertNotNil(row.titleField.layer?.animation(forKey: TabListMotion.movementKey))
             XCTAssertNotNil(row.subtitle.layer?.animation(forKey: DeveloperModeMotion.subtitleFadeKey))
         }
         XCTAssertLessThan(row.titleField.frame.minY, titleY)
         try await Task.sleep(for: .milliseconds(65))
-        let openingHeight = tab.webView.frame.minY
+        let openingHeight = tab.page.view.frame.minY
         XCTAssertGreaterThan(openingHeight, 0); XCTAssertLessThan(openingHeight, 40)
         XCTAssertEqual(browser.developerBar.frame.maxY, openingHeight)
-        XCTAssertEqual(tab.webView.frame.maxY, browser.pageClip.bounds.maxY)
+        XCTAssertEqual(tab.page.view.frame.maxY, browser.pageClip.bounds.maxY)
         browser.update()
-        XCTAssertEqual(tab.webView.frame.minY, openingHeight, "Loading updates do not snap the ongoing motion")
+        XCTAssertEqual(tab.page.view.frame.minY, openingHeight, "Loading updates do not snap the ongoing motion")
         browser.toggleDeveloper()
-        XCTAssertEqual(tab.webView.frame.minY, openingHeight, "Reversing continues from the visible position")
+        XCTAssertEqual(tab.page.view.frame.minY, openingHeight, "Reversing continues from the visible position")
         try await Task.sleep(for: .milliseconds(65))
-        XCTAssertLessThan(tab.webView.frame.minY, openingHeight)
+        XCTAssertLessThan(tab.page.view.frame.minY, openingHeight)
         try await Task.sleep(for: .milliseconds(180))
-        XCTAssertEqual(tab.webView.frame, browser.pageClip.bounds)
+        XCTAssertEqual(tab.page.view.frame, browser.pageClip.bounds)
         XCTAssertTrue(browser.developerBar.isHidden); XCTAssertTrue(row.subtitle.isHidden)
         XCTAssertEqual(row.titleField.frame.minY, titleY)
     }
@@ -57,13 +57,13 @@ final class DeveloperChromeTests: XCTestCase {
         XCTAssertNil(browser.developerMotion.currentHeight)
         XCTAssertTrue(browser.developerBar.isHidden)
         try await Task.sleep(for: .milliseconds(220))
-        XCTAssertTrue(browser.developerBar.isHidden); XCTAssertEqual(second.webView.frame.minY, 0)
+        XCTAssertTrue(browser.developerBar.isHidden); XCTAssertEqual(second.page.view.frame.minY, 0)
         browser.developerMotion.reduceMotion = { true }
         browser.toggleDeveloper()
         XCTAssertNil(browser.developerMotion.currentHeight)
-        XCTAssertEqual(second.webView.frame.minY, 40); XCTAssertEqual(browser.developerBar.frame.minY, 0)
+        XCTAssertEqual(second.page.view.frame.minY, 40); XCTAssertEqual(browser.developerBar.frame.minY, 0)
         browser.toggleDeveloper()
-        XCTAssertTrue(browser.developerBar.isHidden); XCTAssertEqual(second.webView.frame.minY, 0)
+        XCTAssertTrue(browser.developerBar.isHidden); XCTAssertEqual(second.page.view.frame.minY, 0)
     }
     @MainActor func testDeveloperDraftSurvivesBrowserUpdatesAndEscapeCancels() throws {
         let browser = browser(); defer { clean(browser) }
@@ -94,8 +94,8 @@ final class DeveloperChromeTests: XCTestCase {
         editor.insertText(file.path, replacementRange: NSRange(location: 0, length: editor.string.utf16.count))
         editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
         let deadline = Date().addingTimeInterval(10)
-        while tab.webView.title != "Edited address" && Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
-        XCTAssertEqual(tab.webView.title, "Edited address")
+        while tab.page.title != "Edited address" && Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertEqual(tab.page.title, "Edited address")
         XCTAssertEqual(tab.requestedURL, file)
         XCTAssertEqual(browser.selectedID, tab.id)
         XCTAssertEqual(browser.tabs.count, 1)
@@ -118,7 +118,7 @@ final class DeveloperChromeTests: XCTestCase {
         XCTAssertEqual(content.host.stringValue, "example.com")
         XCTAssertEqual(content.address.stringValue, "https://example.com/page")
         XCTAssertEqual(content.connection.stringValue, "This page uses an encrypted HTTPS connection.")
-        XCTAssertEqual(content.engine.stringValue, "Rendering engine: Apple WebKit")
+        XCTAssertEqual(content.engine.stringValue, "Rendering engine: Chromium")
         XCTAssertGreaterThan(browser.siteInfoPopover.contentSize.height, 100)
         XCTAssertEqual(browser.siteInfoPopover.contentSize.width, 340, accuracy: 1)
         browser.devButtons[4].performClick(nil)

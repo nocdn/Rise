@@ -1,16 +1,8 @@
 import AppKit
-import WebKit
 
-/// Which engine draws a page. Saved history is tagged with it, since one engine can't read
-/// the other's.
-enum WebEngine: String, Codable {
-    case webKit, chromium
-}
-
-/// Everything Rise asks of a page, whichever engine draws it. Rise lays out, clips and
-/// animates `view` like any other view; the engine only fills it.
+/// Everything Rise asks of a page. Rise lays out, clips and animates `view` like any other view;
+/// the engine only fills it.
 @MainActor protocol WebPage: ScriptablePage {
-    var engine: WebEngine { get }
     var view: NSView { get }
     var url: URL? { get }
     var title: String? { get }
@@ -28,6 +20,8 @@ enum WebEngine: String, Codable {
     var isCovered: Bool { get set }
     /// Called on the main actor whenever any of the state above changes.
     var onChange: ((WebPageChange) -> Void)? { get set }
+    /// What happens to the page as it loads.
+    var onEvent: ((PageEvent) -> Void)? { get set }
 
     func load(_ url: URL)
     func goBack()
@@ -116,7 +110,6 @@ extension WebPage {
         guard let world else { return await evaluate(body, arguments: arguments, world: nil) }
         return try await evaluate(body, arguments: arguments, in: nil, world: .named(world))
     }
-    var findWebView: WKWebView? { (self as? WebKitPage)?.webView }
     /// As the completion form; throws if the script threw.
     func evaluate(_ body: String, arguments: [String: Any], in frame: PageFrame?, world: ScriptWorld) async throws -> Any? {
         try await withCheckedThrowingContinuation { continuation in
@@ -128,7 +121,7 @@ extension WebPage {
 /// How a page is going somewhere.
 enum PageNavigationKind { case newPage, history, reload }
 /// What happens to a page as it loads, where the engine reports it through the page rather
-/// than Rise's WebKit delegates.
+/// than through delegates.
 enum PageEvent {
     case willNavigate(PageNavigationKind), finished, failed(String), crashed, openInOtherApp(URL)
     /// The engine closed the page itself, as for an extension's tabs.remove.

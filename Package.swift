@@ -16,10 +16,8 @@ let package = Package(name: "Rise", platforms: [.macOS(.v14)], products: [.execu
     .target(name: "RiseChromium", cSettings: hasAdBlock ? [.define("RISE_ADBLOCK")] : [],
             linkerSettings: [.unsafeFlags(["-F", frameworks, "-framework", "Chromium Framework",
                                            "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"] + (hasAdBlock ? [adBlock] : []))]),
-    .executableTarget(name: "Rise", dependencies: ["RiseCore", "RiseChromium"], resources: [.copy("Resources/Blocking")],
-                      swiftSettings: [.define("RISE_CHROMIUM")]),
+    .executableTarget(name: "Rise", dependencies: ["RiseCore", "RiseChromium"]),
     .testTarget(name: "RiseCoreTests", dependencies: ["RiseCore"]),
     // Run with scripts/test.sh, which finds the engine's framework for them; they don't start it.
-    .testTarget(name: "RiseTests", dependencies: ["Rise", "RiseCore"], resources: [.copy("Resources")],
-                swiftSettings: [.define("RISE_CHROMIUM")]),
+    .testTarget(name: "RiseTests", dependencies: ["Rise", "RiseCore"], resources: [.copy("Resources")]),
 ])

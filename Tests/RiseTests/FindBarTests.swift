@@ -1,4 +1,3 @@
-import WebKit
 import XCTest
 import AppKit
 @testable import Rise
@@ -6,28 +5,6 @@ import AppKit
 @MainActor final class FindBarTests: XCTestCase {
     /// Motion's `{ type: "spring", bounce: 0, duration: 0.2 }` is critically damped with
     /// ω ≈ 46.2 rad/s, so it has all but settled at 0.2 s and never overshoots.
-    func testAssistantSeesCodeThatGitHubDrawsFromAttributes() async throws {
-        // Like GitHub's file view: the lines are empty spans painted from an attribute,
-        // under a transparent aria-readonly text area, inside display: contents wrappers.
-        let webPage = WebKitPage(), web = webPage.webView
-        web.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
-        web.loadHTMLString("""
-        <style>[data-code-text]::before{content:attr(data-code-text)} textarea{color:transparent;background:none}</style>
-        <h1>1-4</h1>
-        <div style="display:contents"><div style="display:contents">
-        <textarea aria-readonly="true">int main ()\n{\n    printf("%6.1f", celsius);\n}</textarea></div></div>
-        <div style="display:contents"><p>Wrapped paragraph</p></div>
-        <div><span data-code-text="int main ()"></span></div><div><span data-code-text="printf"></span></div>
-        <textarea>a draft comment</textarea>
-        """, baseURL: URL(string: "https://github.com/a/b/blob/master/1-4"))
-        for _ in 0..<100 where web.isLoading { try await Task.sleep(nanoseconds: 50_000_000) }
-        let page = try await PageAssistant.snapshot(of: webPage)
-        XCTAssertTrue(page.text.contains("1-4"), page.text)
-        XCTAssertTrue(page.text.contains("printf(\"%6.1f\", celsius);"), page.text)
-        XCTAssertTrue(page.text.contains("Wrapped paragraph"), page.text)
-        XCTAssertFalse(page.text.contains("a draft comment"), page.text)
-    }
-
     func testSwapSpringMatchesMotionDuration() {
         let omega = 2 * .pi/FindMotion.swapResponse
         XCTAssertEqual(omega, 46.2, accuracy: 0.2)
@@ -133,7 +110,7 @@ import AppKit
         let deadline = Date().addingTimeInterval(5)
         while bar.isAnswering && Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertFalse(bar.isAnswering)
-        browser.window?.makeFirstResponder(tab.webView)
+        browser.window?.makeFirstResponder(tab.page.view)
 
         browser.showFind()
         XCTAssertTrue(bar.isPresented)
@@ -151,7 +128,7 @@ import AppKit
 
         bar.handleEscape()
         XCTAssertFalse(bar.isPresented)
-        XCTAssertTrue(browser.window?.firstResponder === tab.webView)
+        XCTAssertTrue(browser.window?.firstResponder === tab.page.view)
     }
     func testInputTokenMenuWaitsForCompletionAndDoesNotReuseReplacedOrFailedUsage() async throws {
         let bar = FindBar()

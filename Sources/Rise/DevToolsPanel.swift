@@ -1,7 +1,5 @@
 import AppKit
-#if RISE_CHROMIUM
 import RiseChromium
-#endif
 
 /// Chromium's DevTools for the selected tab, docked at the window's right edge. Opening, it
 /// springs in from the edge as the page makes room beside it, as the docked sidebar does from
@@ -119,7 +117,6 @@ import RiseChromium
         guard let tab = selectedTab else { return }
         let panel = devTools
         if panel.isOpen, panel.tabID == tab.id { closeDevTools(); return }
-        #if RISE_CHROMIUM
         guard let page = tab.page as? ChromiumPage else { NSSound.beep(); return }
         if panel.tabID != tab.id || panel.frontend == nil { showDevTools(for: tab, page: page, picking: true) }
         // Opened again before they'd gone, they're ready to pick an element again too.
@@ -127,9 +124,6 @@ import RiseChromium
             frontend.evaluateFunctionBody(DevToolsPanel.pickElement + "return await pick();", arguments: [:], frame: nil, world: nil) { _, _ in }
         }
         openDevTools()
-        #else
-        NSSound.beep()
-        #endif
     }
     private func openDevTools() {
         let panel = devTools
@@ -137,7 +131,6 @@ import RiseChromium
         animateDevTools()
         if let frontend = panel.frontend { window?.makeFirstResponder(frontend) }
     }
-    #if RISE_CHROMIUM
     /// "Inspect Element": the page's DevTools, open on the element right-clicked.
     func inspectElement(_ info: RCContextMenu, in page: ChromiumPage) {
         guard let tab = tabs.first(where: { $0.page === page }) else { return }
@@ -147,7 +140,6 @@ import RiseChromium
         info.inspect()
         openDevTools()
     }
-    #endif
     func closeDevTools() {
         let panel = devTools
         guard panel.isOpen else { return }
@@ -159,7 +151,6 @@ import RiseChromium
         animateDevTools()
     }
 
-    #if RISE_CHROMIUM
     private func showDevTools(for tab: BrowserTab, page: ChromiumPage, picking: Bool) {
         let panel = devTools
         tearDownDevTools()
@@ -179,7 +170,6 @@ import RiseChromium
         panel.tabID = tab.id; panel.frontend = frontend
         panel.close = { [weak frontend] in frontend?.close() }
     }
-    #endif
     /// Lets the DevTools go: their tab closed, or they slid away.
     private func tearDownDevTools() {
         let panel = devTools
@@ -206,11 +196,9 @@ import RiseChromium
         let docked = NSRect(x: bounds.maxX-inset-width, y: bounds.minY+inset, width: width, height: max(0, bounds.height-2*inset))
         panel.shadow.frame = docked.offsetBy(dx: room*(1-progress), dy: 0)
         panel.shadow.fill = theme.page; panel.clip.fill = theme.page
-        #if RISE_CHROMIUM
         if let frontend = panel.frontend as? RCBrowserView, frontend.prefersDark?.boolValue != (theme == .dark) {
             frontend.prefersDark = NSNumber(value: theme == .dark)
         }
-        #endif
         panel.shadow.refreshOutline()
         panel.clip.frame = panel.shadow.bounds
         panel.frontend?.frame = panel.clip.bounds

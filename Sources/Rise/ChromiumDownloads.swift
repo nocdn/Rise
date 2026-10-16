@@ -1,4 +1,3 @@
-#if RISE_CHROMIUM
 import AppKit
 import RiseChromium
 
@@ -67,4 +66,3 @@ import RiseChromium
         return destination
     }
 }
-#endif

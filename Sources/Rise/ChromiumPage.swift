@@ -1,7 +1,5 @@
 import AppKit
-#if RISE_CHROMIUM
 import RiseChromium
-#endif
 
 /// A separate place for the session, history and website data, for trying Rise out (with
 /// another engine, say) without touching the everyday ones: `RISE_PROFILE_DIR=<folder>`.
@@ -33,54 +31,34 @@ enum RisePages {
     }
 }
 
-/// Chromium, where it's been built into Rise (see Engine/README.md): Rise's engine unless asked
-/// for WebKit, with `RISE_ENGINE=webkit` or the `RiseEngine` default set to "webkit". New and
-/// restored tabs use it. Builds without it run on WebKit alone.
+/// Chromium, which draws every page (see Engine/README.md).
 @MainActor enum ChromiumEngine {
-    #if RISE_CHROMIUM
-    static var isRequested: Bool {
-        if let engine = ProcessInfo.processInfo.environment["RISE_ENGINE"] { return engine != "webkit" }
-        return UserDefaults.standard.string(forKey: "RiseEngine") != "webkit"
-    }
     /// The application class Chromium needs, made before anything else asks for `NSApp`.
-    static func makeApplication() -> NSApplication { isRequested ? RCApplication.shared : NSApplication.shared }
-    /// Starts Chromium if asked and packaged with the app; WebKit carries on otherwise.
-    static func startIfRequested() {
-        guard isRequested else { return }
+    static func makeApplication() -> NSApplication { RCApplication.shared }
+    /// Starts Chromium, packaged with the app; Rise can't run without it.
+    static func start() {
         let framework = Bundle.main.bundleURL.appendingPathComponent("Contents/Frameworks/Chromium Framework.framework")
-        guard FileManager.default.fileExists(atPath: framework.path) else {
-            NSLog("Rise: Chromium isn't packaged in this build; using WebKit"); return
-        }
         let profile = (RiseProfile.directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Rise"))
             .appendingPathComponent("Chromium")
         try? FileManager.default.createDirectory(at: profile, withIntermediateDirectories: true)
+        let packaged = FileManager.default.fileExists(atPath: framework.path)
         // A test profile is thrown away, so its key needn't outlive it in the Keychain.
-        if !RCEngine.start(withCachePath: profile.path, keychain: RiseProfile.directory == nil) { NSLog("Rise: Chromium didn't start; using WebKit") }
+        guard packaged, RCEngine.start(withCachePath: profile.path, keychain: RiseProfile.directory == nil) else {
+            let alert = NSAlert(); alert.messageText = "Rise couldn’t start its engine"
+            alert.informativeText = packaged ? "Chromium didn’t start." : "This copy of Rise has no Chromium framework."
+            alert.runModal(); exit(1)
+        }
     }
     static var isRunning: Bool { RCEngine.isRunning }
     static func shutdown() { RCEngine.shutdown() }
-    #else
-    static func makeApplication() -> NSApplication { NSApplication.shared }
-    static func startIfRequested() {}
-    static var isRunning: Bool { false }
-    static func shutdown() {}
-    #endif
-    /// The engine new tabs open in.
-    static var engineForNewTabs: WebEngine { isRunning ? .chromium : .webKit }
 }
 
-#if RISE_CHROMIUM
 /// Focusing a page's view focuses the page itself, as Chrome does: the view holding it takes no keys.
 @MainActor func pageFocusTarget(_ responder: NSResponder?) -> NSResponder? { (responder as? RCBrowserView)?.focusView ?? responder }
-#else
-@MainActor func pageFocusTarget(_ responder: NSResponder?) -> NSResponder? { responder }
-#endif
 
-#if RISE_CHROMIUM
 /// A page drawn by Chromium.
 @MainActor final class ChromiumPage: NSObject, WebPage, RCBrowserViewDelegate {
     let browserView: RCBrowserView
-    var engine: WebEngine { .chromium }
     var view: NSView { browserView }
     var onChange: ((WebPageChange) -> Void)?
     var onHoverLink: ((URL?) -> Void)?
@@ -484,4 +462,3 @@ enum RisePages {
     nonisolated func browserView(_ browserView: RCBrowserView, destinationFor download: RCDownload, suggestedName: String) -> URL? { nil }
     nonisolated func browserView(_ browserView: RCBrowserView, open url: URL, disposition: RCOpenDisposition, userGesture: Bool) -> Bool { true }
 }
-#endif

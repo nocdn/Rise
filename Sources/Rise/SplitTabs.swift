@@ -18,7 +18,7 @@ import RiseCore
         let visible = Set(visibleTabIDs)
         pictureInPicture.reconcile(visibleIDs: visible)
         for tab in tabs {
-            // WebKit's fullscreen window holds the web view until it hands it back.
+            // The engine's full-screen window holds the page until it hands it back.
             if pictureInPicture.owns(tab) || tab.isInNativeFullscreen { continue }
             if !visible.contains(tab.id) { tab.page.view.removeFromSuperview(); continue }
             if tab.needsBlockingReload, tab.page.url != nil { tab.needsBlockingReload = false; tab.page.reloadIgnoringCache() }
@@ -31,7 +31,7 @@ import RiseCore
         guard let current = selectedTab else { return }
         if let other = tabs.first(where: { $0.id != current.id }) { showSplit(other) }
         else if let url = current.url {
-            let other = configure(BrowserTab(engine: ChromiumEngine.engineForNewTabs)); tabs.insert(other, at: 0); other.load(url); showSplit(other)
+            let other = configure(BrowserTab()); tabs.insert(other, at: 0); other.load(url); showSplit(other)
         }
     }
     func showSplit(_ tab: BrowserTab) {

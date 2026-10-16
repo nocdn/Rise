@@ -10,7 +10,7 @@ final class TabSwitchingTests: XCTestCase {
     }
     @MainActor private func clean(_ browser: BrowserController) {
         browser.cancelTabSwitch(); browser.saveWork?.cancel()
-        browser.tabs.forEach { $0.webView.stopLoading() }; browser.window?.orderOut(nil)
+        browser.tabs.forEach { $0.page.stopLoading() }; browser.window?.orderOut(nil)
         try? FileManager.default.removeItem(at: browser.sessionURL.deletingLastPathComponent())
     }
     @MainActor private func key(_ browser: BrowserController, code: UInt16 = 48, modifiers: NSEvent.ModifierFlags = .control) -> NSEvent {
@@ -91,21 +91,6 @@ final class TabSwitchingTests: XCTestCase {
         XCTAssertEqual(browser.tabs.count, 1)
         XCTAssertTrue(browser.tabSwitcher.isHidden)
         XCTAssertFalse(browser.isSwitchingTabs)
-    }
-    @MainActor func testPreviewUsesAnActualWebKitSnapshot() async throws {
-        let browser = makeBrowser(); defer { clean(browser) }
-        let tab = browser.addTab()
-        tab.webView.loadHTMLString("<!doctype html><title>Thumbnail</title><style>html,body{margin:0;background:#e06070}</style><p>Preview page</p>", baseURL: nil)
-        let deadline = Date().addingTimeInterval(10)
-        while tab.webView.title != "Thumbnail" && Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
-        XCTAssertEqual(tab.webView.title, "Thumbnail")
-        tab.captureThumbnail()
-        while tab.thumbnail == nil && Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
-        let image = try XCTUnwrap(tab.thumbnail)
-        let bitmap = try XCTUnwrap(image.tiffRepresentation.flatMap { NSBitmapImageRep(data: $0) })
-        let color = try XCTUnwrap(bitmap.colorAt(x: 4, y: 4)?.usingColorSpace(.sRGB))
-        XCTAssertGreaterThan(color.redComponent, color.greenComponent + 0.2)
-        XCTAssertGreaterThan(image.size.width, 100)
     }
     @MainActor func testManyTabsScrollHighlightedCardIntoViewWithSidebarClosed() async throws {
         let browser = makeBrowser(); defer { clean(browser) }

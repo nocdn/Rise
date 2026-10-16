@@ -1,48 +1,22 @@
 import AppKit
-import WebKit
 
-// A separate content world keeps the hover bridge out of the site's JavaScript.
-@MainActor private final class LinkHoverBridge: NSObject, WKScriptMessageHandler {
-    weak var preloader: LinkPreloader?
-    init(_ preloader: LinkPreloader) { self.preloader = preloader }
-    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard let webView = message.webView, let value = message.body as? [String: String] else { return }
-        let url = value["url"].flatMap { $0.isEmpty ? nil : URL(string: $0) }
-        if value["kind"] == "hover" { preloader?.onHover?(url, webView) }
-        else if value["kind"] == "preload", let url { preloader?.preload(url, from: webView) }
-    }
-}
-
-@MainActor private final class HoverLoad {
-    let url: URL
-    let timeout: DispatchWorkItem
-    var cacheLifetime: TimeInterval = 0
-    init(url: URL, timeout: DispatchWorkItem) { self.url = url; self.timeout = timeout }
-}
-
-@MainActor final class LinkPreloader: NSObject, WKNavigationDelegate {
+/// Preload Links: a link the pointer rests on loads out of sight, without its scripts, into the
+/// engine's cache, so opening it is quick.
+@MainActor final class LinkPreloader: NSObject {
     static let preferenceKey = "Rise.PreloadLinks"
     static let worldName = "Rise.LinkPreloading"
-    static let world = WKContentWorld.world(name: worldName)
     private let preferences: UserDefaults
-    private let sources = NSHashTable<WKWebView>.weakObjects()
-    private let controllers = NSHashTable<WKUserContentController>.weakObjects()
-    private var loads: [WKWebView: HoverLoad] = [:]
     private var recent: [URL: Date] = [:]
-    private var readyUntil: [URL: Date] = [:]
     private var completedUntil: [URL: Date] = [:]
-    var prepareWebView: ((WKWebView) -> Void)?
-    var onHover: ((URL?, WKWebView) -> Void)?
-    var onReady: ((URL) -> Void)?
     var onComplete: ((URL) -> Void)?
     private(set) var enabled: Bool
-    var activeLoadCount: Int { loads.count + engineLoads.count }
-    /// Pages of engines whose hovers come through the page rather than a WebKit controller.
-    private let pageSources = NSHashTable<AnyObject>.weakObjects()
-    /// Loads made through an engine's own page, rather than WebKit's: started by `loadPage`, which
-    /// calls back with whether the page loaded.
-    private var engineLoads: [ObjectIdentifier: (load: HoverLoad, cancel: () -> Void)] = [:]
-    /// Loads `url` out of sight, without its scripts, into the engine's cache; nil where it can't.
+    var activeLoadCount: Int { loads.count }
+    private let pages = NSHashTable<AnyObject>.weakObjects()
+    /// Loads under way, each with its timeout and how to stop it.
+    private var loads: [Int: (timeout: DispatchWorkItem, cancel: () -> Void)] = [:]
+    private var nextLoad = 0
+    /// Loads `url` out of sight, without its scripts, into the engine's cache, like `page`; nil where
+    /// it can't. Calls back with whether the page loaded.
     var loadPage: ((_ url: URL, _ like: WebPage, _ done: @escaping (Bool) -> Void) -> (() -> Void)?)?
 
     init(preferences: UserDefaults = .standard) {
@@ -51,9 +25,8 @@ import WebKit
         super.init()
     }
     func install(on page: WebPage) {
-        if let webView = (page as? WebKitPage)?.webView { install(on: webView); return }
-        guard !pageSources.contains(page) else { return }
-        pageSources.add(page)
+        guard !pages.contains(page) else { return }
+        pages.add(page)
         page.addMessageHandler("risePreload", world: .named(Self.worldName)) { [weak self] message in
             // The engine itself reports hovers for the link pill; only the dwell matters here.
             guard let self, let page = message.page, let body = message.body as? [String: Any], body["kind"] as? String == "preload",
@@ -62,64 +35,19 @@ import WebKit
         }
         page.addUserScript(Self.hoverScript, world: .named(Self.worldName), mainFrameOnly: false, handlers: ["risePreload"])
     }
-    func install(on webView: WKWebView) {
-        guard !sources.contains(webView) else { return }
-        sources.add(webView)
-        let controller = webView.configuration.userContentController
-        // window.open can supply a configuration sharing the opener's controller.
-        if !controllers.contains(controller) {
-            controllers.add(controller)
-            controller.add(LinkHoverBridge(self), contentWorld: Self.world, name: "risePreload")
-            controller.addUserScript(WKUserScript(source: Self.hoverScript, injectionTime: .atDocumentStart,
-                                                 forMainFrameOnly: false, in: Self.world))
-        }
-        webView.evaluateJavaScript(Self.hoverScript, in: nil, in: Self.world) { _ in }
-    }
     func setEnabled(_ value: Bool) {
         enabled = value
         preferences.set(value, forKey: Self.preferenceKey)
         if !value { cancelAll() }
-        // The native gate applies immediately to every frame, including frames
-        // already loaded before this preference changed.
-        for source in sources.allObjects {
-            source.evaluateJavaScript("globalThis.riseLinkPreload?.cancel()", in: nil, in: Self.world) { _ in }
-        }
-        for case let page as WebPage in pageSources.allObjects {
+        // The setting applies at once to every frame, including frames already loaded.
+        for case let page as WebPage in pages.allObjects {
             page.evaluate("globalThis.riseLinkPreload?.cancel()", arguments: [:], in: nil, world: .named(Self.worldName)) { _ in }
         }
     }
     func cancelAll() {
-        for (webView, load) in loads { load.timeout.cancel(); webView.stopLoading() }
-        for (_, engine) in engineLoads { engine.load.timeout.cancel(); engine.cancel() }
-        loads.removeAll(); engineLoads.removeAll(); recent.removeAll(); readyUntil.removeAll(); completedUntil.removeAll()
+        for (_, load) in loads { load.timeout.cancel(); load.cancel() }
+        loads.removeAll(); recent.removeAll(); completedUntil.removeAll()
     }
-    func preload(_ url: URL, from source: WKWebView) {
-        guard enabled, source.window != nil, Self.isEligible(url, from: source.url) else { return }
-        let url = Self.cacheKey(url)
-        let now = Date()
-        recent = recent.filter { now.timeIntervalSince($0.value) < 60 }
-        guard recent[url] == nil, activeLoadCount < 2, recent.count < 32 else { return }
-        recent[url] = now
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = source.configuration.websiteDataStore
-        configuration.applicationNameForUserAgent = source.configuration.applicationNameForUserAgent
-        configuration.defaultWebpagePreferences.allowsContentJavaScript = false
-        configuration.mediaTypesRequiringUserActionForPlayback = .all
-        let webView = WKWebView(frame: source.bounds, configuration: configuration)
-        webView.customUserAgent = source.customUserAgent
-        prepareWebView?(webView)
-        webView.navigationDelegate = self
-        let timeout = DispatchWorkItem { [weak self, weak webView] in
-            if let webView { self?.finish(webView) }
-        }
-        loads[webView] = HoverLoad(url: url, timeout: timeout)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: timeout)
-        var request = URLRequest(url: url, cachePolicy: .useProtocolCachePolicy, timeoutInterval: 10)
-        request.setValue("prefetch", forHTTPHeaderField: "Purpose")
-        request.setValue("prefetch", forHTTPHeaderField: "Sec-Purpose")
-        webView.load(request)
-    }
-    /// As for a WebKit page, through the page's own engine.
     func preload(_ url: URL, from source: WebPage) {
         guard enabled, source.view.window != nil, Self.isEligible(url, from: source.url), let loadPage else { return }
         let url = Self.cacheKey(url)
@@ -127,15 +55,15 @@ import WebKit
         recent = recent.filter { now.timeIntervalSince($0.value) < 60 }
         guard recent[url] == nil, activeLoadCount < 2, recent.count < 32 else { return }
         recent[url] = now
-        let token = HoverLoad(url: url, timeout: DispatchWorkItem {}), key = ObjectIdentifier(token)
+        nextLoad += 1; let key = nextLoad
         let finish = { [weak self] (success: Bool) in
-            guard let self, let engine = self.engineLoads.removeValue(forKey: key) else { return }
-            engine.load.timeout.cancel(); engine.cancel()
+            guard let self, let load = self.loads.removeValue(forKey: key) else { return }
+            load.timeout.cancel(); load.cancel()
             self.complete(url, success: success)
         }
         let timeout = DispatchWorkItem { finish(false) }
         guard let cancel = loadPage(url, source, { finish($0) }) else { recent[url] = nil; return }
-        engineLoads[key] = (HoverLoad(url: url, timeout: timeout), cancel)
+        loads[key] = (timeout, cancel)
         DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: timeout)
     }
     nonisolated static func isEligible(_ url: URL, from source: URL?) -> Bool {
@@ -151,64 +79,20 @@ import WebKit
         var parts = URLComponents(url: url, resolvingAgainstBaseURL: false)
         parts?.fragment = nil; return parts?.url ?? url
     }
-    func isReady(_ url: URL) -> Bool { enabled && (readyUntil[Self.cacheKey(url)] ?? .distantPast) > Date() }
     func isComplete(_ url: URL) -> Bool { enabled && (completedUntil[Self.cacheKey(url)] ?? .distantPast) > Date() }
-    private func finish(_ webView: WKWebView, success: Bool = false) {
-        guard let load = loads.removeValue(forKey: webView) else { return }
-        load.timeout.cancel()
-        webView.stopLoading(); webView.navigationDelegate = nil
-        complete(load.url, success: success, cacheLifetime: load.cacheLifetime)
-    }
-    /// A finished preload counts for a minute; one the server let cache is ready for longer.
-    private func complete(_ url: URL, success: Bool, cacheLifetime: TimeInterval = 0) {
-        let load = (url: url, cacheLifetime: cacheLifetime)
-        if success, enabled {
-            completedUntil = completedUntil.filter { $0.value > Date() }
-            completedUntil[load.url] = Date().addingTimeInterval(60)
-            onComplete?(load.url)
-        }
-        if success, enabled, load.cacheLifetime > 0 {
-            readyUntil = readyUntil.filter { $0.value > Date() }
-            readyUntil[load.url] = Date().addingTimeInterval(min(60, load.cacheLifetime))
-            onReady?(load.url)
-        }
-    }
-    func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        let scheme = action.request.url?.scheme?.lowercased() ?? ""
-        decisionHandler(!action.shouldPerformDownload && ["http", "https"].contains(scheme) ? .allow : .cancel)
-    }
-    func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse, decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
-        let allowed = response.canShowMIMEType && (response.response as? HTTPURLResponse).map { (200..<400).contains($0.statusCode) } == true
-        if response.isForMainFrame, let http = response.response as? HTTPURLResponse {
-            loads[webView]?.cacheLifetime = Self.cacheLifetime(http)
-        }
-        decisionHandler(allowed ? .allow : .cancel)
-        if !allowed { finish(webView) }
-    }
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finish(webView, success: true) }
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { finish(webView) }
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { finish(webView) }
-    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { finish(webView) }
-    func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        // Let WebKit validate TLS normally; never prompt for credentials during a hover.
-        completionHandler(challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust ? .performDefaultHandling : .cancelAuthenticationChallenge, nil)
-    }
-    nonisolated private static func cacheLifetime(_ response: HTTPURLResponse) -> TimeInterval {
-        let directives = (response.value(forHTTPHeaderField: "Cache-Control") ?? "").lowercased()
-            .split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-        guard !directives.contains("no-store"), !directives.contains(where: { $0.hasPrefix("no-cache") }),
-              let maxAge = directives.first(where: { $0.hasPrefix("max-age=") }),
-              let age = Double(maxAge.dropFirst(8).replacingOccurrences(of: "\"", with: "")) else { return 0 }
-        return max(0, age - (Double(response.value(forHTTPHeaderField: "Age") ?? "0") ?? 0))
+    /// A finished preload counts for a minute.
+    private func complete(_ url: URL, success: Bool) {
+        guard success, enabled else { return }
+        completedUntil = completedUntil.filter { $0.value > Date() }
+        completedUntil[url] = Date().addingTimeInterval(60)
+        onComplete?(url)
     }
 
     static let hoverScript = #"""
     (() => {
         globalThis.riseLinkPreload?.dispose();
         let timer = null, hovered = null;
-        // WebKit's handlers, or the ones Rise's script wrapper gives a Chromium page.
-        const handlers = typeof riseHandlers !== 'undefined' ? riseHandlers : webkit.messageHandlers;
-        const notify = (kind, url = '') => handlers.risePreload.postMessage({kind, url});
+        const notify = (kind, url = '') => riseHandlers.risePreload.postMessage({kind, url});
         const cancel = () => {
             clearTimeout(timer); timer = null;
             if (hovered) notify('hover');

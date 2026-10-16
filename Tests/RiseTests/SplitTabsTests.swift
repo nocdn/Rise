@@ -9,7 +9,7 @@ final class SplitTabsTests: XCTestCase {
         return BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"), restore: false)
     }
     @MainActor func clean(_ browser: BrowserController) {
-        browser.saveWork?.cancel(); browser.tabs.forEach { $0.webView.stopLoading() }; browser.window?.orderOut(nil)
+        browser.saveWork?.cancel(); browser.tabs.forEach { $0.page.stopLoading() }; browser.window?.orderOut(nil)
         try? FileManager.default.removeItem(at: browser.sessionURL.deletingLastPathComponent())
     }
     @MainActor func testPairStaysGroupedWhenInactiveAndEachHalfRestoresFixedPaneOrder() throws {
@@ -21,35 +21,35 @@ final class SplitTabsTests: XCTestCase {
         XCTAssertEqual(browser.sidebar.orderedIDs, [other.id, left.id])
         XCTAssertTrue(row.left.superview === row && row.right.superview === row)
         XCTAssertTrue(row.divider.isHidden)
-        let leftFrame = left.webView.frame, rightFrame = right.webView.frame
+        let leftFrame = left.page.view.frame, rightFrame = right.page.view.frame
         browser.select(other.id); browser.root.layoutSubtreeIfNeeded()
         XCTAssertEqual(browser.splitGroups, [group])
         XCTAssertFalse(row.divider.isHidden)
         XCTAssertFalse(row.left.selected); XCTAssertFalse(row.right.selected)
-        XCTAssertNil(left.webView.superview); XCTAssertNil(right.webView.superview)
+        XCTAssertNil(left.page.view.superview); XCTAssertNil(right.page.view.superview)
         row.right.performClick(nil); browser.root.layoutSubtreeIfNeeded()
         XCTAssertEqual(browser.selectedID, right.id)
         XCTAssertEqual(browser.splitTab?.id, left.id)
         XCTAssertTrue(row.left.selected && row.right.selected)
-        XCTAssertEqual(left.webView.frame, leftFrame); XCTAssertEqual(right.webView.frame, rightFrame)
-        XCTAssertTrue(left.webView.superview === browser.pageClip && right.webView.superview === browser.pageClip)
+        XCTAssertEqual(left.page.view.frame, leftFrame); XCTAssertEqual(right.page.view.frame, rightFrame)
+        XCTAssertTrue(left.page.view.superview === browser.pageClip && right.page.view.superview === browser.pageClip)
         XCTAssertEqual(browser.sidebar.selectedTabShadow.frame, row.convert(row.bounds, to: browser.sidebar))
         row.left.performClick(nil)
         XCTAssertEqual(browser.selectedID, left.id)
-        XCTAssertEqual(left.webView.frame, leftFrame); XCTAssertEqual(right.webView.frame, rightFrame)
+        XCTAssertEqual(left.page.view.frame, leftFrame); XCTAssertEqual(right.page.view.frame, rightFrame)
     }
     @MainActor func testClickingRightPageFocusesItWithoutReplacingEitherWebView() throws {
         let browser = browser(); defer { clean(browser) }
         let left = browser.addTab(), right = browser.addTab()
         browser.select(left.id); browser.showSplit(right)
-        let leftFrame = left.webView.frame, rightFrame = right.webView.frame
-        let point = right.webView.convert(NSPoint(x: 100, y: 100), to: nil)
+        let leftFrame = left.page.view.frame, rightFrame = right.page.view.frame
+        let point = right.page.view.convert(NSPoint(x: 100, y: 100), to: nil)
         let event = NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: 0,
                                       windowNumber: browser.window!.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!
         browser.window?.sendEvent(event)
         XCTAssertEqual(browser.selectedID, right.id)
-        XCTAssertEqual(left.webView.frame, leftFrame); XCTAssertEqual(right.webView.frame, rightFrame)
-        XCTAssertTrue(left.webView.superview === browser.pageClip && right.webView.superview === browser.pageClip)
+        XCTAssertEqual(left.page.view.frame, leftFrame); XCTAssertEqual(right.page.view.frame, rightFrame)
+        XCTAssertTrue(left.page.view.superview === browser.pageClip && right.page.view.superview === browser.pageClip)
         XCTAssertEqual(browser.activeSplitGroup?.rightID, right.id)
     }
     @MainActor func testClosingOrSeparatingPairLeavesUsableStandaloneTabs() {
@@ -59,13 +59,13 @@ final class SplitTabsTests: XCTestCase {
         browser.closeTab(right.id); browser.root.layoutSubtreeIfNeeded()
         XCTAssertEqual(browser.selectedID, left.id)
         XCTAssertTrue(browser.splitGroups.isEmpty); XCTAssertTrue(browser.sidebar.splitRows.isEmpty)
-        XCTAssertEqual(left.webView.frame, browser.pageClip.bounds)
+        XCTAssertEqual(left.page.view.frame, browser.pageClip.bounds)
         XCTAssertFalse(browser.sidebar.rows[left.id]!.isSplitMember)
         browser.showSplit(other); browser.select(other.id)
         browser.separateSplit(containing: left.id); browser.root.layoutSubtreeIfNeeded()
         XCTAssertTrue(browser.splitGroups.isEmpty)
         XCTAssertEqual(browser.selectedID, other.id)
-        XCTAssertEqual(other.webView.frame, browser.pageClip.bounds)
+        XCTAssertEqual(other.page.view.frame, browser.pageClip.bounds)
         XCTAssertTrue(browser.sidebar.rows[left.id]?.superview === browser.sidebar.rowsHost)
         XCTAssertTrue(browser.sidebar.rows[other.id]?.superview === browser.sidebar.rowsHost)
     }
@@ -76,7 +76,7 @@ final class SplitTabsTests: XCTestCase {
         browser.select(c.id); browser.showSplit(d)
         browser.select(other.id); browser.saveNow()
         let restored = BrowserController(sessionURL: browser.sessionURL)
-        defer { restored.saveWork?.cancel(); restored.tabs.forEach { $0.webView.stopLoading() }; restored.window?.orderOut(nil) }
+        defer { restored.saveWork?.cancel(); restored.tabs.forEach { $0.page.stopLoading() }; restored.window?.orderOut(nil) }
         XCTAssertEqual(restored.splitGroups, browser.splitGroups)
         XCTAssertEqual(restored.sidebar.splitRows.count, 2)
         XCTAssertNil(restored.activeSplitGroup)
@@ -99,7 +99,7 @@ final class SplitTabsTests: XCTestCase {
         let browser = browser(); defer { clean(browser) }
         let left = browser.addTab(), right = browser.addTab()
         browser.select(left.id); browser.showSplit(right)
-        let gap = BrowserController.splitGap, l = left.webView.frame, r = right.webView.frame
+        let gap = BrowserController.splitGap, l = left.page.view.frame, r = right.page.view.frame
         XCTAssertEqual(r.minX-l.maxX, gap); XCTAssertEqual(l.width, r.width, accuracy: 1)
         let outline = try XCTUnwrap(browser.pageClip.restingOutline), height = browser.pageClip.bounds.height
         XCTAssertTrue(outline.contains(CGPoint(x: l.midX, y: height/2)) && outline.contains(CGPoint(x: r.midX, y: height/2)))
@@ -119,21 +119,21 @@ final class SplitTabsTests: XCTestCase {
         let browser = browser(); defer { clean(browser) }
         let left = browser.addTab(), right = browser.addTab()
         browser.select(left.id); browser.showSplit(right)
-        let handle = browser.splitHandle, room = browser.pageBody.width-BrowserController.splitGap, start = left.webView.frame.width
+        let handle = browser.splitHandle, room = browser.pageBody.width-BrowserController.splitGap, start = left.page.view.frame.width
         handle.mouseDown(with: mouse(.leftMouseDown, at: handle))
         handle.mouseDragged(with: mouse(.leftMouseDragged, at: handle, dx: 100))
-        XCTAssertEqual(left.webView.frame.width, start+100, accuracy: 1)
-        XCTAssertEqual(right.webView.frame.minX, left.webView.frame.maxX+BrowserController.splitGap)
-        XCTAssertEqual(handle.frame.minX, left.webView.frame.maxX, "The handle follows the split")
+        XCTAssertEqual(left.page.view.frame.width, start+100, accuracy: 1)
+        XCTAssertEqual(right.page.view.frame.minX, left.page.view.frame.maxX+BrowserController.splitGap)
+        XCTAssertEqual(handle.frame.minX, left.page.view.frame.maxX, "The handle follows the split")
         XCTAssertEqual(browser.pageClip.restingOutline?.contains(CGPoint(x: start+BrowserController.splitGap/2, y: 50)), true, "So do the pages' corners")
         // Further than the limit, the right page keeps a fifth of the room.
         handle.mouseDragged(with: mouse(.leftMouseDragged, at: handle, dx: 5000))
         handle.mouseUp(with: mouse(.leftMouseUp, at: handle))
         XCTAssertEqual(browser.activeSplitGroup?.fraction, SplitTabGroup.fractionRange.upperBound)
-        XCTAssertEqual(right.webView.frame.width, (room*0.2).rounded(), accuracy: 1)
+        XCTAssertEqual(right.page.view.frame.width, (room*0.2).rounded(), accuracy: 1)
         handle.mouseDown(with: mouse(.leftMouseDown, at: handle, clicks: 2))
         XCTAssertEqual(browser.activeSplitGroup?.fraction, 0.5)
-        XCTAssertEqual(left.webView.frame.width, start, accuracy: 1)
+        XCTAssertEqual(left.page.view.frame.width, start, accuracy: 1)
     }
     @MainActor func testTheHandleGrowsAndDarkensOnHoverAndDarkensAndShrinksWhilePressed() throws {
         let browser = browser(); defer { clean(browser) }

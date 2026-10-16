@@ -31,7 +31,7 @@ final class FaviconPersistenceTests: XCTestCase {
         for original in [a, b] {
             let tab = try XCTUnwrap(restored.tabs.first { $0.id == original.id })
             XCTAssertNotNil(tab.favicon)
-            XCTAssertNil(tab.webView.url); XCTAssertFalse(tab.hasAttemptedNavigation)
+            XCTAssertNil(tab.page.url); XCTAssertFalse(tab.hasAttemptedNavigation)
             XCTAssertNil(tab.iconTask, "A saved favicon requires no network fetch to appear")
             XCTAssertTrue(restored.sidebar.rows[tab.id]?.icon.image === tab.favicon)
             let bitmap = try XCTUnwrap(NSBitmapImageRep(data: tab.saved.faviconData!))

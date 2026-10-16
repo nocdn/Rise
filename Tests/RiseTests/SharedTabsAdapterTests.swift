@@ -31,7 +31,7 @@ final class SharedTabsAdapterTests: XCTestCase {
         XCTAssertTrue(a.pinned); XCTAssertTrue(a.developer)
         XCTAssertEqual(a.customTitle, "Personal name")
         XCTAssertEqual(a.title, "Personal name")
-        XCTAssertNil(browser.tabs[0].webView.url, "Unselected remote tabs stay unloaded")
+        XCTAssertNil(browser.tabs[0].page.url, "Unselected remote tabs stay unloaded")
     }
 
     @MainActor func testRemoteCloseKeepsFilesLocalAndChoosesASurvivingPage() {

@@ -1,5 +1,4 @@
-import Foundation
-import WebKit
+import AppKit
 
 enum GmailCategory: String, CaseIterable {
     case primary, promotions, social, updates, forums, purchases, reservations, all
@@ -164,13 +163,8 @@ struct GmailPage: Decodable {
     private var page = 0
     private var firstID: String?
     func prepare(source: WebPage, host: NSView) {
-        if let companion, companion.engine != source.engine { tearDown() }
         if companion == nil {
-            #if RISE_CHROMIUM
-            let web: WebPage = source.engine == .chromium ? ChromiumPage() : WebKitPage()
-            #else
-            let web: WebPage = WebKitPage()
-            #endif
+            let web = BrowserTab.makePage()
             // A window keeps Gmail's list rendering normally; the companion stays offscreen,
             // and its container keeps the page out of the window's accessibility tree.
             let container = HiddenAccessibilityView(frame: NSRect(x: -20000, y: 0, width: 1100, height: 800))
@@ -224,9 +218,7 @@ struct GmailPage: Decodable {
     }
     func tearDown() {
         cancel(); companion?.view.superview?.removeFromSuperview()
-        #if RISE_CHROMIUM
         (companion as? ChromiumPage)?.browserView.close()
-        #endif
         companion = nil
     }
 

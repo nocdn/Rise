@@ -1,5 +1,4 @@
 import AppKit
-import WebKit
 
 /// The link a Peek grew out of: its rect in the source page and a snapshot of it.
 struct PeekOrigin {
@@ -12,7 +11,7 @@ struct PeekOrigin {
 }
 
 /// Stands in for the Peek card while it travels between the clicked link and its
-/// resting frame, so the live WKWebView never resizes mid-animation. Snapshots
+/// resting frame, so the live page never resizes mid-animation. Snapshots
 /// are fitted to the card's width and pinned to its top edge, like Arc.
 final class PeekGhost: Surface {
     enum Phase { case opening, closing }

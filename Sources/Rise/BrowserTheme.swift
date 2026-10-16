@@ -42,10 +42,7 @@ import AppKit
             $0.contentTintColor = theme.sidebarIcon; $0.hoverColor = theme.text.withAlphaComponent(0.07)
         }
         let allTabs = tabs + (peekTab.map { [$0] } ?? [])
-        for tab in allTabs {
-            tab.page.setTheme(appearance, background: theme.page)
-            pagePaint.applyTheme(dark: theme == .dark, to: tab.webView)
-        }
+        for tab in allTabs { tab.page.setTheme(appearance, background: theme.page) }
         if theme == .dark {
             for tab in tabs where tab.darkFavicon == nil {
                 if let icon = suggestionFavicons.darkImage(for: tab.url) { tab.darkFavicon = icon }

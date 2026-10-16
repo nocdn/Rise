@@ -1,5 +1,4 @@
 import AppKit
-import WebKit
 
 /// Holds the page of a link hovered with the Peek modifier, rendering invisibly at
 /// the Peek card's size so a click can show it from the first animation frame.
@@ -14,18 +13,17 @@ final class PeekStandbyView: FlippedView {
         peekStandbyWork?.cancel(); peekStandbyWork = nil
         guard shouldPeek(modifiers: modifiers), let web = hoveredWebView, web !== peekTab?.page.view, let url = linkStatus.url,
               let page = page(showing: web), LinkPreloader.isEligible(url, from: page.url), peekStandby?.url != url else { return }
-        let engine = page.engine
         let work = DispatchWorkItem { [weak self] in
             guard let self, self.linkStatus.url == url, self.shouldPeek(modifiers: NSEvent.modifierFlags) else { return }
-            self.renderPeekStandby(url, engine: engine)
+            self.renderPeekStandby(url)
         }
         peekStandbyWork = work
         DispatchQueue.main.asyncAfter(deadline: .now()+0.08, execute: work)
     }
     /// The standby page uses the hovered page's engine, as the Peek it becomes does.
-    func renderPeekStandby(_ url: URL, engine: WebEngine = .webKit) {
+    func renderPeekStandby(_ url: URL) {
         discardPeekStandby()
-        let tab = configure(BrowserTab(engine: engine))
+        let tab = configure(BrowserTab())
         // It renders invisibly behind the page, so it mustn't take hover until it's shown.
         setCovered(true, tab)
         peekStandbyView.alphaValue = 0; peekStandbyView.addSubview(tab.page.view)

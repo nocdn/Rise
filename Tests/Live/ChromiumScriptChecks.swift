@@ -69,7 +69,7 @@ import RiseChromium
         NSApp.activate(ignoringOtherApps: true)
         let tab = browser.addTab(url: URL(string: "about:blank")!)
         guard let page = tab.page as? ChromiumPage else { check(false, "The tab is a Chromium page"); return }
-        _ = await waitUntil("The blank page loads") { !page.isLoading }
+        _ = await waitUntil("The blank page loads") { page.url?.absoluteString == "about:blank" && !page.isLoading }
 
         page.addMessageHandler("riseCheckNote", world: .named("Rise.Check")) { [weak self] in self?.notes.append($0) }
         page.addMessageHandler("riseCheckAsk", world: .named("Rise.Check")) { message, reply in
@@ -91,6 +91,10 @@ import RiseChromium
         page.addUserScript("window.riseFromRise = 1; riseHandlers.riseCheckPage.postMessage(typeof riseHandlers);",
                            world: .page, mainFrameOnly: true, handlers: ["riseCheckPage"])
 
+        // Adding a script runs it in the blank page too, which posts a moment later; only the
+        // page's own posts count.
+        try await Task.sleep(for: .milliseconds(500))
+        notes = []; pageNotes = []
         tab.load(main)
         _ = await waitUntil("The page and its frames load") { page.url == main && !page.isLoading }
         _ = await waitUntil("Both frames post") { self.notes.count >= 3 }

@@ -1,6 +1,5 @@
 import AppKit
 import QuartzCore
-import WebKit
 
 /// Tuned in Playgrounds/download-flight.html; the math below mirrors that page step for
 /// step, so values copied from it reproduce the same motion. Springs use the

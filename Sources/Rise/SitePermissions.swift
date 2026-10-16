@@ -1,5 +1,4 @@
 import Foundation
-import WebKit
 
 enum SiteCapability: String, CaseIterable {
     case notifications, camera, microphone, location
@@ -39,14 +38,6 @@ enum SitePermission: String, CaseIterable {
         guard let url, let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme), let host = url.host?.lowercased() else { return nil }
         let port = url.port ?? (scheme == "https" ? 443 : 80)
         return "\(scheme)://\(host):\(port)"
-    }
-    static func origin(_ origin: WKSecurityOrigin) -> String? {
-        // Pages without an origin, such as loaded HTML, report an empty scheme, which
-        // URLComponents refuses with a crash.
-        guard ["http", "https"].contains(origin.protocol.lowercased()) else { return nil }
-        var parts = URLComponents(); parts.scheme = origin.protocol; parts.host = origin.host
-        if origin.port > 0 { parts.port = origin.port }
-        return Self.origin(parts.url)
     }
     func permission(_ capability: SiteCapability, origin: String?) -> SitePermission {
         guard let origin, let value = decisions[origin]?[capability.rawValue] else { return .ask }

@@ -1,6 +1,5 @@
 import AppKit
 import os
-import WebKit
 
 /// Snap's finger-phase adapter. System momentum is consumed, since the copied
 /// spring runs its own flick after the finger phase ends.
@@ -187,7 +186,7 @@ struct FloatingVideoScrollInput {
         frozenFrame.isHidden = true; frozenFrame.image = nil
     }
 
-    /// Keeps WebKit in a live window while the first decoded frame arrives,
+    /// Keeps the page in a live window while the first decoded frame arrives,
     /// without taking clicks over the nearly transparent panel.
     func showForFirstFrame() {
         alphaValue = 0.01; acceptsMouse = false; orderFrontRegardless()
@@ -486,7 +485,7 @@ struct FloatingVideoScrollInput {
 
     private func startClock() {
         guard displayLink == nil, let screen = screen ?? NSScreen.main else { return }
-        // A view-bound link can stop when WebKit changes occlusion while the
+        // A view-bound link can stop when the engine changes occlusion while the
         // player migrates. The screen clock keeps the floating window moving.
         let link = screen.displayLink(target: self, selector: #selector(tick(_:)))
         link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)

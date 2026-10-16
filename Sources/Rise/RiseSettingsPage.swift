@@ -1,7 +1,5 @@
 import AppKit
-#if RISE_CHROMIUM
 import RiseChromium
-#endif
 
 /// Rise's own settings, among Chrome's at rise://settings: the settings page asks Rise for each
 /// section's rows, and changes them, through the `riseSettings` object Rise's script gives it.
@@ -143,11 +141,7 @@ import RiseChromium
 
     /// Only Chrome's settings page itself, which `PageFrame.origin` leaves out as it isn't a website.
     private static func isSettings(_ frame: PageFrame) -> Bool {
-        #if RISE_CHROMIUM
         return (frame.handle as? RCFrame)?.origin == "chrome://settings"
-        #else
-        return false
-        #endif
     }
 
     static let settingsScript = """

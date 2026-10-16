@@ -1,5 +1,4 @@
 import AppKit
-import WebKit
 
 /// A Peek growing into its tab hands its live page over instead of loading it again. The
 /// tab's page from before is held, live and paused, so Back returns to it without reloading

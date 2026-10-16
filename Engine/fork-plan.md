@@ -237,15 +237,24 @@ are most of them.
 5. **Chrome features Rise now gets.** Decide, one by one, what Rise shows: Rise's own permission
    prompts, password and autofill (or none, as now), extension side panels in Rise's sidebar,
    Chrome's memory saver.
-6. **Data.** CEF already keeps a Chrome profile directory, so Rise's Chromium profile should
-   carry over as it is. WebKit-era data comes over as planned in the original stage 6.
+6. **Data.** Not needed: Rise had only been used for testing, so nothing is carried over from
+   the CEF or WebKit builds.
 7. **Release.** As planned: signing and notarizing the nested helpers, and licence notices.
    Plus the update routine below.
+   - **The fork is Rise's only engine.** CEF is gone (its bridge, patches, helper app and
+     scripts), and so is WebKit on the Mac: `build/Rise.app` runs on the fork, and
+     `scripts/engine/{checkout,patch,build}.sh` make the fork from the pin and
+     `Engine/fork/patches`. The iPhone app stays on WebKit; the code it shares with the Mac
+     keeps its WebKit parts behind `os(iOS)`.
+   - **Unit tests** run with `scripts/test.sh` on `BlankPage`s, which go where they're sent and
+     say so as pages do, but draw and run nothing; tests that need a real page are live checks.
 
 ## Updating Chromium, every four weeks
 
-1. Move to the new Chrome stable branch, and take Chrome's weekly security fixes in between.
-2. Re-apply Rise's patches. Most of Rise is new files in `src/rise/`, so few conflict.
+1. Move the pin (`Engine/chromium.json`) to the new Chrome stable tag, and take Chrome's weekly
+   security fixes in between; `scripts/engine/checkout.sh` fetches it.
+2. Re-apply Rise's patches (`scripts/engine/patch.sh`, which `build.sh` runs). Most of Rise is new
+   files in `chrome/browser/rise`, so few conflict.
 3. Fix compile errors from Chrome's window interface. These are loud and cheap: over the last
    year, `browser_window.h` changed 43 times, three or four times a release, mostly a method added
    or removed.

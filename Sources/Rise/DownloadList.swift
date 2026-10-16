@@ -1,5 +1,4 @@
 import AppKit
-import WebKit
 
 /// Pauses, resumes and cancels one engine's download for the list.
 @MainActor protocol DownloadControl: AnyObject {
@@ -73,11 +72,6 @@ struct DownloadRecord: Codable, Equatable {
         let item = Item(record: DownloadRecord(path: url.path), progress: progress ?? Progress(totalUnitCount: -1))
         item.readProgress(); items.insert(item, at: 0); changed()
         return item.record.id
-    }
-    func track(_ download: WKDownload, at destination: URL, expectedBytes: Int64, failed: @escaping (Error) -> Void) {
-        track(at: destination, progress: download.progress, expectedBytes: expectedBytes) { item, list in
-            DownloadTransfer(download: download, item: item, list: list, failed: failed)
-        }
     }
     /// A new row for a download saving to `destination`, run by the control `make` gives.
     func track(at destination: URL, progress: Progress, expectedBytes: Int64, control make: (Item, DownloadList) -> DownloadControl) {

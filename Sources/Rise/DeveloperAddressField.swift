@@ -1,6 +1,6 @@
 import AppKit
 
-/// Updates from WebKit must never replace an address while the user edits it.
+/// Updates from the page must never replace an address while the user edits it.
 final class DeveloperAddressField: FadingTextField, NSTextFieldDelegate {
     private(set) var displayedURL = ""
     private(set) var isEditingAddress = false

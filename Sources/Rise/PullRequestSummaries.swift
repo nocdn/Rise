@@ -1,5 +1,4 @@
 import Foundation
-import WebKit
 
 /// A pull request on github.com or a merge request on GitLab, from any of its pages
 /// (conversation, commits, files or changes).

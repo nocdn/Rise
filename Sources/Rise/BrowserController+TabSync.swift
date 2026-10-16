@@ -47,7 +47,7 @@ import RiseCore
             var saved = existing[value.id]?.saved ?? SavedTab(id: value.id, url: "about:blank", title: "New Tab")
             saved.url = value.url ?? "about:blank"; saved.title = value.title ?? "New Tab"
             saved.sessionState = nil; saved.faviconData = nil; saved.darkFaviconData = nil; saved.faviconOrigin = nil
-            return configure(BrowserTab(saved: saved, engine: ChromiumEngine.engineForNewTabs))
+            return configure(BrowserTab(saved: saved))
         } + localTabs
         for old in tabs where !next.contains(where: { $0 === old }) {
             old.onChange = nil; old.onThumbnailChange = nil; old.onFullscreenChange = nil

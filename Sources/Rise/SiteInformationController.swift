@@ -7,7 +7,7 @@ final class SiteInformationController: NSViewController {
     let host: NSTextField
     let address: NSTextField
     let connection: NSTextField
-    let engine = NSTextField(labelWithString: "Rendering engine: Apple WebKit")
+    let engine = NSTextField(labelWithString: "Rendering engine: Chromium")
 
     init(url: URL) {
         self.url = url

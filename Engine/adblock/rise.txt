@@ -1,4 +1,4 @@
-! Rise's own rules, as scripts/update-adblock.py adds them to WebKit's: general ad-slot selectors
+! Rise's own rules: general ad-slot selectors
 ! and ad-script and banner file names.
 /\/ads(\.min)?\.js([?].*)?$/$script,domain=~localhost|~127.0.0.1
 /\/pagead(\.min)?\.js([?].*)?$/$script,domain=~localhost|~127.0.0.1

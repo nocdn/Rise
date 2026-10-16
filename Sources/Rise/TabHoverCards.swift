@@ -1,5 +1,4 @@
 import AppKit
-import WebKit
 
 /// Hovering a pull request, merge request or Gmail tab opens its card, which opens and closes at
 /// once like a tooltip. While one is open, or just after it closes, another supported tab

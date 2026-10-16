@@ -1,8 +1,6 @@
 import AppKit
 import RiseCore
-#if RISE_CHROMIUM
 import RiseChromium
-#endif
 
 /// The sheets a page's `alert()`, `confirm()`, `prompt()` and file choosers open, the same for
 /// either engine's pages. Each returns its sheet, or nil when there's no window to show it in,
@@ -67,7 +65,6 @@ import RiseChromium
     }
 }
 
-#if RISE_CHROMIUM
 /// A dialog a Chromium page asks for.
 struct PageDialog {
     let kind: RCDialogKind
@@ -76,7 +73,7 @@ struct PageDialog {
 }
 
 @MainActor extension BrowserController {
-    /// Rise's sheet for a Chromium page's dialog, as `WebDelegates` opens for WebKit's.
+    /// Rise's sheet for a page's dialog.
     func showDialog(_ dialog: PageDialog, from page: ChromiumPage, finish: @escaping (Bool, String?) -> Void) -> NSWindow? {
         switch dialog.kind {
         case .alert: return showPageAlert(dialog.message, from: page.url) { finish(true, nil) }
@@ -95,4 +92,3 @@ struct PageDialog {
         }
     }
 }
-#endif

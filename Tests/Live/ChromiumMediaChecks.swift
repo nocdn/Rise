@@ -1,7 +1,10 @@
-// Any site's floating video, the tab's play and sound buttons, and page full screen on Chromium: the
-// XCTest cases these were written as, run in Rise windows (Tests/Live/LiveXCTest.swift), with pages
-// at the addresses they name. Run with scripts/test-chromium-live.py media; RISE_CASES=<names> runs some.
+// Any site's floating video, the tab's play and sound buttons, page full screen, Gmail's inbox
+// reader, pausing downloads, what Page Assistant reads, site search learning, the swipe's page
+// probe and hard reloads, on Chromium: the XCTest cases these were written as, run in Rise windows
+// (Tests/Live/LiveXCTest.swift), with pages at the addresses they name. Run with
+// scripts/test-chromium-live.py media; RISE_CASES=<names> runs some.
 import AppKit
+import Network
 import RiseCore
 @testable import Rise
 import RiseChromium
@@ -26,8 +29,446 @@ import RiseChromium
             await VideoPictureInPictureCases().runAll()
             await TabMediaCases().runAll()
             await TabAudioCases().runAll()
+            await GmailReaderCases().runAll()
+            await DownloadCases().runAll()
+            await PageAssistantCases().runAll()
+            await SiteSearchLearningCases().runAll()
+            await HistorySwipeCases().runAll()
+            await HardReloadCases().runAll()
             liveFinish()
         }
+    }
+}
+
+private final class SlowDownloadServer {
+    let listener: NWListener
+    let size = 4 * 1024 * 1024
+    private let queue = DispatchQueue(label: "Rise.DownloadControlsTests")
+    private let lock = NSLock()
+    private var offsets: [Int] = []
+    var ranges: [Int] { lock.lock(); defer { lock.unlock() }; return offsets }
+    var url: URL? { listener.port.flatMap { URL(string: "http://127.0.0.1:\($0.rawValue)/file.bin") } }
+    init() throws {
+        listener = try NWListener(using: .tcp, on: .any)
+        listener.newConnectionHandler = { [weak self] connection in
+            guard let self else { connection.cancel(); return }
+            connection.start(queue: self.queue); self.receive(connection, data: Data())
+        }
+        listener.start(queue: queue)
+    }
+    func stop() { listener.cancel() }
+    private func receive(_ connection: NWConnection, data: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] chunk, _, _, _ in
+            guard let self else { connection.cancel(); return }
+            var buffer = data; if let chunk { buffer.append(chunk) }
+            let text = String(decoding: buffer, as: UTF8.self)
+            guard text.contains("\r\n\r\n") else { self.receive(connection, data: buffer); return }
+            let range = text.lowercased().components(separatedBy: "\r\n").first { $0.hasPrefix("range: bytes=") }
+            let offset = range.flatMap { Int($0.dropFirst("range: bytes=".count).split(separator: "-").first ?? "0") } ?? 0
+            self.lock.lock(); self.offsets.append(offset); self.lock.unlock()
+            let status = offset == 0 ? "200 OK" : "206 Partial Content"
+            let contentRange = offset == 0 ? "" : "Content-Range: bytes \(offset)-\(self.size-1)/\(self.size)\r\n"
+            let header = "HTTP/1.1 \(status)\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=test-file.bin\r\nContent-Length: \(self.size-offset)\r\nCache-Control: no-store\r\nAccept-Ranges: bytes\r\nETag: \"rise-test-v1\"\r\nLast-Modified: Mon, 05 Oct 2026 10:00:00 GMT\r\n\(contentRange)Connection: close\r\n\r\n"
+            connection.send(content: Data(header.utf8), completion: .contentProcessed { [weak self] error in
+                if error == nil { self?.send(connection, offset: offset) } else { connection.cancel() }
+            })
+        }
+    }
+    private func send(_ connection: NWConnection, offset: Int) {
+        guard offset < size else { connection.cancel(); return }
+        let count = min(16384, size-offset)
+        connection.send(content: Data(repeating: 0x5a, count: count), completion: .contentProcessed { [weak self] error in
+            guard let self, error == nil else { connection.cancel(); return }
+            self.queue.asyncAfter(deadline: .now()+0.02) { [weak self] in self?.send(connection, offset: offset+count) }
+        })
+    }
+}
+
+/// Real downloads in Rise's list: pausing, resuming and cancelling a running one, from a server
+/// that sends slowly.
+@MainActor final class DownloadCases {
+    func runAll() async {
+        let only = ProcessInfo.processInfo.environment["RISE_CASES"]?.split(separator: ",").map(String.init)
+        if only?.contains("ActualDownloadPauseResumeCompletionAndPopoverUpdates") ?? true {
+            await liveCase("ActualDownloadPauseResumeCompletionAndPopoverUpdates") { try await testActualDownloadPauseResumeCompletionAndPopoverUpdates() }
+        }
+        if only?.contains("CancellingDuringPauseRemovesOnlyTheActiveDownload") ?? true {
+            await liveCase("CancellingDuringPauseRemovesOnlyTheActiveDownload") { try await testCancellingDuringPauseRemovesOnlyTheActiveDownload() }
+        }
+    }
+    @MainActor private func waitUntil(_ message: String, _ predicate: () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(20)
+        while !predicate() && Date() < deadline { try await Task.sleep(for: .milliseconds(30)) }
+        XCTAssertTrue(predicate(), message)
+    }
+    @MainActor private func begin(_ server: SlowDownloadServer, browser: BrowserController) async throws -> DownloadList.Item {
+        try await waitUntil("HTTP server listening") { server.url != nil }
+        let tab = browser.selectedTab ?? browser.addTab()
+        // An attachment, so opening it downloads it, as a click on its link would.
+        tab.load(server.url!)
+        try await waitUntil("An unfinished file must appear in the list") { !browser.downloads.visible.isEmpty }
+        return try XCTUnwrap(browser.downloads.visible.first)
+    }
+    @MainActor func testActualDownloadPauseResumeCompletionAndPopoverUpdates() async throws {
+        let server = try SlowDownloadServer(); defer { server.stop() }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let browser = BrowserController(sessionURL: folder.appendingPathComponent("session.json"), restore: false)
+        browser.downloadsFolder = folder.appendingPathComponent("Downloads")
+        defer { browser.saveWork?.cancel(); browser.tabs.forEach { $0.cancelLoad() }; browser.window?.orderOut(nil); try? FileManager.default.removeItem(at: folder) }
+        let item = try await begin(server, browser: browser)
+        let controller = DownloadsController(list: browser.downloads); _ = controller.view
+        browser.downloads.onChange = { [weak controller] in controller?.reload() }
+        try await waitUntil("Byte counts and transfer speed update") { item.receivedBytes > 0 && item.bytesPerSecond > 0 }
+        let row = try XCTUnwrap(controller.rows.first)
+        row.isHighlighted = false
+        XCTAssertFalse(row.progressRing.isHidden); XCTAssertTrue(row.pauseButton.isHidden)
+        XCTAssertTrue(row.previewButton.isHidden); XCTAssertTrue(row.removeButton.isHidden)
+        row.isHighlighted = true
+        XCTAssertFalse(row.pauseButton.isHidden); XCTAssertFalse(row.removeButton.isHidden)
+        row.isHighlighted = false
+        XCTAssertFalse(row.canPreview)
+        browser.downloads.togglePause(item.record.id)
+        let ringFill = try XCTUnwrap(row.progressRing.layer?.sublayers?.last as? CAShapeLayer)
+        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            XCTAssertEqual(ringFill.animation(forKey: "pauseColor")?.duration, 0.16)
+        }
+        try await waitUntil("Pause has captured resume data") { item.state == .paused }
+        let bytes = item.receivedBytes
+        XCTAssertGreaterThan(bytes, 0); XCTAssertLessThan(bytes, Int64(server.size))
+        XCTAssertEqual(item.bytesPerSecond, 0)
+        XCTAssertEqual(row.pauseButton.toolTip, "Resume Download")
+        XCTAssertFalse(row.pauseButton.isHidden); XCTAssertFalse(row.removeButton.isHidden, "Paused controls remain visible without a hover")
+        row.progressRing.effectiveAppearance.performAsCurrentDrawingAppearance {
+            XCTAssertEqual(ringFill.strokeColor, NSColor.secondaryLabelColor.cgColor)
+        }
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(item.receivedBytes, bytes, "Paused transfers must stop receiving")
+        XCTAssertEqual(browser.downloads.visible.first?.record.id, item.record.id)
+        browser.downloads.togglePause(item.record.id)
+        try await waitUntil("Resumed download hides controls away from hover") { item.state == .downloading }
+        XCTAssertTrue(row.pauseButton.isHidden); XCTAssertTrue(row.removeButton.isHidden)
+        row.progressRing.effectiveAppearance.performAsCurrentDrawingAppearance {
+            XCTAssertEqual(ringFill.strokeColor, NSColor.systemBlue.cgColor)
+        }
+        try await waitUntil("Resume finishes the same list entry") { item.isFinished }
+        XCTAssertEqual(browser.downloads.items.count, 1)
+        let data = try Data(contentsOf: item.record.url)
+        XCTAssertEqual(data.count, server.size); XCTAssertTrue(data.allSatisfy { $0 == 0x5a })
+        XCTAssertEqual(item.receivedBytes, Int64(server.size)); XCTAssertEqual(item.totalBytes, Int64(server.size))
+        XCTAssertTrue(controller.rows.first === row, "Progress and completion preserve the row")
+        XCTAssertTrue(row.progressRing.isHidden); XCTAssertTrue(row.pauseButton.isHidden)
+        XCTAssertTrue(DownloadList(storeURL: folder.appendingPathComponent("downloads.json")).visible.first?.isFinished == true)
+    }
+    @MainActor func testCancellingDuringPauseRemovesOnlyTheActiveDownload() async throws {
+        let server = try SlowDownloadServer(); defer { server.stop() }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let browser = BrowserController(sessionURL: folder.appendingPathComponent("session.json"), restore: false)
+        browser.downloadsFolder = folder.appendingPathComponent("Downloads")
+        defer { browser.saveWork?.cancel(); browser.tabs.forEach { $0.cancelLoad() }; browser.window?.orderOut(nil); try? FileManager.default.removeItem(at: folder) }
+        let item = try await begin(server, browser: browser)
+        try await waitUntil("Download receives bytes") { item.receivedBytes > 0 }
+        browser.downloads.togglePause(item.record.id); browser.downloads.cancel(item.record.id)
+        try await waitUntil("Cancellation removes the row even while pausing") { browser.downloads.visible.isEmpty }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: item.record.path))
+        XCTAssertTrue(browser.downloads.pendingDestinations.isEmpty)
+    }
+}
+
+/// Serves a page and records each request's headers.
+private final class HeaderRecordingServer {
+    let listener: NWListener
+    private let queue = DispatchQueue(label: "Rise.HeaderRecordingServer")
+    private let lock = NSLock()
+    private var recorded: [String] = []
+    init() throws {
+        listener = try NWListener(using: .tcp, on: .any)
+        listener.newConnectionHandler = { [weak self] connection in
+            connection.start(queue: self?.queue ?? .global()); self?.receive(connection, data: Data())
+        }
+        listener.start(queue: queue)
+    }
+    var url: URL? { listener.port.flatMap { URL(string: "http://[::1]:\($0.rawValue)/") } }
+    var requests: [String] { lock.lock(); defer { lock.unlock() }; return recorded }
+    func stop() { listener.cancel() }
+    private func receive(_ connection: NWConnection, data: Data) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] chunk, _, complete, error in
+            guard let self else { connection.cancel(); return }
+            var data = data; if let chunk { data.append(chunk) }
+            let request = String(decoding: data, as: UTF8.self)
+            guard request.contains("\r\n\r\n") else {
+                if complete || error != nil { connection.cancel() } else { self.receive(connection, data: data) }; return
+            }
+            // Chromium also asks for the site's icon, which isn't a load of the page.
+            if request.lowercased().hasPrefix("get /favicon.ico") {
+                connection.send(content: Data("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8),
+                                completion: .contentProcessed { _ in connection.cancel() })
+                return
+            }
+            self.lock.lock(); self.recorded.append(request.lowercased()); let first = self.recorded.count == 1; self.lock.unlock()
+            let content = "<!doctype html><title>Hard reload</title><p>Page</p>"
+            let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nCache-Control: max-age=3600\r\nContent-Length: \(content.utf8.count)\r\nConnection: close\r\n\r\n\(content)"
+            // Later loads answer slowly, so a test can watch them in progress.
+            self.queue.asyncAfter(deadline: .now()+(first ? 0 : 0.5)) {
+                connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
+            }
+        }
+    }
+}
+
+@MainActor final class HardReloadCases {
+    func tearDown() {}
+    func runAll() async {
+        let only = ProcessInfo.processInfo.environment["RISE_CASES"]?.split(separator: ",").map(String.init)
+        if only?.contains("CommandShiftRReloadsTheSelectedTabWithoutTheCache") ?? true { await liveCase("CommandShiftRReloadsTheSelectedTabWithoutTheCache") { try await self.testCommandShiftRReloadsTheSelectedTabWithoutTheCache(); self.tearDown() } }
+    }
+    @MainActor private func waitUntil(_ message: String, timeout: TimeInterval = 15, _ predicate: () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !predicate() && Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertTrue(predicate(), message)
+    }
+    @MainActor func testCommandShiftRReloadsTheSelectedTabWithoutTheCache() async throws {
+        let server = try HeaderRecordingServer(); defer { server.stop() }
+        try await waitUntil("HTTP fixture listening") { server.url != nil }
+        let suite = "Rise.HardReloadTests.\(UUID())", defaults = UserDefaults(suiteName: suite)!
+        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), restore: false, preferences: defaults)
+        defer {
+            browser.saveWork?.cancel(); browser.tabs.forEach { $0.cancelLoad() }; browser.window?.orderOut(nil)
+            defaults.removePersistentDomain(forName: suite)
+        }
+        let tab = browser.addTab()
+        tab.load(server.url!)
+        try await waitUntil("Page loads") { server.requests.count == 1 && !tab.isLoading }
+        browser.hardReload()
+        try await waitUntil("Hard reload requests the page again") { server.requests.count == 2 }
+        // The tab's progress stays red for the whole load, then returns to the accent.
+        XCTAssertTrue(tab.isLoading); XCTAssertTrue(tab.isHardReloading)
+        try await waitUntil("Hard reload finishes") { !tab.isLoading }
+        try await waitUntil("Finishing clears the hard reload") { !tab.isHardReloading }
+        // WebKit marks a reload from origin with no-cache, not just max-age=0 revalidation.
+        let hard = server.requests[1]
+        XCTAssertTrue(hard.contains("cache-control: no-cache") || hard.contains("pragma: no-cache"), hard)
+    }
+}
+
+/// Rise's probe that decides whether a horizontal swipe goes back, on real pages.
+@MainActor final class HistorySwipeCases {
+    func runAll() async {
+        let only = ProcessInfo.processInfo.environment["RISE_CASES"]?.split(separator: ",").map(String.init)
+        for (name, run) in [("DOMProbePreservesHorizontalContainersShadowDOMIframesAndZoom", testDOMProbePreservesHorizontalContainersShadowDOMIframesAndZoom),
+                            ("PagesThatTakeTheWheelKeepTheGesture", testPagesThatTakeTheWheelKeepTheGesture)] where only?.contains(name) ?? true {
+            await liveCase(name) { try await run() }
+        }
+    }
+    private func browser() -> BrowserController {
+        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"),
+                                        restore: false, preferences: UserDefaults(suiteName: "Rise.SwipeChecks.\(UUID().uuidString)")!)
+        browser.window?.setFrameAutosaveName(""); browser.window?.center(); browser.showWindow(nil)
+        return browser
+    }
+    private func clean(_ browser: BrowserController) { browser.saveWork?.cancel(); browser.tabs.forEach { $0.cancelLoad() }; browser.window?.orderOut(nil) }
+    private func page(_ html: String, in browser: BrowserController) async throws -> BrowserTab {
+        let tab = browser.addTab()
+        tab.web.loadHTMLString(html, baseURL: URL(string: "https://example.com/swipe"))
+        for _ in 0..<200 where tab.page.isLoading || tab.page.url?.host != "example.com" { try await Task.sleep(for: .milliseconds(25)) }
+        try await Task.sleep(for: .milliseconds(300))
+        return tab
+    }
+    /// The probe at `point`, in CSS pixels, as the swipe asks it.
+    private func probe(_ tab: BrowserTab, _ point: NSPoint) async throws -> Bool? {
+        let size = tab.page.view.bounds.size
+        return try await tab.page.evaluate(HistorySwipeController.scrollProbe, arguments: ["x": point.x, "y": point.y, "width": size.width, "height": size.height],
+                                           in: nil, world: .named(HistorySwipeController.worldName)) as? Bool
+    }
+    func testDOMProbePreservesHorizontalContainersShadowDOMIframesAndZoom() async throws {
+        let browser = browser(); defer { clean(browser) }
+        let tab = try await page("""
+        <!doctype html><style>body{margin:0} .scroll{width:200px;height:100px;overflow-x:auto}
+        .wide{width:1000px;height:40px}</style>
+        <div class=scroll><div class=wide>Carousel</div></div>
+        <div id=shadow></div><iframe style='width:200px;height:100px' srcdoc='page'></iframe>
+        <script>document.querySelector('#shadow').attachShadow({mode:'open'}).innerHTML=
+        '<div style="width:200px;height:100px;overflow:auto"><div style="width:1000px">Shadow scroll</div></div>'</script>
+        """, in: browser)
+        for (point, allowed) in [(NSPoint(x: 40, y: 30), false), (.init(x: 40, y: 130), false),
+                                 (.init(x: 40, y: 240), false), (.init(x: 400, y: 400), true)] {
+            let result = try await probe(tab, point)
+            XCTAssertEqual(result, allowed, "At \(point)")
+        }
+        tab.page.zoom = 1.5
+        try await Task.sleep(for: .milliseconds(300))
+        let zoomed = try await probe(tab, NSPoint(x: 40, y: 30))
+        XCTAssertEqual(zoomed, false)
+    }
+    func testPagesThatTakeTheWheelKeepTheGesture() async throws {
+        let browser = browser(); defer { clean(browser) }
+        // Like Excalidraw, a canvas pans by cancelling wheel events instead of scrolling.
+        let tab = try await page("""
+        <!doctype html><style>body{margin:0} canvas{display:block;width:100vw;height:100vh}</style>
+        <canvas></canvas><script>window.pans = 0; document.querySelector('canvas').addEventListener('wheel',
+        e => { e.preventDefault(); pans++ }, {passive: false})</script>
+        """, in: browser)
+        let point = NSPoint(x: 400, y: 300)
+        let permitted = try await probe(tab, point)
+        XCTAssertEqual(permitted, true, "A page that hasn't cancelled any wheel still swipes")
+        let wheel = "document.querySelector('canvas').dispatchEvent(new WheelEvent('wheel', {deltaX: -40, bubbles: true, cancelable: true}))"
+        _ = try await tab.web.evaluateJavaScript(wheel)
+        let panning = try await probe(tab, point)
+        XCTAssertEqual(panning, false, "The page cancelled the gesture's wheel, so it pans instead")
+        let pans = try await tab.web.evaluateJavaScript("pans") as? Int
+        XCTAssertEqual(pans, 1)
+        let hidden = try await tab.web.evaluateJavaScript("typeof window.riseWheel") as? String
+        XCTAssertEqual(hidden, "undefined", "Rise's watcher stays out of the page's world")
+        try await Task.sleep(for: .milliseconds(350))
+        let later = try await probe(tab, point)
+        XCTAssertEqual(later, true, "An old pan doesn't hold back a later swipe")
+    }
+}
+
+@MainActor final class SiteSearchLearningCases {
+    func tearDown() {}
+    func runAll() async {
+        let only = ProcessInfo.processInfo.environment["RISE_CASES"]?.split(separator: ",").map(String.init)
+        if only?.contains("SearchingOnASiteTeachesTheAddressBarToSearchItWithTab") ?? true { await liveCase("SearchingOnASiteTeachesTheAddressBarToSearchItWithTab") { try await self.testSearchingOnASiteTeachesTheAddressBarToSearchItWithTab(); self.tearDown() } }
+        if only?.contains("TypingASiteFillsInTheSiteNotItsLastPage") ?? true { await liveCase("TypingASiteFillsInTheSiteNotItsLastPage") { try self.testTypingASiteFillsInTheSiteNotItsLastPage(); self.tearDown() } }
+    }
+    @MainActor private func waitUntil(_ message: String, _ predicate: () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(10)
+        while !predicate() && Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(predicate(), message)
+    }
+    @MainActor func testSearchingOnASiteTeachesTheAddressBarToSearchItWithTab() async throws {
+        _ = NSApplication.shared
+        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"), restore: false)
+        defer {
+            browser.hidePalette(); browser.saveWork?.cancel(); browser.tabs.forEach { $0.cancelLoad() }
+            browser.window?.orderOut(nil); try? FileManager.default.removeItem(at: browser.sessionURL.deletingLastPathComponent())
+        }
+        let tab = browser.addTab(), web = tab.web
+        // A site that shows its results in place, as YouTube and GitHub do, with the search in the address.
+        web.loadHTMLString("""
+        <!doctype html><meta property="og:site_name" content="Lamp Shop"><title>Lamps</title>
+        <form><input name=user value=someone><input type=search name=find><button>Search</button></form>
+        <script>document.querySelector('form').addEventListener('submit', event => {
+          event.preventDefault(); history.pushState({}, '', '/results/?sort=new&term=' + encodeURIComponent(event.target.find.value))
+        })</script>
+        """, baseURL: URL(string: "https://lamps.example/"))
+        try await waitUntil("Shop loaded") { !web.isLoading && web.title == "Lamps" }
+        XCTAssertNil(browser.siteSearchLearner.searches.site(forAddress: "lamps.example"))
+        _ = try await web.evaluateJavaScript("document.querySelector('[name=find]').value = 'desk lamp'; document.querySelector('form').requestSubmit(); location.href")
+        try await waitUntil("Learned from the search") { browser.siteSearchLearner.searches.site(forAddress: "lamps.example") != nil }
+        let site = try XCTUnwrap(browser.siteSearchLearner.searches.site(forAddress: "lamps.example"))
+        XCTAssertEqual(site.name, "Lamp Shop")
+        XCTAssertEqual(site.searchURL(for: "floor lamp")?.absoluteString, "https://lamps.example/results/?term=floor%20lamp")
+
+        browser.showWindow(nil); browser.newTab()
+        let palette = browser.palette, editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
+        editor.insertText("lamps.example", replacementRange: editor.selectedRange())
+        XCTAssertEqual(palette.offeredSite?.name, "Lamp Shop", "The learned search is offered with Tab")
+        editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
+        XCTAssertEqual(palette.siteSearch?.name, "Lamp Shop")
+        editor.insertText("floor lamp", replacementRange: editor.selectedRange())
+        var opened: URL?
+        palette.submit = { _, suggestion in opened = suggestion?.url }
+        editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        XCTAssertEqual(opened?.absoluteString, "https://lamps.example/results/?term=floor%20lamp")
+    }
+    @MainActor func testTypingASiteFillsInTheSiteNotItsLastPage() throws {
+        _ = NSApplication.shared
+        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"), restore: false)
+        defer { browser.saveWork?.cancel(); browser.window?.orderOut(nil); try? FileManager.default.removeItem(at: browser.sessionURL.deletingLastPathComponent()) }
+        browser.browsingHistory.record(URL(string: "https://www.youtube.com/watch?v=Y0tR-1WUxCo")!, title: "It's Finally Happened")
+        let youtube = try XCTUnwrap(browser.suggestions(for: "yout").first)
+        XCTAssertEqual(youtube.completion, "youtube.com")
+        XCTAssertEqual(youtube.title, "YouTube")
+        browser.browsingHistory.record(URL(string: "https://szukaj.onet.pl/wyniki/?qt=atak")!, title: "atak - Szukaj w Onet.pl")
+        let onet = try XCTUnwrap(browser.suggestions(for: "szu").first)
+        XCTAssertEqual(onet.completion, "szukaj.onet.pl"); XCTAssertEqual(onet.url, URL(string: "https://szukaj.onet.pl/"))
+        XCTAssertTrue(onet.isTypedAction)
+        XCTAssertEqual(browser.suggestions(for: "youtube.com/w").first?.completion, "youtube.com/watch?v=Y0tR-1WUxCo")
+    }
+}
+
+/// What Page Assistant reads of a page.
+@MainActor final class PageAssistantCases {
+    func runAll() async {
+        let only = ProcessInfo.processInfo.environment["RISE_CASES"]?.split(separator: ",").map(String.init)
+        if only?.contains("AssistantSeesCodeThatGitHubDrawsFromAttributes") ?? true {
+            await liveCase("AssistantSeesCodeThatGitHubDrawsFromAttributes") { try await testAssistantSeesCodeThatGitHubDrawsFromAttributes() }
+        }
+    }
+    func testAssistantSeesCodeThatGitHubDrawsFromAttributes() async throws {
+        // Like GitHub's file view: the lines are empty spans painted from an attribute,
+        // under a transparent aria-readonly text area, inside display: contents wrappers.
+        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"),
+                                        restore: false, preferences: UserDefaults(suiteName: "Rise.AssistantChecks.\(UUID().uuidString)")!)
+        browser.window?.setFrameAutosaveName(""); browser.window?.center(); browser.showWindow(nil)
+        defer { browser.saveWork?.cancel(); browser.tabs.forEach { $0.cancelLoad() }; browser.window?.orderOut(nil) }
+        let tab = browser.addTab(), web = tab.web
+        web.loadHTMLString("""
+        <style>[data-code-text]::before{content:attr(data-code-text)} textarea{color:transparent;background:none}</style>
+        <h1>1-4</h1>
+        <div style="display:contents"><div style="display:contents">
+        <textarea aria-readonly="true">int main ()\n{\n    printf("%6.1f", celsius);\n}</textarea></div></div>
+        <div style="display:contents"><p>Wrapped paragraph</p></div>
+        <div><span data-code-text="int main ()"></span></div><div><span data-code-text="printf"></span></div>
+        <textarea>a draft comment</textarea>
+        """, baseURL: URL(string: "https://github.com/a/b/blob/master/1-4"))
+        for _ in 0..<100 where web.isLoading || web.url?.host != "github.com" { try await Task.sleep(nanoseconds: 50_000_000) }
+        let page = try await PageAssistant.snapshot(of: tab.page)
+        XCTAssertTrue(page.text.contains("1-4"), page.text)
+        XCTAssertTrue(page.text.contains("printf(\"%6.1f\", celsius);"), page.text)
+        XCTAssertTrue(page.text.contains("Wrapped paragraph"), page.text)
+        XCTAssertFalse(page.text.contains("a draft comment"), page.text)
+    }
+}
+
+/// The scripts Gmail's card reads the inbox with, on a page made like Gmail's.
+@MainActor final class GmailReaderCases {
+    func runAll() async {
+        let only = ProcessInfo.processInfo.environment["RISE_CASES"]?.split(separator: ",").map(String.init)
+        if only?.contains("ExtractionOnlyIncludesMailTextAndPagingState") ?? true {
+            await liveCase("ExtractionOnlyIncludesMailTextAndPagingState") { try await testExtractionOnlyIncludesMailTextAndPagingState() }
+        }
+    }
+    func testExtractionOnlyIncludesMailTextAndPagingState() async throws {
+        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"),
+                                        restore: false, preferences: UserDefaults(suiteName: "Rise.GmailChecks.\(UUID().uuidString)")!)
+        browser.window?.setFrameAutosaveName(""); browser.window?.center(); browser.showWindow(nil)
+        defer { browser.saveWork?.cancel(); browser.tabs.forEach { $0.cancelLoad() }; browser.window?.orderOut(nil) }
+        let tab = browser.addTab(), web = tab.web
+        web.loadHTMLString("""
+        <table><tr class="zA"><td class="yW"><span email="a@example.com" name="Alice">Ali…</span></td>
+        <td><span class="bog"><span data-legacy-thread-id="abcdef">Subject &amp; details</span><img alt="image"></span>
+        <span class="y2"><span class="Zt"> - </span>Hello <b>there</b><img alt="ignored"><span aria-hidden="true">hidden</span>!\u{200b} More text.</span></td></tr></table>
+        <div role="button" id="older"><img class="amJ"></div>
+        <script>older.onclick = () => older.setAttribute('aria-disabled', 'true')</script>
+        """, baseURL: URL(string: "https://mail.google.com/mail/u/0/#search/in%3Ainbox+category%3Aupdates"))
+        for _ in 0..<200 where web.isLoading || web.url?.host != "mail.google.com" { try await Task.sleep(for: .milliseconds(25)) }
+        // As the reader runs them: in Rise's own world, and the pop-out in the page's.
+        func reader(_ script: String) async throws -> Any? {
+            try await tab.page.evaluate("return " + script, arguments: [:], in: nil, world: .named(GmailPageReader.world))
+        }
+        let snapshot = try await reader(GmailPageReader.snapshot)
+        let raw = try XCTUnwrap(snapshot as? [String: Any])
+        let page = try JSONDecoder().decode(GmailPage.self, from: JSONSerialization.data(withJSONObject: raw))
+        XCTAssertEqual(page.emails, [GmailEmail(id: "abcdef", sender: "Alice", subject: "Subject & details", preview: "Hello there! More text.")])
+        XCTAssertTrue(page.hasMore); XCTAssertEqual(raw["ready"] as? Bool, true)
+        XCTAssertEqual(raw["query"] as? String, "in:inbox category:updates")
+        _ = try await web.evaluateJavaScript("window.shifted = []; document.querySelector('tr.zA').addEventListener('click', e => shifted.push(e.shiftKey)); 0")
+        let popped = try await web.evaluateJavaScript(GmailPageReader.popOut("abcdef")) as? Bool
+        XCTAssertEqual(popped, true)
+        let shifted = try await web.evaluateJavaScript("JSON.stringify(window.shifted)") as? String
+        XCTAssertEqual(shifted, "[true]", "Gmail gets one shift-click on the conversation's row")
+        let missing = try await web.evaluateJavaScript(GmailPageReader.popOut("123456")) as? Bool
+        XCTAssertEqual(missing, false, "No row, no click")
+        let advanced = try await reader(GmailPageReader.nextPage) as? Bool
+        XCTAssertEqual(advanced, true)
+        let stopped = try await reader(GmailPageReader.nextPage) as? Bool
+        XCTAssertEqual(stopped, false)
+        _ = try await web.evaluateJavaScript("document.body.innerHTML = '<div class=ae4><div class=TC>No conversations found.</div></div>'; 0")
+        let empty = try await reader(GmailPageReader.snapshot) as? [String: Any]
+        XCTAssertEqual(empty?["ready"] as? Bool, true, "An empty category finishes loading")
+        XCTAssertEqual(empty?["hasMore"] as? Bool, false)
     }
 }
 

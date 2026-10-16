@@ -1,5 +1,4 @@
 import AppKit
-import WebKit
 
 /// The find bar's motion. Swaps are translated from the Motion (framer-motion) spec they
 /// were designed in:

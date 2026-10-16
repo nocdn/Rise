@@ -1,22 +1,18 @@
 import AppKit
 import RiseCore
-#if RISE_CHROMIUM
 import RiseChromium
-#endif
 
 @MainActor extension BrowserController {
     static let searchEnginePreferenceKey = "Rise.SearchEngine"
 
     var searchProvider: SearchProvider {
-        #if RISE_CHROMIUM
         if ChromiumEngine.isRunning, let name = RCEngine.defaultSearchName() {
             let google = RCEngine.searchURL(forTerms: "rise").flatMap(\.host).map { $0 == "www.google.com" || $0 == "google.com" } ?? false
             return SearchProvider(title: name, searchURL: { RCEngine.searchURL(forTerms: $0) }, isGoogle: google)
         }
-        #endif
         return SearchProvider(searchEngine)
     }
-    /// Rise's own choice, for WebKit.
+    /// Rise's own choice, for when Chromium isn't running, as in unit tests.
     var searchEngine: SearchEngine {
         SearchEngine(rawValue: preferences.string(forKey: Self.searchEnginePreferenceKey) ?? "") ?? .google
     }

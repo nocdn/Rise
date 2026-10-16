@@ -1,4 +1,3 @@
-import WebKit
 
 @MainActor extension VideoPictureInPicture {
     static let script = #"""
@@ -61,7 +60,7 @@ import WebKit
       });
       const largest = list => list.filter(playing).sort((a,b) => (b.videoWidth*b.videoHeight)-(a.videoWidth*a.videoHeight))[0];
       const choose = () => largest(candidates());
-      // Encrypted video floats in WebKit's own picture in picture instead.
+      // Encrypted video floats in Chromium's own picture in picture instead.
       const chooseEncrypted = () => largest(candidates(true).filter(encrypted));
       let nativeVideo = null;
       const floatable = () => !watchPage || !!videoPage();
@@ -203,7 +202,7 @@ import WebKit
       const enter = async (id, w, h, ratio) => {
         if (!floatable()) return false;
         const video = choose();
-        if (!video || document.fullscreenElement || document.querySelector('[data-rise-fullscreen]') || (video.webkitPresentationMode && video.webkitPresentationMode !== 'inline')) return false;
+        if (!video || document.fullscreenElement || document.querySelector('[data-rise-fullscreen]') || document.pictureInPictureElement) return false;
         stop();
         const entry = entries;
         if (!top) {
@@ -255,39 +254,17 @@ import WebKit
         enterNative() {
           const video = floatable() && chooseEncrypted();
           if (!video) return false;
-          if (video.webkitSupportsPresentationMode) {
-            if (!video.webkitSupportsPresentationMode('picture-in-picture') || video.webkitPresentationMode !== 'inline') return false;
-            try { video.webkitSetPresentationMode('picture-in-picture'); } catch { return false; }
-          } else {
-            // Chromium: the standard picture in picture, its own window.
-            if (!document.pictureInPictureEnabled || video.disablePictureInPicture || document.pictureInPictureElement === video) return false;
-            video.requestPictureInPicture().catch(() => { if (nativeVideo === video) nativeVideo = null; });
-          }
+          // The standard picture in picture, Chromium's own window.
+          if (!document.pictureInPictureEnabled || video.disablePictureInPicture || document.pictureInPictureElement === video) return false;
+          video.requestPictureInPicture().catch(() => { if (nativeVideo === video) nativeVideo = null; });
           nativeVideo = video; return true;
         },
         exitNative(pause) {
           const video = nativeVideo; nativeVideo = null;
           if (!video) return;
           if (pause) video.pause();
-          if (!video.webkitSupportsPresentationMode) {
-            // Leaving it, Chromium's carries on playing in the page.
-            if (document.pictureInPictureElement === video) document.exitPictureInPicture().catch(() => {});
-            return;
-          }
-          const resume = !video.paused;
-          const inline = () => {
-            // Floated again meanwhile.
-            if (nativeVideo === video || video.webkitPresentationMode !== 'picture-in-picture') return;
-            // WebKit pauses the video as it leaves; it was playing, so it carries on in the tab.
-            if (resume) video.addEventListener('webkitpresentationmodechanged', () => {
-              if (video.paused && nativeVideo !== video) video.play().catch(() => {});
-            }, {once:true});
-            try { video.webkitSetPresentationMode('inline'); } catch {}
-          };
-          inline();
-          // WebKit ignores it while the window is still opening, so ask again once it's up.
-          video.addEventListener('enterpictureinpicture', inline, {once:true});
-          setTimeout(() => { video.removeEventListener('enterpictureinpicture', inline); inline(); }, 1500);
+          // Leaving it, the video carries on playing in the page.
+          if (document.pictureInPictureElement === video) document.exitPictureInPicture().catch(() => {});
         },
         togglePlayback() {
           const video = current();

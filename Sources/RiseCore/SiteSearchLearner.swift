@@ -1,3 +1,5 @@
+import Foundation
+#if os(iOS)
 import WebKit
 
 // A separate content world keeps the search bridge out of the site's JavaScript.
@@ -10,22 +12,26 @@ import WebKit
         learner?.searched(terms.prefix(6).map { String($0.prefix(200)) }, name: body["name"] as? String, in: webView)
     }
 }
+#endif
 
 /// Learns how a site searches: when a search typed into a page leads to an address holding
 /// those words, that address becomes the site's search, which Tab then offers in the address bar.
 @MainActor public final class SiteSearchLearner {
     public static let worldName = "Rise.SiteSearch"
+    #if os(iOS)
     public static let world = WKContentWorld.world(name: worldName)
+    private let controllers = NSHashTable<WKUserContentController>.weakObjects()
+    #endif
     /// How long after a search the page has to get to its results.
     public static let window: TimeInterval = 15
     public let searches: LearnedSearches
-    private let controllers = NSHashTable<WKUserContentController>.weakObjects()
     /// A search made in a page, waiting for the page to get to its results.
     private struct Pending { weak var page: AnyObject?; let terms: [String], name: String?, until: Date }
     private var pending: [ObjectIdentifier: Pending] = [:]
     public var onLearn: (() -> Void)?
 
     public init(storageURL: URL) { searches = LearnedSearches(storageURL: storageURL) }
+    #if os(iOS)
     public func install(on webView: WKWebView) {
         let controller = webView.configuration.userContentController
         // window.open can supply a configuration sharing the opener's controller.
@@ -38,6 +44,7 @@ import WebKit
         searched(terms, name: name, in: webView, url: webView.url)
     }
     public func addressChanged(_ webView: WKWebView) { addressChanged(webView, url: webView.url) }
+    #endif
     /// A search in any engine's page, which is at `url` now.
     public func searched(_ terms: [String], name: String?, in page: AnyObject, url: URL?) {
         pending = pending.filter { $0.value.page != nil && $0.value.until > Date() }

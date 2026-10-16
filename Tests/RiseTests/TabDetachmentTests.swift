@@ -26,7 +26,7 @@ final class TabDetachmentTests: XCTestCase {
         _ = browser.addTab()
         let tab = browser.addTab(), selected = browser.addTab()
         browser.root.layoutSubtreeIfNeeded()
-        let row = browser.sidebar.rows[tab.id]!, original = row.frame, order = browser.tabs.map(\.id), web = tab.webView
+        let row = browser.sidebar.rows[tab.id]!, original = row.frame, order = browser.tabs.map(\.id), web = tab.page.view
         let start = row.convert(NSPoint(x: 50, y: 18), to: browser.sidebar.rowsHost)
         var releases = 0; browser.sidebar.detachmentClick = { releases += 1 }
         send(.leftMouseDown, NSPoint(x: 50, y: 18), in: row, browser: browser)
@@ -51,7 +51,7 @@ final class TabDetachmentTests: XCTestCase {
         }
         browser.update()
         XCTAssertTrue(row.superview === drag.overlay, "Page updates must not put a held tab back into the scroller")
-        XCTAssertTrue(tab.webView === web); XCTAssertEqual(browser.selectedID, selected.id)
+        XCTAssertTrue(tab.page.view === web); XCTAssertEqual(browser.selectedID, selected.id)
         XCTAssertEqual(browser.tabs.map(\.id), detachedOrder); XCTAssertEqual(detachedOrder, order); XCTAssertEqual(releases, 1)
         XCTAssertEqual(browser.sidebar.scroll.contentView.bounds, scroll)
         send(.leftMouseUp, NSPoint(x: 500, y: -30), in: browser.sidebar.rowsHost, browser: browser)

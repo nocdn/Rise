@@ -1,6 +1,6 @@
 import AppKit
 
-/// One clock keeps the header and the real WebKit viewport moving together.
+/// One clock keeps the header and the real page viewport moving together.
 @MainActor final class DeveloperModeMotion {
     static let duration = 0.18
     static let headerHeight: CGFloat = 40

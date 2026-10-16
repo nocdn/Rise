@@ -24,7 +24,8 @@ import Vision
         sharingPicker?.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
     }
     func moreSiteControls() {
-        // Rise's settings are among Chrome's, at rise://settings; WebKit has the menu.
+        // Rise's settings are among Chrome's, at rise://settings; without the engine, as in unit
+        // tests, the menu stands in.
         if ChromiumEngine.isRunning { siteControlsPopover.close(); showSettings(); return }
         guard let anchor = (siteControlsPopover.contentViewController as? SiteControlsController)?.quickActions.last else { return }
         makeMoreSiteMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.maxY), in: anchor)

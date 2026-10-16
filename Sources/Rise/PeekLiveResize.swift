@@ -1,6 +1,5 @@
 import AppKit
 import QuartzCore
-import WebKit
 
 /// Moves something along a spring one display frame at a time, for motion that has to stay
 /// live, such as a web page laying itself out again at every size, which a Core Animation copy can't.

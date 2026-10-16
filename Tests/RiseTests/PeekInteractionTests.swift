@@ -1,6 +1,5 @@
 import XCTest
 import AppKit
-import WebKit
 @testable import Rise
 
 final class PeekInteractionTests: XCTestCase {
@@ -49,7 +48,7 @@ final class PeekInteractionTests: XCTestCase {
         let delegate = AppDelegate(); delegate.browser = browser; delegate.buildMenu()
         let other = browser.addTab(), source = browser.addTab()
         let tabIDs = browser.tabs.map(\.id), closedTabIDs = browser.closedTabs.map(\.id)
-        browser.showPeek(url: URL(string: "about:blank")!, from: source.webView)
+        browser.showPeek(url: URL(string: "about:blank")!, from: source.page.view)
         XCTAssertNotNil(browser.peekTab)
         let key = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command,
             timestamp: 0, windowNumber: browser.window!.windowNumber, context: nil, characters: "w",
@@ -61,8 +60,8 @@ final class PeekInteractionTests: XCTestCase {
         XCTAssertEqual(browser.tabs.map(\.id), tabIDs)
         XCTAssertEqual(browser.closedTabs.map(\.id), closedTabIDs)
         XCTAssertEqual(browser.selectedID, source.id)
-        XCTAssertTrue(browser.window?.firstResponder === source.webView)
-        XCTAssertFalse((source.webView as? LinkCursorWebView)?.isCovered == true)
+        XCTAssertTrue(browser.window?.firstResponder === source.page.view)
+        XCTAssertFalse(source.page.isCovered)
 
         XCTAssertTrue(NSApp.mainMenu!.performKeyEquivalent(with: key))
         XCTAssertFalse(browser.tabs.contains { $0.id == source.id })
@@ -78,45 +77,41 @@ final class PeekInteractionTests: XCTestCase {
         let urls = ["source", "first", "second"].map { folder.appendingPathComponent("\($0).html") }
         for url in urls { try "<title>\(url.lastPathComponent)</title>Page".write(to: url, atomically: true, encoding: .utf8) }
         let source = browser.addTab(url: urls[0])
-        try await wait { !source.webView.isLoading && source.webView.title == "source.html" }
-        browser.showPeek(url: urls[1], from: source.webView)
+        try await wait { !source.page.isLoading && source.page.title == "source.html" }
+        browser.showPeek(url: urls[1], from: source.page.view)
         let peek = try XCTUnwrap(browser.peekTab), card = try XCTUnwrap(browser.peekCard)
-        try await wait { !peek.webView.isLoading && peek.webView.title == "first.html" && card.alphaValue == 1 }
-        XCTAssertTrue((source.webView as? LinkCursorWebView)?.isCovered == true, "The page under the Peek takes no hover")
+        try await wait { !peek.page.isLoading && peek.page.title == "first.html" && card.alphaValue == 1 }
+        XCTAssertTrue(source.page.isCovered, "The page under the Peek takes no hover")
 
         // Shift over a link inside the Peek: the pill says it can't open one.
-        browser.hoveredWebView = peek.webView
+        browser.hoveredWebView = peek.page.view
         browser.linkStatus.show(urls[2], theme: browser.theme, peek: true, blocked: true)
         // Pressing the link reports its hover ending first; the pill holds on through the press.
-        browser.showHoveredLink(nil, in: peek.webView)
+        browser.showHoveredLink(nil, in: peek.page.view)
         XCTAssertFalse(browser.linkStatus.isHidden, "No blink between the press and the refusal")
-        browser.showPeek(url: urls[2], from: peek.webView)
+        browser.showPeek(url: urls[2], from: peek.page.view)
         XCTAssertFalse(browser.linkStatus.isHidden)
         XCTAssertEqual(browser.linkStatus.accessibilityLabel(), "Cannot open \(urls[2].absoluteString) in Peek")
         XCTAssertTrue(browser.peekTab === peek, "Only one Peek: the open one stays")
         XCTAssertNotNil(browser.linkStatus.layer?.animation(forKey: "shake"), "The pill shakes its \"Cannot open\" instead")
         // Without a click, the held-back hide still happens.
-        browser.showHoveredLink(nil, in: peek.webView)
+        browser.showHoveredLink(nil, in: peek.page.view)
         try await wait { browser.linkStatus.isHidden }
         XCTAssertFalse(browser.peekHasNavigated)
 
         peek.load(urls[2])
-        try await wait { !peek.webView.isLoading && peek.webView.title == "second.html" }
+        try await wait { !peek.page.isLoading && peek.page.title == "second.html" }
         XCTAssertTrue(browser.peekHasNavigated)
         XCTAssertTrue(browser.toolbarButtons[1].isEnabled, "Back follows the Peek's own pages")
         browser.goBack()
-        try await wait { !peek.webView.isLoading && peek.webView.title == "first.html" }
-        XCTAssertEqual(source.webView.title, "source.html", "The tab underneath stays where it was")
+        try await wait { !peek.page.isLoading && peek.page.title == "first.html" }
+        XCTAssertEqual(source.page.title, "source.html", "The tab underneath stays where it was")
         XCTAssertTrue(browser.toolbarButtons[2].isEnabled)
         browser.goForward()
-        try await wait { !peek.webView.isLoading && peek.webView.title == "second.html" }
+        try await wait { !peek.page.isLoading && peek.page.title == "second.html" }
 
         browser.closePeek()
-        XCTAssertFalse((source.webView as? LinkCursorWebView)?.isCovered == true)
-        XCTAssertFalse(source.webView.trackingAreas.isEmpty, "Hover tracking comes back when the Peek closes")
-    }
-    @MainActor private func mark(_ web: WKWebView) async throws -> Int? {
-        try await web.evaluateJavaScript("window.riseMark ?? 0") as? Int
+        XCTAssertFalse(source.page.isCovered, "The page takes hovers again once the Peek closes")
     }
     @MainActor func testNormalExpandHandsTheLivePageToTheTabAndBackReturnsWithoutReloading() async throws {
         let browser = browser(); defer { clean(browser) }
@@ -126,34 +121,34 @@ final class PeekInteractionTests: XCTestCase {
         let urls = ["source", "target", "other"].map { folder.appendingPathComponent("\($0).html") }
         for url in urls { try "<title>\(url.lastPathComponent)</title>Page".write(to: url, atomically: true, encoding: .utf8) }
         let source = browser.addTab(url: urls[0])
-        try await wait { source.webView.title == "source.html" && !source.webView.isLoading }
-        let sourcePage = source.webView
-        _ = try await sourcePage.evaluateJavaScript("window.riseMark = 1")
+        try await wait { source.page.title == "source.html" && !source.page.isLoading }
+        // Load counts tell a page moved from one loaded again.
+        let sourcePage = source.page.view, sourceBlank = try XCTUnwrap(source.page as? BlankPage), sourceLoads = sourceBlank.loadCount
         let count = browser.tabs.count
-        browser.showPeek(url: urls[1], from: source.webView)
-        let peekPage = try XCTUnwrap(browser.peekTab).webView
-        try await wait { peekPage.title == "target.html" && !peekPage.isLoading }
-        _ = try await peekPage.evaluateJavaScript("window.riseMark = 2")
+        browser.showPeek(url: urls[1], from: source.page.view)
+        let peek = try XCTUnwrap(browser.peekTab), peekPage = peek.page.view
+        try await wait { peek.page.title == "target.html" && !peek.page.isLoading }
+        let peekBlank = try XCTUnwrap(peek.page as? BlankPage), peekLoads = peekBlank.loadCount
 
         browser.expandPeek(modifiers: [])
-        XCTAssertTrue(source.webView === peekPage, "The Peek's own page moves into the tab")
-        XCTAssertFalse(peekPage.isLoading); let expanded = try await mark(peekPage); XCTAssertEqual(expanded, 2, "Not loaded again")
+        XCTAssertTrue(source.page.view === peekPage, "The Peek's own page moves into the tab")
+        XCTAssertFalse(source.page.isLoading); XCTAssertEqual(peekBlank.loadCount, peekLoads, "Not loaded again")
         XCTAssertEqual(browser.tabs.count, count); XCTAssertEqual(browser.selectedID, source.id); XCTAssertNil(browser.peekTab)
         XCTAssertTrue(peekPage.superview === browser.pageClip); XCTAssertNil(sourcePage.superview, "The page from before is held off screen")
         XCTAssertTrue(browser.toolbarButtons[1].isEnabled, "Back reaches the page from before")
 
         browser.goBack()
-        XCTAssertTrue(source.webView === sourcePage); XCTAssertEqual(source.title, "source.html")
-        let back = try await mark(sourcePage); XCTAssertEqual(back, 1, "Back shows the held page as it was, without reloading")
+        XCTAssertTrue(source.page.view === sourcePage); XCTAssertEqual(source.title, "source.html")
+        XCTAssertEqual(sourceBlank.loadCount, sourceLoads, "Back shows the held page as it was, without reloading")
         XCTAssertTrue(browser.toolbarButtons[2].isEnabled)
         browser.goForward()
-        XCTAssertTrue(source.webView === peekPage)
-        let forward = try await mark(peekPage); XCTAssertEqual(forward, 2)
+        XCTAssertTrue(source.page.view === peekPage)
+        XCTAssertEqual(peekBlank.loadCount, peekLoads)
 
         // Somewhere new from the page from before leaves the expanded page behind, as forward history goes.
         browser.goBack()
         source.load(urls[2])
-        try await wait { source.webView.title == "other.html" && !source.webView.isLoading }
+        try await wait { source.page.title == "other.html" && !source.page.isLoading }
         XCTAssertTrue(source.forwardPages.isEmpty)
         browser.closeTab(source.id)
         XCTAssertTrue(source.backPages.isEmpty, "A closing tab lets go of the pages it held")
@@ -169,11 +164,12 @@ final class PeekInteractionTests: XCTestCase {
         let start = folder.appendingPathComponent("source.html")
         try "<title>source</title><a target=_blank href='target.html'>Open</a>".write(to: start, atomically: true, encoding: .utf8)
         let source = browser.addTab(url: start)
-        try await wait { source.webView.title == "source" && !source.webView.isLoading }
+        try await wait { source.page.title == "source" && !source.page.isLoading }
         browser.update()
         XCTAssertFalse(browser.toolbarButtons[1].isEnabled, "Nowhere to go back to")
         let count = browser.tabs.count
-        _ = try await source.webView.evaluateJavaScript("document.querySelector('a').click()")
+        // The page's target=_blank link, as the engine reports it.
+        _ = source.page.onOpenElsewhere?(target, false)
         try await wait { browser.tabs.count == count+1 && browser.selectedID != source.id }
         let opened = try XCTUnwrap(browser.selectedTab)
         XCTAssertEqual(opened.returnsTo, source.id)
@@ -182,11 +178,11 @@ final class PeekInteractionTests: XCTestCase {
         XCTAssertTrue(browser.canNavigate(opened.page, .back), "And so does the swipe")
 
         // The new tab's own history still comes first.
-        try await wait { opened.webView.url != nil && !opened.webView.isLoading }
+        try await wait { opened.page.url != nil && !opened.page.isLoading }
         opened.load(other)
-        try await wait { opened.webView.title == "other" && !opened.webView.isLoading }
+        try await wait { opened.page.title == "other" && !opened.page.isLoading }
         browser.goBack()
-        try await wait { opened.webView.url?.lastPathComponent == "target.html" && !opened.webView.isLoading }
+        try await wait { opened.page.url?.lastPathComponent == "target.html" && !opened.page.isLoading }
         XCTAssertEqual(browser.selectedID, opened.id); XCTAssertEqual(browser.tabs.count, count+1)
 
         browser.goBack()
@@ -200,11 +196,11 @@ final class PeekInteractionTests: XCTestCase {
         let browser = browser(); defer { clean(browser) }
         let bottom = browser.addTab(), source = browser.addTab(), top = browser.addTab()
         browser.select(source.id)
-        browser.showPeek(url: URL(string: "about:blank")!, from: source.webView)
-        let peek = try XCTUnwrap(browser.peekTab), web = peek.webView
+        browser.showPeek(url: URL(string: "about:blank")!, from: source.page.view)
+        let peek = try XCTUnwrap(browser.peekTab), web = peek.page.view
         browser.expandPeek(modifiers: .command)
         XCTAssertEqual(browser.tabs.map(\.id), [top.id, peek.id, source.id, bottom.id])
-        XCTAssertEqual(browser.selectedID, peek.id); XCTAssertTrue(browser.selectedTab?.webView === web)
+        XCTAssertEqual(browser.selectedID, peek.id); XCTAssertTrue(browser.selectedTab?.page.view === web)
         XCTAssertNil(browser.peekCard)
     }
     @MainActor func testNewWindowLinkKeepsNormalNewTabSemanticsWhenExpanded() throws {
@@ -212,7 +208,7 @@ final class PeekInteractionTests: XCTestCase {
         let source = browser.addTab(), top = browser.addTab()
         browser.select(source.id)
         XCTAssertTrue(browser.openModifiedLink(URL(string: "about:blank")!, modifiers: .shift,
-                                             from: source.webView, opensNewTab: true))
+                                             from: source.page.view, opensNewTab: true))
         let peek = try XCTUnwrap(browser.peekTab)
         browser.expandPeek(modifiers: [])
         XCTAssertEqual(browser.tabs.map(\.id), [top.id, peek.id, source.id])
@@ -220,11 +216,11 @@ final class PeekInteractionTests: XCTestCase {
     }
     @MainActor func testPeekSwipeWorksWithoutPageHistoryAndReversalCancellationAndMomentumAreSafe() async throws {
         let browser = browser(); defer { clean(browser) }
-        let page = WebKitPage(), web = page.webView
-        web.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
-        web.loadHTMLString("<title>Peek</title><body style='margin:0'>Peek</body>", baseURL: nil)
-        try await wait { web.title == "Peek" && !web.isLoading }
-        XCTAssertFalse(web.canGoBack)
+        let page = BlankPage()
+        page.title = "Peek"
+        // The swipe's probe finds nothing on the page that takes the swipe itself.
+        page.scriptAnswer = { $0 == HistorySwipeController.scrollProbe ? true : nil }
+        XCTAssertFalse(page.canGoBack)
         let router = HistorySwipeController(window: browser.window as! BrowserWindow, pageAt: { _ in page }, feedback: { _, _, _, _ in })
         defer { router.cancel() }
         router.isPeekPage = { $0 === page }
@@ -250,7 +246,7 @@ final class PeekInteractionTests: XCTestCase {
         XCTAssertTrue(router.handle(event([], x: 300, momentum: 1)))
         XCTAssertTrue(router.handle(event([], x: 300, momentum: 3)))
         XCTAssertEqual(releases.count, 3); XCTAssertEqual(clicks, 4)
-        XCTAssertEqual(web.title, "Peek"); XCTAssertFalse(web.canGoBack)
+        XCTAssertEqual(page.title, "Peek"); XCTAssertFalse(page.canGoBack)
     }
 
     @MainActor private func commandZEvent(_ browser: BrowserController) -> NSEvent {
@@ -273,21 +269,22 @@ final class PeekInteractionTests: XCTestCase {
         try "<title>Source</title>Source".write(to: sourceURL, atomically: true, encoding: .utf8)
         try "<title>Target</title>Target".write(to: targetURL, atomically: true, encoding: .utf8)
         let source = browser.addTab(url: sourceURL)
-        try await wait { source.webView.title == "Source" && !source.webView.isLoading }
-        browser.showPeek(url: targetURL, from: source.webView)
+        try await wait { source.page.title == "Source" && !source.page.isLoading }
+        browser.showPeek(url: targetURL, from: source.page.view)
         let peek = try XCTUnwrap(browser.peekTab)
-        try await wait { peek.webView.title == "Target" && !peek.webView.isLoading }
-        let sourcePage = source.webView, peekPage = peek.webView
-        _ = try await sourcePage.evaluateJavaScript("window.riseMark = 3")
-        _ = try await peekPage.evaluateJavaScript("window.riseMark = 7")
+        try await wait { peek.page.title == "Target" && !peek.page.isLoading }
+        let sourcePage = source.page.view, peekPage = peek.page.view
+        // Load counts tell a page moved from one loaded again.
+        let sourceBlank = try XCTUnwrap(source.page as? BlankPage), peekBlank = try XCTUnwrap(peek.page as? BlankPage)
+        let sourceLoads = sourceBlank.loadCount, peekLoads = peekBlank.loadCount
         browser.expandPeek(modifiers: [])
-        XCTAssertTrue(source.webView === peekPage); XCTAssertNil(browser.peekTab)
+        XCTAssertTrue(source.page.view === peekPage); XCTAssertNil(browser.peekTab)
 
         XCTAssertTrue(commandZ(browser))
-        XCTAssertTrue(browser.peekTab === peek && peek.webView === peekPage, "The Peek comes back")
-        let peekMark = try await mark(peekPage); XCTAssertEqual(peekMark, 7, "It's the same page, not loaded again")
-        XCTAssertTrue(source.webView === sourcePage); XCTAssertEqual(source.title, "Source")
-        let sourceMark = try await mark(sourcePage); XCTAssertEqual(sourceMark, 3, "The tab is back on its page at once, not reloaded")
+        XCTAssertTrue(browser.peekTab === peek && peek.page.view === peekPage, "The Peek comes back")
+        XCTAssertEqual(peekBlank.loadCount, peekLoads, "It's the same page, not loaded again")
+        XCTAssertTrue(source.page.view === sourcePage); XCTAssertEqual(source.title, "Source")
+        XCTAssertEqual(sourceBlank.loadCount, sourceLoads, "The tab is back on its page at once, not reloaded")
         XCTAssertTrue(source.backPages.isEmpty && source.forwardPages.isEmpty, "Nothing is left held")
         XCTAssertEqual(browser.selectedID, source.id)
         XCTAssertFalse(takesCommandZ(browser), "There's only one step to undo")
@@ -298,7 +295,7 @@ final class PeekInteractionTests: XCTestCase {
         browser.select(source.id)
         let ids = browser.tabs.map(\.id)
         XCTAssertFalse(takesCommandZ(browser), "Nothing to undo yet, so ⌘Z goes on to the page")
-        browser.showPeek(url: URL(string: "about:blank")!, from: source.webView)
+        browser.showPeek(url: URL(string: "about:blank")!, from: source.page.view)
         let peek = try XCTUnwrap(browser.peekTab)
 
         browser.expandPeek(modifiers: .command)
@@ -322,8 +319,8 @@ final class PeekInteractionTests: XCTestCase {
     @MainActor func testSplitHandleMenuReturnsTheSameLivePeekAfterKeyboardUndoExpires() async throws {
         let browser = browser(); defer { clean(browser); BrowserController.peekUndoDuration = 30 }
         let source = browser.addTab()
-        browser.showPeek(url: URL(string: "about:blank")!, from: source.webView)
-        let peek = try XCTUnwrap(browser.peekTab), page = peek.webView
+        browser.showPeek(url: URL(string: "about:blank")!, from: source.page.view)
+        let peek = try XCTUnwrap(browser.peekTab), page = peek.page.view
         BrowserController.peekUndoDuration = 0.03
         browser.splitPeek()
         let menu = browser.splitHandle.makeContextMenu()
@@ -333,7 +330,7 @@ final class PeekInteractionTests: XCTestCase {
         XCTAssertNil(browser.peekUndo, "The keyboard shortcut remains time-limited")
         XCTAssertTrue(browser.splitHandle.makeContextMenu().items[0].isEnabled)
         menu.performActionForItem(at: 0)
-        XCTAssertTrue(browser.peekTab === peek && browser.peekTab?.webView === page)
+        XCTAssertTrue(browser.peekTab === peek && browser.peekTab?.page.view === page)
         XCTAssertTrue(browser.splitGroups.isEmpty)
         XCTAssertEqual(browser.tabs.map(\.id), [source.id]); XCTAssertEqual(browser.selectedID, source.id)
         XCTAssertTrue(browser.splitPeekReturns.isEmpty)
@@ -342,7 +339,7 @@ final class PeekInteractionTests: XCTestCase {
     @MainActor func testSplitHandleMenuRestoresOnlyItsOwnPairAndForgetsSeparatedPairs() throws {
         let browser = browser(); defer { clean(browser) }
         let source = browser.addTab()
-        browser.showPeek(url: URL(string: "about:blank")!, from: source.webView)
+        browser.showPeek(url: URL(string: "about:blank")!, from: source.page.view)
         browser.splitPeek()
         XCTAssertTrue(browser.canReturnSplitToPeek)
         let other = browser.addTab(), extra = browser.addTab()

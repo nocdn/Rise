@@ -18,7 +18,6 @@ APP="$PWD/build/Rise.app"
 swift build -c release -Xlinker -platform_version -Xlinker macos -Xlinker 14.0 -Xlinker "$RISE_SDK_VERSION"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 cp .build/release/Rise "$APP/Contents/MacOS/Rise"
-cp -R .build/release/Rise_Rise.bundle "$APP/Contents/Resources/"
 cp scripts/Info.plist "$APP/Contents/Info.plist"
 cp THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/THIRD_PARTY_NOTICES.md"
 xcrun actool "$PWD/Assets/AppIcon/Rise.icon" --compile "$APP/Contents/Resources" --app-icon Rise --include-all-app-icons \

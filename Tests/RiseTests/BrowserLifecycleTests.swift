@@ -5,11 +5,11 @@ import RiseCore
 @testable import Rise
 
 final class BrowserLifecycleTests: XCTestCase {
-    @MainActor func testPeekModifierUpdatesExistingHoverAndCursorRectClearsOnMovementOrDismissal() throws {
+    @MainActor func testPeekModifierUpdatesExistingHoverAndHidingClearsIt() throws {
         let browser = makeBrowser(); defer { browser.hideLinkStatus(); clean(browser) }
         let tab = browser.addTab(), target = URL(string: "https://example.com/target")!
-        browser.showHoveredLink(target, in: tab.webView)
-        let web = try XCTUnwrap(tab.webView as? LinkCursorWebView)
+        browser.showHoveredLink(target, in: tab.page.view)
+        let web = tab.page.view
         let window = try XCTUnwrap(browser.window as? BrowserWindow)
         func flags(_ value: NSEvent.ModifierFlags) throws {
             let event = try XCTUnwrap(NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: value, timestamp: 0,
@@ -24,18 +24,11 @@ final class BrowserLifecycleTests: XCTestCase {
         try flags(.option)
         XCTAssertTrue(browser.linkStatus.showsPeekHint, "The existing Option Peek shortcut gets the same hint")
         try flags([])
-        web.keepPeekCursor(at: NSPoint(x: 50, y: 50)); web.resetCursorRects()
-        XCTAssertNotNil(web.peekCursorPoint)
-        let move = try XCTUnwrap(NSEvent.mouseEvent(with: .mouseMoved, location: .zero, modifierFlags: [], timestamp: 0,
-            windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0))
-        window.pointerMoved?(move)
-        XCTAssertNil(web.peekCursorPoint, "Moving away must hand cursor selection back to WebKit")
-        web.keepPeekCursor(at: NSPoint(x: 50, y: 50))
         browser.showHoveredLink(nil, in: web)
-        XCTAssertNil(web.peekCursorPoint); XCTAssertTrue(browser.linkStatus.isHidden)
-        browser.showHoveredLink(target, in: web); web.keepPeekCursor(at: NSPoint(x: 50, y: 50))
+        XCTAssertTrue(browser.linkStatus.isHidden)
+        browser.showHoveredLink(target, in: web)
         browser.hideLinkStatus()
-        XCTAssertNil(web.peekCursorPoint); XCTAssertTrue(browser.linkStatus.isHidden)
+        XCTAssertTrue(browser.linkStatus.isHidden)
         browser.peekStandbyWork?.cancel()
     }
     @MainActor func makeBrowser() -> BrowserController {
@@ -45,7 +38,7 @@ final class BrowserLifecycleTests: XCTestCase {
     }
     @MainActor func clean(_ browser: BrowserController) {
         browser.saveWork?.cancel()
-        browser.tabs.forEach { $0.webView.stopLoading() }
+        browser.tabs.forEach { $0.page.stopLoading() }
         browser.window?.orderOut(nil)
         try? FileManager.default.removeItem(at: browser.sessionURL.deletingLastPathComponent())
     }
@@ -68,7 +61,7 @@ final class BrowserLifecycleTests: XCTestCase {
         browser.closeTab(first.id)
         XCTAssertNil(browser.splitTab)
         XCTAssertEqual(browser.selectedTab?.id, second.id)
-        XCTAssertTrue(second.webView.superview === browser.pageClip)
+        XCTAssertTrue(second.page.view.superview === browser.pageClip)
     }
     @MainActor func testSessionRestoresThemePinnedTabsAndSelection() {
         let browser = makeBrowser(); defer { clean(browser) }
@@ -79,7 +72,7 @@ final class BrowserLifecycleTests: XCTestCase {
         defer { clean(restored) }
         XCTAssertEqual(restored.tabs.map(\.saved), browser.tabs.map(\.saved))
         XCTAssertEqual(restored.selectedID, second.id)
-        XCTAssertTrue(restored.selectedTab?.webView.superview === restored.pageClip)
+        XCTAssertTrue(restored.selectedTab?.page.view.superview === restored.pageClip)
         XCTAssertEqual(restored.theme, .rose)
         XCTAssertEqual(restored.sidebarWidth, 260)
     }
@@ -158,7 +151,7 @@ final class BrowserLifecycleTests: XCTestCase {
         XCTAssertFalse(window.toolbar!.isVisible)
         XCTAssertTrue(browser.toolbarButtons.allSatisfy(\.isHidden))
         XCTAssertEqual(browser.pageShadow.frame, browser.root.bounds.insetBy(dx: PageAppearance.inset, dy: PageAppearance.inset))
-        XCTAssertEqual(tab.webView.frame, browser.pageClip.bounds)
+        XCTAssertEqual(tab.page.view.frame, browser.pageClip.bounds)
         XCTAssertEqual(browser.selectedID, tab.id)
         XCTAssertTrue(browser.pageShadow.layer?.animationKeys()?.isEmpty ?? true)
         for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
@@ -168,7 +161,7 @@ final class BrowserLifecycleTests: XCTestCase {
         let frameView = browser.root.superview!
         let point = browser.root.convert(NSPoint(x: 300, y: 18), to: frameView)
         let hit = frameView.hitTest(point)
-        XCTAssertTrue(hit === tab.webView || hit?.isDescendant(of: tab.webView) == true)
+        XCTAssertTrue(hit === tab.page.view || hit?.isDescendant(of: tab.page.view) == true)
         browser.toggleSidebar()
         XCTAssertEqual(browser.pageShadow.frame, openFrame)
         XCTAssertFalse(browser.toolbarAccessory.isHidden)

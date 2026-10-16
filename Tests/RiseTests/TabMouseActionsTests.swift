@@ -8,7 +8,7 @@ final class TabMouseActionsTests: XCTestCase {
         return BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"), restore: false)
     }
     @MainActor func clean(_ browser: BrowserController) {
-        browser.saveWork?.cancel(); browser.tabs.forEach { $0.webView.stopLoading() }; browser.window?.orderOut(nil)
+        browser.saveWork?.cancel(); browser.tabs.forEach { $0.page.stopLoading() }; browser.window?.orderOut(nil)
         try? FileManager.default.removeItem(at: browser.sessionURL.deletingLastPathComponent())
     }
     @MainActor func event(_ type: NSEvent.EventType, in view: NSView) -> NSEvent {
@@ -48,7 +48,7 @@ final class TabMouseActionsTests: XCTestCase {
         XCTAssertEqual(browser.tabs.map(\.id), [left.id])
         XCTAssertEqual(browser.selectedID, left.id)
         XCTAssertTrue(browser.splitGroups.isEmpty)
-        XCTAssertEqual(left.webView.frame, browser.pageClip.bounds)
+        XCTAssertEqual(left.page.view.frame, browser.pageClip.bounds)
     }
     @MainActor func testReleasingElsewhereOrWithoutPressDoesNotCloseTabs() throws {
         let browser = browser(); defer { clean(browser) }
@@ -60,7 +60,7 @@ final class TabMouseActionsTests: XCTestCase {
         XCTAssertTrue(browser.handleMiddleTabClick(event(.otherMouseUp, in: browser.sidebar.rows[second.id]!.titleField)))
         XCTAssertEqual(browser.tabs.count, 2)
         XCTAssertNil(browser.pendingMiddleTabID)
-        XCTAssertFalse(browser.handleMiddleTabClick(event(.otherMouseDown, in: second.webView)))
+        XCTAssertFalse(browser.handleMiddleTabClick(event(.otherMouseDown, in: second.page.view)))
         XCTAssertFalse(browser.handleMiddleTabClick(event(.rightMouseDown, in: row.titleField)))
     }
 }

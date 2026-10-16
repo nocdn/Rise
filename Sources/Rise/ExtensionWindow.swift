@@ -1,20 +1,15 @@
 import AppKit
-#if RISE_CHROMIUM
 import RiseChromium
-#endif
 
 @MainActor extension BrowserController {
     /// Tells Chrome extensions of the window's tabs: once a turn, however many changed.
     func extensionTabsChanged() {
-        #if RISE_CHROMIUM
         guard ChromiumEngine.isRunning else { return }
         if extensionWindow == nil { extensionWindow = ExtensionWindow(browser: self) }
         (extensionWindow as? ExtensionWindow)?.setNeedsSync()
-        #endif
     }
 }
 
-#if RISE_CHROMIUM
 /// Rise's window as Chrome extensions see it: a browser window with its Chromium tabs, in order,
 /// the selected one in front. What extensions ask of it (opening, switching, moving, pinning and
 /// closing tabs) Rise does as if asked itself.
@@ -170,4 +165,3 @@ import RiseChromium
         browser?.window?.makeKeyAndOrderFront(nil)
     }
 }
-#endif

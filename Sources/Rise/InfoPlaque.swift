@@ -400,7 +400,7 @@ import AppKit
 }
 
 @MainActor extension BrowserController {
-    /// ⇧⌘F switches page fullscreen between WebKit's own and simulated, for pages
+    /// ⇧⌘F switches page fullscreen between the engine's own and simulated, for pages
     /// already open too, and says which one is now on.
     @objc func toggleSimulatedFullscreen() {
         let simulated = !pageFullscreen.isSimulated

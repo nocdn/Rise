@@ -1,6 +1,5 @@
 import AppKit
 import Quartz
-import WebKit
 
 /// The popover's content. It takes the keyboard, and reports pointer moves so arrow-key
 /// focus can hand back to the mouse.

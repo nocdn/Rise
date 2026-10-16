@@ -1,5 +1,4 @@
 import AppKit
-import WebKit
 import RiseCore
 
 @MainActor final class BrowserController: NSWindowController, NSWindowDelegate, NSPopoverDelegate {
@@ -28,7 +27,6 @@ import RiseCore
         media.onChange = { [weak self] id in self?.refreshPlayback(id) }
         return media
     }()
-    let pagePaint = PagePaintWatcher()
     var sharingPicker: NSSharingServicePicker?
     let errorSurface = Surface(color: NSColor(hex: 0xFDFCFC))
     let errorTitle = label("This page couldn’t be opened", size: 23, weight: .semibold)
@@ -69,10 +67,8 @@ import RiseCore
     var selectedID: UUID? { didSet { extensionTabsChanged() } }
     /// The window as Chrome extensions see it (`ExtensionWindow`).
     var extensionWindow: AnyObject?
-    #if RISE_CHROMIUM
     /// The extension popup that's open, if any.
     var extensionPopup: ExtensionPopup?
-    #endif
     var selectedTab: BrowserTab? { tabs.first { $0.id == selectedID } }
     var closedTabs: [SavedTab] = []
     let browsingHistory: BrowsingHistory
@@ -140,7 +136,6 @@ import RiseCore
     var downloadFlight: DownloadFlightView?
     /// Downloads save here without asking; tests point it elsewhere.
     var downloadsFolder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
-    var pendingDownloads: [ObjectIdentifier: WKDownload] = [:]
     lazy var downloads = DownloadList(storeURL: sessionURL.deletingLastPathComponent().appendingPathComponent("downloads.json"))
     let downloadsPopover = NSPopover()
     /// The download Quick Look is showing, while Rise controls the preview panel.
@@ -215,9 +210,7 @@ import RiseCore
             return self.palette.handleUndoKey(event) || self.handlePeekUndoKey(event)
         }
         window.smartRenameEvent = { [weak self] event in self?.handleSmartRenameKey(event) ?? false }
-        #if RISE_CHROMIUM
         window.extensionShortcutEvent = { [weak self] event in self?.runExtensionShortcut(event) ?? false }
-        #endif
         window.pageMouseDown = { [weak self] event in self?.focusSplitPage(at: event) }
         window.linkClickEvent = { [weak self] event in self?.takeLinkClick(event) ?? false }
         window.historyScrollEvent = { [weak self] event in self?.historySwipe.handle(event) ?? false }
@@ -225,20 +218,16 @@ import RiseCore
         window.modifiersChanged = { [weak self] flags in self?.updateHoveredLinkModifiers(flags); self?.sidebarPeekModifiersChanged(flags) }
         window.pointerMoved = { [weak self] event in
             self?.sidebar.refreshReturningTabHover(at: event.locationInWindow)
-            self?.updateHoveredLinkCursor(event); self?.tabHoverPointerMoved()
+            self?.tabHoverPointerMoved()
         }
         tabSwitcher.choose = { [weak self] id in self?.commitTabSwitch(id) }
         tabSwitchBackdrop.dismiss = { [weak self] in self?.cancelTabSwitch() }
         tabSwitchBackdrop.isHidden = true
-        linkPreloader.prepareWebView = { [weak self] web in self?.adBlocker.install(on: web) }
-        linkPreloader.onHover = { [weak self] url, webView in self?.showHoveredLink(url, in: webView) }
-        #if RISE_CHROMIUM
         linkPreloader.loadPage = { url, page, done in
             guard page is ChromiumPage else { return nil }
             let preload = ChromiumPreload(url, size: page.view.bounds.size, done: done)
             return { preload.cancel() }
         }
-        #endif
         linkPreloader.onComplete = { [weak self] url in
             guard let self, let hovered = self.linkStatus.url,
                   LinkPreloader.cacheKey(hovered) == url else { return }
@@ -279,7 +268,7 @@ import RiseCore
             else { theme = RiseTheme(rawValue: saved.theme) ?? .neutral }
             sidebarWidth = SidebarWidth.previousIdeals.contains(saved.sidebarWidth) ? SidebarWidth.ideal
                 : min(SidebarWidth.range.upperBound, max(SidebarWidth.range.lowerBound, saved.sidebarWidth))
-            tabs = saved.tabs.map { configure(BrowserTab(saved: $0, engine: ChromiumEngine.engineForNewTabs)) }
+            tabs = saved.tabs.map { configure(BrowserTab(saved: $0)) }
             // Old sessions can fill their missing icons without loading every page.
             tabs.forEach { $0.updateIcon() }
             splitGroups = saved.splitGroups
@@ -481,20 +470,13 @@ import RiseCore
         sidebar?.cancelTabInteractions()
         DispatchQueue.main.async { [weak self] in
             guard let self, !NSApp.isActive else { return }
-            for tab in self.tabs where self.visibleTabIDs.contains(tab.id) { tab.webView.evaluateJavaScript("window.riseSiteControls?.autoPiP()") { _, _ in } }
+            for tab in self.tabs where self.visibleTabIDs.contains(tab.id) {
+                tab.page.evaluate("window.riseSiteControls?.autoPiP()", arguments: [:], in: nil, world: .page) { _ in }
+            }
         }
     }
     func configure(_ tab: BrowserTab) -> BrowserTab {
-        tab.webView.navigationDelegate = self; tab.webView.uiDelegate = self
-        if let web = tab.webView as? LinkCursorWebView {
-            // A Peek's own links can't open another Peek.
-            web.peekableLink = { [weak self, weak web] in
-                guard let self, let web, hoveredWebView === web, web !== peekTab?.webView else { return nil }
-                return linkStatus.url
-            }
-            web.openInPeek = { [weak self, weak web] url in self?.showPeek(url: url, from: web) }
-        }
-        // Chromium reports hovers, new tabs and its menu through the page; WebKit through delegates.
+        // The page reports hovers, new tabs and its menu.
         // The page, not the tab, is captured: it can move to another tab when a Peek becomes one.
         let page = tab.page
         page.onHoverLink = { [weak self, weak page] url in
@@ -503,21 +485,37 @@ import RiseCore
         }
         page.onOpenElsewhere = { [weak self, weak page] url, background in
             guard let self else { return false }
-            #if RISE_CHROMIUM
             // Chrome's own pages open only as Rise's (rise://settings); the rest, which Rise's pages
             // can't show, aren't opened at all rather than as a blank tab.
             if url.scheme?.lowercased() == "chrome" {
                 if let address = RisePages.address(for: url), address.scheme == "rise" { self.addTab(url: address) }
                 return true
             }
-            #endif
             let opener = self.tabs.first { $0.page === page }?.id
             if background { self.addTab(url: url, background: true, opener: opener ?? self.selectedID) }
             else { self.addTab(url: url).returnsTo = opener }
             return true
         }
         page.onOpenInPeek = { [weak self, weak page] url in self?.showPeek(url: url, from: page?.view) }
-        #if RISE_CHROMIUM
+        page.onEvent = { [weak self, weak page] event in
+            guard let self, let view = page?.view else { return }
+            switch event {
+            case .willNavigate(let kind):
+                if kind == .newPage { self.leaveForwardPages(of: view) }
+                self.pageFullscreen.setActive(false, in: view)
+                self.pageStartedLoading(view)
+            case .finished: self.pageFinishedLoading(view)
+            case .failed(let message): self.showNavigationError(message, in: view)
+            case .crashed: self.pageFullscreen.setActive(false, in: view); self.pageCrashed(view)
+            case .openInOtherApp(let url): self.confirmOpeningInOtherApp(url)
+            case .closed:
+                // Out of Chromium's closing, its tab goes too.
+                DispatchQueue.main.async { [weak self, weak view] in
+                    guard let self, let tab = self.tabs.first(where: { $0.page.view === view }) else { return }
+                    self.closeTab(tab.id)
+                }
+            }
+        }
         if let chromium = page as? ChromiumPage {
             chromium.onDownload = { [weak self] download, name in self?.beginChromiumDownload(download, suggestedName: name) }
             installRiseSettings(on: chromium)
@@ -553,27 +551,8 @@ import RiseCore
                 guard let self, let chromium else { decide(false); return }
                 self.permissionCoordinator.request(in: chromium.view, origin: origin, capabilities: capabilities, completion: decide)
             }
-            chromium.onEvent = { [weak self, weak chromium] event in
-                guard let self, let view = chromium?.view else { return }
-                switch event {
-                case .willNavigate(let kind):
-                    if kind == .newPage { self.leaveForwardPages(of: view) }
-                    self.pageFullscreen.setActive(false, in: view)
-                    self.pageStartedLoading(view)
-                case .finished: self.pageFinishedLoading(view)
-                case .failed(let message): self.showNavigationError(message, in: view)
-                case .crashed: self.pageFullscreen.setActive(false, in: view); self.pageCrashed(view)
-                case .openInOtherApp(let url): self.confirmOpeningInOtherApp(url)
-                case .closed:
-                    // Out of Chromium's closing, its tab goes too.
-                    DispatchQueue.main.async { [weak self, weak view] in
-                        guard let self, let tab = self.tabs.first(where: { $0.page.view === view }) else { return }
-                        self.closeTab(tab.id)
-                    }
-                }
-            }
-            // WebKit closes a window a site opened when it asks; Chromium, which doesn't know these
-            // pages were opened that way, leaves it to Rise.
+            // Chromium doesn't know these pages were windows a site opened, so closing one when it
+            // asks is left to Rise.
             chromium.addMessageHandler("riseWindowClose", world: .page) { [weak self] message in
                 guard let self, let page = message.page, message.frame.isMain,
                       let tab = self.tabs.first(where: { $0.page === page }), tab.returnsTo != nil else { return }
@@ -585,23 +564,17 @@ import RiseCore
                 if let view = chromium?.view { self?.permissionCoordinator.cancel(for: view) }
             }
         }
-        #endif
         tab.hidesNotificationCounts = hidesNotificationCounts
         tab.showsRepositorySubtitle = showsRepositorySubtitle
         tab.page.setTheme(theme.appearance, background: theme.page)
         adBlocker.install(on: tab.page)
         HistorySwipeController.install(on: tab.page)
         siteSearchLearner.install(on: tab.page)
-        tab.prepareForLoad = { [weak self] web in try await self?.adBlocker.prepare(web) }
-        tab.onLoadError = { [weak self, weak tab] error in
-            if let tab { self?.showNavigationError(error, in: tab.page.view) }
-        }
         linkPreloader.install(on: tab.page)
         permissionCoordinator.install(on: tab.page)
         pageFullscreen.install(on: tab.page)
         pictureInPicture.install(on: tab.page)
         tabMedia.install(on: tab.page)
-        pagePaint.install(on: tab.webView, dark: theme == .dark)
         suggestionFavicons.remember(tab)
         tab.onChange = { [weak self, weak tab] in
             guard let self, let tab else { return }
@@ -613,18 +586,14 @@ import RiseCore
             self.update()
         }
         tab.onThumbnailChange = { [weak self] in self?.refreshTabSwitcher() }
-        // WebKit's fullscreen hands the web view back where it took it from, even if its tab is no longer shown.
-        tab.onFullscreenChange = { [weak self, weak tab] in
-            if let state = tab?.webView.fullscreenState { PageFullscreen.log.notice("WebKit fullscreen state \(state.rawValue, privacy: .public) for \(tab?.url?.host ?? "", privacy: .public)") }
-            self?.attachVisiblePages(); self?.update()
-        }
+        // The engine's full screen hands the page back where it took it from, even if its tab is no longer shown.
+        tab.onFullscreenChange = { [weak self] in self?.attachVisiblePages(); self?.update() }
         return tab
     }
     /// A background tab loads in the list without taking over the page, as ⌘-clicked links do.
     /// Given an `opener`, it goes right above that tab (or its split pair), so the two stay together.
-    @discardableResult func addTab(url: URL? = nil, configuration: WKWebViewConfiguration? = nil, background: Bool = false, opener: UUID? = nil,
-                                   page: WebPage? = nil) -> BrowserTab {
-        let tab = configure(BrowserTab(configuration: configuration, engine: ChromiumEngine.engineForNewTabs, page: page))
+    @discardableResult func addTab(url: URL? = nil, background: Bool = false, opener: UUID? = nil, page: WebPage? = nil) -> BrowserTab {
+        let tab = configure(BrowserTab(page: page))
         let members = opener.map { id in splitGroups.first { $0.contains(id) }.map { [$0.leftID, $0.rightID] } ?? [id] } ?? []
         tabs.insert(tab, at: members.compactMap { id in tabs.firstIndex { $0.id == id } }.min() ?? 0)
         if background { update() } else { select(tab.id) }
@@ -726,12 +695,12 @@ import RiseCore
     @objc func reopenTab() {
         guard var saved = closedTabs.popLast() else { return }
         if tabSync?.isClosed(saved.id) == true { saved.id = UUID() }
-        let tab = configure(BrowserTab(saved: saved, engine: ChromiumEngine.engineForNewTabs)); tabs.insert(tab, at: 0); select(tab.id)
+        let tab = configure(BrowserTab(saved: saved)); tabs.insert(tab, at: 0); select(tab.id)
     }
     @objc func goBack() { navigateHistory(.back) }
     @objc func goForward() { navigateHistory(.forward) }
     private func navigateHistory(_ direction: HistoryDirection) {
-        // Buttons/menu shortcuts use WebKit directly. Remove any in-flight
+        // Buttons and menu shortcuts go straight to the page. Remove any in-flight
         // swipe surface and arrow spring before navigation starts.
         historySwipe.cancel()
         developerMotion.cancel()

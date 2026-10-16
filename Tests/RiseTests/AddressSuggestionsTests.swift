@@ -405,10 +405,10 @@ final class AddressSuggestionsTests: XCTestCase {
         XCTAssertTrue(palette.buttons.enumerated().allSatisfy { ($0.offset == 0) == ($0.element.layer?.backgroundColor != NSColor.clear.cgColor) },
                       "Only the row picked with the keys is highlighted")
     }
-    @MainActor func testActualWebKitFinishRecordsVisitsButTypingPrefetchAndFailuresDoNotAndResetPersists() async throws {
+    @MainActor func testAFinishedLoadRecordsVisitsButTypingPrefetchAndFailuresDoNotAndResetPersists() async throws {
         let browser = browser(); defer { clean(browser) }
         let tab = browser.addTab()
-        tab.webView.loadHTMLString("<title>Learned page</title><p>Hello</p>", baseURL: URL(string: "https://example.com/docs"))
+        tab.open(URL(string: "https://example.com/docs")!, title: "Learned page")
         let deadline = Date().addingTimeInterval(8)
         while browser.browsingHistory.entries.first?.title != "Learned page" && Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
         XCTAssertEqual(browser.browsingHistory.entries.first?.visits, 1)

@@ -1,5 +1,4 @@
 import AppKit
-#if RISE_CHROMIUM
 import RiseChromium
 
 /// Chrome extensions in Rise's chrome, as Arc has them: pinned ones in the sidebar's address row,
@@ -304,4 +303,3 @@ import RiseChromium
     })();
     """
 }
-#endif

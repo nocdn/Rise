@@ -1,14 +1,12 @@
 import AppKit
-import WebKit
 
-/// Routes precise trackpad events only over visible pages. WebKit's large native
-/// history slide is disabled; ordinary wheel/vertical/page horizontal scrolling
-/// still goes to WebKit. A short isolated DOM probe protects carousels/editors, and,
-/// as in Safari, pages that take the wheel themselves, like a drawing canvas that pans:
-/// a gesture's first events reach the page at once, and only swipe if it lets them be.
+/// Routes precise trackpad events only over visible pages. The engine's own history slide is
+/// disabled; ordinary wheel/vertical/page horizontal scrolling still goes to the page. A short
+/// isolated DOM probe protects carousels/editors, and, as in Safari, pages that take the wheel
+/// themselves, like a drawing canvas that pans: a gesture's first events reach the page at once,
+/// and only swipe if it lets them be.
 @MainActor final class HistorySwipeController {
     static let worldName = "Rise.HistorySwipe"
-    static let world = WKContentWorld.world(name: worldName)
     private weak var window: BrowserWindow?
     private let pageAt: (NSEvent) -> WebPage?
     private let feedback: (HistoryDirection?, Double, Bool, Bool?) -> Void
@@ -147,19 +145,8 @@ import WebKit
       }, { capture: true, passive: true });
     })();
     """#
-    private static let watched = NSHashTable<WKUserContentController>.weakObjects()
-    static func install(on page: WebPage) {
-        guard let webView = (page as? WebKitPage)?.webView else { page.addScriptToEveryDocument(wheelWatch, world: worldName); return }
-        install(on: webView)
-    }
-    static func install(on webView: WKWebView) {
-        let controller = webView.configuration.userContentController
-        // window.open can supply a configuration sharing the opener's controller.
-        guard !watched.contains(controller) else { return }
-        watched.add(controller)
-        controller.addUserScript(WKUserScript(source: wheelWatch, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: world))
-    }
-    // CSS coordinates account for WKWebView.pageZoom. Shadow DOM is traversed;
+    static func install(on page: WebPage) { page.addScriptToEveryDocument(wheelWatch, world: worldName) }
+    // CSS coordinates account for the page's zoom. Shadow DOM is traversed;
     // iframe contents are conservatively left alone, including cross-origin ones.
     // A page that cancelled the gesture's first wheel events keeps the gesture.
     static let scrollProbe = #"""

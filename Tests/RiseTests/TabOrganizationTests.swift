@@ -68,14 +68,14 @@ final class TabOrganizationTests: XCTestCase {
         let a = browser.addTab(), b = browser.addTab(), c = browser.addTab(), d = browser.addTab()
         b.developer = true; b.pinned = true; b.favicon = NSImage(size:NSSize(width:16,height:16))
         browser.update(); browser.root.layoutSubtreeIfNeeded()
-        let row = browser.sidebar.rows[b.id]!, web = b.webView, icon = row.icon.image, loading = row.loadingBackground
+        let row = browser.sidebar.rows[b.id]!, web = b.page.view, icon = row.icon.image, loading = row.loadingBackground
         var clicks = 0; browser.sidebar.crossingClick = { clicks += 1 }
         browser.window!.sendEvent(event(.leftMouseDown,at:NSPoint(x:45,y:20),in:row))
         XCTAssertEqual(row.layer?.affineTransform().a,1)
         browser.window!.sendEvent(event(.leftMouseDragged,at:NSPoint(x:45,y:10),in:browser.sidebar.rowsHost))
         XCTAssertEqual(browser.tabs.map(\.id),[b.id,d.id,c.id,a.id]); XCTAssertEqual(clicks,2)
         XCTAssertEqual(row.frame.minX,6); XCTAssertEqual(row.frame.height,TabAppearance.subtitleRowHeight)
-        XCTAssertTrue(browser.sidebar.rows[b.id] === row); XCTAssertTrue(b.webView === web); XCTAssertTrue(row.loadingBackground === loading)
+        XCTAssertTrue(browser.sidebar.rows[b.id] === row); XCTAssertTrue(b.page.view === web); XCTAssertTrue(row.loadingBackground === loading)
         XCTAssertTrue(row.icon.image === icon); XCTAssertTrue(b.developer && b.pinned)
         XCTAssertEqual(browser.selectedID,d.id, "Dragging an inactive tab must preserve its selected styling")
         browser.window!.sendEvent(event(.leftMouseDragged,at:NSPoint(x:45,y:500),in:browser.sidebar.rowsHost))
@@ -142,9 +142,9 @@ final class TabOrganizationTests: XCTestCase {
         XCTAssertTrue(row.control(row.titleField,textView:editor,doCommandBy:#selector(NSResponder.insertNewline(_:))))
         XCTAssertFalse(row.isRenaming); XCTAssertEqual(tab.customTitle,"My workspace"); XCTAssertEqual(row.titleField.stringValue,"My workspace")
         XCTAssertEqual(row.frame,frame); XCTAssertEqual(row.titleField.frame,titleFrame); XCTAssertEqual(row.titleField.font,font)
-        tab.webView.loadHTMLString("<title>New page title</title>",baseURL:nil)
+        tab.open(URL(string: "https://example.com/")!, title: "New page title")
         let deadline = Date().addingTimeInterval(5)
-        while tab.webView.title != "New page title" && Date() < deadline { try await Task.sleep(for:.milliseconds(20)) }
+        while tab.page.title != "New page title" && Date() < deadline { try await Task.sleep(for:.milliseconds(20)) }
         tab.changed(); XCTAssertEqual(tab.title,"My workspace")
         browser.saveNow(); let saved = try XCTUnwrap(SessionStorage.read(from:browser.sessionURL)?.tabs.first)
         XCTAssertEqual(saved.customTitle,"My workspace"); XCTAssertEqual(BrowserTab(saved:saved).title,"My workspace")

@@ -2,7 +2,6 @@ import Foundation
 #if os(macOS)
 import AppKit
 #endif
-import WebKit
 
 /// Answers questions about the open page through the chosen AI provider, streamed token by token.
 enum PageAssistant {
@@ -130,7 +129,7 @@ enum PageAssistant {
         bar.provider = { [weak self] in self?.modelChoice ?? .openRouter }
     }
 
-    /// OpenRouter unless another is picked in rise://settings (or WebKit's More menu).
+    /// OpenRouter unless another is picked in rise://settings.
     var aiProvider: AIProvider { AIProvider(rawValue: preferences.string(forKey: AIProvider.preferenceKey) ?? "") ?? .openRouter }
     func selectAIProvider(_ provider: AIProvider) {
         preferences.set(provider.rawValue, forKey: AIProvider.preferenceKey)
