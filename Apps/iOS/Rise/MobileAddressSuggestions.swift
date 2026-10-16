@@ -38,6 +38,14 @@ import WebKit
         history.record(url, title: page.title ?? url.host ?? "")
         scheduleSave()
     }
+    func removeHistory(_ url: URL) {
+        removeHistory([url])
+    }
+    func removeHistory(_ urls: [URL]) {
+        var removed = false
+        for url in urls { if history.remove(url) { removed = true } }
+        if removed { scheduleSave() }
+    }
     private func scheduleSave() {
         saveTask?.cancel()
         saveTask = Task { [weak self] in

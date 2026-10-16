@@ -58,6 +58,14 @@ public final class BrowsingHistory {
         entries[index].title = String(title.prefix(512)); dirty = true
     }
 
+    /// Removes the whole local visit record, including its suggestion ranking.
+    @discardableResult public func remove(_ url: URL) -> Bool {
+        guard let key = Self.key(url), let index = entries.firstIndex(where: { $0.url == key }) else { return false }
+        entries.remove(at: index)
+        dirty = true
+        return true
+    }
+
     public func ranked(for query: String, limit: Int = 5, at date: Date = Date()) -> [HistoryEntry] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let words = query.split(whereSeparator: { $0.isWhitespace }).map(String.init)

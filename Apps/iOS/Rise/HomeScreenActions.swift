@@ -35,10 +35,7 @@ enum HomeScreenAction: String, CaseIterable {
             browser.openPanel(.menu)
             browser.openDownloads()
         case .history:
-            let history = BrowsingHistoryController(source: browser.addressSuggestions) { [weak browser] url in
-                browser?.openLinks([url])
-            }
-            browser.present(UINavigationController(rootViewController: history), animated: true) { [weak browser] in browser?.applyPendingChanges() }
+            browser.openHistory()
         case .newPrivateTab:
             if browser.isPrivateBrowsing { browser.openNewBlankTab(); return true }
             if let privateSession {

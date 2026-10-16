@@ -25,7 +25,7 @@ final class DownloadsPanel: UIView {
     private let header = PanelHeader(title: "Downloads")
     var closeButton: AnimatedSymbolButton { header.closeButton }
     /// The dots after the title, for the whole list, headed by how many files there are.
-    let listMenuButton = UIButton(type: .system)
+    let listMenuButton = PanelListMenu.button(label: "Downloads Options")
     var buttons: [UIButton] { [closeButton, listMenuButton] }
     /// The rounded list, which scrolls once there are more downloads than fit.
     let list = DownloadsList()
@@ -45,27 +45,9 @@ final class DownloadsPanel: UIView {
     private(set) var selected: Set<UUID> = []
     var items: [MobileDownloads.Item] { rows.map(\.item) }
 
-    /// The system's dots, drawn a little closer together.
-    private static let listDots: UIImage = {
-        let side: CGFloat = 3, step: CGFloat = 4.75
-        return UIGraphicsImageRenderer(size: CGSize(width: 2*step+side, height: side)).image { context in
-            UIColor.black.setFill()
-            for index in 0..<3 {
-                context.cgContext.fillEllipse(in: CGRect(x: CGFloat(index)*step, y: 0, width: side, height: side))
-            }
-        }.withRenderingMode(.alwaysTemplate)
-    }()
-
     override init(frame: CGRect) {
         super.init(frame: frame)
         addSubview(header)
-        listMenuButton.setImage(Self.listDots, for: .normal)
-        listMenuButton.tintColor = .secondaryLabel
-        listMenuButton.showsMenuAsPrimaryAction = true
-        // As written, clearing last, rather than flipped to put the first item nearest the dots
-        // when the menu opens upwards.
-        listMenuButton.preferredMenuElementOrder = .fixed
-        listMenuButton.accessibilityLabel = "Downloads Options"
         header.accessory = listMenuButton
         updateListMenu()
         list.layer.cornerCurve = .continuous
@@ -227,7 +209,7 @@ final class DownloadsPanel: UIView {
         private let ring = ProgressRing()
         /// The icon, or the ring while downloading, which Multi Select swaps for the checkbox.
         private let badge = UIView()
-        private let checkbox = UIImageView(image: UIImage(systemName: "circle"))
+        private let checkbox = PanelSelectionIndicator()
         private let title = UILabel()
         private let detail = UILabel()
         private var thumbnailFor: URL?
@@ -249,10 +231,6 @@ final class DownloadsPanel: UIView {
             detail.textColor = .secondaryLabel
             detail.lineBreakMode = .byTruncatingTail
             for view in [icon, ring] as [UIView] { badge.addSubview(view) }
-            checkbox.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 22, weight: .regular)
-            checkbox.contentMode = .center
-            checkbox.tintColor = .tertiaryLabel
-            checkbox.alpha = 0
             for view in [badge, checkbox, title, detail] as [UIView] {
                 view.isUserInteractionEnabled = false
                 view.isAccessibilityElement = false
@@ -319,11 +297,7 @@ final class DownloadsPanel: UIView {
         }
 
         func setChecked(_ checked: Bool, animated: Bool) {
-            let image = UIImage(systemName: checked ? "checkmark.circle.fill" : "circle")!
-            if animated, !UIAccessibility.isReduceMotionEnabled {
-                checkbox.setSymbolImage(image, contentTransition: .replace)
-            } else { checkbox.image = image }
-            checkbox.tintColor = checked ? SiteSettingsPanel.switchBlue : .tertiaryLabel
+            checkbox.setChecked(checked, animated: animated)
             accessibilityTraits = checked ? [.button, .selected] : .button
             iconButton.accessibilityLabel = "\(checked ? "Deselect" : "Select") \(item.name)"
         }

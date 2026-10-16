@@ -30,6 +30,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     let voice = VoiceInput()
     private var isSwipingToTabs = false
     private lazy var backSwipe = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(swipeBack))
+    private lazy var panelBackSwipe = UIPanGestureRecognizer(target: self, action: #selector(swipePanelBack))
     let isPrivateBrowsing: Bool
     let websiteDataStore: WKWebsiteDataStore
     lazy var quickActions = BrowserQuickActions(browser: self)
@@ -88,6 +89,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     var onPanelCloseCommit: (() -> Void)?
     #endif
     private(set) var downloadsSheet = DownloadsSheetState()
+    private var historyReturnPanel: BottomBar.Panel?
     /// Pinching in on the page, from its smallest zoom, folds it up and summarises it.
     private lazy var summarisePinch = UIPinchGestureRecognizer(target: self, action: #selector(pinchToSummarise(_:)))
     private var pinchFromSmallest = false
@@ -392,6 +394,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         backSwipe.edges = .left
         backSwipe.delegate = self
         view.addGestureRecognizer(backSwipe)
+        panelBackSwipe.maximumNumberOfTouches = 1
+        panelBackSwipe.delegate = self
+        view.addGestureRecognizer(panelBackSwipe)
     }
 
     /// Moves a page straight from wherever it is: removing it first would take it out of the
@@ -540,6 +545,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
                     return list.canPullToClose(velocity: panelPan.velocity(in: view))
                 }
             }
+            if bottomBar.panel == .history {
+                let list = bottomBar.history.list
+                if list.bounds.contains(panelPan.location(in: list)) {
+                    return list.canRubberBandPanel(velocity: panelPan.velocity(in: view))
+                }
+            }
             if bottomBar.panel == .downloads {
                 let velocity = panelPan.velocity(in: view)
                 guard abs(velocity.y) > abs(velocity.x) else { return false }
@@ -560,6 +571,11 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         if gestureRecognizer === newPageHold {
             return VoiceInput.isSupported && !isPanelOpen && presentedViewController == nil && !isSwipingToTabs
         }
+        if gestureRecognizer === panelBackSwipe {
+            let delta = panelBackSwipe.translation(in: view), velocity = panelBackSwipe.velocity(in: view)
+            let direction = abs(delta.x)+abs(delta.y) > 1 ? delta : velocity
+            return canReturnFromPanel && direction.x > abs(direction.y)
+        }
         return gestureRecognizer !== backSwipe
             || (!previousPages.isEmpty && !webView.canGoBack && !isPanelOpen && !isTabSwitcherOpen && summarise == nil)
     }
@@ -571,6 +587,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        if gestureRecognizer === panelBackSwipe {
+            return canReturnFromPanel && touch.location(in: view).x <= 16
+        }
         // The strip's tap must not compete with controls in the expanded toolbar or its panels.
         if gestureRecognizer === collapsedBarTap { return bottomBar.isCollapsed && !isPanelOpen }
         // Editing and selection belong to the field; answer scrolling belongs to TextKit.
@@ -615,6 +634,35 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         }
     }
 
+    @objc private func swipePanelBack(_ swipe: UIPanGestureRecognizer) {
+        handlePanelEdgeSwipe(swipe.state)
+    }
+
+    func handlePanelEdgeSwipe(_ state: UIGestureRecognizer.State) {
+        guard state == .began, canReturnFromPanel else { return }
+        returnFromPanel()
+    }
+
+    var canReturnFromPanel: Bool {
+        guard isPanelOpen else { return false }
+        switch bottomBar.panel {
+        case .history, .downloads, .siteSettings, .appSettings: return true
+        default: return false
+        }
+    }
+
+    /// X, the left-edge gesture and accessibility escape take the same route back.
+    func returnFromPanel() {
+        guard isPanelOpen else { return }
+        switch bottomBar.panel {
+        case .history: closeHistory()
+        case .downloads: closeDownloads()
+        case .siteSettings: closeSiteSettings()
+        case .appSettings: closeAppSettings()
+        default: closePanel()
+        }
+    }
+
     private func setUpBottomBar() {
         dimming.backgroundColor = UIColor.black.withAlphaComponent(0.2)
         dimming.alpha = 0
@@ -632,8 +680,16 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         panelPan.delegate = self
         panelPan.maximumNumberOfTouches = 1
         bottomBar.addGestureRecognizer(panelPan)
+        panelPan.require(toFail: panelBackSwipe)
         bottomBar.search.list.panGestureRecognizer.require(toFail: panelPan)
+        bottomBar.history.list.panGestureRecognizer.require(toFail: panelPan)
+        // The panel pan can reject horizontal movement before the edge pan begins;
+        // the list must still wait for the edge gesture itself in that case.
+        bottomBar.history.list.panGestureRecognizer.require(toFail: panelBackSwipe)
+        bottomBar.history.swipe.pan.require(toFail: panelBackSwipe)
+        panelPan.require(toFail: bottomBar.history.swipe.pan)
         bottomBar.downloads.list.panGestureRecognizer.require(toFail: panelPan)
+        bottomBar.downloads.list.panGestureRecognizer.require(toFail: panelBackSwipe)
         bottomBar.downloads.onRowsChange = { [weak self] in self?.resizeDownloadsPanel() }
         tabSwipe.delegate = self
         bottomBar.addGestureRecognizer(tabSwipe)
@@ -656,6 +712,16 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.newPageButton.addGestureRecognizer(newPageHold)
         bottomBar.search.allowsRemoteSuggestions = !isPrivateBrowsing
         bottomBar.search.source = addressSuggestions
+        bottomBar.history.source = addressSuggestions
+        addressSuggestions.icons.onLoad = { [weak self] in
+            self?.bottomBar.search.refresh()
+            self?.bottomBar.history.refreshIcons()
+        }
+        bottomBar.history.open = { [weak self] url in
+            guard let self, isPanelOpen, bottomBar.panel == .history else { return }
+            historyReturnPanel = nil
+            openFromPanel(url)
+        }
         bottomBar.search.tabIcon = { [weak self] url in
             self?.tabs.first { MobileSuggestionFavicons.origin($0.sessionTab.url) == MobileSuggestionFavicons.origin(url) && $0.favicon != nil }?.favicon
         }
@@ -738,15 +804,16 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             (menu.findTile, { $0.openFind() }),
             (menu.copyTile, { $0.copyLink() }),
             (menu.siteSettingsButton, { $0.openSiteSettings() }),
-            (bottomBar.siteSettings.closeButton, { $0.closeSiteSettings() }),
             (bottomBar.siteSettings.appSettingsRow, { $0.openAppSettings() }),
-            (bottomBar.appSettings.closeButton, { $0.closeAppSettings() }),
             (menu.downloadsButton, { $0.openDownloads() }),
-            (bottomBar.tabMenu.historyButton, { $0.quickActions.open(.history) }),
-            (bottomBar.downloads.closeButton, { $0.closeDownloads() }),
+            (bottomBar.tabMenu.historyButton, { $0.openHistory() }),
         ]
         for (control, action) in actions {
             control.addAction(UIAction { [weak self] _ in if let self { action(self) } }, for: .primaryActionTriggered)
+        }
+        for button in [bottomBar.history.closeButton, bottomBar.downloads.closeButton,
+                       bottomBar.siteSettings.closeButton, bottomBar.appSettings.closeButton] {
+            button.addAction(UIAction { [weak self] _ in self?.returnFromPanel() }, for: .primaryActionTriggered)
         }
         bottomBar.siteSettings.onAdBlockingChanged = { [weak self] enabled in self?.changeAdBlocking(enabled) }
         bottomBar.siteSettings.onCookieBannersChanged = { [weak self] enabled in self?.changeCookieBanners(enabled) }
@@ -837,6 +904,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         case .siteSettings: BottomBar.siteSettingsHeight(width: view.bounds.width, safeBottom: safeBottom)
         case .appSettings: BottomBar.appSettingsHeight(width: view.bounds.width, safeBottom: safeBottom)
         case .downloads: downloadsSheet.height(in: downloadsHeights)
+        case .history: BottomBar.historyHeight(screenHeight: view.bounds.height, safeTop: view.safeAreaInsets.top)
         }
         return max(1, height-open)
     }
@@ -912,6 +980,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// Shrinks the panel back into the bar, carrying on at `velocity`, in points per second downwards.
     func closePanel(velocity: CGFloat = 0) {
         guard isPanelOpen else { return }
+        historyReturnPanel = nil
         isPanelOpen = false
         dimming.isUserInteractionEnabled = false
         bottomBar.accessibilityViewIsModal = false
@@ -947,7 +1016,28 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.showContents(of: nil)
     }
 
-    @objc private func closePanelOnTap() { closePanel() }
+    @objc private func closePanelOnTap() {
+        guard bottomBar.panel != .history else { return }
+        closePanel()
+    }
+
+    /// Grow directly from the current surface; no toolbar dismissal or modal presentation first.
+    func openHistory() {
+        guard allowsPeek, presentedViewController == nil, !isPanelOpen || bottomBar.panel != .history else { return }
+        historyReturnPanel = isPanelOpen ? bottomBar.panel : nil
+        bottomBar.history.setSelecting(false, animated: false)
+        bottomBar.history.reload()
+        if isPanelOpen { swapMenuPanel(to: .history) }
+        else { openPanel(.history) }
+    }
+
+    func closeHistory() {
+        guard isPanelOpen, bottomBar.panel == .history else { return }
+        if let previous = historyReturnPanel {
+            historyReturnPanel = nil
+            swapMenuPanel(to: previous)
+        } else { closePanel() }
+    }
 
     /// More fades away with its usual blurred swap as the settings surface grows a little.
     func openSiteSettings() {
@@ -1031,8 +1121,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.panel = panel
         bottomBar.showContents(of: panel)
         let change = { self.setPanel(1); self.setNeedsStatusBarAppearanceUpdate() }
-        guard !UIAccessibility.isReduceMotionEnabled else { change(); return }
+        guard !UIAccessibility.isReduceMotionEnabled else { change(); panelMotion.stop(); return }
         let spring = PeekPresentationController.closeSpring
+        panelMotion.settle(for: spring.duration)
         UIView.animate(springDuration: spring.duration, bounce: spring.bounce, initialSpringVelocity: 0, delay: 0,
                        options: [.beginFromCurrentState, .allowUserInteraction], animations: change)
     }
@@ -1210,8 +1301,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             return
         }
         let travel = panelTravel
-        let stretch = 40*(1-1/(1+max(0, -distance)/160))
-        setPanel(distance >= 0 ? max(0, 1-distance/travel) : 1+stretch/travel)
+        let stretch = 40*(1-1/(1+abs(distance)/160))
+        if bottomBar.panel == .history {
+            setPanel(1+(distance < 0 ? stretch : -stretch)/travel)
+        } else {
+            setPanel(distance >= 0 ? max(0, 1-distance/travel) : 1+stretch/travel)
+        }
     }
 
     func finishPanelDrag(at distance: CGFloat, velocity: CGFloat = 0) {
@@ -1221,6 +1316,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             finishDownloadsDrag(velocity: velocity,cancelled: false)
             return
         }
+        if bottomBar.panel == .history { settlePanelOpen(); return }
         let travel = panelTravel
         if velocity > 600 || (distance > travel*0.3 && velocity > -200) {
             closePanel(velocity: velocity)
@@ -1232,7 +1328,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     override func accessibilityPerformEscape() -> Bool {
         if !isPanelOpen, isTabSwitcherOpen { selectTab(tabIndex); return true }
         guard isPanelOpen else { return super.accessibilityPerformEscape() }
-        closePanel()
+        returnFromPanel()
         return true
     }
 
@@ -1374,6 +1470,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             return false
         }
         if let summarise { summarise.finish(); return false }
+        if isPanelOpen, action == .history, bottomBar.panel != .search, bottomBar.panel != .find { return true }
         if isPanelOpen { closePanel(); return false }
         if isTabSwitcherOpen, action != .history { selectTab(tabIndex); return false }
         return isTabSwitcherOpen || tabSwitcher.isHidden

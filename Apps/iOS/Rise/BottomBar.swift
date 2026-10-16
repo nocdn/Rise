@@ -7,7 +7,7 @@ import UIKit
 /// page's address and a few actions, whose Find turns it into a find field above the keyboard.
 /// Either way the bar's contents swap with a quick, blurred crossfade.
 final class BottomBar: UIView {
-    enum Panel { case search, menu, tabMenu, find, siteSettings, appSettings, downloads }
+    enum Panel { case search, menu, tabMenu, find, siteSettings, appSettings, downloads, history }
 
     /// The buttons' row, and the space above it.
     static let rowHeight: CGFloat = 42
@@ -47,6 +47,7 @@ final class BottomBar: UIView {
     let appSettings = AppSettingsPanel()
     /// More's Downloads: the list of downloads.
     let downloads = DownloadsPanel()
+    let history = HistoryPanel()
     /// Which panel the bar grows into.
     var panel = Panel.search
     /// The search's, and the address's, distance from the panel's top.
@@ -64,7 +65,7 @@ final class BottomBar: UIView {
     private var copySuccessTask: Task<Void, Never>?
     /// Whichever of the row, the search and the menu is showing, if any.
     private(set) var shown: UIView?
-    private var contents: [UIView] { [home, search, menu, tabMenu, find, siteSettings, appSettings, downloads] }
+    private var contents: [UIView] { [home, search, menu, tabMenu, find, siteSettings, appSettings, downloads, history] }
     /// Collapsed, only the strip remains; set it inside an animation to animate.
     var isCollapsed = false {
         didSet {
@@ -109,6 +110,10 @@ final class BottomBar: UIView {
 
     static func appSettingsHeight(width: CGFloat, safeBottom: CGFloat) -> CGFloat {
         siteSettingsHeight(width: width, safeBottom: safeBottom)+100
+    }
+
+    static func historyHeight(screenHeight: CGFloat, safeTop: CGFloat) -> CGFloat {
+        min(screenHeight*0.8, screenHeight-safeTop-12).rounded()
     }
 
     /// As Site settings, growing for a longer list.
@@ -162,7 +167,7 @@ final class BottomBar: UIView {
         for button in [tabsButton, newPageButton] { row.addSubview(button) }
         row.addSubview(moreLanding)
         moreLanding.addSubview(moreButton)
-        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton, tabMenu.historyButton]+menu.buttons+siteSettings.buttons+appSettings.buttons+downloads.buttons+find.buttons+[find.modeButton, find.sendButton] {
+        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton, tabMenu.historyButton, history.closeButton]+menu.buttons+siteSettings.buttons+appSettings.buttons+downloads.buttons+find.buttons+[find.modeButton, find.sendButton] {
             // A light, crisp tap as the finger lands, rather than a soft thud; actions wait for it to lift.
             button.addAction(UIAction { [weak self] _ in self?.tap.impactOccurred(intensity: 0.5) }, for: .touchDown)
         }
@@ -199,6 +204,7 @@ final class BottomBar: UIView {
         case .siteSettings: siteSettings
         case .appSettings: appSettings
         case .downloads: downloads
+        case .history: history
         case nil: home
         }
         show(view, animated: animated)
@@ -246,6 +252,7 @@ final class BottomBar: UIView {
     private func show(_ next: UIView?, animated: Bool) {
         guard next !== shown else { return }
         let previous = shown
+        if previous === history { history.cancelSwipe() }
         shown = next
         let earlier = prepareContents(for: next).filter { $0 !== previous }
         layoutIfNeeded()
@@ -307,6 +314,9 @@ final class BottomBar: UIView {
         place(siteSettings, Self.searchTop, SiteSettingsPanel.height)
         place(appSettings, Self.searchTop, AppSettingsPanel.height)
         let safeBottom = window?.safeAreaInsets.bottom ?? 0
+        let historyHeight = Self.historyHeight(screenHeight: superview?.bounds.height ?? bounds.height,
+                                               safeTop: window?.safeAreaInsets.top ?? 0)
+        place(history, Self.searchTop, max(0, historyHeight-Self.searchTop-max(safeBottom,16)))
         let compact = Self.downloadsHeight(width: bounds.width, safeBottom: safeBottom, rows: downloads.rowCount)
         let base = DownloadsPanel.height(rows: downloads.rowCount)
         // Keep the outgoing collection's viewport until its blurred crossfade has left.

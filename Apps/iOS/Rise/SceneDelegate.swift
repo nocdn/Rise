@@ -7,6 +7,24 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let scene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: scene)
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains(HistorySelectionAudit.argument) {
+            let controller = HistoryPanelAudit.makeBrowser()
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            HistorySelectionAudit.run(in: controller)
+            return
+        }
+        if ProcessInfo.processInfo.arguments.contains(HistoryRowSwipeAudit.argument) {
+            let controller = HistoryPanelAudit.makeBrowser()
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            HistoryRowSwipeAudit.run(in: controller)
+            return
+        }
+        if ProcessInfo.processInfo.arguments.contains(HistoryPanelAudit.argument) {
+            let controller = HistoryPanelAudit.makeBrowser()
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            HistoryPanelAudit.run(in: controller)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains(SummariseBarAudit.argument) {
             let controller = BrowserViewController(startURL: nil)
             window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()

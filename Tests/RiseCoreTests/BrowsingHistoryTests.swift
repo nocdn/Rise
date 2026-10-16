@@ -19,6 +19,25 @@ final class BrowsingHistoryTests: XCTestCase {
         try restored.clear()
         XCTAssertTrue(BrowsingHistory(storageURL: file).entries.isEmpty)
     }
+    func testIndividualRemovalCanonicalizesAndPersistsWithoutRemovingOtherVisits() throws {
+        let file = storage(); defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let history = BrowsingHistory(storageURL: file)
+        let removed = URL(string: "https://example.com/article")!, kept = URL(string: "https://example.com/other")!
+        history.record(removed, title: "Remove this visit")
+        history.record(removed, title: "Remove this visit")
+        history.record(kept, title: "Keep this visit")
+        try history.save()
+        XCTAssertTrue(history.remove(URL(string: "https://user:secret@EXAMPLE.com:443/article#section")!))
+        XCTAssertTrue(history.ranked(for: "Remove this").isEmpty)
+        XCTAssertEqual(history.entries.map(\.url), [kept.absoluteString])
+        try history.save()
+        XCTAssertEqual(BrowsingHistory(storageURL: file).entries, history.entries)
+        XCTAssertFalse(history.remove(removed))
+        XCTAssertFalse(history.remove(URL(fileURLWithPath: "/tmp/history")))
+        XCTAssertEqual(history.entries.count, 1)
+        history.record(removed, title: "New visit")
+        XCTAssertEqual(history.entries.first { $0.url == removed.absoluteString }?.visits, 1)
+    }
     func testFrecencyRewardsRepeatedVisitsAndRecencyWithinTheSameMatchTier() {
         let history = BrowsingHistory(storageURL: storage()), now = Date(timeIntervalSince1970: 1_000_000)
         let frequent = URL(string: "https://frequent.example/docs")!, recent = URL(string: "https://recent.example/docs")!

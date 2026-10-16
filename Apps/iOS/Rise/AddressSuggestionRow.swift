@@ -16,6 +16,13 @@ final class AddressSuggestionRow: UIButton {
     private var roundsIconCorners = false
     var choose: (() -> Void)?
     var fill: (() -> Void)?
+    var showsFillButton = true {
+        didSet {
+            fillButton.isHidden = !showsFillButton
+            updateFillAccessibility()
+            setNeedsLayout()
+        }
+    }
     override init(frame: CGRect) {
         super.init(frame: frame)
         icon.contentMode = .scaleAspectFit
@@ -37,16 +44,19 @@ final class AddressSuggestionRow: UIButton {
         fillButton.shrinksWhenPressed(to: 0.9)
         fillButton.addAction(UIAction { [weak self] _ in self?.fill?() }, for: .primaryActionTriggered)
         addSubview(fillButton)
-        accessibilityCustomActions = [UIAccessibilityCustomAction(name: "Fill in search field") { [weak self] _ in
-            guard let self, let fill else { return false }
-            fill(); return true
-        }]
+        updateFillAccessibility()
         layer.cornerRadius = SearchPanel.cornerRadius; layer.cornerCurve = .continuous
         clipsToBounds = false
         shrinksWhenPressed(to: SearchPanel.pressedScale, filled: true, restingFill: .clear, fillView: pressBackground)
         addAction(UIAction { [weak self] _ in self?.choose?() }, for: .primaryActionTriggered)
     }
     required init?(coder: NSCoder) { fatalError() }
+    private func updateFillAccessibility() {
+        accessibilityCustomActions = showsFillButton ? [UIAccessibilityCustomAction(name: "Fill in search field") { [weak self] _ in
+            guard let self, let fill else { return false }
+            fill(); return true
+        }] : nil
+    }
     func show(_ candidate: AddressCandidate, image: UIImage?) {
         fillGlyph.image = SearchPanel.fillIcon
         fillGlyphOffset = 0
@@ -96,7 +106,8 @@ final class AddressSuggestionRow: UIButton {
         let glyphInset = SearchPanel.rowIndent+(22-glyphSide)/2+1
         fillGlyph.frame = CGRect(x: fillButton.bounds.width-glyphInset-glyphSide+fillGlyphOffset, y: bounds.midY-glyphSide/2,
                                  width: glyphSide, height: glyphSide)
-        let x = SearchPanel.rowIndent+22+8, width = max(0, bounds.width-44-x)
+        let x = SearchPanel.rowIndent+22+8
+        let width = max(0, bounds.width-(showsFillButton ? 44 : SearchPanel.rowIndent)-x)
         if !Self.showsURLSubtitles || (addressLabel.text ?? "").isEmpty {
             let height = min(bounds.height, titleLabelView.font.lineHeight.rounded(.up))
             titleLabelView.frame = CGRect(x: x, y: bounds.midY-height/2, width: width, height: height)

@@ -114,6 +114,13 @@ Downloads supports UIKit's native two-finger selection interaction, including ra
 selection, deselection and edge autoscrolling. Its collection cells host the same download
 row views, retaining their existing icon/checkbox blur and scale transitions. Tapping a file
 icon enters Multi Select and checks that file; row taps toggle selection while editing.
+History shares this native range-selection list, its check-circle drawing and the title's
+compact three-dot menu. History's Multi Select shifts favicons and titles 32 points right,
+leaving check circles in the original favicon column; Done reverses that motion. Two-finger
+dragging enters selection directly, and row taps toggle checks without opening a page.
+The menu also selects all visits or deletes only the selected visits. Selection follows URL
+identity across refreshes and reuse; updates wait for an active range to finish. Reopening
+History starts outside selection. Individual swipe deletion is disabled while selecting.
 Arrivals and removals during a range gesture wait until it ends, preserving selection by ID.
 The sheet always opens at its original compact height. A drag or flick snaps between that
 height and a taller detent, about 80% of the window and slightly higher than New Page.
@@ -195,8 +202,17 @@ cards through separate targets or the Close Tab custom action.
 
 The bottom bar stays, with New Page and More. More in the switcher contains only History,
 using the usual animated sheet/contents swap and the URL row's width, 48-point height,
-14-point corners, press fill, scale and haptic. History remains a visual prototype. More
-over a live page keeps the page menu.
+14-point corners, press fill, scale and haptic. History expands that surface to 80% of the
+screen, with a heading, X and scrollable suggestion-style rows. X or a left-edge swipe returns
+to the switcher's menu. The same left-edge gesture returns from Downloads and both Settings
+panels, using their X buttons' return route and starting as soon as a swipe is recognized.
+Vertical drags rubber-band back to History's resting height. Horizontal row
+swipes delete visits, with light resistance and a small pull on the neighbouring two pairs of
+rows. A soft haptic at the threshold releases those neighbours onto a spring while the selected
+row springs to the live finger position; reversing reconnects them and restores resistance. The
+swiped row fades and carries its displayed velocity offscreen on release, before
+the list closes the gap. Deleted visits also leave history-based suggestions. More over a live
+page keeps the page menu.
 
 Swiping up anywhere on the bottom bar still shrinks the page under the finger. Its bottom
 edge and horizontal touch anchor follow the finger; its corners start at the screen's own

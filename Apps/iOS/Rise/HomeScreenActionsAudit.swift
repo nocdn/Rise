@@ -42,8 +42,8 @@ import WebKit
             throw Failure(name: "Timed out: "+name)
         }
         func settle() async throws { try await Task.sleep(for: .milliseconds(650)) }
-        func history() -> BrowsingHistoryController? {
-            (browser.presentedViewController as? UINavigationController)?.topViewController as? BrowsingHistoryController
+        func history() -> HistoryPanel? {
+            browser.isPanelOpen && browser.bottomBar.panel == .history ? browser.bottomBar.history : nil
         }
         func capture(_ name: String, _ view: UIView) throws {
             let image = UIGraphicsImageRenderer(bounds: view.bounds).image { _ in view.drawHierarchy(in: view.bounds, afterScreenUpdates: true) }
@@ -72,15 +72,9 @@ import WebKit
         try await settle()
         let list = history()!
         try check("history-is-newest-first", list.entries.map(\.url) == [second.absoluteString, first.absoluteString])
-        list.reload(query: "OLDER")
-        try check("history-filters-title-case-insensitively", list.entries.map(\.url) == [first.absoluteString])
-        list.reload(query: "history-two")
-        try check("history-filters-addresses", list.entries.map(\.url) == [second.absoluteString])
-        list.reload(query: "no matches")
-        try check("history-shows-an-empty-search-state", list.entries.isEmpty && list.tableView.backgroundView is UILabel)
-        list.reload(query: "")
-        try capture("history", list.navigationController!.view)
-        list.tableView(list.tableView, didSelectRowAt: IndexPath(row: 1, section: 0))
+        try check("history-uses-the-toolbar-instead-of-a-modal", browser.presentedViewController == nil && browser.bottomBar.shown === list)
+        try capture("history", browser.view)
+        (list.list.cellForItem(at: IndexPath(item: 1, section: 0)) as! HistoryCell).row.sendActions(for: .primaryActionTriggered)
         try await wait("history selection") { browser.tabs.count == 2 }
         try check("history-selection-opens-the-full-address", browser.tabs[browser.tabIndex].sessionTab.url == first)
         browser.webView.stopLoading()
@@ -163,7 +157,7 @@ import WebKit
         try await settle()
         browser.bottomBar.tabMenu.historyButton.sendActions(for: .primaryActionTriggered)
         try await wait("history from tab deck") { history() != nil }
-        try check("existing-history-button-opens-the-same-list", !browser.isPanelOpen && browser.isTabSwitcherOpen)
+        try check("existing-history-button-opens-the-same-list", browser.isPanelOpen && browser.isTabSwitcherOpen && browser.bottomBar.shown === browser.bottomBar.history)
         browser.quickActions.open(.downloads)
         try await wait("downloads from presented history") { browser.presentedViewController == nil && browser.isPanelOpen && browser.bottomBar.panel == .downloads }
         try await settle()

@@ -211,12 +211,14 @@ import WebKit
         try check("history-darkens-and-scales-like-a-normal-button", history.backgroundColor == SearchPanel.pressedFill
                   && abs(history.transform.a-MenuPanel.pressedScale) < 0.001)
         history.sendActions(for: .touchUpInside); history.sendActions(for: .primaryActionTriggered)
-        try await wait { (browser.presentedViewController as? UINavigationController)?.topViewController is BrowsingHistoryController
-            && browser.presentedViewController?.isBeingPresented == false }
-        try check("history-opens-the-saved-history-list", browser.isTabSwitcherOpen && !browser.isPanelOpen)
-        browser.dismiss(animated: true)
+        try check("history-opens-the-saved-history-list-immediately", browser.isTabSwitcherOpen && browser.isPanelOpen
+                  && bar.panel == .history && browser.presentedViewController == nil)
+        bar.history.closeButton.sendActions(for: .primaryActionTriggered)
         try await Task.sleep(for: .milliseconds(450))
-        try check("closing-history-keeps-the-tab-list-open", browser.isTabSwitcherOpen && !browser.tabSwitcher.isHidden)
+        try check("closing-history-restores-the-switcher-menu", browser.isTabSwitcherOpen && !browser.tabSwitcher.isHidden
+                  && browser.isPanelOpen && bar.panel == .tabMenu && bar.shown === bar.tabMenu)
+        browser.closePanel()
+        try await Task.sleep(for: .milliseconds(400))
         browser.selectTab(browser.tabIndex)
         try await Task.sleep(for: .milliseconds(850))
         browser.openPanel(.menu)
