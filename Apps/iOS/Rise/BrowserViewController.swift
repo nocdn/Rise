@@ -58,6 +58,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private(set) lazy var pullToReload = PullToReload { [weak self] in self?.reloadPage() }
     /// Only the main page has one; Peek pages are closed and opened by their handle.
     let bottomBar = BottomBar()
+    /// Continues the bar's opaque background to the screen edge during its upward rebound.
+    private let bottomBarUnderfill = UIView()
     let downloadOrigins = DownloadOriginTracker()
     private var scrollObservation: NSKeyValueObservation?
     /// Keeps More's address and its Back and Forward up to date with the page.
@@ -619,6 +621,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         dimming.isUserInteractionEnabled = false
         dimming.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(closePanelOnTap)))
         view.addSubview(dimming)
+        bottomBarUnderfill.backgroundColor = bottomBar.backgroundColor
+        bottomBarUnderfill.isUserInteractionEnabled = false
+        view.addSubview(bottomBarUnderfill)
         view.addSubview(bottomBar)
         bottomBar.find.attachHosts(to: self)
         collapsedBarTap.delegate = self
@@ -762,12 +767,20 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.transform = .identity
         bottomBar.frame = CGRect(x: 0, y: bounds.maxY-height, width: bounds.width, height: height)
         bottomBar.transform = offset
+        layoutBottomBarUnderfill()
         bottomBar.search.visibleHeight = min(SearchPanel.height, max(SearchPanel.fieldHeight,
             fullSearchHeight-keyboardHeight-BottomBar.searchTop))
         // Pages scroll clear of the open bar. Its collapsed strip leaves the inset alone, so the
         // page never resizes as the bar collapses; it just shows more of itself.
         let needed = BottomBar.height(collapsed: false, safeBottom: safeBottom)-safeBottom
         if additionalSafeAreaInsets.bottom != needed { additionalSafeAreaInsets.bottom = needed }
+    }
+
+    private func layoutBottomBarUnderfill() {
+        // A one-point overlap avoids a raster seam; the existing bar and spring stay untouched.
+        let frame = bottomBar.frame, top = frame.maxY-1
+        bottomBarUnderfill.frame = CGRect(x: frame.minX, y: top, width: frame.width,
+                                         height: max(0, view.bounds.maxY-top))
     }
 
     /// The bar collapses after the page scrolls down a little, and opens after it scrolls back up
@@ -1319,6 +1332,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         summarise.onBar = { [weak self] offset in
             guard let self else { return }
             bottomBar.transform = offset == 0 ? .identity : CGAffineTransform(translationX: 0, y: offset*(bottomBar.bounds.height+4))
+            layoutBottomBarUnderfill()
         }
         summarise.onStatusBar = { [weak self] in self?.setNeedsStatusBarAppearanceUpdate() }
         summarise.onFinish = { [weak self, weak summarise, weak scroll] in
@@ -1336,11 +1350,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             summarise.removeFromSuperview()
             self.summarise = nil
             bottomBar.transform = .identity
+            layoutBottomBarUnderfill()
             bottomBar.isUserInteractionEnabled = true
             setNeedsStatusBarAppearanceUpdate()
             applyPendingChanges()
         }
-        view.insertSubview(summarise, belowSubview: bottomBar)
+        view.insertSubview(summarise, belowSubview: bottomBarUnderfill)
         if attachingHost { summaryHost.didMove(toParent: self) }
         bottomBar.isUserInteractionEnabled = false
         self.summarise = summarise
