@@ -527,6 +527,76 @@ index 9cfacb4358..cf91f21cc2 100644
            return false;  // Stop iterating.
          }
          return true;  // Continue iterating.
+diff --git a/chrome/browser/extensions/extension_uninstall_dialog.cc b/chrome/browser/extensions/extension_uninstall_dialog.cc
+index 72148d4bc2..e1e96d2efc 100644
+--- a/chrome/browser/extensions/extension_uninstall_dialog.cc
++++ b/chrome/browser/extensions/extension_uninstall_dialog.cc
+@@ -6,6 +6,7 @@
+ 
+ #include "base/functional/bind.h"
+ #include "base/functional/callback_helpers.h"
++#include "base/no_destructor.h"
+ #include "base/metrics/histogram_macros.h"
+ #include "base/metrics/user_metrics.h"
+ #include "base/metrics/user_metrics_action.h"
+@@ -182,6 +183,26 @@ bool ExtensionUninstallDialog::ShouldShowCheckbox() const {
+   return show_report_abuse_checkbox_;
+ }
+ 
++namespace {
++ExtensionUninstallDialog::EmbedderShowCallback& EmbedderShow() {
++  static base::NoDestructor<ExtensionUninstallDialog::EmbedderShowCallback>
++      callback;
++  return *callback;
++}
++}  // namespace
++
++// static
++void ExtensionUninstallDialog::SetEmbedderShowCallback(
++    EmbedderShowCallback callback) {
++  EmbedderShow() = std::move(callback);
++}
++
++// static
++const ExtensionUninstallDialog::EmbedderShowCallback&
++ExtensionUninstallDialog::GetEmbedderShowCallback() {
++  return EmbedderShow();
++}
++
+ void ExtensionUninstallDialog::OnDialogClosed(CloseAction action) {
+   // Ensure the dialog isn't notified of an uninstallation after the dialog was
+   // closed.
+diff --git a/chrome/browser/extensions/extension_uninstall_dialog.h b/chrome/browser/extensions/extension_uninstall_dialog.h
+index 7d4532e1d9..48efbf402d 100644
+--- a/chrome/browser/extensions/extension_uninstall_dialog.h
++++ b/chrome/browser/extensions/extension_uninstall_dialog.h
+@@ -8,6 +8,7 @@
+ #include <memory>
+ #include <string>
+ 
++#include "base/functional/callback.h"
+ #include "base/memory/raw_ptr.h"
+ #include "base/memory/weak_ptr.h"
+ #include "base/scoped_observation.h"
+@@ -40,6 +41,18 @@ class ExtensionUninstallDialog : public ChromeAppIconDelegate,
+   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kCancelButtonElementId);
+   DECLARE_CLASS_ELEMENT_IDENTIFIER_VALUE(kOkButtonElementId);
+ 
++  // An embedder's own prompt in place of Chrome's dialog: given its title, the
++  // extension's icon and the accept button's label, it calls `done` once, with
++  // whether the person removes the extension. Null gives Chrome's dialog back.
++  using EmbedderShowCallback = base::RepeatingCallback<void(
++      gfx::NativeWindow parent,
++      const std::u16string& title,
++      const gfx::ImageSkia& icon,
++      const std::u16string& accept_label,
++      base::OnceCallback<void(bool accepted)> done)>;
++  static void SetEmbedderShowCallback(EmbedderShowCallback callback);
++  static const EmbedderShowCallback& GetEmbedderShowCallback();
++
+   // The type of action the dialog took at close.
+   // Do not reorder this enum as it is used in UMA histograms.
+   enum CloseAction {
 diff --git a/chrome/browser/extensions/tab_helper.cc b/chrome/browser/extensions/tab_helper.cc
 index 33a4d3ac7d..87f3cafd42 100644
 --- a/chrome/browser/extensions/tab_helper.cc
@@ -693,10 +763,10 @@ index 0000000000..aefb5133bc
 +}
 diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
 new file mode 100644
-index 0000000000..af85ed9abc
+index 0000000000..f6f59b38ab
 --- /dev/null
 +++ b/chrome/browser/rise/RiseChromium.h
-@@ -0,0 +1,461 @@
+@@ -0,0 +1,472 @@
 +#import <AppKit/AppKit.h>
 +
 +NS_ASSUME_NONNULL_BEGIN
@@ -1053,6 +1123,12 @@ index 0000000000..af85ed9abc
 +             handlers:(NSArray<NSString *> *)handlers;
 +/// Runs `expression` in the page as a console does, statements, `let` and `await` included,
 +/// with the value of the last; or the error it threw.
++/// Sends a DevTools protocol command to the page, as DevTools would: `completion` hears its
++/// result, or nil if it failed.
++- (void)devTools:(NSString *)method
++          params:(NSDictionary<NSString *, id> *)params
++      completion:(void (^)(NSDictionary<NSString *, id> *_Nullable result))completion
++    NS_SWIFT_NAME(devTools(_:params:completion:));
 +- (void)evaluateConsoleExpression:(NSString *)expression
 +                       completion:(void (^)(id _Nullable value, NSString *_Nullable error))completion;
 +/// A page showing Chromium's DevTools for this one, opened on the Elements panel. It inspects
@@ -1155,6 +1231,11 @@ index 0000000000..af85ed9abc
 +/// `answer` once. Nil gives Chrome's dialog back.
 ++ (void)setInstallPrompt:(nullable void (^)(NSString *title, NSImage *_Nullable icon, NSArray<NSString *> *permissions,
 +                                            NSString *acceptLabel, void (^answer)(BOOL accept)))prompt;
++/// Asks the person before an extension is removed, in place of Chrome's dialog: `prompt` shows the
++/// title (such as “Remove "Dark Reader"?”), the icon and the remove button's label, and calls
++/// `answer` once. Nil gives Chrome's dialog back.
+++ (void)setUninstallPrompt:(nullable void (^)(NSString *title, NSImage *_Nullable icon, NSString *acceptLabel,
++                                              void (^answer)(BOOL accept)))prompt;
 +@end
 +
 +NS_ASSUME_NONNULL_END
@@ -1210,10 +1291,10 @@ index 0000000000..cabcb68258
 +#endif  // CHROME_BROWSER_RISE_CHROME_BROWSER_MAIN_EXTRA_PARTS_RISE_H_
 diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
 new file mode 100644
-index 0000000000..098d427ad1
+index 0000000000..49b3d67e06
 --- /dev/null
 +++ b/chrome/browser/rise/rise_bridge.mm
-@@ -0,0 +1,3877 @@
+@@ -0,0 +1,3960 @@
 +// Copyright 2026 The Rise Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -1271,6 +1352,7 @@ index 0000000000..098d427ad1
 +#include "chrome/browser/extensions/extension_action_dispatcher.h"
 +#include "chrome/browser/extensions/extension_action_runner.h"
 +#include "chrome/browser/extensions/extension_install_prompt.h"
++#include "chrome/browser/extensions/extension_uninstall_dialog.h"
 +#include "chrome/browser/extensions/extension_install_prompt_show_params.h"
 +#include "chrome/browser/extensions/webstore_install_with_prompt.h"
 +#include "components/sessions/content/session_tab_helper.h"
@@ -2858,6 +2940,8 @@ index 0000000000..098d427ad1
 +  std::unique_ptr<PopupDelegate> _popupDelegate;
 +  // Where Chrome's dialogs for the page go.
 +  std::unique_ptr<PageDialogHost> _dialogHost;
++  // Chromium's tracking areas, set aside while the page is covered.
++  NSMapTable<NSView*, NSArray<NSTrackingArea*>*>* _parkedAreas;
 +}
 +
 +@synthesize delegate = _delegate;
@@ -2875,6 +2959,39 @@ index 0000000000..098d427ad1
 +}
 +@synthesize extensionPopup = _extensionPopup;
 +@synthesize covered = _covered;
++
++// Under something else, such as a Peek or a notice: Chromium's mouse tracking
++// is set aside, so the page takes no hover and sets no cursor through it.
++- (void)setCovered:(BOOL)covered {
++  if (covered == _covered) {
++    return;
++  }
++  _covered = covered;
++  if (covered) {
++    _parkedAreas = [NSMapTable strongToStrongObjectsMapTable];
++    [self parkTrackingAreasIn:self];
++  } else {
++    for (NSView* view in _parkedAreas) {
++      for (NSTrackingArea* area in [_parkedAreas objectForKey:view]) {
++        [view addTrackingArea:area];
++      }
++    }
++    _parkedAreas = nil;
++  }
++  [self.window invalidateCursorRectsForView:self];
++}
++- (void)parkTrackingAreasIn:(NSView*)view {
++  for (NSView* child in view.subviews) {
++    NSArray<NSTrackingArea*>* areas = child.trackingAreas;
++    if (areas.count) {
++      [_parkedAreas setObject:areas forKey:child];
++      for (NSTrackingArea* area in areas) {
++        [child removeTrackingArea:area];
++      }
++    }
++    [self parkTrackingAreasIn:child];
++  }
++}
 +@synthesize zoom = _zoom;
 +@synthesize pageBackgroundColor = _pageBackgroundColor;
 +@synthesize prefersDark = _prefersDark;
@@ -2912,6 +3029,29 @@ index 0000000000..098d427ad1
 +
 +- (BOOL)isFlipped {
 +  return YES;
++}
++
++// Assistive apps (VoiceOver, screenshot tools) reach the page through its
++// view, as Chrome's window leads them to it: Chrome builds the page's
++// accessibility tree once one asks the page's view what it is, which it's
++// otherwise never asked, as it isn't an element until the tree is there.
++- (BOOL)isAccessibilityElement {
++  return [self pageAccessibilityView] != nil;
++}
++- (NSAccessibilityRole)accessibilityRole {
++  return NSAccessibilityGroupRole;
++}
++- (NSArray*)accessibilityChildren {
++  // Reached without asking the app first, as Chrome's own windows answer:
++  // asking the app is what turns Chrome's accessibility on.
++  std::ignore = [NSApp accessibilityRole];
++  NSView* page = [self pageAccessibilityView];
++  return page ? @[ page ] : [super accessibilityChildren];
++}
++- (NSView*)pageAccessibilityView {
++  content::RenderWidgetHostView* view =
++      _contents ? _contents->GetRenderWidgetHostView() : nullptr;
++  return view ? view->GetNativeView().GetNativeNSView() : nil;
 +}
 +
 +- (web_modal::WebContentsModalDialogHost*)dialogHost {
@@ -3487,8 +3627,8 @@ index 0000000000..098d427ad1
 +  _devTools->Send(method, params, reply);
 +}
 +- (void)devTools:(NSString*)method
-+          params:(NSDictionary*)params
-+      completion:(void (^)(NSDictionary*))completion {
++          params:(NSDictionary<NSString*, id>*)params
++      completion:(void (^)(NSDictionary<NSString*, id>* _Nullable))completion {
 +  [self devTools:method
 +          params:params
 +           reply:^(NSDictionary* result, NSDictionary*) {
@@ -5083,6 +5223,30 @@ index 0000000000..098d427ad1
 +          completion));
 +  install->BeginInstall();
 +}
+++ (void)setUninstallPrompt:(void (^)(NSString*, NSImage*, NSString*,
++                                     void (^)(BOOL)))prompt {
++  if (!prompt) {
++    extensions::ExtensionUninstallDialog::SetEmbedderShowCallback({});
++    return;
++  }
++  extensions::ExtensionUninstallDialog::SetEmbedderShowCallback(
++      base::BindRepeating(
++          [](void (^prompt)(NSString*, NSImage*, NSString*, void (^)(BOOL)),
++             gfx::NativeWindow parent, const std::u16string& title,
++             const gfx::ImageSkia& icon, const std::u16string& accept_label,
++             base::OnceCallback<void(bool)> done) {
++            // Answered once; unanswered, it's cancelled.
++            auto waiting =
++                std::make_shared<base::OnceCallback<void(bool)>>(std::move(done));
++            prompt(base::SysUTF16ToNSString(title), ToNSImage(icon),
++                   base::SysUTF16ToNSString(accept_label), ^(BOOL accept) {
++                     if (*waiting) {
++                       std::move(*waiting).Run(accept);
++                     }
++                   });
++          },
++          prompt));
++}
 ++ (void)setInstallPrompt:(void (^)(NSString*, NSImage*, NSArray<NSString*>*,
 +                                   NSString*, void (^)(BOOL)))prompt {
 +  g_install_prompt = prompt;
@@ -6346,6 +6510,49 @@ index 6ecba965f8..f743dfabb7 100644
 +
    // User-set title of this browser window, if there is one.
    std::string user_title;
+ 
+diff --git a/chrome/browser/ui/extensions/extension_uninstall_dialog_impl.cc b/chrome/browser/ui/extensions/extension_uninstall_dialog_impl.cc
+index 9bc1098150..26e6dabc3d 100644
+--- a/chrome/browser/ui/extensions/extension_uninstall_dialog_impl.cc
++++ b/chrome/browser/ui/extensions/extension_uninstall_dialog_impl.cc
+@@ -71,6 +71,26 @@ ExtensionUninstallDialogImpl::~ExtensionUninstallDialogImpl() {
+ }
+ 
+ void ExtensionUninstallDialogImpl::Show() {
++  // The embedder's own prompt, if it has one.
++  if (const EmbedderShowCallback& embedder = GetEmbedderShowCallback()) {
++    embedder.Run(
++        parent(),
++        l10n_util::GetStringFUTF16(
++            IDS_EXTENSION_PROMPT_UNINSTALL_TITLE,
++            extensions::ui_util::GetFixupExtensionNameForUIDisplay(
++                extension()->name())),
++        icon(), l10n_util::GetStringUTF16(IDS_EXTENSION_PROMPT_UNINSTALL_BUTTON),
++        base::BindOnce(
++            [](base::WeakPtr<ExtensionUninstallDialogImpl> dialog,
++               bool accepted) {
++              if (dialog) {
++                dialog->OnDialogClosed(accepted ? CLOSE_ACTION_UNINSTALL
++                                                : CLOSE_ACTION_CANCELED);
++              }
++            },
++            weak_ptr_factory_.GetWeakPtr()));
++    return;
++  }
+   ui::DialogModel::Builder dialog_builder;
+   dialog_builder.SetInternalName("ExtensionUninstallDialog")
+       .SetTitle(l10n_util::GetStringFUTF16(
+@@ -128,7 +148,10 @@ void ExtensionUninstallDialogImpl::Show() {
+ }
+ 
+ void ExtensionUninstallDialogImpl::Close() {
+-  DCHECK(dialog_model_);
++  // The embedder's prompt answers on its own.
++  if (!dialog_model_) {
++    return;
++  }
+   dialog_model_->host()->Close();
+ }
  
 diff --git a/chrome/browser/ui/sad_tab_helper.cc b/chrome/browser/ui/sad_tab_helper.cc
 index c0157e893f..d8494c52fa 100644

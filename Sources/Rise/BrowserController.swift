@@ -15,6 +15,8 @@ import RiseCore
     lazy var developerMotion = DeveloperModeMotion { [weak self] in self?.layoutChrome() }
     let siteInfoPopover = NSPopover()
     let siteControlsPopover = NSPopover()
+    /// The camera button's JPEG and PDF.
+    let capturePopover = NSPopover()
     var linkPasteboard: NSPasteboard = .general
     var airDropService: NSSharingService?
     var airDropHandler: ((URL) -> Void)?
@@ -340,7 +342,7 @@ import RiseCore
         }
         let devActions: [(String, String, () -> Void)] = [
             ("link", "Copy URL", { [weak self] in self?.copyURL() }),
-            ("camera", "Save page screenshot", { [weak self] in self?.capturePage() }),
+            ("camera", "Capture whole page", { [weak self] in if let self { self.showCaptureChoices(from: self.devButtons[1]) } }),
             ("terminal", "JavaScript Console", { [weak self] in self?.javascriptConsole() }),
             ("doc.text", "View page source", { [weak self] in self?.viewSource() }),
             ("info.circle", "Site information", { [weak self] in self?.siteInformation() }),

@@ -344,6 +344,32 @@ enum RisePages {
         guard let crop = cg.cropping(to: pixels) else { return nil }
         return NSImage(cgImage: crop, size: rect.size)
     }
+    func capture(_ format: PageCaptureFormat) async -> Data? {
+        func send(_ method: String, _ params: [String: Any] = [:]) async -> [String: Any]? {
+            await withCheckedContinuation { continuation in
+                browserView.devTools(method, params: params) { continuation.resume(returning: $0) }
+            }
+        }
+        guard let metrics = await send("Page.getLayoutMetrics"), let content = metrics["cssContentSize"] as? [String: Any],
+              let width = (content["width"] as? NSNumber)?.doubleValue, let height = (content["height"] as? NSNumber)?.doubleValue,
+              width > 0, height > 0 else { return nil }
+        let result: [String: Any]?
+        switch format {
+        case .jpeg:
+            // Chromium draws at most 16,384 pixels down.
+            let scale = Double(browserView.window?.backingScaleFactor ?? 2)
+            result = await send("Page.captureScreenshot", ["format": "jpeg", "quality": 90, "captureBeyondViewport": true, "fromSurface": true,
+                                                           "clip": ["x": 0, "y": 0, "width": width, "height": min(height, 16384/scale), "scale": 1]])
+        case .pdf:
+            // One page the size of the page, as it shows on screen rather than printed.
+            _ = await send("Emulation.setEmulatedMedia", ["media": "screen"])
+            result = await send("Page.printToPDF", ["printBackground": true, "preferCSSPageSize": false, "pageRanges": "1",
+                                                    "paperWidth": width/96, "paperHeight": (height+1)/96,
+                                                    "marginTop": 0, "marginBottom": 0, "marginLeft": 0, "marginRight": 0])
+            _ = await send("Emulation.setEmulatedMedia", ["media": ""])
+        }
+        return (result?["data"] as? String).flatMap { Data(base64Encoded: $0) }
+    }
     private func wholeSnapshot() async -> NSImage? {
         await withCheckedContinuation { continuation in browserView.snapshot { continuation.resume(returning: $0) } }
     }

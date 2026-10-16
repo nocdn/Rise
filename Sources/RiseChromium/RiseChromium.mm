@@ -1900,6 +1900,8 @@ class ActionsObserver : public CefExtensionActionsObserver {
 + (RCExtensionShortcut *)shortcutForEvent:(NSEvent *)event {
   return nil;
 }
++ (void)setUninstallPrompt:(void (^)(NSString *, NSImage *, NSString *, void (^)(BOOL)))prompt {
+}
 + (id)observeActions:(void (^)(void))changed {
   RCActionsObservation *observation = [RCActionsObservation new];
   if (gContextReady) {

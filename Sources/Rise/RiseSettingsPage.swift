@@ -56,6 +56,11 @@ import RiseChromium
             if pageFullscreen.isSimulated {
                 rows.append(toggle("collapseSidebar", "Collapse sidebar in simulated full screen", nil, collapsesSidebarInSimulatedFullscreen))
             }
+            rows.append(toggle("savesCaptures", "Save page captures automatically",
+                               "The camera button's JPEG and PDF go straight to the folder below; off asks where each time", savesCapturesAutomatically))
+            rows.append(["key": "capturesFolder", "type": "button", "label": "Page captures folder",
+                         "sublabel": (capturesFolder.path as NSString).abbreviatingWithTildeInPath, "button": "Change…"])
+            rows.append(toggle("copiesCaptures", "Copy page captures to the clipboard", nil, copiesCaptures))
             return rows
         case "privacy":
             var rows: [[String: Any]] = [["key": "clearHistory", "type": "button", "label": "Clear address bar history",
@@ -86,6 +91,8 @@ import RiseChromium
         case "simulatedFullscreen":
             if on != pageFullscreen.isSimulated { pageFullscreen.setSimulated(on, in: tabs.map(\.page) + (peekTab.map { [$0.page] } ?? [])) }
         case "collapseSidebar": setCollapsesSidebarInSimulatedFullscreen(on)
+        case "savesCaptures": setSavesCapturesAutomatically(on)
+        case "copiesCaptures": setCopiesCaptures(on)
         default:
             let parts = key.split(separator: "|", maxSplits: 2).map(String.init)
             guard parts.count == 3, parts[0] == "permission", let capability = SiteCapability(rawValue: parts[1]),
@@ -103,6 +110,14 @@ import RiseChromium
         switch key {
         case "clearHistory": confirmClearBrowsingHistory()
         case "aiKeyRemove": setAIKey(nil, for: aiProvider)
+        case "capturesFolder":
+            chooseCapturesFolder { [weak self] in
+                guard let self else { return }
+                // The settings page shows the new folder.
+                for tab in self.tabs where tab.url?.scheme == "rise" || tab.url?.scheme == "chrome" {
+                    tab.page.evaluate("dispatchEvent(new Event('rise-settings-ready'))", arguments: [:], in: nil, world: .page) { _ in }
+                }
+            }
         default: break
         }
     }

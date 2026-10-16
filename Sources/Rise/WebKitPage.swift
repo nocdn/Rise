@@ -162,6 +162,25 @@ import WebKit
                   completion: @escaping (Result<Any?, Error>) -> Void) {
         webView.callAsyncJavaScript(body, arguments: arguments, in: frame?.handle as? WKFrameInfo, in: Self.contentWorld(world)) { completion($0.map { $0 }) }
     }
+    func capture(_ format: PageCaptureFormat) async -> Data? {
+        // WebKit's PDF of the page is all of it, as it shows, on one page.
+        let pdf: Data? = await withCheckedContinuation { continuation in
+            webView.createPDF(configuration: WKPDFConfiguration()) { continuation.resume(returning: try? $0.get()) }
+        }
+        guard let pdf, format == .jpeg else { return pdf }
+        guard let page = NSPDFImageRep(data: pdf) else { return nil }
+        let scale = webView.window?.backingScaleFactor ?? 2
+        guard let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(page.bounds.width*scale), pixelsHigh: Int(page.bounds.height*scale),
+                                            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                            bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+        bitmap.size = page.bounds.size
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+        NSColor.white.setFill(); NSRect(origin: .zero, size: page.bounds.size).fill()
+        page.draw(in: NSRect(origin: .zero, size: page.bounds.size))
+        NSGraphicsContext.restoreGraphicsState()
+        return bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.9])
+    }
     func snapshot(width: CGFloat?) async -> NSImage? {
         let configuration = WKSnapshotConfiguration()
         if let width { configuration.snapshotWidth = NSNumber(value: Double(width)) }

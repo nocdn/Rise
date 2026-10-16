@@ -575,7 +575,7 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
 
             // Rise's own settings are among Chrome's: in sections of their own, and in Chrome's.
             for (path, label) in [("/tabs", "Gmail preview category"), ("/assistant", "Reasoning effort"), ("/appearance", "The colours of Rise"),
-                                  ("/system", "Simulated full screen"), ("/privacy", "Clear address bar history")] {
+                                  ("/system", "Simulated full screen"), ("/system", "Page captures folder"), ("/privacy", "Clear address bar history")] {
                 settings.load(URL(string: "rise://settings" + path)!)
                 _ = await waitUntil("rise://settings\(path) shows Rise's “\(label)”", 15) {
                     guard !settings.page.isLoading else { return false }

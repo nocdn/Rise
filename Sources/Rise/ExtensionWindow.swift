@@ -115,6 +115,13 @@ import RiseChromium
                 browser.showInstallPrompt(title: title, icon: icon, permissions: permissions, acceptLabel: acceptLabel, answer: answer)
             }
         }
+        RCExtensions.setUninstallPrompt { title, icon, acceptLabel, answer in
+            MainActor.assumeIsolated {
+                let browsers = NSApp.orderedWindows.compactMap { $0.windowController as? BrowserController }
+                guard let browser = (NSApp.keyWindow?.windowController as? BrowserController) ?? browsers.first else { answer(false); return }
+                browser.showUninstallPrompt(title: title, icon: icon, acceptLabel: acceptLabel, answer: answer)
+            }
+        }
     }
     private static var installPromptSet = false
     private func syncWindow() {

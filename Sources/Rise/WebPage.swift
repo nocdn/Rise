@@ -51,6 +51,9 @@ enum WebEngine: String, Codable {
     func liveLayer(showing rect: NSRect?) -> CALayer?
     /// A picture of part of the page as it is now: `rect` in the view's own coordinates.
     func snapshot(rect: NSRect) async -> NSImage?
+    /// The whole page, beyond what shows: a JPEG of it, or a PDF of it as one long page, as it
+    /// shows on screen. Nil if it couldn't be taken.
+    func capture(_ format: PageCaptureFormat) async -> Data?
 
     /// Runs `body` as the body of an async function taking `arguments`, in Rise's own script
     /// world `world` (nil: the one Rise's page tools share), which the page can't see.
@@ -129,3 +132,6 @@ enum PageEvent {
 enum WebPageChange {
     case title, url, progress, loading, navigation, fullscreen, audio
 }
+
+/// How a whole page is captured.
+enum PageCaptureFormat { case jpeg, pdf }

@@ -3,7 +3,7 @@ import AppKit
 /// The border, arrow, material and outer shadow belong to NSPopover.
 final class PopoverContentView: FlippedView {}
 
-private enum SiteControlsLayout {
+enum SiteControlsLayout {
     static let scale: CGFloat = 0.96
 }
 
@@ -26,6 +26,15 @@ final class PopoverActionButton: ChromeButton {
         layer?.shadowRadius = 1.5*scale; layer?.shadowOffset = NSSize(width: 0, height: -0.5*scale)
         // A shade off the resting bezel, rather than the tab list's much darker hover.
         hoverColor = theme == .dark ? NSColor(hex: 0x464646) : NSColor(hex: 0xF1F0EF)
+    }
+    /// The same button with a word on it in place of a symbol, such as the capture popover's.
+    convenience init(label text: String, scale: CGFloat = 1, title: String, theme: RiseTheme, action: @escaping () -> Void) {
+        self.init(symbol: "", scale: scale, title: title, theme: theme, action: action)
+        image = nil; imagePosition = .noImage
+        attributedTitle = NSAttributedString(string: text, attributes: [
+            .font: NSFont.systemFont(ofSize: 13*scale, weight: .semibold), .foregroundColor: theme.text,
+            .paragraphStyle: { let style = NSMutableParagraphStyle(); style.alignment = .center; return style }()])
+        setAccessibilityLabel(text)
     }
     required init?(coder: NSCoder) { fatalError() }
 }
@@ -95,7 +104,7 @@ final class SiteSettingRow: NSButton {
         view = PopoverContentView(frame: NSRect(x: 0, y: 0, width: 240, height: 440))
         let actions: [(String, String, () -> Void)] = [
             (PopoverActionButton.shareSymbol, "Share Page", { [weak browser] in browser?.shareCurrentPage() }),
-            ("camera", "Save Page Screenshot", { [weak browser] in browser?.siteControlsPopover.close(); browser?.capturePage() }),
+            ("camera", "Capture Whole Page", {}),
             ("text.viewfinder", "Copy Text from Page Image", { [weak browser] in browser?.siteControlsPopover.close(); browser?.copyTextFromPageImage() }),
             ("ellipsis", "More Site Controls", { [weak browser] in browser?.moreSiteControls() })
         ]
@@ -103,6 +112,7 @@ final class SiteSettingRow: NSButton {
             let button = PopoverActionButton(symbol: action.0, size: action.0 == "ellipsis" ? 18 : 17, scale: scale, title: action.1, theme: theme,
                                              shareLift: PopoverActionButton.popoverShareLift, action: action.2)
             button.frame = NSRect(x: 10+CGFloat(index)*56+(52-52*scale)/2, y: 10+(34-34*scale)/2, width: 52*scale, height: 34*scale)
+            if action.0 == "camera" { button.actionBlock = { [weak browser, weak button] in if let button { browser?.showCaptureChoices(from: button) } } }
             view.addSubview(button); quickActions.append(button)
         }
         func heading(_ title: String, y: CGFloat) {

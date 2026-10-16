@@ -204,8 +204,16 @@ are most of them.
      skipped in Rise's windows.
    - **Chrome's windows over Rise's** become their children, so they move with them (Chrome only
      does so for its own windows). A dialog for a whole window (removing an extension) shows
-     over the window in front, centred below its top. It's drawn as an ordinary window, with a
-     title, not as the sheet Chrome would show; Rise's own sheets are an option for later.
+     over the window in front, centred below its top, as an ordinary window rather than the
+     sheet Chrome would show.
+   - **Removing an extension** asks in Rise's own sheet (Remove or Cancel): an embedder hook in
+     `ExtensionUninstallDialog`, as for the install prompt.
+   - **Accessibility:** a page's view is the page's container for assistive apps (VoiceOver,
+     Snap's page captures), as Chrome's window leads them to it, so Chrome builds the page's
+     tree and shows it as an `AXWebArea`. Reaching it turns Chrome's accessibility on, as asking
+     the app does.
+   - **Covered pages** (under a Peek or a notice) set Chromium's mouse tracking aside, as on CEF,
+     so they take no hover and set no cursor through what covers them.
    - **Picture-in-picture windows for pages** (`documentPictureInPicture`) are Chrome's own
      floating windows: Rise's popup hook leaves them to Chrome.
    - **Rise's floating video** works on the fork as on WebKit: the `float` live check floats a

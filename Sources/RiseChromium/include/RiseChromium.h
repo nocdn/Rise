@@ -354,6 +354,12 @@ RC_EXPORT @interface RCBrowserView : NSView
              handlers:(NSArray<NSString *> *)handlers;
 /// Runs `expression` in the page as a console does, statements, `let` and `await` included,
 /// with the value of the last; or the error it threw.
+/// Sends a DevTools protocol command to the page, as DevTools would: `completion` hears its
+/// result, or nil if it failed.
+- (void)devTools:(NSString *)method
+          params:(NSDictionary<NSString *, id> *)params
+      completion:(void (^)(NSDictionary<NSString *, id> *_Nullable result))completion
+    NS_SWIFT_NAME(devTools(_:params:completion:));
 - (void)evaluateConsoleExpression:(NSString *)expression
                        completion:(void (^)(id _Nullable value, NSString *_Nullable error))completion;
 /// A page showing Chromium's DevTools for this one, opened on the Elements panel. It inspects
@@ -456,6 +462,11 @@ RC_EXPORT @interface RCExtensions : NSObject
 /// `answer` once. Nil gives Chrome's dialog back.
 + (void)setInstallPrompt:(nullable void (^)(NSString *title, NSImage *_Nullable icon, NSArray<NSString *> *permissions,
                                             NSString *acceptLabel, void (^answer)(BOOL accept)))prompt;
+/// Asks the person before an extension is removed, in place of Chrome's dialog: `prompt` shows the
+/// title (such as “Remove "Dark Reader"?”), the icon and the remove button's label, and calls
+/// `answer` once. Nil gives Chrome's dialog back.
++ (void)setUninstallPrompt:(nullable void (^)(NSString *title, NSImage *_Nullable icon, NSString *acceptLabel,
+                                              void (^answer)(BOOL accept)))prompt;
 @end
 
 NS_ASSUME_NONNULL_END

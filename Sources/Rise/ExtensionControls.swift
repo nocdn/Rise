@@ -108,6 +108,19 @@ import RiseChromium
         alert.beginSheetModal(for: window) { answer($0 == .alertFirstButtonReturn) }
     }
 
+    /// Rise's sheet before an extension is removed: Remove or Cancel.
+    func showUninstallPrompt(title: String, icon: NSImage?, acceptLabel: String, answer: @escaping (Bool) -> Void) {
+        guard let window else { answer(false); return }
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = "Its settings and data in Rise go with it."
+        if let icon { alert.icon = icon }
+        let remove = alert.addButton(withTitle: acceptLabel.isEmpty ? "Remove" : acceptLabel)
+        remove.hasDestructiveAction = true
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { answer($0 == .alertFirstButtonReturn) }
+    }
+
     static let webStoreHandler = "riseWebStore"
     /// An “Add to Rise” button by the extension's name on Web Store pages, which offer Chrome only,
     /// in place of the store's own Chrome button, its “Switch to Chrome” banner and its pop-up.

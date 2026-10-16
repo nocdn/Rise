@@ -35,7 +35,7 @@ final class SiteControlsTests: XCTestCase {
         let content = try XCTUnwrap(browser.siteControlsPopover.contentViewController as? SiteControlsController)
         XCTAssertEqual(content.view.frame.width, 240)
         XCTAssertEqual(content.quickActions.count, 4)
-        XCTAssertEqual(content.quickActions.map(\.toolTip), ["Share Page", "Save Page Screenshot", "Copy Text from Page Image", "More Site Controls"])
+        XCTAssertEqual(content.quickActions.map(\.toolTip), ["Share Page", "Capture Whole Page", "Copy Text from Page Image", "More Site Controls"])
         XCTAssertFalse(content.view.subviews.contains { $0 is NSVisualEffectView })
         XCTAssertEqual(content.extensionsButton.layer?.cornerRadius, content.quickActions[0].layer?.cornerRadius)
         XCTAssertFalse(content.view.subviews.contains { ($0 as? NSButton)?.title == "Secure" || ($0 as? NSButton)?.title == "Not Secure" })
