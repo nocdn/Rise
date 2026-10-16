@@ -2,48 +2,24 @@
 import Foundation
 import PackageDescription
 
-// Rise links its Chromium engine only where it has been built (see Engine/README.md);
-// everywhere else it builds as before, on WebKit alone.
+// Rise runs on its own Chromium fork (Engine/README.md), whose framework holds the engine, built
+// beside the repo by scripts/engine/build.sh; Rise only takes its interface's header.
 let engineRoot = ProcessInfo.processInfo.environment["RISE_CHROMIUM_ROOT"]
     ?? URL(fileURLWithPath: Context.packageDirectory).deletingLastPathComponent().appendingPathComponent("rise-chromium").path
-let cef = engineRoot + "/distrib/current"
-let cefWrapper = engineRoot + "/bridge-build/wrapper/libcef_dll_wrapper/libcef_dll_wrapper.a"
-// RISE_ENGINE_FORK=1 builds on Rise's own Chromium fork instead (Engine/fork-plan.md), whose
-// framework holds the engine interface, so Rise only takes its header.
-let forkFrameworks = engineRoot + "/fork/src/out/Release/Chromium.app/Contents/Frameworks"
-let onFork = ProcessInfo.processInfo.environment["RISE_ENGINE_FORK"] == "1"
-    && FileManager.default.fileExists(atPath: forkFrameworks + "/Chromium Framework.framework")
-let hasChromium = onFork || (FileManager.default.fileExists(atPath: cef + "/include/cef_app.h") && FileManager.default.fileExists(atPath: cefWrapper))
-// Ad blocking for Chromium pages, built from Engine/adblock by scripts/build.sh where cargo is.
+let frameworks = engineRoot + "/fork/src/out/Release/Chromium.app/Contents/Frameworks"
+// Ad blocking for pages, built from Engine/adblock by scripts/build.sh where cargo is.
 let adBlock = engineRoot + "/adblock-build/release/librise_adblock.a"
 let hasAdBlock = FileManager.default.fileExists(atPath: adBlock)
-// The settings CEF's own samples build their code with.
-let cefFlags: [CXXSetting] = [.unsafeFlags(["-I", cef, "-std=c++20", "-fno-exceptions", "-fno-rtti", "-fobjc-arc"])]
-let cefLinking: [LinkerSetting] = [.unsafeFlags([cefWrapper]), .linkedLibrary("c++"), .linkedFramework("AppKit")]
 
-var targets: [Target] = [
+let package = Package(name: "Rise", platforms: [.macOS(.v14)], products: [.executable(name: "Rise", targets: ["Rise"])], targets: [
     .target(name: "RiseCore"),
-    .executableTarget(name: "Rise", dependencies: ["RiseCore"] + (hasChromium ? ["RiseChromium"] : []),
-                      resources: [.copy("Resources/Blocking")],
-                      swiftSettings: hasChromium ? [.define("RISE_CHROMIUM")] : []),
+    .target(name: "RiseChromium", cSettings: hasAdBlock ? [.define("RISE_ADBLOCK")] : [],
+            linkerSettings: [.unsafeFlags(["-F", frameworks, "-framework", "Chromium Framework",
+                                           "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"] + (hasAdBlock ? [adBlock] : []))]),
+    .executableTarget(name: "Rise", dependencies: ["RiseCore", "RiseChromium"], resources: [.copy("Resources/Blocking")],
+                      swiftSettings: [.define("RISE_CHROMIUM")]),
     .testTarget(name: "RiseCoreTests", dependencies: ["RiseCore"]),
+    // Run with scripts/test.sh, which finds the engine's framework for them; they don't start it.
     .testTarget(name: "RiseTests", dependencies: ["Rise", "RiseCore"], resources: [.copy("Resources")],
-                swiftSettings: hasChromium ? [.define("RISE_CHROMIUM")] : []),
-]
-var products: [Product] = [.executable(name: "Rise", targets: ["Rise"])]
-if onFork {
-    targets.append(.target(name: "RiseChromium", path: "Sources/RiseFork",
-                           cSettings: hasAdBlock ? [.define("RISE_ADBLOCK")] : [],
-                           linkerSettings: [.unsafeFlags(["-F", forkFrameworks, "-framework", "Chromium Framework",
-                                                          "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]
-                                                         + (hasAdBlock ? [adBlock] : []))]))
-} else if hasChromium {
-    targets += [
-        .target(name: "RiseChromium", cxxSettings: cefFlags + (hasAdBlock ? [.define("RISE_ADBLOCK")] : []),
-                linkerSettings: cefLinking + (hasAdBlock ? [.unsafeFlags([adBlock])] : [])),
-        .executableTarget(name: "RiseHelper", cxxSettings: cefFlags + [.define("CEF_USE_SANDBOX")], linkerSettings: cefLinking),
-    ]
-    products.append(.executable(name: "RiseHelper", targets: ["RiseHelper"]))
-}
-
-let package = Package(name: "Rise", platforms: [.macOS(.v14)], products: products, targets: targets)
+                swiftSettings: [.define("RISE_CHROMIUM")]),
+])

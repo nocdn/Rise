@@ -1,24 +1,18 @@
 #!/bin/bash
-# Fetches the pinned Chromium and CEF sources (without history) beside the repo.
+# Fetches the pinned Chromium (without history) beside the repo, for Rise's fork of it.
 # Takes hours the first time and about 30 GB.
 source "$(dirname "$0")/common.sh"
 
-mkdir -p "$ENGINE_ROOT"
+mkdir -p "$FORK_ROOT"
 # Keep Spotlight out of hundreds of thousands of source files.
 touch "$ENGINE_ROOT/.metadata_never_index"
+[[ -d "$DEPOT_TOOLS" ]] || git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git "$DEPOT_TOOLS"
 
-AUTOMATE="$ENGINE_ROOT/automate-git.py"
-curl -fsSL "https://raw.githubusercontent.com/chromiumembedded/cef/$(pin cef_commit)/tools/automate/automate-git.py" -o "$AUTOMATE"
+cd "$FORK_ROOT"
+cat > .gclient <<GCLIENT
+solutions = [{'managed': False, 'name': 'src', 'url': 'https://chromium.googlesource.com/chromium/src.git@$(pin chromium)',
+              'custom_vars': {'checkout_pgo_profiles': False}, 'custom_deps': {}, 'deps_file': 'DEPS'}]
+GCLIENT
+gclient sync --no-history --shallow --revision "src@refs/tags/$(pin chromium)"
 
-python3 "$AUTOMATE" \
-  --download-dir="$ENGINE_ROOT" \
-  --depot-tools-dir="$DEPOT_TOOLS" \
-  --branch="$(pin cef_branch)" \
-  --checkout="$(pin cef_commit)" \
-  --no-chromium-history \
-  --arm64-build \
-  --no-debug-build \
-  --no-build \
-  --no-distrib
-
-echo "Checked out Chromium $(pin chromium) with CEF $(pin cef_branch) at $CHROMIUM_SRC"
+echo "Checked out Chromium $(pin chromium) at $CHROMIUM_SRC"

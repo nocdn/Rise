@@ -14,7 +14,7 @@ void rise_adblock_free_string(char *value);
 void RCAdBlockUseEngine(bool (*load)(void), bool (*blocks)(const char *, const char *, const char *),
                         char *(*hidden)(const char *, const char *, const char *), void (*free_string)(char *));
 
-__attribute__((constructor)) static void RiseForkUseAdBlock(void) {
+__attribute__((constructor)) static void RiseUseAdBlock(void) {
   RCAdBlockUseEngine(rise_adblock_load, rise_adblock_blocks, rise_adblock_hidden, rise_adblock_free_string);
 }
 #endif
