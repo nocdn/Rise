@@ -471,6 +471,11 @@ final class SearchPanel: UIView, UITextFieldDelegate {
 /// Rows retain their immediate press feedback while a drag hands control to native scrolling.
 final class SuggestionList: UIScrollView {
     override func touchesShouldCancel(in view: UIView) -> Bool { true }
+
+    /// A downward pull at the top moves the sheet; every other drag scrolls results.
+    func canPullToClose(velocity: CGPoint) -> Bool {
+        velocity.y > abs(velocity.x) && contentOffset.y <= -adjustedContentInset.top+1
+    }
 }
 
 /// The search field, with its clear button as far from the right end as from the top and bottom.

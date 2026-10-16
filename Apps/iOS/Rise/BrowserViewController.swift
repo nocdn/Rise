@@ -78,6 +78,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// How much of the window the keyboard covers, which Find's panel sits above.
     private var keyboardHeight: CGFloat = 0
     private lazy var panelPan = UIPanGestureRecognizer(target: self, action: #selector(dragPanel(_:)))
+    private(set) var downloadsSheet = DownloadsSheetState()
     /// Pinching in on the page, from its smallest zoom, folds it up and summarises it.
     private lazy var summarisePinch = UIPinchGestureRecognizer(target: self, action: #selector(pinchToSummarise(_:)))
     private var pinchFromSmallest = false
@@ -506,7 +507,25 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         // WebKit's own swipe handles Back within the page's history.
-        if gestureRecognizer === panelPan { return isPanelOpen }
+        if gestureRecognizer === panelPan {
+            guard isPanelOpen else { return false }
+            if bottomBar.panel == .search {
+                let list = bottomBar.search.list
+                if list.bounds.contains(panelPan.location(in: list)) {
+                    return list.canPullToClose(velocity: panelPan.velocity(in: view))
+                }
+            }
+            if bottomBar.panel == .downloads {
+                let velocity = panelPan.velocity(in: view)
+                guard abs(velocity.y) > abs(velocity.x) else { return false }
+                let list = bottomBar.downloads.list
+                if list.bounds.contains(panelPan.location(in: list)), bottomBar.downloads.isScrollable {
+                    if list.contentOffset.y > -list.adjustedContentInset.top+1, velocity.y > 0 { return false }
+                    if downloadsSheet.detent == .expanded, velocity.y < 0 { return false }
+                }
+            }
+            return true
+        }
         if gestureRecognizer === tabSwipe {
             // Only upwards, more up than sideways.
             let velocity = tabSwipe.velocity(in: view)
@@ -534,13 +553,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             if bottomBar.panel == .find, touched.isDescendant(of: bottomBar.find.field)
                 || touched.isDescendant(of: bottomBar.find.answerView) { return false }
             if bottomBar.panel == .search, touched.isDescendant(of: bottomBar.search.field) { return false }
-            if bottomBar.panel == .search, bottomBar.search.isScrollable,
-               touched.isDescendant(of: bottomBar.search.list) { return false }
             if bottomBar.panel == .siteSettings,
                bottomBar.siteSettings.switches.contains(where: { touched.isDescendant(of: $0) }) { return false }
-            // A list long enough to scroll keeps its own drags.
-            if bottomBar.panel == .downloads, bottomBar.downloads.isScrollable,
-               touched.isDescendant(of: bottomBar.downloads.list) { return false }
         }
         return true
     }
@@ -588,7 +602,11 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         collapsedBarTap.cancelsTouchesInView = false
         bottomBar.addGestureRecognizer(collapsedBarTap)
         panelPan.delegate = self
+        panelPan.maximumNumberOfTouches = 1
         bottomBar.addGestureRecognizer(panelPan)
+        bottomBar.search.list.panGestureRecognizer.require(toFail: panelPan)
+        bottomBar.downloads.list.panGestureRecognizer.require(toFail: panelPan)
+        bottomBar.downloads.onRowsChange = { [weak self] in self?.resizeDownloadsPanel() }
         tabSwipe.delegate = self
         bottomBar.addGestureRecognizer(tabSwipe)
         bottomBar.tabsButton.addAction(UIAction { [weak self] _ in
@@ -780,8 +798,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         case .find: BottomBar.findHeight(keyboard: keyboardHeight, safeBottom: safeBottom, answer: bottomBar.find.answerHeight)
         case .siteSettings: BottomBar.siteSettingsHeight(width: view.bounds.width, safeBottom: safeBottom)
         case .appSettings: BottomBar.appSettingsHeight(width: view.bounds.width, safeBottom: safeBottom)
-        case .downloads: BottomBar.downloadsHeight(width: view.bounds.width, safeBottom: safeBottom,
-                                                   rows: bottomBar.downloads.rowCount)
+        case .downloads: downloadsSheet.height(in: downloadsHeights)
         }
         return max(1, height-open)
     }
@@ -913,6 +930,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         guard isPanelOpen, bottomBar.panel == .menu else { return }
         bottomBar.downloads.reload(MobileDownloads.shared.items)
         bottomBar.downloads.setSelecting(false, animated: false)
+        downloadsSheet.reset()
         swapMenuPanel(to: .downloads)
     }
 
@@ -923,11 +941,41 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     /// Downloads came or went: the list follows, and the open panel grows or shrinks to fit it.
     func downloadsChanged() {
-        let rows = bottomBar.downloads.rowCount
         bottomBar.downloads.reload(MobileDownloads.shared.items)
         bottomBar.menu.updateDownloadProgress(MobileDownloads.shared.items)
-        guard isPanelOpen, bottomBar.panel == .downloads, bottomBar.downloads.rowCount != rows else { return }
+    }
+
+    private func resizeDownloadsPanel() {
+        guard isPanelOpen, bottomBar.panel == .downloads else { return }
         swapMenuPanel(to: .downloads)
+    }
+
+    var downloadsHeights: DownloadsSheetState.Heights {
+        let safe = view.window?.safeAreaInsets.bottom ?? 0
+        let maximum = max(1,view.bounds.height-view.safeAreaInsets.top-12)
+        let compact = min(maximum,BottomBar.downloadsHeight(width: view.bounds.width,safeBottom: safe,
+                                                          rows: bottomBar.downloads.rowCount))
+        let expanded = min(maximum,max(compact+96,fullSearchHeight+48,view.bounds.height*0.8))
+        return .init(compact: compact, expanded: expanded)
+    }
+
+    private func beginDownloadsDrag() {
+        guard !downloadsSheet.isDragging else { return }
+        let height = bottomBar.layer.presentation()?.bounds.height ?? bottomBar.bounds.height
+        downloadsSheet.begin(at: height, in: downloadsHeights)
+        // Catch the displayed sheet without interrupting its child symbol transitions.
+        for layer in [bottomBar.layer,content.layer,dimming.layer] { layer.removeAllAnimations() }
+    }
+
+    private func finishDownloadsDrag(velocity: CGFloat, cancelled: Bool) {
+        let current = downloadsSheet.height(in: downloadsHeights)
+        downloadsSheet.finish(velocity: velocity,cancelled: cancelled,in: downloadsHeights)
+        let distance = downloadsSheet.height(in: downloadsHeights)-current
+        let speed = abs(distance) > 1 ? min(4,max(0,-velocity/distance)) : 0
+        let change = { self.setPanel(1) }
+        guard !UIAccessibility.isReduceMotionEnabled else { change(); return }
+        UIView.animate(springDuration: 0.3,bounce: 0,initialSpringVelocity: speed,delay: 0,
+                       options: [.beginFromCurrentState,.allowUserInteraction],animations: change)
     }
 
     private func swapMenuPanel(to panel: BottomBar.Panel) {
@@ -1093,13 +1141,22 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             dragPanel(to: distance)
         case .ended, .cancelled, .failed:
             let velocity = pan.state == .ended ? pan.velocity(in: view).y : 0
-            finishPanelDrag(at: distance, velocity: velocity)
+            if bottomBar.panel == .downloads {
+                finishDownloadsDrag(velocity: velocity,cancelled: pan.state != .ended)
+            } else if pan.state == .ended { finishPanelDrag(at: distance, velocity: velocity) }
+            else { settlePanelOpen() }
         default: break
         }
     }
 
     func dragPanel(to distance: CGFloat) {
         guard isPanelOpen else { return }
+        if bottomBar.panel == .downloads {
+            beginDownloadsDrag()
+            downloadsSheet.drag(by: distance,in: downloadsHeights)
+            setPanel(1)
+            return
+        }
         let travel = panelTravel
         let stretch = 40*(1-1/(1+max(0, -distance)/160))
         setPanel(distance >= 0 ? max(0, 1-distance/travel) : 1+stretch/travel)
@@ -1107,6 +1164,11 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     func finishPanelDrag(at distance: CGFloat, velocity: CGFloat = 0) {
         guard isPanelOpen else { return }
+        if bottomBar.panel == .downloads {
+            if !downloadsSheet.isDragging { dragPanel(to: distance) }
+            finishDownloadsDrag(velocity: velocity,cancelled: false)
+            return
+        }
         let travel = panelTravel
         if velocity > 600 || (distance > travel*0.3 && velocity > -200) {
             closePanel(velocity: velocity)

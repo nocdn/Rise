@@ -398,6 +398,44 @@ import WebKit
         try check("url-editing-also-has-the-full-scrollable-result-list", panel.resultRows.count > 4 && panel.list.isScrollEnabled)
         panel.releaseAddress()
         field.text = "scroll-fixture.example"; field.sendActions(for: .editingChanged); panel.layoutIfNeeded()
+        try await Task.sleep(for: .milliseconds(350))
+        let list = panel.list
+        list.setContentOffset(.zero, animated: false)
+        try check("pulling-down-at-the-top-belongs-to-the-panel", list.canPullToClose(velocity: CGPoint(x: 15, y: 200)))
+        try check("upward-and-sideways-drags-stay-with-results", !list.canPullToClose(velocity: CGPoint(x: 0, y: -200))
+                  && !list.canPullToClose(velocity: CGPoint(x: 250, y: 100)))
+        list.setContentOffset(CGPoint(x: 0, y: SearchPanel.rowHeight), animated: false)
+        try check("pulling-down-further-in-the-list-keeps-scrolling", !list.canPullToClose(velocity: CGPoint(x: 0, y: 200)))
+        list.setContentOffset(.zero, animated: false)
+        let restingHeight = browser.bottomBar.bounds.height, draft = field.text
+        browser.dragPanel(to: 60)
+        try check("pulling-results-down-moves-the-sheet-without-rubber-banding", abs(browser.bottomBar.bounds.height-(restingHeight-60)) < 1
+                  && list.contentOffset == .zero && field.text == draft && field.isFirstResponder)
+        browser.finishPanelDrag(at: 60, velocity: 0)
+        try await Task.sleep(for: .milliseconds(650))
+        try JSONSerialization.data(withJSONObject: ["before": restingHeight, "after": browser.bottomBar.bounds.height,
+            "open": browser.isPanelOpen, "focused": field.isFirstResponder, "draft": draft, "text": field.text ?? ""],
+            options: [.prettyPrinted,.sortedKeys]).write(to: folder.appendingPathComponent("pull-state.json"))
+        try check("a-short-pull-restores-the-panel-and-keeps-the-search-draft", browser.isPanelOpen
+                  && abs(browser.bottomBar.bounds.height-restingHeight) < 1 && field.text == draft && field.isFirstResponder)
+        browser.dragPanel(to: 75)
+        browser.finishPanelDrag(at: 75, velocity: 900)
+        try await Task.sleep(for: .milliseconds(650))
+        try check("a-downward-flick-closes-the-panel-and-keyboard", !browser.isPanelOpen && !field.isFirstResponder
+                  && browser.bottomBar.shown !== panel && browser.bottomBar.panelExpansion == 0
+                  && browser.content.transform == .identity)
+        browser.openPanel()
+        try await Task.sleep(for: .milliseconds(650))
+        field.text = "scroll-fixture.example"; field.sendActions(for: .editingChanged); panel.layoutIfNeeded()
+        let reopenedHeight = browser.bottomBar.bounds.height
+        let travel = reopenedHeight-BottomBar.height(collapsed: false, safeBottom: browser.view.window!.safeAreaInsets.bottom)
+        browser.dragPanel(to: travel*0.4)
+        browser.finishPanelDrag(at: travel*0.4, velocity: 0)
+        try await Task.sleep(for: .milliseconds(650))
+        try check("a-long-slow-pull-also-closes-the-panel", !browser.isPanelOpen && !field.isFirstResponder)
+        browser.openPanel()
+        try await Task.sleep(for: .milliseconds(650))
+        field.text = "scroll-fixture.example"; field.sendActions(for: .editingChanged); panel.layoutIfNeeded()
         try capture("scrollable-suggestions")
         return checks
     }

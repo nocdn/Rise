@@ -306,7 +306,14 @@ final class BottomBar: UIView {
         place(find, Self.searchTop, SearchPanel.fieldHeight+find.answerHeight)
         place(siteSettings, Self.searchTop, SiteSettingsPanel.height)
         place(appSettings, Self.searchTop, AppSettingsPanel.height)
-        place(downloads, Self.searchTop, DownloadsPanel.height(rows: downloads.rowCount))
+        let safeBottom = window?.safeAreaInsets.bottom ?? 0
+        let compact = Self.downloadsHeight(width: bounds.width, safeBottom: safeBottom, rows: downloads.rowCount)
+        let base = DownloadsPanel.height(rows: downloads.rowCount)
+        // Keep the outgoing collection's viewport until its blurred crossfade has left.
+        // Shrinking it immediately would recycle lower cells while they are still visible.
+        let desired = panel == .downloads ? base+max(0,bounds.height-compact) : max(base,downloads.bounds.height)
+        let available = max(0,bounds.height-Self.searchTop-max(safeBottom,16))
+        place(downloads, Self.searchTop, panel == .downloads ? min(desired,available) : desired)
     }
 }
 

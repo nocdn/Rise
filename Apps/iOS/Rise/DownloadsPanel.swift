@@ -28,10 +28,10 @@ final class DownloadsPanel: UIView {
     let listMenuButton = UIButton(type: .system)
     var buttons: [UIButton] { [closeButton, listMenuButton] }
     /// The rounded list, which scrolls once there are more downloads than fit.
-    let list = List()
+    let list = DownloadsList()
     private let empty = UILabel()
     private var rows: [Row] = []
-    private var dividers: [UIView] = []
+    private var deferredItems: [MobileDownloads.Item]?
     var rowCount: Int { rows.count }
     var isScrollable: Bool { list.contentSize.height > list.bounds.height+0.5 }
 
@@ -39,6 +39,7 @@ final class DownloadsPanel: UIView {
     var menu: ((MobileDownloads.Item, UIButton) -> [UIMenuElement])?
     var listMenu: (() -> [UIMenuElement])?
     var onTouchDown: (() -> Void)?
+    var onRowsChange: (() -> Void)?
     /// Multi Select: rows tick and untick rather than open, their icons turned into checkboxes.
     private(set) var isSelecting = false
     private(set) var selected: Set<UUID> = []
@@ -75,6 +76,17 @@ final class DownloadsPanel: UIView {
         list.showsHorizontalScrollIndicator = false
         list.alwaysBounceVertical = false
         addSubview(list)
+        list.rangeBegan = { [weak self] in self?.setSelecting(true, syncingList: false) }
+        list.rangeEnded = { [weak self] in
+            guard let self, let items = deferredItems else { return }
+            deferredItems = nil
+            reload(items)
+        }
+        list.selectionChanged = { [weak self] index, selected in
+            guard let self, rows.indices.contains(index) else { return }
+            guard isSelecting else { list.syncSelection([]); return }
+            setSelected(rows[index], selected, syncingList: false)
+        }
         empty.text = "No downloads yet"
         empty.font = PanelHeader.font("OpenRunde-Medium", size: 16, fallbackWeight: .medium)
         empty.adjustsFontForContentSizeCategory = true
@@ -87,11 +99,19 @@ final class DownloadsPanel: UIView {
 
     /// Rebuilds the rows when downloads come or go; otherwise refreshes them in place.
     func reload(_ items: [MobileDownloads.Item]) {
+        if list.isRangeSelecting {
+            // Don't move UIKit's range anchors when another transfer arrives mid-gesture.
+            deferredItems = items.map(\.id) == rows.map(\.item.id) ? nil : items
+            rows.forEach { $0.update() }
+            updateListMenu()
+            return
+        }
         if items.map(\.id) == rows.map(\.item.id) {
             rows.forEach { $0.update() }
             updateListMenu()
             return
         }
+        let oldCount = rows.count
         let kept = Dictionary(uniqueKeysWithValues: rows.map { ($0.item.id, $0) })
         rows.filter { row in !items.contains { $0.id == row.item.id } }.forEach { $0.removeFromSuperview() }
         rows = items.map { item in
@@ -102,37 +122,39 @@ final class DownloadsPanel: UIView {
                 if isSelecting { toggle(row) } else if row.item.state == .finished { open?(row.item) }
             }, for: .primaryActionTriggered)
             row.setSelecting(isSelecting, animated: false)
+            row.iconPressed = { [weak self, weak row] in
+                guard let self, let row else { return }
+                if isSelecting { toggle(row) }
+                else { selected = [row.item.id]; setSelecting(true) }
+            }
             row.addAction(UIAction { [weak self] _ in self?.onTouchDown?() }, for: .touchDown)
             row.moreButton.menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak self, weak row] completion in
                 guard let self, let row else { completion([]); return }
                 completion(menu?(row.item, row.moreButton) ?? [])
             }])
-            list.addSubview(row)
             return row
-        }
-        dividers.forEach { $0.removeFromSuperview() }
-        dividers = rows.dropFirst().map { _ in
-            let divider = UIView()
-            divider.backgroundColor = .separator
-            divider.isUserInteractionEnabled = false
-            list.addSubview(divider)
-            return divider
         }
         empty.isHidden = !rows.isEmpty
         list.backgroundColor = rows.isEmpty ? Self.rowFill : .clear
         selected.formIntersection(items.map(\.id))
         if rows.isEmpty { setSelecting(false, animated: false) }
+        list.reload(rows)
+        syncListSelection()
         updateListMenu()
         setNeedsLayout()
+        if rows.count != oldCount { onRowsChange?() }
     }
 
-    func setSelecting(_ selecting: Bool, animated: Bool = true) {
-        selected = []
-        rows.forEach { $0.setChecked(false, animated: false) }
+    func setSelecting(_ selecting: Bool, animated: Bool = true, syncingList: Bool = true) {
+        guard selecting != isSelecting else { return }
+        if !selecting { selected = [] }
+        rows.forEach { $0.setChecked(selected.contains($0.item.id), animated: false) }
+        list.isEditing = selecting
         if selecting != isSelecting {
             isSelecting = selecting
-            rows.forEach { $0.setSelecting(selecting, animated: animated && window != nil) }
+            rows.forEach { $0.setSelecting(selecting, animated: animated && $0.window != nil) }
         }
+        if syncingList { syncListSelection() }
         updateListMenu()
     }
 
@@ -141,14 +163,24 @@ final class DownloadsPanel: UIView {
         let all = Set(items.map(\.id))
         selected = selected == all ? [] : all
         rows.forEach { $0.setChecked(selected.contains($0.item.id), animated: true) }
+        syncListSelection()
         updateListMenu()
     }
 
     private func toggle(_ row: Row) {
         let id = row.item.id
-        if selected.remove(id) == nil { selected.insert(id) }
-        row.setChecked(selected.contains(id), animated: true)
+        setSelected(row, !selected.contains(id))
+    }
+
+    private func setSelected(_ row: Row, _ selecting: Bool, syncingList: Bool = true) {
+        if selecting { selected.insert(row.item.id) } else { selected.remove(row.item.id) }
+        row.setChecked(selecting, animated: true)
+        if syncingList { syncListSelection() }
         updateListMenu()
+    }
+
+    private func syncListSelection() {
+        list.syncSelection(Set(rows.indices.filter { selected.contains(rows[$0].item.id) }))
     }
 
     /// The menu's heading counts the files; its actions are read when it opens.
@@ -171,14 +203,11 @@ final class DownloadsPanel: UIView {
         header.frame = CGRect(x: 0, y: 0, width: bounds.width, height: PanelHeader.height)
         // As wide as Site settings' list, and More's tiles.
         let width = 4*MenuPanel.tileSize(width: bounds.width).width+3*MenuPanel.spacing
-        let visible = CGFloat(min(max(rows.count, 1), Self.maximumVisibleRows))
-        list.frame = CGRect(x: bounds.midX-width/2, y: SiteSettingsPanel.rowsTop, width: width, height: visible*Self.rowHeight)
-        list.contentSize = CGSize(width: width, height: CGFloat(rows.count)*Self.rowHeight)
+        let visible = min(CGFloat(max(rows.count, 1))*Self.rowHeight, max(0,bounds.height-SiteSettingsPanel.rowsTop))
+        list.frame = CGRect(x: bounds.midX-width/2, y: SiteSettingsPanel.rowsTop, width: width, height: visible)
         empty.frame = CGRect(x: 16, y: 0, width: max(0, width-32), height: Self.rowHeight)
         for (index, row) in rows.enumerated() {
             // By bounds and center, as pressed rows are scaled.
-            row.bounds = CGRect(x: 0, y: 0, width: width, height: Self.rowHeight)
-            row.center = CGPoint(x: width/2, y: (CGFloat(index)+0.5)*Self.rowHeight)
             // The list's own corners, kept as the first or last row shrinks.
             var corners: CACornerMask = []
             if index == 0 { corners.formUnion([.layerMinXMinYCorner, .layerMaxXMinYCorner]) }
@@ -186,21 +215,14 @@ final class DownloadsPanel: UIView {
             row.layer.maskedCorners = corners
             row.layer.cornerRadius = corners.isEmpty ? 0 : MenuPanel.cornerRadius
         }
-        let hairline = 1/max(1, traitCollection.displayScale)
-        for (index, divider) in dividers.enumerated() {
-            divider.frame = CGRect(x: 16, y: CGFloat(index+1)*Self.rowHeight-hairline/2, width: width-32, height: hairline)
-        }
-    }
-
-    /// Rows take touches at once, so they darken straight away, and a drag that starts on one
-    /// still scrolls.
-    final class List: UIScrollView {
-        override func touchesShouldCancel(in view: UIView) -> Bool { true }
+        list.layoutIfNeeded()
     }
 
     final class Row: UIButton {
         let item: MobileDownloads.Item
         let moreButton = UIButton(type: .system)
+        let iconButton = UIButton(type: .custom)
+        var iconPressed: (() -> Void)?
         private let icon = UIImageView()
         private let ring = ProgressRing()
         /// The icon, or the ring while downloading, which Multi Select swaps for the checkbox.
@@ -209,6 +231,9 @@ final class DownloadsPanel: UIView {
         private let title = UILabel()
         private let detail = UILabel()
         private var thumbnailFor: URL?
+        #if DEBUG
+        var selectionViews: (badge: UIView, checkbox: UIImageView) { (badge,checkbox) }
+        #endif
 
         init(item: MobileDownloads.Item) {
             self.item = item
@@ -239,6 +264,11 @@ final class DownloadsPanel: UIView {
             moreButton.showsMenuAsPrimaryAction = true
             moreButton.preferredMenuElementOrder = .fixed
             addSubview(moreButton)
+            addSubview(iconButton)
+            iconButton.addAction(UIAction { [weak self] _ in self?.iconPressed?() }, for: .primaryActionTriggered)
+            iconButton.addAction(UIAction { [weak self] _ in self?.sendActions(for: .touchDown) }, for: .touchDown)
+            iconButton.addAction(UIAction { [weak self] _ in self?.sendActions(for: .touchCancel) },
+                                 for: [.touchUpInside,.touchUpOutside,.touchCancel,.touchDragExit])
             layer.cornerCurve = .continuous
             shrinksWhenPressed(to: DownloadsPanel.pressedScale, filled: true,
                                restingFill: DownloadsPanel.rowFill, pressedFill: DownloadsPanel.pressedRowFill)
@@ -266,6 +296,7 @@ final class DownloadsPanel: UIView {
             accessibilityLabel = "\(item.name), \(detail.text ?? "")"
             accessibilityHint = finished ? "Opens in Quick Look" : nil
             moreButton.accessibilityLabel = "More for \(item.name)"
+            iconButton.accessibilityLabel = "\(accessibilityTraits.contains(.selected) ? "Deselect" : "Select") \(item.name)"
         }
 
         /// Swaps the icon for a checkbox, as Send swaps in beside Find, and hides the row's dots.
@@ -294,6 +325,7 @@ final class DownloadsPanel: UIView {
             } else { checkbox.image = image }
             checkbox.tintColor = checked ? SiteSettingsPanel.switchBlue : .tertiaryLabel
             accessibilityTraits = checked ? [.button, .selected] : .button
+            iconButton.accessibilityLabel = "\(checked ? "Deselect" : "Select") \(item.name)"
         }
 
         /// The file's own picture, as Files shows it, or its type's icon.
@@ -317,6 +349,7 @@ final class DownloadsPanel: UIView {
         override func layoutSubviews() {
             super.layoutSubviews()
             let column = CGRect(x: 14, y: bounds.midY-18, width: 36, height: 36)
+            iconButton.frame = CGRect(x: 0, y: 0, width: column.maxX+6, height: bounds.height)
             // By bounds and center, as they scale as they swap.
             for view in [badge, checkbox] {
                 view.bounds = CGRect(origin: .zero, size: column.size)

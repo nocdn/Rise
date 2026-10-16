@@ -63,7 +63,10 @@ Google for it; Go opens what was typed as an address when it looks like one
 (`example.com`, `https://…`), and searches Google otherwise. Either way the panel quickly grows
 up to fill the window as the search fades out and the new page appears inside it,
 while the page behind keeps receding at the same rate; the new page then stays as the page, the previous one held for Back (the edge swipe). Swiping the
-panel down or tapping the page puts it back without opening anything. Holding New Page searches by voice instead:
+panel down or tapping the page puts it back without opening anything. Pulling down from the
+top of the suggestions also moves the whole panel: a short pull settles back, while a long
+pull or downward flick closes it and the keyboard. Upward drags and drags further down the
+results keep scrolling normally. Holding New Page searches by voice instead:
 a strong, sharp click, then a constant soft haptic hum while it listens, as the plus swaps (with
 the icons' blurred swap) for seven fully rounded red bars that rise and fall smoothly with the
 microphone's level, tallest in the middle. Letting go opens New Page as a tap would, a small spinner
@@ -100,13 +103,24 @@ Progress combines the current batch by byte count when sizes are known; complete
 their share until the remaining transfers finish. Unknown sizes reserve a share until measured
 or finished. Updates animate from the visible fill over 0.25 s. Completion fills the button,
 then fades it back to normal over 0.18 s; a new transfer safely interrupts that fade.
-Confirming Download produces one sharp impact. Each
+The flying row produces one sharp impact when it reaches More. Each
 successful WebKit completion plays three brief rising haptic pulses. Concurrent completions
 queue separate patterns; confirming, cancelling, failing or restoring a saved file does not
 play completion feedback. Files and the finished list retain their existing storage paths.
 Cancelling removes the row immediately and deletes the partial file after WebKit stops
 writing, including a cancellation before the destination is handed over. Its filename stays
 reserved until cleanup completes, so cleanup cannot delete a newer transfer's file.
+Downloads supports UIKit's native two-finger selection interaction, including range
+selection, deselection and edge autoscrolling. Its collection cells host the same download
+row views, retaining their existing icon/checkbox blur and scale transitions. Tapping a file
+icon enters Multi Select and checks that file; row taps toggle selection while editing.
+Arrivals and removals during a range gesture wait until it ends, preserving selection by ID.
+The sheet always opens at its original compact height. A drag or flick snaps between that
+height and a taller detent, about 80% of the window and slightly higher than New Page.
+Dragging stops at those two limits; it cannot dismiss or stretch Downloads. Long lists scroll
+at the tall detent, and scrolling back to the top allows a downward sheet drag. X returns to
+More from either height using the existing blurred swap, keeping outgoing rows in place.
+The native interaction follows [Apple's two-finger selection sample](https://developer.apple.com/documentation/uikit/selecting-multiple-items-with-a-two-finger-pan-gesture).
 Tapping the address grows More into a New Page-sized
 editor on the same spring, receding the page further while the tiles blur and fade away. The
 address bar itself stays intact: the full URL slides from the center to the left as the sheet

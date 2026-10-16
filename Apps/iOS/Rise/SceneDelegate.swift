@@ -7,6 +7,12 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let scene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: scene)
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains(DownloadsPanelAudit.argument) {
+            let controller = BrowserViewController(startURL: nil)
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            DownloadsPanelAudit.run(in: controller)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains(DownloadFlightAudit.argument) {
             let controller = BrowserViewController(startURL: nil)
             window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
