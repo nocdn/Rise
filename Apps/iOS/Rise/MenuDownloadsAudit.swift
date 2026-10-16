@@ -211,13 +211,12 @@ import WebKit
         try check("history-darkens-and-scales-like-a-normal-button", history.backgroundColor == SearchPanel.pressedFill
                   && abs(history.transform.a-MenuPanel.pressedScale) < 0.001)
         history.sendActions(for: .touchUpInside); history.sendActions(for: .primaryActionTriggered)
-        try check("history-has-no-navigation-action-yet", browser.isTabSwitcherOpen && browser.isPanelOpen && bar.panel == .tabMenu)
-        try await Task.sleep(for: .milliseconds(350))
-        let historyImage = UIGraphicsImageRenderer(bounds: bar.bounds).image { _ in bar.drawHierarchy(in: bar.bounds, afterScreenUpdates: true) }
-        try historyImage.pngData()?.write(to: folder.appendingPathComponent("switcher-history.png"))
-        browser.closePanel()
-        try await Task.sleep(for: .milliseconds(400))
-        try check("closing-history-keeps-the-tab-list-open", browser.isTabSwitcherOpen && !browser.tabSwitcher.isHidden && bar.shown === bar.home)
+        try await wait { (browser.presentedViewController as? UINavigationController)?.topViewController is BrowsingHistoryController
+            && browser.presentedViewController?.isBeingPresented == false }
+        try check("history-opens-the-saved-history-list", browser.isTabSwitcherOpen && !browser.isPanelOpen)
+        browser.dismiss(animated: true)
+        try await Task.sleep(for: .milliseconds(450))
+        try check("closing-history-keeps-the-tab-list-open", browser.isTabSwitcherOpen && !browser.tabSwitcher.isHidden)
         browser.selectTab(browser.tabIndex)
         try await Task.sleep(for: .milliseconds(850))
         browser.openPanel(.menu)

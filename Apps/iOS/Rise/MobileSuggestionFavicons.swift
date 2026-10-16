@@ -3,7 +3,8 @@ import ImageIO
 
 /// Bounded, persistent first-party icons. No third-party favicon service receives typed URLs.
 @MainActor final class MobileSuggestionFavicons {
-    private let storageURL: URL
+    private let storageURL: URL?
+    private let allowsNetwork: Bool
     private let session: URLSession
     private var images: [String: UIImage] = [:]
     private var bytes: [String: Data] = [:]
@@ -13,13 +14,14 @@ import ImageIO
     private let writer = DispatchQueue(label: "Rise.SuggestionIcons", qos: .utility)
     var onLoad: (() -> Void)?
 
-    init(storageURL: URL, session: URLSession? = nil) {
+    init(storageURL: URL?, session: URLSession? = nil, allowsNetwork: Bool = true) {
+        self.allowsNetwork = allowsNetwork
         self.storageURL = storageURL
         let config = URLSessionConfiguration.ephemeral
         config.httpCookieStorage = nil; config.httpShouldSetCookies = false
         config.timeoutIntervalForRequest = 4; config.timeoutIntervalForResource = 6
         self.session = session ?? URLSession(configuration: config)
-        if let data = try? Data(contentsOf: storageURL), data.count <= 8_000_000,
+        if let storageURL, let data = try? Data(contentsOf: storageURL), data.count <= 8_000_000,
            let saved = try? JSONDecoder().decode([String: Data].self, from: data) {
             for (key, value) in saved.sorted(by: { $0.key < $1.key }).prefix(128) {
                 if let image = Self.decode(value) { bytes[key] = value; images[key] = image }
@@ -38,7 +40,7 @@ import ImageIO
     /// Typing a literal address waits for a quiet moment before fetching its public site's icon.
     func previewCandidate(_ url: URL?) {
         preview?.cancel(); preview = nil
-        guard let url, let origin = Self.origin(url), images[origin] == nil,
+        guard allowsNetwork, let url, let origin = Self.origin(url), images[origin] == nil,
               !AddressResolver.isLocal(url), let host = url.host,
               let suffix = host.split(separator: ".").last, suffix.count >= 2 else { return }
         preview = Task { [weak self] in
@@ -51,7 +53,7 @@ import ImageIO
         guard let url, let origin = Self.origin(url) else { return nil }
         if let image = images[origin] { return image }
         // Only complete public domains are fetched. In-progress/local addresses keep a globe.
-        guard fetch, !AddressResolver.isLocal(url), let host = url.host, host.contains("."),
+        guard fetch, allowsNetwork, !AddressResolver.isLocal(url), let host = url.host, host.contains("."),
               !host.hasSuffix(".test"), !host.hasSuffix(".example"), !host.hasSuffix(".invalid"),
               attempted.insert(origin).inserted else { return nil }
         tasks[origin] = Task { [weak self] in
@@ -85,7 +87,7 @@ import ImageIO
         save(); onLoad?()
     }
     func save() {
-        guard let data = try? JSONEncoder().encode(bytes) else { return }
+        guard let storageURL, let data = try? JSONEncoder().encode(bytes) else { return }
         let file = storageURL
         writer.async {
             try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)

@@ -253,6 +253,10 @@ fades in `backDelay` 0.38 s after the card starts settling, over `backDuration` 
   speeds up (k²) over `barExit` 0.18 s, moving by its height + 4.
 - **Coming back:** it springs back as the card grows back, with response 0.27 s and bounce 0.25.
   Arc's bar actually leaves in 0.07 s; he chose 0.18.
+- **Background coverage:** a non-interactive sibling continues the bar's opaque background
+  down to the screen edge, behind the bar and above Summarise. It follows the existing
+  per-frame transform with a one-point overlap, covering the upward rebound without changing
+  the bar's bounds, clipping, spring, timing or bounce.
 
 **Status bar:** dark over the backdrop. It counts as over the page while the card's top is above
 20 pt, and again 0.15 s into the close.

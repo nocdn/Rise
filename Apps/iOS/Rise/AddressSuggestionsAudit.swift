@@ -130,8 +130,8 @@ import WebKit
         try check("single-line-rows-stay-centred", visibleRows.filter { ($0.addressLabel.text ?? "").isEmpty }.allSatisfy {
             $0.titleLabelView.frame.midY == $0.bounds.midY
         })
-        try check("link-title-and-subtitle-stay-centred-together", visibleRows.filter { !($0.addressLabel.text ?? "").isEmpty }.allSatisfy {
-            abs(($0.titleLabelView.frame.minY+$0.addressLabel.frame.maxY)/2-$0.bounds.midY) < 0.5
+        try check("temporary-single-line-preview-hides-all-url-subtitles", visibleRows.allSatisfy {
+            $0.addressLabel.isHidden && $0.addressLabel.frame == .zero && $0.titleLabelView.frame.midY == $0.bounds.midY
         })
         var fullHeight = browser.bottomBar.bounds.height
         let fullPageScale = browser.content.transform.a
@@ -442,6 +442,64 @@ import WebKit
         try await Task.sleep(for: .milliseconds(650))
         field.text = "scroll-fixture.example"; field.sendActions(for: .editingChanged); panel.layoutIfNeeded()
         try capture("scrollable-suggestions")
+
+        // Refinement keeps the keyboard/panel open and must never trigger the row's open action.
+        let savedOpen = panel.onOpen, savedSwitch = panel.onSwitchToTab, savedTabs = panel.openTabs
+        var filledOpen: URL?, filledSwitch: UUID?
+        panel.onOpen = { filledOpen = $0 }; panel.onSwitchToTab = { filledSwitch = $0 }
+        let existingTab = UUID()
+        panel.openTabs = { [.init(id: existingTab, title: "Lighting handbook", url: fixture)] }
+        defer { panel.onOpen = savedOpen; panel.onSwitchToTab = savedSwitch; panel.openTabs = savedTabs }
+        field.text = "Lighting"; field.sendActions(for: .editingChanged); panel.layoutIfNeeded()
+        guard let fillRow = panel.resultRows.first(where: { $0.addressLabel.text == AddressSuggestionRow.displayAddress(fixture.absoluteString) }) else {
+            throw Failure(check: "missing fixture fill row")
+        }
+        fillRow.layoutIfNeeded()
+        let glyph = fillRow.fillGlyph.convert(fillRow.fillGlyph.bounds, to: fillRow)
+        let expectedInset = SearchPanel.rowIndent+(22-SearchPanel.searchIcon.size.width)/2+1
+        try check("fill-arrows-match-search-glyph-size-colour-and-edge-inset", panel.resultRows.allSatisfy {
+            $0.layoutIfNeeded()
+            let frame = $0.fillGlyph.convert($0.fillGlyph.bounds, to: $0)
+            return $0.fillGlyph.bounds.size == SearchPanel.searchIcon.size && $0.fillGlyph.tintColor == SearchPanel.iconColor
+                && abs($0.bounds.maxX-frame.maxX-expectedInset) < 0.01 && frame.midY == $0.bounds.midY
+                && $0.titleLabelView.frame.maxX <= $0.fillButton.frame.minX
+        })
+        let hit = fillRow.hitTest(CGPoint(x: glyph.midX, y: glyph.midY), with: nil)
+        try check("fill-arrows-have-an-independent-large-touch-target", hit === fillRow.fillButton && fillRow.fillButton.bounds.width == 44
+                  && fillRow.fillButton.bounds.height == SearchPanel.rowHeight)
+        fillRow.fillButton.sendActions(for: .primaryActionTriggered)
+        try check("link-arrow-fills-the-full-url-without-opening-or-switching", field.text == fixture.absoluteString
+                  && panel.query == fixture.absoluteString && field.inlineCompletion == nil && filledOpen == nil && filledSwitch == nil)
+        try check("link-arrow-keeps-the-keyboard-and-caret-ready-for-editing", browser.isPanelOpen && field.isFirstResponder
+                  && field.selectedTextRange?.isEmpty == true && field.offset(from: field.beginningOfDocument, to: field.selectedTextRange!.start) == fixture.absoluteString.utf16.count)
+        field.insertText("/more")
+        try check("typing-after-fill-appends-to-the-address", field.text == fixture.absoluteString+"/more")
+        field.text = "diagonal suggestions"; field.sendActions(for: .editingChanged); panel.layoutIfNeeded()
+        guard let searchRow = panel.resultRows.first(where: { $0.titleLabelView.text == "Search Google for “diagonal suggestions”" }) else {
+            throw Failure(check: "missing search fill row")
+        }
+        searchRow.fillButton.sendActions(for: .primaryActionTriggered)
+        try check("search-arrow-fills-search-terms-without-submitting", field.text == "diagonal suggestions" && filledOpen == nil && filledSwitch == nil)
+        field.text = "amazo"; field.sendActions(for: .editingChanged); panel.layoutIfNeeded()
+        let home = panel.offeredSite!.homeURL
+        panel.siteRow.fillButton.sendActions(for: .primaryActionTriggered)
+        try check("site-search-arrow-fills-the-site-url-without-entering-site-search", field.text == home.absoluteString
+                  && panel.siteSearch == nil && field.inlineCompletion == nil && filledOpen == nil)
+        panel.end(); browser.bottomBar.restoreAddress()
+        panel.beginEditingAddress(browser.bottomBar.menu.address, url: URL(string: "https://lamps.example/"))
+        panel.focusAddress()
+        field.text = "Lighting"; field.sendActions(for: .editingChanged); panel.layoutIfNeeded()
+        let editRow = panel.resultRows.first { $0.addressLabel.text == AddressSuggestionRow.displayAddress(fixture.absoluteString) }!
+        editRow.fillButton.sendActions(for: .primaryActionTriggered)
+        try check("fill-also-works-in-url-editing-without-navigation", panel.editingAddress != nil && field.text == fixture.absoluteString
+                  && field.isFirstResponder && field.inlineCompletion == nil && filledOpen == nil && filledSwitch == nil)
+        panel.end(); browser.bottomBar.restoreAddress(); panel.begin(); panel.focus()
+        field.text = "Lighting"; field.sendActions(for: .editingChanged); panel.layoutIfNeeded()
+        try capture("single-line-fill-arrows")
+        browser.overrideUserInterfaceStyle = .dark
+        try await Task.sleep(for: .milliseconds(150))
+        try capture("single-line-fill-arrows-dark")
+        browser.overrideUserInterfaceStyle = .light
         return checks
     }
     static func run(in browser: BrowserViewController) {

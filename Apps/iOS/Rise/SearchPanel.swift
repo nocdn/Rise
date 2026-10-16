@@ -29,6 +29,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     /// The magnifying glass's colour, beside each suggestion.
     static let iconColor = UIColor { $0.userInterfaceStyle == .dark
         ? UIColor(white: 1, alpha: 0.5) : UIColor(red: 165/255, green: 167/255, blue: 172/255, alpha: 1) }
+    static let iconStrokeWidth: CGFloat = 2.5
     /// The field keeps its rounded semibold text; suggestion titles use the standard iOS face.
     static var fieldFont: UIFont { roundedFont(weight: .semibold) }
     static var font: UIFont {
@@ -43,7 +44,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     /// and about as long. Drawn rather than a symbol, so the suggestions' buttons don't resize it
     /// to their text.
     static let searchIcon: UIImage = {
-        let line: CGFloat = 2.5, outerRadius: CGFloat = 7.33
+        let line = iconStrokeWidth, outerRadius: CGFloat = 7.33
         let centre = CGPoint(x: 7.4, y: 7.4), radius = outerRadius-line/2
         // The handle's tip, round cap included, from the ring's centre; the symbol's reaches 11.8.
         let tip: CGFloat = 11.9, diagonal = 1/CGFloat(2).squareRoot()
@@ -62,6 +63,20 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         }
         return image.withRenderingMode(.alwaysTemplate)
     }()
+    /// A 45-degree arrow toward the field, drawn at the search glyph's size and stroke.
+    static let fillIcon: UIImage = {
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 16, height: 16)).image { _ in
+            UIColor.black.setStroke()
+            let arrow = UIBezierPath()
+            arrow.move(to: CGPoint(x: 11.25, y: 11.25)); arrow.addLine(to: CGPoint(x: 2.25, y: 2.25))
+            arrow.move(to: CGPoint(x: 2.25, y: 9.25)); arrow.addLine(to: CGPoint(x: 2.25, y: 2.25))
+            arrow.addLine(to: CGPoint(x: 9.25, y: 2.25))
+            arrow.lineWidth = iconStrokeWidth
+            arrow.lineCapStyle = .round; arrow.lineJoinStyle = .round
+            arrow.stroke()
+        }
+        return image.withRenderingMode(.alwaysTemplate)
+    }()
 
     let field = SearchField()
     private(set) var editingAddress: AddressBar?
@@ -71,6 +86,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     private(set) var siteSearch: PopularSite?
     private(set) var query = ""
     private(set) var completionPrefix: String?
+    var allowsRemoteSuggestions = true
     private let remote = GoogleSearchSuggestions()
     private var rows: [AddressSuggestionRow] = []
     let list = SuggestionList()
@@ -101,6 +117,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     var tabIcon: (URL) -> UIImage? = { _ in nil }
     var onSwitchToTab: (UUID) -> Void = { _ in }
     private let click = UIImpactFeedbackGenerator(style: .rigid)
+    private let fillFeedback = UIImpactFeedbackGenerator(style: .soft)
     let clearButton = AnimatedSymbolButton(symbol: "xmark", pointSize: 14, weight: .bold)
     let transcribing = UIActivityIndicatorView(style: .medium)
     var onClose: @MainActor () -> Void = {}
@@ -159,6 +176,10 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         addSubview(list)
         siteRow.alpha = 0; siteRow.isHidden = true
         siteRow.choose = { [weak self] in self?.enterSiteSearch() }
+        siteRow.fill = { [weak self] in
+            guard let self, let site = offeredSite else { return }
+            fillInput(site.homeURL.absoluteString)
+        }
         list.addSubview(siteRow)
         remote.onLoad = { [weak self] text in
             guard let self, active, query == text, siteSearch == nil, field.markedTextRange == nil else { return }
@@ -213,7 +234,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         showPlaceholder()
         list.setContentOffset(.zero, animated: false)
         updateResults(allowCompletion: false)
-        remote.warmUp(); click.prepare()
+        if allowsRemoteSuggestions { remote.warmUp() }; click.prepare()
     }
     func focus() { _ = field.becomeFirstResponder() }
     func beginTranscribing() -> Int {
@@ -238,7 +259,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         editingAddress = address; addSubview(address); field.text = url?.absoluteString ?? ""; query = field.text ?? ""
         list.setContentOffset(.zero, animated: false)
         address.prepareEditing(field, url: url); clearButton.isHidden = true
-        updateResults(allowCompletion: false); remote.warmUp(); click.prepare()
+        updateResults(allowCompletion: false); if allowsRemoteSuggestions { remote.warmUp() }; click.prepare()
     }
     func focusAddress() {
         guard editingAddress != nil else { return }
@@ -305,7 +326,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         let local = AddressSuggestionEngine.suggestions(for: query, history: source.history, tabs: openTabs(),
             currentURL: currentAddress, editingCurrentAddress: editingAddress != nil && query == currentAddress?.absoluteString,
             limit: Self.maximumSuggestions)
-        let terms = composing ? [] : remote.suggestions(for: query)
+        let terms = composing || !allowsRemoteSuggestions ? [] : remote.suggestions(for: query)
         candidates = AddressSuggestionEngine.merging(terms, into: local, limit: Self.maximumSuggestions, tabs: openTabs())
         if allowCompletion || composing {
             let completed = !composing ? candidates.first?.completion : nil
@@ -340,8 +361,27 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         for (row, value) in zip(rows, values) {
             row.show(value, image: value.symbol == "globe" ? image(for: value.url, fetch: value.fetchFavicon) : nil)
             row.choose = { [weak self] in self?.choose(value) }
+            let text = value.symbol == "magnifyingglass" ? (value.isTypedAction ? query : value.title)
+                : value.url?.absoluteString ?? value.title
+            row.fill = { [weak self] in self?.fillInput(text) }
         }
         setNeedsLayout()
+    }
+    /// Refine a suggestion in place, without submitting it or switching to an existing tab.
+    private func fillInput(_ text: String) {
+        guard active, siteSearch == nil else { return }
+        fillFeedback.impactOccurred(intensity: 0.4)
+        UIView.performWithoutAnimation {
+            applyingCompletion = true
+            field.inlineCompletion = nil
+            field.text = text
+            _ = field.becomeFirstResponder()
+            field.selectedTextRange = field.textRange(from: field.endOfDocument, to: field.endOfDocument)
+            suppressCompletion = true
+            queryChanged()
+            field.layoutIfNeeded()
+            applyingCompletion = false
+        }
     }
     private func updateSite(_ site: PopularSite?) {
         let changed = offeredSite?.domain != site?.domain
@@ -422,7 +462,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
             field.layoutIfNeeded()
             applyingCompletion = false
         }
-        _ = remote.suggestions(for: query)
+        if allowsRemoteSuggestions { _ = remote.suggestions(for: query) }
         onSiteSearchChanged()
     }
     func choose(_ value: AddressCandidate) {

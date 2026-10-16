@@ -7,6 +7,18 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let scene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: scene)
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains(SummariseBarAudit.argument) {
+            let controller = BrowserViewController(startURL: nil)
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            SummariseBarAudit.run(in: controller)
+            return
+        }
+        if ProcessInfo.processInfo.arguments.contains(HomeScreenActionsAudit.argument) {
+            let controller = HomeScreenActionsAudit.makeBrowser()
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            HomeScreenActionsAudit.run(in: controller)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains(PanelMotionAudit.argument) {
             let controller = BrowserViewController(startURL: nil)
             window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
@@ -87,12 +99,22 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         #endif
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let sync = SharedTabsSync(cacheURL: support.appendingPathComponent("SharedTabs.json"))
-        let browser = BrowserViewController(opensSearchOnFirstAppearance: true, sessionStore: .shared, tabSync: sync,
+        let action = connectionOptions.shortcutItem.flatMap(HomeScreenAction.init(shortcut:))
+        let browser = BrowserViewController(opensSearchOnFirstAppearance: action == nil, sessionStore: .shared, tabSync: sync,
             previewCacheURL: URL.cachesDirectory.appendingPathComponent("TabPreviews"))
         window.rootViewController = browser
         self.window = window
+        if let action { browser.quickActions.open(action) }
         window.makeKeyAndVisible()
         browser.openLinks(connectionOptions.urlContexts.map(\.url))
+    }
+
+    func windowScene(_ windowScene: UIWindowScene, performActionFor shortcutItem: UIApplicationShortcutItem,
+                     completionHandler: @escaping (Bool) -> Void) {
+        guard let action = HomeScreenAction(shortcut: shortcutItem),
+              let browser = window?.rootViewController as? BrowserViewController else { completionHandler(false); return }
+        browser.quickActions.open(action)
+        completionHandler(true)
     }
 
     /// A link opened from another app, with Rise as the default browser.
@@ -101,6 +123,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneWillResignActive(_ scene: UIScene) {
+        if let window { (window.rootViewController as? BrowserViewController)?.quickActions.setActive(false, in: window) }
         (window?.rootViewController as? BrowserViewController)?.panelMotion.stop()
         (window?.rootViewController as? BrowserViewController)?.setTabPreviewsActive(false)
         saveSession()
@@ -109,6 +132,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     func sceneDidDisconnect(_ scene: UIScene) { saveSession() }
     func sceneDidBecomeActive(_ scene: UIScene) {
         let browser = window?.rootViewController as? BrowserViewController
+        if let window { browser?.quickActions.setActive(true, in: window) }
         browser?.applyPendingChanges()
         browser?.tabSync?.refresh()
         browser?.setTabPreviewsActive(true)

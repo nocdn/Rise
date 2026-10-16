@@ -8,7 +8,8 @@ import WebKit
     nonisolated static let scriptMarker = "// Rise.CookieConsent\n"
     static let world = WKContentWorld.world(name: "Rise.CookieConsent")
     private static let preferenceKey = "Rise.iOS.CookieBanners.DisabledSites"
-    private let preferences: UserDefaults
+    private let preferences: UserDefaults?
+    private var privateDisabledSites = Set<String>()
     private static let contexts = NSMapTable<WKWebView, Context>.weakToStrongObjects()
     private static let versions = NSMapTable<WKWebView, NSNumber>.weakToStrongObjects()
     private static var generation = 0
@@ -40,7 +41,7 @@ import WebKit
         return value
     }
 
-    init(preferences: UserDefaults = .standard) { self.preferences = preferences; _ = Self.loading }
+    init(preferences: UserDefaults? = .standard) { self.preferences = preferences; _ = Self.loading }
 
     private static func site(_ url: URL?) -> String? {
         guard ["http", "https"].contains(url?.scheme?.lowercased() ?? ""), var host = url?.host?.lowercased(), !host.isEmpty else { return nil }
@@ -50,18 +51,19 @@ import WebKit
     }
     func isEnabled(for url: URL?) -> Bool {
         guard let site = Self.site(url) else { return false }
-        return !(preferences.stringArray(forKey: Self.preferenceKey) ?? []).contains(site)
+        return !(preferences?.stringArray(forKey: Self.preferenceKey).map(Set.init) ?? privateDisabledSites).contains(site)
     }
     func setEnabled(_ enabled: Bool, for url: URL) {
         guard let site = Self.site(url) else { return }
-        var disabled = Set(preferences.stringArray(forKey: Self.preferenceKey) ?? [])
+        var disabled = Set(preferences?.stringArray(forKey: Self.preferenceKey).map(Set.init) ?? privateDisabledSites)
         if enabled { disabled.remove(site) } else { disabled.insert(site) }
-        preferences.set(disabled.sorted(), forKey: Self.preferenceKey)
+        if let preferences { preferences.set(disabled.sorted(), forKey: Self.preferenceKey) }
+        else { privateDisabledSites = disabled }
         if !enabled {
             // Stop delayed acceptance in other tabs and preview renderers on this host,
             // too. A different audit/profile's independent preferences stay independent.
             for page in Self.contexts.keyEnumerator().allObjects.compactMap({ $0 as? WKWebView }) {
-                guard let context = Self.contexts.object(forKey:page), context.owner?.preferences === preferences,
+                guard let context = Self.contexts.object(forKey:page), (context.owner === self || (preferences != nil && context.owner?.preferences === preferences)),
                       Self.site(context.url) == site else { continue }
                 apply(to:page,url:context.url)
             }
