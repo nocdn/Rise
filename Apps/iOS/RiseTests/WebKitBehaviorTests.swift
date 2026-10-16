@@ -27,6 +27,22 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTFail("The local WebKit fixture did not finish loading")
     }
 
+    @MainActor private func assertFullSearchPlacement(_ browser: BrowserViewController,
+                                                     file: StaticString = #filePath, line: UInt = #line) {
+        let keyboard = browser.view.keyboardLayoutGuide.layoutFrame
+        let panel = browser.bottomBar.search
+        if keyboard.minY < browser.view.bounds.maxY-100 {
+            let visibleResults = panel.list.convert(panel.list.bounds, to: browser.view)
+            XCTAssertEqual(visibleResults.maxY, keyboard.minY, accuracy: 1, file: file, line: line)
+            XCTAssertLessThan(panel.field.convert(panel.field.bounds, to: browser.view).maxY, keyboard.minY, file: file, line: line)
+            XCTAssertLessThanOrEqual(panel.list.bounds.height, SearchPanel.rowHeight*4+SearchPanel.keyboardClearance, file: file, line: line)
+        } else {
+            XCTAssertEqual(browser.bottomBar.bounds.height,
+                           (browser.view.bounds.height*BrowserViewController.panelHeightFraction).rounded(),
+                           accuracy: 1, file: file, line: line)
+        }
+    }
+
     private static let inputPage = """
     <!doctype html><html><head>
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, viewport-fit=cover">
@@ -46,7 +62,7 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertTrue(bar.search.field.isFirstResponder)
         XCTAssertEqual(bar.search.field.text, "")
         XCTAssertEqual(browser.tabs.count, 1, "Opening the dialog does not create another tab")
-        XCTAssertEqual(bar.frame.height, (window.bounds.height*BrowserViewController.panelHeightFraction).rounded(), accuracy: 1)
+        assertFullSearchPlacement(browser)
 
         // The page can finish loading behind the search without taking focus or closing it.
         let original = browser.webView
@@ -400,8 +416,8 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertTrue(bar.search.candidates.contains { $0.symbol == "globe" && $0.url != nil }, "An empty field offers learned/recent links")
         XCTAssertEqual(SearchPanel.searchIcon.size, CGSize(width: 16, height: 16))
         try await Task.sleep(for: .milliseconds(600))
-        let panel = (bounds.height*BrowserViewController.panelHeightFraction).rounded()
-        XCTAssertEqual(bar.frame.height, panel, accuracy: 0.5)
+        assertFullSearchPlacement(browser)
+        let panel = bar.frame.height
         XCTAssertEqual(bar.frame.maxY, bounds.maxY, accuracy: 0.5)
         XCTAssertLessThan(bar.frame.height, bounds.height*PeekPresentationController.heightFraction)
         XCTAssertEqual(bar.layer.cornerRadius, BottomBar.panelCornerRadius)
@@ -863,7 +879,7 @@ final class WebKitBehaviorTests: XCTestCase {
         }
         try await Task.sleep(for: .milliseconds(700))
         XCTAssertLessThan(bar.frame.minY, initialTop)
-        XCTAssertEqual(bar.bounds.height, (browser.view.bounds.height*BrowserViewController.panelHeightFraction).rounded(), accuracy: 1)
+        assertFullSearchPlacement(browser)
         XCTAssertEqual(browser.content.transform.a, PageRecede.scale, accuracy: 0.001)
         XCTAssertEqual(browser.content.transform.ty, PageRecede.drop, accuracy: 0.5)
         XCTAssertEqual(address.host.frame.minX, bar.search.field.textRect(forBounds: address.bounds).minX, accuracy: 0.5)

@@ -6,15 +6,18 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     static let rowHeight: CGFloat = 56
     /// Between the field and the first suggestion.
     static let rowsGap: CGFloat = 10
-    /// As many as fit above the keyboard on an iPhone.
-    static let maximumSuggestions = 4
+    /// Four rows show above the keyboard; the remaining ranked results scroll beneath it.
+    static let visibleSuggestions = 4
+    static let maximumSuggestions = 12
+    /// A little breathing room below the fourth row; the fifth row's content stays covered.
+    static let keyboardClearance: CGFloat = 6
     static let inset: CGFloat = 16
     /// Suggestions sit this far inside the field's left edge, which balances them better than lining up.
-    static let rowIndent: CGFloat = 5
+    static let rowIndent: CGFloat = 2
     /// How small a suggestion gets while pressed.
     static let pressedScale: CGFloat = 0.97
     /// The field and as many suggestions as show.
-    static var height: CGFloat { fieldHeight+rowsGap+CGFloat(maximumSuggestions)*rowHeight }
+    static var height: CGFloat { fieldHeight+rowsGap+CGFloat(visibleSuggestions)*rowHeight+keyboardClearance }
     /// The field's corners: rounded, rather than a capsule.
     static let cornerRadius: CGFloat = 14
     /// The field's fill, as on Arc Search's, translucent over dark pages.
@@ -70,6 +73,13 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     private(set) var completionPrefix: String?
     private let remote = GoogleSearchSuggestions()
     private var rows: [AddressSuggestionRow] = []
+    let list = SuggestionList()
+    var resultRows: [AddressSuggestionRow] { (offeredSite == nil ? [] : [siteRow])+rows }
+    var isScrollable: Bool { list.contentSize.height > list.bounds.height+0.5 }
+    /// Kept at the full search layout during compact site search, so rows lift up with the sheet.
+    var visibleHeight: CGFloat = SearchPanel.height {
+        didSet { if visibleHeight != oldValue { setNeedsLayout() } }
+    }
     let siteRow = AddressSuggestionRow()
     private var applyingCompletion = false
     private var changingText = false
@@ -81,6 +91,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         let completion: String?
         let completionPrefix: String?
         let selection: NSRange
+        let scrollOffset: CGPoint
     }
     private var previousSearch: SearchDraft?
     var source: MobileAddressSuggestions? {
@@ -140,9 +151,15 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         addSubview(clearButton)
         transcribing.hidesWhenStopped = true; transcribing.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
         transcribing.accessibilityLabel = "Transcribing"; addSubview(transcribing)
+        list.delaysContentTouches = false
+        list.contentInsetAdjustmentBehavior = .never
+        list.showsHorizontalScrollIndicator = false
+        list.showsVerticalScrollIndicator = false
+        list.keyboardDismissMode = .none
+        addSubview(list)
         siteRow.alpha = 0; siteRow.isHidden = true
         siteRow.choose = { [weak self] in self?.enterSiteSearch() }
-        addSubview(siteRow)
+        list.addSubview(siteRow)
         remote.onLoad = { [weak self] text in
             guard let self, active, query == text, siteSearch == nil, field.markedTextRange == nil else { return }
             refresh()
@@ -172,17 +189,21 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         clearButton.bounds = CGRect(x: 0, y: 0, width: AddressBar.buttonWidth, height: Self.fieldHeight)
         clearButton.center = CGPoint(x: frame.maxX-AddressBar.outerCentre, y: frame.midY)
         transcribing.center = clearButton.center
-        let count = max(0, Int((bounds.height-Self.fieldHeight-Self.rowsGap)/Self.rowHeight))
+        let top = Self.fieldHeight+Self.rowsGap
+        list.frame = CGRect(x: 0, y: top, width: bounds.width, height: max(0, visibleHeight-top))
         let offset = offeredSite == nil ? 0 : 1
         siteRow.bounds = CGRect(x: 0, y: 0, width: width, height: Self.rowHeight)
-        siteRow.center = CGPoint(x: bounds.midX, y: Self.fieldHeight+Self.rowsGap+Self.rowHeight/2)
+        siteRow.center = CGPoint(x: bounds.midX, y: Self.rowHeight/2)
         for (index, row) in rows.enumerated() {
             row.bounds = CGRect(x: 0, y: 0, width: width, height: Self.rowHeight)
-            row.center = CGPoint(x: bounds.midX, y: Self.fieldHeight+Self.rowsGap+(CGFloat(index+offset)+0.5)*Self.rowHeight)
-            row.isHidden = index+offset >= count
+            row.center = CGPoint(x: bounds.midX, y: (CGFloat(index+offset)+0.5)*Self.rowHeight)
+            row.isHidden = false
             row.isUserInteractionEnabled = siteSearch == nil
-            row.accessibilityElementsHidden = row.isHidden || siteSearch != nil
+            row.accessibilityElementsHidden = siteSearch != nil
         }
+        list.contentSize = CGSize(width: bounds.width, height: CGFloat(rows.count+offset)*Self.rowHeight)
+        list.isScrollEnabled = siteSearch == nil && isScrollable
+        list.isUserInteractionEnabled = siteSearch == nil
         siteRow.isUserInteractionEnabled = offeredSite != nil && siteSearch == nil
         siteRow.accessibilityElementsHidden = offeredSite == nil || siteSearch != nil
     }
@@ -190,6 +211,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         remote.cancel(); opening += 1; active = true; changingText = false; stopTranscribing()
         siteSearch = nil; previousSearch = nil; currentAddress = nil; completionPrefix = nil; field.inlineCompletion = nil; query = ""; field.text = ""
         showPlaceholder()
+        list.setContentOffset(.zero, animated: false)
         updateResults(allowCompletion: false)
         remote.warmUp(); click.prepare()
     }
@@ -214,6 +236,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         siteSearch = nil; previousSearch = nil; completionPrefix = nil; field.inlineCompletion = nil; currentAddress = url
         showPlaceholder()
         editingAddress = address; addSubview(address); field.text = url?.absoluteString ?? ""; query = field.text ?? ""
+        list.setContentOffset(.zero, animated: false)
         address.prepareEditing(field, url: url); clearButton.isHidden = true
         updateResults(allowCompletion: false); remote.warmUp(); click.prepare()
     }
@@ -248,6 +271,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         editingAddress?.finishEditing()
         UIView.performWithoutAnimation { self.field.inlineCompletion = nil }
         completionPrefix = nil; query = field.text ?? ""
+        list.setContentOffset(.zero, animated: false)
         updateResults(allowCompletion: !suppressCompletion)
         suppressCompletion = false
         changingText = false
@@ -312,7 +336,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     }
     private func renderRows(_ values: [AddressCandidate]) {
         while rows.count > values.count { rows.removeLast().removeFromSuperview() }
-        while rows.count < values.count { let row = AddressSuggestionRow(); rows.append(row); addSubview(row) }
+        while rows.count < values.count { let row = AddressSuggestionRow(); rows.append(row); list.addSubview(row) }
         for (row, value) in zip(rows, values) {
             row.show(value, image: value.symbol == "globe" ? image(for: value.url, fetch: value.fetchFavicon) : nil)
             row.choose = { [weak self] in self?.choose(value) }
@@ -365,7 +389,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
                     length: field.offset(from: range.start, to: range.end))
         } ?? NSRange(location: text.utf16.count, length: 0)
         previousSearch = SearchDraft(text: text, completion: field.inlineCompletion,
-                                     completionPrefix: completionPrefix, selection: selection)
+                                     completionPrefix: completionPrefix, selection: selection, scrollOffset: list.contentOffset)
         click.impactOccurred(intensity: 0.5); remote.cancel(); siteSearch = site
         completionPrefix = nil; field.inlineCompletion = nil; query = ""; field.text = ""
         showPlaceholder()
@@ -394,6 +418,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
             // expansion instead of rebuilding them from a possibly different remote answer.
             setNeedsLayout()
             layoutIfNeeded()
+            if let draft { list.setContentOffset(draft.scrollOffset, animated: false) }
             field.layoutIfNeeded()
             applyingCompletion = false
         }
@@ -441,6 +466,11 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         guard let values = try? JSONSerialization.jsonObject(with: data) as? [Any], values.count > 1 else { return [] }
         return values[1] as? [String] ?? []
     }
+}
+
+/// Rows retain their immediate press feedback while a drag hands control to native scrolling.
+final class SuggestionList: UIScrollView {
+    override func touchesShouldCancel(in view: UIView) -> Bool { true }
 }
 
 /// The search field, with its clear button as far from the right end as from the top and bottom.

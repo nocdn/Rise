@@ -95,12 +95,34 @@ import WebKit
                   && (attributed.attribute(.font, at: "Search in ".utf16.count, effectiveRange: nil) as? UIFont) == SearchPanel.font)
         try check("site-row-uses-favicon", panel.siteRow.icon.image === icon)
         panel.layoutIfNeeded()
-        let visibleRows = panel.subviews.compactMap { $0 as? AddressSuggestionRow }.filter { !$0.isHidden }
+        let visibleRows = panel.resultRows
         visibleRows.forEach { $0.layoutIfNeeded() }
         try check("all-suggestion-rows-share-the-taller-height", visibleRows.allSatisfy { $0.bounds.height == 56 })
         try check("suggestion-titles-use-the-standard-ios-font", visibleRows.allSatisfy {
             $0.titleLabelView.font.fontName == UIFont.systemFont(ofSize: 17, weight: .medium).fontName
         })
+        try check("url-subtitles-use-the-reference-size-and-standard-font", visibleRows.allSatisfy {
+            $0.addressLabel.font.pointSize == 12 && $0.addressLabel.font.fontName == UIFont.systemFont(ofSize: 12, weight: .medium).fontName
+        })
+        for (url, expected) in [
+            ("https://www.apple.com/", "apple.com"),
+            ("HTTP://WWW.example.com/path?q=https://www.other.example/#fragment", "example.com/path?q=https://www.other.example/#fragment"),
+            ("https://example.com/?q=lamp", "example.com/?q=lamp"),
+            ("https://www2.example.com/docs/", "www2.example.com/docs/")
+        ] {
+            try check("display-url-\(expected)", AddressSuggestionRow.displayAddress(url) == expected)
+        }
+        let reference = UIView(frame: CGRect(x: 0, y: 0, width: 393, height: 56))
+        reference.backgroundColor = .white
+        let referenceRow = AddressSuggestionRow(frame: reference.bounds.insetBy(dx: SearchPanel.inset, dy: 0))
+        reference.addSubview(referenceRow)
+        referenceRow.show(AddressCandidate(title: "Apple", subtitle: "https://www.apple.com/", url: URL(string: "https://www.apple.com/")), image: nil)
+        referenceRow.layoutIfNeeded()
+        let format = UIGraphicsImageRendererFormat(); format.scale = 3
+        let referenceImage = UIGraphicsImageRenderer(size: reference.bounds.size, format: format).image { _ in
+            reference.drawHierarchy(in: reference.bounds, afterScreenUpdates: true)
+        }
+        try referenceImage.pngData()?.write(to: folder.appendingPathComponent("reference-typography-row.png"))
         try check("pressed-background-widens-without-widening-the-row", visibleRows.allSatisfy {
             $0.pressBackground.frame.minX == -6 && $0.pressBackground.bounds.width == $0.bounds.width+12
                 && !$0.point(inside: CGPoint(x: -2, y: $0.bounds.midY), with: nil)
@@ -111,7 +133,8 @@ import WebKit
         try check("link-title-and-subtitle-stay-centred-together", visibleRows.filter { !($0.addressLabel.text ?? "").isEmpty }.allSatisfy {
             abs(($0.titleLabelView.frame.minY+$0.addressLabel.frame.maxY)/2-$0.bounds.midY) < 0.5
         })
-        let fullHeight = browser.bottomBar.bounds.height, fullPageScale = browser.content.transform.a
+        var fullHeight = browser.bottomBar.bounds.height
+        let fullPageScale = browser.content.transform.a
         let rowBounds = panel.siteRow.bounds, rowCentreBeforePress = panel.siteRow.center
         panel.siteRow.sendActions(for: .touchDown)
         try await Task.sleep(for: .milliseconds(250))
@@ -141,7 +164,7 @@ import WebKit
         field.insertText("lamps.example")
         try check("pasted-address-is-not-rewritten", field.text == "lamps.example" && panel.completionPrefix == nil)
         try await Task.sleep(for: .milliseconds(300))
-        let retainedRows = panel.subviews.compactMap { $0 as? AddressSuggestionRow }.filter { !$0.isHidden }
+        let retainedRows = panel.resultRows
         let retainedFrames = retainedRows.map(\.frame)
         let retainedTitles = retainedRows.map { $0.titleLabelView.bounds }
         let siteColour = panel.siteRow.titleLabelView.attributedText?.attribute(.foregroundColor, at: "Search in ".utf16.count,
@@ -157,7 +180,7 @@ import WebKit
         try await Task.sleep(for: .milliseconds(350))
         try check("site-search-shrinks-the-sheet-without-resizing-results", panel.bounds.height == SearchPanel.height
                   && browser.bottomBar.bounds.height < fullHeight-80 && !panel.siteRow.isHidden)
-        try check("compact-site-search-keeps-every-row-and-its-geometry", retainedRows.allSatisfy { $0.superview === panel }
+        try check("compact-site-search-keeps-every-row-and-its-geometry", retainedRows.allSatisfy { $0.superview === panel.list }
                   && zip(retainedRows,retainedFrames).allSatisfy { $0.frame == $1 }
                   && zip(retainedRows,retainedTitles).allSatisfy { $0.titleLabelView.bounds == $1 })
         try check("covered-results-cannot-be-tapped-or-read-by-voiceover", retainedRows.allSatisfy {
@@ -185,6 +208,8 @@ import WebKit
         try check("site-search-fits-with-a-hardware-keyboard", abs(browser.bottomBar.bounds.height
                   - BottomBar.findHeight(keyboard: 0, safeBottom: browser.view.window!.safeAreaInsets.bottom)) < 1)
         try await keyboardFrame(350)
+        // Full search now follows the keyboard too, keeping four rows above its edge.
+        fullHeight = BottomBar.searchTop+SearchPanel.height+350
         try capture("compact-site-search")
         var opened: URL?
         let onOpen = panel.onOpen
@@ -206,7 +231,7 @@ import WebKit
             try await Task.sleep(for: .milliseconds(8))
         }
         try check("x-restores-the-original-row-identities-and-native-placeholder", retainedRows.allSatisfy {
-            $0.superview === panel && $0.isUserInteractionEnabled && !$0.accessibilityElementsHidden
+            $0.superview === panel.list && $0.isUserInteractionEnabled && !$0.accessibilityElementsHidden
         } && field.placeholder == "Search or enter URL"
           && (field.attributedPlaceholder == nil || field.attributedPlaceholder?.string == "Search or enter URL"))
         try await Task.sleep(for: .milliseconds(350))
@@ -238,6 +263,8 @@ import WebKit
         panel.clearAddress()
         try check("url-editor-clear-preserves-focus", field.text == "" && field.isFirstResponder)
         field.insertText("lamps.example")
+        try await Task.sleep(for: .milliseconds(350))
+        fullHeight = browser.bottomBar.bounds.height
         panel.siteRow.sendActions(for: .primaryActionTriggered)
         try await Task.sleep(for: .milliseconds(350))
         try check("url-editor-also-shrinks-for-site-search", panel.siteSearch != nil && panel.bounds.height == SearchPanel.height
@@ -321,7 +348,57 @@ import WebKit
         panel.clearButton.sendActions(for: .primaryActionTriggered)
         try await Task.sleep(for: .milliseconds(350))
         panel.overrideUserInterfaceStyle = .unspecified
-        field.text = "amazon.com"; field.sendActions(for: .editingChanged)
+        for index in 0..<10 {
+            source.history.record(URL(string: "https://www.scroll-fixture.example/page/\(index)?ref=kept")!, title: "Scrollable result \(index)")
+        }
+        field.text = "scroll-fixture.example"; field.sendActions(for: .editingChanged)
+        try await keyboardFrame(350)
+        panel.layoutIfNeeded()
+        try check("more-than-four-results-exist-in-the-scroll-list", panel.resultRows.count > 4 && panel.isScrollable)
+        let fifth = panel.resultRows[4]
+        let keyboardTop = browser.view.bounds.height-350
+        let fifthTitle = fifth.titleLabelView.convert(fifth.titleLabelView.bounds, to: browser.view)
+        let listFrame = panel.list.convert(panel.list.bounds, to: browser.view)
+        try check("the-fifth-result-starts-just-behind-the-keyboard", abs(listFrame.maxY-keyboardTop) < 1
+                  && fifthTitle.minY > keyboardTop && fifthTitle.minY < keyboardTop+20)
+        try check("all-results-keep-the-normal-row-spacing", zip(panel.resultRows, panel.resultRows.dropFirst()).allSatisfy {
+            abs($1.frame.minY-$0.frame.minY-SearchPanel.rowHeight) < 0.1
+        })
+        let inputFrame = field.convert(field.bounds, to: browser.view), sheetHeight = browser.bottomBar.bounds.height
+        panel.list.setContentOffset(CGPoint(x: 0, y: SearchPanel.rowHeight*2), animated: false)
+        let revealed = fifth.titleLabelView.convert(fifth.titleLabelView.bounds, to: browser.view)
+        try check("scrolling-reveals-the-fifth-result-without-moving-the-input-or-panel", revealed.maxY < keyboardTop
+                  && revealed.minY > inputFrame.maxY && field.convert(field.bounds, to: browser.view) == inputFrame
+                  && browser.bottomBar.bounds.height == sheetHeight && field.isFirstResponder)
+        let offset = panel.list.contentOffset
+        panel.refresh(); panel.layoutIfNeeded()
+        try check("late-results-and-icons-keep-the-scroll-position", panel.list.contentOffset == offset && panel.resultRows[4] === fifth)
+        panel.list.setContentOffset(CGPoint(x: 0, y: panel.list.contentSize.height-panel.list.bounds.height), animated: false)
+        let lastRow = panel.resultRows.last!
+        try check("the-final-result-can-scroll-fully-above-the-keyboard", lastRow.convert(lastRow.bounds, to: browser.view).maxY <= keyboardTop+0.5)
+        var chosen: URL?
+        let normalOpen = panel.onOpen
+        panel.onOpen = { chosen = $0 }
+        fifth.sendActions(for: .primaryActionTriggered)
+        let fifthCandidate = panel.candidates.filter { !$0.isAutofill }[4]
+        try check("scrolled-results-keep-the-original-complete-navigation-url", chosen == fifthCandidate.url
+                  && chosen?.host == "www.scroll-fixture.example" && chosen?.query == "ref=kept")
+        panel.onOpen = normalOpen
+        field.text = "scroll-fixture.example/p"; field.sendActions(for: .editingChanged); panel.layoutIfNeeded()
+        try check("editing-the-query-resets-results-to-the-top", panel.list.contentOffset == .zero)
+        try await keyboardFrame(620)
+        try check("short-visible-areas-use-a-shorter-scroll-viewport", panel.list.bounds.height < SearchPanel.rowHeight*4)
+        panel.list.setContentOffset(CGPoint(x: 0, y: panel.list.contentSize.height-panel.list.bounds.height), animated: false)
+        try check("the-final-result-is-reachable-with-a-taller-keyboard", panel.resultRows.last!.convert(panel.resultRows.last!.bounds,
+            to: browser.view).maxY <= browser.view.bounds.height-620+0.5)
+        try await keyboardFrame(350)
+        panel.beginEditingAddress(browser.bottomBar.menu.address, url: fixture)
+        panel.focusAddress(); panel.finishAddressTransition()
+        field.text = "scroll-fixture.example"; field.sendActions(for: .editingChanged); panel.layoutIfNeeded()
+        try check("url-editing-also-has-the-full-scrollable-result-list", panel.resultRows.count > 4 && panel.list.isScrollEnabled)
+        panel.releaseAddress()
+        field.text = "scroll-fixture.example"; field.sendActions(for: .editingChanged); panel.layoutIfNeeded()
+        try capture("scrollable-suggestions")
         return checks
     }
     static func run(in browser: BrowserViewController) {

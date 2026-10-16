@@ -67,7 +67,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// How far the page has scrolled in its current direction, to collapse or open the bar.
     private var scrollTravel: CGFloat = 0, lastScrollOffset: CGFloat = 0
     /// The panel New Page grows the bar into, as a share of the window's height.
-    static let panelHeightFraction: CGFloat = 0.73
+    static let panelHeightFraction: CGFloat = 0.71
     private(set) var isPanelOpen = false
     /// Growing from the panel to fill the window with a page chosen in it: quicker than a Peek
     /// expanding, and likewise without overshoot, which would fall outside the screen.
@@ -532,6 +532,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             if bottomBar.panel == .find, touched.isDescendant(of: bottomBar.find.field)
                 || touched.isDescendant(of: bottomBar.find.answerView) { return false }
             if bottomBar.panel == .search, touched.isDescendant(of: bottomBar.search.field) { return false }
+            if bottomBar.panel == .search, bottomBar.search.isScrollable,
+               touched.isDescendant(of: bottomBar.search.list) { return false }
             if bottomBar.panel == .siteSettings,
                bottomBar.siteSettings.switches.contains(where: { touched.isDescendant(of: $0) }) { return false }
             // A list long enough to scroll keeps its own drags.
@@ -715,6 +717,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.transform = .identity
         bottomBar.frame = CGRect(x: 0, y: bounds.maxY-height, width: bounds.width, height: height)
         bottomBar.transform = offset
+        bottomBar.search.visibleHeight = min(SearchPanel.height, max(SearchPanel.fieldHeight,
+            fullSearchHeight-keyboardHeight-BottomBar.searchTop))
         // Pages scroll clear of the open bar. Its collapsed strip leaves the inset alone, so the
         // page never resizes as the bar collapses; it just shows more of itself.
         let needed = BottomBar.height(collapsed: false, safeBottom: safeBottom)-safeBottom
@@ -754,12 +758,20 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// How much taller the open panel is than the bar.
     private var panelTravel: CGFloat { travel(of: bottomBar.panel) }
 
+    /// The fifth row starts at the keyboard edge. Short screens expose fewer rows,
+    /// while the scroll view still lets every result move fully above the keyboard.
+    private var fullSearchHeight: CGFloat {
+        let desired = keyboardHeight > 0 ? keyboardHeight+BottomBar.searchTop+SearchPanel.height
+            : (view.bounds.height*Self.panelHeightFraction).rounded()
+        return min(view.bounds.height-view.safeAreaInsets.top-12, desired)
+    }
+
     private func travel(of panel: BottomBar.Panel) -> CGFloat {
         let safeBottom = view.window?.safeAreaInsets.bottom ?? 0
         let open = BottomBar.height(collapsed: false, safeBottom: safeBottom)
         let height = switch panel {
         case .search: bottomBar.search.siteSearch == nil
-            ? (view.bounds.height*Self.panelHeightFraction).rounded()
+            ? fullSearchHeight
             : BottomBar.findHeight(keyboard: keyboardHeight, safeBottom: safeBottom)
         case .menu: BottomBar.menuHeight(width: view.bounds.width, safeBottom: safeBottom)
         case .tabMenu: BottomBar.tabMenuHeight(safeBottom: safeBottom)
@@ -777,7 +789,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// its matches.
     private var panelRecede: CGFloat {
         let safeBottom = view.window?.safeAreaInsets.bottom ?? 0
-        let fullSearchTravel = (view.bounds.height*Self.panelHeightFraction).rounded()
+        let fullSearchTravel = fullSearchHeight
             - BottomBar.height(collapsed: false, safeBottom: safeBottom)
         return bottomBar.panel == .find ? 0 : panelTravel/max(1, fullSearchTravel)
     }
@@ -947,8 +959,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
               let screen = view.window?.screen else { return }
         let frame = view.convert(end, from: screen.coordinateSpace)
         keyboardHeight = frame.minY < view.bounds.maxY ? view.bounds.maxY-frame.minY : 0
-        guard isPanelOpen, bottomBar.panel == .find
-            || bottomBar.panel == .search && bottomBar.search.siteSearch != nil else { return }
+        guard isPanelOpen, bottomBar.panel == .find || bottomBar.panel == .search else { return }
         let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
         let curve = note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt ?? 7
         UIView.animate(withDuration: duration, delay: 0, options: [UIView.AnimationOptions(rawValue: curve << 16),

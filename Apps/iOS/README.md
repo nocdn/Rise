@@ -28,7 +28,8 @@ As in Arc Search, a toolbar spans the bottom edge with a hairline on top: white,
 grey rather than black in dark mode, whatever the page, so its buttons and panels stand out.
 The app follows the system's light or dark appearance. Tabs, on the left, shows the top of the current page as a
 small square card over a tilted one behind it. New Page, the light grey rounded button in
-the middle, grows the bar into a panel 73% of the window's height, with Peek's quick spring:
+the middle, grows the bar into a panel with four suggestion rows above the keyboard
+(71% of the window's height without a software keyboard), with Peek's quick spring:
 its top corners round as it grows, and the page recedes behind it, dimmed, its corners following
 the screen's own, as far in as the page has moved, so it never looks cut square into them: they
 round the moment the panel starts opening, stay round as the page comes back, and square off
@@ -44,7 +45,17 @@ and rounded like New Page (#F8F9FA, 14-point corners) with semibold rounded text
 focused at once, so the keyboard comes up alongside. Shaking the phone while typing there clears the field with two sharp taps,
 instead of offering to undo the typing. Google's
 suggestions appear under it as you type, the latest query's only, each shrinking a little
-while pressed. Their titles use the standard iOS font at medium weight, beside a grey magnifying glass drawn
+while pressed. Up to twelve ranked rows share a native scroll view; the fifth starts just
+behind the keyboard, with normal row spacing and six points of extra clearance below the
+fourth row, and scrolling keeps the field and sheet in place.
+The sheet fits shorter visible areas and keeps the last result fully reachable. Changing the
+query returns to the top, while late icons/results preserve the scroll position. Site-search
+mode preserves the list and its scroll position under the keyboard during the compact transition.
+Titles use the standard iOS font at 17 points and medium weight; URL subtitles use the same
+face at 12 points and medium weight, with a tighter baseline gap and darker grey in light mode.
+Display addresses omit the scheme, leading `www.` and a bare origin's final slash, preserving
+paths, queries and fragments; navigation always uses the complete original URL.
+Icons sit beside them, including a grey magnifying glass drawn
 like the system's bold one, its handle as thick as its ring and about as long.
 At the field's end, the address editor's bold X is always there: it clears the
 field, clicking once, and on an empty field closes the panel. Clearing clicks once; Go or choosing a suggestion clicks twice in quick succession. Choosing one searches
