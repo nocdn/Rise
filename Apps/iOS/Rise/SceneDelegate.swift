@@ -7,6 +7,12 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let scene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: scene)
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains(PanelMotionAudit.argument) {
+            let controller = BrowserViewController(startURL: nil)
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            PanelMotionAudit.run(in: controller)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains(DownloadsPanelAudit.argument) {
             let controller = BrowserViewController(startURL: nil)
             window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
@@ -95,6 +101,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneWillResignActive(_ scene: UIScene) {
+        (window?.rootViewController as? BrowserViewController)?.panelMotion.stop()
         (window?.rootViewController as? BrowserViewController)?.setTabPreviewsActive(false)
         saveSession()
     }

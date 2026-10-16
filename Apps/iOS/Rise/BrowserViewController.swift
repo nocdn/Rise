@@ -78,6 +78,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// How much of the window the keyboard covers, which Find's panel sits above.
     private var keyboardHeight: CGFloat = 0
     private lazy var panelPan = UIPanGestureRecognizer(target: self, action: #selector(dragPanel(_:)))
+    let panelMotion = PanelMotion()
+    #if DEBUG
+    var onPanelCloseCommit: (() -> Void)?
+    #endif
     private(set) var downloadsSheet = DownloadsSheetState()
     /// Pinching in on the page, from its smallest zoom, folds it up and summarises it.
     private lazy var summarisePinch = UIPinchGestureRecognizer(target: self, action: #selector(pinchToSummarise(_:)))
@@ -851,8 +855,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     private func settlePanelOpen(velocity: CGFloat = 0, alongside: (() -> Void)? = nil, completion: (() -> Void)? = nil) {
         let spring = PeekPresentationController.openSpring
+        panelMotion.settle(for: spring.duration)
         let animate = { alongside?(); self.setPanel(1); self.setNeedsStatusBarAppearanceUpdate() }
-        guard !UIAccessibility.isReduceMotionEnabled else { animate(); completion?(); return }
+        guard !UIAccessibility.isReduceMotionEnabled else { animate(); panelMotion.stop(); completion?(); return }
         UIView.animate(springDuration: spring.duration, bounce: spring.bounce, initialSpringVelocity: velocity, delay: 0,
                        options: [.beginFromCurrentState, .allowUserInteraction], animations: animate) { finished in
             if finished { completion?() }
@@ -874,12 +879,11 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     func closePanel(velocity: CGFloat = 0) {
         guard isPanelOpen else { return }
         isPanelOpen = false
-        bottomBar.search.end()
-        bottomBar.find.end()
         dimming.isUserInteractionEnabled = false
         bottomBar.accessibilityViewIsModal = false
         guard !UIAccessibility.isReduceMotionEnabled else {
             setPanel(0); bottomBar.showContents(of: nil, animated: false); setNeedsStatusBarAppearanceUpdate()
+            bottomBar.search.end(); bottomBar.find.end(); panelMotion.stop()
             applyPendingChanges(); return
         }
         // As with Peek, the bar returns without overshoot while the page's bounce shows its return.
@@ -892,10 +896,20 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             self.setNeedsStatusBarAppearanceUpdate()
         }
         let back = PeekPresentationController.pageReturnSpring
+        panelMotion.settle(for: max(close.duration, back.duration))
         UIView.animate(springDuration: back.duration, bounce: back.bounce, initialSpringVelocity: 0, delay: 0,
                        options: [.beginFromCurrentState, .allowUserInteraction]) {
             PageRecede.apply(0, to: self.content)
         } completion: { _ in PageRecede.settle(self.content); self.applyPendingChanges() }
+        // Keyboard resignation and blurred copies can block the main thread. Hand the
+        // closing motion to the render server before either starts, as when opening.
+        CATransaction.flush()
+        panelMotion.event("close-committed")
+        #if DEBUG
+        onPanelCloseCommit?()
+        #endif
+        bottomBar.search.end()
+        bottomBar.find.end()
         bottomBar.showContents(of: nil)
     }
 
@@ -973,7 +987,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let distance = downloadsSheet.height(in: downloadsHeights)-current
         let speed = abs(distance) > 1 ? min(4,max(0,-velocity/distance)) : 0
         let change = { self.setPanel(1) }
-        guard !UIAccessibility.isReduceMotionEnabled else { change(); return }
+        guard !UIAccessibility.isReduceMotionEnabled else { change(); panelMotion.stop(); return }
+        panelMotion.settle(for: 0.3)
         UIView.animate(springDuration: 0.3,bounce: 0,initialSpringVelocity: speed,delay: 0,
                        options: [.beginFromCurrentState,.allowUserInteraction],animations: change)
     }
@@ -1151,6 +1166,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     func dragPanel(to distance: CGFloat) {
         guard isPanelOpen else { return }
+        let began = CACurrentMediaTime()
+        panelMotion.begin(bottomBar.panel, screen: view.window?.windowScene?.screen)
+        defer { panelMotion.tracked(since: began) }
         if bottomBar.panel == .downloads {
             beginDownloadsDrag()
             downloadsSheet.drag(by: distance,in: downloadsHeights)

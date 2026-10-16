@@ -121,6 +121,12 @@ Dragging stops at those two limits; it cannot dismiss or stretch Downloads. Long
 at the tall detent, and scrolling back to the top allows a downward sheet drag. X returns to
 More from either height using the existing blurred swap, keeping outgoing rows in place.
 The native interaction follows [Apple's two-finger selection sample](https://developer.apple.com/documentation/uikit/selecting-multiple-items-with-a-two-finger-pan-gesture).
+Search and Downloads dragging hold the display's maximum refresh request, up to 120 Hz,
+through the release spring. Search closing commits its motion before keyboard resignation
+and blurred-copy preparation. The last 20 panel drag/frame records are saved after settling;
+`python3 scripts/panel-motion-log.py --simulator <UDID>` (or `--device <ID>`) reads them.
+See [Motion.md](../../docs/Motion.md) for measurements and the distinction between callback
+gaps and rendered animation hitches.
 Tapping the address grows More into a New Page-sized
 editor on the same spring, receding the page further while the tiles blur and fade away. The
 address bar itself stays intact: the full URL slides from the center to the left as the sheet

@@ -586,6 +586,25 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
 - **Opening the panel's keyboard** still costs the main thread about 160 ms, and closing it
   (`resignFirstResponder`) about 47 ms. Only what runs on Core Animation stays smooth through
   that.
+- **Search and Downloads panel tracking (16 October 2026):** the panel pan did not hold a
+  high-refresh display link, unlike the tab switcher. `PanelMotion` now requests the screen's
+  maximum rate (up to 120 Hz) throughout tracking and the release spring, then invalidates its
+  link. It also stops when the scene becomes inactive. This includes both Downloads detents.
+  A focused Simulator replay found repeated search closes doing 36–40 ms of synchronous work
+  before the first commit, with a cold first close at 317 ms. A symbolicated `sample` capture
+  attributed release work to keyboard resignation and `BlurCrossfade` snapshot/blur preparation.
+  Closing now flushes the sheet and page-return animations before that work. The first fixed
+  replay committed them in 2.1–4.9 ms; total synchronous release work still took about 40 ms,
+  but now runs after the render server can start moving. Drag updates averaged 0.5–0.6 ms.
+  These are Simulator CPU/commit measurements, not a physical iPhone 120 Hz verification.
+  The Simulator reports a 60 Hz maximum, which the request respects.
+  `-RisePanelMotionAudit` replays slow tracking and release without an extra measuring display
+  link; `-RiseWaitForProfiler` pauses at `Library/Caches/PanelMotionAudit/ready.txt` until a
+  sibling `go` file exists. Search and Downloads drags also retain the last 20 frame/work logs
+  in `Library/Caches/Panels/log.jsonl`, written on a utility task after settling. Read them with
+  `scripts/panel-motion-log.py --simulator <UDID>` or `--device <ID>`. Long display-link callback
+  gaps identify main-thread stalls; they do not establish a rendered hitch while Core Animation
+  is running independently.
 
 ---
 

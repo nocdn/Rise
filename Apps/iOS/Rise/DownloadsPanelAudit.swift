@@ -121,10 +121,15 @@ import UIKit
         list.setContentOffset(.zero,animated: false)
         browser.dragPanel(to: -80)
         try check("dragging-up-follows-the-finger-between-the-two-heights", abs(bar.bounds.height-(compact+80)) < 1)
+        let expectedFPS = Float(min(120, browser.view.window!.windowScene!.screen.maximumFramesPerSecond))
+        try check("downloads-drag-holds-the-displays-high-refresh-rate", browser.panelMotion.isHoldingRate
+                  && browser.panelMotion.preferredFPS == expectedFPS)
         browser.dragPanel(to: -10_000)
         try check("dragging-cannot-stretch-above-the-tall-detent", abs(bar.bounds.height-expanded) < 0.5)
         browser.finishPanelDrag(at: -10_000,velocity: -900)
+        try check("downloads-release-keeps-the-rate-request-through-settling", browser.panelMotion.isHoldingRate)
         try await Task.sleep(for: .milliseconds(450))
+        try check("downloads-stops-the-rate-request-once-it-has-landed", !browser.panelMotion.isHoldingRate)
         try check("an-upward-flick-settles-only-at-the-tall-detent", browser.downloadsSheet.detent == .expanded && abs(bar.bounds.height-expanded) < 0.5)
         try check("the-tall-detent-is-higher-than-new-page-and-exposes-more-rows", expanded > browser.view.bounds.height*BrowserViewController.panelHeightFraction+40
                   && list.bounds.height > 4*DownloadsPanel.rowHeight+80 && list.visibleCells.count > 4)

@@ -409,15 +409,20 @@ import WebKit
         list.setContentOffset(.zero, animated: false)
         let restingHeight = browser.bottomBar.bounds.height, draft = field.text
         browser.dragPanel(to: 60)
+        let expectedFPS = Float(min(120, browser.view.window!.windowScene!.screen.maximumFramesPerSecond))
+        try check("search-drag-holds-the-displays-high-refresh-rate", browser.panelMotion.isHoldingRate
+                  && browser.panelMotion.preferredFPS == expectedFPS)
         try check("pulling-results-down-moves-the-sheet-without-rubber-banding", abs(browser.bottomBar.bounds.height-(restingHeight-60)) < 1
                   && list.contentOffset == .zero && field.text == draft && field.isFirstResponder)
         browser.finishPanelDrag(at: 60, velocity: 0)
+        try check("search-keeps-the-rate-request-through-the-return-spring", browser.panelMotion.isHoldingRate)
         try await Task.sleep(for: .milliseconds(650))
         try JSONSerialization.data(withJSONObject: ["before": restingHeight, "after": browser.bottomBar.bounds.height,
             "open": browser.isPanelOpen, "focused": field.isFirstResponder, "draft": draft, "text": field.text ?? ""],
             options: [.prettyPrinted,.sortedKeys]).write(to: folder.appendingPathComponent("pull-state.json"))
         try check("a-short-pull-restores-the-panel-and-keeps-the-search-draft", browser.isPanelOpen
                   && abs(browser.bottomBar.bounds.height-restingHeight) < 1 && field.text == draft && field.isFirstResponder)
+        try check("search-stops-the-rate-request-after-settling", !browser.panelMotion.isHoldingRate)
         browser.dragPanel(to: 75)
         browser.finishPanelDrag(at: 75, velocity: 900)
         try await Task.sleep(for: .milliseconds(650))
