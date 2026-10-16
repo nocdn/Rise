@@ -171,8 +171,11 @@ are most of them.
      opens the popup as a click does, the rest go out as `commands.onCommand`.
    - **Installs:** Rise's "Add to Rise" button and install sheet (`0005`, the same as CEF's).
      uBlock Origin Lite, Dark Reader and Bitwarden install, run and show their popups.
-   - **Still open:** the store's own button stays greyed out, and its "Switch to Chrome" prompts
-     show, as the store sees Chromium, not Chrome. Side panels wait on stage 5.
+   - **The store's Chrome offers:** the store sees Chromium, not Chrome, so it greys out its own
+     button and asks people to switch to Chrome. Rise's store script hides the button, the
+     "Switch to Chrome" banner and pop-up, and "Install Chrome", by their text, keeping the
+     store's button's place, empty, so the store lays out the rest as it does with it.
+   - **Still open:** side panels wait on stage 5.
 
    The `extensions` live check passes on the fork, 19 of 19.
 4. **Where Chrome reaches into its own window.** Today 116 files in `chrome/browser` look for

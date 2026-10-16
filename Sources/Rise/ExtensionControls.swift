@@ -109,7 +109,8 @@ import RiseChromium
     }
 
     static let webStoreHandler = "riseWebStore"
-    /// An “Add to Rise” button by the extension's name on Web Store pages, which offer Chrome only.
+    /// An “Add to Rise” button by the extension's name on Web Store pages, which offer Chrome only,
+    /// in place of the store's own Chrome button, its “Switch to Chrome” banner and its pop-up.
     func installWebStoreButton(on page: ChromiumPage) {
         page.addMessageHandler(Self.webStoreHandler, world: .named("Rise.WebStore")) { [weak self] message, reply in
             let origin = message.frame.origin.flatMap(URL.init(string:))
@@ -148,7 +149,31 @@ import RiseChromium
         if (!shown || installed) return;
         installed = !!(await send({kind: 'add', id: shown}).catch(() => false)); draw();
       });
+      // The store's Chrome offers, each hidden with what holds only offers (the banner's box with
+      // its Install Chrome button), and its Switch to Chrome pop-up. The store's own button's place
+      // stays, empty, so the store lays out the rest, Rise's button too, as it does with it.
+      const offers = ['Add to Chrome', 'Remove from Chrome', 'Install Chrome', 'Try Chrome Enterprise Core',
+                      'Switch to Chrome to install extensions and themes'];
+      const onlyOffers = n => offers.reduce((t, offer) => t.split(offer).join(''), n.innerText || '').trim() === '';
+      const wrapper = n => {
+        while (n.parentElement && n.parentElement !== document.body && onlyOffers(n.parentElement)) n = n.parentElement;
+        return n;
+      };
+      const hide = n => { n.dataset.riseHidden = ''; n.style.setProperty('display', 'none', 'important'); };
+      const hideOffers = () => {
+        for (const n of document.querySelectorAll('body *')) {
+          if (n.childElementCount || n.closest('[data-rise-hidden], [data-rise-slot]')) continue;
+          const own = n.textContent.trim();
+          if (own === 'Add to Chrome' || own === 'Remove from Chrome') wrapper(n).dataset.riseSlot = '';
+          else if (own === 'Switch to Chrome?') hide(n.closest('[role=dialog]') || n);
+          else if (offers.includes(own)) hide(wrapper(n));
+        }
+        for (const slot of document.querySelectorAll('[data-rise-slot]')) {
+          for (const child of slot.children) if (child !== button && !('riseHidden' in child.dataset)) hide(child);
+        }
+      };
       const place = () => {
+        hideOffers();
         const id = idOf();
         const title = id && document.querySelector('main h1, h1');
         if (!title) { button.remove(); shown = null; return; }
