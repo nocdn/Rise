@@ -11,7 +11,7 @@ The code it describes:
 - `Apps/iOS/Rise/Summarise.swift`: `SummariseMotion` (every constant), `SummariseSpring` (the spring
   maths), `SummariseView` (the scene), the summary's model request and its SwiftUI text.
 - `Apps/iOS/Rise/TabSwitcher.swift`: `TabSwitcherView`, which flies its moving page on
-  `SummariseMotion`'s springs.
+  the shared spring maths, with its own tab-specific tuning.
 - `Apps/iOS/Rise/BrowserViewController.swift`: the gestures (the pinch, the swipe up the bar), and
   how both scenes sit over the page.
 - `Apps/iOS/Rise/SummariseLog.swift` and `scripts/summarise-log.py`: the on-device frame log.
@@ -19,7 +19,8 @@ The code it describes:
 - `Playgrounds/summarise.html` and `Playgrounds/summarise-reference.mp4`: the web playground with
   dials, and the Arc recording it was measured from.
 
-Changing a spring in `SummariseMotion` changes both Summarise and the tab switcher.
+The deck uses the same `SummariseSpring` maths with separate `TabDeckMotion` constants.
+Changing Summarise must not silently change the tab switcher.
 
 ---
 
@@ -68,10 +69,13 @@ These came out of many rounds of trying things on the phone. Follow them by defa
   generously.
 - **Gradual progress.** A small pinch should move the page only a little; it shouldn't take "a
   very small amount to make it move quickly".
-- **Text materialises with the motion it belongs to.** Only the moving tab's title rides under
-  the shrinking page and fades in as it nears its card. The stationary cards' titles are already
-  in place when their cards appear, with no separate fade or rise. Button entry shows the other
-  cards fully from the first frame, without a grid fade-in. Going back, they fade out quickly.
+- **Text materialises with the motion it belongs to.** In the horizontal Arc-style deck
+  requested on 15 October, titles sit above their cards. Older tabs and their titles rise as
+  one from the bottom-left stack; the active page's own title rides above it as it shrinks.
+  Only the centred card shows title text; neighbouring favicons remain visible.
+  There is no delayed grid fade after the page has landed. Going back, the other cards fade
+  quickly. The incoming cards fly smoothly into place without any bounce. This supersedes
+  the earlier two-column grid's stationary-title behaviour.
 - **Plain, immediate backgrounds.** The tab switcher sits on a solid grey from the first frame,
   not a blur of the page fading in.
 - **Only what moves should move.** When the summary closes, only the summary text sinks back; the
@@ -325,97 +329,166 @@ fades in `backDelay` 0.38 s after the card starts settling, over `backDuration` 
 
 ---
 
-## 4. The tab switcher
+## 4. The horizontal tab switcher (15 October 2026)
 
-The swipe up the bottom bar (from anywhere on it, even New Page) uses the same model.
+Bartosz supplied `ScreenRecording_10-15-2026 19-51-35_1.MP4` and asked to replace the
+previous two-column Safari-style grid with Arc Search's overlapping horizontal deck.
+The reference is 1180 × 2556, approximately 59.94 fps, 16.76 s long. Frame strips and
+full-size samples live in the ignored `build/arc-switcher-reference` folder.
 
-### While swiping
+### Measured reference
 
-- **Progress:** `rise / (0.45·H)`, where `rise` is how far the finger has gone up (plus the
-  caught page's progress).
-- **Scale:** `1 − 0.5·progress`, giving exponentially past the full travel:
-  `0.5·e^(−(progress − 1))`.
-- **Shape:** as with the pinch, by `k = clamp((1 − s)/(1 − cardScale))^1.3`:
-  - Crop: the height goes to the card's 1.42 aspect, and the strip is cropped off.
-  - Corners: the screen's own (`_displayCornerRadius`, 28.8 if it can't be read) from the very
-    start, all four, easing by `k` to the card's 16. He didn't want the page square at first and
-    rounding only a little way in. The Tabs press starts from them too, and growing back ends on
-    them, so the real page takes over unseen behind the screen's corners. Resting corners are now
-    16 pt (slightly less rounded than the original 18 pt).
-- **Place:**
-  - The bottom edge follows the finger.
-  - Horizontally, the spot across from where the finger started stays under it:
-    `x = startX + Δx − (startX − W/2)·s`.
-- **Catching it mid-flight:** a caught page starts where it was, moving with the finger. It comes
-  under the finger as the finger moves over 120 pt (`catchTravel`).
-- **Behind it:** a solid, faintly warm grey, #F3F1F0 (#1A1918 in dark mode), opaque from the
-  start. It replaced a blur of the page, which was awkward because it was slow to come in. The
-  grid fades in with progress and grows from 0.96.
-- **Refresh rate:** the 120 Hz display link is held from the start of the drag through its
-  release and landing, including when catching a growing page. Requesting it only for the
-  flight left the finger tracking at 60 Hz.
+- The first button entry starts near 0.89 s; the page moves towards the right, while older
+  cards rise out of the toolbar stack near the lower left. Most movement finishes in
+  0.3–0.4 s. The second entry at about 2.77 s repeats that path.
+- Settled cards are approximately 70% of screen width. Their height is approximately
+  70% of the screen below the status strip, placing their top near 19% and bottom near
+  84% of screen height. This preserves the page's proportions instead of squashing it.
+- The most recent active page becomes the right-hand card; the preceding tab is in front
+  of the deck. Older cards compress behind its left edge, dim slightly, and overlap.
+  There is no rotation or 3D tilt once settled.
+- Horizontal swipes bring each card forward, with momentum and snapping. Favicons and
+  truncated titles sit above each card. Near 12 s, swiping a card upwards closes it and
+  lets the remaining cards settle into the gap.
+- These are measurements of the supplied video, not a claim that Arc's private spring
+  constants are known. Rise uses the same geometry and comparable timing with its own
+  subtle spring response.
 
-### When let go
+### Geometry and order
 
-- **Commit:** if flicked up faster than 400 pt/s, or let go past 25% while not moving down faster
-  than 400.
-- **Committed:** it flies to its card at the swipe's speed:
-  - size on `releaseScale`, place on `releaseMove`, crop and corners on `placeCrop`, each
-    carrying its velocity. Stopping the uncropped height at release changed both edges' speed
-    abruptly even though the centre and scale kept moving, making a flick feel like a wall;
-  - a hard flick dips past the card's size (in the replay: down to 136 pt wide against the card's
-    179) before curving into it in about half a second;
-  - no release haptic.
-- **Not committed:** it springs back to the page on `cancel` from its speed.
-- **Tabs button:** the page goes to its card on the same springs, as progress from rest, with
-  frequency and initial progress velocity multiplied by 1.15. This makes button entry about 13%
-  quicker without changing damping or the path. The grid is opaque at its full size before
-  the first flight commit, including when turning a closing page around. Swipes retain the
-  original progress-driven grid appearance and spring timings.
-- **Choosing a card:** the card grows to the page on `close`, as progress.
-- **Turning around** (Tabs again, a tap on the landing page, a swipe as it grows back): it carries
-  on from the flight's current speed, including its height, crop and corners.
-- **Landing:** the flight runs on Core Animation, not a display link. Nothing but a new touch
-  changes it, so its whole path is worked out when it starts, sampled every 1/120 s until it's
-  within 0.5 pt (and 0.01 of crop) of its place and moving under 0.1 pt a frame. It's then played
-  as linear keyframes: the card's bounds, position and corners; the page picture's bounds and
-  position inside it; and, on the way in, the moving tab's title opacity and transform. The model values
-  jump to the end at once, and the real cell takes over when the animations finish. Interrupting
-  reads the flight's function at the current time, removes the animations and starts from there.
-  - A finger's release starts from the presentation layers' visible page and strip crop. The
-    last touch can update the model without that pose displaying, and starting from that
-    unseen pose made a short, strong flick jump in one frame.
-  - The keyframes are all prepared before their shared start time is set. Starting their clock
-    before that work let the first visible frame skip ahead on fast flicks.
-- **The page in flight** is a `snapshotView` replica (about 5 ms), scaled from the window's size.
-  Its card's picture (`drawHierarchy` of the page plus the strip's colour, about 25 ms) is drawn
-  only once the flight is with the render server (`onFlight`, after a `CATransaction.flush()`),
-  or sooner if a tab is chosen, closed or opened first.
+`TabDeckLayout.swift` owns the geometry. Native horizontal `UIScrollView` movement
+supplies tracking, rubber banding and deceleration; the deck lays out its visible cards
+from the fractional scroll position. The next card is 57% of a screen width to the right;
+older cards compress into the left stack, reducing by 2% per step left of focus, capped
+at 8%, shrinking equally at the top and bottom. The centred card and every card to its
+right remain at full size; moving farther right must never shrink a card. Left-side pages
+also gain a black overlay continuously with depth: 14% per step, capped at 36%. Centred
+and right-side pages remain undimmed. Captions align
+with the page’s left edge. Only the centred card shows its title text: it fades out
+before the next title fades in, while neighbouring favicons remain visible. Hidden cards
+outside the nearby stack do not lay out every frame, and slot lookup is constant time.
 
-### Card styling
+The switcher retains a local most-recently-used display order by tab identity, with the
+active page last. It never reorders the browser's shared tab list or changes selection
+merely because someone swipes through previews. It opens focused on the preceding tab,
+leaving the current page visible on the right; a single tab is centred.
 
-- Cards have 16 pt corners and a subtle black shadow (opacity 0.10, radius 6 pt, y offset
-  2 pt). A separate layer with an explicit rounded shadow path avoids sampling the
-  webpage's contents. The moving page has its own matching shadow, sharing its bounds,
-  position and corner-path keyframes. Opacity follows smoothstep of the scale's progress
-  from the full page to the card, from 0 to 0.10; it reverses while reopening and follows
-  the finger during a swipe. At landing it hands off to the resting shadow at the same
-  opacity and geometry, rather than introducing a shadow after landing.
-- A tab is a button with the app's 0.97 press scale and release spring. Card, shadow,
-  caption and close button scale together; release opens immediately from the card's
-  presentation-layer size/position. The scroll view sends touch-down immediately but
-  cancels the press for scrolling. Tab and Close remain separate VoiceOver targets.
-- Close buttons are 22 pt (previously 24), with a light 0.96-white fill and a
-  0.36-white cross at 9 pt. Their hit area extends 9 pt beyond the visual.
+Cards have 22-point continuous corners. Their subtle shadow retains opacity 0.10,
+radius 6 pt and a 2 pt downward offset, using an explicit rounded path. The moving page
+shares bounds, position, corner-path and opacity keyframes with its shadow, so the shadow
+forms during movement and hands over at landing. Existing small light close buttons
+remain available alongside swipe-to-close; the last tab cannot be removed. An upward
+close keeps the whole tab opaque under the finger and throughout its offscreen flight.
+`TabDeckDismissal` captures the displayed cards when the drag begins. The tab behind the
+focused one moves right, grows to full size and loses its depth shading as the finger
+goes up. Progress is `rise / (rise + 0.22 × cell height)`, so even a short drag starts
+moving its neighbour and reversing the finger reverses that progress. Closing the first
+card instead pulls its successor left. Cancelling springs the survivors back to their
+original layout. Release carries the drag's speed into a 0.36-second spring with 0.06
+bounce, matching the app's soft settles; this does not change the bounce-free entrance.
 
-### Titles
+The discarded view is removed offscreen, without a second animation back towards the
+deck. The release spring already runs while that tab flies away, and deleting the tab
+does not restart it. Content offset and viewport anchoring update together so shrinking
+the scroll range cannot shift the deck abruptly. The reflow commits before live-page
+WebKit work; a new close or horizontal swipe can catch its displayed pose and size. The
+X button retains its separate small shrink/fade. Tab and Close
+remain separate VoiceOver targets, with horizontal accessibility scrolling and a Close
+Tab custom action.
 
-- **Coming in:** the current tab's title (favicon and title) rides under the moving page: 7 pt
-  below its bottom edge, centred on it. It fades in by a smoothstep over the last 65% of the way
-  to card size (`captionFrom` 0.35), rising 6 pt into place, and lands with the page. Stationary
-  cards keep their captions fully opaque and at their resting position from the start; this is
-  also restored immediately when an outgoing flight is turned around or caught.
-- **Going back to the page:** they fade out in 0.12 s.
+### Springs and entry
+
+Tab-specific values are in `TabDeckMotion`, independent of Summarise:
+
+| Phase | Angular frequency, damping, initial progress velocity |
+|---|---|
+| Button size | (26, 1, 8) |
+| Button position | (25, 1, 9) |
+| Crop and corners | (28, 1, 0) |
+| Older tabs rising | (22, 1, 0), at most 48 ms of depth delay |
+| Swipe release size | (18, 0.86, 0), with the finger's measured velocity |
+| Swipe release position | (16, 0.92, 0), with the finger's measured velocity |
+| Opening a settled card | (21, 0.96, 7) |
+| Cancellation/reversal | (22, 1, 0), carrying the current velocity |
+
+The current page uses a quick `snapshotView` replica. Its flight commits before drawing
+its saved bitmap. `TabDeckEntrance` then commits the other tabs' position, transform,
+rounded corners and shadow paths before that deferred bitmap work starts. They rise from
+18% of their resting size near the toolbar's Tabs button, gently fanned, with captions
+already attached to them. Entry springs are critically damped: the cards approach their
+positions and size without overshooting or bouncing. The stack’s 0.46-second keyframes
+normalise the spring’s final sample to its resting pose, avoiding a small endpoint snap.
+Most movement finishes within 0.3 seconds. The deck background is opaque from the first
+frame; no global fade delays the tabs until the current page has finished moving.
+
+Every explicit keyframe animation requests 80–120 Hz, preferring 120. A rate-holding
+display link covers finger tracking, flights, horizontal scrolling, and close gestures.
+During flights, no page/layout/snapshot work runs once per animation frame on the main
+thread. Finger-driven horizontal scrolling lays out only the nearby visible cards. Both resting
+cards and the page still in flight belong to the native scroll view’s gesture ancestry.
+The close pan uses a separate gesture delegate: UIKit also calls UIView’s similarly named
+gesture-admission method before movement has supplied velocity. A vertical-only override
+on the card can reject the horizontal scroll pan. The card is a UIControl with explicit
+8-point tap tolerance, rather than a UIButton with competing selection recognizers.
+Leaving that tolerance permanently cancels activation for the touch, even if it returns
+to its starting point; ordinary taps retain the 97% press scale and quick opening flight.
+
+### Corners and interruption: do not regress
+
+- **The full page starts with the device's own corner radius, all four corners, in its
+  very first moving frame.** It eases towards the card's radius. Older cards likewise
+  start with generous device-like rounding before they grow out of the small stack.
+- A bottom-bar swipe uses the same early rounding and finger anchor as before. Progress
+  remains `rise / (0.45 × screen height)`; scale now reaches the deck's 0.70, rather than
+  the old grid's 0.50, at full travel, and gives exponentially beyond that.
+- The bottom edge stays under the finger. A caught page blends under it over 120 pt.
+  Release carries size, position, height, crop and corner velocity onto separate springs.
+  It starts from the last *displayed* pose, including the crop, so a final unrendered
+  touch update cannot produce a one-frame jump. There is still no release haptic.
+- Tabs again reverses the current flight from its position and velocity. Opening a card
+  starts at its actual pressed presentation frame, including depth scale. Horizontal
+  swiping can catch an entry: the entering page follows the deck continuously, and other
+  cards shed their remaining entry offsets over 90 pt of travel before settling.
+- Settling occurs within 0.5 pt of the destination, with less than 0.1 pt of movement per
+  sample. Keyframes share a clock set after their arrays have been built. Completion
+  tokens prevent an interrupted flight from later hiding or landing a newer one.
+
+### Verification
+
+`-RiseTabDeckAudit` uses an isolated four-tab session with local fixtures and a live WebKit
+page. It records positions/timing, verifies the first corner keyframes for *all* entering
+cards, horizontal snapping, session-order preservation, reversals, horizontal catches,
+strong flicks, swipe-to-close and its cancellation, dark mode and the last remaining tab.
+The first complete simulator run passed 32 checks: button flight 0.308 s and approximately
+17 ms from action to the first render-server commit. The first radius was 62 pt (that
+simulator's screen), easing to 22 pt. These are simulator measurements, not a physical
+120 Hz capture. Record the simulator replay separately to inspect the real displayed
+frames; `drawHierarchy` can return a stale snapshot while a scroll view's layers animate.
+
+The physical iPhone 14 Pro also passed all 37 motion checks. Its button flight was
+0.308 s, with approximately 15 ms from action to the render-server commit. This verifies
+the real device paths and timing; it does not measure physical display scan-out or certify
+an uninterrupted 120 Hz refresh rate.
+
+The 16 October follow-up adds title isolation, left-stack depth scaling, full-size right
+cards and vertical centring checks. Verify real left/right finger drags in Device Hub
+as well: programmatically changing scroll offsets or invoking scroll delegates cannot
+detect touch-routing regressions.
+
+The initial closing follow-up passed 71 deck checks and 108 interaction checks on Simulator.
+It checks opacity throughout the committed offscreen flight, cancellation, reflow from
+the neighbour's displayed position, closing the rightmost slot as the scroll range
+shrinks, and closing during the incoming stack's animation. A caught entrance restores
+its surviving cards' full size and final corners during reflow. The test target also
+builds successfully; the recorded replay was inspected for the closing handoff.
+
+The subsequent interactive-close pass passed 83 deck checks and 108 interaction checks
+on Simulator. It additionally verifies that the predecessor moves right during the drag,
+grows and brightens with progress, follows a reversed finger, returns on cancellation,
+and becomes focused after the close. Release starts from its displayed position and its
+spring is not replaced when the discarded view is removed. The replay also covers catching
+a cancellation with a new close or a horizontal swipe, and the first card's successor
+moving left when no predecessor exists.
 
 ---
 

@@ -138,39 +138,44 @@ finger lands, and acts as it lifts. Scrolling down collapses the bar to a thin e
 reaching either end of the page or tapping the strip opens it again. Pages scroll clear
 of the open bar through extra safe area.
 
-New Page opens what's chosen in a new tab after the current one. Tabs shrinks the page into a
-Safari-style tab switcher over a solid, faintly warm grey (#F3F1F0, or #1A1918 in dark mode),
-there from the start rather than a blur of the page that would be slow to come in: the page
-springs into its card in a two-column grid with the other cards and their titles already
-visible on button entry. Only the moving page's title rides in, each with the page's favicon
-in line with it. Cards have slightly less rounded 16-point corners and a subtle shadow that
-forms during the flight, handing off smoothly on landing. Pressing a tab shrinks it to 97%,
-then opens it immediately from that visible size. As on the
-Mac, the icon's corners are clipped a little (4 points in 16), so square icons round off, and a
-page without one shows a blank grey square. Icons are the first bitmap the page declares that
-loads (SVGs can't be drawn here), else the site's `favicon.ico`. The bottom bar stays, with New
-Page and More, and Tabs becomes a rounded square filled like them that shows how many tabs there
-are. Tapping a card grows it back into the page; its close button closes the tab (the last one
-stays). More in the switcher opens a smaller panel with just History, using the same blurred
-contents swap and sheet spring. Its supplied Tabler icon and title are centred in a button
-with the URL row's width, 48-point height and 14-point corners, plus the normal press fill,
-scale and haptic. History has no navigation action yet; dismissing this panel keeps the grid
-open. More over a live page keeps the normal page menu. A swipe up anywhere on the bottom bar,
-even starting on New Page, shrinks the page with
-the finger, as Summarise's pinch does: its bottom edge follows the finger and the spot across
-from where it started stays under it, its corners the screen's own from the start and easing to
-the card's, the page cropping towards its card
-as it goes, its title riding under it and fading in, with the others', over the last part of the
-way. The drag and flight are held at 120 Hz on ProMotion iPhones. Let go past a quarter of the
-way or flicked, it flies on at the speed it was going, including its crop and corners, and curves
-round into its card on Summarise's springs without a release haptic, a hard flick shrinking past the card's
-size first; a short one springs back. Each flight is worked out as it starts and played by Core
-Animation, so it carries on smoothly while the app is busy, as when New Page is
-pressed straight after Tabs and brings the keyboard up; the page flies as a quick copy of the
-screen, and its card's picture is drawn once it's on its way. Every move
-turns around from wherever it has got to, carrying on from its speed, so Tabs can be pressed as
-quickly as wanted: a page landing in its card can be tapped to grow it back, and a swipe up as a
-card grows back catches the page where it is. Going back to the page, the titles fade out quickly.
+New Page opens what's chosen in a new tab after the current one. Tabs opens an Arc-style
+horizontal deck over Rise's solid warm grey (#F3F1F0, or #1A1918 in dark mode). The current
+page shrinks towards the right while older tabs rise from the bottom-left toolbar stack,
+with a smooth, quick 0.3–0.4 s transition and no incoming bounce. Large cards are 70% of
+screen width, overlap, and compress behind the focused card's left edge.
+Swipe horizontally to bring each page forward; native momentum snaps to a card. This local
+recent-tab display order does not reorder the shared iCloud tab list.
+
+Favicons sit above each card, aligned with the page’s left edge; only the centred card shows
+its title text. Cards to the left subtly shrink by 2% per step, equally at the top and
+bottom, with a progressively darker overlay (14% per step, up to 36%). The centred card
+and cards to its right stay full size and undimmed. Pages have the device's generously
+rounded corners from their very first moving frame, for both button entry and swipe-up;
+they ease towards
+22-point card corners. A subtle shadow forms during the flight and hands over at landing.
+Pressing a card shrinks it to 97%, then opens immediately from its actual visible size.
+The small light close button and an upward card swipe both close its tab. A swiped tab
+stays opaque until it leaves the screen. During the drag, the tab behind moves forward
+to the right, grows and loses its depth shading. Releasing eases it into place on the
+app's soft spring; cancelling eases it back. The offscreen tab's removal does not restart
+that spring or delay the remaining cards' movement.
+Cancelling that swipe springs it back, and the last tab stays. VoiceOver can scroll horizontally and close
+cards through separate targets or the Close Tab custom action.
+
+The bottom bar stays, with New Page and More. More in the switcher contains only History,
+using the usual animated sheet/contents swap and the URL row's width, 48-point height,
+14-point corners, press fill, scale and haptic. History remains a visual prototype. More
+over a live page keeps the page menu.
+
+Swiping up anywhere on the bottom bar still shrinks the page under the finger. Its bottom
+edge and horizontal touch anchor follow the finger; its corners start at the screen's own
+radius. Letting go past a quarter of the travel or flicking commits, carrying position,
+size, crop and corner velocity onto the deck's own springs without a release haptic. A short
+swipe springs back. Reversing a flight, catching it with the bottom-bar swipe, or swiping
+horizontally during entry continues from the displayed pose. Explicit 120 Hz keyframes
+keep the page and rising stack moving while WebKit draws its deferred thumbnail; a rate
+hold also covers finger tracking and horizontal scrolling. Summarise's springs are unchanged.
+See `docs/Motion.md` for the reference measurements and `-RiseTabDeckAudit` for native checks.
 
 Pull down from the top of the page to reload. An eight-spoke spinner charges up one
 spoke at a time in the gap, complete at 115 points, while light haptic ticks every

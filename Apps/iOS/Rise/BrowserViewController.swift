@@ -1264,8 +1264,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         allowsPeek && !isTabSwitcherOpen && !isPanelOpen && presentedViewController == nil && view.window != nil
     }
 
-    /// Shrinks the page into its card among the other tabs', over a blur of it, or back into it as
-    /// it grows out.
+    /// Moves the page into the Arc-style horizontal deck, or turns its growing card around.
     func showTabSwitcher() {
         guard canShowTabSwitcher else { return }
         prepareTabSwitcher()
@@ -1344,17 +1343,22 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// Closes a tab from its card; the last one stays.
     private func closeTab(_ index: Int) {
         guard isTabSwitcherOpen, tabs.count > 1, tabs.indices.contains(index) else { return }
-        drawPendingCard()
+        let closesSelected = index == tabIndex
         let closing = tabs.remove(at: index)
+        if pendingCard === closing { pendingCard = nil }
         if index < tabIndex {
             tabIndex -= 1
-        } else if index == tabIndex {
+        } else if closesSelected {
             tabIndex = min(index, tabs.count-1)
+        }
+        // Commit the deck's reflow before WebKit/session work can occupy the main thread.
+        tabSwitcher.remove(at: index, current: tabIndex)
+        drawPendingCard()
+        if closesSelected {
             install(webView)
             closing.webView.removeFromSuperview()
             pageChanged()
         }
-        tabSwitcher.remove(at: index, current: tabIndex)
         bottomBar.tabsButton.count = tabs.count
         saveSession()
     }

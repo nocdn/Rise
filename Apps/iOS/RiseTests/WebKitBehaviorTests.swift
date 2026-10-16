@@ -712,8 +712,9 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertLessThan(caption.favicon.frame.maxX, caption.title.frame.minX)
         XCTAssertGreaterThan(caption.favicon.layer.cornerRadius, 0, "Square icons round off a little")
         let left = switcher.cells[0].frame, right = switcher.cells[1].frame
-        XCTAssertEqual(left.minY, right.minY, "Two across")
-        XCTAssertLessThan(left.maxX, right.minX)
+        XCTAssertGreaterThan(left.maxX, right.minX, "The horizontal deck overlaps its cards")
+        XCTAssertGreaterThan(right.width, browser.view.bounds.width*0.65, "Large page previews")
+        XCTAssertLessThan(caption.caption.frame.maxY, caption.card.frame.minY, "Title above the page")
         XCTAssertTrue(bar.tabsButton.showsSwitcher, "Tabs becomes an empty square")
         XCTAssertEqual(bar.home.alpha, 1, "The bar stays, with New Page and More")
         XCTAssertEqual(bar.moreButton.tintColor, BottomBar.plusTint, "More's dots are as soft as New Page's plus")

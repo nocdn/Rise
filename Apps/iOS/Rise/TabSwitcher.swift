@@ -354,17 +354,65 @@ final class TabCard: UIView {
     }
 }
 
-/// A tab in the switcher: its card, with a close button on it, and its icon and title under it.
-final class TabCell: UIButton {
+/// A tab in the horizontal deck: its favicon/title above the page, and a separate close target.
+final class TabCell: UIControl {
+    private var touchOrigin: CGPoint?
+    private var closeBaseTransform = CGAffineTransform.identity
+
+    override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
+        touchOrigin = touch.location(in: window)
+        setPressed(true)
+        return true
+    }
+    override func continueTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
+        guard isTap(at: touch.location(in: window)) else {
+            touchOrigin = nil
+            setPressed(false)
+            return false
+        }
+        return true
+    }
+    override func endTracking(_ touch: UITouch?, with event: UIEvent?) {
+        let activate = touch.map { isTap(at: $0.location(in: window)) } ?? false
+        touchOrigin = nil
+        setPressed(false)
+        if activate { sendActions(for: .primaryActionTriggered) }
+    }
+    override func cancelTracking(with event: UIEvent?) {
+        touchOrigin = nil
+        setPressed(false)
+        super.cancelTracking(with: event)
+    }
+    private func isTap(at point: CGPoint) -> Bool {
+        guard let touchOrigin else { return false }
+        return hypot(point.x-touchOrigin.x, point.y-touchOrigin.y) <= 8
+    }
+    private func setPressed(_ pressed: Bool) {
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
+        UIView.animate(springDuration: pressed ? 0.2 : 0.3, bounce: pressed ? 0 : 0.3, initialSpringVelocity: 0,
+                       delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+            self.transform = pressed ? CGAffineTransform(scaleX: Self.pressedScale, y: Self.pressedScale) : .identity
+        }
+    }
     let card = TabCard()
     let closeButton = TabCloseButton(type: .system)
     let cardShadow = UIView()
-    /// The icon and title, side by side and centred, revealed together.
+    private let shade = UIView()
+    var roundingLayers: [CALayer] { [card.layer, shade.layer] }
+    var shadeAmount: CGFloat = 0 { didSet { shade.alpha = shadeAmount*card.alpha } }
+    var shownShadeAmount: CGFloat { CGFloat(shade.layer.presentation()?.opacity ?? shade.layer.opacity) }
+    /// The favicon remains visible in the stack; only the focused card shows title text.
     let caption = UIView()
     let favicon = FaviconView()
     let title = UILabel()
     var onSelect: () -> Void = {}
     var onClose: () -> Void = {}
+    var onGestureActivity: (Bool) -> Void = { _ in }
+    enum CloseGesture { case began, changed(CGFloat), ended(committed: Bool, velocity: CGFloat) }
+    var onCloseGesture: (CloseGesture) -> Void = { _ in }
+    var canBeginClose: () -> Bool = { true }
+    private lazy var closePan = UIPanGestureRecognizer(target: self, action: #selector(dragToClose))
+    private let closePanDelegate = TabClosePanDelegate()
     private static let iconGap: CGFloat = 6
     static let pressedScale: CGFloat = 0.97
 
@@ -387,9 +435,16 @@ final class TabCell: UIButton {
         card.isUserInteractionEnabled = false
         card.onActivate = { [weak self] in self?.onSelect() }
         addSubview(card)
+        shade.backgroundColor = .black
+        shade.isUserInteractionEnabled = false
+        shade.layer.cornerCurve = .continuous
+        shade.alpha = 0
+        addSubview(shade)
         isAccessibilityElement = false
         accessibilityElements = [card, closeButton]
-        shrinksWhenPressed(to: Self.pressedScale)
+        addAction(UIAction { [weak self] _ in self?.setPressed(true) }, for: [.touchDown, .touchDragEnter])
+        addAction(UIAction { [weak self] _ in self?.setPressed(false) },
+                  for: [.touchUpInside, .touchUpOutside, .touchDragExit, .touchCancel])
         addAction(UIAction { [weak self] _ in self?.onSelect() }, for: .primaryActionTriggered)
         closeButton.setImage(UIImage(systemName: "xmark", withConfiguration:
             UIImage.SymbolConfiguration(pointSize: 9, weight: .bold)), for: .normal)
@@ -397,6 +452,7 @@ final class TabCell: UIButton {
         closeButton.backgroundColor = UIColor(white: 0.96, alpha: 0.95)
         closeButton.layer.cornerRadius = TabSwitcherView.closeSize/2
         closeButton.accessibilityLabel = "Close Tab"
+        closeButton.isAccessibilityElement = true
         closeButton.addAction(UIAction { [weak self] _ in self?.onClose() }, for: .primaryActionTriggered)
         addSubview(closeButton)
         title.font = SearchPanel.roundedFont(ofSize: 13, weight: .semibold, scaled: false)
@@ -407,6 +463,10 @@ final class TabCell: UIButton {
         caption.addSubview(favicon)
         caption.addSubview(title)
         addSubview(caption)
+        closePan.delegate = closePanDelegate
+        addGestureRecognizer(closePan)
+        card.accessibilityCustomActions = [UIAccessibilityCustomAction(name: "Close Tab", target: self,
+                                                                     selector: #selector(closeFromAccessibility))]
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -421,48 +481,83 @@ final class TabCell: UIButton {
     func setCardOpacity(_ opacity: CGFloat) {
         card.alpha = opacity
         cardShadow.alpha = opacity
+        shade.alpha = shadeAmount*opacity
+    }
+
+    @objc private func closeFromAccessibility() -> Bool {
+        guard !closeButton.isHidden else { return false }
+        onClose(); return true
+    }
+    @objc private func dragToClose(_ pan: UIPanGestureRecognizer) {
+        let rise = min(0, pan.translation(in: superview).y)
+        switch pan.state {
+        case .began: beginCloseDrag(); updateCloseDrag(rise)
+        case .changed: updateCloseDrag(rise)
+        case .ended, .cancelled, .failed:
+            endCloseDrag(rise, velocity: pan.velocity(in: self).y, cancelled: pan.state != .ended)
+        default: break
+        }
+    }
+    func beginCloseDrag() {
+        closeBaseTransform = CATransform3DGetAffineTransform((layer.presentation() ?? layer).transform)
+        onGestureActivity(true)
+        onCloseGesture(.began)
+    }
+    func updateCloseDrag(_ translation: CGFloat) {
+        let rise = min(0, translation)
+        transform = closeBaseTransform.translatedBy(x: 0, y: rise)
+        onCloseGesture(.changed(rise))
+    }
+    func endCloseDrag(_ rise: CGFloat, velocity: CGFloat, cancelled: Bool) {
+        let commit = !cancelled && !closeButton.isHidden && (rise < -bounds.height*0.18 || velocity < -650)
+        onCloseGesture(.ended(committed: commit, velocity: velocity))
+        if commit {
+            isUserInteractionEnabled = false
+            UIView.animate(withDuration: 0.18, delay: 0, options: [.beginFromCurrentState, .curveEaseIn]) {
+                self.transform = self.closeBaseTransform.translatedBy(x: 0, y: -self.bounds.height*1.8)
+            } completion: { _ in self.onGestureActivity(false); self.onClose() }
+        } else {
+            UIView.animate(springDuration: 0.3, bounce: 0.12, initialSpringVelocity: 0, delay: 0,
+                           options: [.beginFromCurrentState, .allowUserInteraction]) {
+                self.transform = .identity
+            } completion: { _ in self.onGestureActivity(false) }
+        }
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        card.frame = CGRect(x: 0, y: 0, width: bounds.width, height: bounds.height-TabSwitcherView.titleHeight)
+        card.frame = CGRect(x: 0, y: TabSwitcherView.titleHeight, width: bounds.width, height: bounds.height-TabSwitcherView.titleHeight)
         cardShadow.frame = card.frame
         cardShadow.layer.shadowPath = UIBezierPath(roundedRect: cardShadow.bounds,
-            cornerRadius: TabSwitcherView.cornerRadius).cgPath
+            cornerRadius: card.layer.cornerRadius).cgPath
+        shade.frame = card.frame
+        shade.layer.cornerRadius = card.layer.cornerRadius
         card.accessibilityLabel = title.text
         let close = TabSwitcherView.closeSize
-        closeButton.frame = CGRect(x: card.frame.maxX-7-close, y: 7, width: close, height: close)
-        caption.bounds = CGRect(x: 0, y: 0, width: bounds.width-12, height: TabSwitcherView.titleHeight-10)
-        caption.center = CGPoint(x: bounds.midX, y: card.frame.maxY+7+caption.bounds.height/2)
+        closeButton.frame = CGRect(x: card.frame.maxX-7-close, y: card.frame.minY+7, width: close, height: close)
+        caption.bounds = CGRect(x: 0, y: 0, width: bounds.width, height: TabSwitcherView.titleHeight-10)
+        caption.center = CGPoint(x: bounds.midX, y: card.frame.minY-7-caption.bounds.height/2)
         let icon = FaviconView.size, lead = icon+Self.iconGap
         let text = min(ceil(title.sizeThatFits(caption.bounds.size).width), caption.bounds.width-lead)
-        let left = ((caption.bounds.width-lead-text)/2).rounded()
-        favicon.frame = CGRect(x: left, y: ((caption.bounds.height-icon)/2).rounded(), width: icon, height: icon)
-        title.frame = CGRect(x: left+lead, y: 0, width: text, height: caption.bounds.height)
+        favicon.frame = CGRect(x: 0, y: ((caption.bounds.height-icon)/2).rounded(), width: icon, height: icon)
+        title.frame = CGRect(x: lead, y: 0, width: text, height: caption.bounds.height)
     }
 }
 
-/// The tabs as cards in two columns over a solid grey, as in Safari. The current page shrinks
-/// into its card with the other cards and titles already in place; choosing a card grows it
+/// An overlapping horizontal deck. The current page moves right while recent tabs rise from
+/// the toolbar stack; swiping brings each card forward. Choosing a card grows it
 /// back into the page from its pressed size. A swipe up the bottom bar shrinks the
 /// page with the finger, the spot under it staying under it, and when let go it flies on at the
 /// speed it was going and curves round into its card, on Summarise's springs. Every move can be
 /// turned around partway, carrying on from its speed: Tabs again, a tap on the landing page, or a
 /// swipe up as it grows back.
-final class TabSwitcherView: UIView {
-    static let inset: CGFloat = 16
-    static let spacing: CGFloat = 14
-    static let rowSpacing: CGFloat = 8
-    /// The cards' height for their width.
-    static let cardAspect: CGFloat = 1.42
+final class TabSwitcherView: UIView, UIScrollViewDelegate {
     static let titleHeight: CGFloat = 32
-    static let cornerRadius: CGFloat = 16
+    static let cornerRadius: CGFloat = 22
     static let closeSize: CGFloat = 22
     /// The grid's own fade and growth.
     static let spring = (duration: 0.3, bounce: 0.14)
     static let returnSpring = (duration: 0.28, bounce: 0.0)
-    /// A little quicker from the Tabs button, with the same damping and curved path.
-    static let buttonEntrySpeed = 1.15
     /// The page's corners as it starts to shrink, which ease down to the card's, if the screen's
     /// can't be read.
     static let swipeRadius = 28.8
@@ -483,8 +578,25 @@ final class TabSwitcherView: UIView {
     let scroll = TabGridScrollView()
     /// Holds the cards, so they can fade, grow and sharpen in as one.
     let grid = UIView()
+    /// Keep a page in flight inside the scroll gesture's ancestry too. It can be
+    /// caught horizontally before landing, without turning that drag into a tap.
+    private let flightContainer = TabFlightContainer()
     private(set) var cells: [TabCell] = []
     private(set) var current = 0
+    private var recentIDs: [UUID] = []
+    private var tabIDs: [UUID] = []
+    private var slots: [Int: Int] = [:]
+    private(set) var displayOrder: [Int] = [] {
+        didSet { slots = Dictionary(uniqueKeysWithValues: displayOrder.enumerated().map { ($0.element, $0.offset) }) }
+    }
+    private let entrance = TabDeckEntrance()
+    private var closing: TabDeckDismissal?
+    private var reflowing = false
+    private var layingOutDeck = false
+    private var scrollCatch: (shape: Shape, target: Shape)?
+    private var caughtCells: [ObjectIdentifier: (offset: CGPoint, transform: CGAffineTransform, radius: CGFloat)] = [:]
+    private var caughtOffset: CGFloat = 0
+    private var focusMove = 0
     /// The page on its way into, or out of, its card, and which way it's going; nil while a finger
     /// holds it.
     private(set) var moving: TabCard?
@@ -563,53 +675,92 @@ final class TabSwitcherView: UIView {
         super.init(frame: frame)
         isHidden = true
         backgroundColor = Self.background
-        scroll.alwaysBounceVertical = true
+        scroll.delegate = self
+        scroll.alwaysBounceHorizontal = true
+        scroll.alwaysBounceVertical = false
+        scroll.showsHorizontalScrollIndicator = false
+        scroll.showsVerticalScrollIndicator = false
+        scroll.decelerationRate = .fast
+        scroll.isDirectionalLockEnabled = true
         scroll.delaysContentTouches = false
         scroll.contentInsetAdjustmentBehavior = .never
         addSubview(scroll)
         scroll.addSubview(grid)
+        scroll.addSubview(flightContainer)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    var cardSize: CGSize {
-        let width = max(1, ((bounds.width-2*Self.inset-Self.spacing)/2).rounded(.down))
-        return CGSize(width: width, height: (width*Self.cardAspect).rounded())
+    private var deck: TabDeckLayout {
+        TabDeckLayout(size: bounds.size, stripHeight: stripHeight, topInset: topInset,
+                      bottomInset: bottomInset, count: cells.count, focus: focus)
     }
-
-    private var gridHeight: CGFloat {
-        let rows = CGFloat((cells.count+1)/2), cell = cardSize.height+Self.titleHeight
-        return max(0, rows*cell+(rows-1)*Self.rowSpacing)
+    var focus: CGFloat { scroll.contentOffset.x/max(1, bounds.width*0.57) }
+    var cardSize: CGSize { deck.cardSize }
+    var focusedIndex: Int? {
+        guard !displayOrder.isEmpty else { return nil }
+        return displayOrder[min(displayOrder.count-1, max(0, Int(focus.rounded())))]
     }
-
-    /// A cell's frame in the grid.
+    /// A cell's frame in the viewport. The scroll view supplies native momentum; card
+    /// positions compress on the left, rather than becoming a flat row of thumbnails.
     func cellFrame(_ index: Int) -> CGRect {
-        let card = cardSize, row = CGFloat(index/2), column = CGFloat(index%2)
-        return CGRect(x: Self.inset+column*(card.width+Self.spacing), y: row*(card.height+Self.titleHeight+Self.rowSpacing),
-                      width: card.width, height: card.height+Self.titleHeight)
+        deck.frame(at: slots[index] ?? 0)
     }
 
     /// Where a tab's card sits on screen once settled, in this view.
     private func cardFrame(_ index: Int) -> CGRect {
         let cell = cellFrame(index)
-        return CGRect(x: cell.minX, y: cell.minY-scroll.contentOffset.y, width: cell.width, height: cardSize.height)
+        return CGRect(x: cell.minX, y: cell.minY+Self.titleHeight, width: cell.width, height: cell.height-Self.titleHeight)
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        guard !layingOutDeck else { return }
+        layingOutDeck = true
         scroll.frame = bounds
-        scroll.contentInset = UIEdgeInsets(top: topInset, left: 0, bottom: bottomInset, right: 0)
-        scroll.verticalScrollIndicatorInsets = scroll.contentInset
-        let height = gridHeight
-        scroll.contentSize = CGSize(width: bounds.width, height: height)
-        // By bounds and center, as the grid grows in, around its anchor.
-        grid.bounds = CGRect(x: 0, y: 0, width: bounds.width, height: height)
-        grid.center = CGPoint(x: bounds.midX, y: grid.layer.anchorPoint.y*height)
+        scroll.contentInset = .zero
+        scroll.contentSize = CGSize(width: bounds.width+CGFloat(max(0, cells.count-1))*deck.step, height: bounds.height)
+        layingOutDeck = false
+        layoutDeck()
+    }
+
+    private func layoutDeck() {
+        guard !layingOutDeck else { return }
+        layingOutDeck = true
+        defer { layingOutDeck = false }
+        grid.bounds = bounds
+        grid.center = CGPoint(x: scroll.contentOffset.x+bounds.midX, y: bounds.midY)
+        flightContainer.bounds = bounds
+        flightContainer.center = grid.center
+        if let closing { closing.apply(); return }
+        let blend = min(1, abs(scroll.contentOffset.x-caughtOffset)/90)
         for (index, cell) in cells.enumerated() {
+            let slot = slots[index] ?? 0
+            let distance = CGFloat(slot)-focus
+            let visible = distance >= -5 && distance <= 2.2
+            if cell.isHidden && !visible { continue }
+            cell.isHidden = !visible
+            guard visible else { continue }
             let frame = cellFrame(index)
             cell.bounds = CGRect(origin: .zero, size: frame.size)
             cell.center = CGPoint(x: frame.midX, y: frame.midY)
+            cell.shadeAmount = deck.shadeOpacity(at: slot)
+            cell.title.alpha = deck.titleOpacity(at: slot)
+            cell.card.layer.cornerRadius = Self.cornerRadius*frame.width/max(1, cardSize.width)
             cell.closeButton.isHidden = cells.count < 2
+            cell.layoutIfNeeded()
+            if entrance.isPrepared, index != current {
+                entrance.place(cell, depth: max(0, displayOrder.count-2-slot))
+            } else if let caught = caughtCells[ObjectIdentifier(cell)] {
+                cell.center.x += caught.offset.x*(1-blend)
+                cell.center.y += caught.offset.y*(1-blend)
+                let t = caught.transform
+                cell.transform = CGAffineTransform(a: t.a+(1-t.a)*blend, b: t.b*(1-blend),
+                    c: t.c*(1-blend), d: t.d+(1-t.d)*blend, tx: t.tx*(1-blend), ty: t.ty*(1-blend))
+                let targetRadius = Self.cornerRadius*frame.width/max(1, cardSize.width)
+                cell.card.layer.cornerRadius = caught.radius+(targetRadius-caught.radius)*blend
+                cell.setNeedsLayout(); cell.layoutIfNeeded()
+            }
         }
     }
 
@@ -623,7 +774,14 @@ final class TabSwitcherView: UIView {
 
     /// Lays out a card for each tab.
     func load(_ tabs: [BrowserTab], current: Int) {
+        closing = nil; reflowing = false; focusMove += 1
+        entrance.stop(cells: cells)
         cells.forEach { $0.removeFromSuperview() }
+        tabIDs = tabs.map(\.id)
+        recentIDs.removeAll { !tabIDs.contains($0) || $0 == tabIDs[current] }
+        recentIDs.append(contentsOf: tabIDs.filter { !recentIDs.contains($0) && $0 != tabIDs[current] })
+        recentIDs.append(tabIDs[current])
+        displayOrder = recentIDs.compactMap { tabIDs.firstIndex(of: $0) }
         cells = tabs.map { tab in
             let cell = TabCell()
             cell.card.image.image = tab.snapshot
@@ -641,10 +799,20 @@ final class TabSwitcherView: UIView {
                 guard let self, let cell, let index = cells.firstIndex(of: cell) else { return }
                 onClose(index)
             }
+            cell.onGestureActivity = { [weak self] active in
+                guard let self else { return }
+                holdRate(active || moving != nil || closing != nil || reflowing)
+            }
+            cell.canBeginClose = { [weak self] in self?.closing == nil }
+            cell.onCloseGesture = { [weak self, weak cell] gesture in
+                guard let self, let cell, let index = cells.firstIndex(of: cell) else { return }
+                self.closeGesture(gesture, at: index)
+            }
             grid.addSubview(cell)
             return cell
         }
         self.current = current
+        for index in displayOrder { grid.bringSubviewToFront(cells[index]) }
         setNeedsLayout()
         layoutIfNeeded()
     }
@@ -657,8 +825,10 @@ final class TabSwitcherView: UIView {
         isHidden = false
         scrollToCurrent()
         anchorGridOnScreen()
-        grid.alpha = 0
+        grid.alpha = 1
         grid.transform = .identity
+        entrance.prepare(size: bounds.size, bottomInset: bottomInset, radius: pageRadius)
+        layoutDeck()
         showStationaryCaptions()
         cells[current].caption.alpha = 0
         cells[current].caption.transform = CGAffineTransform(translationX: 0, y: 6)
@@ -691,7 +861,11 @@ final class TabSwitcherView: UIView {
             grid.transform = .identity
         }
         showStationaryCaptions()
-        settle(speed: Self.buttonEntrySpeed)
+        settle(button: true, alongside: { self.animateDeckEntry() })
+    }
+
+    private func animateDeckEntry() {
+        entrance.animate(cells: cells, current: current, order: displayOrder, cardWidth: cardSize.width) { self.deck.frame(at: $0) }
     }
 
     /// Catches the page as it grows back out of its card, for a swipe to shrink it again from there.
@@ -703,8 +877,11 @@ final class TabSwitcherView: UIView {
         showStationaryCaptions()
         holdRate(true)
         BlurCrossfade.stop(in: scroll)
+        UIView.animate(withDuration: 0.12, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+            self.grid.alpha = 1
+        }
         let shape = shape(of: card)
-        let progress = min(1, max(0, (1-shape.scale)/0.5))
+        let progress = min(1, max(0, (1-shape.scale)/max(0.01, 1-cardShape(current).scale)))
         caught = (progress, shape)
         swipeProgress = progress
         history = []
@@ -721,9 +898,8 @@ final class TabSwitcherView: UIView {
         let rise = (caught?.progress ?? 0)*travel-translation.y
         let progress = max(0, rise/travel)
         swipeProgress = min(1, progress)
-        // Half the size at the end of the travel, and a little past it, giving.
-        let s = progress <= 1 ? 1-0.5*progress : 0.5*exp(-(progress-1))
         let target = cardShape(current), width = Double(bounds.width), height = Double(bounds.height)
+        let s = progress <= 1 ? 1-(1-target.scale)*progress : target.scale*exp(-(progress-1))
         let k = pow(min(1, max(0, (1-s)/(1-target.scale))), SummariseMotion.pinchEasing)
         var shape = Shape(x: anchorX+Double(translation.x)-(anchorX-width/2)*s, y: 0, scale: s,
                           height: height+(target.height-height)*k, crop: k,
@@ -739,9 +915,9 @@ final class TabSwitcherView: UIView {
         let now = CACurrentMediaTime()
         history.append((now, shape))
         history.removeAll { now-$0.t > SummariseMotion.velocityWindow }
-        grid.alpha = progress
-        let grow = 0.96+0.04*progress
-        grid.transform = CGAffineTransform(scaleX: grow, y: grow)
+        grid.alpha = 1
+        entrance.follow(swipeProgress)
+        layoutDeck()
     }
 
     /// Drops the page into its card, or springs it back to the window.
@@ -756,14 +932,13 @@ final class TabSwitcherView: UIView {
                 self.grid.alpha = 1
                 self.grid.transform = .identity
             }
-            settle(velocity: velocity)
+            settle(velocity: velocity, alongside: { self.animateDeckEntry() })
             completion()
             return
         }
         UIView.animate(springDuration: Self.returnSpring.duration, bounce: Self.returnSpring.bounce, initialSpringVelocity: 0,
                        delay: 0, options: [.allowUserInteraction, .beginFromCurrentState]) {
             self.grid.alpha = 0
-            self.grid.transform = CGAffineTransform(scaleX: 0.96, y: 0.96)
         }
         // Short, it springs back to the page from wherever it was going, as a short pinch does.
         fadeCaptions()
@@ -821,7 +996,9 @@ final class TabSwitcherView: UIView {
         cell.closeButton.alpha = 0
         anchorGridOnScreen()
         grow(card, alongside: {
-            BlurCrossfade.swap(from: self.grid, to: nil)
+            UIView.animate(withDuration: 0.18, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+                self.grid.alpha = 0
+            }
             self.fadeCaptions()
         }, completion: completion)
     }
@@ -829,15 +1006,101 @@ final class TabSwitcherView: UIView {
     /// Closes a tab's card, the others moving up to fill its place.
     func remove(at index: Int, current: Int) {
         guard cells.indices.contains(index) else { return }
+        if moving != nil { land() }
+        entrance.freeze(cells: cells)
+        let oldSlot = displayOrder.firstIndex(of: index) ?? 0
+        let dragged = closing.flatMap { $0.cell === cells[index] ? $0 : nil }
+        let continuingDrag = dragged?.committed == true
+        let next = dragged?.nextFocus ?? TabDeckDismissal.focusAfterRemoving(slot: oldSlot, from: deck)
+        closing = nil
         let cell = cells.remove(at: index)
+        let id = tabIDs.remove(at: index)
+        recentIDs.removeAll { $0 == id }
+        displayOrder = recentIDs.compactMap { tabIDs.firstIndex(of: $0) }
         self.current = current
-        setNeedsLayout()
-        UIView.animate(springDuration: Self.spring.duration, bounce: 0.1, initialSpringVelocity: 0, delay: 0,
+        caughtCells = [:]
+        if cell.isUserInteractionEnabled {
+            // The separate X button keeps its small shrink/fade dismissal.
+            cell.isUserInteractionEnabled = false
+            UIView.animate(withDuration: 0.18, delay: 0, options: [.beginFromCurrentState, .curveEaseOut]) {
+                cell.alpha = 0
+                cell.transform = cell.transform.scaledBy(x: 0.8, y: 0.8)
+            } completion: { _ in cell.removeFromSuperview() }
+        } else {
+            // A swiped card is already off screen. Never animate its translation
+            // back to zero as the remaining cards close the gap.
+            cell.removeFromSuperview()
+        }
+        UIView.performWithoutAnimation {
+            // Offset and viewport anchoring must change together. Otherwise UIScrollView
+            // clamps the shorter content first and momentarily shifts every card.
+            self.layingOutDeck = true
+            self.scroll.setContentOffset(self.scroll.contentOffset, animated: false)
+            self.scroll.contentSize = CGSize(width: self.bounds.width+CGFloat(max(0, self.cells.count-1))*self.deck.step,
+                                             height: self.bounds.height)
+            self.scroll.contentOffset = CGPoint(x: next*self.deck.step, y: 0)
+            self.grid.center = CGPoint(x: self.scroll.contentOffset.x+self.bounds.midX, y: self.bounds.midY)
+            self.flightContainer.center = self.grid.center
+            self.layingOutDeck = false
+            if continuingDrag { self.layoutDeck() }
+        }
+        // The release spring is already moving the survivors to these exact poses.
+        // Removing the offscreen tab must not restart or delay that animation.
+        if continuingDrag { CATransaction.flush(); return }
+        focusMove += 1
+        let reflow = focusMove
+        reflowing = true
+        holdRate(true)
+        UIView.animate(springDuration: 0.36, bounce: 0.06, initialSpringVelocity: 0, delay: 0,
                        options: [.beginFromCurrentState, .allowUserInteraction]) {
-            cell.alpha = 0
-            cell.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
-            self.layoutIfNeeded()
-        } completion: { _ in cell.removeFromSuperview() }
+            // A close can catch the entrance before its cards reach full size.
+            // Their frozen transforms must settle along with their new positions.
+            for cell in self.cells { cell.transform = .identity }
+            self.layoutDeck()
+        } completion: { _ in
+            if self.focusMove == reflow {
+                self.reflowing = false
+                if self.moving == nil && !self.scroll.isDragging && !self.scroll.isDecelerating { self.holdRate(false) }
+            }
+        }
+        CATransaction.flush()
+    }
+
+    private func closeGesture(_ gesture: TabCell.CloseGesture, at index: Int) {
+        switch gesture {
+        case .began:
+            guard closing == nil, cells.count > 1 else { return }
+            if moving != nil { land() }
+            entrance.freeze(cells: cells)
+            caughtCells = [:]
+            scroll.setContentOffset(scroll.contentOffset, animated: false)
+            let reflow = TabDeckDismissal(cells: cells, order: displayOrder, closing: index, layout: deck)
+            closing = reflow
+            focusMove += 1
+            reflowing = false
+            // Freeze any previous release at its displayed pose before following the finger.
+            UIView.performWithoutAnimation { reflow.catchMotion() }
+            holdRate(true)
+        case .changed(let rise):
+            guard let closing, closing.cell === cells[index], !closing.committed else { return }
+            UIView.performWithoutAnimation { closing.follow(rise: rise) }
+        case .ended(let committed, let velocity):
+            guard let reflow = closing, reflow.cell === cells[index] else { return }
+            let move = focusMove
+            let speed = committed ? reflow.releaseVelocity(velocity) : 0
+            reflowing = true
+            UIView.animate(springDuration: 0.36, bounce: 0.06, initialSpringVelocity: speed, delay: 0,
+                           options: [.beginFromCurrentState, .allowUserInteraction]) {
+                if committed { reflow.commit() }
+                else { self.closing = nil; self.layoutDeck() }
+            } completion: { _ in
+                if self.focusMove == move {
+                    self.reflowing = false
+                    if self.moving == nil && !self.scroll.isDragging && !self.scroll.isDecelerating { self.holdRate(false) }
+                }
+            }
+            CATransaction.flush()
+        }
     }
 
     /// Hides the switcher at once.
@@ -858,14 +1121,14 @@ final class TabSwitcherView: UIView {
         let shadow = UIView()
         TabCell.styleShadow(shadow)
         shadow.layer.shadowOpacity = 0
-        addSubview(shadow)
+        flightContainer.addSubview(shadow)
         movingShadow = shadow
         let card = TabCard()
         card.image.image = image
         card.pageSize = pageSize
         card.stripHeight = stripHeight
         card.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(movingTapped)))
-        addSubview(card)
+        flightContainer.addSubview(card)
         moving = card
         return card
     }
@@ -877,17 +1140,15 @@ final class TabSwitcherView: UIView {
 
     /// Moves the page into its card, with its own title coming in after it: let go, at the speed it
     /// was going, and otherwise turning round from however it was already moving.
-    private func settle(velocity: Shape? = nil, speed: Double = 1, alongside: () -> Void = {}) {
+    private func settle(velocity: Shape? = nil, button: Bool = false, alongside: () -> Void = {}) {
         guard let card = moving, cells.indices.contains(current) else { return }
         move += 1
         let move = move
         heading = .card
-        let M = SummariseMotion.self
-        func paced(_ spring: SummariseSpring) -> SummariseSpring {
-            SummariseSpring(spring.w*speed, spring.z, spring.v0*speed)
-        }
         fly(card, to: cardShape(current), velocity: velocity ?? flightVelocity(),
-            scale: paced(M.releaseScale), place: paced(M.releaseMove), shape: paced(M.placeCrop), alongside: alongside) { [weak self] in
+            scale: button ? TabDeckMotion.entryScale : TabDeckMotion.releaseScale,
+            place: button ? TabDeckMotion.entryMove : TabDeckMotion.releaseMove,
+            shape: TabDeckMotion.entryShape, alongside: alongside) { [weak self] in
             guard let self, self.move == move else { return }
             land()
         }
@@ -899,7 +1160,6 @@ final class TabSwitcherView: UIView {
         move += 1
         let move = move
         heading = .page
-        let M = SummariseMotion.self
         let done = { [weak self] in
             guard let self, self.move == move else { return }
             hide()
@@ -907,9 +1167,11 @@ final class TabSwitcherView: UIView {
         }
         // Already moving, it turns round from that speed.
         if let speed = velocity ?? (flight != nil ? flightVelocity() : nil) {
-            fly(card, to: pageShape, velocity: speed, scale: M.cancel, place: M.cancel, shape: M.cancel, alongside: alongside, done: done)
+            fly(card, to: pageShape, velocity: speed, scale: TabDeckMotion.cancel, place: TabDeckMotion.cancel,
+                shape: TabDeckMotion.cancel, alongside: alongside, done: done)
         } else {
-            fly(card, to: pageShape, velocity: nil, scale: M.close, place: M.close, shape: M.close, alongside: alongside, done: done)
+            fly(card, to: pageShape, velocity: nil, scale: TabDeckMotion.open, place: TabDeckMotion.open,
+                shape: TabDeckMotion.open, alongside: alongside, done: done)
         }
     }
 
@@ -930,7 +1192,7 @@ final class TabSwitcherView: UIView {
     private func cardShape(_ index: Int, asShown: Bool = false) -> Shape {
         let frame = asShown ? cells[index].shownCardFrame(in: self) : cardFrame(index)
         let scale = Double(frame.width/max(1, bounds.width))
-        let pressScale = asShown ? frame.width/max(1, cardSize.width) : 1
+        let pressScale = frame.width/max(1, cardSize.width)
         return Shape(x: Double(frame.midX), y: Double(frame.midY), scale: scale, height: Double(frame.height)/scale,
                      crop: 1, radius: Double(Self.cornerRadius*pressScale))
     }
@@ -982,9 +1244,10 @@ final class TabSwitcherView: UIView {
         let target = cardShape(current)
         let k = min(1, max(0, ((1-shape.scale)/max(0.01, 1-target.scale)-Self.captionFrom)/(1-Self.captionFrom)))
         let shown = k*k*(3-2*k)
-        // Its own under the page, wherever it is, rather than under its card.
+        // Its own above the page, wherever it is, rather than above its eventual card.
         let height = shape.height*shape.scale
-        return (shown, CGAffineTransform(translationX: shape.x-target.x, y: (shape.y+height/2)-(target.y+target.height*target.scale/2)+6*(1-shown)))
+        return (shown, CGAffineTransform(translationX: shape.x-target.x,
+            y: (shape.y-height/2)-(target.y-target.height*target.scale/2)-6*(1-shown)))
     }
 
     /// Flies the page along its springs on Core Animation: the whole path is worked out at once,
@@ -1160,6 +1423,10 @@ final class TabSwitcherView: UIView {
     private func stop() {
         move += 1
         stopFlight()
+        entrance.stop(cells: cells)
+        closing = nil
+        reflowing = false
+        caughtCells = [:]; scrollCatch = nil
         holdRate(false)
         history = []
         moving?.removeFromSuperview()
@@ -1170,28 +1437,157 @@ final class TabSwitcherView: UIView {
         caught = nil
     }
 
-    /// Brings the current tab's card into the middle of what shows, as far as the grid allows.
+    /// Arc leaves the active page at the right, with the previous tab ready in front.
     private func scrollToCurrent() {
         layoutIfNeeded()
-        guard cells.indices.contains(current) else { return }
-        let visible = bounds.height-topInset-bottomInset
-        let lowest = max(-topInset, scroll.contentSize.height+bottomInset-bounds.height)
-        let offset = cellFrame(current).midY-topInset-visible/2
-        scroll.contentOffset = CGPoint(x: 0, y: min(lowest, max(-topInset, offset)))
+        guard let slot = displayOrder.firstIndex(of: current) else { return }
+        scroll.contentOffset = CGPoint(x: CGFloat(max(0, slot-1))*deck.step, y: 0)
+        layoutDeck()
     }
 
     /// The grid grows in around the middle of what shows, rather than of all of it.
     private func anchorGridOnScreen() {
-        let height = max(1, grid.bounds.height)
-        let middle = scroll.contentOffset.y+topInset+(bounds.height-topInset-bottomInset)/2
-        grid.layer.anchorPoint = CGPoint(x: 0.5, y: min(1, max(0, middle/height)))
-        grid.center = CGPoint(x: bounds.midX, y: grid.layer.anchorPoint.y*height)
+        grid.layer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+        grid.center = CGPoint(x: scroll.contentOffset.x+bounds.midX, y: bounds.midY)
+    }
+
+    /// Also used by keyboard/VoiceOver navigation and deterministic native motion checks.
+    func focusTab(_ index: Int, animated: Bool = false) {
+        guard let slot = displayOrder.firstIndex(of: index) else { return }
+        focusMove += 1
+        let move = focusMove
+        let changes = {
+            self.scroll.contentOffset = CGPoint(x: CGFloat(slot)*self.deck.step, y: 0)
+            self.layoutDeck()
+        }
+        if animated {
+            holdRate(true)
+            UIView.animate(springDuration: 0.34, bounce: 0.10, initialSpringVelocity: 0, delay: 0,
+                           options: [.beginFromCurrentState, .allowUserInteraction], animations: changes) { _ in
+                if self.focusMove == move && self.moving == nil && !self.scroll.isDragging { self.holdRate(false) }
+            }
+        } else {
+            UIView.performWithoutAnimation {
+                for cell in cells { TabDeckDismissal.stopMotion(cell.layer); cell.transform = .identity }
+                changes()
+            }
+        }
+    }
+
+    override func accessibilityScroll(_ direction: UIAccessibilityScrollDirection) -> Bool {
+        let step: Int
+        switch direction {
+        case .left, .next: step = 1
+        case .right, .previous: step = -1
+        default: return false
+        }
+        let slot = Int(focus.rounded())+step
+        guard displayOrder.indices.contains(slot) else { return false }
+        let index = displayOrder[slot]
+        focusTab(index, animated: true)
+        UIAccessibility.post(notification: .pageScrolled, argument: cells[index].title.text)
+        return true
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        layoutDeck()
+        if let caught = scrollCatch, let card = moving {
+            let target = cardShape(current)
+            var shape = caught.shape
+            shape.x += target.x-caught.target.x
+            shape.y += target.y-caught.target.y
+            shape.scale *= target.scale/caught.target.scale
+            apply(shape, to: card)
+        }
+    }
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        // The ancestor scroll pan may recognise alongside the upward close. Its
+        // callbacks must not steal that gesture's focus or completion token.
+        guard closing == nil else { return }
+        focusMove += 1
+        holdRate(true)
+        let speed = scroll.panGestureRecognizer.velocity(in: self)
+        guard abs(speed.x) >= abs(speed.y) else { return }
+        caughtCells = [:]; caughtOffset = scroll.contentOffset.x
+        // A sideways swipe can catch either an incoming stack or a close reflow.
+        // Carry the displayed size and position into the gesture, shedding offsets over 90 pt.
+        for cell in cells where (cell.layer.animationKeys() ?? []).contains(where: {
+            $0.hasPrefix("deck.") || $0.hasPrefix("position") || $0.hasPrefix("bounds") || $0.hasPrefix("transform")
+        }) {
+            let shown = cell.layer.presentation() ?? cell.layer
+            let target = cellFrame(cells.firstIndex(of: cell)!)
+            let transform = CATransform3DGetAffineTransform(shown.transform).scaledBy(
+                x: shown.bounds.width/max(1, target.width), y: shown.bounds.height/max(1, target.height))
+            caughtCells[ObjectIdentifier(cell)] = (CGPoint(x: shown.position.x-target.midX,
+                                                         y: shown.position.y-target.midY),
+                                                  transform,
+                                                  cell.card.layer.presentation()?.cornerRadius ?? cell.card.layer.cornerRadius)
+            TabDeckDismissal.stopMotion(cell.layer)
+        }
+        entrance.stop(cells: cells)
+        if let card = moving, heading == .card {
+            let shown = shape(of: card, asShown: true)
+            scrollCatch = (shown, cardShape(current))
+            stopFlight(); heading = nil
+            apply(shown, to: card)
+        }
+        layoutDeck()
+    }
+    func scrollViewWillEndDragging(_ scrollView: UIScrollView, withVelocity velocity: CGPoint,
+                                  targetContentOffset: UnsafeMutablePointer<CGPoint>) {
+        let slot = min(CGFloat(max(0, cells.count-1)), max(0, (targetContentOffset.pointee.x/deck.step).rounded()))
+        targetContentOffset.pointee = CGPoint(x: slot*deck.step, y: 0)
+    }
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        if !decelerate { finishDeckScroll() }
+    }
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) { finishDeckScroll() }
+    private func finishDeckScroll() {
+        guard closing == nil else { return }
+        if !caughtCells.isEmpty {
+            caughtCells = [:]
+            UIView.animate(springDuration: 0.26, bounce: 0.08, initialSpringVelocity: 0, delay: 0,
+                           options: [.beginFromCurrentState, .allowUserInteraction]) {
+                for cell in self.cells { cell.transform = .identity }
+                self.layoutDeck()
+            }
+        }
+        if scrollCatch != nil, moving != nil {
+            scrollCatch = nil
+            settle()
+        } else if moving == nil { holdRate(false) }
+        let slot = min(max(0, cells.count-1), max(0, Int(focus.rounded())))
+        if displayOrder.indices.contains(slot), abs(scroll.contentOffset.x-CGFloat(slot)*deck.step) > 0.5 {
+            focusTab(displayOrder[slot], animated: true)
+        }
     }
 }
 
 /// A tab's press starts immediately, but dragging it still hands control to grid scrolling.
 final class TabGridScrollView: UIScrollView {
     override func touchesShouldCancel(in view: UIView) -> Bool { true }
+}
+
+/// Keep the close recognizer's direction policy separate from UIView's gesture admission
+/// method, which UIKit also calls for ancestor pans before velocity is available.
+private final class TabClosePanDelegate: NSObject, UIGestureRecognizerDelegate {
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard let pan = gestureRecognizer as? UIPanGestureRecognizer, let cell = pan.view as? TabCell else { return true }
+        let speed = pan.velocity(in: cell)
+        return !cell.closeButton.isHidden && cell.canBeginClose() && speed.y < 0 && abs(speed.y) > abs(speed.x)*1.15
+    }
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        otherGestureRecognizer.view is UIScrollView
+    }
+}
+
+/// An empty flight layer lets touches reach the resting cards beneath it.
+private final class TabFlightContainer: UIView {
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let hit = super.hitTest(point, with: event)
+        return hit === self ? nil : hit
+    }
 }
 
 /// The smaller visual keeps a forgiving hit area over the card corner.

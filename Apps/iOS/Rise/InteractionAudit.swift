@@ -39,7 +39,7 @@ import WebKit
                 controls.layoutIfNeeded()
                 for (index, tile) in controls.tiles.enumerated() {
                     guard let icon = tile.subviews.compactMap({ $0 as? UIImageView }).first else { throw Failure(check: "icon") }
-                    func same(_ a: UIColor?, _ b: UIColor) -> Bool {
+                    @MainActor func same(_ a: UIColor?, _ b: UIColor) -> Bool {
                         guard let a else { return false }
                         func rgba(_ colour: UIColor) -> [CGFloat] {
                             var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
@@ -77,7 +77,7 @@ import WebKit
                         actionStart = 0
                     }
                 }
-                func stationary() -> Bool {
+                @MainActor func stationary() -> Bool {
                     switcher.cells.enumerated().filter { $0.offset != switcher.current }.allSatisfy { _, cell in
                         cell.caption.alpha == 1 && cell.caption.transform == .identity
                             && !(cell.caption.layer.animationKeys() ?? []).contains { $0.hasPrefix("flight.") }
@@ -119,7 +119,7 @@ import WebKit
                 try check("button-landed", switcher.moving == nil)
                 try check("landing-hands-the-shadow-to-the-grid-without-a-remnant", switcher.movingShadow == nil
                           && switcher.cells[switcher.current].cardShadow.alpha == 1)
-                try check("tab-corners-are-slightly-less-rounded", switcher.cells.allSatisfy { $0.card.layer.cornerRadius == 16 })
+                try check("deck-corners-remain-generously-rounded", switcher.cells.allSatisfy { $0.card.layer.cornerRadius >= 19 })
                 let opacity = samples.compactMap { $0["movingTitle"] as? Float }
                 try check("moving-title-still-reveals", (opacity.min() ?? 1) < 0.2 && (opacity.max() ?? 0) > 0.9)
                 let shadows = samples.compactMap { $0["shadow"] as? Float }
@@ -145,9 +145,10 @@ import WebKit
                 guard let swipe = switcher.moving?.layer.animation(forKey: "flight.bounds") else { throw Failure(check: "swipe-flight") }
                 checks["buttonDuration"] = buttonDuration
                 checks["swipeDuration"] = swipe.duration
-                try check("button-entry-quicker", buttonDuration < swipe.duration*0.92)
-                try check("swipe-timing-preserved", abs(buttonDuration*TabSwitcherView.buttonEntrySpeed-swipe.duration) < 0.03)
+                try check("button-entry-matches-arcs-short-transition", (0.25...0.65).contains(buttonDuration))
+                try check("swipe-release-remains-a-brief-continuous-spring", (0.25...0.85).contains(swipe.duration))
                 try await Task.sleep(for: .milliseconds(850))
+                switcher.focusTab(switcher.current)
                 let hitCell = switcher.cells[switcher.current]
                 let hitCard = hitCell.card.convert(CGPoint(x: hitCell.card.bounds.midX, y: hitCell.card.bounds.midY), to: switcher)
                 let hitClose = hitCell.closeButton.convert(CGPoint(x: hitCell.closeButton.bounds.midX, y: hitCell.closeButton.bounds.midY), to: switcher)
@@ -168,9 +169,16 @@ import WebKit
                 }
                 try check("tab-press-does-not-delay-or-prevent-grid-scrolling", !switcher.scroll.delaysContentTouches
                           && switcher.scroll.touchesShouldCancel(in: cell))
-                try check("voiceover-keeps-separate-tab-and-close-targets", !cell.isAccessibilityElement
-                          && cell.card.isAccessibilityElement && cell.closeButton.isAccessibilityElement
-                          && cell.card.accessibilityActivate() && selections == 1)
+                // A rear card's corner is covered by the next card in the deck. Check the
+                // visible Close target on the frontmost tab; rear tabs expose Close as an action.
+                let accessibleSelection = hitCell.onSelect
+                hitCell.onSelect = { selections += 1 }
+                let activated = hitCell.card.accessibilityActivate()
+                try check("voiceover-keeps-separate-tab-and-close-targets", !hitCell.isAccessibilityElement
+                          && hitCell.card.isAccessibilityElement && hitCell.closeButton.isAccessibilityElement
+                          && activated && selections == 1)
+                try check("overlapped-tabs-also-expose-an-accessible-close-action", cell.card.accessibilityCustomActions?.contains { $0.name == "Close Tab" } == true)
+                hitCell.onSelect = accessibleSelection
                 cell.onSelect = selection
                 cell.sendActions(for: .touchDown)
                 try await Task.sleep(for: .milliseconds(150))
