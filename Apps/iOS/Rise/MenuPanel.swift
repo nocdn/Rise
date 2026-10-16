@@ -33,7 +33,7 @@ final class AddressBar: UIControl {
         layer.cornerRadius = SearchPanel.cornerRadius
         lock.tintColor = .systemGreen
         lock.isAccessibilityElement = false
-        host.font = SearchPanel.fieldFont
+        host.font = SearchPanel.font
         host.adjustsFontForContentSizeCategory = true
         host.textColor = .label
         host.lineBreakMode = .byTruncatingHead

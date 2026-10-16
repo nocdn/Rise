@@ -30,7 +30,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     static let iconColor = UIColor { $0.userInterfaceStyle == .dark
         ? UIColor(white: 1, alpha: 0.5) : UIColor(red: 165/255, green: 167/255, blue: 172/255, alpha: 1) }
     static let iconStrokeWidth: CGFloat = 2.5
-    /// The field keeps its rounded semibold text; suggestion titles use the standard iOS face.
+    /// Rounded typography for Find and menu controls; address/search fields share the suggestions' font.
     static var fieldFont: UIFont { roundedFont(weight: .semibold) }
     static var font: UIFont {
         UIFontMetrics(forTextStyle: .body).scaledFont(for: .systemFont(ofSize: 17, weight: .medium))
@@ -129,7 +129,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         super.init(frame: frame)
         field.backgroundColor = Self.fill
         field.layer.cornerCurve = .continuous; field.layer.cornerRadius = Self.cornerRadius
-        field.placeholder = "Search or enter URL"; field.font = Self.fieldFont
+        field.placeholder = "Search or enter URL"; field.font = Self.font
         field.adjustsFontForContentSizeCategory = true
         field.leftView = UIView(frame: CGRect(x: 0, y: 0, width: 18, height: Self.fieldHeight))
         field.leftViewMode = .always
@@ -412,7 +412,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
             field.placeholder = "Search or enter URL"
             return
         }
-        let font = field.font ?? Self.fieldFont
+        let font = field.font ?? Self.font
         let title = NSMutableAttributedString(string: "Search in ", attributes: [.font: font, .foregroundColor: UIColor.placeholderText])
         let brand = brandColor(for: siteSearch, icon: image(for: siteSearch.homeURL))
         let muted = brand?.withAlphaComponent(0.45) ?? .placeholderText

@@ -250,7 +250,9 @@ fades in `backDelay` 0.38 s after the card starts settling, over `backDuration` 
 
 **Bottom bar:**
 - **Leaving:** it slides off as the page takes off (on release, or at once from More). It
-  speeds up (k²) over `barExit` 0.18 s, moving by its height + 4.
+  uses the background glows' quadratic ease-out (`1 − (1 − k)²`) over `barExit` 0.18 s,
+  moving by its height + 4. It starts promptly and slows throughout the exit; Bartosz asked
+  to replace the previous accelerating `k²` curve on 16 October.
 - **Coming back:** it springs back as the card grows back, with response 0.27 s and bounce 0.25.
   Arc's bar actually leaves in 0.07 s; he chose 0.18.
 - **Background coverage:** a non-interactive sibling continues the bar's opaque background

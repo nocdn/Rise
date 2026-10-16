@@ -51,9 +51,19 @@ import UIKit
                     scene.updatePinch(scale: 0.65, centroid: anchor)
                     scene.endPinch(cancelled: false)
                     if revealed { try await Task.sleep(for: .milliseconds(500)) }
-                    for step in 0...420 { scene.advance(to: Double(step)/120) }
-                    try check(name+"-requested-state", scene.isRevealed == revealed)
                     let distance = browser.bottomBar.bounds.height+4
+                    var exitOffsets: [CGFloat] = []
+                    for step in 0...4 {
+                        scene.advance(to: 0.18*Double(step)/4)
+                        exitOffsets.append(browser.bottomBar.transform.ty)
+                    }
+                    let advances = zip(exitOffsets.dropFirst(), exitOffsets).map { $0-$1 }
+                    try check(name+"-exit-decelerates-without-reversing", advances.allSatisfy { $0 > 0 }
+                              && zip(advances.dropFirst(), advances).allSatisfy { $0 < $1 })
+                    try check(name+"-exit-keeps-180ms-duration", abs(exitOffsets[4]-distance) < 0.01
+                              && exitOffsets[3] < distance-0.01)
+                    for step in 22...420 { scene.advance(to: Double(step)/120) }
+                    try check(name+"-requested-state", scene.isRevealed == revealed)
                     try check(name+"-bar-leaves-fully", abs(browser.bottomBar.transform.ty-distance) < 0.01)
                     let closedAt = 3.5
                     scene.manualTime = closedAt

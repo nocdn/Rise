@@ -76,7 +76,7 @@ enum SummariseMotion {
     static let backDelay = 0.38
     static let backDuration = 0.2
 
-    // The bottom bar slides off, speeding up, and springs back with a little bounce.
+    // The bottom bar eases out as it slides off, and springs back with a little bounce.
     static let barExit = 0.18
     static let barResponse = 0.27
     static let barBounce = 0.25
@@ -726,7 +726,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate {
     private func currentBar(_ t: Double) -> Double {
         guard let bar else { return 0 }
         let elapsed = t-bar.t0
-        if bar.hide { let k = clamp(elapsed/M.barExit); return lerp(bar.from, 1, k*k) }
+        if bar.hide { return lerp(bar.from, 1, easeOut(elapsed/M.barExit, 1)) }
         return bar.from*(1-SummariseSpring(2*Double.pi/M.barResponse, 1-M.barBounce)(elapsed))
     }
 
