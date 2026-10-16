@@ -214,6 +214,14 @@ are most of them.
      the app does.
    - **Covered pages** (under a Peek or a notice) set Chromium's mouse tracking aside, as on CEF,
      so they take no hover and set no cursor through what covers them.
+   - **Page tools** have a `tools` live check: Page Assistant (the page's text and selection, an
+     answer, its highlighted passage), a merge request's hover card described from its page,
+     Gmail's hidden inbox reader, Copy Text from Page Image, Share Page, the tab switcher's
+     pictures and Smart Rename. The AI service and GitLab's API are answered by the check.
+   - **`main` merged:** iCloud tab sync and the shared `RiseCore` suggestions and site-search
+     learner run on the fork's pages. The shared engine takes any `SearchProvider`, so the Mac
+     searches with Chrome's default engine; `PageFind` and `PageAssistant` take a
+     `ScriptablePage`, which Rise's pages and the iPhone's WebKit view both are.
    - **Picture-in-picture windows for pages** (`documentPictureInPicture`) are Chrome's own
      floating windows: Rise's popup hook leaves them to Chrome.
    - **Rise's floating video** works on the fork as on WebKit: the `float` live check floats a

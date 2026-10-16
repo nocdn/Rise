@@ -1,6 +1,6 @@
 """Rise's features on Chromium pages in an actual Rise window.
 
-    python3 scripts/test-chromium-live.py [peek|features|extensions|scripts|app|float|capture|path/to/Check.swift]
+    python3 scripts/test-chromium-live.py [peek|features|extensions|scripts|app|float|capture|tools|path/to/Check.swift]
 
 peek: Peek's motion, frame by frame (Tests/Live/ChromiumPeekBenchmarks.swift).
 features: history after a relaunch, downloads, find, permissions, picture in picture and the
@@ -8,6 +8,8 @@ tab's media and sound (Tests/Live/ChromiumFeatureChecks.swift), with pages serve
 sites so one can hold a frame of the other.
 scripts: Rise's page scripts and messages, in frames of both sites (Tests/Live/ChromiumScriptChecks.swift).
 app: Rise's menus, Dock, links from other apps and quitting (Tests/Live/ChromiumAppChecks.swift).
+tools: Page Assistant, hover cards, Copy Text from Page Image, Share Page, the tab switcher and Smart
+Rename (Tests/Live/ChromiumToolChecks.swift).
 
 Chromium only runs from an app bundle with its helpers, so the check runs as the main program of
 a copy of build/Rise.app (made by ./scripts/build.sh with the engine built). Frames are kept in
@@ -23,7 +25,7 @@ import tempfile
 import time
 
 checks = {"peek": "ChromiumPeekBenchmarks.swift", "features": "ChromiumFeatureChecks.swift", "extensions": "ChromiumExtensionChecks.swift",
-          "float": "ChromiumFloatingVideoChecks.swift", "capture": "ChromiumCaptureChecks.swift",
+          "float": "ChromiumFloatingVideoChecks.swift", "capture": "ChromiumCaptureChecks.swift", "tools": "ChromiumToolChecks.swift",
           "scripts": "ChromiumScriptChecks.swift", "app": "ChromiumAppChecks.swift"}
 check = sys.argv[1] if len(sys.argv) > 1 else "peek"
 if check not in checks and not check.endswith(".swift"):
@@ -79,7 +81,7 @@ if check in ("features", "float") or check.endswith(".swift"):
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=30", "-f", "lavfi",
                     "-i", "sine=frequency=440", "-t", "30", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
                     "-shortest", str(folder / "clip.mp4")], check=True)
-if check in ("features", "scripts", "float", "capture") or check.endswith(".swift"):
+if check in ("features", "scripts", "float", "capture", "tools") or check.endswith(".swift"):
     # Two sites: localhost and 127.0.0.1 are different sites.
     ports = []
     for _ in range(2):
@@ -95,6 +97,9 @@ if check == "features" or check.endswith(".swift"):
     # rise-check.test is an ordinary site to the filter lists, which leave local addresses alone.
     arguments = ["--autoplay-policy=no-user-gesture-required", "--use-fake-device-for-media-stream",
                  "--host-resolver-rules=MAP rise-check.test 127.0.0.1"]
+if check == "tools":
+    # A company's own GitLab server, on the local site.
+    arguments = ["--host-resolver-rules=MAP gitlab.rise-check.test 127.0.0.1"]
 if check == "extensions":
     # A test extension, unpacked: a background worker, a content script on every page and a popup.
     extension = folder / "extension"
