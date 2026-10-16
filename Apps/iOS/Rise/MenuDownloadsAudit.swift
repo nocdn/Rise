@@ -95,14 +95,16 @@ import WebKit
         defer { server.stop() }
         let harness = DownloadHarness(downloads)
         downloads.confirm = { _,_,_,answer in answer(true) }
+        var starts: [(UUID,CGPoint?)] = []
+        downloads.onStart = { starts.append(($0.id,$1)) }
         var sawConcurrent = false, updates = 0
         downloads.onListChange = {
             sawConcurrent = sawConcurrent || downloads.items.filter { $0.state == .downloading }.count == 2
             menu.updateDownloadProgress(downloads.items)
         }
         downloads.onProgress = { _ in updates += 1; menu.updateDownloadProgress(downloads.items) }
-        harness.start(server.url.appendingPathComponent("first.bin"))
-        harness.start(server.url.appendingPathComponent("second.bin"))
+        harness.start(server.url.appendingPathComponent("first.bin"), origin: CGPoint(x: 75,y: 310))
+        harness.start(server.url.appendingPathComponent("second.bin"), origin: CGPoint(x: 225,y: 420))
         do { try await wait { downloads.items.count == 2 && downloads.items.allSatisfy { $0.state == .finished } } }
         catch {
             let state: [String: Any] = ["started": harness.started, "items": downloads.items.map {
@@ -112,6 +114,17 @@ import WebKit
             throw error
         }
         try check("real-concurrent-webkit-downloads-update-the-button", sawConcurrent && updates >= 3)
+        try check("accepted-transfers-each-request-exactly-one-flight", starts.count == 2 && Set(starts.map(\.0)).count == 2)
+        try check("each-real-transfer-retains-its-own-touch-through-confirmation", starts.allSatisfy { id, origin in
+            origin == (downloads.item(id)?.name == "first.bin" ? CGPoint(x: 75,y: 310) : CGPoint(x: 225,y: 420))
+        })
+        var declined = false
+        downloads.confirm = { _,_,_,answer in declined = true; answer(false) }
+        harness.start(server.url.appendingPathComponent("declined.bin"))
+        try await wait { declined }
+        try await Task.sleep(for: .milliseconds(200))
+        try check("declining-confirmation-never-adds-a-row-or-starts-a-flight", starts.count == 2 && downloads.items.count == 2)
+        downloads.confirm = { _,_,_,answer in answer(true) }
         try check("every-successful-download-requests-one-three-pulse-pattern", downloads.successFeedbackCount == 2)
         try check("real-files-have-their-complete-byte-counts", downloads.items.map(\.totalBytes).sorted() == [131_072,262_144]
                   && downloads.items.allSatisfy { $0.receivedBytes == $0.totalBytes && MobileDownloads.size(of: $0.url) == $0.totalBytes })
@@ -156,6 +169,7 @@ import WebKit
         let early = cancelledBeforeDestination!
         try check("cancelling-before-destination-handoff-never-leaves-a-file", downloads.item(early.id) == nil
                   && !FileManager.default.fileExists(atPath: early.url.path) && downloads.successFeedbackCount == 3)
+        try check("a-transfer-cancelled-before-start-never-flies", !starts.contains { $0.0 == early.id })
 
         let finishedFiles = downloads.items.filter { $0.state == .finished }.map(\.url)
         harness.start(server.url.appendingPathComponent("cancel.bin"))
@@ -217,11 +231,11 @@ import WebKit
         private(set) var started = 0
         private var pages: [WKWebView] = []
         init(_ downloads: MobileDownloads) { self.downloads = downloads }
-        func start(_ url: URL) {
+        func start(_ url: URL, origin: CGPoint? = nil) {
             let page = WKWebView(); pages.append(page)
             page.startDownload(using: URLRequest(url: url)) { [weak self] download in
                 self?.started += 1
-                self?.downloads.begin(download)
+                self?.downloads.begin(download, origin: origin)
             }
         }
     }

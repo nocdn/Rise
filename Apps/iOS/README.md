@@ -232,6 +232,12 @@ Once painted it's opaque again, so pages without a background of their own still
 the status bar strip samples its top then. Later navigations keep showing the old page until the
 new one paints, so they don't flash either.
 
+Download starts also throw a miniature download row from the original page touch into More,
+which absorbs it with a small directional spring kick and the single start haptic at impact.
+Concurrent throws coexist and normal
+button press feedback remains independent. Reduce Motion skips the throw. See
+[Download motion](../../docs/DownloadMotion.md) for the reference measurements and checks.
+
 ## Summarise
 
 As in Arc Search, pinching in on the page, from its smallest zoom, summarises it. As when pinching

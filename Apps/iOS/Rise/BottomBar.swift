@@ -31,6 +31,8 @@ final class BottomBar: UIView {
     let waveform = VoiceWaveform()
     private(set) var isListening = false
     let moreButton = AnimatedSymbolButton(symbol: "ellipsis", pointSize: 14)
+    /// The download's landing kick stays independent of the button's normal press scale.
+    let moreLanding = UIView()
     /// The bar's own contents: its row of buttons.
     let home = UIView()
     /// New Page's panel: a search.
@@ -157,7 +159,9 @@ final class BottomBar: UIView {
             }, for: [.touchUpInside, .touchUpOutside, .touchDragExit, .touchCancel])
         }
 
-        for button in [tabsButton, newPageButton, moreButton] { row.addSubview(button) }
+        for button in [tabsButton, newPageButton] { row.addSubview(button) }
+        row.addSubview(moreLanding)
+        moreLanding.addSubview(moreButton)
         for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton, tabMenu.historyButton]+menu.buttons+siteSettings.buttons+appSettings.buttons+downloads.buttons+find.buttons+[find.modeButton, find.sendButton] {
             // A light, crisp tap as the finger lands, rather than a soft thud; actions wait for it to lift.
             button.addAction(UIAction { [weak self] _ in self?.tap.impactOccurred(intensity: 0.5) }, for: .touchDown)
@@ -283,8 +287,10 @@ final class BottomBar: UIView {
             glyph.center = CGPoint(x: newPageButton.bounds.midX, y: newPageButton.bounds.midY)
         }
         let menuSide = Self.menuSize
+        moreLanding.bounds = CGRect(x: 0, y: 0, width: menuSide, height: menuSide)
+        moreLanding.center = CGPoint(x: bounds.width-centre, y: midY)
         moreButton.bounds = CGRect(x: 0, y: 0, width: menuSide, height: menuSide)
-        moreButton.center = CGPoint(x: bounds.width-centre, y: midY)
+        moreButton.center = CGPoint(x: menuSide/2, y: menuSide/2)
         // The panels' contents keep their place from the top as the bar grows beneath them. By
         // bounds and center, as they scale as they swap.
         let place = { (view: UIView, top: CGFloat, height: CGFloat) in

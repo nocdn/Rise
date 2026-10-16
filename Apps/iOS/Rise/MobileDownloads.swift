@@ -49,6 +49,8 @@ import WebKit
     var onListChange: (() -> Void)?
     /// A download's progress moved on.
     var onProgress: ((Item) -> Void)?
+    /// Fires once an accepted transfer is added, preserving its original page touch.
+    var onStart: ((Item, CGPoint?) -> Void)?
     /// Asks whether to download the named file, of this many bytes if known, from the host, as Safari does.
     var confirm: ((_ name: String, _ host: String?, _ bytes: Int64?, _ answer: @escaping (Bool) -> Void) -> Void)?
     var failed: ((Error) -> Void)?
@@ -73,10 +75,11 @@ import WebKit
     #endif
 
     /// WebKit has turned a navigation into a download; ask about it once its name is known.
-    func begin(_ download: WKDownload) {
+    func begin(_ download: WKDownload, origin: CGPoint? = nil) {
         download.delegate = self
         pending.insert(ObjectIdentifier(download))
         retained[ObjectIdentifier(download)] = download
+        origins[ObjectIdentifier(download)] = origin
     }
 
     func item(_ id: UUID) -> Item? { items.first { $0.id == id } }
@@ -118,6 +121,7 @@ import WebKit
 
     private var pending: Set<ObjectIdentifier> = []
     private var retained: [ObjectIdentifier: WKDownload] = [:]
+    private var origins: [ObjectIdentifier: CGPoint] = [:]
     private struct CancelledDownload {
         let download: WKDownload
         let destination: URL
@@ -141,6 +145,7 @@ import WebKit
             let key = ObjectIdentifier(download)
             pending.remove(key)
             retained[key] = nil
+            let origin = origins.removeValue(forKey: key)
             guard accepted else { completionHandler(nil); return }
             try? FileManager.default.createDirectory(at: downloadsFolder, withIntermediateDirectories: true)
             let destination = Self.destination(for: name, in: downloadsFolder) { url in
@@ -153,6 +158,7 @@ import WebKit
             items.insert(item, at: 0)
             observe(download.progress, for: item)
             onListChange?()
+            if self.item(item.id) === item { onStart?(item, origin) }
             // List callbacks can immediately cancel. Never hand WebKit a destination
             // for an item that was already removed before the file could be created.
             completionHandler(self.item(item.id) === item ? destination : nil)
@@ -179,6 +185,7 @@ import WebKit
         let key = ObjectIdentifier(download)
         pending.remove(key)
         retained[key] = nil
+        origins[key] = nil
         guard !discardCancelledFile(for: download) else { return }
         guard let item = items.first(where: { $0.download === download }) else { return }
         item.download = nil

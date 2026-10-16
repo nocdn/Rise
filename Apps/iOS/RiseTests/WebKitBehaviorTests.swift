@@ -371,7 +371,8 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertEqual(browser.view.safeAreaInsets.bottom, open, accuracy: 0.5, "Pages scroll clear of the open bar")
         XCTAssertLessThan(bar.tabsButton.frame.maxX, bar.newPageButton.frame.minX)
         XCTAssertEqual(bar.newPageButton.frame.midX, bar.bounds.midX, accuracy: 0.5)
-        XCTAssertLessThan(bar.newPageButton.frame.maxX, bar.moreButton.frame.minX)
+        XCTAssertLessThan(bar.newPageButton.convert(bar.newPageButton.bounds, to: bar).maxX,
+                          bar.moreButton.convert(bar.moreButton.bounds, to: bar).minX)
         XCTAssertNil(bar.moreButton.menu, "More grows the bar rather than showing a menu")
         XCTAssertNil(PeekViewController(url: URL(string: "https://example.com")!) { _, _ in }.browser.bottomBar.superview)
 

@@ -15,9 +15,10 @@ extension BrowserViewController {
             let alert = UIAlertController(title: "Download \(name)?", message: message.isEmpty ? nil : message,
                                           preferredStyle: .alert)
             alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in answer(false) })
-            alert.addAction(UIAlertAction(title: "Download", style: .default) { _ in
-                UIImpactFeedbackGenerator(style: .rigid).impactOccurred(intensity: 1)
-                answer(true)
+            alert.addAction(UIAlertAction(title: "Download", style: .default) { [weak alert] _ in
+                // Let the alert clear the page before its download row takes off.
+                guard let alert else { answer(false); return }
+                alert.dismiss(animated: true) { answer(true) }
             })
             topPresenter.present(alert, animated: true)
         }
@@ -28,6 +29,7 @@ extension BrowserViewController {
             topPresenter.present(alert, animated: true)
         }
         downloads.onListChange = { [weak self] in self?.downloadsChanged() }
+        downloads.onStart = { [weak self] item, origin in self?.launchDownloadFlight(item, from: origin) }
         downloads.onProgress = { [weak self, weak downloads] item in
             guard let self, let downloads else { return }
             bottomBar.downloads.update(item)
@@ -49,11 +51,28 @@ extension BrowserViewController {
     }
 
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
-        MobileDownloads.shared.begin(download)
+        MobileDownloads.shared.begin(download, origin: downloadOrigins.take(from: webView))
     }
 
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
-        MobileDownloads.shared.begin(download)
+        MobileDownloads.shared.begin(download, origin: downloadOrigins.take(from: webView))
+    }
+
+    func launchDownloadFlight(_ item: MobileDownloads.Item, from origin: CGPoint?) {
+        guard let window = viewIfLoaded?.window, window.windowScene?.activationState == .foregroundActive else { return }
+        // With no throw, receipt at the destination is immediate; keep its tactile feedback.
+        if UIAccessibility.isReduceMotionEnabled {
+            UIImpactFeedbackGenerator(style: .rigid).impactOccurred(intensity: 1)
+            return
+        }
+        if isPanelOpen { closePanel() }
+        setBottomBarCollapsed(false)
+        view.layoutIfNeeded(); bottomBar.layoutIfNeeded()
+        let fallback = webView.convert(CGPoint(x: webView.bounds.midX, y: webView.bounds.midY), to: window)
+        let source = origin.flatMap { window.bounds.contains($0) ? $0 : nil } ?? fallback
+        let flight = MobileDownloadFlight(item: item, origin: source, landing: bottomBar.moreLanding, window: window)
+        window.addSubview(flight)
+        flight.start()
     }
 
     /// Alerts go over whatever is showing, such as a Peek.

@@ -55,6 +55,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private(set) lazy var pullToReload = PullToReload { [weak self] in self?.reloadPage() }
     /// Only the main page has one; Peek pages are closed and opened by their handle.
     let bottomBar = BottomBar()
+    let downloadOrigins = DownloadOriginTracker()
     private var scrollObservation: NSKeyValueObservation?
     /// Keeps More's address and its Back and Forward up to date with the page.
     private var addressObservations: [NSKeyValueObservation] = []
@@ -271,6 +272,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
 
     private func adoptDelegates(of webView: WKWebView) {
+        downloadOrigins.install(on: webView)
         addressSuggestions.learner.install(on: webView)
         webView.uiDelegate = self
         webView.navigationDelegate = self
