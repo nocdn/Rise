@@ -3,12 +3,15 @@
 # window (unchecked would crash if reached), verdict, why. Verdicts: unreached (Rise never runs it),
 # harmless (does nothing without the window), rise (Rise does it its own way), todo (needs Rise's version).
 #
-# Also found by testing, outside these lookups: Chrome's dialogs for a page (a site's sign-in, screen
-# sharing) ask the window for a dialog host, which Rise gives them over the page (PageDialogHost in the
-# bridge). Still todo: picture-in-picture windows for pages, and device choosers (USB, serial, HID,
-# Bluetooth), which do nothing yet.
+# Also found by testing, outside these lookups or past their checks:
+# - Chrome's dialogs for a page (a site's sign-in, screen sharing) ask the window for a dialog host,
+#   which Rise gives them over the page (PageDialogHost in the bridge).
+# - Device choosers (USB, serial, HID, Bluetooth) anchored through bubble_anchor_util, which used the
+#   window past its check; patched.
+# - Chrome's windows over a Rise window (dialogs, bubbles) are made its children, so they move with
+#   it; a page's picture-in-picture window is Chrome's own and floats.
 chrome/browser/accessibility/ax_main_node_annotator_controller.cc	AnnounceToScreenReader	checked	harmless	Checks for the window first
-chrome/browser/content_settings/chrome_content_settings_utils.cc	UpdateLocationBarUiForWebContents	unchecked	unreached	Only for picture-in-picture windows, which Rise does not open yet (see the picture-in-picture entry)
+chrome/browser/content_settings/chrome_content_settings_utils.cc	UpdateLocationBarUiForWebContents	unchecked	harmless	Only for picture-in-picture windows, which are Chrome's own windows, with their own BrowserView
 chrome/browser/contextual_tasks/contextual_tasks_extensions_container.cc	GetFocusManagerForAccelerator	checked	unreached	Contextual tasks side panel
 chrome/browser/contextual_tasks/contextual_tasks_side_panel_coordinator.cc	ContextualTasksSidePanelCoordinator::ShowPageInfoBubble	checked	unreached	Contextual tasks side panel
 chrome/browser/contextual_tasks/search_ai_mode_promo_tab_helper.cc	SearchAiModePromoTabHelper::MaybeShowPromo	checked	harmless	A promo, skipped without the window
@@ -62,3 +65,66 @@ chrome/browser/ui/webauthn/ambient/ambient_signin_controller.cc	AmbientSigninCon
 chrome/browser/ui/webui/downloads/downloads_dom_handler.cc	DownloadsDOMHandler::OpenFileRequiringGesture	checked	harmless	Checks for the window first
 chrome/browser/ui/webui/top_chrome/webui_contents_preload_manager.cc	GetLastActiveBrowserWidget	checked	harmless	Checks for the window first
 chrome/browser/ui/webui_browser/webui_browser_window.cc	WebUIBrowserWindow::FromBrowser	unchecked	unreached	Chrome's experimental WebUI window
+chrome/browser/ui/views/accelerator_utils_aura.cc	AcceleratorProviderForBrowser	checked	unreached	Aura only, not macOS
+chrome/browser/ui/views/accessibility/accessibility_util.cc	AnnounceInActiveBrowser	checked	harmless	Checks for the window first
+chrome/browser/ui/views/autofill/at_memory_promo_bubble_view.cc	AtMemoryPromoBubbleView::OnLearnMoreClicked	checked	unreached	A promo from Chrome's autofill UI
+chrome/browser/ui/views/autofill/autofill_field_promo_view_impl.cc	GetContentsWebView	checked	harmless	Checks for the window first
+chrome/browser/ui/views/autofill/popup/popup_base_view.cc	PopupBaseView::ArrowHorizontalMargin	checked	todo	Autofill pop-ups: check by hand once autofill is decided (stage 5)
+chrome/browser/ui/views/autofill/popup/popup_view_utils.cc	BoundsOverlapWithOpenPermissionsPrompt	checked	todo	Autofill pop-ups: check by hand once autofill is decided (stage 5)
+chrome/browser/ui/views/autofill/popup/popup_view_views.cc	DefaultA11yAnnouncer	checked	todo	Autofill pop-ups: check by hand once autofill is decided (stage 5)
+chrome/browser/ui/views/browser_commands_views.cc	GetKeyboardFocusedTabIndex	checked	unreached	Chrome's keyboard commands for its tab strip
+chrome/browser/ui/views/bubble_anchor_util_views.cc	GetPageInfoAnchorConfiguration	checked	rise	Patched: with no Chrome window, bubbles anchor to the top left of the page (device choosers crashed without it)
+chrome/browser/ui/views/bubble_anchor_util_views.cc	GetPageInfoAnchorRect	checked	rise	Patched: with no Chrome window, bubbles anchor to the top left of the page (device choosers crashed without it)
+chrome/browser/ui/views/compose/chrome_compose_dialog_controller.cc	ShowComposeDialog	checked	unreached	Help me write, a Google feature
+chrome/browser/ui/views/context_hub/save_to_memory_bank_bubble_controller.cc	SaveToMemoryBankBubbleController::ShowBubble	checked	unreached	A Google feature
+chrome/browser/ui/views/data_sharing/data_sharing_bubble_controller.cc	DataSharingBubbleController::Show	checked	unreached	Shared tab groups
+chrome/browser/ui/views/desktop_capture/desktop_media_list_view.cc	LoadDefaultIcon	checked	harmless	Screen-sharing picker icons; the picker works
+chrome/browser/ui/views/download/bubble/download_bubble_row_view.cc	DownloadBubbleRowView::AcceleratorPressed	checked	unreached	Chrome's download bubble; Rise has its own downloads
+chrome/browser/ui/views/download/bubble/download_bubble_row_view.cc	DownloadBubbleRowView::RegisterAccelerators	checked	unreached	Chrome's download bubble; Rise has its own downloads
+chrome/browser/ui/views/download/bubble/download_bubble_row_view.cc	DownloadBubbleRowView::UnregisterAccelerators	checked	unreached	Chrome's download bubble; Rise has its own downloads
+chrome/browser/ui/views/download/download_cuj_event_emitter.cc	EmitElementTrackerEvent	checked	unreached	Chrome's download bubble
+chrome/browser/ui/views/extensions/extension_view_utils.cc	GetExtensionsContainerViews	checked	harmless	Checks for the window first
+chrome/browser/ui/views/extensions/extensions_toolbar_desktop.cc	ExtensionsToolbarDesktop::GetToolbarActionSize	unchecked	unreached	Chrome's extensions toolbar
+chrome/browser/ui/views/extensions/extensions_toolbar_desktop.cc	ExtensionsToolbarDesktop::ShowPinnedByDefaultIPH	checked	unreached	Chrome's extensions toolbar
+chrome/browser/ui/views/extensions/extensions_toolbar_desktop.cc	ExtensionsToolbarDesktop::UpdateIconVisibility	checked	unreached	Chrome's extensions toolbar
+chrome/browser/ui/views/file_system_access/file_system_access_usage_bubble_view.cc	FileSystemAccessUsageBubbleView::GetAccessibleWindowTitle	checked	unreached	From the address bar's file access icon
+chrome/browser/ui/views/file_system_access/file_system_access_usage_bubble_view.cc	FileSystemAccessUsageBubbleView::ShowBubble	unchecked	unreached	From the address bar's file access icon
+chrome/browser/ui/views/glic/glic_button_interface.cc	GlicButtonInterface::FromBrowser	unchecked	unreached	Gemini in Chrome (Glic)
+chrome/browser/ui/views/hats/hats_next_web_dialog.cc	GetBubbleAnchor	unchecked	unreached	Google surveys, off in Chromium builds
+chrome/browser/ui/views/idle_bubble.cc	ShowIdleBubble	checked	harmless	Checks for the window first
+chrome/browser/ui/views/javascript_app_modal_event_blocker_aura.cc	JavascriptAppModalEventBlockerAura	checked	unreached	Aura only, not macOS
+chrome/browser/ui/views/javascript_app_modal_event_blocker_aura.cc	JavascriptAppModalEventBlockerAura::ShouldStopPropagationTo	checked	unreached	Aura only, not macOS
+chrome/browser/ui/views/media_router/cast_browser_controller.cc	CastBrowserController::GetToolbarButton	checked	unreached	Chrome's Cast toolbar button
+chrome/browser/ui/views/media_router/cast_dialog_coordinator.cc	CastDialogCoordinator::ShowDialogCenteredForBrowserWindow	unchecked	unreached	Toolbar and window-centred Cast; Cast from a page anchors to the page
+chrome/browser/ui/views/media_router/cast_dialog_coordinator.cc	CastDialogCoordinator::ShowDialogWithToolbarAction	unchecked	unreached	Toolbar and window-centred Cast; Cast from a page anchors to the page
+chrome/browser/ui/views/media_router/media_remoting_dialog_view.cc	MediaRemotingDialogCoordinatorViews::Show	checked	harmless	Checks for the window first
+chrome/browser/ui/views/media_router/media_router_dialog_controller_views.cc	MediaRouterDialogControllerViews::CreateMediaRouterDialog	checked	harmless	Anchors to the page without Chrome's window
+chrome/browser/ui/views/media_router/media_router_dialog_controller_views.cc	MediaRouterDialogControllerViews::GetMediaButton	checked	harmless	Anchors to the page without Chrome's window
+chrome/browser/ui/views/media_router/media_router_dialog_controller_views.cc	MediaRouterDialogControllerViews::ShowGlobalMediaControlsDialog	checked	harmless	Anchors to the page without Chrome's window
+chrome/browser/ui/views/network_profile_bubble_view.cc	NetworkProfileBubble::ShowNotification	checked	harmless	Checks for the window first
+chrome/browser/ui/views/page_info/about_this_site_side_panel_coordinator.cc	AboutThisSideSidePanelCoordinator::GetBrowserView	checked	unreached	Chrome's side panel
+chrome/browser/ui/views/page_info/merchant_trust_side_panel_coordinator.cc	MerchantTrustSidePanelCoordinator::GetBrowserView	checked	unreached	Chrome's side panel
+chrome/browser/ui/views/page_info/web_view_side_panel_view.cc	WebViewSidePanelView::outer_browser_view	checked	unreached	Chrome's side panel
+chrome/browser/ui/views/permissions/chooser_bubble_ui.cc	ShowDeviceChooserDialogForExtension	checked	harmless	Extensions' device chooser: checks for the window first
+chrome/browser/ui/views/permissions/embedded_permission_prompt_content_scrim_view.cc	EmbeddedPermissionPromptContentScrim	unchecked	todo	The <permission> element's prompt: Rise answers permissions with its own prompt; check by hand
+chrome/browser/ui/views/permissions/permission_prompt_bubble_base_view.cc	PermissionPromptBubbleBaseView::RunButtonCallback	checked	rise	Rise shows its own permission prompts
+chrome/browser/ui/views/profiles/cross_device_signin_qr_bubble_views.cc	CreateCrossDeviceSigninQrBubble	checked	unreached	Chrome sign-in
+chrome/browser/ui/views/profiles/dice_web_signin_interception_bubble_view.cc	GetAvatarToolbarButtonInterface	checked	unreached	Chrome sign-in
+chrome/browser/ui/views/profiles/dice_web_signin_interception_bubble_view.cc	ShowSigninInterceptionBubbleInternal	checked	unreached	Chrome sign-in
+chrome/browser/ui/views/profiles/first_run_flow_controller.cc	GetOnToggleMediaEffectsHistogram	checked	unreached	Chrome's first-run flow
+chrome/browser/ui/views/profiles/profile_customization_bubble_sync_controller.cc	ShowBubble	unchecked	unreached	Chrome profiles
+chrome/browser/ui/views/profiles/profile_picker_flow_controller.cc	MaybeShowProfileIPHs	checked	unreached	Chrome profiles
+chrome/browser/ui/views/profiles/profile_picker_flow_controller.cc	ShowCustomizationBubble	checked	unreached	Chrome profiles
+chrome/browser/ui/views/profiles/signin_view_controller_delegate_views.cc	CloseModalSigninInBrowser	checked	unreached	Chrome sign-in
+chrome/browser/ui/views/relaunch_notification/relaunch_recommended_bubble_view.cc	RelaunchRecommendedBubbleView::ShowBubble	unchecked	unreached	Enterprise relaunch policy
+chrome/browser/ui/views/renderer_context_menu/render_view_context_menu_views.cc	GetBrowserAcceleratorProvider	checked	rise	Rise shows its own page menu
+chrome/browser/ui/views/scheduled_restart/scheduled_restart_bubble_view.cc	RecordDialogChoice	unchecked	unreached	ChromeOS restarts
+chrome/browser/ui/views/search_ai_mode/signin_promo_controller.cc	ComposeboxDriveSignInPromoController::MaybeShowPromo	checked	unreached	A Google promo
+chrome/browser/ui/views/search_engines/dse_reset_dialog.cc	ShowSearchEngineResetNotification	checked	harmless	Checks for the window first
+chrome/browser/ui/views/session_crashed_bubble_view.cc	SessionCrashedBubbleView::ShowBubble	checked	harmless	Checks for the window first; Rise restores its own windows
+chrome/browser/ui/views/storage/storage_pressure_bubble_view.cc	StoragePressureBubbleView::ShowBubble	checked	rise	Patched: skipped in Rise's windows (crashed when the disk was nearly full)
+chrome/browser/ui/views/tab_search_bubble_host.cc	TabSearchBubbleHost::GetBrowser	checked	unreached	Chrome's tab search
+chrome/browser/ui/views/translate/translate_bubble_controller.cc	TranslateBubbleController::StartPartialTranslate	checked	harmless	Checks for the window first; translate is a stage 5 decision
+chrome/browser/ui/views/user_education/autofill_help_bubble_factory.cc	GetBrowserWidgetFrom	unchecked	unreached	Chrome's feature promos
+chrome/browser/ui/views/user_education/impl/browser_feature_promo_controller.cc	BrowserFeaturePromoController::GetBrowserForView	checked	unreached	Chrome's feature promos
+chrome/browser/ui/views/user_education/impl/browser_user_education_context.cc	BrowserUserEducationContext::Filter	checked	unreached	Chrome's feature promos

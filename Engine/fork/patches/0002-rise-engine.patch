@@ -1210,10 +1210,10 @@ index 0000000000..cabcb68258
 +#endif  // CHROME_BROWSER_RISE_CHROME_BROWSER_MAIN_EXTRA_PARTS_RISE_H_
 diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
 new file mode 100644
-index 0000000000..14bbc07a64
+index 0000000000..098d427ad1
 --- /dev/null
 +++ b/chrome/browser/rise/rise_bridge.mm
-@@ -0,0 +1,3791 @@
+@@ -0,0 +1,3877 @@
 +// Copyright 2026 The Rise Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -1583,6 +1583,86 @@ index 0000000000..14bbc07a64
 +  NSHashTable<NSWindow*>* dialogs_ = nil;
 +  base::WeakPtrFactory<PageDialogHost> weak_factory_{this};
 +};
++
++// Chrome's dialogs for a whole window that Rise placed, which Chrome may move
++// again, centred on nothing.
++NSHashTable<NSWindow*>* WindowDialogs() {
++  static NSHashTable* dialogs = [NSHashTable weakObjectsHashTable];
++  return dialogs;
++}
++
++// Over its window, as a sheet shows, centred below its top.
++void PlaceWindowDialog(NSWindow* window) {
++  NSWindow* parent = window.parentWindow;
++  if (!parent) {
++    return;
++  }
++  NSRect frame = window.frame;
++  NSRect over = [parent convertRectToScreen:parent.contentLayoutRect];
++  NSPoint origin = NSMakePoint(NSMidX(over) - NSWidth(frame) / 2,
++                               NSMaxY(over) - 40 - NSHeight(frame));
++  if (!NSEqualPoints(origin, frame.origin)) {
++    [window setFrameOrigin:origin];
++  }
++}
++
++// Chrome's own windows over one of Rise's (a page's dialog, a device chooser)
++// become its children, as they are of Chrome's windows, so they move with it.
++// A page's picture-in-picture window floats on its own, as in Chrome.
++void AttachChromeWindow(NSWindow* window) {
++  static Class chrome_window = NSClassFromString(@"NativeWidgetMacNSWindow");
++  static Class floating = NSClassFromString(@"NativeWidgetMacFramelessNSWindow");
++  if (!window.visible || window.parentWindow ||
++      ![window isKindOfClass:chrome_window] ||
++      [window isKindOfClass:floating]) {
++    return;
++  }
++  NSPoint middle = NSMakePoint(NSMidX(window.frame), NSMidY(window.frame));
++  NSWindow* front = nil;
++  for (NSWindow* rise in NSApp.orderedWindows) {
++    if (rise == window || !rise.visible ||
++        [rise isKindOfClass:chrome_window] || rise.parentWindow) {
++      continue;
++    }
++    if (NSPointInRect(middle, rise.frame)) {
++      [rise addChildWindow:window ordered:NSWindowAbove];
++      return;
++    }
++    front = front ?: rise;
++  }
++  // A dialog for a whole window (removing an extension, say), which Chrome
++  // places over its own windows only: over the window in front, as a sheet
++  // shows, centred below its top.
++  if (front) {
++    [front addChildWindow:window ordered:NSWindowAbove];
++    [WindowDialogs() addObject:window];
++    PlaceWindowDialog(window);
++  }
++}
++
++void WatchChromeWindows() {
++  [NSNotificationCenter.defaultCenter
++      addObserverForName:NSWindowDidChangeOcclusionStateNotification
++                  object:nil
++                   queue:NSOperationQueue.mainQueue
++              usingBlock:^(NSNotification* notification) {
++                AttachChromeWindow(notification.object);
++              }];
++  [NSNotificationCenter.defaultCenter
++      addObserverForName:NSWindowDidMoveNotification
++                  object:nil
++                   queue:NSOperationQueue.mainQueue
++              usingBlock:^(NSNotification* notification) {
++                NSWindow* window = notification.object;
++                NSWindow* parent = window.parentWindow;
++                if (parent && [WindowDialogs() containsObject:window] &&
++                    !NSPointInRect(NSMakePoint(NSMidX(window.frame),
++                                               NSMidY(window.frame)),
++                                   parent.frame)) {
++                  PlaceWindowDialog(window);
++                }
++              }];
++}
 +
 +// The window the person used last, of those Rise shows.
 +BrowserWindowInterface* LastActiveShownBrowser() {
@@ -2051,6 +2131,10 @@ index 0000000000..14bbc07a64
 +                      WindowOpenDisposition disposition,
 +                      const blink::mojom::WindowFeatures& features,
 +                      bool user_gesture) override {
++    // A page's picture-in-picture window is Chrome's own, floating.
++    if (disposition == WindowOpenDisposition::NEW_PICTURE_IN_PICTURE) {
++      return false;
++    }
 +    RCBrowserView* view = view_;
 +    if (!view) {
 +      return true;
@@ -2610,7 +2694,9 @@ index 0000000000..14bbc07a64
 +      }));
 +  // Pages' requests pass Rise's ad blocking.
 +  InstallAdBlocking();
-+  // Chrome's dialogs for a page go over it.
++  // Chrome's dialogs for a page go over it, and Chrome's windows over Rise's
++  // move with them.
++  WatchChromeWindows();
 +  RiseBrowserWindow::SetDialogHostFinder(
 +      base::BindRepeating([](content::WebContents* contents)
 +                              -> web_modal::WebContentsModalDialogHost* {
@@ -6301,6 +6387,51 @@ index fd25e44754..ae2e25df2b 100644
    // Set state_ here, so that extensions, etc, do not attempt to add tabs to the
    // browser before it closes.
    if (state_ == State::kIdle) {
+diff --git a/chrome/browser/ui/views/bubble_anchor_util_views.cc b/chrome/browser/ui/views/bubble_anchor_util_views.cc
+index bd418d5445..f50ba7169f 100644
+--- a/chrome/browser/ui/views/bubble_anchor_util_views.cc
++++ b/chrome/browser/ui/views/bubble_anchor_util_views.cc
+@@ -8,6 +8,8 @@
+ #include "build/build_config.h"
+ #include "chrome/browser/ui/browser_element_identifiers.h"
+ #include "chrome/browser/ui/browser_window.h"
++#include "components/tabs/public/tab_interface.h"
++#include "content/public/browser/web_contents.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
+ #include "chrome/browser/ui/bubble_anchor_util.h"
+ #include "chrome/browser/ui/views/frame/app_menu_button.h"
+@@ -36,8 +38,11 @@ AnchorConfiguration GetPageInfoAnchorConfiguration(
+     BrowserWindowInterface* browser,
+     Anchor anchor) {
+   BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
+-  auto* location_bar_view =
+-      browser_view ? browser_view->GetLocationBarView() : nullptr;
++  // An embedder's window has no toolbar to anchor to.
++  if (!browser_view) {
++    return {};
++  }
++  auto* location_bar_view = browser_view->GetLocationBarView();
+ 
+   if (base::FeatureList::IsEnabled(
+           content_settings::features::kLeftHandSideActivityIndicators) &&
+@@ -183,6 +188,17 @@ gfx::Rect GetPageInfoAnchorRect(BrowserWindowInterface* browser) {
+   DCHECK(GetPageInfoAnchorConfiguration(browser).anchor.IsNull());
+ 
+   BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
++  // An embedder's window: the top left of the page, as for a window without a
++  // toolbar.
++  if (!browser_view) {
++    tabs::TabInterface* tab = browser->GetActiveTabInterface();
++    gfx::Rect page = tab ? tab->GetContents()->GetContainerBounds()
++                         : browser->GetWindow()->GetBounds();
++    return gfx::Rect(
++        page.origin() +
++            gfx::Vector2d(bubble_anchor_util::kNoToolbarLeftOffset, 0),
++        gfx::Size());
++  }
+   // Get position in view (taking RTL UI into account).
+   int x_within_browser_view = browser_view->GetMirroredXInView(
+       bubble_anchor_util::kNoToolbarLeftOffset);
 diff --git a/chrome/browser/ui/views/frame/browser_window_factory.cc b/chrome/browser/ui/views/frame/browser_window_factory.cc
 index ad579aa818..2fa56bd6b3 100644
 --- a/chrome/browser/ui/views/frame/browser_window_factory.cc
@@ -6316,6 +6447,21 @@ index ad579aa818..2fa56bd6b3 100644
  const BrowserWindow* BrowserWindow::FromBrowser(
      const BrowserWindowInterface* browser) {
    // See https://crbug.com/496674143 for the umbrella effort to remove
+diff --git a/chrome/browser/ui/views/storage/storage_pressure_bubble_view.cc b/chrome/browser/ui/views/storage/storage_pressure_bubble_view.cc
+index e055aa36ff..d7d53987c1 100644
+--- a/chrome/browser/ui/views/storage/storage_pressure_bubble_view.cc
++++ b/chrome/browser/ui/views/storage/storage_pressure_bubble_view.cc
+@@ -45,6 +45,10 @@ void StoragePressureBubbleView::ShowBubble(const url::Origin& origin) {
+   }
+ 
+   auto* browser_view = BrowserView::GetBrowserViewForBrowser(bwi);
++  // An embedder's window has no app menu to warn from.
++  if (!browser_view) {
++    return;
++  }
+   auto* control = browser_view->toolbar_button_provider()->GetAppMenuControl();
+   views::BubbleAnchor anchor =
+       control ? control->GetAnchor() : views::BubbleAnchor();
 diff --git a/chrome/common/rise/BUILD.gn b/chrome/common/rise/BUILD.gn
 new file mode 100644
 index 0000000000..685f476c66

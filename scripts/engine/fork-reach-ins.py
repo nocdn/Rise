@@ -17,11 +17,14 @@ import re
 import sys
 
 LOOKUPS = re.compile(r"BrowserView::GetBrowserViewFor(?:Browser|NativeWindow)\s*\(")
-# Code that doesn't run in Rise: tests, other platforms, and Chrome's own window UI, which only
-# exists alongside a BrowserView.
+# Code that doesn't run in Rise: tests, other platforms, and the parts of Chrome's window that
+# only exist inside it (its frame, tabs, toolbar, address bar, side panel, bookmark bar and web app
+# windows). The rest of Chrome's window code is listed: its dialogs and bubbles are reached through
+# Chrome's dialog functions from anywhere.
 SKIP = re.compile(r"(_unittest|_browsertest|browser_test_|_interactive_uitest|_uitest|_apitest|_pixeltest|test_util|"
                   r"_test_base|_test\.|/test/|/ash/|chromeos|_chromeos|/android/|_android|_win\.|/win/|"
-                  r"_linux|/linux/|_ozone|/ui/views/)")
+                  r"_linux|/linux/|_ozone|"
+                  r"/ui/views/(frame|tabs|toolbar|location_bar|omnibox|side_panel|bookmarks|web_apps|page_action)/)")
 FUNCTION = re.compile(r"^[A-Za-z_][\w:<>,\s\*&~]*?\b([\w:~]+::[\w~]+|[\w~]+)\s*\(")
 LIST = pathlib.Path(__file__).resolve().parents[2] / "Engine/fork/reach-ins.tsv"
 
