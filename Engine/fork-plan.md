@@ -208,6 +208,9 @@ are most of them.
      title, not as the sheet Chrome would show; Rise's own sheets are an option for later.
    - **Picture-in-picture windows for pages** (`documentPictureInPicture`) are Chrome's own
      floating windows: Rise's popup hook leaves them to Chrome.
+   - **Rise's floating video** works on the fork as on WebKit: the `float` live check floats a
+     page's video when its tab is left, and checks it paints, plays and pauses from the panel, and
+     goes back to its tab still playing. The still picture for going back comes from Chromium.
    - **The test path:** no `CHECK_IS_TEST()` place is reached in the live checks.
 5. **Chrome features Rise now gets.** Decide, one by one, what Rise shows: Rise's own permission
    prompts, password and autofill (or none, as now), extension side panels in Rise's sidebar,

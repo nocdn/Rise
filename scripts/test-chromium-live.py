@@ -1,6 +1,6 @@
 """Rise's features on Chromium pages in an actual Rise window.
 
-    python3 scripts/test-chromium-live.py [peek|features|extensions|scripts|app|path/to/Check.swift]
+    python3 scripts/test-chromium-live.py [peek|features|extensions|scripts|app|float|path/to/Check.swift]
 
 peek: Peek's motion, frame by frame (Tests/Live/ChromiumPeekBenchmarks.swift).
 features: history after a relaunch, downloads, find, permissions, picture in picture and the
@@ -23,6 +23,7 @@ import tempfile
 import time
 
 checks = {"peek": "ChromiumPeekBenchmarks.swift", "features": "ChromiumFeatureChecks.swift", "extensions": "ChromiumExtensionChecks.swift",
+          "float": "ChromiumFloatingVideoChecks.swift",
           "scripts": "ChromiumScriptChecks.swift", "app": "ChromiumAppChecks.swift"}
 check = sys.argv[1] if len(sys.argv) > 1 else "peek"
 if check not in checks and not check.endswith(".swift"):
@@ -73,12 +74,12 @@ subprocess.run(["codesign", "--force", "--sign", "-", str(executable)], check=Tr
 subprocess.run(["codesign", "--force", "--sign", "-", str(probe)], check=True, capture_output=True)
 environment = dict(os.environ, RISE_PEEK_OUT=str(folder), PACKAGE_RESOURCE_BUNDLE_PATH=str(debug))
 arguments, servers = [], []
-if check == "features":
+if check in ("features", "float") or check.endswith(".swift"):
     # A short clip with sound.
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=30", "-f", "lavfi",
                     "-i", "sine=frequency=440", "-t", "30", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
                     "-shortest", str(folder / "clip.mp4")], check=True)
-if check in ("features", "scripts") or check.endswith(".swift"):
+if check in ("features", "scripts", "float") or check.endswith(".swift"):
     # Two sites: localhost and 127.0.0.1 are different sites.
     ports = []
     for _ in range(2):
