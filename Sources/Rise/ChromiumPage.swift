@@ -72,6 +72,13 @@ enum RisePages {
 }
 
 #if RISE_CHROMIUM
+/// Focusing a page's view focuses the page itself, as Chrome does: the view holding it takes no keys.
+@MainActor func pageFocusTarget(_ responder: NSResponder?) -> NSResponder? { (responder as? RCBrowserView)?.focusView ?? responder }
+#else
+@MainActor func pageFocusTarget(_ responder: NSResponder?) -> NSResponder? { responder }
+#endif
+
+#if RISE_CHROMIUM
 /// A page drawn by Chromium.
 @MainActor final class ChromiumPage: NSObject, WebPage, RCBrowserViewDelegate {
     let browserView: RCBrowserView

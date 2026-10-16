@@ -315,6 +315,9 @@ RC_EXPORT @interface RCBrowserView : NSView
 /// Under something else, such as a Peek: the page takes no hover and sets no cursor, though
 /// mouse tracking would otherwise reach it through whatever covers it.
 @property (nonatomic) BOOL covered;
+/// The page's own view, which takes the keyboard: focusing the page is making it first
+/// responder, as Chrome does, not this view.
+@property (nonatomic, readonly, nullable) NSView *focusView;
 /// Page zoom as a factor, 1 for 100%.
 @property (nonatomic) double zoom;
 /// The color shown where the page hasn't painted yet.
@@ -329,6 +332,8 @@ RC_EXPORT @interface RCBrowserView : NSView
 - (void)reloadIgnoringCache;
 - (void)stopLoading;
 - (void)setAudioMuted:(BOOL)muted;
+/// Whether Chromium has the page's sound muted.
+@property (nonatomic, readonly) BOOL isAudioMuted;
 /// Downloads `url` as the page would, into Rise's downloads.
 - (void)downloadURL:(NSURL *)url NS_SWIFT_NAME(download(_:));
 /// Runs `functionBody` as the body of an async function with `arguments` as its parameters,

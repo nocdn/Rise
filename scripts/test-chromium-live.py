@@ -1,6 +1,6 @@
 """Rise's features on Chromium pages in an actual Rise window.
 
-    python3 scripts/test-chromium-live.py [peek|features|extensions|scripts|app|float|capture|tools|path/to/Check.swift]
+    python3 scripts/test-chromium-live.py [peek|features|extensions|scripts|app|float|capture|tools|youtube|media|path/to/Check.swift]
 
 peek: Peek's motion, frame by frame (Tests/Live/ChromiumPeekBenchmarks.swift).
 features: history after a relaunch, downloads, find, permissions, picture in picture and the
@@ -10,6 +10,10 @@ scripts: Rise's page scripts and messages, in frames of both sites (Tests/Live/C
 app: Rise's menus, Dock, links from other apps and quitting (Tests/Live/ChromiumAppChecks.swift).
 tools: Page Assistant, hover cards, Copy Text from Page Image, Share Page, the tab switcher and Smart
 Rename (Tests/Live/ChromiumToolChecks.swift).
+youtube: Rise's floating YouTube player (Tests/Live/ChromiumYouTubeChecks.swift), on a YouTube page
+served locally. media: any site's floating video, the tab's media and sound buttons and page full
+screen (Tests/Live/ChromiumMediaChecks.swift). Both are tests written for XCTest
+(Tests/Live/LiveXCTest.swift), with pages at the addresses they name (scripts/live-fixture-server.py).
 
 Chromium only runs from an app bundle with its helpers, so the check runs as the main program of
 a copy of build/Rise.app (made by ./scripts/build.sh with the engine built). Frames are kept in
@@ -26,8 +30,13 @@ import time
 
 checks = {"peek": "ChromiumPeekBenchmarks.swift", "features": "ChromiumFeatureChecks.swift", "extensions": "ChromiumExtensionChecks.swift",
           "float": "ChromiumFloatingVideoChecks.swift", "capture": "ChromiumCaptureChecks.swift", "tools": "ChromiumToolChecks.swift",
+          "youtube": "ChromiumYouTubeChecks.swift", "media": "ChromiumMediaChecks.swift",
           "scripts": "ChromiumScriptChecks.swift", "app": "ChromiumAppChecks.swift"}
 check = sys.argv[1] if len(sys.argv) > 1 else "peek"
+# Checks written as XCTest cases, with pages at the HTTPS addresses they name.
+fixtures = check in ("youtube", "media")
+fixture_hosts = ["www.youtube.com", "youtube.com", "videos.example", "other.example", "media.example",
+                 "fullscreen.example", "example.com", "vimeo.com"]
 if check not in checks and not check.endswith(".swift"):
     raise SystemExit(f"Unknown check {check}; choose from {', '.join(checks)}.")
 
@@ -68,7 +77,8 @@ subprocess.run(["ditto", str(app), str(probe)], check=True)
 # The probe takes Rise's name, so Chromium finds the helpers as "Rise Helper".
 executable = probe / "Contents/MacOS/Rise"
 subprocess.run(["swiftc", "-target", f"{platform.machine()}-apple-macos14.0", "-parse-as-library", "-module-name", "ChromiumPeekCheck",
-                str(Path(check) if check.endswith(".swift") else root / "Tests/Live" / checks[check]), "-I", str(debug / "Modules"),
+                str(Path(check) if check.endswith(".swift") else root / "Tests/Live" / checks[check]),
+                *([str(root / "Tests/Live/LiveXCTest.swift")] if fixtures else []), "-I", str(debug / "Modules"),
                 "-Xcc", f"-fmodule-map-file={debug / 'RiseChromium.build/module.modulemap'}",
                 "-I", str(root / "Sources/RiseChromium/include"), *objects, *engine_linking,
                 *linker, "-o", str(executable)], cwd=root, check=True)
@@ -97,6 +107,17 @@ if check == "features" or check.endswith(".swift"):
     # rise-check.test is an ordinary site to the filter lists, which leave local addresses alone.
     arguments = ["--autoplay-policy=no-user-gesture-required", "--use-fake-device-for-media-stream",
                  "--host-resolver-rules=MAP rise-check.test 127.0.0.1"]
+if fixtures:
+    # One HTTPS server for every fixture address, with a certificate made for the run.
+    subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2", "-subj", "/CN=rise-check",
+                    "-keyout", str(folder / "fixture-key.pem"), "-out", str(folder / "fixture-cert.pem")], check=True, capture_output=True)
+    with socket.socket() as probe_socket:
+        probe_socket.bind(("127.0.0.1", 0)); secure_port = probe_socket.getsockname()[1]
+    servers.append(subprocess.Popen([sys.executable, "-u", str(root / "scripts/live-fixture-server.py"), str(folder), str(secure_port),
+                                     str(folder / "fixture-cert.pem"), str(folder / "fixture-key.pem")],
+                                    stdout=subprocess.DEVNULL, stderr=open(folder / "fixture-server.log", "w")))
+    arguments = ["--autoplay-policy=no-user-gesture-required", "--ignore-certificate-errors",
+                 "--host-resolver-rules=" + ", ".join(f"MAP {host} 127.0.0.1:{secure_port}" for host in fixture_hosts)]
 if check == "tools":
     # A company's own GitLab server, on the local site.
     arguments = ["--host-resolver-rules=MAP gitlab.rise-check.test 127.0.0.1"]

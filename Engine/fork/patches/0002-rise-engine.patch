@@ -763,10 +763,10 @@ index 0000000000..aefb5133bc
 +}
 diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
 new file mode 100644
-index 0000000000..f6f59b38ab
+index 0000000000..19ff73b805
 --- /dev/null
 +++ b/chrome/browser/rise/RiseChromium.h
-@@ -0,0 +1,472 @@
+@@ -0,0 +1,477 @@
 +#import <AppKit/AppKit.h>
 +
 +NS_ASSUME_NONNULL_BEGIN
@@ -1084,6 +1084,9 @@ index 0000000000..f6f59b38ab
 +/// Under something else, such as a Peek: the page takes no hover and sets no cursor, though
 +/// mouse tracking would otherwise reach it through whatever covers it.
 +@property (nonatomic) BOOL covered;
++/// The page's own view, which takes the keyboard: focusing the page is making it first
++/// responder, as Chrome does, not this view.
++@property (nonatomic, readonly, nullable) NSView *focusView;
 +/// Page zoom as a factor, 1 for 100%.
 +@property (nonatomic) double zoom;
 +/// The color shown where the page hasn't painted yet.
@@ -1098,6 +1101,8 @@ index 0000000000..f6f59b38ab
 +- (void)reloadIgnoringCache;
 +- (void)stopLoading;
 +- (void)setAudioMuted:(BOOL)muted;
++/// Whether Chromium has the page's sound muted.
++@property (nonatomic, readonly) BOOL isAudioMuted;
 +/// Downloads `url` as the page would, into Rise's downloads.
 +- (void)downloadURL:(NSURL *)url NS_SWIFT_NAME(download(_:));
 +/// Runs `functionBody` as the body of an async function with `arguments` as its parameters,
@@ -1291,10 +1296,10 @@ index 0000000000..cabcb68258
 +#endif  // CHROME_BROWSER_RISE_CHROME_BROWSER_MAIN_EXTRA_PARTS_RISE_H_
 diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
 new file mode 100644
-index 0000000000..49b3d67e06
+index 0000000000..2c4de7418a
 --- /dev/null
 +++ b/chrome/browser/rise/rise_bridge.mm
-@@ -0,0 +1,3960 @@
+@@ -0,0 +1,3966 @@
 +// Copyright 2026 The Rise Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -3048,6 +3053,9 @@ index 0000000000..49b3d67e06
 +  NSView* page = [self pageAccessibilityView];
 +  return page ? @[ page ] : [super accessibilityChildren];
 +}
++- (NSView*)focusView {
++  return [self pageAccessibilityView];
++}
 +- (NSView*)pageAccessibilityView {
 +  content::RenderWidgetHostView* view =
 +      _contents ? _contents->GetRenderWidgetHostView() : nullptr;
@@ -3432,6 +3440,9 @@ index 0000000000..49b3d67e06
 +  if (_contents) {
 +    _contents->SetAudioMuted(muted);
 +  }
++}
++- (BOOL)isAudioMuted {
++  return _contents && _contents->IsAudioMuted();
 +}
 +- (void)downloadURL:(NSURL*)url {}
 +

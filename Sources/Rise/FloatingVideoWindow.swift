@@ -20,6 +20,7 @@ struct FloatingVideoScrollInput {
 }
 
 @MainActor final class FloatingVideoWindow: NSPanel {
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool { super.makeFirstResponder(pageFocusTarget(responder)) }
     let videoHost = FlippedView()
     let overlay = FloatingVideoOverlay()
     /// The last picture, shown while the page itself is back in its tab.

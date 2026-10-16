@@ -222,6 +222,12 @@ are most of them.
      learner run on the fork's pages. The shared engine takes any `SearchProvider`, so the Mac
      searches with Chrome's default engine; `PageFind` and `PageAssistant` take a
      `ScriptablePage`, which Rise's pages and the iPhone's WebKit view both are.
+   - **Focus:** focusing a page's view gives the keyboard to the page's own view
+     (`RCBrowserView.focusView`), as Chrome focuses its tabs; the holding view took it before,
+     so keys Rise sent the page after a switch or the palette went nowhere.
+   - **XCTest cases on Chromium:** the WebKit unit tests that needed a real page run as live
+     checks (`youtube`, `media`), nearly as written, through `Tests/Live/LiveXCTest.swift`, with
+     their pages served at the HTTPS addresses they name by `scripts/live-fixture-server.py`.
    - **Picture-in-picture windows for pages** (`documentPictureInPicture`) are Chrome's own
      floating windows: Rise's popup hook leaves them to Chrome.
    - **Rise's floating video** works on the fork as on WebKit: the `float` live check floats a

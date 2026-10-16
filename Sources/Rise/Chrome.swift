@@ -144,6 +144,7 @@ final class BrowserWindow: NSWindow {
     var smartRenameEvent: ((NSEvent) -> Bool)?
     /// Sees key presses with ⌘, ⌃ or ⌥ before the page does, for extensions' shortcuts.
     var extensionShortcutEvent: ((NSEvent) -> Bool)?
+    override func makeFirstResponder(_ responder: NSResponder?) -> Bool { super.makeFirstResponder(pageFocusTarget(responder)) }
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if undoEvent?(event) == true { return true }
         if smartRenameEvent?(event) == true { return true }
