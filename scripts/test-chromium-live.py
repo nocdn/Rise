@@ -20,6 +20,7 @@ import subprocess
 import sys
 import socket
 import tempfile
+import time
 
 checks = {"peek": "ChromiumPeekBenchmarks.swift", "features": "ChromiumFeatureChecks.swift", "extensions": "ChromiumExtensionChecks.swift",
           "scripts": "ChromiumScriptChecks.swift", "app": "ChromiumAppChecks.swift"}
@@ -57,6 +58,9 @@ folder = Path(keep) if keep else Path(tempfile.mkdtemp(prefix="rise-chromium-pee
 folder.mkdir(parents=True, exist_ok=True)
 probe = folder / "RiseProbe.app"
 shutil.rmtree(probe, ignore_errors=True)
+started = time.time()
+bundle_id = subprocess.run(["defaults", "read", str(app / "Contents/Info"), "CFBundleIdentifier"],
+                           capture_output=True, text=True).stdout.strip() or "dev.bartosz.Rise"
 subprocess.run(["ditto", str(app), str(probe)], check=True)
 # The probe takes Rise's name, so Chromium finds the helpers as "Rise Helper".
 executable = probe / "Contents/MacOS/Rise"
@@ -167,4 +171,12 @@ finally:
         server.terminate()
 if not keep:
     shutil.rmtree(folder, ignore_errors=True)
+# macOS keeps a copy of each app it launches, to check its signature against, which takes the
+# probe's full size once its folder is gone; copies from this run go too, unless another run's
+# probe is still going.
+clones = Path(tempfile.gettempdir()).parent / "X" / f"{bundle_id}.code_sign_clone"
+if clones.is_dir() and subprocess.run(["pgrep", "-f", "RiseProbe.app/Contents/MacOS"], capture_output=True).returncode != 0:
+    for clone in clones.glob("code_sign_clone.*"):
+        if clone.stat().st_mtime >= started - 5 and (clone / "RiseProbe.app.bundle").exists():
+            shutil.rmtree(clone, ignore_errors=True)
 sys.exit(result.returncode)

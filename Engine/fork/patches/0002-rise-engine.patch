@@ -1210,10 +1210,10 @@ index 0000000000..cabcb68258
 +#endif  // CHROME_BROWSER_RISE_CHROME_BROWSER_MAIN_EXTRA_PARTS_RISE_H_
 diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
 new file mode 100644
-index 0000000000..b87881cc21
+index 0000000000..14bbc07a64
 --- /dev/null
 +++ b/chrome/browser/rise/rise_bridge.mm
-@@ -0,0 +1,3643 @@
+@@ -0,0 +1,3791 @@
 +// Copyright 2026 The Rise Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -1298,6 +1298,8 @@ index 0000000000..b87881cc21
 +#include "chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.h"
 +#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 +#include "content/public/browser/web_contents_delegate.h"
++#include "components/web_modal/web_contents_modal_dialog_host.h"
++#include "base/observer_list.h"
 +#include "extensions/browser/install_prompt_data.h"
 +#include "extensions/common/extension.h"
 +#include "extensions/common/manifest.h"
@@ -1468,6 +1470,119 @@ index 0000000000..b87881cc21
 +      index, std::move(tab),
 +      pinned ? AddTabTypes::ADD_PINNED : AddTabTypes::ADD_NONE);
 +}
++
++// Where Chrome's dialogs for a page go: over the page, below its top, in the
++// window Rise shows it in (or the window in front, while it's in none). Chrome
++// only makes a dialog a child of its own windows, so the host makes it one of
++// Rise's, to move with it.
++class PageDialogHost : public web_modal::WebContentsModalDialogHost {
++ public:
++  explicit PageDialogHost(NSView* page) : page_(page) {}
++  ~PageDialogHost() override {
++    observers_.Notify(&web_modal::ModalDialogHostObserver::OnHostDestroying);
++  }
++
++  void NotifyPositionRequiresUpdate() override {
++    observers_.Notify(
++        &web_modal::ModalDialogHostObserver::OnPositionRequiresUpdate);
++    AttachDialogs(0);
++  }
++  gfx::NativeView GetHostView() const override {
++    NSView* content = Content();
++    return gfx::NativeView(content);
++  }
++  gfx::Point GetDialogPosition(const gfx::Size& size) override {
++    NSView* content = Content();
++    NSView* page = page_;
++    NSRect area = page && page.window == content.window
++                      ? [page convertRect:page.bounds toView:content]
++                      : content.bounds;
++    CGFloat top = content.isFlipped ? NSMinY(area)
++                                    : NSHeight(content.bounds) - NSMaxY(area);
++    return gfx::Point(NSMinX(area) + (NSWidth(area) - size.width()) / 2, top);
++  }
++  gfx::Size GetMaximumDialogSize() override {
++    NSView* page = page_;
++    NSSize size = page.window ? page.bounds.size : Content().bounds.size;
++    return gfx::Size(size.width, size.height);
++  }
++  bool ShouldActivateDialog() const override {
++    return Content().window.isKeyWindow;
++  }
++  void AddObserver(web_modal::ModalDialogHostObserver* observer) override {
++    observers_.AddObserver(observer);
++    // A dialog being shown, whose window is ready on the next turn.
++    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++        FROM_HERE, base::BindOnce(&PageDialogHost::AttachDialogs,
++                                  weak_factory_.GetWeakPtr(), 20));
++  }
++  void RemoveObserver(web_modal::ModalDialogHostObserver* observer) override {
++    observers_.RemoveObserver(observer);
++  }
++
++ private:
++  NSView* Content() const {
++    NSView* page = page_;
++    NSWindow* window = page.window;
++    if (!window) {
++      window = NSApp.keyWindow ?: NSApp.mainWindow ?: NSApp.orderedWindows.firstObject;
++    }
++    return window.contentView;
++  }
++
++  // Chrome's dialog windows that are no one's children yet, once they show
++  // (trying for a second): made children of the page's window, over the page.
++  void AttachDialogs(int tries = 20) {
++    NSWindow* parent = Content().window;
++    if (!dialogs_) {
++      dialogs_ = [NSHashTable weakObjectsHashTable];
++    }
++    Class dialog = NSClassFromString(@"NativeWidgetMacNSWindow");
++    bool waiting = false;
++    for (NSWindow* window in NSApp.windows) {
++      if (window == parent || ![window isKindOfClass:dialog] ||
++          window.parentWindow || [dialogs_ containsObject:window]) {
++        continue;
++      }
++      if (!window.visible) {
++        waiting = true;
++        continue;
++      }
++      [parent addChildWindow:window ordered:NSWindowAbove];
++      [dialogs_ addObject:window];
++    }
++    for (NSWindow* window in dialogs_) {
++      Place(window);
++    }
++    if (waiting && tries > 0) {
++      base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
++          FROM_HERE,
++          base::BindOnce(&PageDialogHost::AttachDialogs,
++                         weak_factory_.GetWeakPtr(), tries - 1),
++          base::Milliseconds(50));
++    }
++  }
++
++  // Puts `window` where Chrome's dialogs go over the page.
++  void Place(NSWindow* window) {
++    NSView* content = Content();
++    if (!content.window || window.parentWindow != content.window) {
++      return;
++    }
++    NSSize size = window.frame.size;
++    gfx::Point at = GetDialogPosition(gfx::Size(size.width, size.height));
++    NSPoint top_left = NSMakePoint(
++        at.x(), content.isFlipped ? at.y() : NSHeight(content.bounds) - at.y());
++    NSPoint screen = [content.window
++        convertPointToScreen:[content convertPoint:top_left toView:nil]];
++    [window setFrameOrigin:NSMakePoint(screen.x, screen.y - size.height)];
++  }
++
++  __weak NSView* page_;
++  base::ObserverList<web_modal::ModalDialogHostObserver> observers_;
++  NSHashTable<NSWindow*>* dialogs_ = nil;
++  base::WeakPtrFactory<PageDialogHost> weak_factory_{this};
++};
 +
 +// The window the person used last, of those Rise shows.
 +BrowserWindowInterface* LastActiveShownBrowser() {
@@ -1697,6 +1812,7 @@ index 0000000000..b87881cc21
 +- (BOOL)showContextMenu:(RCContextMenu*)menu;
 +- (instancetype)initWithFrame:(NSRect)frame
 +                  tabContents:(content::WebContents*)contents;
++- (web_modal::WebContentsModalDialogHost*)dialogHost;
 +- (void)inspectFrame:(content::GlobalRenderFrameHostId)frame
 +                   x:(int)x
 +                   y:(int)y;
@@ -2366,7 +2482,10 @@ index 0000000000..b87881cc21
 +      return;
 +    }
 +    net::Error error = navigation->GetNetErrorCode();
-+    if (error == net::OK || error == net::ERR_ABORTED) {
++    // A site's sign-in shows over an empty page Chrome commits for it; Chrome
++    // loads the page, or the site's own refusal, once it's answered.
++    if (error == net::OK || error == net::ERR_ABORTED ||
++        error == net::ERR_INVALID_AUTH_CREDENTIALS) {
 +      return;
 +    }
 +    [view_ loadFailed:error
@@ -2491,6 +2610,13 @@ index 0000000000..b87881cc21
 +      }));
 +  // Pages' requests pass Rise's ad blocking.
 +  InstallAdBlocking();
++  // Chrome's dialogs for a page go over it.
++  RiseBrowserWindow::SetDialogHostFinder(
++      base::BindRepeating([](content::WebContents* contents)
++                              -> web_modal::WebContentsModalDialogHost* {
++        RCBrowserView* view = ViewOf(contents);
++        return view ? [view dialogHost] : nullptr;
++      }));
 +  // As AppKit tells an app's delegate; Chrome posts it as it quits.
 +  [NSNotificationCenter.defaultCenter
 +      addObserverForName:NSApplicationWillTerminateNotification
@@ -2644,6 +2770,8 @@ index 0000000000..b87881cc21
 +  // An extension popup's: its page, which is no tab, and its delegate.
 +  std::unique_ptr<content::WebContents> _popupContents;
 +  std::unique_ptr<PopupDelegate> _popupDelegate;
++  // Where Chrome's dialogs for the page go.
++  std::unique_ptr<PageDialogHost> _dialogHost;
 +}
 +
 +@synthesize delegate = _delegate;
@@ -2698,6 +2826,26 @@ index 0000000000..b87881cc21
 +
 +- (BOOL)isFlipped {
 +  return YES;
++}
++
++- (web_modal::WebContentsModalDialogHost*)dialogHost {
++  if (!_dialogHost) {
++    _dialogHost = std::make_unique<PageDialogHost>(self);
++  }
++  return _dialogHost.get();
++}
++// Chrome's dialogs over the page follow it.
++- (void)setFrameSize:(NSSize)size {
++  [super setFrameSize:size];
++  if (_dialogHost) {
++    _dialogHost->NotifyPositionRequiresUpdate();
++  }
++}
++- (void)viewDidMoveToWindow {
++  [super viewDidMoveToWindow];
++  if (_dialogHost) {
++    _dialogHost->NotifyPositionRequiresUpdate();
++  }
 +}
 +
 +- (void)browserStarted {
@@ -4859,10 +5007,10 @@ index 0000000000..b87881cc21
 +@end
 diff --git a/chrome/browser/rise/rise_browser_window.cc b/chrome/browser/rise/rise_browser_window.cc
 new file mode 100644
-index 0000000000..f809629592
+index 0000000000..f59fefc262
 --- /dev/null
 +++ b/chrome/browser/rise/rise_browser_window.cc
-@@ -0,0 +1,448 @@
+@@ -0,0 +1,460 @@
 +// Copyright 2012 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -5023,7 +5171,16 @@ index 0000000000..f809629592
 +  static base::NoDestructor<RiseBrowserWindow::CloseHandler> handler;
 +  return *handler;
 +}
++RiseBrowserWindow::DialogHostFinder& DialogHostFinderForWindows() {
++  static base::NoDestructor<RiseBrowserWindow::DialogHostFinder> finder;
++  return *finder;
++}
 +}  // namespace
++
++// static
++void RiseBrowserWindow::SetDialogHostFinder(DialogHostFinder finder) {
++  DialogHostFinderForWindows() = std::move(finder);
++}
 +
 +// static
 +void RiseBrowserWindow::SetCloseHandler(CloseHandler handler) {
@@ -5239,13 +5396,16 @@ index 0000000000..f809629592
 +
 +web_modal::WebContentsModalDialogHost*
 +RiseBrowserWindow::GetWebContentsModalDialogHost() {
-+  return nullptr;
++  tabs::TabInterface* tab = browser_ ? browser_->GetActiveTabInterface() : nullptr;
++  return GetWebContentsModalDialogHostFor(tab ? tab->GetContents() : nullptr);
 +}
 +
 +web_modal::WebContentsModalDialogHost*
 +RiseBrowserWindow::GetWebContentsModalDialogHostFor(
 +    content::WebContents* web_contents) {
-+  return nullptr;
++  return web_contents && DialogHostFinderForWindows()
++             ? DialogHostFinderForWindows().Run(web_contents)
++             : nullptr;
 +}
 +
 +ExclusiveAccessContext* RiseBrowserWindow::GetExclusiveAccessContext() {
@@ -5313,10 +5473,10 @@ index 0000000000..f809629592
 +}
 diff --git a/chrome/browser/rise/rise_browser_window.h b/chrome/browser/rise/rise_browser_window.h
 new file mode 100644
-index 0000000000..568cfefd04
+index 0000000000..be29f012bb
 --- /dev/null
 +++ b/chrome/browser/rise/rise_browser_window.h
-@@ -0,0 +1,330 @@
+@@ -0,0 +1,337 @@
 +// Copyright 2026 The Rise Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -5391,6 +5551,13 @@ index 0000000000..568cfefd04
 +  // What Chrome closing a window does (to quit, say), for Rise's bridge.
 +  using CloseHandler = base::RepeatingCallback<void(BrowserWindowInterface*)>;
 +  static void SetCloseHandler(CloseHandler handler);
++
++  // Where Chrome's dialogs for a page (a site's sign-in, say) go: over the
++  // page, wherever Rise shows it. From Rise's bridge.
++  using DialogHostFinder =
++      base::RepeatingCallback<web_modal::WebContentsModalDialogHost*(
++          content::WebContents*)>;
++  static void SetDialogHostFinder(DialogHostFinder finder);
 +
 +  void Show() override;
 +  void ShowInactive() override {}

@@ -1,0 +1,64 @@
+# Where Chrome looks for its own window (BrowserView), which Rise's fork does not have: listed by
+# scripts/engine/fork-reach-ins.py, reviewed. Columns: file, function, whether the code checks for the
+# window (unchecked would crash if reached), verdict, why. Verdicts: unreached (Rise never runs it),
+# harmless (does nothing without the window), rise (Rise does it its own way), todo (needs Rise's version).
+#
+# Also found by testing, outside these lookups: Chrome's dialogs for a page (a site's sign-in, screen
+# sharing) ask the window for a dialog host, which Rise gives them over the page (PageDialogHost in the
+# bridge). Still todo: picture-in-picture windows for pages, and device choosers (USB, serial, HID,
+# Bluetooth), which do nothing yet.
+chrome/browser/accessibility/ax_main_node_annotator_controller.cc	AnnounceToScreenReader	checked	harmless	Checks for the window first
+chrome/browser/content_settings/chrome_content_settings_utils.cc	UpdateLocationBarUiForWebContents	unchecked	unreached	Only for picture-in-picture windows, which Rise does not open yet (see the picture-in-picture entry)
+chrome/browser/contextual_tasks/contextual_tasks_extensions_container.cc	GetFocusManagerForAccelerator	checked	unreached	Contextual tasks side panel
+chrome/browser/contextual_tasks/contextual_tasks_side_panel_coordinator.cc	ContextualTasksSidePanelCoordinator::ShowPageInfoBubble	checked	unreached	Contextual tasks side panel
+chrome/browser/contextual_tasks/search_ai_mode_promo_tab_helper.cc	SearchAiModePromoTabHelper::MaybeShowPromo	checked	harmless	A promo, skipped without the window
+chrome/browser/dictation/application_registration_delegate.cc	ApplicationScopedHotkeyRegistration::RegisterAccelerator	unchecked	unreached	Dictation hotkeys, a feature Rise leaves off
+chrome/browser/dictation/application_registration_delegate.cc	ApplicationScopedHotkeyRegistration::UnregisterAccelerator	unchecked	unreached	Dictation hotkeys, a feature Rise leaves off
+chrome/browser/dictation/dictation_keyed_service.cc	GetWebContentsForHotkey	unchecked	unreached	Dictation, a feature Rise leaves off
+chrome/browser/glic/browser_ui/context_sharing_border_view.cc	ContextSharingBorderView::DrawEffect	unchecked	unreached	Gemini in Chrome (Glic) draws in Chrome's window only
+chrome/browser/glic/browser_ui/context_sharing_border_view.cc	ContextSharingBorderView::DrawSimplifiedEffect	unchecked	unreached	Gemini in Chrome (Glic) draws in Chrome's window only
+chrome/browser/glic/browser_ui/context_sharing_border_view.cc	ContextSharingBorderView::PopulateShaderUniforms	unchecked	unreached	Gemini in Chrome (Glic) draws in Chrome's window only
+chrome/browser/glic/common/application_hotkey_delegate.cc	(file)	unchecked	unreached	Gemini in Chrome (Glic)
+chrome/browser/glic/glic_metrics.cc	GlicMetrics::GetChromeRelativePositionOfPoint	checked	unreached	Gemini in Chrome (Glic)
+chrome/browser/glic/widget/browser_conditions.cc	GetActiveGlicEligibleBrowser	unchecked	unreached	Gemini in Chrome (Glic)
+chrome/browser/indigo/indigo_image_replacement_manager.cc	IndigoImageReplacementManager::NotifyReplacementsReady	checked	harmless	Skips its overlay without Chrome's window
+chrome/browser/indigo/indigo_image_replacement_manager.cc	IndigoImageReplacementManager::ReplacementFrameAttached	checked	harmless	Skips its overlay without Chrome's window
+chrome/browser/indigo/indigo_page_action_controller.cc	IndigoPageActionController::GetIndigoOverlayView	unchecked	unreached	A toolbar page action
+chrome/browser/lens/region_search/lens_region_search_controller.cc	OpenLensRegionSearchInstructions	unchecked	unreached	Google Lens, from Chrome's menus only
+chrome/browser/media/webrtc/display_media_access_handler.cc	DisplayMediaAccessHandler::ProcessQueuedPickerRequest	checked	rise	Screen sharing: its picker shows through Rise's dialog host
+chrome/browser/picture_in_picture/auto_picture_in_picture_window_occlusion_helper_widget.cc	AutoPictureInPictureWindowOcclusionHelperWidget::OnBrowserClosed	checked	harmless	Checks for the window first
+chrome/browser/picture_in_picture/auto_picture_in_picture_window_occlusion_helper_widget.cc	AutoPictureInPictureWindowOcclusionHelperWidget::OnBrowserCreated	checked	harmless	Checks for the window first
+chrome/browser/picture_in_picture/auto_picture_in_picture_window_occlusion_helper_widget.cc	AutoPictureInPictureWindowOcclusionHelperWidget::StartObserving	checked	harmless	Checks for the window first
+chrome/browser/picture_in_picture/auto_picture_in_picture_window_occlusion_helper_widget.cc	GetOcclusionState	checked	harmless	Checks for the window first
+chrome/browser/profiles/batch_upload/batch_upload_service.cc	BatchUploadService::TriggerAvatarButtonSavingDataText	checked	unreached	Sync's avatar button
+chrome/browser/ui/browser_actions.cc	BrowserActions::InitializeChromeMenuActions	unchecked	unreached	Chrome's toolbar and menu actions, run only from Chrome's toolbar
+chrome/browser/ui/browser_actions.cc	BrowserActions::InitializePageActionIconActions	checked	unreached	Chrome's toolbar and menu actions, run only from Chrome's toolbar
+chrome/browser/ui/browser_actions.cc	BrowserActions::InitializeToolbarAndMiscActions	unchecked	unreached	Chrome's toolbar and menu actions, run only from Chrome's toolbar
+chrome/browser/ui/browser_command_controller.cc	BrowserCommandController::UpdateCommandsForFind	unchecked	harmless	Checks for the window first
+chrome/browser/ui/browser_commands.cc	CloseTab	unchecked	unreached	Chrome's Close Tab command (Rise closes tabs itself) and Windows-only window commands
+chrome/browser/ui/browser_commands.cc	OpenMoveWindow	checked	unreached	Chrome's Close Tab command (Rise closes tabs itself) and Windows-only window commands
+chrome/browser/ui/browser_commands.cc	OpenSizeWindow	checked	unreached	Chrome's Close Tab command (Rise closes tabs itself) and Windows-only window commands
+chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc	BrowserWebContentsDelegate::SetResizableFromWebAPI	checked	harmless	Checks for the window first
+chrome/browser/ui/browser_window/internal/browser_window_features.cc	BrowserWindowFeatures::InitPostWindowConstruction	checked	harmless	Checks for the window first
+chrome/browser/ui/cocoa/accelerator_utils_cocoa.mm	AcceleratorProviderForBrowser	checked	rise	Menu shortcuts: Rise has its own menus
+chrome/browser/ui/cocoa/share_menu_controller.mm	CanShare	checked	rise	Rise has its own Share
+chrome/browser/ui/cocoa/touchbar/web_textfield_touch_bar_controller.mm	(file)	checked	harmless	Touch Bar, skipped without the window
+chrome/browser/ui/commerce/commerce_ui_tab_helper.cc	CommerceUiTabHelper::GetDiscountsBubbleAnchor	checked	harmless	A toolbar bubble, skipped
+chrome/browser/ui/desktop_to_mobile_promos/ios_promo_controller.cc	IOSPromoController::CanShowIOSPromo	checked	harmless	A promo, skipped
+chrome/browser/ui/desktop_to_mobile_promos/ios_promo_controller.cc	IOSPromoController::MaybeShowTabGroupsPromo	checked	harmless	A promo, skipped
+chrome/browser/ui/desktop_to_mobile_promos/ios_promos_utils.cc	OnIOSPromoClassificationResult	checked	harmless	A promo, skipped
+chrome/browser/ui/extensions/extension_dialog_utils_views.cc	ShowDialog	unchecked	unreached	The toolbar-anchored version; the extension dialogs Rise reaches take the native window and go through Rise's dialog host
+chrome/browser/ui/extensions/extension_install_ui_desktop.cc	ExtensionInstallUIDesktop::OnInstallSuccess	checked	rise	Rise turns off the after-install bubble and pins the extension
+chrome/browser/ui/lens/overlay_base_controller.cc	OverlayBaseController::GetHostView	checked	unreached	Google Lens overlay
+chrome/browser/ui/omnibox/chrome_omnibox_client.cc	ChromeOmniboxClient::CheckConditionsAndLaunchSurvey	checked	unreached	Chrome's address bar
+chrome/browser/ui/performance_controls/memory_saver_bubble_controller.cc	MemorySaverBubbleController::InvokeAction	unchecked	unreached	Chrome's toolbar memory saver icon
+chrome/browser/ui/read_anything/read_anything_side_panel_controller_utils.cc	IsReadAnythingEntryShowing	checked	harmless	Checks for the window first
+chrome/browser/ui/sad_tab_controller.cc	FindContentsWebView	unchecked	rise	Rise shows crashed pages itself (EmbedderTabHooks::ShowsCrashedPages)
+chrome/browser/ui/startup/default_browser_prompt/default_browser_bubble_dialog_manager.cc	DefaultBrowserBubbleDialogManager::ShowForBrowser	checked	harmless	A prompt, skipped
+chrome/browser/ui/tabs/vertical_tab_iph_controller.cc	VerticalTabIphController::MaybeShowPromo	checked	harmless	A promo, skipped
+chrome/browser/ui/web_applications/web_app_launch_utils.cc	FocusAppContainer	unchecked	unreached	Installed web apps, which Rise does not offer
+chrome/browser/ui/web_applications/web_app_ui_manager_impl.cc	WebAppUiManagerImpl::IsAppMigrationDialogShowing	checked	harmless	Checks for the window first
+chrome/browser/ui/webauthn/ambient/ambient_signin_controller.cc	AmbientSigninController::ShowBubbleView	unchecked	unreached	Passkey sign-in bubble anchored to Chrome's toolbar; part of the passkeys decision
+chrome/browser/ui/webui/downloads/downloads_dom_handler.cc	DownloadsDOMHandler::OpenFileRequiringGesture	checked	harmless	Checks for the window first
+chrome/browser/ui/webui/top_chrome/webui_contents_preload_manager.cc	GetLastActiveBrowserWidget	checked	harmless	Checks for the window first
+chrome/browser/ui/webui_browser/webui_browser_window.cc	WebUIBrowserWindow::FromBrowser	unchecked	unreached	Chrome's experimental WebUI window

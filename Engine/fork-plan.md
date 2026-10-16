@@ -185,6 +185,21 @@ are most of them.
    - **Harmless:** the code does nothing when there's no `BrowserView`.
 
    A script lists them, and a Chrome update that adds one is flagged before it ships.
+
+   Where it stands:
+   - **The list:** `scripts/engine/fork-reach-ins.py` finds 55 places outside Chrome's own
+     window code (21 using the window without checking), all reviewed in
+     `Engine/fork/reach-ins.tsv`: 28 never reached in Rise, 22 harmless, 5 done Rise's way. A
+     place not in the list fails the script.
+   - **Dialogs for a page:** testing found more than the lookups do. Chrome's dialogs for a page
+     (a site's sign-in, the screen-sharing picker) ask the window for a dialog host, and crashed
+     Rise without one. Each page view now has one (`PageDialogHost` in the bridge): Chrome's
+     dialog shows over the page, below its top, as in Chrome, attached to Rise's window so it
+     moves with it. Chrome only places and attaches dialogs over its own windows, so the host does
+     both. A sign-in's empty page isn't shown as Rise's error page.
+   - **Still to do:** picture-in-picture windows for pages (`documentPictureInPicture`) and device
+     choosers (USB, serial, HID, Bluetooth) do nothing yet: the page's request waits.
+   - **The test path:** no `CHECK_IS_TEST()` place is reached in the live checks.
 5. **Chrome features Rise now gets.** Decide, one by one, what Rise shows: Rise's own permission
    prompts, password and autofill (or none, as now), extension side panels in Rise's sidebar,
    Chrome's memory saver.

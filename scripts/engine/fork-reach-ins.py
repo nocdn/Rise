@@ -4,7 +4,7 @@ have: for Rise's window, the lookup finds nothing. Each place either checks for 
 window regardless, which would crash in Rise. Places are told apart by file and function, so they
 survive lines moving.
 
-Engine/fork/reach-ins.tsv holds the places reviewed, with what each needs (see its header). A
+Engine/fork/reach-ins.tsv holds the places reviewed, with a verdict for each (see its header). A
 place not in it, such as one a Chromium update adds, is listed as new, and the script fails, so
 it's looked at before the update ships.
 
@@ -19,7 +19,7 @@ import sys
 LOOKUPS = re.compile(r"BrowserView::GetBrowserViewFor(?:Browser|NativeWindow)\s*\(")
 # Code that doesn't run in Rise: tests, other platforms, and Chrome's own window UI, which only
 # exists alongside a BrowserView.
-SKIP = re.compile(r"(_unittest|_browsertest|_interactive_uitest|_uitest|_apitest|_pixeltest|test_util|"
+SKIP = re.compile(r"(_unittest|_browsertest|browser_test_|_interactive_uitest|_uitest|_apitest|_pixeltest|test_util|"
                   r"_test_base|_test\.|/test/|/ash/|chromeos|_chromeos|/android/|_android|_win\.|/win/|"
                   r"_linux|/linux/|_ozone|/ui/views/)")
 FUNCTION = re.compile(r"^[A-Za-z_][\w:<>,\s\*&~]*?\b([\w:~]+::[\w~]+|[\w~]+)\s*\(")
