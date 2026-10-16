@@ -156,6 +156,25 @@ are most of them.
    Chrome's real popup host, shown in Rise's popover. The Web Store's own install button should
    then work, with the store's "Switch to Chrome" prompts hidden. The `extensions` live check
    passes, plus uBlock Origin Lite, Dark Reader and Bitwarden by hand.
+
+   Where it stands (on the fork):
+   - **Buttons, badges and icons:** `RCExtensionAction` reads Chrome's `ExtensionAction`s and
+     clicks through `ExtensionActionRunner`, which grants the tab, as Chrome's toolbar does.
+   - **Windows and tabs:** the waiting `Browser` is hidden from extensions (an embedder's window
+     that stays open while empty and isn't shown). A page in it has the person's last window as
+     its current one. A tab Chrome opens in a Rise window (`tabs.create`) is handed to Rise
+     (`tabStripAdoptTab:`), keeping its id.
+   - **Popups:** a page of their own, in no tab strip, of view type popup, sized by Chrome's
+     auto-resize (25 by 25 to 800 by 600), as Chrome's popup host makes them.
+   - **The page menu:** extensions' entries come from Chrome's `ContextMenuMatcher`.
+   - **Shortcuts:** Rise's window asks for an extension's shortcut on key presses; the button's
+     opens the popup as a click does, the rest go out as `commands.onCommand`.
+   - **Installs:** Rise's "Add to Rise" button and install sheet (`0005`, the same as CEF's).
+     uBlock Origin Lite, Dark Reader and Bitwarden install, run and show their popups.
+   - **Still open:** the store's own button stays greyed out, and its "Switch to Chrome" prompts
+     show, as the store sees Chromium, not Chrome. Side panels wait on stage 5.
+
+   The `extensions` live check passes on the fork, 19 of 19.
 4. **Where Chrome reaches into its own window.** Today 116 files in `chrome/browser` look for
    Chrome's `BrowserView` (45 outside `ui/views`). Each is sorted into one of three groups:
    - **Not needed:** interface Rise replaces (bubbles, toolbar, side panel). Nothing to do.

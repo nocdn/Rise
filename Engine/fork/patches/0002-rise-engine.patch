@@ -80,10 +80,10 @@ index 8bc5981f98..eb36c7932d 100644
  // In special cases, code should not execute in a test.
  #define CHECK_IS_NOT_TEST(...) \
 diff --git a/chrome/app/framework.exports b/chrome/app/framework.exports
-index 37c881f5d2..9ba99564b7 100644
+index 37c881f5d2..c76a9fb948 100644
 --- a/chrome/app/framework.exports
 +++ b/chrome/app/framework.exports
-@@ -19,3 +19,26 @@
+@@ -19,3 +19,28 @@
  _ChromeAppModeStart_v8
  _ChromeMain
  _ChromeWebAppShortcutCopierMain
@@ -101,6 +101,8 @@ index 37c881f5d2..9ba99564b7 100644
 +_OBJC_CLASS_$_RCDownload
 +_OBJC_METACLASS_$_RCDownload
 +_OBJC_CLASS_$_RCContextMenu
++_OBJC_CLASS_$_RCExtensionShortcut
++_OBJC_CLASS_$_RCExtensionMenuItem
 +_OBJC_METACLASS_$_RCContextMenu
 +_OBJC_CLASS_$_RCBrowserView
 +_OBJC_METACLASS_$_RCBrowserView
@@ -111,10 +113,10 @@ index 37c881f5d2..9ba99564b7 100644
 +_OBJC_CLASS_$_RCExtensions
 +_OBJC_METACLASS_$_RCExtensions
 diff --git a/chrome/app/framework.order b/chrome/app/framework.order
-index 6dbc3aeff3..b48fccae54 100644
+index 6dbc3aeff3..11bfa62335 100644
 --- a/chrome/app/framework.order
 +++ b/chrome/app/framework.order
-@@ -31,3 +31,27 @@ _ChromeWebAppShortcutCopierMain
+@@ -31,3 +31,29 @@ _ChromeWebAppShortcutCopierMain
  
  # _ChromeMain must be listed last.  That's the whole point of this file.
  _ChromeMain
@@ -133,6 +135,8 @@ index 6dbc3aeff3..b48fccae54 100644
 +_OBJC_CLASS_$_RCDownload
 +_OBJC_METACLASS_$_RCDownload
 +_OBJC_CLASS_$_RCContextMenu
++_OBJC_CLASS_$_RCExtensionShortcut
++_OBJC_CLASS_$_RCExtensionMenuItem
 +_OBJC_METACLASS_$_RCContextMenu
 +_OBJC_CLASS_$_RCBrowserView
 +_OBJC_METACLASS_$_RCBrowserView
@@ -473,6 +477,76 @@ index 0e2ffe2ae7..f98f0fbfac 100644
      // If there is a non-neutral confirmation reason, prompt the user.
      if (confirmation_reason_ != DownloadConfirmationReason::NONE) {
        base::FilePath sanitized_path = virtual_path_;
+diff --git a/chrome/browser/extensions/browser_extension_window_controller.cc b/chrome/browser/extensions/browser_extension_window_controller.cc
+index b48c0452f3..80e4a08fd2 100644
+--- a/chrome/browser/extensions/browser_extension_window_controller.cc
++++ b/chrome/browser/extensions/browser_extension_window_controller.cc
+@@ -16,6 +16,7 @@
+ #include "chrome/browser/profiles/profile.h"
+ #include "chrome/browser/tab_list/tab_list_interface.h"
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window.h"
+ #include "chrome/browser/ui/browser_window/public/create_browser_window.h"
+ #include "chrome/browser/ui/navigator/browser_navigator_params.h"
+ #include "chrome/common/extensions/api/tabs.h"
+@@ -191,6 +192,13 @@ bool BrowserExtensionWindowController::IsVisibleToTabsAPIForExtension(
+     return false;
+   }
+ 
++  // A window an embedder keeps without showing it (Rise's, of pages that
++  // aren't tabs, such as a Peek) isn't one of the person's windows.
++  if (const BrowserWindow* window = BrowserWindow::FromBrowser(&browser_.get());
++      window && window->StaysOpenWhenEmpty() && !window->IsVisible()) {
++    return false;
++  }
++
+   return (window_type_ != api::tabs::WindowType::kDevtools) ||
+          allow_dev_tools_windows;
+ }
+diff --git a/chrome/browser/extensions/chrome_extension_function_details.cc b/chrome/browser/extensions/chrome_extension_function_details.cc
+index 9cfacb4358..cf91f21cc2 100644
+--- a/chrome/browser/extensions/chrome_extension_function_details.cc
++++ b/chrome/browser/extensions/chrome_extension_function_details.cc
+@@ -60,10 +60,15 @@ WindowController* ChromeExtensionFunctionDetails::GetCurrentWindowController()
+   WindowController* window_controller = nullptr;
+   ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
+       [&](BrowserWindowInterface* browser) {
+-        if (browser->GetProfile() == profile ||
+-            (function_->include_incognito_information() &&
+-             browser->GetProfile()->GetOriginalProfile() == profile)) {
+-          window_controller = BrowserExtensionWindowController::From(browser);
++        WindowController* controller =
++            BrowserExtensionWindowController::From(browser);
++        if ((browser->GetProfile() == profile ||
++             (function_->include_incognito_information() &&
++              browser->GetProfile()->GetOriginalProfile() == profile)) &&
++            controller &&
++            controller->IsVisibleToTabsAPIForExtension(
++                nullptr, /*allow_dev_tools_windows=*/true)) {
++          window_controller = controller;
+           return false;  // Stop iterating.
+         }
+         return true;  // Continue iterating.
+diff --git a/chrome/browser/extensions/tab_helper.cc b/chrome/browser/extensions/tab_helper.cc
+index 33a4d3ac7d..87f3cafd42 100644
+--- a/chrome/browser/extensions/tab_helper.cc
++++ b/chrome/browser/extensions/tab_helper.cc
+@@ -327,7 +327,14 @@ void TabHelper::WebContentsDestroyed() {
+ }
+ 
+ WindowController* TabHelper::GetExtensionWindowController() {
+-  return ExtensionTabUtil::GetWindowControllerOfTab(web_contents());
++  WindowController* controller =
++      ExtensionTabUtil::GetWindowControllerOfTab(web_contents());
++  // A page in a window an embedder doesn't show has the person's current
++  // window as its own, as a page in no window does.
++  return controller && controller->IsVisibleToTabsAPIForExtension(
++                           nullptr, /*allow_dev_tools_windows=*/true)
++             ? controller
++             : nullptr;
+ }
+ 
+ void TabHelper::OnExtensionLoaded(content::BrowserContext* browser_context,
 diff --git a/chrome/browser/external_protocol/external_protocol_handler.cc b/chrome/browser/external_protocol/external_protocol_handler.cc
 index 1f269b2237..cd4986290c 100644
 --- a/chrome/browser/external_protocol/external_protocol_handler.cc
@@ -619,10 +693,10 @@ index 0000000000..aefb5133bc
 +}
 diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
 new file mode 100644
-index 0000000000..9a9c618b02
+index 0000000000..af85ed9abc
 --- /dev/null
 +++ b/chrome/browser/rise/RiseChromium.h
-@@ -0,0 +1,419 @@
+@@ -0,0 +1,461 @@
 +#import <AppKit/AppKit.h>
 +
 +NS_ASSUME_NONNULL_BEGIN
@@ -776,6 +850,24 @@ index 0000000000..9a9c618b02
 +  RCEditCommandSelectAll,
 +};
 +
++/// An extension's entry in the page menu (chrome.contextMenus), as Chrome would show it for the
++/// click: an extension with several is one entry, its name, holding them.
++RC_EXPORT @interface RCExtensionMenuItem : NSObject
++/// Empty for a separator.
++@property (nonatomic, readonly) NSString *title;
++@property (nonatomic, readonly) BOOL separator;
++@property (nonatomic, readonly) BOOL enabled;
++/// A checkbox or radio entry that's on.
++@property (nonatomic, readonly) BOOL checked;
++/// The extension's icon, on an extension's own entry.
++@property (nonatomic, readonly, nullable) NSImage *icon;
++/// What a submenu holds; empty for an entry.
++@property (nonatomic, readonly) NSArray<RCExtensionMenuItem *> *children;
++- (instancetype)init NS_UNAVAILABLE;
++/// Tells the extension it was chosen.
++- (void)perform;
++@end
++
 +/// What a right-click in a page was on, for Rise to build its menu from, and what that menu can
 +/// do there. Actions apply to the frame clicked in.
 +RC_EXPORT @interface RCContextMenu : NSObject
@@ -803,6 +895,8 @@ index 0000000000..9a9c618b02
 +- (void)lookUp;
 +/// Has the page's DevTools select the element clicked, once they're attached if they aren't yet.
 +- (void)inspect;
++/// Extensions' entries for what was clicked.
++@property (nonatomic, readonly) NSArray<RCExtensionMenuItem *> *extensionItems;
 +@end
 +
 +@class RCBrowserView;
@@ -858,6 +952,9 @@ index 0000000000..9a9c618b02
 +/// The page was right-clicked; Rise shows its menu for `menu`.
 +- (void)browserView:(RCBrowserView *)browserView
 +    showContextMenu:(RCContextMenu *)menu NS_SWIFT_NAME(browserView(_:showContextMenu:));
++/// An extension popup's page has a new size, as Chrome sizes popups to what they show (see
++/// `sizesExtensionPopups`), in points.
++- (void)browserView:(RCBrowserView *)browserView didChangePreferredSize:(NSSize)size;
 +/// The page, at `origin`, asks for a dialog; call `completion` once, with whether it was accepted
 +/// and, for a prompt, the text.
 +- (void)browserView:(RCBrowserView *)browserView
@@ -904,6 +1001,9 @@ index 0000000000..9a9c618b02
 +/// A Chrome extension's popup, as extensions see it (a "popup" view, not a tab). Set it before
 +/// the page loads.
 +@property (nonatomic) BOOL extensionPopup;
++/// Whether the engine sizes an extension popup's page to what it shows, from 25 by 25 to 800 by
++/// 600 points, as Chrome does, telling the delegate; if not, Rise measures the page.
++@property (class, nonatomic, readonly) BOOL sizesExtensionPopups;
 +/// The back/forward history, with scroll positions and forms, for restoring at the next launch.
 +@property (nonatomic, readonly, nullable) NSData *navigationState;
 +/// Gives a page that hasn't loaded anything that history and loads its current entry, or loads
@@ -988,6 +1088,10 @@ index 0000000000..9a9c618b02
 +- (void)tabStripMoveTab:(RCBrowserView *)tab toIndex:(NSInteger)index;
 +- (void)tabStripSetTab:(RCBrowserView *)tab pinned:(BOOL)pinned;
 +- (void)tabStripActivateWindow;
++@optional
++/// A tab an extension opened in the window, as tabs.create does, its page already made: Rise puts
++/// it among the window's tabs at `index` (-1: the end), in front if `active`. NO closes it.
++- (BOOL)tabStripAdoptTab:(RCBrowserView *)tab index:(NSInteger)index active:(BOOL)active;
 +@end
 +
 +/// A Rise window as Chrome extensions see it: a browser window holding its tabs, which the tabs
@@ -1024,12 +1128,24 @@ index 0000000000..9a9c618b02
 +- (nullable NSURL *)clickInTab:(RCBrowserView *)tab;
 +@end
 +
++/// A keyboard shortcut an extension set (chrome.commands).
++RC_EXPORT @interface RCExtensionShortcut : NSObject
++@property (nonatomic, readonly) NSString *extensionID;
++/// Whether it clicks the extension's button, which Rise does as for a click, opening any popup.
++@property (nonatomic, readonly) BOOL clicksButton;
++- (instancetype)init NS_UNAVAILABLE;
++/// Tells the extension, for `tab` (the one in front).
++- (void)runInTab:(nullable RCBrowserView *)tab;
++@end
++
 +/// The toolbar buttons of the extensions installed in Rise's profile.
 +RC_EXPORT @interface RCExtensions : NSObject
 +@property (class, readonly) NSArray<RCExtensionAction *> *actions;
 +/// Calls `changed` on the main thread whenever buttons are added, removed or change, until the
 +/// returned object goes away.
 ++ (id)observeActions:(void (^)(void))changed;
++/// The extension shortcut a key press is, if it's one.
+++ (nullable RCExtensionShortcut *)shortcutForEvent:(NSEvent *)event;
 +/// Installs the Chrome Web Store's extension `extensionID`, after the install prompt asks;
 +/// `completion` hears how it went.
 ++ (void)installFromWebStore:(NSString *)extensionID
@@ -1094,10 +1210,10 @@ index 0000000000..cabcb68258
 +#endif  // CHROME_BROWSER_RISE_CHROME_BROWSER_MAIN_EXTRA_PARTS_RISE_H_
 diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
 new file mode 100644
-index 0000000000..eb79f1a469
+index 0000000000..b87881cc21
 --- /dev/null
 +++ b/chrome/browser/rise/rise_bridge.mm
-@@ -0,0 +1,2935 @@
+@@ -0,0 +1,3643 @@
 +// Copyright 2026 The Rise Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -1151,6 +1267,42 @@ index 0000000000..eb79f1a469
 +#include "chrome/browser/lifetime/browser_shutdown.h"
 +#include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 +#include "chrome/browser/devtools/devtools_ui_bindings.h"
++#include "base/scoped_multi_source_observation.h"
++#include "chrome/browser/extensions/extension_action_dispatcher.h"
++#include "chrome/browser/extensions/extension_action_runner.h"
++#include "chrome/browser/extensions/extension_install_prompt.h"
++#include "chrome/browser/extensions/extension_install_prompt_show_params.h"
++#include "chrome/browser/extensions/webstore_install_with_prompt.h"
++#include "components/sessions/content/session_tab_helper.h"
++#include "extensions/browser/extension_action.h"
++#include "extensions/browser/extension_action_manager.h"
++#include "extensions/browser/extension_icon_image.h"
++#include "extensions/browser/extension_registry.h"
++#include "extensions/browser/extension_registry_observer.h"
++#include "extensions/browser/extensions_browser_client.h"
++#include "chrome/browser/extensions/context_menu_helpers.h"
++#include "chrome/browser/extensions/commands/command_service.h"
++#include "chrome/browser/extensions/extension_tab_util.h"
++#include "extensions/browser/event_router.h"
++#include "extensions/browser/permissions/active_tab_permission_granter.h"
++#include "extensions/common/api/extension_action/action_info.h"
++#include "ui/events/cocoa/cocoa_event_utils.h"
++#include "ui/events/keycodes/keyboard_code_conversion_mac.h"
++#include "chrome/browser/extensions/context_menu_matcher.h"
++#include "ui/base/l10n/l10n_util_mac.h"
++#include "ui/base/models/image_model.h"
++#include "ui/menus/simple_menu_model.h"
++#include "extensions/browser/view_type_utils.h"
++#include "extensions/common/mojom/view_type.mojom.h"
++#include "chrome/browser/ui/prefs/prefs_tab_helper.h"
++#include "chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
++#include "content/public/browser/web_contents_delegate.h"
++#include "extensions/browser/install_prompt_data.h"
++#include "extensions/common/extension.h"
++#include "extensions/common/manifest.h"
++#include "ui/gfx/image/image.h"
++#include "ui/gfx/image/image_skia.h"
 +#include "chrome/browser/spellchecker/spellcheck_custom_dictionary.h"
 +#include "chrome/browser/spellchecker/spellcheck_factory.h"
 +#include "chrome/browser/spellchecker/spellcheck_service.h"
@@ -1317,6 +1469,88 @@ index 0000000000..eb79f1a469
 +      pinned ? AddTabTypes::ADD_PINNED : AddTabTypes::ADD_NONE);
 +}
 +
++// The window the person used last, of those Rise shows.
++BrowserWindowInterface* LastActiveShownBrowser() {
++  BrowserWindowInterface* last = nullptr;
++  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
++      [&](BrowserWindowInterface* browser) {
++        const BrowserWindow* window =
++            BrowserWindow::FromBrowser(browser);
++        if (window && window->StaysOpenWhenEmpty() && !window->IsVisible()) {
++          return true;
++        }
++        last = browser;
++        return false;
++      });
++  return last;
++}
++
++// An extension's popup's page: not a tab, as Chrome's own popups aren't, sized
++// as Chrome sizes them, to what they show. What it opens goes to the window the
++// person is in.
++class PopupDelegate : public content::WebContentsDelegate,
++                      public content::WebContentsObserver {
++ public:
++  explicit PopupDelegate(RCBrowserView* view) : view_(view) {}
++
++  using content::WebContentsObserver::Observe;
++
++  void RenderFrameCreated(content::RenderFrameHost* frame) override {
++    // A main frame, made as the popup's page starts loading, before it's the
++    // page's.
++    if (!frame->GetParentOrOuterDocument() && frame->GetView()) {
++      frame->GetView()->EnableAutoResize(gfx::Size(25, 25),
++                                         gfx::Size(800, 600));
++    }
++  }
++  void ResizeDueToAutoResize(content::WebContents* source,
++                             const gfx::Size& size) override {
++    RCBrowserView* view = view_;
++    if ([view.delegate respondsToSelector:@selector(browserView:
++                                              didChangePreferredSize:)]) {
++      [view.delegate browserView:view
++          didChangePreferredSize:NSMakeSize(size.width(), size.height())];
++    }
++  }
++
++  void CloseContents(content::WebContents* source) override {
++    RCBrowserView* view = view_;
++    if ([view.delegate
++            respondsToSelector:@selector(browserViewDidRequestClose:)]) {
++      [view.delegate browserViewDidRequestClose:view];
++    }
++  }
++  content::WebContents* OpenURLFromTab(
++      content::WebContents* source,
++      const content::OpenURLParams& params,
++      base::OnceCallback<void(content::NavigationHandle&)> callback) override {
++    if (params.disposition == WindowOpenDisposition::CURRENT_TAB) {
++      source->GetController().LoadURLWithParams(
++          content::NavigationController::LoadURLParams(params));
++      return source;
++    }
++    BrowserWindowInterface* browser = LastActiveShownBrowser();
++    return browser ? browser->OpenURL(params, std::move(callback)) : nullptr;
++  }
++  content::WebContents* AddNewContents(
++      content::WebContents* source,
++      std::unique_ptr<content::WebContents> new_contents,
++      const GURL& target_url,
++      WindowOpenDisposition disposition,
++      const blink::mojom::WindowFeatures& features,
++      bool user_gesture,
++      bool* was_blocked) override {
++    BrowserWindowInterface* browser = LastActiveShownBrowser();
++    return browser ? BrowserWebContentsDelegate::From(browser)->AddNewContents(
++                         source, std::move(new_contents), target_url,
++                         disposition, features, user_gesture, was_blocked)
++                   : nullptr;
++  }
++
++ private:
++  __weak RCBrowserView* view_;
++};
++
 +// Every page's Rise view, for what Chrome does to its tabs.
 +NSMapTable<NSValue*, RCBrowserView*>* Views() {
 +  static NSMapTable* views = [NSMapTable strongToWeakObjectsMapTable];
@@ -1461,6 +1695,8 @@ index 0000000000..eb79f1a469
 +- (void)loadFailed:(NSInteger)code text:(NSString*)text url:(NSURL*)url;
 +- (content::WebContents*)contents;
 +- (BOOL)showContextMenu:(RCContextMenu*)menu;
++- (instancetype)initWithFrame:(NSRect)frame
++                  tabContents:(content::WebContents*)contents;
 +- (void)inspectFrame:(content::GlobalRenderFrameHostId)frame
 +                   x:(int)x
 +                   y:(int)y;
@@ -2405,10 +2641,17 @@ index 0000000000..eb79f1a469
 +  BOOL _devToolsLoaded;
 +  std::optional<std::tuple<content::GlobalRenderFrameHostId, int, int>>
 +      _pendingInspect;
++  // An extension popup's: its page, which is no tab, and its delegate.
++  std::unique_ptr<content::WebContents> _popupContents;
++  std::unique_ptr<PopupDelegate> _popupDelegate;
 +}
 +
 +@synthesize delegate = _delegate;
 +@synthesize scriptsDisabled = _scriptsDisabled;
++
+++ (BOOL)sizesExtensionPopups {
++  return YES;
++}
 +
 +- (void)setScriptsDisabled:(BOOL)disabled {
 +  _scriptsDisabled = disabled;
@@ -2462,8 +2705,29 @@ index 0000000000..eb79f1a469
 +  if (_closed || _contents || !browser) {
 +    return;
 +  }
++  if (_extensionPopup) {
++    [self makePopup:browser->GetProfile()];
++    return;
++  }
 +  [self adopt:content::WebContents::Create(
 +                  content::WebContents::CreateParams(browser->GetProfile()))];
++}
++
++// An extension's popup, as Chrome makes one: a page of its own, which
++// extensions see as a popup.
++- (void)makePopup:(Profile*)profile {
++  _popupContents =
++      content::WebContents::Create(content::WebContents::CreateParams(profile));
++  _contents = _popupContents.get();
++  _popupDelegate = std::make_unique<PopupDelegate>(self);
++  _contents->SetDelegate(_popupDelegate.get());
++  _popupDelegate->Observe(_contents);
++  extensions::SetViewType(_contents,
++                          extensions::mojom::ViewType::kExtensionPopup);
++  extensions::ExtensionsBrowserClient::Get()
++      ->CreateExtensionWebContentsObserver(_contents);
++  PrefsTabHelper::CreateForWebContents(_contents);
++  [self tookContents];
 +}
 +
 +// A page Chrome made, opened by another page's script.
@@ -2490,6 +2754,24 @@ index 0000000000..eb79f1a469
 +  // as one.
 +  browser->GetTabStripModel()->AppendWebContents(std::move(contents),
 +                                                 /*foreground=*/false);
++  [self tookContents];
++}
++
++// A page Chrome made as a tab of one of Rise's windows, as an extension's
++// tabs.create does, where it is.
++- (instancetype)initWithFrame:(NSRect)frame
++                  tabContents:(content::WebContents*)contents {
++  if (!(self = [self initWithFrame:frame URL:nil])) {
++    return nil;
++  }
++  _contents = contents;
++  EmbedderTabHooks::Attach(_contents, std::make_unique<RiseTabHooks>(self));
++  [self tookContents];
++  return self;
++}
++
++// What a page takes as soon as it's the view's.
++- (void)tookContents {
 +  // Its permission requests are asked in Rise's prompt.
 +  if (auto* permissions =
 +          permissions::PermissionRequestManager::FromWebContents(_contents)) {
@@ -3198,6 +3480,14 @@ index 0000000000..eb79f1a469
 +  content::WebContents* contents = _contents;
 +  _contents = nullptr;
 +  [Views() removeObjectForKey:[NSValue valueWithPointer:contents]];
++  if (_popupContents) {
++    [_popupContents->GetNativeView().GetNativeNSView() removeFromSuperview];
++    _popupContents->SetDelegate(nullptr);
++    _popupDelegate.reset();
++    base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(
++        FROM_HERE, std::move(_popupContents));
++    return;
++  }
 +  BrowserWindowInterface* browser = BrowserOf(contents);
 +  if (!contents || !browser) {
 +    return;
@@ -3603,11 +3893,124 @@ index 0000000000..eb79f1a469
 +}
 +@end
 +
++namespace {
++
++// Extensions' entries for a right-click, as Chrome's page menu adds them, for
++// Rise's menu to show.
++class ExtensionEntries : public ui::SimpleMenuModel::Delegate {
++ public:
++  ExtensionEntries(content::RenderFrameHost* frame,
++                   const content::ContextMenuParams& params)
++      : frame_(frame->GetGlobalId()),
++        params_(params),
++        model_(this),
++        matcher_(frame->GetBrowserContext(),
++                 this,
++                 &model_,
++                 base::BindRepeating(
++                     extensions::context_menu_helpers::MenuItemMatchesParams,
++                     params_)) {
++    extensions::context_menu_helpers::PopulateExtensionItems(
++        frame->GetBrowserContext(), params_, matcher_);
++  }
++
++  bool IsCommandIdChecked(int command_id) const override {
++    return matcher_.IsCommandIdChecked(command_id);
++  }
++  bool IsCommandIdEnabled(int command_id) const override {
++    return matcher_.IsCommandIdEnabled(command_id);
++  }
++  bool IsCommandIdVisible(int command_id) const override {
++    return matcher_.IsCommandIdVisible(command_id);
++  }
++  void ExecuteCommand(int command_id, int event_flags) override {
++    content::RenderFrameHost* frame = content::RenderFrameHost::FromID(frame_);
++    if (frame) {
++      matcher_.ExecuteCommand(command_id,
++                              content::WebContents::FromRenderFrameHost(frame),
++                              frame, params_);
++    }
++  }
++
++  ui::MenuModel* model() { return &model_; }
++
++ private:
++  content::GlobalRenderFrameHostId frame_;
++  content::ContextMenuParams params_;
++  ui::SimpleMenuModel model_;
++  extensions::ContextMenuMatcher matcher_;
++};
++
++}  // namespace
++
++@interface RCExtensionMenuItem ()
++- (instancetype)initWithModel:(ui::MenuModel*)model
++                        index:(size_t)index
++                      entries:(std::shared_ptr<ExtensionEntries>)entries;
++@end
++
++@implementation RCExtensionMenuItem {
++  std::shared_ptr<ExtensionEntries> _entries;
++  int _command;
++}
++@synthesize title = _title;
++@synthesize separator = _separator;
++@synthesize enabled = _enabled;
++@synthesize checked = _checked;
++@synthesize icon = _icon;
++@synthesize children = _children;
++
++// What `model` holds, as Rise's entries.
+++ (NSArray<RCExtensionMenuItem*>*)itemsOf:(ui::MenuModel*)model
++                                  entries:
++                                      (std::shared_ptr<ExtensionEntries>)entries {
++  NSMutableArray<RCExtensionMenuItem*>* items = [NSMutableArray array];
++  for (size_t i = 0; model && i < model->GetItemCount(); ++i) {
++    if (model->GetTypeAt(i) == ui::MenuModel::TYPE_SEPARATOR ||
++        model->IsVisibleAt(i)) {
++      [items addObject:[[RCExtensionMenuItem alloc] initWithModel:model
++                                                            index:i
++                                                          entries:entries]];
++    }
++  }
++  return items;
++}
++
++- (instancetype)initWithModel:(ui::MenuModel*)model
++                        index:(size_t)index
++                      entries:(std::shared_ptr<ExtensionEntries>)entries {
++  if (!(self = [super init])) {
++    return nil;
++  }
++  _entries = entries;
++  _command = model->GetCommandIdAt(index);
++  _separator = model->GetTypeAt(index) == ui::MenuModel::TYPE_SEPARATOR;
++  _title = _separator ? @""
++                      : l10n_util::FixUpWindowsStyleLabel(model->GetLabelAt(index));
++  _enabled = !_separator && model->IsEnabledAt(index);
++  _checked = !_separator && model->IsItemCheckedAt(index);
++  ui::ImageModel icon = model->GetIconAt(index);
++  _icon = icon.IsImage() ? icon.GetImage().ToNSImage() : nil;
++  _children = model->GetTypeAt(index) == ui::MenuModel::TYPE_SUBMENU
++                  ? [RCExtensionMenuItem itemsOf:model->GetSubmenuModelAt(index)
++                                         entries:entries]
++                  : @[];
++  return self;
++}
++
++- (void)perform {
++  if (!_separator && _children.count == 0) {
++    _entries->ExecuteCommand(_command, 0);
++  }
++}
++@end
++
 +@implementation RCContextMenu {
 +  content::GlobalRenderFrameHostId _frame;
 +  __weak RCBrowserView* _view;
 +  int _x;
 +  int _y;
++  std::shared_ptr<ExtensionEntries> _extensionEntries;
 +}
 +@synthesize point = _point;
 +@synthesize linkURL = _linkURL;
@@ -3628,6 +4031,7 @@ index 0000000000..eb79f1a469
 +  }
 +  _frame = frame->GetGlobalId();
 +  _view = view;
++  _extensionEntries = std::make_shared<ExtensionEntries>(frame, params);
 +  _x = params.x;
 +  _y = params.y;
 +  _point = NSMakePoint(params.x, params.y);
@@ -3743,10 +4147,19 @@ index 0000000000..eb79f1a469
 +- (void)inspect {
 +  [_view inspectFrame:_frame x:_x y:_y];
 +}
++- (NSArray<RCExtensionMenuItem*>*)extensionItems {
++  return _extensionEntries
++             ? [RCExtensionMenuItem itemsOf:_extensionEntries->model()
++                                    entries:_extensionEntries]
++             : @[];
++}
 +@end
 +
 +@interface RCTabStrip ()
 +@property(nonatomic, weak, readonly) id<RCTabStripDelegate> delegate;
++- (void)adoptTab:(content::WebContents*)contents
++           index:(int)index
++          active:(BOOL)active;
 +- (BOOL)isApplying;
 +- (NSWindow*)nativeWindow;
 +@end
@@ -3785,6 +4198,23 @@ index 0000000000..eb79f1a469
 +    RCTabStrip* strip = strip_;
 +    if (!strip || [strip isApplying]) {
 +      return;
++    }
++    // A tab Chrome opened in the window itself, for Rise to show, on the next
++    // turn: Rise changes the window's tabs as it does.
++    if (change.type() == TabStripModelChange::kInserted) {
++      for (const auto& inserted : change.GetInsert()->contents) {
++        if (ViewOf(inserted.contents)) {
++          continue;
++        }
++        base::WeakPtr<content::WebContents> contents =
++            inserted.contents->GetWeakPtr();
++        int index = inserted.index;
++        bool active = selection.new_contents == inserted.contents;
++        __weak RCTabStrip* weakStrip = strip;
++        dispatch_async(dispatch_get_main_queue(), ^{
++          [weakStrip adoptTab:contents.get() index:index active:active];
++        });
++      }
 +    }
 +    if (change.type() == TabStripModelChange::kMoved) {
 +      const TabStripModelChange::Move* move = change.GetMove();
@@ -3847,6 +4277,24 @@ index 0000000000..eb79f1a469
 +- (void)dealloc {
 +  [NSNotificationCenter.defaultCenter removeObserver:self];
 +  [self close];
++}
++
++- (void)adoptTab:(content::WebContents*)contents
++           index:(int)index
++          active:(BOOL)active {
++  BrowserWindowInterface* browser = _browser;
++  TabStripModel* model = browser ? browser->GetTabStripModel() : nullptr;
++  if (!contents || ViewOf(contents) || !model ||
++      model->GetIndexOfWebContents(contents) == TabStripModel::kNoTab) {
++    return;
++  }
++  RCBrowserView* view =
++      [[RCBrowserView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)
++                               tabContents:contents];
++  if (![_delegate respondsToSelector:@selector(tabStripAdoptTab:index:active:)] ||
++      ![_delegate tabStripAdoptTab:view index:index active:active]) {
++    [view close];
++  }
 +}
 +
 +- (void)pageMade:(NSNotification*)notification {
@@ -3990,48 +4438,424 @@ index 0000000000..eb79f1a469
 +
 +@end
 +
-+@implementation RCExtensionAction
-+- (NSString*)extensionID {
-+  return @"";
++// MARK: Extensions
++
++namespace {
++
++// An extension a person installed, which has a toolbar button in Chrome.
++const extensions::Extension* ToolbarExtension(Profile* profile,
++                                              const std::string& id) {
++  auto* registry = profile ? extensions::ExtensionRegistry::Get(profile) : nullptr;
++  const extensions::Extension* extension =
++      registry ? registry->enabled_extensions().GetByID(id) : nullptr;
++  if (!extension || !extension->is_extension() ||
++      extensions::Manifest::IsComponentLocation(extension->location())) {
++    return nullptr;
++  }
++  return extension;
 +}
-+- (NSString*)name {
-+  return @"";
++
++extensions::ExtensionAction* ActionOf(Profile* profile, const std::string& id) {
++  const extensions::Extension* extension = ToolbarExtension(profile, id);
++  return extension ? extensions::ExtensionActionManager::Get(profile)
++                         ->GetExtensionAction(*extension)
++                   : nullptr;
++}
++
++// What an extension's button shows for a tab, by Chrome's number for the tab.
++int TabIdOf(RCBrowserView* tab) {
++  content::WebContents* contents = [tab contents];
++  return contents ? sessions::SessionTabHelper::IdForTab(contents).id()
++                  : extensions::ExtensionAction::kDefaultTabId;
++}
++
++NSImage* ToNSImage(const gfx::ImageSkia& image) {
++  if (image.isNull()) {
++    return nil;
++  }
++  // Asking for each scale loads it, if it isn't yet.
++  image.GetRepresentation(1.0f);
++  image.GetRepresentation(2.0f);
++  return gfx::Image(image).ToNSImage();
++}
++
++// Tells Rise of extensions coming and going, their buttons changing and their
++// icons loading.
++class ActionsWatcher : public extensions::ExtensionRegistryObserver,
++                       public extensions::ExtensionActionDispatcher::Observer,
++                       public extensions::IconImage::Observer {
++ public:
++  ActionsWatcher(Profile* profile, void (^changed)(void))
++      : profile_(profile), changed_(changed) {
++    registry_observation_.Observe(extensions::ExtensionRegistry::Get(profile));
++    if (auto* dispatcher = extensions::ExtensionActionDispatcher::Get(profile)) {
++      dispatcher->AddObserver(this);
++      dispatcher_ = dispatcher;
++    }
++    WatchIcons();
++  }
++  ~ActionsWatcher() override {
++    if (dispatcher_) {
++      dispatcher_->RemoveObserver(this);
++    }
++  }
++
++  void OnExtensionLoaded(content::BrowserContext* browser_context,
++                         const extensions::Extension* extension) override {
++    Changed();
++  }
++  void OnExtensionUnloaded(content::BrowserContext* browser_context,
++                           const extensions::Extension* extension,
++                           extensions::UnloadedExtensionReason reason) override {
++    Changed();
++  }
++  void OnShutdown(extensions::ExtensionRegistry* registry) override {
++    icon_observations_.RemoveAllObservations();
++    registry_observation_.Reset();
++  }
++  void OnExtensionActionUpdated(
++      extensions::ExtensionAction* extension_action,
++      content::WebContents* web_contents,
++      content::BrowserContext* browser_context) override {
++    Changed();
++  }
++  void OnShuttingDown() override {
++    if (dispatcher_) {
++      dispatcher_->RemoveObserver(this);
++      dispatcher_ = nullptr;
++    }
++  }
++  void OnExtensionIconImageChanged(extensions::IconImage* image) override {
++    changed_();
++  }
++  void OnExtensionIconImageDestroyed(extensions::IconImage* image) override {
++    if (icon_observations_.IsObservingSource(image)) {
++      icon_observations_.RemoveObservation(image);
++    }
++  }
++
++ private:
++  void Changed() {
++    WatchIcons();
++    changed_();
++  }
++  void WatchIcons() {
++    auto* registry = extensions::ExtensionRegistry::Get(profile_);
++    if (!registry) {
++      return;
++    }
++    for (const auto& extension : registry->enabled_extensions()) {
++      extensions::ExtensionAction* action = ActionOf(profile_, extension->id());
++      extensions::IconImage* icon = action ? action->default_icon_image() : nullptr;
++      if (icon && !icon_observations_.IsObservingSource(icon)) {
++        icon_observations_.AddObservation(icon);
++      }
++    }
++  }
++
++  raw_ptr<Profile> profile_;
++  void (^changed_)(void);
++  raw_ptr<extensions::ExtensionActionDispatcher> dispatcher_ = nullptr;
++  base::ScopedObservation<extensions::ExtensionRegistry,
++                          extensions::ExtensionRegistryObserver>
++      registry_observation_{this};
++  base::ScopedMultiSourceObservation<extensions::IconImage,
++                                     extensions::IconImage::Observer>
++      icon_observations_{this};
++};
++
++// Rise's install prompt, in place of Chrome's dialog.
++void (^g_install_prompt)(NSString*, NSImage*, NSArray<NSString*>*, NSString*,
++                         void (^)(BOOL)) = nil;
++
++void ShowInstallPrompt(
++    std::unique_ptr<ExtensionInstallPromptShowParams> show_params,
++    ExtensionInstallPrompt::DoneCallback done,
++    std::unique_ptr<extensions::InstallPromptData> prompt) {
++  if (!g_install_prompt || !prompt) {
++    std::move(done).Run(ExtensionInstallPrompt::DoneCallbackPayload(
++        ExtensionInstallPrompt::Result::ABORTED));
++    return;
++  }
++  NSMutableArray<NSString*>* permissions = [NSMutableArray array];
++  for (size_t i = 0; i < prompt->GetPermissionCount(); ++i) {
++    [permissions addObject:base::SysUTF16ToNSString(prompt->GetPermission(i))];
++  }
++  NSImage* icon =
++      prompt->icon().IsEmpty() ? nil : ToNSImage(*prompt->icon().ToImageSkia());
++  // Answered once; unanswered, it's cancelled.
++  auto waiting =
++      std::make_shared<ExtensionInstallPrompt::DoneCallback>(std::move(done));
++  g_install_prompt(base::SysUTF16ToNSString(prompt->GetDialogTitle()), icon,
++                   permissions,
++                   base::SysUTF16ToNSString(prompt->GetAcceptButtonLabel()),
++                   ^(BOOL accept) {
++                     if (*waiting) {
++                       std::move(*waiting).Run(
++                           ExtensionInstallPrompt::DoneCallbackPayload(
++                               accept ? ExtensionInstallPrompt::Result::ACCEPTED
++                                      : ExtensionInstallPrompt::Result::
++                                            USER_CANCELED));
++                     }
++                   });
++}
++
++// A Web Store install, asked with the prompt, told to Rise rather than shown
++// after.
++class WebStoreInstall : public extensions::WebstoreInstallWithPrompt {
++ public:
++  WebStoreInstall(const std::string& id, Profile* profile, Callback callback)
++      : WebstoreInstallWithPrompt(id, profile, gfx::NativeWindow(),
++                                  std::move(callback)) {
++    set_show_post_install_ui(false);
++  }
++
++ private:
++  ~WebStoreInstall() override = default;
++};
++
++}  // namespace
++
++@interface RCActionsObservation : NSObject
++- (instancetype)initWithChanged:(void (^)(void))changed;
++@end
++
++@implementation RCActionsObservation {
++  std::unique_ptr<ActionsWatcher> _watcher;
++}
++- (instancetype)initWithChanged:(void (^)(void))changed {
++  if ((self = [super init]) && RiseProfile()) {
++    void (^onMain)(void) = ^{
++      dispatch_async(dispatch_get_main_queue(), changed);
++    };
++    _watcher = std::make_unique<ActionsWatcher>(RiseProfile(), onMain);
++  }
++  return self;
++}
++@end
++
++@implementation RCExtensionAction {
++  NSString* _extensionID;
++}
++- (instancetype)initWithExtension:(const extensions::Extension*)extension {
++  if ((self = [super init])) {
++    _extensionID = base::SysUTF8ToNSString(extension->id());
++    _name = base::SysUTF8ToNSString(extension->name());
++  }
++  return self;
++}
++@synthesize name = _name;
++- (NSString*)extensionID {
++  return _extensionID;
++}
++- (extensions::ExtensionAction*)action {
++  return ActionOf(RiseProfile(), base::SysNSStringToUTF8(_extensionID));
 +}
 +- (NSString*)titleForTab:(RCBrowserView*)tab {
-+  return @"";
++  extensions::ExtensionAction* action = [self action];
++  return action ? base::SysUTF8ToNSString(action->GetTitle(TabIdOf(tab))) : @"";
 +}
 +- (NSString*)badgeTextForTab:(RCBrowserView*)tab {
-+  return @"";
++  extensions::ExtensionAction* action = [self action];
++  return action ? base::SysUTF8ToNSString(action->GetDisplayBadgeText(TabIdOf(tab)))
++                : @"";
 +}
 +- (NSColor*)badgeColorForTab:(RCBrowserView*)tab {
-+  return NSColor.clearColor;
++  extensions::ExtensionAction* action = [self action];
++  SkColor color = action ? action->GetBadgeBackgroundColor(TabIdOf(tab)) : 0;
++  return [NSColor colorWithSRGBRed:SkColorGetR(color) / 255.0
++                             green:SkColorGetG(color) / 255.0
++                              blue:SkColorGetB(color) / 255.0
++                             alpha:SkColorGetA(color) / 255.0];
 +}
 +- (NSImage*)iconForTab:(RCBrowserView*)tab {
-+  return nil;
++  extensions::ExtensionAction* action = [self action];
++  if (!action) {
++    return nil;
++  }
++  gfx::Image set = action->GetExplicitlySetIcon(TabIdOf(tab));
++  if (!set.IsEmpty()) {
++    return ToNSImage(*set.ToImageSkia());
++  }
++  extensions::IconImage* icon = action->default_icon_image();
++  return icon ? ToNSImage(icon->image_skia()) : nil;
 +}
 +- (BOOL)isEnabledForTab:(RCBrowserView*)tab {
-+  return NO;
++  extensions::ExtensionAction* action = [self action];
++  return action && action->GetIsVisible(TabIdOf(tab));
 +}
++// Clicked as Chrome's toolbar does, granting the tab if the extension asks
++// for the active one: its popup's address, or nil if it took the click.
 +- (NSURL*)clickInTab:(RCBrowserView*)tab {
-+  return nil;
++  Profile* profile = RiseProfile();
++  const extensions::Extension* extension =
++      ToolbarExtension(profile, base::SysNSStringToUTF8(_extensionID));
++  extensions::ExtensionAction* action = [self action];
++  content::WebContents* contents = [tab contents];
++  auto* runner =
++      contents ? extensions::ExtensionActionRunner::GetForWebContents(contents)
++               : nullptr;
++  if (!extension || !action || !runner ||
++      runner->RunAction(extension, /*grant_tab_permissions=*/true) !=
++          extensions::ExtensionAction::ShowAction::kShowPopup) {
++    return nil;
++  }
++  return ToNSURL(action->GetPopupUrl(TabIdOf(tab)));
++}
++@end
++
++@interface RCExtensionShortcut ()
++- (instancetype)initWithExtension:(const extensions::Extension*)extension
++                          command:(const std::string&)command
++                     clicksButton:(BOOL)clicksButton;
++@end
++
++@implementation RCExtensionShortcut {
++  NSString* _extensionID;
++  std::string _command;
++  BOOL _clicksButton;
++}
++- (instancetype)initWithExtension:(const extensions::Extension*)extension
++                          command:(const std::string&)command
++                     clicksButton:(BOOL)clicksButton {
++  if ((self = [super init])) {
++    _extensionID = base::SysUTF8ToNSString(extension->id());
++    _command = command;
++    _clicksButton = clicksButton;
++  }
++  return self;
++}
++- (NSString*)extensionID {
++  return _extensionID;
++}
++- (BOOL)clicksButton {
++  return _clicksButton;
++}
++// As Chrome's window runs one: the extension may act on the tab in front, and
++// hears its command with it.
++- (void)runInTab:(RCBrowserView*)tab {
++  Profile* profile = RiseProfile();
++  const extensions::Extension* extension =
++      ToolbarExtension(profile, base::SysNSStringToUTF8(_extensionID));
++  if (!extension || _clicksButton) {
++    return;
++  }
++  base::ListValue args;
++  args.Append(_command);
++  base::Value tab_value;
++  if (content::WebContents* contents = [tab contents]) {
++    if (auto* granter =
++            extensions::ActiveTabPermissionGranter::FromWebContents(contents)) {
++      granter->GrantIfRequested(extension);
++    }
++    tab_value = base::Value(
++        extensions::ExtensionTabUtil::CreateTabObject(
++            contents,
++            extensions::ExtensionTabUtil::GetScrubTabBehavior(
++                extension, extensions::mojom::ContextType::kPrivilegedExtension,
++                contents),
++            extension)
++            .ToValue());
++  }
++  args.Append(std::move(tab_value));
++  auto event = std::make_unique<extensions::Event>(
++      extensions::events::COMMANDS_ON_COMMAND, "commands.onCommand",
++      std::move(args), profile);
++  event->user_gesture = extensions::EventRouter::UserGestureState::kEnabled;
++  extensions::EventRouter::Get(profile)->DispatchEventToExtension(
++      extension->id(), std::move(event));
 +}
 +@end
 +
 +@implementation RCExtensions
+++ (RCExtensionShortcut*)shortcutForEvent:(NSEvent*)event {
++  Profile* profile = RiseProfile();
++  if (!profile || event.type != NSEventTypeKeyDown) {
++    return nil;
++  }
++  ui::Accelerator pressed(ui::KeyboardCodeFromNSEvent(event),
++                          ui::EventFlagsFromModifiers(event.modifierFlags));
++  auto* commands = extensions::CommandService::Get(profile);
++  for (const auto& extension :
++       extensions::ExtensionRegistry::Get(profile)->enabled_extensions()) {
++    if (!ToolbarExtension(profile, extension->id())) {
++      continue;
++    }
++    extensions::Command command;
++    bool active = false;
++    const extensions::ActionInfo* action =
++        extensions::ActionInfo::GetExtensionActionInfo(extension.get());
++    if (action &&
++        commands->GetExtensionActionCommand(
++            extension->id(), action->type,
++            extensions::CommandService::ACTIVE, &command, &active) &&
++        active && command.accelerator() == pressed) {
++      return [[RCExtensionShortcut alloc] initWithExtension:extension.get()
++                                                    command:command.command_name()
++                                               clicksButton:YES];
++    }
++    ui::CommandMap named;
++    commands->GetNamedCommands(extension->id(),
++                               extensions::CommandService::ACTIVE,
++                               extensions::CommandService::REGULAR, &named);
++    for (const auto& [name, shortcut] : named) {
++      if (shortcut.accelerator() == pressed) {
++        return [[RCExtensionShortcut alloc] initWithExtension:extension.get()
++                                                      command:name
++                                                 clicksButton:NO];
++      }
++    }
++  }
++  return nil;
++}
 ++ (NSArray<RCExtensionAction*>*)actions {
-+  return @[];
++  Profile* profile = RiseProfile();
++  auto* registry = profile ? extensions::ExtensionRegistry::Get(profile) : nullptr;
++  NSMutableArray<RCExtensionAction*>* actions = [NSMutableArray array];
++  if (!registry) {
++    return actions;
++  }
++  for (const auto& extension : registry->enabled_extensions()) {
++    if (ActionOf(profile, extension->id())) {
++      [actions addObject:[[RCExtensionAction alloc]
++                             initWithExtension:extension.get()]];
++    }
++  }
++  return actions;
 +}
 ++ (id)observeActions:(void (^)(void))changed {
-+  return [NSObject new];
++  return [[RCActionsObservation alloc] initWithChanged:changed];
 +}
 ++ (void)installFromWebStore:(NSString*)extensionID
 +                 completion:(void (^)(BOOL, NSString*))completion {
-+  if (completion) {
-+    completion(NO, @"Not on this engine yet");
++  Profile* profile = RiseProfile();
++  if (!profile) {
++    if (completion) {
++      completion(NO, @"Chromium isn't running");
++    }
++    return;
 +  }
++  auto install = base::MakeRefCounted<WebStoreInstall>(
++      base::SysNSStringToUTF8(extensionID), profile,
++      base::BindOnce(
++          [](void (^completion)(BOOL, NSString*), bool success,
++             const std::string& error,
++             extensions::webstore_install::Result result) {
++            if (completion) {
++              completion(success,
++                         error.empty() ? nil : base::SysUTF8ToNSString(error));
++            }
++          },
++          completion));
++  install->BeginInstall();
 +}
 ++ (void)setInstallPrompt:(void (^)(NSString*, NSImage*, NSArray<NSString*>*,
-+                                   NSString*, void (^)(BOOL)))prompt {}
++                                   NSString*, void (^)(BOOL)))prompt {
++  g_install_prompt = prompt;
++  ExtensionInstallPrompt::SetEmbedderShowDialogCallback(
++      prompt ? base::BindRepeating(&ShowInstallPrompt)
++             : ExtensionInstallPrompt::ShowDialogCallback());
++}
 +@end
 diff --git a/chrome/browser/rise/rise_browser_window.cc b/chrome/browser/rise/rise_browser_window.cc
 new file mode 100644

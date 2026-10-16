@@ -110,6 +110,31 @@ import RiseChromium
             _ = await waitUntil("tabs.remove closes it in Rise") { self.browser.tabs.count == count }
         }
 
+        // Its entry in the page menu, for a selection, which it hears chosen.
+        _ = await value("getSelection().selectAllChildren(document.querySelector('h1')); return 0", in: second.page)
+        if let window = browser.window, let at = await value("const r = document.querySelector('h1').getBoundingClientRect(); return [r.x + 10, r.y + r.height / 2]", in: second.page) as? [Double] {
+            let view = second.page.view
+            let point = view.convert(NSPoint(x: at[0], y: view.isFlipped ? at[1] : view.bounds.height-at[1]), to: nil)
+            var shown: NSMenu?
+            browser.presentContextMenu = { menu, _, _ in shown = menu }
+            for type in [NSEvent.EventType.rightMouseDown, .rightMouseUp] {
+                if let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                  windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
+                                                  pressure: type == .rightMouseDown ? 1 : 0) { window.sendEvent(event) }
+            }
+            _ = await waitUntil("A right-click on the selection opens Rise's menu") { shown != nil }
+            let entry = shown?.items.first { $0.title == "Rise Test “Second”" }
+            check(entry != nil, "The page menu has the extension's entry: \(shown?.items.map(\.title) ?? [])")
+            if let entry, let action = entry.action { NSApp.sendAction(action, to: entry.target, from: entry) }
+            var clicked: [Any] = []
+            _ = await waitUntil("Choosing it tells the extension") {
+                clicked = (await ask(["cmd": "clicked"], in: second.page))?["clicked"] as? [Any] ?? []
+                return !clicked.isEmpty
+            }
+            check(clicked.first as? String == "rise-test" && clicked.dropFirst().first as? String == "Second" && clicked.last as? Int == secondID,
+                  "With the selection and the tab: \(clicked)")
+        }
+
         // Its toolbar button, and its popup, which sees the tab it was opened over.
         let actions = RCExtensions.actions
         check(actions.contains { $0.extensionID == id && $0.name == "Rise Test Extension" }, "Its toolbar button: \(actions.map(\.name))")
@@ -151,6 +176,29 @@ import RiseChromium
                 _ = await value("window.close(); return 0", in: popup.page)
                 _ = await waitUntil("window.close() closes the popup") { self.browser.extensionPopup == nil }
             }
+        }
+        // Its keyboard shortcuts, pressed in Rise's window: one it hears, with the tab, and its
+        // button's, which opens its popup as a click does.
+        func press(_ key: String, _ code: UInt16) {
+            guard let window = browser.window, let event = NSEvent.keyEvent(
+                with: .keyDown, location: .zero, modifierFlags: [.command, .shift], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil, characters: key.uppercased(), charactersIgnoringModifiers: key,
+                isARepeat: false, keyCode: code) else { return }
+            window.sendEvent(event)
+        }
+        press("y", 16)
+        var commanded: [Any] = []
+        _ = await waitUntil("Its shortcut tells the extension") {
+            commanded = (await ask(["cmd": "commanded"], in: second.page))?["commanded"] as? [Any] ?? []
+            return !commanded.isEmpty
+        }
+        check(commanded.first as? String == "rise-test-command" && commanded.last as? Int == secondID, "Its shortcut runs its command, for the tab: \(commanded)")
+        press("u", 32)
+        _ = await waitUntil("Its button's shortcut opens its popup") { self.browser.extensionPopup?.popover.isShown == true }
+        if let popup = browser.extensionPopup {
+            check(true, "Its button's shortcut opens its popup")
+            popup.close()
+            _ = await waitUntil("The popup closes") { self.browser.extensionPopup == nil }
         }
         browser.siteMenu()
         _ = await waitUntil("The site controls open") { self.browser.siteControlsPopover.isShown }

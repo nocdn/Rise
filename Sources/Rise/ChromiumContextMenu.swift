@@ -85,6 +85,12 @@ import RiseChromium
             add("Forward", enabled: page.canGoForward) { page.goForward() }
             add("Reload") { page.reload() }
         }
+        // Extensions' entries, where Chrome puts them.
+        let entries = info.extensionItems
+        if !entries.isEmpty {
+            group()
+            entries.map(extensionMenuItem).forEach(menu.addItem)
+        }
         if opener != nil {
             group()
             add("Inspect Element") { [weak self, weak page] in
@@ -93,6 +99,24 @@ import RiseChromium
             }
         }
         return menu
+    }
+
+    private func extensionMenuItem(_ entry: RCExtensionMenuItem) -> NSMenuItem {
+        if entry.separator { return .separator() }
+        let item = entry.children.isEmpty ? menuItem(entry.title, checked: entry.checked) { entry.perform() }
+            : NSMenuItem(title: entry.title, action: nil, keyEquivalent: "")
+        item.isEnabled = entry.enabled
+        if let icon = entry.icon?.copy() as? NSImage {
+            icon.size = NSSize(width: 16, height: 16)
+            item.image = icon
+        }
+        if !entry.children.isEmpty {
+            let submenu = NSMenu()
+            submenu.autoenablesItems = false
+            entry.children.map(extensionMenuItem).forEach(submenu.addItem)
+            item.submenu = submenu
+        }
+        return item
     }
 }
 #endif

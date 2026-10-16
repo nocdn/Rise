@@ -135,6 +135,12 @@ import RiseChromium
         sync()
         return (tab.page as? ChromiumPage)?.browserView
     }
+    func tabStripAdoptTab(_ view: RCBrowserView, index: Int, active: Bool) -> Bool {
+        guard let browser else { return false }
+        browser.addTab(background: !active, page: ChromiumPage(browserView: view))
+        sync()
+        return true
+    }
     func tabStripActivateTab(_ view: RCBrowserView) {
         if let tab = tab(for: view) { browser?.select(tab.id) }
     }

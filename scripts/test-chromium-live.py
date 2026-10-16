@@ -96,20 +96,27 @@ if check == "extensions":
     extension.mkdir(exist_ok=True)
     (extension / "manifest.json").write_text("""{
       "manifest_version": 3, "name": "Rise Test Extension", "version": "1.0",
-      "permissions": ["tabs", "storage", "activeTab"], "host_permissions": ["<all_urls>"],
+      "permissions": ["tabs", "storage", "activeTab", "contextMenus"], "host_permissions": ["<all_urls>"],
       "background": {"service_worker": "background.js"},
       "content_scripts": [{"matches": ["<all_urls>"], "js": ["content.js"], "run_at": "document_idle"}],
-      "action": {"default_popup": "popup.html", "default_title": "Rise Test", "default_icon": "icon.png"}
+      "action": {"default_popup": "popup.html", "default_title": "Rise Test", "default_icon": "icon.png"},
+      "commands": {"rise-test-command": {"suggested_key": {"default": "Ctrl+Shift+Y"}, "description": "Rise test"},
+                   "_execute_action": {"suggested_key": {"default": "Ctrl+Shift+U"}}}
     }""")
     (extension / "background.js").write_text("""
-    let activated = [];
+    let activated = [], clicked = null, commanded = null;
+    chrome.commands.onCommand.addListener((name, tab) => commanded = [name, tab?.id ?? null]);
     chrome.tabs.onActivated.addListener(info => activated.push(info.tabId));
+    chrome.contextMenus.removeAll(() => chrome.contextMenus.create({id: 'rise-test', title: 'Rise Test “%s”', contexts: ['selection']}));
+    chrome.contextMenus.onClicked.addListener((info, tab) => clicked = [info.menuItemId, info.selectionText, tab?.id ?? null]);
     chrome.runtime.onMessage.addListener((message, sender, reply) => {
       (async () => {
         if (message.cmd === 'create') return {id: (await chrome.tabs.create({url: message.url, active: true})).id};
         if (message.cmd === 'activate') return {id: (await chrome.tabs.update(message.id, {active: true})).id};
         if (message.cmd === 'remove') { await chrome.tabs.remove(message.id); return {removed: true}; }
         if (message.cmd === 'activated') return {activated};
+        if (message.cmd === 'clicked') return {clicked};
+        if (message.cmd === 'commanded') return {commanded};
         const all = await chrome.tabs.query({});
         const active = await chrome.tabs.query({active: true, currentWindow: true});
         const windows = await chrome.windows.getAll({populate: true});

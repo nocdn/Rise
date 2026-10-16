@@ -142,6 +142,8 @@ final class BrowserWindow: NSWindow {
     var undoEvent: ((NSEvent) -> Bool)?
     /// Sees ⌃R before the page does, for the tab under the pointer.
     var smartRenameEvent: ((NSEvent) -> Bool)?
+    /// Sees key presses with ⌘, ⌃ or ⌥ before the page does, for extensions' shortcuts.
+    var extensionShortcutEvent: ((NSEvent) -> Bool)?
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         if undoEvent?(event) == true { return true }
         if smartRenameEvent?(event) == true { return true }
@@ -161,6 +163,8 @@ final class BrowserWindow: NSWindow {
             if otherMouseEvent?(event) == true { return }
             // keyCode is only valid on key events (it raises on others), so the type goes first.
             if event.type == .keyDown || event.type == .keyUp, event.keyCode == 53, escapeEvent?(event) == true { return }
+            if event.type == .keyDown, !event.modifierFlags.isDisjoint(with: [.command, .control, .option]),
+               extensionShortcutEvent?(event) == true { return }
             if [.leftMouseDown, .leftMouseDragged, .leftMouseUp].contains(event.type), linkClickEvent?(event) == true { return }
             if event.type == .leftMouseDown || event.type == .rightMouseDown { pageMouseDown?(event) }
             super.sendEvent(event)

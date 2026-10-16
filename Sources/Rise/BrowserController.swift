@@ -209,6 +209,9 @@ import RiseCore
             return self.palette.handleUndoKey(event) || self.handlePeekUndoKey(event)
         }
         window.smartRenameEvent = { [weak self] event in self?.handleSmartRenameKey(event) ?? false }
+        #if RISE_CHROMIUM
+        window.extensionShortcutEvent = { [weak self] event in self?.runExtensionShortcut(event) ?? false }
+        #endif
         window.pageMouseDown = { [weak self] event in self?.focusSplitPage(at: event) }
         window.linkClickEvent = { [weak self] event in self?.takeLinkClick(event) ?? false }
         window.historyScrollEvent = { [weak self] event in self?.historySwipe.handle(event) ?? false }

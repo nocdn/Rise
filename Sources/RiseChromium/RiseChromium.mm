@@ -186,6 +186,22 @@ NSString *StringFrom(const CefString &value) {
 - (void)inspectNow;
 @end
 
+@implementation RCExtensionShortcut
+- (NSString *)extensionID { return @""; }
+- (BOOL)clicksButton { return NO; }
+- (void)runInTab:(RCBrowserView *)tab {}
+@end
+
+@implementation RCExtensionMenuItem
+- (NSString *)title { return @""; }
+- (BOOL)separator { return NO; }
+- (BOOL)enabled { return NO; }
+- (BOOL)checked { return NO; }
+- (NSImage *)icon { return nil; }
+- (NSArray<RCExtensionMenuItem *> *)children { return @[]; }
+- (void)perform {}
+@end
+
 @implementation RCContextMenu {
   CefRefPtr<CefBrowser> _browser;
   CefRefPtr<CefFrame> _frame;
@@ -262,6 +278,9 @@ NSString *StringFrom(const CefString &value) {
 }
 - (void)inspectNow {
   if (_browser) _browser->GetHost()->InspectElementAt(_frame, _x, _y);
+}
+- (NSArray<RCExtensionMenuItem *> *)extensionItems {
+  return @[];
 }
 @end
 
@@ -804,6 +823,10 @@ cef_color_t ARGB(NSColor *color) {
   // The DevTools front end inspecting this page, and an element waiting for it.
   __weak RCBrowserView *_attachedFrontend;
   RCContextMenu *_pendingInspect;
+}
+
++ (BOOL)sizesExtensionPopups {
+  return NO;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame URL:(NSURL *)url {
@@ -1874,6 +1897,9 @@ class ActionsObserver : public CefExtensionActionsObserver {
   CefRequestContext::GetGlobalContext()->SetExtensionInstallHandler(prompt ? new Handler(prompt) : nullptr);
 }
 
++ (RCExtensionShortcut *)shortcutForEvent:(NSEvent *)event {
+  return nil;
+}
 + (id)observeActions:(void (^)(void))changed {
   RCActionsObservation *observation = [RCActionsObservation new];
   if (gContextReady) {

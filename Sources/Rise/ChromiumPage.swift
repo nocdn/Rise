@@ -131,6 +131,11 @@ enum RisePages {
     nonisolated func browserView(_ browserView: RCBrowserView, open url: URL, disposition: RCOpenDisposition, userGesture: Bool) -> Bool {
         MainActor.assumeIsolated { onOpenElsewhere?(url, disposition == .backgroundTab) ?? false }
     }
+    /// An extension popup's page's size, when the engine sizes popups.
+    var onPreferredSize: ((NSSize) -> Void)?
+    nonisolated func browserView(_ browserView: RCBrowserView, didChangePreferredSize size: NSSize) {
+        MainActor.assumeIsolated { onPreferredSize?(size) }
+    }
     /// A right-click, for Rise's menu.
     var onContextMenu: ((RCContextMenu) -> Void)?
     nonisolated func browserView(_ browserView: RCBrowserView, showContextMenu menu: RCContextMenu) {

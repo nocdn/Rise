@@ -151,6 +151,24 @@ typedef NS_ENUM(NSInteger, RCEditCommand) {
   RCEditCommandSelectAll,
 };
 
+/// An extension's entry in the page menu (chrome.contextMenus), as Chrome would show it for the
+/// click: an extension with several is one entry, its name, holding them.
+RC_EXPORT @interface RCExtensionMenuItem : NSObject
+/// Empty for a separator.
+@property (nonatomic, readonly) NSString *title;
+@property (nonatomic, readonly) BOOL separator;
+@property (nonatomic, readonly) BOOL enabled;
+/// A checkbox or radio entry that's on.
+@property (nonatomic, readonly) BOOL checked;
+/// The extension's icon, on an extension's own entry.
+@property (nonatomic, readonly, nullable) NSImage *icon;
+/// What a submenu holds; empty for an entry.
+@property (nonatomic, readonly) NSArray<RCExtensionMenuItem *> *children;
+- (instancetype)init NS_UNAVAILABLE;
+/// Tells the extension it was chosen.
+- (void)perform;
+@end
+
 /// What a right-click in a page was on, for Rise to build its menu from, and what that menu can
 /// do there. Actions apply to the frame clicked in.
 RC_EXPORT @interface RCContextMenu : NSObject
@@ -178,6 +196,8 @@ RC_EXPORT @interface RCContextMenu : NSObject
 - (void)lookUp;
 /// Has the page's DevTools select the element clicked, once they're attached if they aren't yet.
 - (void)inspect;
+/// Extensions' entries for what was clicked.
+@property (nonatomic, readonly) NSArray<RCExtensionMenuItem *> *extensionItems;
 @end
 
 @class RCBrowserView;
@@ -233,6 +253,9 @@ RC_EXPORT @interface RCContextMenu : NSObject
 /// The page was right-clicked; Rise shows its menu for `menu`.
 - (void)browserView:(RCBrowserView *)browserView
     showContextMenu:(RCContextMenu *)menu NS_SWIFT_NAME(browserView(_:showContextMenu:));
+/// An extension popup's page has a new size, as Chrome sizes popups to what they show (see
+/// `sizesExtensionPopups`), in points.
+- (void)browserView:(RCBrowserView *)browserView didChangePreferredSize:(NSSize)size;
 /// The page, at `origin`, asks for a dialog; call `completion` once, with whether it was accepted
 /// and, for a prompt, the text.
 - (void)browserView:(RCBrowserView *)browserView
@@ -279,6 +302,9 @@ RC_EXPORT @interface RCBrowserView : NSView
 /// A Chrome extension's popup, as extensions see it (a "popup" view, not a tab). Set it before
 /// the page loads.
 @property (nonatomic) BOOL extensionPopup;
+/// Whether the engine sizes an extension popup's page to what it shows, from 25 by 25 to 800 by
+/// 600 points, as Chrome does, telling the delegate; if not, Rise measures the page.
+@property (class, nonatomic, readonly) BOOL sizesExtensionPopups;
 /// The back/forward history, with scroll positions and forms, for restoring at the next launch.
 @property (nonatomic, readonly, nullable) NSData *navigationState;
 /// Gives a page that hasn't loaded anything that history and loads its current entry, or loads
@@ -363,6 +389,10 @@ RC_EXPORT @interface RCBrowserView : NSView
 - (void)tabStripMoveTab:(RCBrowserView *)tab toIndex:(NSInteger)index;
 - (void)tabStripSetTab:(RCBrowserView *)tab pinned:(BOOL)pinned;
 - (void)tabStripActivateWindow;
+@optional
+/// A tab an extension opened in the window, as tabs.create does, its page already made: Rise puts
+/// it among the window's tabs at `index` (-1: the end), in front if `active`. NO closes it.
+- (BOOL)tabStripAdoptTab:(RCBrowserView *)tab index:(NSInteger)index active:(BOOL)active;
 @end
 
 /// A Rise window as Chrome extensions see it: a browser window holding its tabs, which the tabs
@@ -399,12 +429,24 @@ RC_EXPORT @interface RCExtensionAction : NSObject
 - (nullable NSURL *)clickInTab:(RCBrowserView *)tab;
 @end
 
+/// A keyboard shortcut an extension set (chrome.commands).
+RC_EXPORT @interface RCExtensionShortcut : NSObject
+@property (nonatomic, readonly) NSString *extensionID;
+/// Whether it clicks the extension's button, which Rise does as for a click, opening any popup.
+@property (nonatomic, readonly) BOOL clicksButton;
+- (instancetype)init NS_UNAVAILABLE;
+/// Tells the extension, for `tab` (the one in front).
+- (void)runInTab:(nullable RCBrowserView *)tab;
+@end
+
 /// The toolbar buttons of the extensions installed in Rise's profile.
 RC_EXPORT @interface RCExtensions : NSObject
 @property (class, readonly) NSArray<RCExtensionAction *> *actions;
 /// Calls `changed` on the main thread whenever buttons are added, removed or change, until the
 /// returned object goes away.
 + (id)observeActions:(void (^)(void))changed;
+/// The extension shortcut a key press is, if it's one.
++ (nullable RCExtensionShortcut *)shortcutForEvent:(NSEvent *)event;
 /// Installs the Chrome Web Store's extension `extensionID`, after the install prompt asks;
 /// `completion` hears how it went.
 + (void)installFromWebStore:(NSString *)extensionID

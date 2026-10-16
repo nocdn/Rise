@@ -43,6 +43,17 @@ import RiseChromium
         extensionPopup = popup
         popup.show(relativeTo: rect, of: anchorView)
     }
+    /// An extension's keyboard shortcut: its button's opens its popup, under its sidebar button if
+    /// it's pinned, as a click does; others go to the extension. False if `event` isn't one.
+    func runExtensionShortcut(_ event: NSEvent) -> Bool {
+        guard let shortcut = RCExtensions.shortcut(for: event) else { return false }
+        if shortcut.clicksButton {
+            runExtension(shortcut.extensionID, anchor: sidebar.extensionButtons.first { $0.extensionID == shortcut.extensionID })
+        } else {
+            shortcut.run(inTab: selectedChromiumView)
+        }
+        return true
+    }
     /// Right-clicking an extension's button: pin or unpin it, or manage it.
     func extensionMenu(for action: RCExtensionAction) -> NSMenu {
         let id = action.extensionID, pinned = pinnedExtensions.contains(id)
@@ -180,11 +191,16 @@ import RiseChromium
         content.addSubview(page.view)
         let controller = NSViewController(); controller.view = content
         popover.contentViewController = controller
-        page.addMessageHandler(Self.handler, world: .named("Rise.ExtensionPopup")) { [weak self] message in
-            guard message.frame.isMain, let size = message.body as? [Double], size.count == 2 else { return }
-            self?.fit(NSSize(width: size[0], height: size[1]))
+        // Sized as Chrome sizes popups, where the engine does; measured by the page, where not.
+        if RCBrowserView.sizesExtensionPopups {
+            page.onPreferredSize = { [weak self] size in self?.fit(size) }
+        } else {
+            page.addMessageHandler(Self.handler, world: .named("Rise.ExtensionPopup")) { [weak self] message in
+                guard message.frame.isMain, let size = message.body as? [Double], size.count == 2 else { return }
+                self?.fit(NSSize(width: size[0], height: size[1]))
+            }
+            page.addUserScript(Self.sizeScript, world: .named("Rise.ExtensionPopup"), mainFrameOnly: true, handlers: [Self.handler])
         }
-        page.addUserScript(Self.sizeScript, world: .named("Rise.ExtensionPopup"), mainFrameOnly: true, handlers: [Self.handler])
         // `window.close()` from the popup, as many do when they're done.
         page.onEvent = { [weak self] event in if case .closed = event { self?.close() } }
         page.load(url)
