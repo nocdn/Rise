@@ -12,6 +12,7 @@ final class AddressSuggestionRow: UIButton {
     let fillGlyph = UIImageView(image: SearchPanel.fillIcon)
     private var iconSide: CGFloat = 22
     private var iconOffset: CGFloat = 0
+    private var fillGlyphOffset: CGFloat = 0
     private var roundsIconCorners = false
     var choose: (() -> Void)?
     var fill: (() -> Void)?
@@ -47,6 +48,8 @@ final class AddressSuggestionRow: UIButton {
     }
     required init?(coder: NSCoder) { fatalError() }
     func show(_ candidate: AddressCandidate, image: UIImage?) {
+        fillGlyph.image = SearchPanel.fillIcon
+        fillGlyphOffset = 0
         titleLabelView.attributedText = nil
         titleLabelView.font = SearchPanel.font
         titleLabelView.text = candidate.title
@@ -66,9 +69,11 @@ final class AddressSuggestionRow: UIButton {
     func showSite(_ site: PopularSite, image: UIImage?, color: UIColor?) {
         let font = SearchPanel.font
         titleLabelView.font = font
-        let title = NSMutableAttributedString(string: "Search in ", attributes: [.font: font, .foregroundColor: UIColor.secondaryLabel])
+        let title = NSMutableAttributedString(string: "Search in ", attributes: [.font: font, .foregroundColor: UIColor.label])
         title.append(NSAttributedString(string: site.name, attributes: [.font: font, .foregroundColor: color ?? UIColor.label]))
         titleLabelView.attributedText = title; addressLabel.text = nil
+        fillGlyph.image = SearchPanel.searchIcon
+        fillGlyphOffset = -2
         addressLabel.isHidden = true
         icon.image = image ?? UIImage(systemName: "globe")
         roundsIconCorners = image != nil
@@ -89,7 +94,7 @@ final class AddressSuggestionRow: UIButton {
         fillButton.center = CGPoint(x: bounds.width-22, y: bounds.midY)
         let glyphSide = SearchPanel.searchIcon.size.width
         let glyphInset = SearchPanel.rowIndent+(22-glyphSide)/2+1
-        fillGlyph.frame = CGRect(x: fillButton.bounds.width-glyphInset-glyphSide, y: bounds.midY-glyphSide/2,
+        fillGlyph.frame = CGRect(x: fillButton.bounds.width-glyphInset-glyphSide+fillGlyphOffset, y: bounds.midY-glyphSide/2,
                                  width: glyphSide, height: glyphSide)
         let x = SearchPanel.rowIndent+22+8, width = max(0, bounds.width-44-x)
         if !Self.showsURLSubtitles || (addressLabel.text ?? "").isEmpty {
