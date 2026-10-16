@@ -227,7 +227,8 @@ import WebKit
 
     /// Used by the temporary preview page too, without changing a real tab's address/history.
     static func favicon(for web: WKWebView) async -> UIImage? {
-        guard let page = web.url, MobileBrowserSession.canRestore(page) else { return nil }
+        guard web.configuration.websiteDataStore.isPersistent,
+              let page = web.url, MobileBrowserSession.canRestore(page) else { return nil }
         let result = try? await web.evaluateJavaScript(iconScript)
         var candidates = ((result as? [String]) ?? []).compactMap(URL.init(string:))
             .filter { ["http", "https", "data"].contains($0.scheme?.lowercased() ?? "") }
@@ -262,6 +263,7 @@ import WebKit
 /// transparent or round ones keep their shape; without one, the Mac app's blank square.
 final class FaviconView: UIView {
     static let size: CGFloat = 16
+    static let cornerRadiusFraction: CGFloat = 4.0/16.0
     private let imageView = UIImageView()
     private let placeholder = UIView()
     var image: UIImage? {
@@ -291,7 +293,7 @@ final class FaviconView: UIView {
         super.layoutSubviews()
         // As on the Mac: 4 points in 16 for the clip, and a 14-point square with 3-point corners.
         let scale = min(bounds.width, bounds.height)/Self.size
-        layer.cornerRadius = 4*scale
+        layer.cornerRadius = min(bounds.width, bounds.height)*Self.cornerRadiusFraction
         imageView.frame = bounds
         let side = 14*scale
         placeholder.frame = CGRect(x: bounds.midX-side/2, y: bounds.midY-side/2, width: side, height: side)

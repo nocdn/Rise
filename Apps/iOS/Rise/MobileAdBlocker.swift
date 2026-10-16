@@ -8,7 +8,8 @@ import WebKit
     static let shared = MobileAdBlocker()
     nonisolated static let scriptMarker = "// Rise.AdBlock\n"
     private static let preferenceKey = "Rise.iOS.AdBlocking.DisabledSites"
-    private let preferences: UserDefaults
+    private let preferences: UserDefaults?
+    private var privateDisabledSites = Set<String>()
     let cookieBanners: MobileCookieBannerBlocker
     // Pages can move between browser owners (Peek -> full tab). A single ledger also
     // prevents an old owner's pending preparation from undoing the new owner's policy.
@@ -60,7 +61,7 @@ import WebKit
         return catalog
     }
 
-    init(preferences: UserDefaults = .standard) {
+    init(preferences: UserDefaults? = .standard) {
         self.preferences = preferences
         cookieBanners = MobileCookieBannerBlocker(preferences: preferences)
         _ = Self.compilation // Prepare the immutable catalog while the initial UI opens.
@@ -82,14 +83,15 @@ import WebKit
 
     func isEnabled(for url: URL?) -> Bool {
         guard !Self.isYouTube(url), let site = Self.site(url) else { return false }
-        return !(preferences.stringArray(forKey: Self.preferenceKey) ?? []).contains(site)
+        return !(preferences?.stringArray(forKey: Self.preferenceKey).map(Set.init) ?? privateDisabledSites).contains(site)
     }
 
     func setEnabled(_ value: Bool, for url: URL) {
         guard !Self.isYouTube(url), let site = Self.site(url) else { return }
-        var disabled = Set(preferences.stringArray(forKey: Self.preferenceKey) ?? [])
+        var disabled = Set(preferences?.stringArray(forKey: Self.preferenceKey).map(Set.init) ?? privateDisabledSites)
         if value { disabled.remove(site) } else { disabled.insert(site) }
-        preferences.set(disabled.sorted(), forKey: Self.preferenceKey)
+        if let preferences { preferences.set(disabled.sorted(), forKey: Self.preferenceKey) }
+        else { privateDisabledSites = disabled }
     }
 
     func prepare(_ page: WKWebView, for url: URL?) async throws {

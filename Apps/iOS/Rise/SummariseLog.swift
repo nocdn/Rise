@@ -39,6 +39,7 @@ struct SummariseRecord: Codable, Sendable {
     /// How long the page is watched after the scene ends, as it takes over from the card.
     private static let afterwards = 0.5
 
+    private let enabled: Bool
     private var record: SummariseRecord
     private let clock0 = CACurrentMediaTime()
     private var lastVsync: CFTimeInterval?
@@ -46,7 +47,8 @@ struct SummariseRecord: Codable, Sendable {
     private var after: CADisplayLink?
     private var afterUntil = 0.0
 
-    init(path: String, page: String) {
+    init(path: String, page: String, enabled: Bool = true) {
+        self.enabled = enabled
         let screen = UIScreen.main, process = ProcessInfo.processInfo
         let device = "\(UIDevice.current.model) iOS \(UIDevice.current.systemVersion), up to \(screen.maximumFramesPerSecond) fps, "
             + "thermal \(Self.describe(process.thermalState)), low power \(process.isLowPowerModeEnabled)"
@@ -57,6 +59,7 @@ struct SummariseRecord: Codable, Sendable {
     var now: Double { CACurrentMediaTime()-clock0 }
 
     func event(_ name: String, _ detail: String = "") {
+        guard enabled else { return }
         record.events.append(.init(t: now, name: name, detail: detail))
         Self.logger.debug("\(name, privacy: .public) \(detail, privacy: .public)")
         switch name {
@@ -68,6 +71,7 @@ struct SummariseRecord: Codable, Sendable {
 
     /// One frame of the scene: its vsync and the next, and when its work started and ended.
     func frame(phase: String, vsync: CFTimeInterval, target: CFTimeInterval, started: CFTimeInterval, ended: CFTimeInterval) {
+        guard enabled else { return }
         defer { lastVsync = vsync }
         guard let lastVsync else { return }
         let interval = (target-vsync)*1000, gap = (vsync-lastVsync)*1000
@@ -78,6 +82,7 @@ struct SummariseRecord: Codable, Sendable {
 
     /// Watches the page's frames for a moment as it takes over, then saves the record.
     func finish() {
+        guard enabled else { return }
         lastVsync = nil
         afterUntil = now+Self.afterwards
         // The link holds on to the log, the scene gone, until it's done.
