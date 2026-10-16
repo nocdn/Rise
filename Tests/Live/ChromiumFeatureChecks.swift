@@ -645,8 +645,10 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
             return await self.value("return document.querySelector('img').complete", in: dragging.page) as? Bool == true
         }
         try await Task.sleep(for: .milliseconds(500))
+        let inFront = browser.window?.isKeyWindow == true && NSApp.isActive
         let dragged = try await drag("#l img", in: dragging.page)
-        check(dragged.contains(.URL) || dragged.contains(NSPasteboard.PasteboardType("public.url")), "Dragging a link out carries its address")
+        check(dragged.contains(.URL) || dragged.contains(NSPasteboard.PasteboardType("public.url")),
+              "Dragging a link out carries its address\(inFront ? "" : " (Rise's window wasn't in front)")")
         check(dragged.contains(.tiff) || dragged.contains(.png) || dragged.contains(NSPasteboard.PasteboardType("com.apple.pasteboard.promised-file-url"))
               || dragged.contains(NSPasteboard.PasteboardType("NSPromiseContentsPboardType")), "And an image, its picture: \(dragged.map(\.rawValue).filter { !$0.hasPrefix("org.chromium") }.prefix(8))")
 
