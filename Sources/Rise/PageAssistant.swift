@@ -34,10 +34,10 @@ enum PageAssistant {
     }
 
     /// The visible text of the page, plus whatever the user has selected on it.
-    @MainActor static func snapshot(of webPage: WebPage) async throws -> Page {
+    @MainActor static func snapshot(of webPage: any ScriptablePage) async throws -> Page {
         let source = await PageFind.visibleText(in: webPage)
         let script = "return [fallback && document.body ? document.body.innerText : '', String(window.getSelection() || '')]"
-        let parts = await webPage.evaluate(script, arguments: ["fallback": source == nil], world: nil) as? [String] ?? []
+        let parts = try await webPage.runScript(script, arguments: ["fallback": source == nil], world: nil) as? [String] ?? []
         return Page(title: webPage.title ?? "", url: webPage.url?.absoluteString ?? "",
                     selection: parts.count > 1 ? parts[1] : "", text: String((source ?? parts.first ?? "").prefix(pageCharacterLimit)))
     }

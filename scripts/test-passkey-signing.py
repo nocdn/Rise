@@ -64,5 +64,33 @@ class LocalIdentityTests(unittest.TestCase):
         self.assertEqual(signing.local_identity("     0 valid identities found\n"), "-")
 
 
+class CloudKitSigningTests(PasskeySigningTests):
+    def setUp(self):
+        super().setUp()
+        self.profile["Entitlements"].update({
+            "com.apple.developer.icloud-services": "*",
+            "com.apple.developer.icloud-container-identifiers": [signing.CLOUD_CONTAINER],
+            "com.apple.developer.icloud-container-environment": ["Development", "Production"],
+            "com.apple.developer.aps-environment": "development",
+        })
+
+    def testCloudKitRequiresExplicitContainerAndKeepsOnlyApprovedCapabilities(self):
+        result = signing.cloudkit_entitlements(self.profile, "dev.bartosz.Rise", self.sha, self.now)
+        self.assertNotIn(signing.PASSKEY, result)
+        self.assertNotIn("com.apple.security.get-task-allow", result)
+        self.assertEqual(result["com.apple.developer.icloud-services"], ["CloudKit"])
+        self.assertEqual(result["com.apple.developer.icloud-container-environment"], "Development")
+        for key, value in [
+            ("com.apple.developer.icloud-container-identifiers", ["iCloud.other"]),
+            ("com.apple.developer.icloud-services", ["CloudDocuments"]),
+            ("com.apple.developer.icloud-container-environment", ["Production"]),
+            ("com.apple.application-identifier", "TESTTEAM.*"),
+        ]:
+            with self.subTest(key=key):
+                profile = copy.deepcopy(self.profile); profile["Entitlements"][key] = value
+                with self.assertRaises(ValueError):
+                    signing.cloudkit_entitlements(profile, "dev.bartosz.Rise", self.sha, self.now)
+
+
 if __name__ == "__main__":
     unittest.main()

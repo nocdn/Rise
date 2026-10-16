@@ -16,10 +16,23 @@
         </dict>
     </dict>
     <key>UILaunchScreen</key><dict/>
+    <!-- Needed to be offered as the default browser, which also lets pages use passkeys. -->
+    <key>CFBundleURLTypes</key>
+    <array><dict>
+        <key>CFBundleURLName</key><string>Web site URL</string>
+        <key>CFBundleURLSchemes</key><array><string>http</string><string>https</string></array>
+    </dict></array>
+    <key>RiseCloudKitEnabled</key><true/>
+    <key>UIBackgroundModes</key><array><string>remote-notification</string></array>
+    <!-- Downloads land in Documents/Downloads, shown in Files under On My iPhone › Rise. -->
+    <key>UIFileSharingEnabled</key><true/>
+    <key>LSSupportsOpeningDocumentsInPlace</key><true/>
+    <!-- Lets animations run at up to 120 Hz on ProMotion iPhones, rather than 60. -->
+    <key>CADisableMinimumFrameDurationOnPhone</key><true/>
     <key>NSMicrophoneUsageDescription</key><string>Hold New Page to say what to search for.</string>
     <key>NSSpeechRecognitionUsageDescription</key><string>What you say while holding New Page is transcribed on your iPhone into a search.</string>
     <key>UIAppFonts</key>
-    <array><string>OpenRunde-Medium.otf</string></array>
+    <array><string>OpenRunde-Medium.otf</string><string>OpenRunde-Semibold.otf</string></array>
     <key>UISupportedInterfaceOrientations</key>
     <array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
     <key>UISupportedInterfaceOrientations~ipad</key>

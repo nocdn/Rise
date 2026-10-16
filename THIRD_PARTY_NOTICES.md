@@ -27,7 +27,7 @@ SOFTWARE.
 
 ## Tabler Icons
 
-ArchiveButton.swift, TablerIcon.swift and Playgrounds/download-flight.html draw icons from Tabler Icons (archive, paint roller, adjustments, link, link-copied and eye).
+ArchiveButton.swift, TablerIcon.swift, MenuIcons.swift, the iOS menu SVG assets and Playgrounds/download-flight.html draw icons from Tabler Icons (archive, paint roller, adjustments, link, link-copied, eye, inward diagonal arrows, input search, settings, ad, spy and cookie).
 Source: https://github.com/tabler/tabler-icons
 
 MIT License

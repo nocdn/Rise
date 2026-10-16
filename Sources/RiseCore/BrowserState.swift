@@ -16,7 +16,7 @@ public enum AddressResolver {
         if !text.contains(where: { $0.isWhitespace }), let candidate = URL(string: "https://" + text), let rawHost = candidate.host {
             let host = rawHost.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
             let local = host == "localhost" || host == "127.0.0.1" || host == "::1" || host.hasSuffix(".localhost")
-            if local || host.contains(".") || text.hasPrefix("[") {
+            if local || (host.contains(".") && !host.hasPrefix(".") && !host.hasSuffix(".")) || text.hasPrefix("[") {
                 return URL(string: (local ? "http://" : "https://") + text)
             }
         }

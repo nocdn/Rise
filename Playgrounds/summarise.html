@@ -1,0 +1,947 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rise · Summarise playground</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    display: flex; flex-direction: column; overflow: hidden; background: #f5f5f4; color: #222;
+    font: 12px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  #top { flex: 1; min-height: 0; display: flex; gap: 18px; padding: 14px 18px 10px; }
+  #side { width: 250px; flex: none; display: flex; flex-direction: column; gap: 8px; overflow-y: auto; }
+  #side h1 { font-size: 13px; margin: 0; }
+  #side .sub { color: #777; }
+  #stage { flex: 1; min-width: 0; display: flex; gap: 22px; align-items: flex-start; justify-content: center; }
+  .device { position: relative; flex: none; }
+  .device .caption { position: absolute; left: 0; right: 0; top: -2px; transform: translateY(-100%); text-align: center; color: #888; font-size: 11px; }
+  .screen {
+    position: absolute; left: 0; top: 0; width: 393px; height: 852px; transform-origin: 0 0; overflow: hidden;
+    border-radius: 55px; background: #000; user-select: none; -webkit-user-select: none;
+    box-shadow: 0 0 0 9px #1b1b1d, 0 0 0 10px #3a3a3c, 0 24px 60px rgba(0,0,0,.28);
+    touch-action: none;
+  }
+  video.screen { object-fit: cover; }
+
+  /* The summary's backdrop: a pale wash with a purple and a pink glow circling each other. */
+  #bg { position: absolute; inset: 0; overflow: hidden;
+    background: linear-gradient(100deg, #D8D4F5 0%, #E9D7EE 50%, #FBDAE1 100%); }
+  #bg::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to top, #E4E3FB 0%, rgba(228,227,251,0) 32%); }
+  .blob { position: absolute; left: 0; top: 0; border-radius: 50%; will-change: transform, opacity; }
+
+  #group { position: absolute; left: 0; top: 0; width: 393px; will-change: transform; z-index: 1; }
+  #group.tappable { cursor: pointer; }
+  #card, #cardB { position: absolute; left: 0; top: 0; width: 393px; overflow: hidden; background: #f0f0f0; backface-visibility: hidden; }
+  #cardB { display: none; }
+  #pageWrap, #pageWrapB { position: absolute; left: 0; top: 0; width: 393px; }
+  .shade { position: absolute; inset: 0; background: #000; opacity: 0; pointer-events: none; }
+  #back { position: absolute; left: 6px; right: 6px; top: -12px; height: 90px; overflow: hidden; background: #c7c7cb; opacity: 0; }
+  #back .flip { position: absolute; left: -6px; top: 0; width: 393px; transform: scaleY(-1); transform-origin: 50% 0; opacity: .55; filter: grayscale(1); }
+
+  /* A stand-in for the page in the video. */
+  .page { position: relative; width: 393px; height: 852px; background: #f0f0f0; color: #111; overflow: hidden; }
+  .page .strip { height: 59px; background: #000; }
+  .page .menu { height: 28px; background: #000; color: #fff; font: 11px/28px -apple-system, sans-serif; letter-spacing: .02em; text-align: center; }
+  .page .author { font: 600 15px/1 -apple-system, sans-serif; text-align: center; margin: 22px 0 0; }
+  .page h2 { font: italic 700 35px/1.12 Georgia, "Times New Roman", serif; margin: 44px 18px 0; letter-spacing: -.01em; }
+  .page .meta { font: 10px/1.45 -apple-system, sans-serif; margin: 18px 18px 0; color: #222; }
+  .page .tags { font: 9.5px/1 -apple-system, sans-serif; margin: 12px 18px 0; color: #222; word-spacing: 1px; }
+  .page p { font: 12.4px/1.5 -apple-system, sans-serif; margin: 12px 18px 0; color: #1a1a1a; }
+
+  #statusbar { position: absolute; left: 0; right: 0; top: 0; height: 59px; pointer-events: none; color: #fff; transition: color .2s; }
+  #statusbar .time { position: absolute; left: 52px; top: 19px; font: 600 17px/22px -apple-system, sans-serif; }
+  #statusbar .island { position: absolute; left: 50%; top: 11px; width: 125px; height: 37px; margin-left: -62.5px; border-radius: 20px; background: #000; }
+  #statusbar .icons { position: absolute; right: 30px; top: 21px; display: flex; gap: 6px; align-items: center; }
+  #statusbar .icons i { display: block; height: 12px; border-radius: 3px; background: currentColor; }
+
+  /* Rise's bottom bar, as in the app. */
+  #bar { position: absolute; left: 0; right: 0; bottom: 0; height: 83px; background: #fff; border-top: .5px solid rgba(60,60,67,.29); will-change: transform; }
+  /* Fills in below the bar when its spring carries it a little past its place. */
+  #bar::after { content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 30px; background: #fff; }
+  #bar .tabs { position: absolute; left: 30px; top: 16px; width: 28px; height: 28px; }
+  #bar .tabs i { position: absolute; inset: 0; border-radius: 6px; background: #2f4f63; box-shadow: 0 0 0 1px #fff; }
+  #bar .tabs i:first-child { transform: rotate(-12deg) translate(-3px, 1px); background: #8fb6c8; }
+  #bar .newpage { position: absolute; left: 50%; top: 11px; width: 76px; height: 38px; margin-left: -38px; border-radius: 11px; background: #f2f2f4; display: flex; align-items: center; justify-content: center; font: 400 26px/1 -apple-system, sans-serif; color: rgba(0,0,0,.7); }
+  #bar .more { position: absolute; right: 26px; top: 12px; width: 36px; height: 36px; border-radius: 18px; background: #f2f2f4; display: flex; align-items: center; justify-content: center; font: 700 16px/1 -apple-system, sans-serif; color: rgba(0,0,0,.7); cursor: pointer; }
+  #menuPanel { position: absolute; left: 0; right: 0; bottom: 0; height: 200px; background: #fff; border-radius: 20px 20px 0 0; transform: translateY(100%); transition: transform .32s cubic-bezier(.2,.9,.25,1); padding: 20px 16px 0; }
+  #menuPanel.open { transform: none; }
+  #menuPanel .address { height: 46px; border-radius: 14px; background: #f2f2f4; display: flex; align-items: center; justify-content: center; font: 600 15px -apple-system, sans-serif; }
+  #menuPanel .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 14px; }
+  #menuPanel .tile { aspect-ratio: 1; border-radius: 20px; background: #f2f2f4; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; font: 500 12px -apple-system, sans-serif; cursor: pointer; }
+  #menuPanel .tile b { font-size: 20px; font-weight: 400; }
+  #menuPanel .tile.go { outline: 2px solid #2D7FF9; outline-offset: -2px; }
+  #scrim { position: absolute; inset: 0; background: rgba(0,0,0,.2); opacity: 0; pointer-events: none; transition: opacity .3s; }
+  #scrim.on { opacity: 1; pointer-events: auto; }
+
+  /* The card, its title and the summary scroll together as one page. */
+  #scroller { position: absolute; inset: 0; z-index: 0; overflow-x: hidden; overflow-y: hidden; scrollbar-width: none; touch-action: pan-y; }
+  #scroller::-webkit-scrollbar { display: none; }
+  #scroller.scrolls { overflow-y: auto; }
+  #content { position: relative; width: 393px; height: 852px; }
+  /* Inside the card's transform, so it tilts and swings with it; sized for the card's scale. */
+  #title { position: absolute; left: 26px; right: 26px; text-align: center; font: 19.7px/24px -apple-system, sans-serif; color: #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; opacity: 0; pointer-events: none; }
+  #summary { position: absolute; left: 0; right: 0; padding: 0 24px 64px; }
+  #summary .blk { opacity: 0; will-change: filter, opacity, transform; }
+  #summary .para { font: 17px/22px -apple-system, "SF Pro Text", sans-serif; color: rgba(28,28,30,.85); margin: 0 0 30px; }
+  #summary .sec { position: relative; padding-left: 40px; margin: 0 0 22px; }
+  #summary .sec .ico { position: absolute; left: 3px; top: -2px; width: 27px; height: 27px; border-radius: 50%; background: #2A30FF; color: #fff; display: flex; align-items: center; justify-content: center; font: 700 13px/1 -apple-system, sans-serif; }
+  #summary .sec h3 { margin: 0 0 5px; font: 600 17px/22px -apple-system, sans-serif; color: rgba(28,28,30,.9); }
+  #summary .sec div.body { font: 17px/22px -apple-system, sans-serif; color: rgba(28,28,30,.85); }
+
+  /* Dials along the bottom. */
+  #dials { flex: none; height: 41vh; min-height: 220px; overflow-y: auto; background: #fff; border-top: 1px solid #e3e3e3; padding: 8px 16px 18px;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 0 20px; align-content: start; }
+  fieldset { border: none; border-top: 1px solid #eee; margin: 8px 0 0; padding: 8px 0 0; min-width: 0; }
+  legend { font-weight: 600; padding: 0 6px 0 0; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: #666; }
+  fieldset .hint { color: #999; font-size: 11px; margin: 2px 0 4px; }
+  .ctl { display: grid; grid-template-columns: 1fr 70px; column-gap: 8px; align-items: center; margin: 4px 0 1px; }
+  .ctl label { color: #333; }
+  .ctl output { text-align: right; color: #666; font-variant-numeric: tabular-nums; }
+  .ctl input[type=range] { grid-column: 1 / 3; width: 100%; margin: 1px 0 0; accent-color: #2D7FF9; }
+  .ctl.changed label { color: #2D7FF9; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  button, select { font: inherit; border: 1px solid #d6d6d6; background: #fafafa; border-radius: 6px; padding: 4px 9px; cursor: pointer; }
+  button:hover { background: #f0f0f0; } button.primary { background: #2D7FF9; border-color: #2D7FF9; color: #fff; }
+  .check { display: flex; align-items: center; gap: 6px; }
+  kbd { font: 11px ui-monospace, Menlo, monospace; background: #f1f1f1; border: 1px solid #ddd; border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
+  #readout { font: 11px/1.4 ui-monospace, Menlo, monospace; color: #555; background: #fafafa; border: 1px solid #eee; border-radius: 6px; padding: 6px 8px; white-space: pre; }
+  #scrub { user-select: none; -webkit-user-select: none; }
+  #scrub .track { position: relative; height: 34px; cursor: ew-resize; touch-action: none; }
+  #scrub .rail { position: absolute; left: 0; right: 0; top: 8px; height: 6px; border-radius: 3px; background: #e6e6e6; overflow: hidden; }
+  #scrub .fill { height: 100%; width: 0; background: #2D7FF9; }
+  #scrub .head { position: absolute; top: 4px; width: 14px; height: 14px; margin-left: -7px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.18), 0 1px 3px rgba(0,0,0,.25); pointer-events: none; }
+  #scrub .mark { position: absolute; top: 6px; width: 1px; height: 10px; background: rgba(0,0,0,.35); pointer-events: none; }
+  #scrub .mark span { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); font-size: 10px; color: #888; white-space: nowrap; }
+  #scrub .mark.up span { top: -13px; }
+  #scrub .track { margin-top: 12px; }
+  #scrub .times { display: flex; justify-content: space-between; align-items: center; color: #666; font-variant-numeric: tabular-nums; }
+  #toast { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); background: rgba(0,0,0,.78); color: #fff; padding: 6px 12px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 9; }
+</style>
+</head>
+<body>
+<div id="top">
+  <div id="side">
+    <h1>Summarise</h1>
+    <div class="sub">Arc Search's pinch to summarise, remade with the timings measured from the recording. Every value below is in points and seconds, as it will be in the app.</div>
+    <div class="row">
+      <button class="primary" id="playPinch" title="P">Pinch, as in video</button>
+      <button id="playMenu" title="M">Menu, as in video</button>
+    </div>
+    <div class="row">
+      <button id="closeBtn" title="Esc">Close</button>
+      <button id="resetBtn">Reset</button>
+      <select id="speed">
+        <option value="1">1×</option><option value="0.5">0.5×</option><option value="0.25">0.25×</option><option value="0.1">0.1×</option>
+      </select>
+    </div>
+    <label class="check"><input type="checkbox" id="showRef" checked> Show reference video</label>
+    <label class="check"><input type="checkbox" id="syncRef" checked> Play it alongside replays</label>
+    <div class="sub" style="margin-top:4px">
+      <b>Scrub:</b> drag along the timeline below to move the simulation and the recording together. While paused, dials update the frame as you drag them. <kbd>Space</kbd> plays and pauses.
+      <br><b>Pinch it yourself:</b> pinch on the page with a trackpad or two fingers, or hold <kbd>⌥</kbd> and drag up. Let go past “Commit when let go past p” to summarise.
+      <br><b>More</b> (•••) → <b>Summarise</b> runs the menu path. Tap the card to go back to the page.
+    </div>
+    <div id="scrub">
+      <div class="track" id="scrubTrack"><div class="rail"><div class="fill"></div></div><div class="marks"></div><div class="head"></div></div>
+      <div class="times"><button id="playPause" title="Space">Pause</button><span id="scrubTime">Drag to scrub the replay</span></div>
+    </div>
+    <div id="readout"></div>
+    <div class="row">
+      <button id="copy">Copy values</button>
+      <button id="defaults">Reset dials</button>
+    </div>
+    <div class="sub">Changed dials turn blue. “Copy values” copies only the changed ones, so you can paste them back to me.</div>
+  </div>
+  <div id="stage">
+    <div class="device" id="liveDevice">
+      <div class="caption">Rise</div>
+      <div class="screen" id="screen">
+        <div id="bg"><div class="blob" id="blobP"></div><div class="blob" id="blobK"></div></div>
+        <div id="scroller"><div id="content">
+          <div id="group">
+            <div id="title"></div>
+            <div id="back"><div class="flip"></div></div>
+            <div id="card"><div id="pageWrap"></div><div class="shade"></div></div>
+            <div id="cardB"><div id="pageWrapB"></div><div class="shade"></div></div>
+          </div>
+          <div id="summary"></div>
+        </div></div>
+        <div id="scrim"></div>
+        <div id="bar">
+          <div class="tabs"><i></i><i></i></div>
+          <div class="newpage">+</div>
+          <div class="more" id="moreBtn">•••</div>
+        </div>
+        <div id="menuPanel">
+          <div class="address">🔒 lalinsky.com</div>
+          <div class="tiles">
+            <div class="tile"><b>⇪</b>Share</div>
+            <div class="tile go" id="summariseTile"><b>≣</b>Summarise</div>
+            <div class="tile"><b>⌕</b>Find</div>
+            <div class="tile"><b>🔗</b>Copy</div>
+          </div>
+        </div>
+        <div id="statusbar"><div class="time">15:11</div><div class="island"></div>
+          <div class="icons"><i style="width:17px"></i><i style="width:15px"></i><i style="width:25px;border-radius:4px"></i></div></div>
+      </div>
+    </div>
+    <div class="device" id="refDevice">
+      <div class="caption">Arc Search (recording)</div>
+      <video class="screen" id="ref" src="summarise-reference.mp4" muted playsinline preload="auto"></video>
+    </div>
+  </div>
+</div>
+<div id="dials"></div>
+<div id="toast"></div>
+
+<template id="pageTemplate">
+  <div class="page">
+    <div class="strip"></div>
+    <div class="menu">MENU</div>
+    <div class="author">Lukáš Lalinský</div>
+    <h2>Type-safe HTML templating in Zig</h2>
+    <div class="meta">Lukáš Lalinský<br>2026-10-11</div>
+    <div class="tags">CATEGORIES&nbsp; programming &nbsp;&nbsp; TAGS&nbsp; zig, networking, web, html, templating</div>
+    <p>I’ve done a lot of web development over the years. I started around the year 2000, just after PHP 3.0 was released and started taking over the web world. I’ve used all kinds of approaches for generating HTML: raw PHP, string concatenation in Python, Smarty templates in PHP, Template Toolkit in Perl, and Jinja/Django templates in Python. Then, as the world moved on to SPAs and JavaScript frameworks, I stopped working on frontends.</p>
+    <p>Two years ago, I picked up Zig, and I’d never have imagined I’d be considering web development in such a low-level language. But as I was building my own ecosystem with zio and Dusty, I realized it’s not that far-fetched. I built these libraries for API backends, where the output is JSON or MessagePack, but then I saw that with proper use of arena allocators, even web development is actually manageable, since you don’t need to remember to deallocate all the strings that are typically involved. And with Zig’s comptime, you can build very high-level interfaces without losing the performance. You can even build SPAs without touching JavaScript.</p>
+  </div>
+</template>
+
+<script>
+// ----- Dials ---------------------------------------------------------------
+// Springs are (ω, ζ, v₀): angular frequency in rad/s, damping ratio, and starting velocity in
+// whole-distances per second, fitted to the recording frame by frame. In UIKit terms the
+// perceptual duration is 2π/ω and the bounce is 1−ζ.
+const schema = [
+  { group: 'Pinch (follows the fingers)', hint: 'p goes 0→1 as the fingers close by “pinch range”.', items: [
+    ['pinchRange', 'Pinch range (scale lost at p = 1)', 0.2, 0.9, 0.01, '', 0.6],
+    ['snapScale', 'Snap when the pinch is recognised', 0.9, 1, 0.001, '×', 0.976],
+    ['foldStartP', 'Fold starts at p', 0, 1, 0.01, '', 0.7],
+    ['scaleAtFold', 'Scale where the fold starts', 0.8, 1, 0.001, '×', 0.927],
+    ['scaleAtEnd', 'Scale at p = 1', 0.7, 1, 0.001, '×', 0.89],
+    ['foldAtEnd', 'Fold angle at p = 1', 0, 89, 1, '°', 39],
+    ['commitP', 'Commit when let go past p', 0.05, 1, 0.01, '', 0.5],
+    ['commitVelocity', 'or when flicked faster than', 0.5, 10, 0.1, 'p/s', 2.5],
+    ['pageRadius', 'Page corner radius', 0, 50, 1, 'pt', 12],
+    ['foldLine', 'Crease (of the page above the bar)', 0.3, 0.7, 0.005, '', 0.51],
+    ['foldPerspective', 'Fold perspective distance', 400, 8000, 50, 'pt', 2600],
+    ['topShade', 'Top half darkens as it folds', 0, 0.5, 0.01, '', 0.03],
+    ['bottomShade', 'Bottom half darkens as it folds', 0, 0.5, 0.01, '', 0.1],
+    ['cancelResponse', 'Spring back, perceptual duration', 0.1, 0.8, 0.01, 's', 0.3],
+  ]},
+  { group: 'Fold (after letting go)', hint: 'Both halves fold back away from you about the crease, until edge-on.', items: [
+    ['foldSpeed', 'Average fold speed', 60, 600, 1, '°/s', 204],
+    ['foldEaseIn', 'Ease in (0 linear, 1 strong)', 0, 1, 0.01, '', 0.22],
+    ['foldEndScale', 'Scale when flat', 0.6, 1, 0.001, '×', 0.875],
+    ['flatHold', 'Hold edge-on', 0, 0.4, 0.005, 's', 0.09],
+  ]},
+  { group: 'Flip up into the card', items: [
+    ['flipRotDuration', 'Rotation 90° → upright', 0.05, 0.8, 0.005, 's', 0.2],
+    ['flipRotEaseOut', 'Rotation ease out', 0, 1, 0.01, '', 0.25],
+    ['flipScaleW', 'Scale spring ω', 2, 40, 0.5, '', 10.5],
+    ['flipScaleZ', 'Scale spring ζ', 0.2, 1.5, 0.01, '', 0.95],
+    ['flipScaleV', 'Scale spring v₀', 0, 30, 0.5, '', 6],
+    ['flipTopW', 'Rise spring ω', 2, 40, 0.5, '', 20.5],
+    ['flipTopZ', 'Rise spring ζ', 0.2, 1.5, 0.01, '', 0.75],
+    ['flipTopV', 'Rise spring v₀', 0, 40, 0.5, '', 16],
+    ['perspective', 'Perspective distance', 300, 8000, 50, 'pt', 2000],
+  ]},
+  { group: 'Card', items: [
+    ['loadScale', 'Width while loading (of screen)', 0.3, 0.9, 0.001, '×', 0.526],
+    ['loadTop', 'Top while loading', 60, 300, 0.5, 'pt', 149],
+    ['revealScale', 'Width with the summary', 0.3, 0.9, 0.001, '×', 0.659],
+    ['revealTop', 'Top with the summary', 60, 300, 0.5, 'pt', 134],
+    ['cardAspect', 'Height ÷ width', 0.5, 1.6, 0.005, '', 0.975],
+    ['cropTop', 'Crop starts at (from page top)', 0, 200, 1, 'pt', 47],
+    ['cardRadius', 'Corner radius (unscaled)', 0, 40, 0.5, 'pt', 15],
+    ['restTilt', 'Resting tilt (− = top toward you)', -20, 20, 0.5, '°', -6],
+    ['shadow', 'Shadow strength', 0, 0.5, 0.01, '', 0.16],
+    ['backPeek', 'Back card peeks above (unscaled)', 0, 40, 0.5, 'pt', 12],
+    ['backInset', 'Back card inset (unscaled)', 0, 30, 0.5, 'pt', 6],
+  ]},
+  { group: 'Menu path (Summarise in More)', items: [
+    ['menuW', 'Shrink spring ω', 2, 40, 0.5, '', 9.5],
+    ['menuZ', 'Shrink spring ζ', 0.2, 1.5, 0.01, '', 0.95],
+    ['menuV', 'Shrink spring v₀', 0, 30, 0.5, '', 7],
+    ['cropW', 'Crop spring ω', 2, 60, 0.5, '', 24.5],
+    ['cropZ', 'Crop spring ζ', 0.2, 1.5, 0.01, '', 0.9],
+  ]},
+  { group: 'Swing while the model works', hint: 'Starts as the card starts; the reveal waits for it to pass the middle.', items: [
+    ['swingPeriod', 'Period', 0.5, 5, 0.01, 's', 2.04],
+    ['swingTilt', 'Tilt', 0, 10, 0.1, '°', 2.1],
+    ['swingX', 'Sway', 0, 30, 0.1, 'pt', 6.7],
+    ['swingY', 'Bob (twice per swing, low in the middle)', 0, 12, 0.1, 'pt', 2],
+    ['swingDir', 'First way (−1 left, 0 random, 1 right)', -1, 1, 1, '', 0],
+    ['latency', 'Model latency (from card start)', 0, 8, 0.05, 's', 1.2],
+    ['syncReveal', 'Reveal at the swing’s middle (0/1)', 0, 1, 1, '', 1],
+    ['syncTolerance', 'unless it passed within', 0, 0.5, 0.01, 's', 0.12],
+  ]},
+  { group: 'Title', hint: 'Part of the card, so it tilts, swings and grows with it.', items: [
+    ['titleDelay', 'Title and back card appear after', 0, 1.5, 0.01, 's', 0.38],
+    ['titleDuration', '…fading in over', 0.02, 1, 0.01, 's', 0.2],
+    ['titleGap', 'Title above the card (with the summary)', 0, 60, 0.5, 'pt', 26],
+    ['titleSize', 'Title size (with the summary)', 9, 20, 0.5, 'pt', 13],
+  ]},
+  { group: 'Bottom bar', hint: 'Slides off as the pinch starts or Summarise is tapped, and springs back as the card grows back into the page.', items: [
+    ['barExit', 'Slides off in', 0.04, 0.6, 0.01, 's', 0.07],
+    ['barResponse', 'Springs back, duration', 0.1, 1, 0.01, 's', 0.27],
+    ['barBounce', 'Springs back, bounce', 0, 0.6, 0.01, '', 0.25],
+  ]},
+  { group: 'Reveal', items: [
+    ['revealW', 'Card spring ω', 2, 40, 0.5, '', 13],
+    ['revealZ', 'Card spring ζ', 0.2, 1.5, 0.01, '', 1],
+    ['revealV', 'Card spring v₀', 0, 30, 0.5, '', 1],
+    ['textDelay', 'Text starts after', 0, 0.6, 0.01, 's', 0.12],
+    ['stagger', 'Each block after the last', 0, 0.4, 0.005, 's', 0.08],
+    ['textBlur', 'Starting blur', 0, 40, 0.5, 'pt', 20],
+    ['blurTau', 'Blur clears (time constant)', 0.02, 0.6, 0.005, 's', 0.15],
+    ['fadeTau', 'Fade in (time constant)', 0.02, 0.6, 0.005, 's', 0.12],
+    ['textRise', 'Rises from below by', 0, 40, 0.5, 'pt', 0],
+    ['textGap', 'Text below the card', 0, 60, 0.5, 'pt', 26],
+  ]},
+  { group: 'Background', items: [
+    ['orbitPeriod', 'Glows circle once every', 1, 12, 0.05, 's', 4],
+    ['blobBlur', 'Glow softness', 0, 120, 1, 'pt', 40],
+    ['purpleSize', 'Purple glow size', 100, 700, 5, 'pt', 380],
+    ['pinkSize', 'Pink glow size', 100, 700, 5, 'pt', 400],
+    ['settle', 'After the reveal, glows settle over', 0.2, 5, 0.05, 's', 1.8],
+    ['pinkFade', 'Pink fades out over', 0.1, 5, 0.05, 's', 1.1],
+    ['purpleRest', 'Purple stays at', 0, 1, 0.01, '', 0.25],
+  ]},
+  { group: 'Close', items: [
+    ['closeW', 'Grow back spring ω', 2, 40, 0.5, '', 9.5],
+    ['closeZ', 'Grow back spring ζ', 0.2, 1.5, 0.01, '', 1],
+    ['closeV', 'Grow back spring v₀', 0, 30, 0.5, '', 11.5],
+    ['contentsOut', 'Summary fades out in', 0.02, 1, 0.01, 's', 0.3],
+    ['closeRecede', 'Summary text sinks back by', 0, 0.4, 0.005, '', 0.1],
+    ['unfoldFrom', 'Page below the card starts folded at', 0, 180, 1, '°', 90],
+    ['unfoldW', 'Unfold spring ω', 2, 40, 0.5, '', 16],
+    ['unfoldZ', 'Unfold spring ζ', 0.2, 1.5, 0.01, '', 1],
+    ['unfoldV', 'Unfold spring v₀', 0, 30, 0.5, '', 8],
+  ]},
+];
+const storeKey = 'rise.summarise.playground.v1';
+const defaults = {};
+for (const g of schema) for (const item of g.items) defaults[item[0]] = item[6];
+let P = { ...defaults, ...JSON.parse(localStorage.getItem(storeKey) || '{}') };
+
+// ----- Maths ---------------------------------------------------------------
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const lerp = (a, b, t) => a + (b - a)*t;
+const DEG = Math.PI/180;
+/** A damped spring's progress from 0 towards 1 after t seconds. */
+function spring(t, w, z, v0) {
+  if (t <= 0) return 0;
+  let d;
+  if (z < 1) {
+    const wd = w*Math.sqrt(1 - z*z), B = (v0 - z*w)/wd;
+    d = Math.exp(-z*w*t)*(-Math.cos(wd*t) + B*Math.sin(wd*t));
+  } else if (z === 1) {
+    d = Math.exp(-w*t)*(-1 + (v0 - w)*t);
+  } else {
+    const r = Math.sqrt(z*z - 1), r1 = -w*(z - r), r2 = -w*(z + r);
+    const c2 = (v0 + r1)/(r1 - r2), c1 = -1 - c2;
+    d = c1*Math.exp(r1*t) + c2*Math.exp(r2*t);
+  }
+  return 1 + d;
+}
+/** Smooth ease-out: k = 0 is linear. */
+const easeOut = (x, k) => { x = clamp(x); return (1 - k)*x + k*(1 - (1 - x)*(1 - x)); };
+
+// ----- Scene ---------------------------------------------------------------
+const W = 393, H = 852, BAR = 83, STRIP = 59, ABOVE_BAR = H - BAR;
+const $ = id => document.getElementById(id);
+const screen = $('screen'), group = $('group'), card = $('card'), pageWrap = $('pageWrap'), back = $('back');
+const titleEl = $('title'), summaryEl = $('summary'), scroller = $('scroller'), content = $('content');
+const bar = $('bar'), menuPanel = $('menuPanel'), scrim = $('scrim'), statusbar = $('statusbar');
+const blobP = $('blobP'), blobK = $('blobK'), bgEl = $('bg'), ref = $('ref');
+pageWrap.appendChild($('pageTemplate').content.cloneNode(true));
+// The page's lower half, below the crease, for the fold.
+const cardB = $('cardB'), pageWrapB = $('pageWrapB');
+pageWrapB.appendChild($('pageTemplate').content.cloneNode(true));
+back.querySelector('.flip').appendChild($('pageTemplate').content.cloneNode(true));
+titleEl.textContent = 'Type-safe HTML templating in Zig | Lukáš Lalinský';
+summaryEl.innerHTML = `
+  <div class="blk para">The author, Lukáš Lalinský, discusses his journey in web development and the evolution of templating in Zig, a low-level programming language.</div>
+  <div class="blk sec"><div class="ico">▤</div><h3>Templating Library</h3><div class="body">Lalinský introduces 'zt', a type-safe HTML templating library for Zig, designed to ensure compile-time checks, fast performance, and safe defaults against XSS.</div></div>
+  <div class="blk sec"><div class="ico">★</div><h3>Key Features</h3><div class="body">The library allows for HTML escaping by default, requires proper element closures, and integrates seamlessly with Zig code, providing a familiar HTML-like syntax.</div></div>
+  <div class="blk sec"><div class="ico">⚡︎</div><h3>Performance</h3><div class="body">Templates compile to plain Zig, so rendering a page is as fast as writing the strings by hand.</div></div>`;
+const blocks = [...summaryEl.querySelectorAll('.blk')];
+
+// Everything runs on a virtual clock, so slow motion slows everything alike.
+let T = 0, speed = 1, last = performance.now();
+let S;            // the scene's state
+function freshState() {
+  return {
+    mode: 'idle',          // idle | pinch | cancel | fold | flat | card | closing
+    path: null,            // 'pinch' | 'menu'
+    p: 0, pinchS: 1,       // pinch progress and the fingers' scale
+    u: 1, rot: 0,          // page scale and fold angle in page modes
+    t0: 0,                 // when the current mode started
+    tw: {},                // tweens for the card
+    swingT0: null, swingDir: 1, revealT: null, readyT: null, closeT: null,
+    orbitT0: null, orbitStop: null,
+    bar: 0, barFrom: 0, barT0: 0, barDur: 0.1,
+  };
+}
+S = freshState();
+
+/** Tweens a card value from wherever it is now. */
+function tween(name, to, spec) {
+  const from = value(name);
+  S.tw[name] = { from, to, t0: T, ...spec };
+}
+function setValue(name, v) { S.tw[name] = { from: v, to: v, t0: T, kind: 'none' }; }
+function value(name) {
+  const tw = S.tw[name]; if (!tw) return 0;
+  const t = T - tw.t0;
+  let k;
+  if (tw.kind === 'spring') k = spring(t, tw.w, tw.z, tw.v0);
+  else if (tw.kind === 'ease') k = easeOut(t/tw.dur, tw.ease);
+  else k = 1;
+  return lerp(tw.from, tw.to, k);
+}
+const springSpec = (w, z, v0 = 0) => ({ kind: 'spring', w, z, v0 });
+
+// ----- Pinch model ---------------------------------------------------------
+function pagePose(p) {
+  if (p <= 0) return { u: 1, rot: 0 };
+  const fs = P.foldStartP;
+  if (p < fs) return { u: lerp(P.snapScale, P.scaleAtFold, p/Math.max(fs, 1e-6)), rot: 0 };
+  const k = (p - fs)/Math.max(1 - fs, 1e-6);
+  return { u: lerp(P.scaleAtFold, P.scaleAtEnd, k), rot: P.foldAtEnd*k };
+}
+
+function beginPinch() {
+  if (S.mode !== 'idle' && S.mode !== 'cancel') return false;
+  closeMenu();
+  S.mode = 'pinch'; S.path = 'pinch'; S.t0 = T; S.p = 0;
+  S.orbitT0 = T; S.orbitStop = null;
+  pinchHistory = [];
+  return true;
+}
+let pinchHistory = [];
+function updatePinch(scale) {
+  if (S.mode !== 'pinch') return;
+  S.pinchS = scale;
+  S.p = clamp((1 - scale)/P.pinchRange);
+  pinchHistory.push({ t: T, p: S.p }); if (pinchHistory.length > 8) pinchHistory.shift();
+  const pose = pagePose(S.p); S.u = pose.u; S.rot = pose.rot;
+}
+function endPinch() {
+  if (S.mode !== 'pinch') return;
+  const h = pinchHistory, v = h.length > 1 ? (h[h.length-1].p - h[0].p)/Math.max(1e-3, h[h.length-1].t - h[0].t) : 0;
+  if (S.p > 0 && (S.p >= P.commitP || v > P.commitVelocity)) startFold();
+  else { S.mode = 'cancel'; S.t0 = T; S.cancelFrom = { u: S.u, rot: S.rot }; showBar(); }
+}
+function startFold() {
+  mark('fold');
+  S.mode = 'fold'; S.t0 = T; S.foldFrom = { u: S.u, rot: S.rot };
+  S.foldDur = Math.max(0.02, (90 - S.rot)/P.foldSpeed);
+}
+
+// ----- Card phases ---------------------------------------------------------
+const cardH = () => W*P.cardAspect;
+function startCard(path) {
+  S.mode = 'card'; S.t0 = T; S.swingT0 = T; S.revealT = null; S.closeT = null;
+  S.swingDir = S.forceDir ?? (P.swingDir === 0 ? (Math.random() < 0.5 ? -1 : 1) : P.swingDir);
+  mark('card');
+  S.readyT = T + (S.latencyOverride ?? P.latency);
+  if (path === 'pinch') {
+    // The bar stays through the pinch and fold, and drops away as the page takes off.
+    hideBar();
+    // Edge-on at the fold line, as wide as the page was when it went flat.
+    const foldY = P.foldLine*ABOVE_BAR;
+    setValue('cropTop', P.cropTop);
+    setValue('cropH', cardH());
+    setValue('radius', P.cardRadius);
+    S.tw.s = { from: P.foldEndScale, to: P.loadScale, t0: T, ...springSpec(P.flipScaleW, P.flipScaleZ, P.flipScaleV) };
+    S.tw.top = { from: foldY, to: P.loadTop, t0: T, ...springSpec(P.flipTopW, P.flipTopZ, P.flipTopV) };
+    S.tw.rot = { from: 90, to: P.restTilt, t0: T, kind: 'ease', dur: P.flipRotDuration, ease: P.flipRotEaseOut };
+  } else {
+    // From the whole page straight into the card.
+    setValue('cropTop', 0); setValue('cropH', H); setValue('radius', 0); setValue('s', 1); setValue('top', 0); setValue('rot', 0);
+    tween('cropTop', P.cropTop, springSpec(P.cropW, P.cropZ));
+    tween('cropH', cardH(), springSpec(P.cropW, P.cropZ));
+    tween('radius', P.cardRadius, springSpec(P.cropW, P.cropZ));
+    tween('rot', P.restTilt, springSpec(P.cropW, P.cropZ));
+    tween('s', P.loadScale, springSpec(P.menuW, P.menuZ, P.menuV));
+    tween('top', P.loadTop, springSpec(P.menuW, P.menuZ, P.menuV));
+    S.orbitT0 = T; S.orbitStop = null;
+  }
+}
+function swingPhase(t) { return 2*Math.PI*(t - S.swingT0)/P.swingPeriod; }
+function swingOffsets(t) {
+  if (S.swingT0 == null) return { x: 0, rz: 0, y: 0 };
+  let phase = swingPhase(t), amount = 1;
+  if (S.revealT != null && t >= S.revealT) {
+    phase = swingPhase(S.revealT);
+    amount = 1 - spring(t - S.revealT, P.revealW, P.revealZ, P.revealV);
+  }
+  if (S.closeT != null && t >= S.closeT) {
+    amount *= 1 - spring(t - S.closeT, P.closeW, P.closeZ, P.closeV);
+  }
+  const s = Math.sin(phase)*S.swingDir;
+  return { x: P.swingX*s*amount, rz: P.swingTilt*s*amount, y: P.swingY*Math.cos(2*phase)*amount };
+}
+function maybeReveal() {
+  if (S.mode !== 'card' || S.revealT != null || S.closeT != null || T < S.readyT) return;
+  if (P.syncReveal) {
+    // The swing passes its middle every half period: reveal there, unless it only just did.
+    const half = P.swingPeriod/2, n = (T - S.swingT0)/half;
+    const previous = S.swingT0 + Math.floor(n)*half;
+    if (T - previous > P.syncTolerance) { S.pendingReveal = previous + half; return; }
+  }
+  reveal();
+}
+function reveal() {
+  mark('reveal');
+  S.revealT = T; S.pendingReveal = null;
+  tween('s', P.revealScale, springSpec(P.revealW, P.revealZ, P.revealV));
+  tween('top', P.revealTop, springSpec(P.revealW, P.revealZ, P.revealV));
+  // Glows carry on to the left, then stop there.
+  const a = orbitAngle(T), twoPi = 2*Math.PI;
+  const target = Math.PI + twoPi*Math.ceil((a - Math.PI + 1e-6)/twoPi);
+  S.orbitStop = { t0: T, a0: a, a1: target };
+}
+function close() {
+  if (S.mode === 'card') {
+    mark('close');
+    S.mode = 'closing'; S.closeT = T;
+    // The card grows back from where it shows, scrolled or not, as the summary fades in place.
+    S.closeScroll = scroller.scrollTop; scroller.scrollTop = 0;
+    setValue('top', value('top') - S.closeScroll);
+    const spec = springSpec(P.closeW, P.closeZ, P.closeV);
+    tween('s', 1, spec); tween('top', 0, spec); tween('cropTop', 0, spec);
+    tween('radius', 0, spec); tween('rot', 0, spec);
+    showBar();
+  } else if (S.mode !== 'idle') reset();
+}
+
+// ----- Bar -----------------------------------------------------------------
+// 0 is in place and 1 is off the bottom of the screen. It leaves quickly, speeding up, and
+// springs back with a little bounce.
+function hideBar() { S.bar = { hide: true, t0: T, from: currentBar() }; }
+function showBar() { S.bar = { hide: false, t0: T, from: currentBar() }; }
+function currentBar() {
+  const b = S.bar; if (!b) return 0;
+  const t = T - b.t0;
+  if (b.hide) { const k = clamp(t/P.barExit); return lerp(b.from, 1, k*k); }
+  return b.from*(1 - spring(t, 2*Math.PI/P.barResponse, 1 - P.barBounce, 0));
+}
+function openMenu() { if (S.mode !== 'idle') return; menuPanel.classList.add('open'); scrim.classList.add('on'); }
+function closeMenu() { menuPanel.classList.remove('open'); scrim.classList.remove('on'); }
+function summariseFromMenu() {
+  if (S.mode !== 'idle') return;
+  menuPanel.style.transition = 'none'; closeMenu(); menuPanel.offsetHeight; menuPanel.style.transition = '';
+  S.path = 'menu';
+  hideBar();
+  startCard('menu');
+}
+
+// ----- Background ----------------------------------------------------------
+function orbitAngle(t) {
+  if (S.orbitT0 == null) return Math.PI;
+  if (S.orbitStop && t >= S.orbitStop.t0) {
+    const k = clamp((t - S.orbitStop.t0)/P.settle), e = 1 - Math.pow(1 - k, 3);
+    return lerp(S.orbitStop.a0, S.orbitStop.a1, e);
+  }
+  return Math.PI + 2*Math.PI*(t - S.orbitT0)/P.orbitPeriod;
+}
+function renderBackground() {
+  const a = orbitAngle(T);
+  // Measured paths, as fractions of the screen: purple circles wide, pink opposite and flatter.
+  const px = (0.5 + 0.34*Math.cos(a))*W, py = (0.41 + 0.22*Math.sin(a))*H;
+  const kx = (0.5 + 0.31*Math.cos(a + Math.PI))*W, ky = (0.44 + 0.11*Math.sin(a + Math.PI))*H;
+  let purple = 1, pink = 1;
+  if (S.revealT != null && S.mode === 'card') {
+    const t = T - S.revealT;
+    purple = lerp(1, P.purpleRest, easeOut(t/P.settle, 1));
+    pink = 1 - easeOut(t/P.pinkFade, 0.6);
+  }
+  placeBlob(blobP, px, py, P.purpleSize, 'rgba(112,82,208,1)', 'rgba(132,108,224,.7)', purple);
+  placeBlob(blobK, kx, ky, P.pinkSize, 'rgba(236,118,156,1)', 'rgba(244,154,176,.7)', pink);
+}
+function placeBlob(el, x, y, size, c1, c2, opacity) {
+  el.style.width = size + 'px'; el.style.height = size*0.85 + 'px';
+  el.style.background = `radial-gradient(closest-side, ${c1} 0%, ${c1} 28%, ${c2} 62%, rgba(255,255,255,0) 100%)`;
+  el.style.filter = `blur(${P.blobBlur}px)`;
+  el.style.transform = `translate(${x - size/2}px, ${y - size*0.425}px)`;
+  el.style.opacity = opacity;
+}
+
+// ----- Frame ---------------------------------------------------------------
+const fadeIn = (t, delay, dur) => clamp((t - delay)/dur);
+function frame(now) {
+  const dt = Math.min(0.1, (now - last)/1000); last = now;
+  if (!paused) T += dt*speed;
+  script();
+  step();
+  if (replay && !paused && T - replay.t0 >= replay.dur) { T = replay.t0 + replay.dur; paused = true; }
+  render();
+  syncVideo();
+  renderScrubber();
+  requestAnimationFrame(frame);
+}
+function step() {
+  if (S.mode === 'cancel') {
+    const k = spring(T - S.t0, 2*Math.PI/P.cancelResponse, 1, 0);
+    S.u = lerp(S.cancelFrom.u, 1, k); S.rot = lerp(S.cancelFrom.rot, 0, k);
+    if (T - S.t0 > P.cancelResponse*1.6) S = freshState();
+  }
+  if (S.mode === 'fold') {
+    const x = clamp((T - S.t0)/S.foldDur), f = (1 - P.foldEaseIn)*x + P.foldEaseIn*x*x;
+    S.rot = lerp(S.foldFrom.rot, 90, f); S.u = lerp(S.foldFrom.u, P.foldEndScale, x);
+    if (x >= 1) { S.mode = 'flat'; S.t0 = T; }
+  }
+  if (S.mode === 'flat' && T - S.t0 >= P.flatHold) startCard('pinch');
+  if (S.mode === 'card') {
+    if (S.pendingReveal != null) { if (T >= S.pendingReveal) reveal(); }
+    else maybeReveal();
+  }
+  // Done once both the growth and the unfold have settled.
+  if (S.mode === 'closing' && T - S.closeT > Math.max(0.9, 7/Math.min(P.closeW*P.closeZ, P.unfoldW*P.unfoldZ))) S = freshState();
+}
+
+function render() {
+  const t = T;
+  renderBackground();
+  let cropTop, cropH, radius, transform, origin, shadow = 0, cardTop = 0, cardBottom = 0, cx = W/2, folding = false, crease = 0;
+  if (S.mode === 'idle' || S.mode === 'pinch' || S.mode === 'cancel' || S.mode === 'fold' || S.mode === 'flat') {
+    const live = S.mode !== 'idle';
+    cropTop = 0; cropH = live ? ABOVE_BAR : H;
+    radius = live ? P.pageRadius*clamp(S.p/0.05 + (S.mode === 'pinch' ? 0 : 1)) : 0;
+    const pivot = P.foldLine*ABOVE_BAR;
+    origin = `${W/2}px ${pivot}px`;
+    transform = S.mode === 'idle' ? 'none' : `scale(${S.u})`;
+    // One piece until it actually folds, so no seam shows at the crease.
+    folding = live && S.rot > 0.01;
+    crease = pivot;
+  } else {
+    cropTop = value('cropTop'); cropH = value('cropH'); radius = value('radius');
+    // Closing, the card keeps its bottom edge in the page: what's above it grows back in, and
+    // the rest of the page unfolds below it.
+    if (S.mode === 'closing') cropH = P.cropTop + cardH() - cropTop;
+    const s = value('s'), top = value('top'), rot = value('rot');
+    const sw = swingOffsets(t);
+    const cy = top + cropH*s*Math.cos(rot*DEG)/2 + sw.y;
+    cx = W/2 + sw.x;
+    origin = `${W/2}px ${cropH/2}px`;
+    transform = `translate(${cx - W/2}px, ${cy - cropH/2}px) perspective(${P.perspective}px) rotateX(${rot}deg) rotateZ(${sw.rz}deg) scale(${s})`;
+    cardTop = cy - cropH*s*Math.cos(rot*DEG)/2; cardBottom = cy + cropH*s*Math.cos(rot*DEG)/2;
+    shadow = P.shadow*(S.mode === 'closing' ? 1 - clamp((t - S.closeT)/0.2) : 1);
+  }
+  group.style.height = cropH + 'px';
+  group.style.transformOrigin = origin;
+  group.style.transform = transform;
+  pageWrap.style.transform = `translateY(${-cropTop}px)`;
+  const shades = [card.querySelector('.shade'), cardB.querySelector('.shade')];
+  if (folding) {
+    // Two halves hinged at the crease, folding away from you: the crease stays where it is and
+    // the top and bottom edges tip back, narrowing, so the page's back ends up inside the fold.
+    const sin = Math.sin(S.rot*DEG);
+    group.style.perspective = P.foldPerspective + 'px';
+    group.style.perspectiveOrigin = `${W/2}px ${crease}px`;
+    card.style.top = '0px'; card.style.height = crease + 'px';
+    card.style.transformOrigin = '50% 100%'; card.style.transform = `rotateX(${S.rot}deg)`;
+    card.style.borderRadius = `${radius}px ${radius}px 0 0`;
+    cardB.style.display = 'block';
+    cardB.style.top = crease + 'px'; cardB.style.height = (cropH - crease) + 'px';
+    cardB.style.transformOrigin = '50% 0'; cardB.style.transform = `rotateX(${-S.rot}deg)`;
+    cardB.style.borderRadius = `0 0 ${radius}px ${radius}px`;
+    pageWrapB.style.transform = `translateY(${-crease}px)`;
+    shades[0].style.opacity = P.topShade*sin; shades[1].style.opacity = P.bottomShade*sin;
+  } else if (S.mode === 'closing') {
+    // The page below the card hangs from its bottom edge, folded back away from you, and
+    // unfolds flat as the card grows to fill the screen.
+    const k = spring(t - S.closeT, P.unfoldW, P.unfoldZ, P.unfoldV), angle = P.unfoldFrom*(1 - k);
+    const crease = P.cropTop + cardH();
+    group.style.perspective = 'none'; group.style.transformStyle = 'preserve-3d';
+    card.style.top = '0px'; card.style.height = cropH + 'px'; card.style.transform = 'none';
+    card.style.borderRadius = `${radius}px ${radius}px 0 0`;
+    cardB.style.display = 'block';
+    // Tucked a pixel under the card so the backdrop doesn't show through the crease.
+    cardB.style.top = (cropH - 1) + 'px'; cardB.style.height = (H - crease + 1) + 'px';
+    cardB.style.transformOrigin = '50% 0'; cardB.style.transform = `rotateX(${-angle}deg)`;
+    cardB.style.borderRadius = `0 0 ${radius}px ${radius}px`;
+    pageWrapB.style.transform = `translateY(${1 - crease}px)`;
+    shades[0].style.opacity = 0; shades[1].style.opacity = P.bottomShade*Math.sin(angle*DEG);
+  } else {
+    group.style.perspective = 'none'; group.style.transformStyle = 'flat';
+    card.style.top = '0px'; card.style.height = cropH + 'px'; card.style.transform = 'none';
+    card.style.borderRadius = radius + 'px';
+    cardB.style.display = 'none';
+    shades[0].style.opacity = 0;
+  }
+  if (S.mode !== 'closing') group.style.transformStyle = 'flat';
+  // Closing, the summary text sinks back as the page comes forward over it; the backdrop stays.
+  const recede = S.mode === 'closing' ? 1 - P.closeRecede*clamp(spring(t - S.closeT, P.closeW, P.closeZ, P.closeV), 0, 1.2) : 1;
+
+  card.style.boxShadow = shadow ? `0 10px 34px rgba(40,20,90,${shadow}), 0 1px 3px rgba(40,20,90,${shadow*0.8})` : 'none';
+  back.style.borderRadius = `${radius}px ${radius}px 0 0`;
+  back.style.top = -P.backPeek + 'px'; back.style.left = back.style.right = P.backInset + 'px';
+
+  // The title, part of the card: sized and spaced for the card's scale with the summary.
+  const cardT = S.swingT0 != null ? t - S.swingT0 : -1;
+  const closing = S.mode === 'closing' ? clamp((t - S.closeT)/P.contentsOut) : 0;
+  const inCard = S.mode === 'card' || S.mode === 'closing';
+  const titleA = inCard ? fadeIn(cardT, P.titleDelay, P.titleDuration)*(1 - closing) : 0;
+  const unscale = 1/P.revealScale;
+  titleEl.style.opacity = titleA;
+  titleEl.style.fontSize = P.titleSize*unscale + 'px';
+  titleEl.style.lineHeight = P.titleSize*unscale*1.25 + 'px';
+  titleEl.style.top = -(P.titleGap*unscale + P.titleSize*unscale*0.625) + 'px';
+  back.style.opacity = titleA;
+  group.classList.toggle('tappable', S.mode === 'card');
+  const revealed = S.revealT != null && inCard;
+
+  // Summary blocks: each fades in, sharpens and (optionally) rises, a little after the last.
+  // They scroll with the card, so nothing clips their blur.
+  summaryEl.style.top = (P.revealTop + cardH()*P.revealScale*Math.cos(P.restTilt*DEG) + P.textGap) + 'px';
+  if (S.mode === 'closing') {
+    const sTop = summaryEl.offsetTop, sc = S.closeScroll || 0;
+    summaryEl.style.transformOrigin = `${W/2}px ${H/2 + sc - sTop}px`;
+    summaryEl.style.transform = `translateY(${-sc}px) scale(${recede})`;
+  } else summaryEl.style.transform = 'none';
+  summaryEl.style.pointerEvents = revealed ? 'auto' : 'none';
+  const scrolls = revealed && S.mode === 'card';
+  scroller.classList.toggle('scrolls', scrolls);
+  const height = scrolls ? Math.max(H, summaryEl.offsetTop + summaryEl.offsetHeight) : H;
+  if (content.offsetHeight !== height) content.style.height = height + 'px';
+  blocks.forEach((el, i) => {
+    if (!revealed) { el.style.opacity = 0; return; }
+    const bt = t - S.revealT - P.textDelay - i*P.stagger;
+    if (bt <= 0) { el.style.opacity = 0; el.style.filter = `blur(${P.textBlur}px)`; return; }
+    const a = 1 - Math.exp(-bt/P.fadeTau), b = P.textBlur*Math.exp(-bt/P.blurTau), r = P.textRise*Math.exp(-bt/P.blurTau);
+    el.style.opacity = a*(1 - closing);
+    el.style.filter = b > 0.05 ? `blur(${b}px)` : 'none';
+    el.style.transform = r > 0.05 ? `translateY(${r}px)` : 'none';
+  });
+
+  // Bar and status bar.
+  const b = currentBar();
+  bar.style.transform = `translateY(${b*(BAR + 4)}px)`;
+  // Light over the page's black top, dark over the backdrop.
+  let overPage = S.mode === 'idle' || (S.mode === 'closing' && T - S.closeT > 0.15);
+  if (['pinch', 'cancel', 'fold'].includes(S.mode)) {
+    const pivot = P.foldLine*ABOVE_BAR;
+    overPage = pivot - pivot*S.u*Math.cos(S.rot*DEG) < 36;
+  }
+  statusbar.style.color = overPage ? '#fff' : '#000';
+
+  $('readout').textContent =
+    `mode   ${S.mode}${S.path ? ' (' + S.path + ')' : ''}\n` +
+    `pinch  p ${S.p.toFixed(2)}  scale ${S.u.toFixed(3)}  fold ${S.rot.toFixed(1)}°\n` +
+    `card   ${S.swingT0 != null ? (T - S.swingT0).toFixed(2) + ' s' : '–'}` +
+    `${S.revealT != null ? '   revealed at ' + (S.revealT - S.swingT0).toFixed(2) + ' s' : S.pendingReveal ? '   waiting for the swing' : ''}`;
+}
+
+// ----- Replays, timed like the recording ------------------------------------
+// The recording's pinch runs 1.45 s → 2.55 s, then folds; Summarise in More is tapped at 8.42 s.
+// A replay is deterministic, so any moment of it can be rebuilt by running it from the start:
+// that's how scrubbing and live dial changes work.
+let replay = null, paused = false, marks = {};
+const replays = {
+  pinch: { dur: 6.0, videoStart: 1.40, latency: 0.85 },
+  menu: { dur: 4.1, videoStart: 8.20, latency: 2.15 },
+};
+function mark(name) { if (replay) marks[name] = T - replay.t0; }
+function startReplay(kind) {
+  replay = { kind, ...replays[kind], dir: P.swingDir || (Math.random() < 0.5 ? -1 : 1) };
+  measureMarks();
+  rebuild(0);
+  paused = false;
+}
+function endReplay() { replay = null; paused = false; ref.pause(); }
+/** Runs the replay from its start to tau seconds in, at a fixed step. */
+function rebuild(tau) {
+  T = 0; S = freshState(); closeMenu(); scroller.scrollTop = 0; marks = {};
+  S.latencyOverride = replay.latency; S.forceDir = replay.dir;
+  Object.assign(replay, { t0: 0, began: false, closed: false });
+  const steps = Math.round(clamp(tau, 0, replay.dur)*120);
+  for (let i = 0; i < steps; i++) { T += 1/120; script(); step(); }
+}
+function measureMarks() { rebuild(replay.dur); replay.marks = { ...marks }; }
+const replayTime = () => replay ? T - replay.t0 : 0;
+function script() {
+  if (!replay) return;
+  const t = T - replay.t0;
+  if (replay.kind === 'pinch') {
+    const start = 0.05, end = 1.15;
+    if (t >= start && S.mode === 'idle' && !replay.began) { replay.began = true; beginPinch(); }
+    if (S.mode === 'pinch') {
+      const p = clamp((t - start)/(end - start));
+      updatePinch(1 - p*P.pinchRange);
+      if (t >= end) { S.p = 1; startFold(); }
+    }
+    if (t >= 4.98 && S.mode === 'card' && !replay.closed) { replay.closed = true; close(); }
+  } else {
+    if (t >= 0.22 && !replay.began) { replay.began = true; summariseFromMenu(); }
+  }
+}
+function syncVideo() {
+  if (!replay || !$('syncRef').checked || !$('showRef').checked || !ref.duration) return;
+  const target = replay.videoStart + replayTime();
+  if (paused) {
+    if (!ref.paused) ref.pause();
+    if (Math.abs(ref.currentTime - target) > 0.004) ref.currentTime = target;
+  } else {
+    ref.playbackRate = speed;
+    if (ref.paused) { ref.currentTime = target; ref.play().catch(() => {}); }
+    else if (Math.abs(ref.currentTime - target) > 0.08) ref.currentTime = target;
+  }
+}
+const track = $('scrubTrack');
+function renderScrubber() {
+  const k = replay ? clamp(replayTime()/replay.dur) : 0;
+  track.querySelector('.fill').style.width = k*100 + '%';
+  track.querySelector('.head').style.left = k*100 + '%';
+  $('playPause').textContent = paused || !replay ? 'Play' : 'Pause';
+  $('scrubTime').textContent = replay
+    ? `${replayTime().toFixed(2)} s · video ${(replay.videoStart + replayTime()).toFixed(2)} s`
+    : 'Drag to scrub the replay';
+}
+function drawMarks() {
+  const box = track.querySelector('.marks'); box.innerHTML = '';
+  if (!replay) return;
+  const names = { fold: 'fold', card: 'card', reveal: 'reveal', close: 'close' };
+  for (const [i, [k, t]] of Object.entries(replay.marks || {}).sort((a, b) => a[1] - b[1]).entries()) {
+    const m = document.createElement('div'); m.className = i % 2 ? 'mark up' : 'mark'; m.style.left = (t/replay.dur*100) + '%';
+    m.innerHTML = `<span>${names[k]}</span>`; box.appendChild(m);
+  }
+}
+let scrubbing = false;
+function scrubTo(e) {
+  const r = track.getBoundingClientRect();
+  rebuild(clamp((e.clientX - r.left)/r.width)*replay.dur);
+}
+track.addEventListener('pointerdown', e => {
+  if (!replay) { startReplay('pinch'); drawMarks(); }
+  scrubbing = true; paused = true; track.setPointerCapture(e.pointerId); scrubTo(e);
+});
+track.addEventListener('pointermove', e => { if (scrubbing) scrubTo(e); });
+track.addEventListener('pointerup', () => { scrubbing = false; });
+track.addEventListener('pointercancel', () => { scrubbing = false; });
+function togglePlay() {
+  if (!replay) { playPinch(); return; }
+  if (paused && replayTime() >= replay.dur - 1e-3) rebuild(0);
+  paused = !paused;
+}
+$('playPause').onclick = togglePlay;
+/** Dials apply to the replay at once: its marks move, and a paused frame redraws. */
+function dialsChanged() {
+  if (!replay) return;
+  const tau = replayTime();
+  if (P.swingDir) replay.dir = P.swingDir;
+  measureMarks(); drawMarks(); rebuild(tau);
+}
+function playPinch() { startReplay('pinch'); drawMarks(); }
+function playMenu() { startReplay('menu'); drawMarks(); }
+function reset() { endReplay(); S = freshState(); closeMenu(); scroller.scrollTop = 0; }
+
+// ----- Input ---------------------------------------------------------------
+// Trackpad pinches arrive as ctrl+wheel in Chrome and Firefox; Safari also sends gesture events.
+let wheelScale = 1, wheelTimer = null;
+screen.addEventListener('wheel', e => {
+  if (!e.ctrlKey) return;
+  e.preventDefault();
+  if (S.mode !== 'pinch') { if (!beginPinch()) return; wheelScale = 1; endReplay(); }
+  wheelScale *= Math.exp(-e.deltaY*0.01);
+  updatePinch(Math.min(1, wheelScale));
+  clearTimeout(wheelTimer); wheelTimer = setTimeout(endPinch, 140);
+}, { passive: false });
+let gestureBase = null;
+screen.addEventListener('gesturestart', e => { e.preventDefault(); if (beginPinch()) { endReplay(); gestureBase = 1; } });
+screen.addEventListener('gesturechange', e => { e.preventDefault(); if (gestureBase) updatePinch(Math.min(1, e.scale)); });
+screen.addEventListener('gestureend', e => { e.preventDefault(); if (gestureBase) { gestureBase = null; endPinch(); } });
+// Two fingers on a touch screen, or ⌥-drag with a mouse.
+const pointers = new Map(); let touchBase = 0, dragBase = null;
+screen.addEventListener('pointerdown', e => {
+  if (e.target.closest('#moreBtn, #menuPanel, #scrim')) return;
+  pointers.set(e.pointerId, toScreen(e));
+  if (pointers.size === 2 && beginPinch()) { endReplay(); touchBase = spread(); }
+  else if (e.altKey && pointers.size === 1 && beginPinch()) { endReplay(); dragBase = toScreen(e).y; screen.setPointerCapture(e.pointerId); }
+});
+screen.addEventListener('pointermove', e => {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, toScreen(e));
+  if (touchBase && pointers.size >= 2) updatePinch(Math.min(1, spread()/touchBase));
+  else if (dragBase != null) updatePinch(Math.min(1, Math.exp((toScreen(e).y - dragBase)/260)));
+});
+const lift = e => {
+  pointers.delete(e.pointerId);
+  if ((touchBase && pointers.size < 2) || dragBase != null) { touchBase = 0; dragBase = null; endPinch(); }
+};
+screen.addEventListener('pointerup', lift); screen.addEventListener('pointercancel', lift);
+function spread() { const [a, b] = [...pointers.values()]; return Math.hypot(a.x - b.x, a.y - b.y); }
+function toScreen(e) { const r = screen.getBoundingClientRect(); return { x: (e.clientX - r.left)/fit, y: (e.clientY - r.top)/fit }; }
+
+group.addEventListener('click', () => { if (S.mode === 'card') { endReplay(); close(); } });
+$('moreBtn').onclick = openMenu;
+scrim.onclick = closeMenu;
+$('summariseTile').onclick = () => { endReplay(); summariseFromMenu(); };
+$('playPinch').onclick = playPinch;
+$('playMenu').onclick = playMenu;
+$('closeBtn').onclick = () => { endReplay(); close(); };
+$('resetBtn').onclick = reset;
+$('speed').onchange = e => { speed = +e.target.value; ref.playbackRate = speed; };
+$('showRef').onchange = () => { $('refDevice').style.display = $('showRef').checked ? '' : 'none'; layout(); };
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' && e.target.type !== 'range' && e.target.type !== 'checkbox') return;
+  if (e.key === 'p' || e.key === 'P') playPinch();
+  if (e.key === 'm' || e.key === 'M') playMenu();
+  if (e.key === 'Escape') { endReplay(); close(); }
+  if (e.code === 'Space' && e.target.tagName !== 'BUTTON') { e.preventDefault(); togglePlay(); }
+});
+
+// ----- Layout --------------------------------------------------------------
+let fit = 1;
+function layout() {
+  const stage = $('stage'), devices = [...document.querySelectorAll('.device')].filter(d => d.style.display !== 'none');
+  const availH = stage.clientHeight - 24, availW = (stage.clientWidth - 22*(devices.length - 1))/devices.length - 20;
+  fit = Math.max(0.2, Math.min(availH/H, availW/W));
+  for (const d of devices) {
+    d.style.width = W*fit + 'px'; d.style.height = H*fit + 'px'; d.style.marginTop = '16px';
+    d.querySelector('.screen').style.transform = `scale(${fit})`;
+  }
+}
+addEventListener('resize', layout);
+
+// ----- Dials ---------------------------------------------------------------
+const dials = $('dials'), inputs = {};
+const fmt = (v, step, unit) => `${(+v).toFixed(step < 0.01 ? 3 : step < 0.1 ? 2 : step < 1 ? 1 : 0)}${unit ? (unit === '×' || unit === '°' ? unit : ' ' + unit) : ''}`;
+for (const g of schema) {
+  const fs = document.createElement('fieldset'); fs.innerHTML = `<legend>${g.group}</legend>` + (g.hint ? `<div class="hint">${g.hint}</div>` : '');
+  for (const [key, label, min, max, step, unit] of g.items) {
+    const wrap = document.createElement('div'); wrap.className = 'ctl';
+    wrap.innerHTML = `<label for="c-${key}" title="${key} · default ${defaults[key]}">${label}</label><output></output><input id="c-${key}" type="range" min="${min}" max="${max}" step="${step}">`;
+    const input = wrap.querySelector('input'), out = wrap.querySelector('output');
+    input.oninput = () => { P[key] = +input.value; show(key); save(); dialsChanged(); };
+    input.ondblclick = () => { P[key] = defaults[key]; show(key); save(); dialsChanged(); };
+    inputs[key] = { input, out, step, unit, wrap };
+    fs.appendChild(wrap);
+  }
+  dials.appendChild(fs);
+}
+function show(key) {
+  const i = inputs[key]; i.input.value = P[key]; i.out.textContent = fmt(P[key], i.step, i.unit);
+  i.wrap.classList.toggle('changed', P[key] !== defaults[key]);
+}
+function save() { localStorage.setItem(storeKey, JSON.stringify(P)); }
+$('defaults').onclick = () => { P = { ...defaults }; save(); for (const k in inputs) show(k); dialsChanged(); toast('Dials reset'); };
+$('copy').onclick = async () => {
+  const changed = {}; for (const k in defaults) if (P[k] !== defaults[k]) changed[k] = P[k];
+  const text = Object.keys(changed).length ? JSON.stringify(changed, null, 2) : 'No dials changed from the measured defaults.';
+  try { await navigator.clipboard.writeText(text); toast('Changed values copied'); } catch { prompt('Copy these values', text); }
+};
+function toast(text) { const t = $('toast'); t.textContent = text; t.style.opacity = 1; clearTimeout(toast.timer); toast.timer = setTimeout(() => t.style.opacity = 0, 1200); }
+for (const k in inputs) show(k);
+layout();
+requestAnimationFrame(t => { last = t; requestAnimationFrame(frame); });
+</script>
+</body>
+</html>

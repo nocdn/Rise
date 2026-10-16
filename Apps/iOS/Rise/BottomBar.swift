@@ -7,7 +7,7 @@ import UIKit
 /// page's address and a few actions, whose Find turns it into a find field above the keyboard.
 /// Either way the bar's contents swap with a quick, blurred crossfade.
 final class BottomBar: UIView {
-    enum Panel { case search, menu, find }
+    enum Panel { case search, menu, tabMenu, find, siteSettings, appSettings, downloads }
 
     /// The buttons' row, and the space above it.
     static let rowHeight: CGFloat = 42
@@ -30,15 +30,23 @@ final class BottomBar: UIView {
         UIImage.SymbolConfiguration(pointSize: 20, weight: .medium)))
     let waveform = VoiceWaveform()
     private(set) var isListening = false
-    let moreButton = UIButton(type: .custom)
+    let moreButton = AnimatedSymbolButton(symbol: "ellipsis", pointSize: 14)
+    /// The download's landing kick stays independent of the button's normal press scale.
+    let moreLanding = UIView()
     /// The bar's own contents: its row of buttons.
     let home = UIView()
     /// New Page's panel: a search.
     let search = SearchPanel()
     /// More's panel: the page's address, with large buttons under it.
     let menu = MenuPanel()
+    let tabMenu = TabMenuPanel()
     /// More's Find: a find field.
     let find = FindPanel()
+    /// Site protections, currently a visual preview.
+    let siteSettings = SiteSettingsPanel()
+    let appSettings = AppSettingsPanel()
+    /// More's Downloads: the list of downloads.
+    let downloads = DownloadsPanel()
     /// Which panel the bar grows into.
     var panel = Panel.search
     /// The search's, and the address's, distance from the panel's top.
@@ -52,9 +60,11 @@ final class BottomBar: UIView {
     private let separator = UIView()
     private let row = UIView()
     private let tap = UIImpactFeedbackGenerator(style: .rigid)
+    private let copyFeedback = UINotificationFeedbackGenerator()
+    private var copySuccessTask: Task<Void, Never>?
     /// Whichever of the row, the search and the menu is showing, if any.
     private(set) var shown: UIView?
-    private var contents: [UIView] { [home, search, menu, find] }
+    private var contents: [UIView] { [home, search, menu, tabMenu, find, siteSettings, appSettings, downloads] }
     /// Collapsed, only the strip remains; set it inside an animation to animate.
     var isCollapsed = false {
         didSet {
@@ -83,9 +93,28 @@ final class BottomBar: UIView {
         searchTop+SearchPanel.fieldHeight+answer+(keyboard > 0 ? keyboard+12 : max(safeBottom, 16))
     }
 
-    /// More's panel's height: the address, then a row of square buttons above the safe area.
+    /// More's panel's height: the address, icon tiles, Settings and Downloads above the safe area.
     static func menuHeight(width: CGFloat, safeBottom: CGFloat) -> CGFloat {
         searchTop+MenuPanel.height(width: width)+max(safeBottom, 16)
+    }
+
+    static func tabMenuHeight(safeBottom: CGFloat) -> CGFloat {
+        searchTop+SearchPanel.fieldHeight+max(safeBottom, 16)
+    }
+
+    static func siteSettingsHeight(width: CGFloat, safeBottom: CGFloat) -> CGFloat {
+        max(menuHeight(width: width, safeBottom: safeBottom)+48,
+            searchTop+SiteSettingsPanel.height+max(safeBottom, 16))
+    }
+
+    static func appSettingsHeight(width: CGFloat, safeBottom: CGFloat) -> CGFloat {
+        siteSettingsHeight(width: width, safeBottom: safeBottom)+100
+    }
+
+    /// As Site settings, growing for a longer list.
+    static func downloadsHeight(width: CGFloat, safeBottom: CGFloat, rows: Int) -> CGFloat {
+        max(menuHeight(width: width, safeBottom: safeBottom)+48,
+            searchTop+DownloadsPanel.height(rows: rows)+max(safeBottom, 16))
     }
 
     override init(frame: CGRect) {
@@ -116,8 +145,6 @@ final class BottomBar: UIView {
         waveform.alpha = 0
         newPageButton.accessibilityLabel = "New Page"
         moreButton.layer.cornerRadius = Self.menuSize/2
-        moreButton.setImage(UIImage(systemName: "ellipsis", withConfiguration:
-            UIImage.SymbolConfiguration(pointSize: 14, weight: .semibold)), for: .normal)
         moreButton.accessibilityLabel = "More"
         for button in [newPageButton, moreButton] {
             button.shrinksWhenPressed(to: Self.pressedScale, filled: true)
@@ -132,15 +159,34 @@ final class BottomBar: UIView {
             }, for: [.touchUpInside, .touchUpOutside, .touchDragExit, .touchCancel])
         }
 
-        for button in [tabsButton, newPageButton, moreButton] { row.addSubview(button) }
-        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton]+menu.tiles+find.buttons+[find.modeButton, find.sendButton] {
+        for button in [tabsButton, newPageButton] { row.addSubview(button) }
+        row.addSubview(moreLanding)
+        moreLanding.addSubview(moreButton)
+        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton, tabMenu.historyButton]+menu.buttons+siteSettings.buttons+appSettings.buttons+downloads.buttons+find.buttons+[find.modeButton, find.sendButton] {
             // A light, crisp tap as the finger lands, rather than a soft thud; actions wait for it to lift.
             button.addAction(UIAction { [weak self] _ in self?.tap.impactOccurred(intensity: 0.5) }, for: .touchDown)
         }
+        downloads.onTouchDown = { [weak self] in self?.tap.impactOccurred(intensity: 0.5) }
         tap.prepare()
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// A successful copy briefly acknowledges the action in More, using Send/Stop's icon swap.
+    func showCopySuccess() {
+        copyFeedback.notificationOccurred(.success)
+        copySuccessTask?.cancel()
+        moreButton.setSymbol("checkmark")
+        moreButton.accessibilityValue = "Link copied"
+        copySuccessTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(750)) }
+            catch { return }
+            guard let self else { return }
+            moreButton.setSymbol("ellipsis")
+            moreButton.accessibilityValue = nil
+            copySuccessTask = nil
+        }
+    }
 
     /// Shows the row of buttons, or a panel's contents, swapping them with a quick crossfade, each
     /// softly blurred as it passes.
@@ -148,7 +194,11 @@ final class BottomBar: UIView {
         let view: UIView? = switch panel {
         case .search: search
         case .menu: menu
+        case .tabMenu: tabMenu
         case .find: find
+        case .siteSettings: siteSettings
+        case .appSettings: appSettings
+        case .downloads: downloads
         case nil: home
         }
         show(view, animated: animated)
@@ -179,15 +229,12 @@ final class BottomBar: UIView {
         search.beginEditingAddress(menu.address, url: url)
         panel = .search
         shown = search
-        for view in contents {
-            view.isUserInteractionEnabled = view === search
-            view.accessibilityElementsHidden = view !== search
-        }
+        let earlier = prepareContents(for: search).filter { $0 !== menu }
         search.alpha = 1
         search.transform = .identity
-        BlurCrossfade.stop(in: self)
-        if UIAccessibility.isReduceMotionEnabled { menu.alpha = 0 }
-        else { BlurCrossfade.swap(from: menu, to: nil) }
+        if UIAccessibility.isReduceMotionEnabled {
+            for view in [menu]+earlier { view.alpha = 0; view.transform = .identity }
+        } else { BlurCrossfade.swap(from: menu, to: nil, alsoHiding: earlier) }
     }
 
     func restoreAddress() {
@@ -200,18 +247,27 @@ final class BottomBar: UIView {
         guard next !== shown else { return }
         let previous = shown
         shown = next
-        for view in contents {
-            view.isUserInteractionEnabled = view === next
-            view.accessibilityElementsHidden = view !== next
-        }
+        let earlier = prepareContents(for: next).filter { $0 !== previous }
         layoutIfNeeded()
         guard animated, !UIAccessibility.isReduceMotionEnabled else {
-            previous?.alpha = 0
+            for view in [previous].compactMap({ $0 })+earlier { view.alpha = 0; view.transform = .identity }
             next?.alpha = 1
             next?.transform = .identity
             return
         }
-        BlurCrossfade.swap(from: previous, to: next)
+        BlurCrossfade.swap(from: previous, to: next, alsoHiding: earlier)
+    }
+
+    /// Freeze the current poses before starting another swap, and keep every visible outgoing
+    /// surface in that swap. Only the incoming surface accepts taps, even during rapid changes.
+    private func prepareContents(for next: UIView?) -> [UIView] {
+        BlurCrossfade.stop(in: self)
+        for view in contents {
+            view.isUserInteractionEnabled = view === next
+            view.accessibilityElementsHidden = view !== next
+            if view !== next, view.alpha == 0 { view.transform = .identity }
+        }
+        return contents.filter { $0 !== next && $0.alpha > 0 }
     }
 
     override func layoutSubviews() {
@@ -231,8 +287,10 @@ final class BottomBar: UIView {
             glyph.center = CGPoint(x: newPageButton.bounds.midX, y: newPageButton.bounds.midY)
         }
         let menuSide = Self.menuSize
+        moreLanding.bounds = CGRect(x: 0, y: 0, width: menuSide, height: menuSide)
+        moreLanding.center = CGPoint(x: bounds.width-centre, y: midY)
         moreButton.bounds = CGRect(x: 0, y: 0, width: menuSide, height: menuSide)
-        moreButton.center = CGPoint(x: bounds.width-centre, y: midY)
+        moreButton.center = CGPoint(x: menuSide/2, y: menuSide/2)
         // The panels' contents keep their place from the top as the bar grows beneath them. By
         // bounds and center, as they scale as they swap.
         let place = { (view: UIView, top: CGFloat, height: CGFloat) in
@@ -240,27 +298,50 @@ final class BottomBar: UIView {
             view.center = CGPoint(x: self.bounds.midX, y: top+height/2)
         }
         place(home, 0, Self.rowTop+Self.rowHeight)
+        // Compact site search only moves the sheet. Its result rows keep their full layout
+        // beneath the keyboard, so expanding carries them up rather than resizing each row.
         place(search, Self.searchTop, SearchPanel.height)
         place(menu, Self.searchTop, MenuPanel.height(width: bounds.width))
+        place(tabMenu, Self.searchTop, SearchPanel.fieldHeight)
         place(find, Self.searchTop, SearchPanel.fieldHeight+find.answerHeight)
+        place(siteSettings, Self.searchTop, SiteSettingsPanel.height)
+        place(appSettings, Self.searchTop, AppSettingsPanel.height)
+        let safeBottom = window?.safeAreaInsets.bottom ?? 0
+        let compact = Self.downloadsHeight(width: bounds.width, safeBottom: safeBottom, rows: downloads.rowCount)
+        let base = DownloadsPanel.height(rows: downloads.rowCount)
+        // Keep the outgoing collection's viewport until its blurred crossfade has left.
+        // Shrinking it immediately would recycle lower cells while they are still visible.
+        let desired = panel == .downloads ? base+max(0,bounds.height-compact) : max(base,downloads.bounds.height)
+        let available = max(0,bounds.height-Self.searchTop-max(safeBottom,16))
+        place(downloads, Self.searchTop, panel == .downloads ? min(desired,available) : desired)
     }
 }
 
 extension UIControl {
+    /// Darkens at once under the finger, and fades back as it lifts, without scaling.
+    func darkensWhenPressed(restingFill: UIColor = SearchPanel.fill, pressedFill: UIColor = SearchPanel.pressedFill,
+                            fillView: UIView? = nil) {
+        let background = fillView ?? self
+        background.backgroundColor = restingFill
+        addAction(UIAction { [weak background] _ in
+            background?.backgroundColor = pressedFill
+        }, for: [.touchDown, .touchDragEnter])
+        addAction(UIAction { [weak background] _ in
+            guard let background else { return }
+            UIView.animate(withDuration: 0.2, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+                background.backgroundColor = restingFill
+            }
+        }, for: [.touchUpInside, .touchUpOutside, .touchDragExit, .touchCancel])
+    }
+
     /// Shrinks the control a little under the finger, and springs it back as it lifts. Lay it
     /// out by bounds and center, as frames ignore the scale. `filled` controls take the search
-    /// field's fill, a little darker while pressed, as native buttons do.
-    func shrinksWhenPressed(to scale: CGFloat, filled: Bool = false) {
-        if filled { backgroundColor = SearchPanel.fill }
+    /// field's fill by default, a little darker while pressed, as native buttons do.
+    func shrinksWhenPressed(to scale: CGFloat, filled: Bool = false, restingFill: UIColor = SearchPanel.fill,
+                            pressedFill: UIColor = SearchPanel.pressedFill, fillView: UIView? = nil) {
+        if filled { darkensWhenPressed(restingFill: restingFill, pressedFill: pressedFill, fillView: fillView) }
         let press = { [weak self] (pressed: Bool) in
             guard let self else { return }
-            // Darkens at once under the finger, and fades back as it lifts.
-            if filled, pressed { backgroundColor = SearchPanel.pressedFill }
-            if filled, !pressed {
-                UIView.animate(withDuration: 0.2, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
-                    self.backgroundColor = SearchPanel.fill
-                }
-            }
             guard !UIAccessibility.isReduceMotionEnabled else { return }
             UIView.animate(springDuration: pressed ? 0.2 : 0.3, bounce: pressed ? 0 : 0.3, initialSpringVelocity: 0,
                            delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {

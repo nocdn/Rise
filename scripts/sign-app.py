@@ -11,14 +11,20 @@ import sys
 import tempfile
 
 PASSKEY = "com.apple.developer.web-browser.public-key-credential"
+CLOUD_CONTAINER = "iCloud.dev.bartosz.Rise"
 
 
 def passkey_entitlements(profile, bundle_id, certificate_hash, now=None):
-    if "OSX" not in profile.get("Platform", []):
-        raise ValueError("Browser passkeys require a macOS provisioning profile.")
     entitlements = profile.get("Entitlements", {})
     if entitlements.get(PASSKEY) is not True:
         raise ValueError("The provisioning profile does not authorize browser passkeys. Apple approval is required.")
+    return {PASSKEY: True, **profile_identity(profile, bundle_id, certificate_hash, now)}
+
+
+def profile_identity(profile, bundle_id, certificate_hash, now=None):
+    if "OSX" not in profile.get("Platform", []):
+        raise ValueError("A macOS provisioning profile is required.")
+    entitlements = profile.get("Entitlements", {})
     expiration = profile.get("ExpirationDate")
     now = now or datetime.datetime.now(datetime.timezone.utc)
     if expiration is None or expiration.replace(tzinfo=datetime.timezone.utc) <= now:
@@ -31,11 +37,43 @@ def passkey_entitlements(profile, bundle_id, certificate_hash, now=None):
     certificates = {hashlib.sha1(cert).hexdigest().upper() for cert in profile.get("DeveloperCertificates", [])}
     if certificate_hash.upper() not in certificates:
         raise ValueError("The signing certificate is not authorized by this provisioning profile.")
-    result = {PASSKEY: True, app_key: app_id}
+    result = {app_key: app_id}
     team = entitlements.get("com.apple.developer.team-identifier")
     if team:
         result["com.apple.developer.team-identifier"] = team
     return result
+
+
+def cloudkit_entitlements(profile, bundle_id, certificate_hash, now=None):
+    result = profile_identity(profile, bundle_id, certificate_hash, now)
+    granted = profile.get("Entitlements", {})
+    if CLOUD_CONTAINER not in granted.get("com.apple.developer.icloud-container-identifiers", []):
+        raise ValueError("The profile does not authorize Rise's shared CloudKit container.")
+    services = granted.get("com.apple.developer.icloud-services", [])
+    if services != "*" and "CloudKit" not in services:
+        raise ValueError("The profile does not authorize CloudKit.")
+    environments = granted.get("com.apple.developer.icloud-container-environment", [])
+    if "Development" not in environments:
+        raise ValueError("Local builds require the Development CloudKit environment.")
+    result.update({
+        "com.apple.developer.icloud-container-identifiers": [CLOUD_CONTAINER],
+        "com.apple.developer.icloud-services": ["CloudKit"],
+        "com.apple.developer.icloud-container-environment": "Development",
+    })
+    if granted.get("com.apple.developer.aps-environment") == "development":
+        result["com.apple.developer.aps-environment"] = "development"
+    return result
+
+
+def cloudkit_profile(bundle_id, certificate_hash):
+    directory = Path.home() / "Library/Developer/Xcode/UserData/Provisioning Profiles"
+    for path in sorted(directory.glob("*.provisionprofile")) + sorted(directory.glob("*.mobileprovision")):
+        try:
+            profile = plistlib.loads(subprocess.check_output(["security", "cms", "-D", "-i", str(path)], stderr=subprocess.PIPE))
+            return path, cloudkit_entitlements(profile, bundle_id, certificate_hash)
+        except (ValueError, subprocess.CalledProcessError, plistlib.InvalidFileException):
+            continue
+    return None, None
 
 
 def signing_certificate(identity):
@@ -74,6 +112,13 @@ def configuration(info):
         declared = plistlib.loads(Path(__file__).with_name("Rise-passkeys.entitlements").read_bytes())
         if declared.get(PASSKEY) is not True:
             raise ValueError("The passkey entitlements template is missing the browser capability.")
+        try:
+            entitlements.update(cloudkit_entitlements(profile, info["CFBundleIdentifier"], signing_certificate(identity)))
+        except ValueError:
+            pass
+        return identity, profile_file, entitlements
+    if identity != "-":
+        profile_file, entitlements = cloudkit_profile(info["CFBundleIdentifier"], signing_certificate(identity))
         return identity, profile_file, entitlements
     return identity, None, None
 
@@ -83,7 +128,11 @@ def main():
         configuration(plistlib.loads(Path(__file__).with_name("Info.plist").read_bytes()))
         return
     app = Path(sys.argv[1])
-    identity, profile_file, entitlements = configuration(plistlib.loads((app / "Contents/Info.plist").read_bytes()))
+    info_path = app / "Contents/Info.plist"
+    info = plistlib.loads(info_path.read_bytes())
+    identity, profile_file, entitlements = configuration(info)
+    info["RiseCloudKitEnabled"] = bool(entitlements and "com.apple.developer.icloud-services" in entitlements)
+    info_path.write_bytes(plistlib.dumps(info))
     embedded = app / "Contents/embedded.provisionprofile"
     command = ["codesign", "--force", "--sign", identity]
     if profile_file:
@@ -92,7 +141,7 @@ def main():
         with tempfile.NamedTemporaryFile(suffix=".entitlements") as temporary:
             plistlib.dump(entitlements, temporary); temporary.flush()
             subprocess.run([*command, "--options", "runtime", "--timestamp", "--entitlements", temporary.name, str(app)], check=True)
-        print("Signed with the approved browser passkey capability. WebKit presents native authentication prompts.")
+        print("Signed with Apple's provisioning profile. CloudKit: " + str(info["RiseCloudKitEnabled"]) + "; browser passkeys: " + str(PASSKEY in entitlements))
     else:
         # An ad-hoc app claiming this restricted entitlement can fail to launch.
         # Also remove a profile left by a previous approved build of this bundle.

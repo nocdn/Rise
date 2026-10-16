@@ -27,6 +27,22 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTFail("The local WebKit fixture did not finish loading")
     }
 
+    @MainActor private func assertFullSearchPlacement(_ browser: BrowserViewController,
+                                                     file: StaticString = #filePath, line: UInt = #line) {
+        let keyboard = browser.view.keyboardLayoutGuide.layoutFrame
+        let panel = browser.bottomBar.search
+        if keyboard.minY < browser.view.bounds.maxY-100 {
+            let visibleResults = panel.list.convert(panel.list.bounds, to: browser.view)
+            XCTAssertEqual(visibleResults.maxY, keyboard.minY, accuracy: 1, file: file, line: line)
+            XCTAssertLessThan(panel.field.convert(panel.field.bounds, to: browser.view).maxY, keyboard.minY, file: file, line: line)
+            XCTAssertLessThanOrEqual(panel.list.bounds.height, SearchPanel.rowHeight*4+SearchPanel.keyboardClearance, file: file, line: line)
+        } else {
+            XCTAssertEqual(browser.bottomBar.bounds.height,
+                           (browser.view.bounds.height*BrowserViewController.panelHeightFraction).rounded(),
+                           accuracy: 1, file: file, line: line)
+        }
+    }
+
     private static let inputPage = """
     <!doctype html><html><head>
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, viewport-fit=cover">
@@ -46,7 +62,7 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertTrue(bar.search.field.isFirstResponder)
         XCTAssertEqual(bar.search.field.text, "")
         XCTAssertEqual(browser.tabs.count, 1, "Opening the dialog does not create another tab")
-        XCTAssertEqual(bar.frame.height, (window.bounds.height*BrowserViewController.panelHeightFraction).rounded(), accuracy: 1)
+        assertFullSearchPlacement(browser)
 
         // The page can finish loading behind the search without taking focus or closing it.
         let original = browser.webView
@@ -355,7 +371,8 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertEqual(browser.view.safeAreaInsets.bottom, open, accuracy: 0.5, "Pages scroll clear of the open bar")
         XCTAssertLessThan(bar.tabsButton.frame.maxX, bar.newPageButton.frame.minX)
         XCTAssertEqual(bar.newPageButton.frame.midX, bar.bounds.midX, accuracy: 0.5)
-        XCTAssertLessThan(bar.newPageButton.frame.maxX, bar.moreButton.frame.minX)
+        XCTAssertLessThan(bar.newPageButton.convert(bar.newPageButton.bounds, to: bar).maxX,
+                          bar.moreButton.convert(bar.moreButton.bounds, to: bar).minX)
         XCTAssertNil(bar.moreButton.menu, "More grows the bar rather than showing a menu")
         XCTAssertNil(PeekViewController(url: URL(string: "https://example.com")!) { _, _ in }.browser.bottomBar.superview)
 
@@ -397,11 +414,11 @@ final class WebKitBehaviorTests: XCTestCase {
         bar.search.field.text = "swift"
         bar.search.field.motionEnded(.motionShake, with: nil)
         XCTAssertEqual(bar.search.field.text, "")
-        XCTAssertEqual(bar.search.suggestions, [])
+        XCTAssertTrue(bar.search.candidates.contains { $0.symbol == "globe" && $0.url != nil }, "An empty field offers learned/recent links")
         XCTAssertEqual(SearchPanel.searchIcon.size, CGSize(width: 16, height: 16))
         try await Task.sleep(for: .milliseconds(600))
-        let panel = (bounds.height*BrowserViewController.panelHeightFraction).rounded()
-        XCTAssertEqual(bar.frame.height, panel, accuracy: 0.5)
+        assertFullSearchPlacement(browser)
+        let panel = bar.frame.height
         XCTAssertEqual(bar.frame.maxY, bounds.maxY, accuracy: 0.5)
         XCTAssertLessThan(bar.frame.height, bounds.height*PeekPresentationController.heightFraction)
         XCTAssertEqual(bar.layer.cornerRadius, BottomBar.panelCornerRadius)
@@ -417,7 +434,8 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertEqual(traits?[.weight] as? CGFloat, UIFont.Weight.semibold.rawValue)
         XCTAssertTrue(font.fontName.lowercased().contains("rounded"), font.fontName)
         XCTAssertNil(bar.search.field.leftView?.subviews.first, "No magnifying glass in the field")
-        XCTAssertEqual(SearchPanel.font.fontName, "OpenRunde-Medium", "The suggestions are in Open Runde")
+        XCTAssertEqual(SearchPanel.font.fontName, UIFont.systemFont(ofSize: 17, weight: .medium).fontName,
+                       "Suggestion titles use the standard iOS font")
         XCTAssertEqual(browser.content.transform.a, PageRecede.scale, accuracy: 0.001)
         XCTAssertEqual(browser.content.transform.ty, PageRecede.drop, accuracy: 0.5)
         XCTAssertTrue(browser.webView === original, "Plus doesn't replace the page")
@@ -466,7 +484,7 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertEqual(search.queryItems?.first { $0.name == "q" }?.value, "swift concurrency")
         bar.newPageButton.sendActions(for: .primaryActionTriggered)
         XCTAssertEqual(bar.search.field.text, "")
-        XCTAssertEqual(bar.search.suggestions, [])
+        XCTAssertTrue(bar.search.candidates.contains { $0.symbol == "globe" && $0.url != nil }, "An empty field offers learned/recent links")
         browser.closePanel()
 
         // More grows the bar a little, its buttons swapping for the page's address over large
@@ -545,6 +563,118 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertEqual(browser.content.transform, .identity)
     }
 
+    @MainActor func testSoleHistoryChevronTurnsBetweenBackAndForwardAndKeepsBothActions() async throws {
+        let browser = BrowserViewController(startURL: nil)
+        let window = try host(browser)
+        defer { window.isHidden = true }
+        let fixture = FileManager.default.temporaryDirectory.appendingPathComponent("rise-history-\(UUID().uuidString).html")
+        try "<html><body>A local history fixture.</body></html>".write(to: fixture, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: fixture) }
+        browser.webView.loadFileURL(fixture, allowingReadAccessTo: fixture.deletingLastPathComponent())
+        for _ in 0..<250 where browser.webView.isLoading || browser.webView.url != fixture {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        XCTAssertEqual(browser.webView.url, fixture)
+        try await browser.webView.evaluateJavaScript("location.hash = 'detail'")
+        for _ in 0..<100 where !browser.webView.canGoBack { try await Task.sleep(for: .milliseconds(10)) }
+        let address = browser.bottomBar.menu.address
+        browser.openPanel(.menu)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertFalse(address.backButton.isHidden)
+        XCTAssertTrue(address.forwardButton.isHidden)
+        let slot = address.backButton.center
+
+        address.backButton.sendActions(for: .primaryActionTriggered)
+        for _ in 0..<100 where address.forwardButton.isHidden { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(address.backButton.isHidden)
+        XCTAssertFalse(address.forwardButton.isHidden)
+        XCTAssertEqual(address.forwardButton.center, slot, "The sole arrow keeps its tap area")
+        XCTAssertEqual(address.forwardButton.accessibilityLabel, "Forward")
+        try await Task.sleep(for: .milliseconds(40))
+        let forwardGlyph = try XCTUnwrap(address.forwardButton.subviews.first { $0 is UIImageView })
+        let turningForward = try XCTUnwrap(forwardGlyph.layer.presentation()?.affineTransform())
+        XCTAssertGreaterThan(abs(turningForward.b), 0.1, "The glyph turns instead of instantly swapping")
+
+        // Reverse before the first turn has finished: the new Back glyph starts at that angle.
+        address.forwardButton.sendActions(for: .primaryActionTriggered)
+        for _ in 0..<100 where address.backButton.isHidden { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(address.backButton.isHidden)
+        XCTAssertTrue(address.forwardButton.isHidden)
+        XCTAssertEqual(address.backButton.center, slot)
+        XCTAssertEqual(address.backButton.accessibilityLabel, "Back")
+        try await Task.sleep(for: .milliseconds(40))
+        let backGlyph = try XCTUnwrap(address.backButton.subviews.first { $0 is UIImageView })
+        XCTAssertGreaterThan(abs(try XCTUnwrap(backGlyph.layer.presentation()?.affineTransform().b)), 0.1)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertEqual(backGlyph.transform, .identity)
+        XCTAssertTrue(browser.isPanelOpen, "History navigation leaves More open")
+        XCTAssertTrue(browser.webView.canGoBack)
+        XCTAssertFalse(browser.webView.canGoForward)
+
+        // With more history there are still two distinct, correctly directed controls.
+        try await browser.webView.evaluateJavaScript("location.hash = 'second'")
+        try await Task.sleep(for: .milliseconds(100))
+        address.backButton.sendActions(for: .primaryActionTriggered)
+        for _ in 0..<100 where address.forwardButton.isHidden { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(address.backButton.isHidden)
+        XCTAssertFalse(address.forwardButton.isHidden)
+        XCTAssertEqual(address.forwardButton.center.x-address.backButton.center.x, AddressBar.pairSpacing)
+        XCTAssertEqual(backGlyph.transform, .identity)
+        XCTAssertEqual(forwardGlyph.transform.a, -1, accuracy: 0.001)
+
+        // Editing temporarily hides both arrows; returning restores the same availability.
+        address.sendActions(for: .touchUpInside)
+        try await Task.sleep(for: .milliseconds(400))
+        browser.closePanel()
+        try await Task.sleep(for: .milliseconds(400))
+        browser.openPanel(.menu)
+        try await Task.sleep(for: .milliseconds(400))
+        XCTAssertFalse(address.backButton.isHidden)
+        XCTAssertFalse(address.forwardButton.isHidden)
+        browser.closePanel()
+    }
+
+    @MainActor func testRapidMoreThenSiteSettingsDoesNotLeaveTheCompactBarVisible() async throws {
+        let browser = BrowserViewController(startURL: nil)
+        let window = try host(browser)
+        defer { window.isHidden = true }
+        let bar = browser.bottomBar
+
+        for delay in [50, 100] {
+            bar.moreButton.sendActions(for: .primaryActionTriggered)
+            try await Task.sleep(for: .milliseconds(delay))
+            XCTAssertGreaterThan(try XCTUnwrap(bar.home.layer.presentation()?.opacity), 0,
+                                 "The second tap interrupts the compact bar's fade")
+            bar.menu.siteSettingsButton.sendActions(for: .primaryActionTriggered)
+            XCTAssertTrue(bar.shown === bar.siteSettings)
+            XCTAssertTrue(bar.siteSettings.isUserInteractionEnabled, "Rapid input stays responsive")
+            try await Task.sleep(for: .milliseconds(400))
+
+            XCTAssertEqual(bar.siteSettings.alpha, 1)
+            XCTAssertEqual(bar.siteSettings.transform, .identity)
+            for inactive in [bar.home, bar.menu, bar.search, bar.find] {
+                XCTAssertEqual(inactive.alpha, 0, "Earlier contents must not remain above Site settings")
+                XCTAssertEqual(inactive.transform, .identity)
+                XCTAssertTrue(inactive.accessibilityElementsHidden)
+                XCTAssertFalse(inactive.subviews.contains { $0 is UIImageView }, "No blurred snapshots are left over")
+            }
+
+            // Interrupt the return to More as well, without waiting for its crossfade to finish.
+            bar.siteSettings.closeButton.sendActions(for: .primaryActionTriggered)
+            try await Task.sleep(for: .milliseconds(50))
+            bar.menu.siteSettingsButton.sendActions(for: .primaryActionTriggered)
+            try await Task.sleep(for: .milliseconds(400))
+            XCTAssertEqual(bar.home.alpha, 0)
+            XCTAssertEqual(bar.menu.alpha, 0)
+            XCTAssertEqual(bar.siteSettings.alpha, 1)
+            browser.closePanel()
+            try await Task.sleep(for: .milliseconds(400))
+            XCTAssertEqual(bar.home.alpha, 1)
+            XCTAssertEqual(bar.siteSettings.alpha, 0)
+        }
+    }
+
     @MainActor func testTabsShrinkIntoCardsUnderTheBarAndASwipeUpDropsThePageIn() async throws {
         let browser = BrowserViewController(startURL: nil)
         let window = try host(browser)
@@ -581,6 +711,10 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertFalse(switcher.isHidden)
         try await Task.sleep(for: .milliseconds(80))
         let shrinking = try XCTUnwrap(switcher.subviews.last as? TabCard, "The page on its way into its card")
+        XCTAssertEqual(switcher.cells[0].caption.alpha, 1, "A stationary card's title is already visible")
+        XCTAssertEqual(switcher.cells[0].caption.transform, .identity)
+        XCTAssertNil(switcher.cells[0].caption.layer.animation(forKey: "flight.opacity"))
+        XCTAssertNotNil(switcher.cells[1].caption.layer.animation(forKey: "flight.opacity"), "Only the moving title reveals")
         XCTAssertLessThan(try XCTUnwrap(shrinking.layer.presentation()).frame.width, browser.view.bounds.width)
         try await Task.sleep(for: .milliseconds(600))
         XCTAssertFalse(switcher.subviews.contains { $0 is TabCard }, "The page has landed in its card")
@@ -595,8 +729,9 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertLessThan(caption.favicon.frame.maxX, caption.title.frame.minX)
         XCTAssertGreaterThan(caption.favicon.layer.cornerRadius, 0, "Square icons round off a little")
         let left = switcher.cells[0].frame, right = switcher.cells[1].frame
-        XCTAssertEqual(left.minY, right.minY, "Two across")
-        XCTAssertLessThan(left.maxX, right.minX)
+        XCTAssertGreaterThan(left.maxX, right.minX, "The horizontal deck overlaps its cards")
+        XCTAssertGreaterThan(right.width, browser.view.bounds.width*0.65, "Large page previews")
+        XCTAssertLessThan(caption.caption.frame.maxY, caption.card.frame.minY, "Title above the page")
         XCTAssertTrue(bar.tabsButton.showsSwitcher, "Tabs becomes an empty square")
         XCTAssertEqual(bar.home.alpha, 1, "The bar stays, with New Page and More")
         XCTAssertEqual(bar.moreButton.tintColor, BottomBar.plusTint, "More's dots are as soft as New Page's plus")
@@ -745,7 +880,7 @@ final class WebKitBehaviorTests: XCTestCase {
         }
         try await Task.sleep(for: .milliseconds(700))
         XCTAssertLessThan(bar.frame.minY, initialTop)
-        XCTAssertEqual(bar.bounds.height, (browser.view.bounds.height*BrowserViewController.panelHeightFraction).rounded(), accuracy: 1)
+        assertFullSearchPlacement(browser)
         XCTAssertEqual(browser.content.transform.a, PageRecede.scale, accuracy: 0.001)
         XCTAssertEqual(browser.content.transform.ty, PageRecede.drop, accuracy: 0.5)
         XCTAssertEqual(address.host.frame.minX, bar.search.field.textRect(forBounds: address.bounds).minX, accuracy: 0.5)
@@ -764,7 +899,7 @@ final class WebKitBehaviorTests: XCTestCase {
         attachment.name = "Expanded URL editor"; attachment.lifetime = .keepAlways; add(attachment)
         address.reloadButton.sendActions(for: .primaryActionTriggered)
         XCTAssertEqual(bar.search.field.text, "")
-        XCTAssertEqual(bar.search.suggestions, [])
+        XCTAssertTrue(bar.search.candidates.contains { $0.symbol == "globe" && $0.url != nil }, "An empty field offers learned/recent links")
         XCTAssertTrue(bar.search.field.isFirstResponder)
         XCTAssertTrue(browser.webView === original)
         XCTAssertEqual(bar.tabsButton.count, 1)

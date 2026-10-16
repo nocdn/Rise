@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "@adguard/agtree": "4.2.1",
+    "@adguard/extended-css": "2.2.1",
+    "@adguard/scriptlets": "2.5.1",
+    "terser": "5.39.0",
+    "tldts": "7.0.19"
+  }
+}

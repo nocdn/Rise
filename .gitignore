@@ -9,3 +9,4 @@ __pycache__/
 xcuserdata/
 *.xcuserstate
 .build-fork/
+node_modules/

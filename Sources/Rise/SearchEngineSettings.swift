@@ -4,15 +4,6 @@ import RiseCore
 import RiseChromium
 #endif
 
-/// The search engine the address bar searches with: on Chromium, the default chosen in Chrome's
-/// Search engine section of rise://settings; on WebKit, Rise's own choice.
-struct SearchProvider {
-    let title: String
-    let searchURL: (String) -> URL?
-    /// Google, which offers suggestions as you type.
-    let isGoogle: Bool
-}
-
 @MainActor extension BrowserController {
     static let searchEnginePreferenceKey = "Rise.SearchEngine"
 
@@ -23,8 +14,7 @@ struct SearchProvider {
             return SearchProvider(title: name, searchURL: { RCEngine.searchURL(forTerms: $0) }, isGoogle: google)
         }
         #endif
-        let engine = searchEngine
-        return SearchProvider(title: engine.title, searchURL: { engine.searchURL(for: $0) }, isGoogle: engine == .google)
+        return SearchProvider(searchEngine)
     }
     /// Rise's own choice, for WebKit.
     var searchEngine: SearchEngine {

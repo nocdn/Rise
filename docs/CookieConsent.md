@@ -1,0 +1,139 @@
+# Mobile cookie consent
+
+“Block cookie banners” automatically **accepts** consent, as requested. It is on
+by default, saved per host (www and non-www share a preference), and independent
+of ad blocking. It works in full tabs, Peek and background preview pages. Changing
+the switch reloads the current page behind Site settings, with the same native
+spinner and disabled row used by ad blocking. Failed and interrupted navigations
+clear the spinner. YouTube's hard ad-blocking exclusion remains in force; it does
+not disable cookie consent.
+
+## Engine
+
+The bundled engine uses DuckDuckGo Autoconsent **16.52.0**, pinned in
+`scripts/ios-cookie-consent/package-lock.json`: 413 declarative opt-in rules, 11
+CMP adapters and the maintained multilingual button classifier. The build selects
+real acceptance flows, excludes cosmetic hiding/style-removal steps, and omits
+opt-out, prehide and test actions. No executable filters are fetched at runtime.
+License and source provenance ship beside the SHA-256-validated assets.
+
+Rise adds a conservative fallback for custom banners:
+
+- Cookie/data-consent purpose must appear in the surrounding message, outside its
+  buttons. A button labelled “Accept all cookies” alone is insufficient.
+- The message must be a consent container, dialog, fixed/sticky banner, or a small
+  frame with explicit cookie purpose. Articles and ordinary forms do not qualify.
+- Accept/all/agree actions use the multilingual classifier. Acknowledge is used
+  for notices; an explicit accept action takes priority. Settings, rejection,
+  payment, subscription and terms buttons are excluded, as are external links.
+- Hidden ancestors, disabled controls, inert content and occluded/offscreen custom
+  buttons are skipped. Email, password and payment forms are left alone.
+- Mutation observers handle delayed hydration, replaced/disabled buttons, SPAs,
+  cross-origin frames and nested open shadow roots. Persistent failed handlers get
+  bounded, increasingly spaced retries (five per control, 24 clicks per document).
+- Trusted interaction with a consent panel or cookie-settings action stops further
+  automation. Known saved choices are respected by provider APIs.
+- Cookiebot and OneTrust can accept an explicitly unanswered, open dialog through
+  their supported APIs, including closed shadow DOM. Usercentrics acceptance is
+  awaited before closing its UI. A failed API does not trigger cosmetic removal.
+- Sourcepoint consent-or-pay dialogs may use the provider's explicit accept-all
+  action even when a subscription option is present. No paid choice is selected.
+
+Both fallback traversal and maintained-rule detection yield between short work
+batches. Ordinary links are classified before geometry/style reads. Mutation
+processing inspects changed subtrees instead of rescanning the entire document.
+
+## WebKit boundary and lifecycle
+
+DOM automation uses the named `Rise.CookieConsent` content world. A page cannot
+access the bridge or the automation's guarded `click()` prototype. Page-owned
+scripts keep their ordinary `click()` implementation.
+
+Providers with page-global APIs use a native bridge. It accepts only a bundled
+snippet ID, never message-supplied JavaScript. The bridge checks the document token,
+current policy and manual-interaction state before running the named function in
+the originating frame's page world. Evaluation and frame ledgers are bounded;
+asynchronous calls time out. Stale preparation and stop messages cannot apply to a
+new document. Disabling consent stops pending automation, and history restores
+restart it when the current site's policy permits it.
+
+Ad/cookie/viewport/paint scripts have separate markers. A cookie-policy change
+preserves the other scripts and does not turn ad blocking on or off. Preview
+capture allows the first API fallback to finish, and cache format 3 refreshes old
+cards that may contain a banner.
+
+## Reproduce the audits
+
+Regenerate the bundle:
+
+```sh
+npm --prefix scripts/ios-cookie-consent ci --ignore-scripts
+npm --prefix scripts/ios-cookie-consent run build
+```
+
+With a booted simulator:
+
+```sh
+python3 scripts/test-ios-cookie-consent.py --simulator <UUID> --real-sites all
+```
+
+The runner rebuilds/relaunches using `scripts/restart.sh`, serves real HTTP
+fixtures, then launches an opt-in DEBUG audit inside Rise. No GUI automation,
+mocked DOM or user's persistent browser session is used. Results, snapshots and
+build output go to `build/ios-cookie-consent/<timestamp>/`. `--no-build` reuses an
+installed build; `--skip-fixtures --real-sites 0,25` runs a focused public retest.
+
+The 68 synthetic fixtures cover 14 language variants, native dialogs and scroll
+locks, several CMPs, promise-based success/failure, consent-or-pay, strict CSP,
+open/closed shadow trees, nested same/cross-origin frames, 11-second banners,
+6.5-second handlers, replaced controls, SPA recurrence, occlusion, busy DOMs and
+an 18,000-paragraph article. Negative cases include checkout, newsletter, login,
+paywall, legal terms, cookie-policy articles, external links, disabled/inert/hidden
+controls, existing decline, unknown closed shadow content, and Microsoft banners
+beside unrelated terms buttons. Native checks cover
+reload/spinner success, interruption/failure, persistence, history, adoption,
+isolation, other-tab cancellation, cookie-free background previews and YouTube
+policy. The existing ad-blocking checks run afterward.
+
+The public audit compares consent off/on in fresh ephemeral data stores across 30
+websites. Regional redirects are separately disabled for a valid baseline. It
+records visible dialogs, provider acceptance state, cookie **names**, content and
+frame diagnostics. Screenshots resolve ambiguous cases where a framework retains
+closed banner markup. A site showing no banner in this region is evidence of
+unchanged behavior, not proof of that site's consent flow. Bot/network failures
+must remain unverified. Unknown closed shadow dialogs without a supported API or
+known rule are left visible instead of faking consent or unlocking their page.
+
+## Results — 14 October 2026
+
+On the iPhone 17 Pro / iOS 27 simulator:
+
+- **68 synthetic cases passed** (66 in the full pass, plus two scoped Microsoft
+  regressions after narrowing that rule).
+- **19 native checks and 21 existing ad-blocking checks passed.** These include
+  cancellation in another tab, history restores and a background preview whose
+  closed-shadow Cookiebot banner was accepted before snapshotting.
+- **30 public sites received fresh off/on comparisons**, with focused retests for
+  late regional redirects, Sourcepoint consent-or-pay and unrelated legal notices.
+- **Five sites were retested with ad blocking on:** Guardian, IKEA, Decathlon,
+  Cookiebot and Spiegel. Their consent dialogs cleared; OneTrust, Didomi and
+  Cookiebot reported accepted categories. Spiegel's TCF state reported
+  `useractioncomplete` with all 11 purpose consents granted.
+
+Mozilla, YouTube, Wikipedia and Hacker News did not present a consent banner in
+this session, so they count as checks of unchanged behavior. WIRED retained
+closed banner DOM nodes; ancestor visibility and its screenshot confirmed the
+dialog was gone. The Verge's separate ownership/terms notice stays untouched.
+Spiegel displayed a separate advertising popup after consent; its scroll lock
+belonged to that popup, which the cookie handler leaves alone.
+
+Reports are in `build/ios-cookie-consent/20261014-100911/` (66-case pass and public
+retests), `20261014-102532/` (Microsoft cases plus native/ad regressions),
+`20261014-093554/` (30-site pass), `20261014-101808/` (default ad-blocking pass),
+and `20261014-103436/` (Spiegel TCF/overlay diagnostic).
+
+Primary sources: [Autoconsent](https://github.com/duckduckgo/autoconsent),
+[Cookiebot API](https://www.cookiebot.com/us/developer/),
+[OneTrust API](https://developer.onetrust.com/onetrust/docs/javascript-api),
+[Usercentrics UI actions](https://usercentrics.com/beta-docs/available-properties),
+[IAB CMP API](https://github.com/InteractiveAdvertisingBureau/GDPR-Transparency-and-Consent-Framework/blob/master/TCFv2/IAB%20Tech%20Lab%20-%20CMP%20API%20v2.md).

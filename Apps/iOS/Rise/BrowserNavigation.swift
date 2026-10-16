@@ -1,0 +1,28 @@
+import WebKit
+import OSLog
+
+extension BrowserViewController {
+    func webView(_ page: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        tabs.first { $0.webView === page }?.didStart(navigation)
+        if page === webView { updateNavigationStatus() }
+    }
+    func handlePageFailure(_ page: WKWebView, navigation: WKNavigation?, error: Error) {
+        guard let tab = tabs.first(where: { $0.webView === page }) else { return }
+        let retry = tab.didFail(navigation, error: error)
+        if retry {
+            DispatchQueue.main.async { [weak self, weak tab] in
+                guard let self, let tab, self.tabs.contains(where: { $0 === tab }) else { return }
+                tab.loadIfNeeded()
+                if page === self.webView { self.updateNavigationStatus() }
+            }
+        }
+        let code = (error as NSError).code
+        Logger(subsystem: "dev.bartosz.Rise", category: "Navigation").notice("Page navigation failed: \(code)")
+        if page === webView { updateNavigationStatus(); updateAddress() }
+    }
+    func handlePageProcessTermination(_ page: WKWebView) {
+        guard let tab = tabs.first(where: { $0.webView === page }) else { return }
+        tab.processTerminated()
+        if page === webView { tab.loadIfNeeded(); updateNavigationStatus() }
+    }
+}

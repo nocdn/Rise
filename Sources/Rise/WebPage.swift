@@ -1,4 +1,5 @@
 import AppKit
+import WebKit
 
 /// Which engine draws a page. Saved history is tagged with it, since one engine can't read
 /// the other's.
@@ -8,7 +9,7 @@ enum WebEngine: String, Codable {
 
 /// Everything Rise asks of a page, whichever engine draws it. Rise lays out, clips and
 /// animates `view` like any other view; the engine only fills it.
-@MainActor protocol WebPage: AnyObject {
+@MainActor protocol WebPage: ScriptablePage {
     var engine: WebEngine { get }
     var view: NSView { get }
     var url: URL? { get }
@@ -111,6 +112,11 @@ struct PageScriptError: Error, LocalizedError {
 }
 
 extension WebPage {
+    func runScript(_ body: String, arguments: [String: Any], world: String?) async throws -> Any? {
+        guard let world else { return await evaluate(body, arguments: arguments, world: nil) }
+        return try await evaluate(body, arguments: arguments, in: nil, world: .named(world))
+    }
+    var findWebView: WKWebView? { (self as? WebKitPage)?.webView }
     /// As the completion form; throws if the script threw.
     func evaluate(_ body: String, arguments: [String: Any], in frame: PageFrame?, world: ScriptWorld) async throws -> Any? {
         try await withCheckedThrowingContinuation { continuation in

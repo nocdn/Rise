@@ -1,9 +1,19 @@
 # Rise for iOS
 
-On a fresh launch, New Page's plus dialog opens and focuses its search field while
-`https://news.ycombinator.com/` loads behind it in a persistent `WKWebView`. This happens
-once for a newly created scene, including relaunching after the process was killed.
+With no saved session, New Page's plus dialog opens and focuses its search field while
+`https://news.ycombinator.com/` loads behind it in a persistent `WKWebView`. Later launches
+restore the open tabs in order and resume the selected page without opening that dialog.
+Addresses, titles and selection are saved atomically in Application Support on tab and
+navigation changes, including History API changes in background tabs. Scene lifecycle
+events flush pending writes; ordinary app updates retain the file. Only the selected
+restored tab loads at launch; other tabs retain their saved title/address and load when
+selected. Temporary Peek pages and DEBUG replays/audits have no session store. This
+restores page addresses, rather than live form contents or WebKit's back/forward history.
 Returning to the app while it's still in memory preserves the existing page and panel.
+Tabs also form one shared list with the Mac app through the user's existing iCloud
+account. Sync is enabled by default under **More → Site settings → App settings**;
+there is no app login. See [Shared tabs with iCloud](../../docs/TabSync.md) for the
+merge behavior, signing setup and verification.
 Web links navigate normally; new-window links use the
 same page, and WebKit's native back/forward gestures remain available. UIKit and
 WebKit manage safe areas, rotation, the keyboard and scrolling.
@@ -18,8 +28,12 @@ As in Arc Search, a toolbar spans the bottom edge with a hairline on top: white,
 grey rather than black in dark mode, whatever the page, so its buttons and panels stand out.
 The app follows the system's light or dark appearance. Tabs, on the left, shows the top of the current page as a
 small square card over a tilted one behind it. New Page, the light grey rounded button in
-the middle, grows the bar into a panel 70% of the window's height, with Peek's quick spring:
-its top corners round as it grows, and the page recedes behind it, dimmed. The bar's
+the middle, grows the bar into a panel with four suggestion rows above the keyboard
+(71% of the window's height without a software keyboard), with Peek's quick spring:
+its top corners round as it grows, and the page recedes behind it, dimmed, its corners following
+the screen's own, as far in as the page has moved, so it never looks cut square into them: they
+round the moment the panel starts opening, stay round as the page comes back, and square off
+only once it's full size again. The bar's
 buttons swap for the panel's contents, and back, as a Motion transition on the web would:
 the incoming side fades in, grows from 96% and sharpens from a 1-point blur over 0.27 s
 (`cubic-bezier(0.26, 0.08, 0.25, 1)`), while the outgoing side fades in 0.19 s as it shrinks
@@ -31,8 +45,17 @@ and rounded like New Page (#F8F9FA, 14-point corners) with semibold rounded text
 focused at once, so the keyboard comes up alongside. Shaking the phone while typing there clears the field with two sharp taps,
 instead of offering to undo the typing. Google's
 suggestions appear under it as you type, the latest query's only, each shrinking a little
-while pressed. They're set in [Open Runde](https://github.com/lauridskern/open-runde) Medium,
-bundled with its SIL Open Font License in `Rise/Fonts`, beside a grey magnifying glass drawn
+while pressed. Up to twelve ranked rows share a native scroll view; the fifth starts just
+behind the keyboard, with normal row spacing and six points of extra clearance below the
+fourth row, and scrolling keeps the field and sheet in place.
+The sheet fits shorter visible areas and keeps the last result fully reachable. Changing the
+query returns to the top, while late icons/results preserve the scroll position. Site-search
+mode preserves the list and its scroll position under the keyboard during the compact transition.
+Titles use the standard iOS font at 17 points and medium weight; URL subtitles use the same
+face at 12 points and medium weight, with a tighter baseline gap and darker grey in light mode.
+Display addresses omit the scheme, leading `www.` and a bare origin's final slash, preserving
+paths, queries and fragments; navigation always uses the complete original URL.
+Icons sit beside them, including a grey magnifying glass drawn
 like the system's bold one, its handle as thick as its ring and about as long.
 At the field's end, the address editor's bold X is always there: it clears the
 field, clicking once, and on an empty field closes the panel. Clearing clicks once; Go or choosing a suggestion clicks twice in quick succession. Choosing one searches
@@ -40,7 +63,10 @@ Google for it; Go opens what was typed as an address when it looks like one
 (`example.com`, `https://…`), and searches Google otherwise. Either way the panel quickly grows
 up to fill the window as the search fades out and the new page appears inside it,
 while the page behind keeps receding at the same rate; the new page then stays as the page, the previous one held for Back (the edge swipe). Swiping the
-panel down or tapping the page puts it back without opening anything. Holding New Page searches by voice instead:
+panel down or tapping the page puts it back without opening anything. Pulling down from the
+top of the suggestions also moves the whole panel: a short pull settles back, while a long
+pull or downward flick closes it and the keyboard. Upward drags and drags further down the
+results keep scrolling normally. Holding New Page searches by voice instead:
 a strong, sharp click, then a constant soft haptic hum while it listens, as the plus swaps (with
 the icons' blurred swap) for seven fully rounded red bars that rise and fall smoothly with the
 microphone's level, tallest in the middle. Letting go opens New Page as a tap would, a small spinner
@@ -49,13 +75,59 @@ transcribed on the device by iOS's newest speech-to-text model, `SpeechAnalyzer`
 `SpeechTranscriber` (iOS 26 and later; `DictationTranscriber` where that model isn't available),
 whose assets are fetched at launch. The first hold asks for the microphone and speech recognition
 instead of listening. More, the ellipsis
-circle on the right, grows the bar the same way into a panel about a third as tall, the page
+circle on the right, grows the bar the same way into a smaller panel, the page
 behind receding only as far as that growth takes it at the same rate. The bar's buttons
 swap the same way for the page's address, styled like the search field: Back and Forward
-close together, each only if there's a page that way, the host behind a green padlock on HTTPS pages, then Reload. Under it,
-square buttons Share, Summarise, Find (on page) and Copy (the link), labelled in rounded type. Back and Forward keep the
+close together, each only if there's a page that way, the host behind a green padlock on HTTPS pages, then Reload.
+The 14.5-point history chevrons keep their normal tap areas. When the only available direction
+changes from Back to Forward or back, the chevron turns a half-circle on a quick, lightly bouncing
+0.32-second spring, carrying on from its current angle if reversed before it finishes. Under it,
+buttons a little less tall than wide, each just a symbol: Share, Summarise, Find (on page) and Copy (the link). Back and Forward keep the
 panel open (Back also returns to a page a Peek or search replaced); Reload, Share and
-Copy close it. Summarise does nothing yet. Tapping the address grows More into a New Page-sized
+Copy close it; Summarise is below. A full-width Site settings button sits beneath the four
+icons, with its gear and title centred, using their fill, press effects and outline weight.
+It swaps More's contents with the same blurred crossfade as returning to the bar, while the panel
+grows on the closing spring. Settings has an Open Runde Semibold title at the left and the address
+editor's X at the right, returning to More with the same animated swap. Beneath it, a joined group
+of 60-point rows offers Block ads, Block trackers and Block cookie banners in Open Runde Medium,
+with the supplied Tabler icons, inset hairline dividers and blue native switches. The ads icon is
+red, trackers orange and cookies green; switching a protection off mutes its icon to 35% opacity.
+Tracker and cookie icons are slightly smaller, centred in the same icon column. The rows darken
+while pressed without scaling.
+Rapid panel changes keep all earlier visible contents in the outgoing fade, so tapping More then
+Site settings before the first swap finishes cannot leave the compact toolbar behind.
+The switches start on and only change their appearance for now; WebKit's protections are unchanged.
+Tapping the page or swiping down still closes the panel.
+The Downloads button fills horizontally with translucent light blue while files download.
+Progress combines the current batch by byte count when sizes are known; completed files keep
+their share until the remaining transfers finish. Unknown sizes reserve a share until measured
+or finished. Updates animate from the visible fill over 0.25 s. Completion fills the button,
+then fades it back to normal over 0.18 s; a new transfer safely interrupts that fade.
+The flying row produces one sharp impact when it reaches More. Each
+successful WebKit completion plays three brief rising haptic pulses. Concurrent completions
+queue separate patterns; confirming, cancelling, failing or restoring a saved file does not
+play completion feedback. Files and the finished list retain their existing storage paths.
+Cancelling removes the row immediately and deletes the partial file after WebKit stops
+writing, including a cancellation before the destination is handed over. Its filename stays
+reserved until cleanup completes, so cleanup cannot delete a newer transfer's file.
+Downloads supports UIKit's native two-finger selection interaction, including range
+selection, deselection and edge autoscrolling. Its collection cells host the same download
+row views, retaining their existing icon/checkbox blur and scale transitions. Tapping a file
+icon enters Multi Select and checks that file; row taps toggle selection while editing.
+Arrivals and removals during a range gesture wait until it ends, preserving selection by ID.
+The sheet always opens at its original compact height. A drag or flick snaps between that
+height and a taller detent, about 80% of the window and slightly higher than New Page.
+Dragging stops at those two limits; it cannot dismiss or stretch Downloads. Long lists scroll
+at the tall detent, and scrolling back to the top allows a downward sheet drag. X returns to
+More from either height using the existing blurred swap, keeping outgoing rows in place.
+The native interaction follows [Apple's two-finger selection sample](https://developer.apple.com/documentation/uikit/selecting-multiple-items-with-a-two-finger-pan-gesture).
+Search and Downloads dragging hold the display's maximum refresh request, up to 120 Hz,
+through the release spring. Search closing commits its motion before keyboard resignation
+and blurred-copy preparation. The last 20 panel drag/frame records are saved after settling;
+`python3 scripts/panel-motion-log.py --simulator <UDID>` (or `--device <ID>`) reads them.
+See [Motion.md](../../docs/Motion.md) for measurements and the distinction between callback
+gaps and rendered animation hitches.
+Tapping the address grows More into a New Page-sized
 editor on the same spring, receding the page further while the tiles blur and fade away. The
 address bar itself stays intact: the full URL slides from the center to the left as the sheet
 grows, the padlock and history buttons fade, and Reload swaps to a clear X with the same blur,
@@ -97,20 +169,44 @@ finger lands, and acts as it lifts. Scrolling down collapses the bar to a thin e
 reaching either end of the page or tapping the strip opens it again. Pages scroll clear
 of the open bar through extra safe area.
 
-New Page opens what's chosen in a new tab after the current one. Tabs shrinks the page into a
-Safari-style tab switcher over a blur of it: the page springs into its card in a two-column
-grid as the system material blurs in behind and the other cards fade, grow and sharpen in
-around it, their titles revealed last, each with the page's favicon in line with it. As on the
-Mac, the icon's corners are clipped a little (4 points in 16), so square icons round off, and a
-page without one shows a blank grey square. Icons are the first bitmap the page declares that
-loads (SVGs can't be drawn here), else the site's `favicon.ico`. The bottom bar stays, with New
-Page and More, and Tabs becomes a rounded square filled like them that shows how many tabs there
-are. Tapping a card grows it back into the page; its close button closes the tab (the last one
-stays). A swipe up anywhere on the bottom bar, even starting on New Page, shrinks the page with
-the finger and drops it into its card when let go past a quarter of the way or flicked; a short
-one springs back. Every move turns around from wherever it has got to, so Tabs can be pressed as
-quickly as wanted: a page landing in its card can be tapped to grow it back, and a swipe up as a
-card grows back catches the page where it is.
+New Page opens what's chosen in a new tab after the current one. Tabs opens an Arc-style
+horizontal deck over Rise's solid warm grey (#F3F1F0, or #1A1918 in dark mode). The current
+page shrinks towards the right while older tabs rise from the bottom-left toolbar stack,
+with a smooth, quick 0.3–0.4 s transition and no incoming bounce. Large cards are 70% of
+screen width, overlap, and compress behind the focused card's left edge.
+Swipe horizontally to bring each page forward; native momentum snaps to a card. This local
+recent-tab display order does not reorder the shared iCloud tab list.
+
+Favicons sit above each card, aligned with the page’s left edge; only the centred card shows
+its title text. Cards to the left subtly shrink by 2% per step, equally at the top and
+bottom, with a progressively darker overlay (14% per step, up to 36%). The centred card
+and cards to its right stay full size and undimmed. Pages have the device's generously
+rounded corners from their very first moving frame, for both button entry and swipe-up;
+they ease towards
+22-point card corners. A subtle shadow forms during the flight and hands over at landing.
+Pressing a card shrinks it to 97%, then opens immediately from its actual visible size.
+The small light close button and an upward card swipe both close its tab. A swiped tab
+stays opaque until it leaves the screen. During the drag, the tab behind moves forward
+to the right, grows and loses its depth shading. Releasing eases it into place on the
+app's soft spring; cancelling eases it back. The offscreen tab's removal does not restart
+that spring or delay the remaining cards' movement.
+Cancelling that swipe springs it back, and the last tab stays. VoiceOver can scroll horizontally and close
+cards through separate targets or the Close Tab custom action.
+
+The bottom bar stays, with New Page and More. More in the switcher contains only History,
+using the usual animated sheet/contents swap and the URL row's width, 48-point height,
+14-point corners, press fill, scale and haptic. History remains a visual prototype. More
+over a live page keeps the page menu.
+
+Swiping up anywhere on the bottom bar still shrinks the page under the finger. Its bottom
+edge and horizontal touch anchor follow the finger; its corners start at the screen's own
+radius. Letting go past a quarter of the travel or flicking commits, carrying position,
+size, crop and corner velocity onto the deck's own springs without a release haptic. A short
+swipe springs back. Reversing a flight, catching it with the bottom-bar swipe, or swiping
+horizontally during entry continues from the displayed pose. Explicit 120 Hz keyframes
+keep the page and rising stack moving while WebKit draws its deferred thumbnail; a rate
+hold also covers finger tracking and horizontal scrolling. Summarise's springs are unchanged.
+See `docs/Motion.md` for the reference measurements and `-RiseTabDeckAudit` for native checks.
 
 Pull down from the top of the page to reload. An eight-spoke spinner charges up one
 spoke at a time in the gap, complete at 115 points, while light haptic ticks every
@@ -156,6 +252,56 @@ Once painted it's opaque again, so pages without a background of their own still
 the status bar strip samples its top then. Later navigations keep showing the old page until the
 new one paints, so they don't flash either.
 
+Download starts also throw a miniature download row from the original page touch into More,
+which absorbs it with a small directional spring kick and the single start haptic at impact.
+Concurrent throws coexist and normal
+button press feedback remains independent. Reduce Motion skips the throw. See
+[Download motion](../../docs/DownloadMotion.md) for the reference measurements and checks.
+
+## Summarise
+
+As in Arc Search, pinching in on the page, from its smallest zoom, summarises it. As when pinching
+into Safari's tabs, the page follows the fingers at their scale, the spot pinched staying under
+them wherever they go, giving a little past its limits, while its corners round at once and it
+crops to its top and tips back a little as it shrinks towards the card over a pale backdrop where a
+purple and a pink glow circle each other. Let go smaller than 85%, or while shrinking quickly, it
+flies from wherever it is to the card at the top, carrying on at the speed it was going in scale
+and position, coasting the way the fingers were going before it curves round to its place: a
+gentle pinch glides into place, while a hard one shoots smaller than the card and springs back up
+to it. Let go otherwise, it springs back to the page. Summarise in More takes the
+page into the card the same way on its own. The bottom bar drops away, speeding up, as it goes.
+The card shows the top of the page, with another card peeking out behind, and swings gently from side to side while the shared OpenRouter
+model (`gpt-6-luna`) reads the page, a soft haptic hum running meanwhile, as when holding New
+Page. When the summary arrives, the reveal waits for the swing to pass the middle: the card
+settles, growing a little, the hum ends in one short, strong, dull hit, and the summary's
+paragraph and key points, each beside a blue symbol, fade in from a heavy blur one after another
+as the glows settle. Everything scrolls together over the backdrop. Tapping the card grows it back
+into the page, uncropping as it grows, as the summary fades and sinks back a little and the bar
+springs back. On the way back, or springing back from a short pinch, a pinch catches it at once
+from wherever it is, as in Safari, and let go it takes it back into the card, showing the summary
+it already had again once it lands. Fingers can still move the page underneath, two of them
+panning it as they pinch, or touches reaching it as the card grows back, so its scroll and zoom
+are put back as the card showed them before it takes over again; once Summarise has the pinch,
+WebKit's own zoom and scrolling are ended. The card is a replica of the page from `snapshotView`, quick
+enough not to hold up the pinch's first frames, and the haptic engine starts away from the main
+thread for the same reason. The motion runs at up to 120 Hz
+on ProMotion iPhones (`CADisableMinimumFrameDurationOnPhone`). The timings, springs and sizes were
+measured from a recording of Arc Search frame by frame and tuned in `Playgrounds/summarise.html`;
+`SummariseMotion` holds them, noting where the app has since moved on from the playground.
+`docs/Motion.md` records everything learned about this motion and the tab switcher's: the
+measurements, the physics, what was tried and removed, and the preferences behind it.
+
+Each Summarise is logged on the device: its events (the pinch, letting go, the summary arriving,
+the reveal, the close with what the page underneath was doing, the finish) and its frames, every
+one while things move fast and the dropped ones otherwise, with half a second of the page's own
+frames after the card has grown back. The last 40 are kept in the app's caches.
+The browser reuses one SwiftUI text host, keeping it hidden in the same window between summaries,
+while each scene gets a fresh model and request. Closing releases the scene and page replica;
+the haptic engine's audio-session teardown runs off the main thread. This avoids the text-view
+and audio cleanup stalling the first frames of the live page.
+`python3 scripts/summarise-log.py --device <iPhone> [--last N]` fetches them and reports, for each,
+what happened when, every phase's frame rate, and each dropped frame with what happened near it.
+
 ## Project layout
 
 - `Rise.xcodeproj`: native Xcode project with a shared `RiseiOS` scheme and folder-synchronized source groups. Add Swift files to `Rise` or `RiseTests` without maintaining file lists or running a project generator.
@@ -200,6 +346,15 @@ python3 scripts/ios.py test --device "Your iPhone"
 Use `--configuration Release` for a release build, or add `--console` to the restart
 command to stream app logs while debugging. Build products and local signing
 profiles are ignored by Git; the source project, scheme and original icon are tracked.
+
+`BrowserSessionTests` exercises ordered atomic saves, invalid/corrupt records, tab opening
+and closing, selection, background History API/title changes, lazy restoration, and Peek
+adoption/Back using real on-device WebKit and HTTP. All four tests passed on iPhone 14 Pro
+on 13 October 2026, alongside the existing address-editing, Peek and fresh-launch checks.
+The existing `testTabsShrinkIntoCardsUnderTheBarAndASwipeUpDropsThePageIn` timing check
+failed on both this build and an isolated build of the preceding commit (`c2956b5`).
+The normal phone session's tab identities, addresses and selection also survived installation
+and relaunch with the restart script.
 
 ## Input focus and zoom
 

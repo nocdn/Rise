@@ -27,6 +27,7 @@ import WebKit
     private(set) var gesture = HistorySwipeState()
     private var pending: [NSEvent] = []
     private var probing = false, permitted = false, suppressMomentum = false
+    var isActive: Bool { probing || gesture.isTracking }
     private var generation = 0
     private var probeTimeout: DispatchWorkItem?
     init(window: BrowserWindow, pageAt: @escaping (NSEvent) -> WebPage?,

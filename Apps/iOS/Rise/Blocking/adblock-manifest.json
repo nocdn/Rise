@@ -1,0 +1,45 @@
+{
+  "format": 1,
+  "converter": "AdGuard SafariConverterLib 4.3.0, Safari 17",
+  "lists": [
+    {
+      "file": "ads-1.json",
+      "sha256": "519dd7e99a1e7450b74e7a9c66c6809a14cfe831f817fe0b1cdcc84d8140d3b0",
+      "rules": 103855
+    }
+  ],
+  "scripts": [
+    {
+      "file": "adblock-start.js",
+      "sha256": "d0d882f256ede1390f207f615fea4babbbbc2d55bfcb02601d328d64f266c59b"
+    },
+    {
+      "file": "adblock-end.js",
+      "sha256": "a775f2573c2bded1a0ae47ff229f9539799467151d8847a55f4ec986081e8b47"
+    }
+  ],
+  "sources": [
+    {
+      "file": "base.txt",
+      "sha256": "9ce03826f022cc4e3c41577f781fd3bb7649c8aafa1bdea0655a23b91b925c17",
+      "url": "https://filters.adtidy.org/extension/safari/filters/2.txt"
+    },
+    {
+      "file": "mobile.txt",
+      "sha256": "76ba5d2986c0fa4dd7a82ad4872b281f947cd197ee17571335086a9719de4a5c",
+      "url": "https://filters.adtidy.org/extension/safari/filters/11.txt"
+    },
+    {
+      "file": "quick-fixes.txt",
+      "sha256": "99dd64ada94975be1e9062412d90f972bcf0ee85e2f0ee8e1841dc1c91840d45",
+      "url": "https://raw.githubusercontent.com/AdguardTeam/FiltersRegistry/master/filters/filter_24_QuickFixes/filter.txt"
+    }
+  ],
+  "advanced": {
+    "scriptlets": 5041,
+    "javascript": 240,
+    "cosmetics": 5627,
+    "exceptions": 33,
+    "excludedYouTube": 34
+  }
+}

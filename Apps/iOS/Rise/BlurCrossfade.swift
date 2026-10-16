@@ -33,19 +33,22 @@ import UIKit
 
     /// Both views keep their place in their superview as it animates; lay them out by bounds and
     /// center, as they're scaled.
-    static func swap(from previous: UIView?, to next: UIView?, style: Style = .panel,
+    static func swap(from previous: UIView?, to next: UIView?, alsoHiding earlier: [UIView] = [], style: Style = .panel,
                      completion: (() -> Void)? = nil) {
         guard let container = (next ?? previous)?.superview else { return }
         // Carries on from wherever an interrupted swap had got to.
         stop(in: container)
         let shrunk = CGAffineTransform(scaleX: style.scale, y: style.scale)
-        let outgoing = previous.flatMap { blurredCopy(of: $0, radius: style.radius) }
+        // An interrupted A → B → C swap can still have A on screen. It must finish leaving
+        // alongside B, instead of staying at the opacity where the first swap was stopped.
+        let leaving = [previous].compactMap { $0 }+earlier
+        let outgoing = leaving.compactMap { blurredCopy(of: $0, radius: style.radius) }
         let incoming = next.flatMap { blurredCopy(of: $0, radius: style.radius) }
         if let next {
             if next.alpha == 0 { next.transform = shrunk }
             incoming?.alpha = next.alpha == 0 ? 1 : 0
         }
-        outgoing?.alpha = 0
+        for copy in outgoing { copy.alpha = 0 }
 
         let curve: UITimingCurveProvider = style.spring ? UISpringTimingParameters(dampingRatio: 1) : timing
         let move = UIViewPropertyAnimator(duration: style.duration, timingParameters: curve)
@@ -53,18 +56,18 @@ import UIKit
             next?.alpha = 1
             next?.transform = .identity
             incoming?.alpha = 0
-            previous?.transform = shrunk
-            outgoing?.alpha = 1
+            for view in leaving { view.transform = shrunk }
+            for copy in outgoing { copy.alpha = 1 }
         }
         move.addCompletion { _ in
             incoming?.removeFromSuperview()
-            outgoing?.removeFromSuperview()
+            for copy in outgoing { copy.removeFromSuperview() }
             // Hidden now, so it can be put back for the next time it shows.
-            if let previous, previous.alpha == 0 { previous.transform = .identity }
+            for view in leaving where view.alpha == 0 { view.transform = .identity }
             completion?()
         }
         let fade = UIViewPropertyAnimator(duration: style.exitFadeDuration, timingParameters: curve)
-        fade.addAnimations { previous?.alpha = 0 }
+        fade.addAnimations { for view in leaving { view.alpha = 0 } }
         running[ObjectIdentifier(container)] = [move, fade]
         move.startAnimation()
         fade.startAnimation()
@@ -89,6 +92,9 @@ import UIKit
         let alpha = view.alpha
         view.alpha = 1
         let format = UIGraphicsImageRendererFormat(for: view.traitCollection)
+        // Blurred, it needs no more than a pixel and a half for a point of blur: fewer pixels to
+        // draw and blur keep the swap from holding up the frame it starts on.
+        format.scale = max(1, min(format.scale, 1.5/radius))
         let image = UIGraphicsImageRenderer(size: size, format: format).image { view.layer.render(in: $0.cgContext) }
         view.alpha = alpha
         guard let source = image.cgImage else { return nil }

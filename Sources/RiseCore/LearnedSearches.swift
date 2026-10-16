@@ -9,17 +9,50 @@ public final class LearnedSearches {
         public var template: String
         public var learned: Date
     }
+    /// A clear is a durable tombstone, so an offline device cannot restore deleted templates.
+    public struct Snapshot: Codable, Equatable {
+        public var searches: [String: Search]
+        public var clearedAt: Date?
+        public init(searches: [String: Search] = [:], clearedAt: Date? = nil) {
+            self.searches = searches; self.clearedAt = clearedAt
+        }
+        public func merging(_ other: Snapshot) -> Snapshot {
+            let cleared = [clearedAt, other.clearedAt].compactMap { $0 }.max()
+            var values = searches
+            for (domain, incoming) in other.searches {
+                guard LearnedSearches.valid(incoming, for: domain) else { continue }
+                if let existing = values[domain] {
+                    if incoming.learned < existing.learned { continue }
+                    if incoming.learned == existing.learned,
+                       incoming.template < existing.template ||
+                        (incoming.template == existing.template && incoming.name <= existing.name) { continue }
+                }
+                values[domain] = incoming
+            }
+            values = values.filter { LearnedSearches.valid($0.value, for: $0.key) && (cleared == nil || $0.value.learned > cleared!) }
+            let keep = values.sorted {
+                $0.value.learned == $1.value.learned ? $0.key < $1.key : $0.value.learned > $1.value.learned
+            }.prefix(LearnedSearches.maximumSearches)
+            return Snapshot(searches: Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) }), clearedAt: cleared)
+        }
+    }
     public static let maximumSearches = 500
     public let storageURL: URL
     /// By the domain typed for the site, without "www.".
     public private(set) var searches: [String: Search] = [:]
+    public private(set) var clearedAt: Date?
+    public var snapshot: Snapshot { Snapshot(searches: searches, clearedAt: clearedAt) }
     private var dirty = false
 
     public init(storageURL: URL) {
         self.storageURL = storageURL
-        if let data = try? Data(contentsOf: storageURL), data.count <= 1_000_000,
-           let saved = try? JSONDecoder().decode([String: Search].self, from: data) {
-            searches = saved.filter { $0.value.template.contains("{q}") && URL(string: $0.value.template.replacingOccurrences(of: "{q}", with: "q")) != nil }
+        if let data = try? Data(contentsOf: storageURL), data.count <= 1_000_000 {
+            let saved = (try? JSONDecoder().decode(Snapshot.self, from: data)) ??
+                (try? JSONDecoder().decode([String: Search].self, from: data)).map { Snapshot(searches: $0) }
+            if let saved {
+                let bounded = Snapshot().merging(saved)
+                searches = bounded.searches; clearedAt = bounded.clearedAt
+            }
         }
     }
 
@@ -30,7 +63,9 @@ public final class LearnedSearches {
         let domains = Self.domains(for: host)
         // A site Rise already knows how to search keeps that.
         guard !domains.contains(where: { PopularSites.site(forAddress: $0)?.isSearchable == true }) else { return false }
-        let search = Search(name: Self.siteName(name, domains: domains), template: template, learned: date)
+        let search = Search(name: Self.siteName(name, domains: domains), template: template,
+                            learned: max(date, clearedAt?.addingTimeInterval(0.001) ?? date))
+        guard Self.valid(search, for: domains[0]) else { return false }
         for (index, domain) in domains.enumerated() {
             // A domain whose own pages have a search keeps it over a subdomain's.
             if index > 0, let existing = searches[domain], Self.searchesItself(existing, domain) { continue }
@@ -91,6 +126,24 @@ public final class LearnedSearches {
         guard let host = URL(string: search.template.replacingOccurrences(of: "{q}", with: "q"))?.host?.lowercased() else { return false }
         return host == domain || host == "www." + domain
     }
+    /// Cloud data is untrusted. Only same-site HTTP(S) templates with one substitution are accepted.
+    static func valid(_ search: Search, for domain: String) -> Bool {
+        guard !domain.isEmpty, domain.count <= 253, domain == domain.lowercased(),
+              domain == PopularSites.domain(ofAddress: domain),
+              !domain.contains(where: { $0.isWhitespace }), search.name.count <= 40,
+              search.template.utf8.count <= 1024, search.template.components(separatedBy: "{q}").count == 2,
+              let url = URL(string: search.template.replacingOccurrences(of: "{q}", with: "q")),
+              ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.user == nil, url.password == nil,
+              let host = url.host?.lowercased(), domains(for: host).contains(domain),
+              search.learned.timeIntervalSince1970.isFinite else { return false }
+        return true
+    }
+    @discardableResult public func merge(_ incoming: Snapshot) -> Bool {
+        let merged = snapshot.merging(incoming)
+        guard merged != snapshot else { return false }
+        searches = merged.searches; clearedAt = merged.clearedAt; dirty = true
+        return true
+    }
     /// The page's own name for its site, or else its domain's main word ("Onet" for szukaj.onet.pl).
     private static func siteName(_ name: String?, domains: [String]) -> String {
         let named = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -100,15 +153,16 @@ public final class LearnedSearches {
     }
 
     public func clear() throws {
-        let previous = searches
+        let previous = snapshot
+        clearedAt = max(Date(), searches.values.map(\.learned).max() ?? .distantPast)
         searches = [:]; dirty = true
         do { try save() }
-        catch { searches = previous; dirty = true; throw error }
+        catch { searches = previous.searches; clearedAt = previous.clearedAt; dirty = true; throw error }
     }
     public func save() throws {
         guard dirty else { return }
         try FileManager.default.createDirectory(at: storageURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try JSONEncoder().encode(searches).write(to: storageURL, options: .atomic)
+        try JSONEncoder().encode(snapshot).write(to: storageURL, options: .atomic)
         dirty = false
     }
 }
