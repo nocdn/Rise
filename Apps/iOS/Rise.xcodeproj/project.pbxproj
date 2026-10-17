@@ -4,6 +4,48 @@
     classes = {};
     objectVersion = 77;
     objects = {
+
+        B00000000000000000000001 /* Shared activity model and views */ = { isa = PBXFileSystemSynchronizedRootGroup; path = Shared; sourceTree = "<group>"; };
+        B00000000000000000000002 /* Widget Info.plist exception */ = { isa = PBXFileSystemSynchronizedBuildFileExceptionSet; membershipExceptions = (Info.plist,); target = B00000000000000000000003; };
+        B00000000000000000000004 /* DownloadWidgets */ = { isa = PBXFileSystemSynchronizedRootGroup; exceptions = (B00000000000000000000002,); path = DownloadWidgets; sourceTree = "<group>"; };
+        B00000000000000000000005 /* RiseDownloads.appex */ = { isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = RiseDownloads.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+        B00000000000000000000009 /* Widget in app */ = { isa = PBXBuildFile; fileRef = B00000000000000000000005; settings = { ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy,); }; };
+        B0000000000000000000000A /* Embed widget */ = { isa = PBXCopyFilesBuildPhase; buildActionMask = 2147483647; dstPath = ""; dstSubfolderSpec = 13; files = (B00000000000000000000009,); name = "Embed App Extensions"; runOnlyForDeploymentPostprocessing = 0; };
+        B0000000000000000000000B /* Widget sources */ = { isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        B0000000000000000000000C /* Widget resources */ = { isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        B0000000000000000000000D /* Widget frameworks */ = { isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        B0000000000000000000000E /* Widget dependency */ = { isa = PBXTargetDependency; target = B00000000000000000000003; targetProxy = B0000000000000000000000F; };
+        B0000000000000000000000F /* Widget proxy */ = { isa = PBXContainerItemProxy; containerPortal = A00000000000000000000040; proxyType = 1; remoteGlobalIDString = B00000000000000000000003; remoteInfo = RiseDownloads; };
+        B00000000000000000000003 /* RiseDownloads */ = {
+            isa = PBXNativeTarget; buildConfigurationList = B00000000000000000000010;
+            buildPhases = (B0000000000000000000000B, B0000000000000000000000D, B0000000000000000000000C,);
+            buildRules = (); dependencies = ();
+            fileSystemSynchronizedGroups = (B00000000000000000000001, B00000000000000000000004,);
+            name = RiseDownloads; productName = RiseDownloads; productReference = B00000000000000000000005;
+            productType = "com.apple.product-type.app-extension";
+        };
+        B00000000000000000000010 = { isa = XCConfigurationList; buildConfigurations = (B00000000000000000000011, B00000000000000000000012,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+        B00000000000000000000011 /* Widget Debug */ = {
+            isa = XCBuildConfiguration; name = Debug; buildSettings = {
+                APPLICATION_EXTENSION_API_ONLY = YES; SKIP_INSTALL = YES;
+                INFOPLIST_FILE = DownloadWidgets/Info.plist;
+                PRODUCT_BUNDLE_IDENTIFIER = dev.bartosz.Rise.iOS.Downloads;
+                PRODUCT_NAME = "$(TARGET_NAME)";
+                SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) RISE_WIDGET_EXTENSION";
+                SUPPORTS_MACCATALYST = NO; SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+            };
+        };
+        B00000000000000000000012 /* Widget Release */ = {
+            isa = XCBuildConfiguration; name = Release; buildSettings = {
+                APPLICATION_EXTENSION_API_ONLY = YES; SKIP_INSTALL = YES;
+                INFOPLIST_FILE = DownloadWidgets/Info.plist;
+                PRODUCT_BUNDLE_IDENTIFIER = dev.bartosz.Rise.iOS.Downloads;
+                PRODUCT_NAME = "$(TARGET_NAME)";
+                SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) RISE_WIDGET_EXTENSION";
+                SUPPORTS_MACCATALYST = NO; SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+            };
+        };
+
         A00000000000000000000110 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = FaviconDiscovery.swift; path = ../../Sources/RiseCore/FaviconDiscovery.swift; sourceTree = "<group>"; };
         A00000000000000000000111 = { isa = PBXBuildFile; fileRef = A00000000000000000000110; };
         A00000000000000000000100 /* BrowserState.swift */ = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = BrowserState.swift; path = ../../Sources/RiseCore/BrowserState.swift; sourceTree = "<group>"; };
@@ -93,7 +135,7 @@
         };
         A00000000000000000000009 /* Main group */ = {
             isa = PBXGroup;
-            children = (A00000000000000000000007, A00000000000000000000008,
+            children = (B00000000000000000000001, B00000000000000000000004, A00000000000000000000007, A00000000000000000000008,
                         A0000000000000000000000A, A00000000000000000000002, A0000000000000000000000C, A00000000000000000000060, A00000000000000000000062, A00000000000000000000064, A00000000000000000000066, A00000000000000000000068, A00000000000000000000070, A00000000000000000000072, A00000000000000000000110, A00000000000000000000100, A00000000000000000000102, A00000000000000000000104, A00000000000000000000106, A00000000000000000000108, A0000000000000000000010A, A0000000000000000000010C, A0000000000000000000010E, A0000000000000000000000B,);
             sourceTree = "<group>";
         };
@@ -102,15 +144,15 @@
             path = Configuration; sourceTree = "<group>";
         };
         A0000000000000000000000B /* Products */ = {
-            isa = PBXGroup; children = (A00000000000000000000003, A00000000000000000000004,);
+            isa = PBXGroup; children = (B00000000000000000000005, A00000000000000000000003, A00000000000000000000004,);
             name = Products; sourceTree = "<group>";
         };
         A00000000000000000000010 /* RiseiOS */ = {
             isa = PBXNativeTarget;
             buildConfigurationList = A00000000000000000000030;
-            buildPhases = (A00000000000000000000020, A00000000000000000000021, A00000000000000000000022,);
-            buildRules = (); dependencies = ();
-            fileSystemSynchronizedGroups = (A00000000000000000000007,);
+            buildPhases = (A00000000000000000000020, A00000000000000000000021, A00000000000000000000022, B0000000000000000000000A,);
+            buildRules = (); dependencies = (B0000000000000000000000E,);
+            fileSystemSynchronizedGroups = (A00000000000000000000007, B00000000000000000000001,);
             name = RiseiOS; productName = RiseiOS;
             productReference = A00000000000000000000003;
             productType = "com.apple.product-type.application";
@@ -172,7 +214,7 @@
             preferredProjectObjectVersion = 77;
             productRefGroup = A0000000000000000000000B;
             projectDirPath = ""; projectRoot = "";
-            targets = (A00000000000000000000010, A00000000000000000000011,);
+            targets = (B00000000000000000000003, A00000000000000000000010, A00000000000000000000011,);
         };
         A00000000000000000000050 /* App Debug */ = {
             isa = XCBuildConfiguration; name = Debug;

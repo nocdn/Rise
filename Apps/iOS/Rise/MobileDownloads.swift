@@ -55,12 +55,14 @@ import WebKit
     var confirm: ((_ name: String, _ host: String?, _ bytes: Int64?, _ answer: @escaping (Bool) -> Void) -> Void)?
     var failed: ((Error) -> Void)?
     private let completionFeedback = DownloadCompletionFeedback()
+    private var liveActivities: DownloadLiveActivities?
 
     override private init() {
         downloadsFolder = Self.folder
         recordsFile = Self.listFile
         super.init()
         load()
+        liveActivities = DownloadLiveActivities()
     }
     #if DEBUG
     /// Real WebKit download audits use an isolated directory, leaving saved downloads intact.
@@ -93,6 +95,7 @@ import WebKit
         let removing = items.filter { ids.contains($0.id) }
         guard !removing.isEmpty else { return }
         for item in removing where item.state == .downloading {
+            liveActivities?.end(item, successfully: false)
             item.progress = nil
             if let download = item.download {
                 let key = ObjectIdentifier(download)
@@ -159,6 +162,7 @@ import WebKit
             observe(download.progress, for: item)
             onListChange?()
             if self.item(item.id) === item { onStart?(item, origin) }
+            if self.item(item.id) === item { liveActivities?.start(item) }
             // List callbacks can immediately cancel. Never hand WebKit a destination
             // for an item that was already removed before the file could be created.
             completionHandler(self.item(item.id) === item ? destination : nil)
@@ -176,6 +180,7 @@ import WebKit
         item.bytesPerSecond = 0
         item.totalBytes = Self.size(of: item.url)
         item.receivedBytes = item.totalBytes
+        liveActivities?.end(item, successfully: true)
         save()
         onListChange?()
         completionFeedback.play()
@@ -193,6 +198,7 @@ import WebKit
         item.state = .failed
         item.bytesPerSecond = 0
         try? FileManager.default.removeItem(at: item.url)
+        liveActivities?.end(item, successfully: false)
         onListChange?()
         if (error as NSError).code != NSURLErrorCancelled { failed?(error) }
     }
@@ -220,6 +226,7 @@ import WebKit
             item.bytesPerSecond = item.bytesPerSecond == 0 ? speed : item.bytesPerSecond*0.6+speed*0.4
         }
         item.sample = (now, received)
+        liveActivities?.update(item)
         onProgress?(item)
     }
 

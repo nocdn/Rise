@@ -2,6 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>NSSupportsLiveActivities</key><true/>
     <key>CFBundleDisplayName</key><string>Rise</string>
     <key>UIApplicationSceneManifest</key>
     <dict>
@@ -38,7 +39,7 @@
     <key>CFBundleURLTypes</key>
     <array><dict>
         <key>CFBundleURLName</key><string>Web site URL</string>
-        <key>CFBundleURLSchemes</key><array><string>http</string><string>https</string></array>
+        <key>CFBundleURLSchemes</key><array><string>http</string><string>https</string><string>rise</string></array>
     </dict></array>
     <key>RiseCloudKitEnabled</key><true/>
     <key>UIBackgroundModes</key><array><string>remote-notification</string></array>

@@ -243,7 +243,7 @@ import WebKit
 }
 
 /// Known and unknown lengths, truncation and cancellation, served in real spaced TCP chunks.
-private final class DownloadHTTPFixture: @unchecked Sendable {
+final class DownloadHTTPFixture: @unchecked Sendable {
     private let listener: NWListener
     private let queue = DispatchQueue(label: "Rise.DownloadAudit.HTTP")
     var url: URL { URL(string: "http://127.0.0.1:\(listener.port!.rawValue)/")! }
@@ -268,7 +268,8 @@ private final class DownloadHTTPFixture: @unchecked Sendable {
             guard let self, let data, let request = String(data: data, encoding: .utf8),
                   let route = request.split(separator: " ").dropFirst().first else { connection.cancel(); return }
             let name = String(route.dropFirst())
-            let length = name == "first.bin" ? 131_072 : name == "second.bin" ? 262_144 : name == "cancel.bin" ? 4_194_304 : 65_536
+            let length = name == "first.bin" ? 131_072 : name == "second.bin" ? 262_144
+                : name == "cancel.bin" ? 4_194_304 : name == "150MB-Live-Activity-Test.bin" ? 157_286_400 : 65_536
             let size = name == "unknown.bin" ? "" : "Content-Length: \(length)\r\n"
             let headers = Data("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment; filename=\"\(name)\"\r\n\(size)Connection: close\r\n\r\n".utf8)
             connection.send(content: headers, completion: .contentProcessed { [weak self] error in

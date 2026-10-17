@@ -7,6 +7,12 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let scene = scene as? UIWindowScene else { return }
         let window = UIWindow(windowScene: scene)
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains(DownloadActivityAudit.argument) {
+            let controller = HistoryPanelAudit.makeBrowser()
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            DownloadActivityAudit.run()
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains(HistorySelectionAudit.argument) {
             let controller = HistoryPanelAudit.makeBrowser()
             window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
@@ -117,14 +123,16 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         #endif
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let sync = SharedTabsSync(cacheURL: support.appendingPathComponent("SharedTabs.json"))
+        let urls = connectionOptions.urlContexts.map(\.url)
         let action = connectionOptions.shortcutItem.flatMap(HomeScreenAction.init(shortcut:))
+            ?? (urls.contains(where: Self.isDownloadsLink) ? .downloads : nil)
         let browser = BrowserViewController(opensSearchOnFirstAppearance: action == nil, sessionStore: .shared, tabSync: sync,
             previewCacheURL: URL.cachesDirectory.appendingPathComponent("TabPreviews"))
         window.rootViewController = browser
         self.window = window
         if let action { browser.quickActions.open(action) }
         window.makeKeyAndVisible()
-        browser.openLinks(connectionOptions.urlContexts.map(\.url))
+        browser.openLinks(urls.filter { $0.scheme?.lowercased() != "rise" })
     }
 
     func windowScene(_ windowScene: UIWindowScene, performActionFor shortcutItem: UIApplicationShortcutItem,
@@ -137,7 +145,14 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     /// A link opened from another app, with Rise as the default browser.
     func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
-        (window?.rootViewController as? BrowserViewController)?.openLinks(URLContexts.map(\.url))
+        guard let browser = window?.rootViewController as? BrowserViewController else { return }
+        let urls = URLContexts.map(\.url)
+        if urls.contains(where: Self.isDownloadsLink) { browser.quickActions.open(.downloads) }
+        browser.openLinks(urls.filter { $0.scheme?.lowercased() != "rise" })
+    }
+
+    private static func isDownloadsLink(_ url: URL) -> Bool {
+        url.scheme?.lowercased() == "rise" && url.host?.lowercased() == "downloads"
     }
 
     func sceneWillResignActive(_ scene: UIScene) {
