@@ -54,6 +54,8 @@ import RiseCore
             tab.captureThumbnail()
             browsingHistory.record(url, title: historyTitle(tab.page.title ?? tab.title, url: url))
             discoverPageFavicon(tab.page)
+        } else if let peek = allPeekTabs.first(where: { $0.page.view === webView }) {
+            discoverPageFavicon(peek.page)
         }; update()
         if let tab = tabs.first(where: { $0.page.view === webView }) { findBars[tab.id]?.pageChanged() }
     }

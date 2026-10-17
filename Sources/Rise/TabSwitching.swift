@@ -3,7 +3,21 @@ import AppKit
 @MainActor extension BrowserController {
     var isSwitchingTabs: Bool { !tabSwitchOrder.isEmpty }
     var tabSwitchCandidate: UUID? { tabSwitchOrder.indices.contains(tabSwitchIndex) ? tabSwitchOrder[tabSwitchIndex] : nil }
+    /// Sidebar order, not MRU order. ⌘9 means the ninth tab even when more are open.
+    func selectTab(at index: Int) {
+        guard tabs.indices.contains(index) else { return }
+        select(tabs[index].id)
+    }
+    @objc func selectNumberedTab(_ item: NSMenuItem) { selectTab(at: item.tag) }
     func handleTabSwitchEvent(_ event: NSEvent) -> Bool {
+        if event.type == .keyDown,
+           event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command,
+           let characters = event.charactersIgnoringModifiers, characters.count == 1,
+           let number = Int(characters), (1...9).contains(number) {
+            // Take these before Chromium or an address field handles them. An absent tab is
+            // a no-op, so Chromium's own ⌘9 (last tab) cannot select a different one.
+            selectTab(at: number-1); return true
+        }
         if event.type == .keyDown, event.keyCode == 48, event.modifierFlags.contains(.control),
            event.modifierFlags.intersection([.command, .option]).isEmpty {
             advanceTabSwitch(event.modifierFlags.contains(.shift) ? -1 : 1); return true

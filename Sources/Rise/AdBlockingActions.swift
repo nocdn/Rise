@@ -19,6 +19,7 @@ import AppKit
                     else { tab.needsBlockingReload = true }
                 }
                 self.peekTab?.page.reloadIgnoringCache()
+                for saved in self.suspendedPeeks.values { saved.tab.needsBlockingReload = true }
                 self.update()
             } catch { self.showMessage("Couldn’t enable ad blocking", error.localizedDescription) }
         }

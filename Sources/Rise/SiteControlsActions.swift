@@ -17,7 +17,7 @@ import Vision
         siteControlsPopover.contentViewController = controller
         siteControlsPopover.contentSize = controller.view.frame.size
     }
-    func shareCurrentPage() {
+    @objc func shareCurrentPage() {
         guard let url = selectedTab?.url else { return }
         let anchor = (siteControlsPopover.contentViewController as? SiteControlsController)?.quickActions.first ?? sidebar.settingsButton
         sharingPicker = NSSharingServicePicker(items: [url])
@@ -75,14 +75,14 @@ import Vision
     }
     func setHidesNotificationCounts(_ value: Bool) {
         preferences.set(value, forKey: Self.notificationCountsKey)
-        for tab in tabs + (peekTab.map { [$0] } ?? []) { tab.hidesNotificationCounts = value; tab.changed() }
+        for tab in tabs + allPeekTabs { tab.hidesNotificationCounts = value; tab.changed() }
     }
     static let repositorySubtitleKey = "Rise.ShowRepositorySubtitle"
     /// On unless turned off in the site controls' More menu.
     var showsRepositorySubtitle: Bool { preferences.object(forKey: Self.repositorySubtitleKey) as? Bool ?? true }
     func setShowsRepositorySubtitle(_ value: Bool) {
         preferences.set(value, forKey: Self.repositorySubtitleKey)
-        for tab in tabs + (peekTab.map { [$0] } ?? []) { tab.showsRepositorySubtitle = value }
+        for tab in tabs + allPeekTabs { tab.showsRepositorySubtitle = value }
         update()
     }
     func permissionSettingMenu(_ capability: SiteCapability) {
@@ -118,7 +118,7 @@ import Vision
         pictureInPicture.reconcile(visibleIDs: Set(visibleTabIDs))
     }
     func refreshPermissionScripts() {
-        for tab in tabs + (peekTab.map { [$0] } ?? []) {
+        for tab in tabs + allPeekTabs {
             tab.page.evaluate("window.riseSiteControls?.refresh()", arguments: [:], in: nil, world: .page) { _ in }
         }
     }

@@ -417,6 +417,25 @@ final class PeekInteractionTests: XCTestCase {
         XCTAssertEqual(samples.last!, 1, accuracy: 0.002, "And has all but settled when the motion ends")
     }
 
+    @MainActor func testClosingPeekRestoresBackgroundWithoutBounceAndKeepsItsDuration() throws {
+        let browser = browser(); defer { clean(browser) }
+        let original = CASpringAnimation(perceptualDuration: 0.28, bounce: 0.38)
+        let spring = BrowserController.peekPageReturnSpring
+        browser.recedePage(true, along: nil)
+        XCTAssertEqual(browser.pageShadow.layer!.transform.m11, BrowserController.peekPageScale, accuracy: 0.0001)
+        browser.recedePage(false, along: spring)
+        let animation = try XCTUnwrap(browser.pageShadow.layer?.animation(forKey: "peek.recede") as? CASpringAnimation)
+        XCTAssertEqual(animation.duration, original.duration, accuracy: 0.000001)
+        XCTAssertEqual(animation.perceptualDuration, original.perceptualDuration, accuracy: 0.000001)
+        XCTAssertTrue(CATransform3DIsIdentity(browser.pageShadow.layer!.transform))
+        let samples = stride(from: 0.0, through: animation.duration, by: 1.0/240).map {
+            PeekLiveMotion.progress(at: $0, along: animation)
+        }
+        XCTAssertTrue(samples.allSatisfy { $0 >= 0 && $0 <= 1 }, "Never overshoots full size")
+        XCTAssertTrue(zip(samples, samples.dropFirst()).allSatisfy { $0 <= $1 }, "Never reverses into a bounce")
+        XCTAssertEqual(samples.last!, 1, accuracy: 0.0001)
+    }
+
     func testABounceNeverCarriesPastTheWindowsEdgesOnlyTowardTheSidebar() {
         let page = NSRect(x: 200, y: 6, width: 800, height: 600)
         // Overshooting by 4 on every side: only the left, beside the sidebar, may go past.

@@ -14,6 +14,8 @@ import RiseCore
     var onTogglePlayback: (() -> Void)?
     /// Between the favicon and the title while the tab plays sound or is muted.
     let audio = TabAudioButton()
+    let peekIndicator = PeekFaviconIndicator(frame: .zero)
+    private(set) var showsPeek = false
     private(set) var showsAudio = false
     var onToggleMute: (() -> Void)?
     private var audioHideWork: DispatchWorkItem?
@@ -64,6 +66,8 @@ import RiseCore
         layer?.cornerRadius = TabAppearance.radius; layer?.cornerCurve = .continuous
         target = self; action = #selector(selectTab)
         addSubview(loadingBackground); addSubview(icon); addSubview(titleField); addSubview(subtitle); addSubview(subtitleAccessory); addSubview(close); addSubview(playback); addSubview(audio)
+        addSubview(peekIndicator, positioned: .below, relativeTo: close)
+        peekIndicator.isHidden = true; peekIndicator.alphaValue = 0
         audio.acceptsFirstClick = false; audio.isHidden = true; audio.alphaValue = 0
         audio.action = { [weak self] in
             guard let self else { return }
@@ -129,7 +133,8 @@ import RiseCore
         playback.color = close.contentTintColor ?? theme.sidebarIcon; playback.hoverColor = close.hoverColor
         audio.color = playback.color; audio.hoverColor = close.hoverColor
         setAudio(playing: tab.isPlayingAudio, muted: tab.isAudioMuted)
-        setAccessibilityLabel(tab.title + (configuration.subtitle.map { ", \($0.text)" } ?? "") + (selected ? ", selected" : ""))
+        setPeek(configuration.peek)
+        setAccessibilityLabel(tab.title + (configuration.subtitle.map { ", \($0.text)" } ?? "") + (configuration.peek.map { ", Peek: \($0.title)" } ?? "") + (selected ? ", selected" : ""))
         close.toolTip = "Close \(tab.title)"
         loadingBackground.update(loading: tab.isLoading, progress: tab.page.estimatedProgress,
                                  theme: theme, hard: tab.isHardReloading)
@@ -155,14 +160,23 @@ import RiseCore
         let animated = hasLaidOut && window?.isVisible == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         slideText = animated
         if shows { audio.isHidden = isSplitMember }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = animated ? (shows ? 0.18 : 0.12) : 0
-            audio.animator().alphaValue = shows ? 1 : 0
-        } completionHandler: { [weak self] in
-            MainActor.assumeIsolated { if let self, !self.showsAudio { self.audio.isHidden = true } }
+        TabListMotion.fadeAccessory(audio, visible: shows, animated: animated) { [weak self] in
+            if let self, !self.showsAudio { self.audio.isHidden = true }
         }
         needsLayout = true
         if shows { audio.refreshHover() }
+    }
+    private func setPeek(_ peek: TabRowConfiguration.Peek?) {
+        if let peek { peekIndicator.update(image: peek.favicon, theme: theme) }
+        let shows = peek != nil
+        guard shows != showsPeek else { return }
+        showsPeek = shows
+        let animated = hasLaidOut && window?.isVisible == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if shows { peekIndicator.isHidden = false }
+        TabListMotion.fadeAccessory(peekIndicator, visible: shows, animated: animated) { [weak self] in
+            if let self, !self.showsPeek { self.peekIndicator.isHidden = true }
+        }
+        needsLayout = true
     }
     /// The page's state. After a press, only its answer (`confirmed`) replaces
     /// the button's new state for a moment, so an earlier report cannot undo it.
@@ -187,7 +201,7 @@ import RiseCore
         // A split half has room for its close button only.
         playback.isHidden = close.isHidden || playbackPaused == nil || isSplitMember
         if !playback.isHidden { playback.refreshHover() }
-        subtitleAccessory.isHidden = !showsSubtitle || configuration.subtitleAccessory == nil || hover || isSplitMember
+        subtitleAccessory.isHidden = !showsSubtitle || configuration.subtitleAccessory == nil || hover || isSplitMember || showsPeek
         needsLayout = true
     }
     override func layout() {
@@ -209,7 +223,8 @@ import RiseCore
             if slide { TabListMotion.slide(view, to: frame) } else { TabListMotion.move(view, to: frame, animated: animated) }
         }
         let closeRoom: CGFloat = isSplitMember ? Self.splitCloseSize+6 : 32
-        let textWidth = max(0, bounds.width - textX - (close.isHidden ? 8 : playback.isHidden ? closeRoom : 58))
+        let trailingRoom: CGFloat = close.isHidden ? (showsPeek ? closeRoom : 8) : (playback.isHidden ? closeRoom : 58) + (showsPeek ? 26 : 0)
+        let textWidth = max(0, bounds.width - textX - trailingRoom)
         place(titleField, NSRect(x: textX, y: textY, width: textWidth, height: titleHeight))
         let subtitleWidth = max(0, textWidth - (subtitleAccessory.isHidden ? 0 : 24))
         titleField.setFadeBoundary(subtitleAccessory.isHidden ? nil : subtitleWidth)
@@ -236,6 +251,12 @@ import RiseCore
             ? NSRect(x: bounds.width-Self.splitCloseSize-4, y: (bounds.height-Self.splitCloseSize)/2, width: Self.splitCloseSize, height: Self.splitCloseSize)
             : NSRect(x: bounds.width-28.5, y: (bounds.height-24)/2-0.5, width: 24, height: 24)
         playback.frame = close.frame.offsetBy(dx: -26, dy: 0)
+        let peekFrame = NSRect(x: close.frame.midX-PeekFaviconIndicator.side/2, y: close.frame.midY-PeekFaviconIndicator.side/2,
+                               width: PeekFaviconIndicator.side, height: PeekFaviconIndicator.side)
+            .offsetBy(dx: hover ? (playback.isHidden ? -26 : -52) : 0, dy: 0)
+        if hasLaidOut, window?.isVisible == true, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            TabListMotion.slide(peekIndicator, to: peekFrame)
+        } else { peekIndicator.frame = peekFrame }
         audio.frame = NSRect(x: iconX+21, y: (iconY+8-12).rounded(), width: 24, height: 24)
         let accessorySize = subtitleAccessory.image?.size ?? .zero
         subtitleAccessory.frame = NSRect(x: close.frame.midX - accessorySize.width/2,

@@ -102,6 +102,9 @@ import RiseCore
     var peekOpensNewTab = false
     var peekSwipePull: Double = 0
     var peekTab: BrowserTab?
+    /// Live Peeks belonging to tabs that aren't currently shown.
+    var suspendedPeeks: [UUID: SuspendedPeek] = [:]
+    var isSelectingTab = false
     var peekBackdrop: Surface?
     var peekCard: Surface?
     var peekControls: [PeekControl] = []
@@ -194,7 +197,7 @@ import RiseCore
         }
         suggestionFavicons.onVariantLoad = { [weak self] origin, image, dark in
             guard let self else { return }
-            for tab in self.tabs where SitePermissions.origin(tab.url) == origin {
+            for tab in self.tabs + self.allPeekTabs where SitePermissions.origin(tab.url) == origin {
                 if dark { tab.darkFavicon = image }
                 else { tab.iconTask?.cancel(); tab.iconTask = nil; tab.iconOrigin = origin; tab.favicon = image }
             }
@@ -292,6 +295,7 @@ import RiseCore
         sidebar.onRename = { [weak self] id, title in self?.renameTab(id, title: title) }
         sidebar.onTabHover = { [weak self] id, hovering in self?.tabHoverChanged(id, hovering: hovering) }
         sidebar.playbackState = { [weak self] id in self?.playbackPaused(id) }
+        sidebar.peekState = { [weak self] id in self?.peek(for: id) }
         sidebar.onTogglePlayback = { [weak self] id in self?.togglePlayback(id) }
         sidebar.onToggleMute = { [weak self] id in
             if let tab = self?.tabs.first(where: { $0.id == id }) { tab.setAudioMuted(!tab.isAudioMuted) }
@@ -513,8 +517,7 @@ import RiseCore
             case .closed:
                 // Out of Chromium's closing, its tab goes too.
                 DispatchQueue.main.async { [weak self, weak view] in
-                    guard let self, let tab = self.tabs.first(where: { $0.page.view === view }) else { return }
-                    self.closeTab(tab.id)
+                    self?.closePage(view)
                 }
             }
         }
@@ -602,6 +605,12 @@ import RiseCore
         if let url { tab.load(url) }; return tab
     }
     func select(_ id: UUID) {
+        let wasSelecting = isSelectingTab
+        isSelectingTab = true
+        defer {
+            isSelectingTab = wasSelecting
+            if !wasSelecting { applyPendingSharedTabs() }
+        }
         // A Peek's stand-ins belong to the page they cover.
         finishPeekPromotion()
         historySwipe.cancel()
@@ -610,14 +619,20 @@ import RiseCore
         siteControlsPopover.close(); permissionCoordinator.cancel()
         if selectedID != id { selectedTab?.captureThumbnail() }
         hideLinkStatus()
-        hidePalette(); closePeek()
+        hidePalette()
+        if selectedID != id {
+            suspendPeek()
+            finishPeekMotion()
+            recedePage(false, along: nil)
+        }
         let previousID = selectedID
         selectedID = id
         swapFindBar(from: previousID)
         attachVisiblePages()
+        restoreSuspendedPeek()
         recentTabIDs.removeAll { $0 == id }; recentTabIDs.insert(id, at: 0)
         if let tab = selectedTab {
-            window?.makeFirstResponder(tab.page.view)
+            window?.makeFirstResponder(peekTab?.page.view ?? tab.page.view)
         }
         update(); layoutChrome()
         findBar.reattached()
@@ -675,6 +690,7 @@ import RiseCore
     func closeTab(_ id: UUID) {
         historySwipe.cancel()
         cancelTabSwitch()
+        discardPeek(for: id)
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
         pictureInPicture.remove(tabs[index]); tabMedia.remove(id)
         let partner = splitGroups.first { $0.contains(id) }.map { $0.leftID == id ? $0.rightID : $0.leftID }
@@ -695,7 +711,12 @@ import RiseCore
         attachVisiblePages(); update()
     }
     @objc func reopenTab() {
-        guard var saved = closedTabs.popLast() else { return }
+        guard let id = closedTabs.last?.id else { return }
+        reopenClosedTab(id)
+    }
+    func reopenClosedTab(_ id: UUID) {
+        guard let index = closedTabs.firstIndex(where: { $0.id == id }) else { return }
+        var saved = closedTabs.remove(at: index)
         if tabSync?.isClosed(saved.id) == true { saved.id = UUID() }
         let tab = configure(BrowserTab(saved: saved)); tabs.insert(tab, at: 0); select(tab.id)
     }

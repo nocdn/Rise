@@ -48,8 +48,10 @@ if not (app / "Contents/Frameworks/Chromium Framework.framework").exists():
     raise SystemExit(f"{app.name} has no Chromium; build the engine and run ./scripts/build.sh first.")
 sdk = subprocess.check_output(["xcrun", "--sdk", "macosx", "--show-sdk-version"], text=True).strip()
 linker = ["-Xlinker", "-platform_version", "-Xlinker", "macos", "-Xlinker", "14.0", "-Xlinker", sdk]
-build_path = ".build"
-subprocess.run(["swift", "build", "--build-tests", "--build-path", build_path, *linker], cwd=root, check=True)
+# The probe links individual objects from SwiftPM's native layout. Keep that build separate
+# from Xcode 27's default Swift Build layout used by the app and unit tests.
+build_path = ".build/chromium-live"
+subprocess.run(["swift", "build", "--build-system", "native", "--build-tests", "--build-path", build_path, *linker], cwd=root, check=True)
 debug = root / build_path / "debug"
 sources = {path.name for path in (root / "Sources/Rise").glob("*.swift")} - {"RiseApp.swift"}
 objects = [str(path) for path in (debug / "Rise.build").glob("*.swift.o")

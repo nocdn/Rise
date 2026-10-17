@@ -48,6 +48,7 @@ import RiseCore
     var onTabHover: ((UUID, Bool) -> Void)?
     /// Whether a tab's video is paused, or nil when it shows none.
     var playbackState: ((UUID) -> Bool?)?
+    var peekState: ((UUID) -> BrowserTab?)?
     var onTogglePlayback: ((UUID) -> Void)?
     var onToggleMute: ((UUID) -> Void)?
     var onTabPress: (() -> Void)?
@@ -120,7 +121,7 @@ import RiseCore
             let group = splits.first { $0.contains(tab.id) }
             row.isSplitMember = group != nil
             let isSelected = group.map { group in selected.map { group.contains($0.id) } ?? false } ?? (tab.id == selected?.id)
-            row.update(tab: tab, selected: isSelected, theme: theme, configuration: .forTab(tab, theme: theme))
+            row.update(tab: tab, selected: isSelected, theme: theme, configuration: .forTab(tab, theme: theme, peek: peekState?(tab.id)))
             row.setPlayback(paused: playbackState?(tab.id))
             if group == nil && row.superview !== rowsHost && drag?.view !== row && returningDrag?.view !== row { rowsHost.addSubview(row) }
         }

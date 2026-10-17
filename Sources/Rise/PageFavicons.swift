@@ -26,7 +26,7 @@ import AppKit
         })()
         """
         web.evaluate(script, arguments: [:], in: nil, world: .page) { [weak self, weak web] result in
-            guard let self, let web, web.url == pageURL, self.tabs.contains(where: { $0.page === web }),
+            guard let self, let web, web.url == pageURL, (self.tabs + self.allPeekTabs).contains(where: { $0.page === web }),
                   let icons = (try? result.get()) as? [String: Any] else { return }
             let light = FaviconDiscovery.lightIcon(for: pageURL) ?? (icons["light"] as? String).flatMap(URL.init(string:))
             let dark = FaviconDiscovery.darkIcon(for: pageURL) ?? (icons["dark"] as? String).flatMap(URL.init(string:))

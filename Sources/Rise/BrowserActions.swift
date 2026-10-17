@@ -46,10 +46,7 @@ import RiseCore
         let menu = NSMenu()
         if closedTabs.isEmpty { let item = NSMenuItem(title: "No recently closed tabs", action: nil, keyEquivalent: ""); item.isEnabled = false; menu.addItem(item) }
         for saved in closedTabs.suffix(15).reversed() {
-            menu.addItem(menuItem(saved.title) { [weak self] in
-                guard let self else { return }; self.closedTabs.removeAll { $0.id == saved.id }
-                let tab = self.configure(BrowserTab(saved: saved)); self.tabs.insert(tab, at: 0); self.select(tab.id)
-            })
+            menu.addItem(menuItem(saved.title) { [weak self] in self?.reopenClosedTab(saved.id) })
         }
         menu.popUp(positioning: nil, at: NSPoint(x: 12, y: sidebar.bounds.height-42), in: sidebar)
     }
@@ -89,7 +86,7 @@ import RiseCore
     @objc func peekCurrentPage() { if let url = selectedTab?.url { showPeek(url: url) } }
     /// `existing` brings back a page that was a Peek before, as ⌘Z does, without loading it again,
     /// shrinking it out of `standIn`, the page it had become, when given.
-    func showPeek(url: URL, from source: NSView? = nil, opensNewTab: Bool = false, existing: BrowserTab? = nil, standIn: PeekOrigin? = nil) {
+    func showPeek(url: URL, from source: NSView? = nil, opensNewTab: Bool = false, existing: BrowserTab? = nil, standIn: PeekOrigin? = nil, animated: Bool = true) {
         // One Peek at a time: a Peek link inside the Peek shakes the pill's "Cannot open … in Peek".
         if source != nil, source === peekTab?.page.view { refusePeek(url); return }
         if existing == nil { discardPeekUndo() }
@@ -98,7 +95,7 @@ import RiseCore
         cancelTabSwitch()
         closePeek(replacing: true); hideLinkStatus()
         peekSourceTabID = sourceID; peekOpensNewTab = opensNewTab
-        let reveal = beginPeekReveal(from: sourcePage, standIn: standIn)
+        let reveal = animated ? beginPeekReveal(from: sourcePage, standIn: standIn) : nil
         // A page already rendering from a Shift-hover shows from the first frame.
         let standby = existing == nil ? takePeekStandby(for: url) : nil
         let tab = existing ?? standby ?? configure(BrowserTab()); peekTab = tab
@@ -123,6 +120,8 @@ import RiseCore
         layoutPeek(); if standby == nil, existing == nil { tab.load(url) }; window?.makeFirstResponder(tab.page.view)
         updatePeekCovers()
         revealPeek(reveal)
+        if !animated { recedePage(true, along: nil) }
+        update()
     }
     var peekCardFrame: NSRect {
         let page = pageShadow.frame; let margin = min(120, page.width*0.1)

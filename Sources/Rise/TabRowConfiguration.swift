@@ -25,11 +25,17 @@ import RiseCore
     var subtitle: Subtitle? = nil
     var constructionBorder = false
     var subtitleAccessory: NSImage? = nil
+    struct Peek {
+        let favicon: NSImage?
+        let title: String
+    }
+    var peek: Peek? = nil
 
     private static let hammer = TablerIcon.image(LucideIcon.hammer, size: 12, description: "Developer mode")
 
-    static func forTab(_ tab: BrowserTab, theme: RiseTheme) -> Self {
+    static func forTab(_ tab: BrowserTab, theme: RiseTheme, peek: BrowserTab? = nil) -> Self {
         var configuration = Self()
+        if let peek { configuration.peek = Peek(favicon: peek.favicon(for: theme), title: peek.title) }
         if tab.developer {
             configuration.subtitle = Subtitle(text: AddressResolver.displayHost(tab.url) + (tab.url?.port.map { ":\($0)" } ?? ""))
             configuration.constructionBorder = true

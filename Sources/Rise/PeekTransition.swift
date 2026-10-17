@@ -108,9 +108,13 @@ extension NSView {
     /// ⌘Z shrinking a page back into its Peek: the opening's timing, with the expand's bounce as it lands.
     static var peekUnexpandSpring: CASpringAnimation { CASpringAnimation(perceptualDuration: 0.3, bounce: 0.25) }
     static var peekCloseSpring: CASpringAnimation { CASpringAnimation(perceptualDuration: 0.22, bounce: 0.11) }
-    // The page travels under 2% back to full size, so it needs a bouncier spring for
-    // its overshoot to be visible at all: about 1 point past its frame per side.
-    static var peekPageReturnSpring: CASpringAnimation { CASpringAnimation(perceptualDuration: 0.28, bounce: 0.38) }
+    // Keep the original return's duration, but critically damp it so the background
+    // reaches full size without carrying past it or bouncing back.
+    static var peekPageReturnSpring: CASpringAnimation {
+        let spring = CASpringAnimation(perceptualDuration: 0.28, bounce: 0.38)
+        spring.damping = 2 * sqrt(spring.mass * spring.stiffness)
+        return spring
+    }
     // Finds the link under the pointer (falling back to the focused link) and
     // remembers it in Rise's isolated world so closing can find it again.
     static let peekLinkScript = """
@@ -180,7 +184,7 @@ extension NSView {
             guard let spring else { layer.removeAnimation(forKey: "peek.recede"); continue }
             let animation = spring.copy() as! CASpringAnimation
             animation.keyPath = "transform"; animation.fromValue = NSValue(caTransform3D: shown)
-            animation.toValue = NSValue(caTransform3D: target); animation.duration = animation.settlingDuration
+            animation.toValue = NSValue(caTransform3D: target); animation.duration = spring.duration
             layer.add(animation, forKey: "peek.recede")
         }
     }

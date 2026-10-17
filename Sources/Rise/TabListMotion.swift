@@ -25,6 +25,14 @@ import QuartzCore
         layer.add(movement, forKey: movementKey)
     }
     static let slideKey = "Rise.TabSlide"
+    /// The shared media/Peek accessory entry and exit: a quick fade, leaving their
+    /// movement to `slide` so the row's controls can exchange places smoothly.
+    static func fadeAccessory(_ view: NSView, visible: Bool, animated: Bool, completion: @escaping () -> Void) {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = animated ? (visible ? 0.18 : 0.12) : 0
+            view.animator().alphaValue = visible ? 1 : 0
+        } completionHandler: { MainActor.assumeIsolated { completion() } }
+    }
     /// Moves a view sideways at once and animates its picture from where it
     /// was shown, so a resize never makes it jump.
     static func slide(_ view: NSView, to frame: NSRect) {

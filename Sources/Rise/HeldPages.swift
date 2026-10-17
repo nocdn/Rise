@@ -50,7 +50,7 @@ import AppKit
     /// The page showing in `view`: a tab's, the Peek's, or the one waiting on a Shift-hover.
     func page(showing view: NSView?) -> WebPage? {
         guard let view else { return nil }
-        return (tabs + [peekTab, peekStandby?.tab].compactMap { $0 }).first { $0.page.view === view }?.page
+        return (tabs + allPeekTabs + [peekStandby?.tab].compactMap { $0 }).first { $0.page.view === view }?.page
     }
     /// The page the swipe or the arrows act on, going `direction`: its own history first, then held pages.
     func navigate(_ page: WebPage, _ direction: HistoryDirection) {

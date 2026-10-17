@@ -22,7 +22,7 @@ import RiseCore
     }
 
     var canApplySharedTabs: Bool {
-        !isApplyingSharedTabs && !palette.isPresented && peekTab == nil && !isSwitchingTabs
+        !isApplyingSharedTabs && !isSelectingTab && !palette.isPresented && peekTab == nil && !isSwitchingTabs
             && sidebar.drag == nil && !historySwipe.isActive && window?.attachedSheet == nil
     }
 
@@ -50,6 +50,7 @@ import RiseCore
             return configure(BrowserTab(saved: saved))
         } + localTabs
         for old in tabs where !next.contains(where: { $0 === old }) {
+            discardPeek(for: old.id)
             old.onChange = nil; old.onThumbnailChange = nil; old.onFullscreenChange = nil
             pictureInPicture.remove(old); tabMedia.remove(old.id)
             pageFullscreen.setActive(false, in: old.page.view)
