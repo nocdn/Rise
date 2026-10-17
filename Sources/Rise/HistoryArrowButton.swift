@@ -3,10 +3,13 @@ import QuartzCore
 
 /// The demo's anchored-tail shape, scaled to the existing 16 pt regular toolbar
 /// glyph. Only the head/shaft compress; neither the button nor its center moves.
+/// It's always this drawn arrow, never AppKit's image: turning on and off only fades its
+/// colour, at once, where AppKit's disabled image redrew late and a hair off.
 final class HistoryArrowButton: ChromeButton {
     let direction: HistoryDirection
     private let arrow = CAShapeLayer()
-    private var restingImage: NSImage?
+    /// The 16 pt toolbar arrow's canvas, which the drawn arrow's ink matches.
+    private let glyphSize: NSSize
     private var returnTimer: Timer?
     private var isDragging = false
     private var crossedThreshold = false
@@ -14,17 +17,29 @@ final class HistoryArrowButton: ChromeButton {
     private(set) var armed = false
     var isReturning: Bool { returnTimer != nil }
     override var contentTintColor: NSColor? {
-        didSet { if !armed { setStrokeColor(contentTintColor ?? .secondaryLabelColor) } }
+        didSet { if !armed { setStrokeColor(restingColor) } }
+    }
+    /// Unavailable, the arrow fades to half, as AppKit draws a disabled button.
+    override var isEnabled: Bool {
+        didSet {
+            guard isEnabled != oldValue, !armed, !isDragging else { return }
+            fadeStroke(to: restingColor, duration: 0.15)
+        }
+    }
+    private var restingColor: NSColor {
+        let tint = contentTintColor ?? .secondaryLabelColor
+        return isEnabled ? tint : tint.withAlphaComponent(tint.alphaComponent*0.5)
     }
     init(direction: HistoryDirection, title: String, action: @escaping () -> Void) {
         self.direction = direction
+        glyphSize = NSImage(systemSymbolName: direction == .back ? "arrow.left" : "arrow.right", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 16, weight: .regular))?.size ?? NSSize(width: 16, height: 14)
         super.init(symbol: direction == .back ? "arrow.left" : "arrow.right", size: 16, title: title, action: action)
-        image = direction == .back ? NavigationIcon.back : NavigationIcon.forward
-        restingImage = image
+        image = nil
         arrow.fillColor = nil; arrow.lineCap = .round; arrow.lineJoin = .round
-        arrow.lineWidth = 1.40; arrow.isHidden = true
+        arrow.lineWidth = 1.40
         layer?.addSublayer(arrow)
-        setStrokeColor(contentTintColor ?? .secondaryLabelColor)
+        setStrokeColor(restingColor)
     }
     required init?(coder: NSCoder) { fatalError() }
     override func layout() { super.layout(); updatePath() }
@@ -33,23 +48,17 @@ final class HistoryArrowButton: ChromeButton {
         crossedThreshold = crossedThreshold || armed
         returnTimer?.invalidate(); returnTimer = nil; arrow.removeAllAnimations()
         self.pull = pull; self.armed = armed
-        image = nil; arrow.isHidden = false; arrow.opacity = 1
-        setStrokeColor(armed ? NSColor(hex: 0x007AFF) : contentTintColor ?? .secondaryLabelColor)
+        arrow.opacity = 1
+        setStrokeColor(armed ? NSColor(hex: 0x007AFF) : restingColor)
         updatePath()
     }
     func release(committed: Bool) {
         let from = pull
         armed = false; isDragging = false
-        let base = contentTintColor ?? .secondaryLabelColor
-        let previousColor = arrow.presentation()?.strokeColor ?? arrow.strokeColor
-        setStrokeColor(base)
+        fadeStroke(to: restingColor, duration: 0.18)
         let spring = (committed || crossedThreshold) && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         // A swipe that reached the threshold springs home even when reversed
         // to cancel. Earlier releases retain the demo's short ease-out.
-        let color = CABasicAnimation(keyPath: "strokeColor")
-        color.fromValue = previousColor; color.toValue = base.cgColor; color.duration = 0.18
-        color.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        arrow.add(color, forKey: "releaseColor")
         returnTimer?.invalidate()
         let start = ProcessInfo.processInfo.systemUptime
         let duration = spring ? 0.55 : 0.16
@@ -81,7 +90,7 @@ final class HistoryArrowButton: ChromeButton {
         return 1 - (3 * (1-t) * t*t + t*t*t)
     }
     private func updatePath() {
-        let size = restingImage?.size ?? NSSize(width: 16, height: 14)
+        let size = glyphSize
         let facing = direction == .back ? -1.0 : 1.0
         // SF Symbols include optical whitespace. Keep the regular arrow's ink
         // size rather than enlarging the replacement to its full image canvas.
@@ -100,6 +109,20 @@ final class HistoryArrowButton: ChromeButton {
         arrow.frame = bounds; arrow.path = path
         CATransaction.commit()
     }
+    /// The arrow's colour as drawn now, for checks.
+    var shownColor: CGColor? { arrow.presentation()?.strokeColor ?? arrow.strokeColor }
+    /// One fade for every colour change, under one key, so a later one (the swipe's page turning
+    /// the button off as the arrow lets go of its blue) takes over from where the colour is,
+    /// rather than an earlier one showing again once the later ends.
+    private func fadeStroke(to color: NSColor, duration: CFTimeInterval) {
+        let from = arrow.presentation()?.strokeColor ?? arrow.strokeColor
+        setStrokeColor(color)
+        guard window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { arrow.removeAnimation(forKey: "color"); return }
+        let fade = CABasicAnimation(keyPath: "strokeColor")
+        fade.fromValue = from; fade.toValue = color.cgColor; fade.duration = duration
+        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        arrow.add(fade, forKey: "color")
+    }
     private func setStrokeColor(_ color: NSColor) {
         CATransaction.begin(); CATransaction.setDisableActions(true)
         arrow.strokeColor = color.cgColor
@@ -107,7 +130,8 @@ final class HistoryArrowButton: ChromeButton {
     }
     func restore() {
         returnTimer?.invalidate(); returnTimer = nil
-        pull = 0; armed = false; isDragging = false; crossedThreshold = false; arrow.isHidden = true; arrow.removeAllAnimations()
-        image = restingImage
+        // A colour fade still under way finishes: it already ends at the resting colour.
+        pull = 0; armed = false; isDragging = false; crossedThreshold = false
+        setStrokeColor(restingColor); updatePath()
     }
 }

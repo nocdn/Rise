@@ -46,20 +46,15 @@ struct AddressSuggestion {
     /// "Search Amazon" and a Tab key at the end of the address, while it's a site with its own search.
     let siteHint = SiteSearchHint()
     private(set) var offeredSite: PopularSite?
-    /// Searching a site, after Tab: its icon and name lead the field, which takes the query.
+    /// Searching a site, after Tab: the hint at the end names it, in its colour, and the field
+    /// keeps the address, selected, to type the search over.
     private(set) var siteSearch: PopularSite?
-    let siteLabel = label("", size: AddressAppearance.textSize, weight: AddressAppearance.textWeight)
-    /// The address as it was, leaving as the site's name comes in.
-    private let leavingText = label("", size: AddressAppearance.textSize, weight: AddressAppearance.textWeight)
-    /// The find bar's swap: what comes in drops from above, what goes slides down, fading.
-    private lazy var siteLabelItem = PresenceItem(siteLabel, shown: false)
-    private lazy var leavingItem = PresenceItem(leavingText, shown: false)
-    private lazy var inputItem = PresenceItem(input, shown: true)
-    private var swapLink: CADisplayLink?, lastSwapTick: CFTimeInterval = 0
     /// A site's icon, from what's been loaded for the address suggestions.
     var siteFavicon: ((URL) -> NSImage?)?
     /// A site whose search was learned from searching on it.
     var learnedSite: ((String) -> PopularSite?)?
+    /// A site set up by hand in Settings, which comes first.
+    var customSite: ((String) -> PopularSite?)?
     /// The site the field fills in, behind the rows rather than among them.
     private(set) var autofill: AddressSuggestion?
     /// Everything the address showed before Tab, to step straight back to.
@@ -83,9 +78,7 @@ struct AddressSuggestion {
         leadingIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
         leadingIcon.contentTintColor = .secondaryLabelColor
         siteHint.alphaValue = 0; siteHint.setAccessibilityElement(false)
-        [siteLabel, leavingText].forEach { $0.lineBreakMode = .byClipping }
-        siteLabel.isHidden = true; leavingText.isHidden = true
-        addSubview(input); addSubview(leadingIcon); [siteLabel, leavingText, siteHint].forEach(addSubview)
+        addSubview(input); addSubview(leadingIcon); addSubview(siteHint)
         isHidden = true
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -104,8 +97,7 @@ struct AddressSuggestion {
         input.selectionColor = AddressAppearance.textSelection(theme)
         applyPlaceholder()
         updateLeadingIcon()
-        if let site = offeredSite { siteHint.configure(site: site.name, theme: theme) }
-        if let site = siteSearch { siteLabel.textColor = color(for: site) }
+        if let site = siteSearch ?? offeredSite { siteHint.applyTheme(theme, siteColor: color(for: site)) }
     }
     func place(at origin: NSPoint, width: CGFloat) {
         placementCenter = nil
@@ -140,6 +132,7 @@ struct AddressSuggestion {
     private var fieldSite: PopularSite? { siteSearch ?? site(forAddress: input.stringValue) }
     /// A well-known site Rise searches itself, or else one whose search it learned.
     private func site(forAddress text: String) -> PopularSite? {
+        if let custom = customSite?(text) { return custom }
         let popular = PopularSites.site(forAddress: text)
         if popular?.isSearchable == true { return popular }
         return learnedSite?(text) ?? popular
@@ -274,15 +267,8 @@ struct AddressSuggestion {
         // The hint keeps the end of the row; a long address fades out before it.
         let hintWidth = siteHint.preferredWidth
         siteHint.frame = NSRect(x: bounds.width-AddressAppearance.inset-12-hintWidth, y: 0, width: hintWidth, height: headerHeight)
-        let hintRoom = offeredSite == nil ? 0 : hintWidth+12
-        let address = NSRect(x: AddressAppearance.inset+35, y: (headerHeight-inputHeight)/2, width: bounds.width-AddressAppearance.inset-50-hintRoom, height: inputHeight)
-        leavingItem.render(at: address)
-        let nameWidth = ceil(siteLabel.intrinsicContentSize.width)
-        siteLabelItem.render(at: NSRect(x: address.minX, y: address.minY, width: nameWidth+4, height: inputHeight))
-        // The query starts a little way after the site's name.
-        let queryX = address.minX+nameWidth+5
-        inputItem.render(at: siteSearch == nil && !siteLabelItem.shown ? address
-                         : NSRect(x: queryX, y: address.minY, width: max(40, bounds.width-AddressAppearance.inset-15-queryX), height: inputHeight))
+        let hintRoom = offeredSite == nil && siteSearch == nil ? 0 : hintWidth+12
+        input.frame = NSRect(x: AddressAppearance.inset+35, y: (headerHeight-inputHeight)/2, width: bounds.width-AddressAppearance.inset-50-hintRoom, height: inputHeight)
         for (i, button) in buttons.enumerated() {
             button.frame = NSRect(x: AddressAppearance.inset, y: headerHeight+CGFloat(i)*(AddressAppearance.rowHeight+AddressAppearance.rowSpacing), width: bounds.width-2*AddressAppearance.inset, height: AddressAppearance.rowHeight)
             if let icon = button.subviews.first as? NSImageView {
@@ -295,7 +281,7 @@ struct AddressSuggestion {
         }
     }
     func updateFavicon(_ image: NSImage, origin: String) {
-        if let site = siteSearch, SitePermissions.origin(site.homeURL) == origin { siteLabel.textColor = color(for: site) }
+        if let site = siteSearch ?? offeredSite, SitePermissions.origin(site.homeURL) == origin { siteHint.applyTheme(theme, siteColor: color(for: site)) }
         if SitePermissions.origin(autofill?.url) == origin { autofill?.favicon = image }
         defer { updateLeadingIcon() }
         for index in suggestions.indices where SitePermissions.origin(suggestions[index].url) == origin && suggestions[index].symbol == "globe" {
@@ -370,8 +356,9 @@ struct AddressSuggestion {
     func chooseSelected() {
         guard isPresented else { return }
         if let site = siteSearch {
-            // An empty search goes to the site itself.
-            let words = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            // An empty search, or the address left as it was, goes to the site itself.
+            var words = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if input.stringValue == addressBeforeSiteSearch?.text { words = "" }
             let url = words.isEmpty ? site.homeURL : site.searchURL(for: words) ?? site.homeURL
             submit?(input.stringValue, AddressSuggestion(title: "Search \(site.name)", subtitle: "", symbol: "magnifyingglass", url: url,
                                                          tabID: nil, command: nil, isTypedAction: true))
@@ -389,15 +376,15 @@ struct AddressSuggestion {
     // MARK: Site search
 
     private func applyPlaceholder() {
-        input.placeholderAttributedString = siteSearch != nil ? nil
-            : NSAttributedString(string: "Search or Enter URL…", attributes: [.foregroundColor: theme.muted, .font: input.font!])
+        input.placeholderAttributedString = NSAttributedString(string: siteSearch.map { "Search \($0.name)…" } ?? "Search or Enter URL…",
+                                                               attributes: [.foregroundColor: theme.muted, .font: input.font!])
     }
     /// Offers the site's search while the address is a site that has one.
     private func updateOffer() {
         let site = siteSearch == nil ? site(forAddress: input.stringValue).flatMap { $0.isSearchable ? $0 : nil } : nil
         guard site != offeredSite else { return }
         offeredSite = site
-        if let site { siteHint.configure(site: site.name, theme: theme) }
+        if let site { siteHint.configure(site: site.name, color: color(for: site), theme: theme) }
         siteHint.setAccessibilityElement(site != nil)
         fadeHint(to: site == nil ? 0 : 1)
         needsLayout = true
@@ -409,57 +396,50 @@ struct AddressSuggestion {
             siteHint.animator().alphaValue = alpha
         }, completionHandler: completion)
     }
-    /// The site's name, in its icon's main color.
+    /// The site's name, in the colour picked for it in Settings, or else its icon's main color.
     private func color(for site: PopularSite) -> NSColor {
+        if let custom = customSite?(site.domain), custom == site, let hex = custom.color { return NSColor(hex: hex) }
         if let icon = siteFavicon?(site.homeURL), let color = FaviconColor.dominant(icon) { return FaviconColor.readable(color, theme: theme) }
         if let hex = site.color { return FaviconColor.readable(NSColor(hex: hex), theme: theme) }
         return AddressAppearance.textColor(theme)
     }
-    /// Tab: the keycap goes down as the hint fades, and the address swaps for the site's name,
-    /// with an empty field after it for the search.
+    /// Tab: the field keeps the address, all selected, so typing replaces it with the search, while
+    /// the hint at the end takes the site's colour and slides into the keycap's place.
     func enterSiteSearch(_ site: PopularSite) {
         let address = input.stringValue
         addressBeforeSiteSearch = AddressState(text: address, query: query, selection: (input.currentEditor() as? NSTextView)?.selectedRange() ?? NSRange(location: address.utf16.count, length: 0),
                                                completionRange: completionRange, completionPrefix: completionPrefix, suggestions: suggestions, autofill: autofill)
         siteSearch = site; offeredSite = nil; completionRange = nil; suppressCompletion = false
-        siteHint.setAccessibilityElement(false); siteHint.press()
-        fadeHint(to: 0) { [weak self] in self?.siteHint.release() }
-        leavingText.attributedStringValue = NSAttributedString(string: address, attributes: [.font: input.font!, .foregroundColor: AddressAppearance.textColor(theme)])
-        leavingItem = PresenceItem(leavingText, shown: true); leavingItem.set(false)
-        siteLabel.stringValue = site.name; siteLabel.textColor = color(for: site)
-        // The site's icon already leads the field; only the text swaps.
-        siteLabelItem.set(true); updateLeadingIcon()
-        setText("")
-        inputItem = PresenceItem(input, shown: false); inputItem.set(true)
+        if siteHint.siteName != site.name { siteHint.configure(site: site.name, color: color(for: site), theme: theme) }
+        siteHint.alphaValue = 1; siteHint.setAccessibilityElement(true)
+        siteHint.setSearching(true, animated: true)
+        updateLeadingIcon()
+        selectAll()
         applyPlaceholder(); input.setAccessibilityLabel("Search \(site.name)")
         suggestions = []; selectedIndex = -1; selectionBeforeHover = nil; render()
-        animateSwap()
     }
-    /// Back to the address just as it was before Tab: what was typed, what it filled in (still
-    /// selected), and the same rows.
+    /// Back to the address as it was before Tab, all selected, with the same rows, and the hint
+    /// offering the site's search again.
     func leaveSiteSearch() {
         guard let site = siteSearch else { return }
         siteSearch = nil
-        siteLabelItem.set(false)
         let before = addressBeforeSiteSearch; addressBeforeSiteSearch = nil
-        setText(before?.text ?? site.domain)
-        inputItem = PresenceItem(input, shown: false); inputItem.set(true)
+        setText(before?.text ?? site.domain); selectAll()
         applyPlaceholder(); input.setAccessibilityLabel("Address or search")
+        offeredSite = site; siteHint.setSearching(false, animated: true)
         if let before {
-            (input.currentEditor() as? NSTextView)?.setSelectedRange(before.selection)
             query = before.query; suggestions = before.suggestions; autofill = before.autofill
-            completionRange = before.completionRange; completionPrefix = before.completionPrefix
+            completionRange = nil
             selectedIndex = -1; selectionBeforeHover = nil
             render(); updateOffer(); updateLeadingIcon()
         } else { refresh() }
-        animateSwap()
     }
-    /// ⌘Z in a site's search steps back: the query first, then out to the address.
+    /// ⌘Z in a site's search steps back: the search first, back to the address, then out.
     func handleUndoKey(_ event: NSEvent) -> Bool {
-        guard isPresented, siteSearch != nil, event.type == .keyDown,
+        guard isPresented, let before = addressBeforeSiteSearch, siteSearch != nil, event.type == .keyDown,
               event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
               event.charactersIgnoringModifiers?.lowercased() == "z" else { return false }
-        if input.stringValue.isEmpty { leaveSiteSearch() } else { setText("") }
+        if input.stringValue == before.text { leaveSiteSearch() } else { setText(before.text); selectAll() }
         return true
     }
     private func setText(_ text: String) {
@@ -468,40 +448,16 @@ struct AddressSuggestion {
         }
         input.stringValue = text
     }
+    private func selectAll() {
+        (input.currentEditor() as? NSTextView)?.setSelectedRange(NSRange(location: 0, length: input.stringValue.utf16.count))
+    }
     /// Straight back to the address, at rest, for a palette opening or closing.
     private func resetSiteSearch() {
-        swapLink?.invalidate(); swapLink = nil
         if siteSearch != nil { siteSearch = nil; applyPlaceholder(); input.setAccessibilityLabel("Address or search") }
         addressBeforeSiteSearch = nil
         offeredSite = nil; siteHint.alphaValue = 0; siteHint.setAccessibilityElement(false)
-        siteLabelItem = PresenceItem(siteLabel, shown: false); leavingItem = PresenceItem(leavingText, shown: false)
-        inputItem = PresenceItem(input, shown: true)
-        input.alphaValue = 1
-        [siteLabel, leavingText].forEach { $0.isHidden = true }
+        siteHint.setSearching(false, animated: false)
         needsLayout = true
-    }
-    private func swapItems(_ body: (inout PresenceItem) -> Void) {
-        body(&siteLabelItem); body(&leavingItem); body(&inputItem)
-    }
-    private var swapResting: Bool {
-        [siteLabelItem, leavingItem, inputItem].allSatisfy(\.isResting)
-    }
-    private func animateSwap() {
-        guard window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { settleSwap(); return }
-        lastSwapTick = CACurrentMediaTime()
-        guard swapLink == nil else { return }
-        let link = displayLink(target: self, selector: #selector(swapTick(_:)))
-        link.add(to: .main, forMode: .common); swapLink = link
-    }
-    @objc private func swapTick(_ link: CADisplayLink) {
-        let now = CACurrentMediaTime(), dt = min(1.0/30, max(0, now-lastSwapTick)); lastSwapTick = now
-        swapItems { $0.step(dt) }
-        if swapResting { settleSwap() } else { needsLayout = true; layoutSubtreeIfNeeded() }
-    }
-    private func settleSwap() {
-        swapLink?.invalidate(); swapLink = nil
-        swapItems { $0.settle() }
-        needsLayout = true; layoutSubtreeIfNeeded()
     }
 }
 

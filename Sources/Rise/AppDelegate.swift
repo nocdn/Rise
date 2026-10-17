@@ -87,6 +87,9 @@ import AppKit
         item(view, "Split View", #selector(BrowserController.toggleSplit), target: browser)
         view.addItem(.separator())
         item(view, "Zoom In", #selector(BrowserController.zoomIn), "+", target: browser)
+        // ⌘= zooms in too, as in Safari and Chrome: the + key without Shift.
+        let zoomInWithoutShift = item(view, "Zoom In", #selector(BrowserController.zoomIn), "=", target: browser)
+        zoomInWithoutShift.isHidden = true; zoomInWithoutShift.allowsKeyEquivalentWhenHidden = true
         item(view, "Zoom Out", #selector(BrowserController.zoomOut), "-", target: browser)
         item(view, "Actual Size", #selector(BrowserController.actualSize), "0", target: browser)
         item(view, "Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", modifiers: [.command, .control], target: browser.window)

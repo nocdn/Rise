@@ -1,0 +1,717 @@
+diff --git a/chrome/browser/resources/settings/BUILD.gn b/chrome/browser/resources/settings/BUILD.gn
+index 25fb48e3bd..55bdc1346d 100644
+--- a/chrome/browser/resources/settings/BUILD.gn
++++ b/chrome/browser/resources/settings/BUILD.gn
+@@ -396,6 +396,8 @@ build_webui("build") {
+     "rise_page/rise_page.ts",
+     "rise_page/rise_settings_rows.html.ts",
+     "rise_page/rise_settings_rows.ts",
++    "rise_page/rise_site_search_page.html.ts",
++    "rise_page/rise_site_search_page.ts",
+     "route.ts",
+     "router.ts",
+     "safety_hub/extensions_module.html.ts",
+diff --git a/chrome/browser/resources/settings/route.ts b/chrome/browser/resources/settings/route.ts
+index 951d42e954..2a67bdfbc2 100644
+--- a/chrome/browser/resources/settings/route.ts
++++ b/chrome/browser/resources/settings/route.ts
+@@ -219,6 +219,8 @@ function createRoutes(): SettingsRoutes {
+   // Rise's own sections, whose rows come from Rise.
+   r.RISE_TABS = r.BASIC.createSection('/tabs', 'riseTabs', 'Tabs');
+   r.RISE_AI = r.BASIC.createSection('/assistant', 'riseAi', 'AI');
++  r.RISE_SITE_SEARCH =
++      r.BASIC.createSection('/siteSearch', 'riseSiteSearch', 'Site search');
+ 
+   if (visibility.yourSavedInfo !== false) {
+     r.AUTOFILL = r.BASIC.createSection(
+diff --git a/chrome/browser/resources/settings/router.ts b/chrome/browser/resources/settings/router.ts
+index a4482fbee4..c12101ed19 100644
+--- a/chrome/browser/resources/settings/router.ts
++++ b/chrome/browser/resources/settings/router.ts
+@@ -54,6 +54,7 @@ export interface SettingsRoutes {
+   PRIVACY_GUIDE: Route;
+   RESET: Route;
+   RISE_AI: Route;
++  RISE_SITE_SEARCH: Route;
+   RISE_TABS: Route;
+   RESET_DIALOG: Route;
+   SAFETY_HUB: Route;
+diff --git a/chrome/browser/resources/settings/settings_main/settings_main.html b/chrome/browser/resources/settings/settings_main/settings_main.html
+index 6d8e1cd253..b55263b462 100644
+--- a/chrome/browser/resources/settings/settings_main/settings_main.html
++++ b/chrome/browser/resources/settings/settings_main/settings_main.html
+@@ -137,6 +137,13 @@
+     </template>
+   </div>
+ 
++  <div slot="view" id="riseSiteSearch">
++    <template is="dom-if" if="[[renderPlugin_(
++        routes_.RISE_SITE_SEARCH, lastRoute_, inSearchMode_)]]">
++      <settings-rise-site-search-page></settings-rise-site-search-page>
++    </template>
++  </div>
++
+ <if expr="not is_chromeos">
+   <template is="dom-if" if="[[showPage_(pageVisibility_.defaultBrowser)]]">
+     <div slot="view" id="defaultBrowser">
+diff --git a/chrome/browser/resources/settings/settings_main/settings_main.ts b/chrome/browser/resources/settings/settings_main/settings_main.ts
+index 0de2941647..5ffe8ce5ce 100644
+--- a/chrome/browser/resources/settings/settings_main/settings_main.ts
++++ b/chrome/browser/resources/settings/settings_main/settings_main.ts
+@@ -19,6 +19,7 @@ import '../people_page/people_page_index.js';
+ import '../performance_page/performance_page_index.js';
+ import '../privacy_page/privacy_page_index.js';
+ import '../rise_page/rise_page.js';
++import '../rise_page/rise_site_search_page.js';
+ import '../reset_page/reset_profile_banner.js';
+ import '../search_page/search_page_index.js';
+ // <if expr="not is_chromeos">
+diff --git a/chrome/browser/resources/settings/settings_menu/settings_menu.html b/chrome/browser/resources/settings/settings_menu/settings_menu.html
+index c102e83e3b..9dc73a492f 100644
+--- a/chrome/browser/resources/settings/settings_menu/settings_menu.html
++++ b/chrome/browser/resources/settings/settings_menu/settings_menu.html
+@@ -149,6 +149,12 @@
+           <span class="menu-label">$i18n{searchPageTitle}</span>
+           <cr-ripple></cr-ripple>
+         </a>
++        <a role="menuitem" id="riseSiteSearch" href="/siteSearch"
++            class="cr-nav-menu-item">
++          <cr-icon icon="settings:travel-explore"></cr-icon>
++          <span class="menu-label">Site search</span>
++          <cr-ripple></cr-ripple>
++        </a>
+ <if expr="not is_chromeos">
+         <a role="menuitem" id="defaultBrowser" class="cr-nav-menu-item"
+           href="/defaultBrowser"
+diff --git a/chrome/browser/resources/settings/rise_page/rise_site_search_page.html.ts b/chrome/browser/resources/settings/rise_page/rise_site_search_page.html.ts
+new file mode 100644
+index 0000000000..c3af3eb635
+--- /dev/null
++++ b/chrome/browser/resources/settings/rise_page/rise_site_search_page.html.ts
+@@ -0,0 +1,114 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++import {html} from 'chrome://resources/lit/v3_0/lit.rollup.js';
++
++import type {SettingsRiseSiteSearchPageElement} from './rise_site_search_page.js';
++
++export function getHtml(this: SettingsRiseSiteSearchPageElement) {
++  // clang-format off
++  return html`<!--_html_template_start_-->
++<settings-section page-title="Site search" class="cr-centered-card-container">
++  <div class="cr-row first">
++    <div class="flex cr-padded-text">
++      <div>Search a site from the address bar</div>
++      <div class="cr-secondary-text">
++        Type a site's address and press Tab to search it. Rise learns a site's
++        search when you search on it; sites you add or edit here come first.
++      </div>
++    </div>
++    <cr-button id="add" @click="${this.onAddClick_}">Add</cr-button>
++  </div>
++  ${this.lists_().map(list => html`
++    <div class="list-header">${list.title}</div>
++    ${!list.sites.length ? html`
++      <div class="cr-row empty cr-secondary-text">${list.empty}</div>` : ''}
++    ${list.sites.map(site => html`
++      <div class="cr-row site">
++        ${site.icon ? html`<img class="icon" src="${site.icon}" alt="">` : ''}
++        ${!site.icon ? html`<div class="icon blank"></div>` : ''}
++        <div class="flex cr-padded-text text">
++          <div class="name" style="--site-color: ${site.color || 'inherit'}">
++            ${site.name}
++          </div>
++          <div class="cr-secondary-text address">
++            ${site.site} · ${site.template}
++          </div>
++        </div>
++        <cr-icon-button iron-icon="cr:edit-filled" title="Edit"
++            aria-label="Edit ${site.name}" data-site="${site.site}"
++            @click="${this.onEditClick_}"></cr-icon-button>
++        <cr-icon-button iron-icon="cr:delete" title="Remove"
++            aria-label="Remove ${site.name}" data-site="${site.site}"
++            @click="${this.onRemoveClick_}"></cr-icon-button>
++      </div>`)}
++  `)}
++</settings-section>
++${this.dialogOpen_ ? html`
++  <cr-dialog id="dialog" show-on-attach @close="${this.onDialogClose_}">
++    <div slot="title">${this.dialogTitle_()}</div>
++    <div slot="body">
++      ${this.dialogLearned_ ? html`
++        <div class="cr-secondary-text note">
++          Saving moves it to your sites, where learning won't change it.
++        </div>` : ''}
++      <cr-input id="site" label="Site" placeholder="amazon.com"
++          .value="${this.dialogSite_}" spellcheck="false" autofocus
++          ?invalid="${this.dialogField_ === 'site'}"
++          error-message="${this.errorFor_('site')}"
++          @value-changed="${this.onSiteValueChanged_}"
++          @change="${this.onSiteChange_}"></cr-input>
++      <cr-input id="name" label="Name" placeholder="Amazon"
++          .value="${this.dialogName_}" maxlength="40"
++          ?invalid="${this.dialogField_ === 'name'}"
++          error-message="${this.errorFor_('name')}"
++          @value-changed="${this.onNameValueChanged_}"></cr-input>
++      <cr-input id="template" label="Search address"
++          placeholder="https://www.amazon.com/s?k=%s" spellcheck="false"
++          .value="${this.dialogTemplate_}"
++          ?invalid="${this.dialogField_ === 'template'}"
++          error-message="${this.errorFor_('template')}"
++          @value-changed="${this.onTemplateValueChanged_}"></cr-input>
++      <div class="cr-secondary-text hint">%s marks where the search goes.</div>
++      <div class="colour-label">Colour</div>
++      <div class="swatches">
++        <button class="swatch automatic ${this.chosenClass_('')}"
++            style="--swatch: ${this.iconSwatch_()}"
++            title="From the site's icon" aria-label="From the site's icon"
++            aria-pressed="${this.dialogColor_ === ''}" data-color=""
++            @click="${this.onSwatchClick_}">
++          ${this.dialogIcon_ ? html`<img src="${this.dialogIcon_}" alt="">` : ''}
++        </button>
++        <span class="divider"></span>
++        ${this.presetColors.map(([color, label]) => html`
++          <button class="swatch ${this.chosenClass_(color)}"
++              style="--swatch: ${color}" title="${label}" aria-label="${label}"
++              aria-pressed="${this.dialogColor_ === color}" data-color="${color}"
++              @click="${this.onSwatchClick_}"></button>`)}
++        <button class="swatch custom ${this.customClass_()}"
++            style="--swatch: ${this.customSwatch_()}"
++            title="Another colour…" aria-label="Another colour"
++            @click="${this.onCustomColorClick_}">
++          ${!this.isCustomColor_() ? html`<cr-icon icon="cr:add"></cr-icon>` : ''}
++        </button>
++      </div>
++      <div class="preview">
++        <span class="cr-secondary-text">In the address bar:</span>
++        <span class="preview-name" style="--site-color: ${this.previewColor_()}">
++          ${this.dialogName_ || 'Name'}
++        </span>
++      </div>
++    </div>
++    <div slot="button-container">
++      <cr-button class="cancel-button" @click="${this.onCancelClick_}">
++        Cancel
++      </cr-button>
++      <cr-button class="action-button" @click="${this.onSaveClick_}">
++        Save
++      </cr-button>
++    </div>
++  </cr-dialog>` : ''}
++<!--_html_template_end_-->`;
++  // clang-format on
++}
+diff --git a/chrome/browser/resources/settings/rise_page/rise_site_search_page.ts b/chrome/browser/resources/settings/rise_page/rise_site_search_page.ts
+new file mode 100644
+index 0000000000..ab8f676204
+--- /dev/null
++++ b/chrome/browser/resources/settings/rise_page/rise_site_search_page.ts
+@@ -0,0 +1,506 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++/**
++ * @fileoverview Rise's Site search section: the sites Tab searches from the
++ * address bar, set up by hand or learned from searching on them. Rise keeps
++ * them; this page asks for them, and changes them, through
++ * `riseSettings.request('siteSearch', ...)`.
++ */
++import 'chrome://resources/cr_elements/cr_button/cr_button.js';
++import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
++import 'chrome://resources/cr_elements/cr_icon/cr_icon.js';
++import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
++import 'chrome://resources/cr_elements/cr_input/cr_input.js';
++import 'chrome://resources/cr_elements/icons.html.js';
++import '../icons.html.js';
++import '../settings_page/settings_section.js';
++
++import {getCss as getCrSharedStyle} from 'chrome://resources/cr_elements/cr_shared_style_lit.css.js';
++import {CrLitElement, css} from 'chrome://resources/lit/v3_0/lit.rollup.js';
++
++import {getSearchManager} from '../search_settings.js';
++import type {SettingsPlugin} from '../settings_main/settings_plugin.js';
++import {getCss as getSettingsSharedStyle} from '../settings_shared_lit.css.js';
++
++import {getHtml} from './rise_site_search_page.html.js';
++
++export interface RiseSiteSearch {
++  site: string;
++  name: string;
++  template: string;
++  color: string;
++  customColor: boolean;
++  icon: string;
++}
++
++interface RiseSiteSearchList {
++  custom: RiseSiteSearch[];
++  learned: RiseSiteSearch[];
++  missingIcons: boolean;
++}
++
++interface RiseSiteSearchReply {
++  error?: string;
++  field?: string;
++}
++
++interface RiseSiteSearchDefaults {
++  site: string;
++  name: string;
++  template: string;
++  color: string;
++  icon: string;
++}
++
++interface RiseRequests {
++  request(kind: string, body: object): Promise<unknown>;
++}
++
++function bridge(): RiseRequests|undefined {
++  return window.riseSettings as unknown as RiseRequests | undefined;
++}
++
++export class SettingsRiseSiteSearchPageElement extends CrLitElement implements
++    SettingsPlugin {
++  static get is() {
++    return 'settings-rise-site-search-page';
++  }
++
++  static override get styles() {
++    return [
++      getCrSharedStyle(),
++      getSettingsSharedStyle(),
++      css`
++        .list-header {
++          color: var(--cr-primary-text-color);
++          font-weight: 500;
++          padding: 16px var(--cr-section-padding) 4px;
++          border-top: var(--cr-separator-line);
++        }
++        .site {
++          gap: 12px;
++        }
++        .icon {
++          width: 16px;
++          height: 16px;
++          flex: none;
++          border-radius: 3px;
++        }
++        .icon.blank {
++          background: var(--cr-separator-color);
++        }
++        .text {
++          min-width: 0;
++        }
++        .name {
++          color: var(--site-color, inherit);
++          font-weight: 500;
++        }
++        .address {
++          overflow: hidden;
++          text-overflow: ellipsis;
++          white-space: nowrap;
++        }
++        .empty {
++          border-top: none;
++        }
++        cr-input {
++          margin-bottom: 12px;
++        }
++        .note,
++        .hint {
++          margin-bottom: 12px;
++        }
++        .hint {
++          margin-top: -8px;
++        }
++        .colour-label {
++          font-size: 12px;
++          font-weight: 500;
++          color: var(--cr-form-field-label-color);
++          margin-bottom: 8px;
++        }
++        .swatches {
++          display: flex;
++          align-items: center;
++          flex-wrap: wrap;
++          gap: 8px;
++        }
++        .swatch {
++          width: 24px;
++          height: 24px;
++          padding: 0;
++          border-radius: 50%;
++          border: none;
++          background: var(--swatch);
++          cursor: pointer;
++          display: flex;
++          align-items: center;
++          justify-content: center;
++          box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
++        }
++        .swatch.chosen {
++          outline: 2px solid var(--cr-focus-outline-color);
++          outline-offset: 2px;
++        }
++        .swatch.automatic img {
++          width: 14px;
++          height: 14px;
++          border-radius: 3px;
++          background: white;
++          padding: 1px;
++        }
++        .swatch.custom {
++          background: var(--swatch);
++          box-shadow: inset 0 0 0 1px var(--cr-separator-color);
++        }
++        .swatch.custom cr-icon {
++          --iron-icon-width: 16px;
++          --iron-icon-height: 16px;
++          color: var(--cr-secondary-text-color);
++        }
++        .divider {
++          width: 1px;
++          height: 20px;
++          background: var(--cr-separator-color);
++        }
++        .preview {
++          margin-top: 16px;
++          display: flex;
++          gap: 8px;
++          align-items: baseline;
++        }
++        .preview-name {
++          color: var(--site-color, inherit);
++        }
++      `,
++    ];
++  }
++
++  override render() {
++    return getHtml.bind(this)();
++  }
++
++  static override get properties() {
++    return {
++      custom_: {type: Array},
++      learned_: {type: Array},
++      dialogOpen_: {type: Boolean},
++      dialogOriginal_: {type: String},
++      dialogLearned_: {type: Boolean},
++      dialogSite_: {type: String},
++      dialogName_: {type: String},
++      dialogTemplate_: {type: String},
++      dialogColor_: {type: String},
++      dialogIconColor_: {type: String},
++      dialogIcon_: {type: String},
++      dialogError_: {type: String},
++      dialogField_: {type: String},
++    };
++  }
++
++  protected accessor custom_: RiseSiteSearch[] = [];
++  protected accessor learned_: RiseSiteSearch[] = [];
++  protected accessor dialogOpen_: boolean = false;
++  // The site being edited, or '' for a new one.
++  protected accessor dialogOriginal_: string = '';
++  protected accessor dialogLearned_: boolean = false;
++  protected accessor dialogSite_: string = '';
++  protected accessor dialogName_: string = '';
++  protected accessor dialogTemplate_: string = '';
++  // A colour picked by hand, or '' for the icon's.
++  protected accessor dialogColor_: string = '';
++  protected accessor dialogIconColor_: string = '';
++  protected accessor dialogIcon_: string = '';
++  protected accessor dialogError_: string = '';
++  protected accessor dialogField_: string = '';
++
++  readonly presetColors: Array<[string, string]> = [
++    ['#E5484D', 'Red'],
++    ['#F76B15', 'Orange'],
++    ['#FFB224', 'Yellow'],
++    ['#30A46C', 'Green'],
++    ['#12A594', 'Teal'],
++    ['#0090FF', 'Blue'],
++    ['#3E63DD', 'Indigo'],
++    ['#8E4EC6', 'Purple'],
++    ['#D6409F', 'Pink'],
++    ['#6F6D66', 'Gray'],
++  ];
++
++  // Whether the name and address were typed, so a site's defaults leave them.
++  private nameTyped_ = false;
++  private templateTyped_ = false;
++  private retriedIcons_ = false;
++
++  private onRefresh_ = () => {
++    this.refresh_();
++  };
++
++  private onColor_ = (e: Event) => {
++    const color = (e as CustomEvent<string>).detail;
++    if (this.dialogOpen_ && /^#[0-9A-F]{6}$/i.test(color)) {
++      this.dialogColor_ = color.toUpperCase();
++    }
++  };
++
++  override connectedCallback() {
++    super.connectedCallback();
++    window.addEventListener('rise-settings-ready', this.onRefresh_);
++    window.addEventListener('focus', this.onRefresh_);
++    window.addEventListener('rise-site-search-color', this.onColor_);
++    document.addEventListener('visibilitychange', this.onRefresh_);
++    this.refresh_();
++  }
++
++  override disconnectedCallback() {
++    super.disconnectedCallback();
++    window.removeEventListener('rise-settings-ready', this.onRefresh_);
++    window.removeEventListener('focus', this.onRefresh_);
++    window.removeEventListener('rise-site-search-color', this.onColor_);
++    document.removeEventListener('visibilitychange', this.onRefresh_);
++  }
++
++  private async request_(body: object): Promise<unknown> {
++    const riseSettings = bridge();
++    return riseSettings ? riseSettings.request('siteSearch', body) : null;
++  }
++
++  private show_(list: RiseSiteSearchList|null) {
++    if (!list) {
++      return;
++    }
++    this.custom_ = list.custom;
++    this.learned_ = list.learned;
++    // Icons not loaded yet usually are a moment later.
++    if (list.missingIcons && !this.retriedIcons_) {
++      this.retriedIcons_ = true;
++      setTimeout(() => this.refresh_(), 1500);
++    }
++  }
++
++  private async refresh_() {
++    this.show_(await this.request_({action: 'list'}) as RiseSiteSearchList |
++               null);
++  }
++
++  private find_(site: string|undefined): RiseSiteSearch|undefined {
++    return [...this.custom_, ...this.learned_].find(entry => entry.site === site);
++  }
++
++  protected onAddClick_() {
++    this.dialogOriginal_ = '';
++    this.dialogLearned_ = false;
++    this.dialogSite_ = '';
++    this.dialogName_ = '';
++    this.dialogTemplate_ = '';
++    this.dialogColor_ = '';
++    this.dialogIconColor_ = '';
++    this.dialogIcon_ = '';
++    this.nameTyped_ = false;
++    this.templateTyped_ = false;
++    this.clearError_();
++    this.dialogOpen_ = true;
++  }
++
++  protected onEditClick_(e: Event) {
++    const entry = this.find_((e.currentTarget as HTMLElement).dataset['site']);
++    if (!entry) {
++      return;
++    }
++    this.dialogOriginal_ = entry.site;
++    this.dialogLearned_ = this.learned_.includes(entry);
++    this.dialogSite_ = entry.site;
++    this.dialogName_ = entry.name;
++    this.dialogTemplate_ = entry.template;
++    this.dialogColor_ = entry.customColor ? entry.color : '';
++    this.dialogIconColor_ = entry.customColor ? '' : entry.color;
++    this.dialogIcon_ = entry.icon;
++    this.nameTyped_ = true;
++    this.templateTyped_ = true;
++    this.clearError_();
++    this.dialogOpen_ = true;
++    if (entry.customColor) {
++      this.loadDefaults_(entry.site, true);
++    }
++  }
++
++  protected async onRemoveClick_(e: Event) {
++    const site = (e.currentTarget as HTMLElement).dataset['site'];
++    this.show_(await this.request_({action: 'remove', site}) as
++               RiseSiteSearchList | null);
++  }
++
++  protected onSiteValueChanged_(e: CustomEvent<{value: string}>) {
++    this.dialogSite_ = e.detail.value;
++    if (this.dialogField_ === 'site') {
++      this.clearError_();
++    }
++  }
++
++  protected onNameValueChanged_(e: CustomEvent<{value: string}>) {
++    if (e.detail.value !== this.dialogName_) {
++      this.nameTyped_ = e.detail.value !== '';
++    }
++    this.dialogName_ = e.detail.value;
++    if (this.dialogField_ === 'name') {
++      this.clearError_();
++    }
++  }
++
++  protected onTemplateValueChanged_(e: CustomEvent<{value: string}>) {
++    if (e.detail.value !== this.dialogTemplate_) {
++      this.templateTyped_ = e.detail.value !== '';
++    }
++    this.dialogTemplate_ = e.detail.value;
++    if (this.dialogField_ === 'template') {
++      this.clearError_();
++    }
++  }
++
++  // Once a site's address is typed: its name, search and icon colour, where
++  // Rise knows them.
++  protected onSiteChange_() {
++    this.loadDefaults_(this.dialogSite_, false);
++  }
++
++  private async loadDefaults_(site: string, colourOnly: boolean) {
++    if (!site.trim()) {
++      return;
++    }
++    const defaults =
++        await this.request_({action: 'defaults', site}) as RiseSiteSearchDefaults |
++        null;
++    if (!defaults || !this.dialogOpen_ || this.dialogSite_ !== site) {
++      return;
++    }
++    this.dialogIconColor_ = defaults.color;
++    this.dialogIcon_ = defaults.icon;
++    if (colourOnly) {
++      return;
++    }
++    if (!this.nameTyped_) {
++      this.dialogName_ = defaults.name;
++    }
++    if (!this.templateTyped_) {
++      this.dialogTemplate_ = defaults.template;
++    }
++  }
++
++  protected onSwatchClick_(e: Event) {
++    this.dialogColor_ = (e.currentTarget as HTMLElement).dataset['color'] || '';
++  }
++
++  protected onCustomColorClick_() {
++    this.request_({
++      action: 'pickColor',
++      color: this.dialogColor_ || this.dialogIconColor_ || '#0090FF',
++    });
++  }
++
++  protected isCustomColor_(): boolean {
++    return this.dialogColor_ !== '' &&
++        !this.presetColors.some(([color]) => color === this.dialogColor_);
++  }
++
++  protected lists_(): Array<{title: string, sites: RiseSiteSearch[], empty: string}> {
++    return [
++      {
++        title: 'Your sites',
++        sites: this.custom_,
++        empty: 'Sites you add, or learned ones you edit, appear here.',
++      },
++      {
++        title: 'Learned automatically',
++        sites: this.learned_,
++        empty: 'Search on a site and Rise learns how to search it from the ' +
++            'address bar.',
++      },
++    ];
++  }
++
++  protected dialogTitle_(): string {
++    return this.dialogOriginal_ ? 'Edit site' : 'Add a site';
++  }
++
++  protected errorFor_(field: string): string {
++    return this.dialogField_ === field ? this.dialogError_ : '';
++  }
++
++  protected chosenClass_(color: string): string {
++    return this.dialogColor_ === color ? 'chosen' : '';
++  }
++
++  protected customClass_(): string {
++    return this.isCustomColor_() ? 'chosen' : '';
++  }
++
++  protected iconSwatch_(): string {
++    return this.dialogIconColor_ || 'var(--cr-secondary-text-color)';
++  }
++
++  protected customSwatch_(): string {
++    return this.isCustomColor_() ? this.dialogColor_ : 'transparent';
++  }
++
++  protected previewColor_(): string {
++    return this.dialogColor_ || this.dialogIconColor_ || 'inherit';
++  }
++
++  private clearError_() {
++    this.dialogError_ = '';
++    this.dialogField_ = '';
++  }
++
++  private closeDialog_() {
++    this.shadowRoot.querySelector<HTMLElement&{close(): void}>('#dialog')
++        ?.close();
++  }
++
++  protected onCancelClick_() {
++    this.closeDialog_();
++  }
++
++  protected onDialogClose_() {
++    this.dialogOpen_ = false;
++    this.request_({action: 'closeColor'});
++  }
++
++  protected async onSaveClick_() {
++    const reply = await this.request_({
++      action: 'save',
++      original: this.dialogOriginal_ || null,
++      site: this.dialogSite_,
++      name: this.dialogName_,
++      template: this.dialogTemplate_,
++      color: this.dialogColor_,
++    }) as (RiseSiteSearchList & RiseSiteSearchReply) | null;
++    if (!reply) {
++      return;
++    }
++    if (reply.error) {
++      this.dialogError_ = reply.error;
++      this.dialogField_ = reply.field || 'site';
++      return;
++    }
++    this.show_(reply);
++    this.closeDialog_();
++  }
++
++  // SettingsPlugin implementation
++  async searchContents(query: string) {
++    const searchRequest = await getSearchManager().search(query, this);
++    return searchRequest.getSearchResult();
++  }
++}
++
++declare global {
++  interface HTMLElementTagNameMap {
++    'settings-rise-site-search-page': SettingsRiseSiteSearchPageElement;
++  }
++}
++
++customElements.define(
++    SettingsRiseSiteSearchPageElement.is, SettingsRiseSiteSearchPageElement);

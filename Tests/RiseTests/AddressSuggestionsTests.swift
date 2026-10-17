@@ -302,39 +302,47 @@ final class AddressSuggestionsTests: XCTestCase {
         editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
         XCTAssertEqual(palette.siteSearch?.name, "Amazon")
         XCTAssertTrue(palette.leadingIcon.image === icon)
-        XCTAssertNil(palette.offeredSite); XCTAssertEqual(palette.input.stringValue, "")
-        XCTAssertEqual(palette.siteLabel.stringValue, "Amazon")
+        XCTAssertNil(palette.offeredSite)
+        XCTAssertEqual(palette.input.stringValue, "amazon.co.uk", "The field keeps the address where it was")
+        XCTAssertEqual(editor.selectedRange(), NSRange(location: 0, length: 12), "All of it selected, to type the search over")
+        XCTAssertTrue(palette.siteHint.isSearching); XCTAssertEqual(palette.siteHint.siteName, "Amazon")
+        XCTAssertEqual(palette.siteHint.alphaValue, 1, "The hint stays, naming the site being searched")
         XCTAssertTrue(palette.suggestions.isEmpty, "A site's search doesn't match addresses")
         XCTAssertEqual(palette.frame.height, AddressAppearance.newTabHeaderHeight, "With no rows, as much room below the field as above")
-        editor.insertText("usb c", replacementRange: editor.selectedRange())
-        XCTAssertTrue(palette.suggestions.isEmpty)
         var submitted: AddressSuggestion?
         let original = palette.submit
         palette.submit = { submitted = $1 }
         editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        XCTAssertEqual(submitted?.url, palette.siteSearch?.homeURL, "Left as it was, Enter goes to the site")
+        editor.insertText("usb c", replacementRange: editor.selectedRange())
+        XCTAssertEqual(palette.input.stringValue, "usb c")
+        XCTAssertTrue(palette.suggestions.isEmpty)
+        editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
         XCTAssertEqual(submitted?.url?.absoluteString, "https://www.amazon.co.uk/s?k=usb%20c")
         palette.submit = original
 
-        // Escape goes back to the address just as it was, rather than closing.
+        // Escape goes back to the address as it was, all selected, rather than closing.
         editor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
         XCTAssertNil(palette.siteSearch); XCTAssertTrue(palette.isPresented)
         XCTAssertEqual(palette.input.stringValue, "amazon.co.uk")
-        XCTAssertEqual(editor.selectedRange(), NSRange(location: 4, length: 8), "Still filled in, as before Tab")
+        XCTAssertEqual(editor.selectedRange(), NSRange(location: 0, length: 12), "All selected again")
         XCTAssertEqual(palette.suggestions.map(\.title), rowsBeforeTab, "With the same rows")
-        // ⌘Z steps back too: the query first, then out of the site's search.
+        XCTAssertEqual(palette.offeredSite?.name, "Amazon"); XCTAssertFalse(palette.siteHint.isSearching)
+        // ⌘Z steps back too: the search first, back to the address, then out of the site's search.
         editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
         editor.insertText("cable", replacementRange: editor.selectedRange())
         let window = try XCTUnwrap(browser.window as? BrowserWindow)
         let undo = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: window.windowNumber,
                                                   context: nil, characters: "z", charactersIgnoringModifiers: "z", isARepeat: false, keyCode: 6))
         XCTAssertTrue(window.performKeyEquivalent(with: undo))
-        XCTAssertEqual(palette.siteSearch?.name, "Amazon"); XCTAssertEqual(palette.input.stringValue, "")
+        XCTAssertEqual(palette.siteSearch?.name, "Amazon"); XCTAssertEqual(palette.input.stringValue, "amazon.co.uk")
         XCTAssertTrue(window.performKeyEquivalent(with: undo))
         XCTAssertNil(palette.siteSearch); XCTAssertEqual(palette.input.stringValue, "amazon.co.uk")
         editor.doCommand(by: #selector(NSResponder.insertTab(_:)))
         XCTAssertEqual(palette.siteSearch?.name, "Amazon")
         // Deleting past the start of the search goes back to the address, offering it again.
-        editor.selectAll(nil); editor.insertText("", replacementRange: editor.selectedRange())
+        editor.insertText("", replacementRange: editor.selectedRange())
+        XCTAssertEqual(palette.siteSearch?.name, "Amazon", "Clearing the field is still the site's search")
         editor.doCommand(by: #selector(NSResponder.deleteBackward(_:)))
         XCTAssertNil(palette.siteSearch)
         XCTAssertEqual(palette.input.stringValue, "amazon.co.uk"); XCTAssertEqual(palette.offeredSite?.name, "Amazon")

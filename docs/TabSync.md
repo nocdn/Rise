@@ -83,8 +83,9 @@ approval. Unsigned/test builds do not create a CloudKit container.
 
 Before shipping through TestFlight/App Store or Developer ID, deploy the `RiseTab`
 and `RiseSearches` schemas (`payload: Bytes`) to Production in CloudKit Console and sign both clients
-for Production. Local Release Mac builds deliberately use Development, matching
-the locally installed Debug iOS app. CloudKit environments have separate data.
+for Production. Local Release Mac builds deliberately use Development, and
+`scripts/ios.py` installs both iOS configurations with Development, so a Release
+build on the phone still syncs with the Mac. CloudKit environments have separate data.
 
 If a new app ID reports “Invalid bundle ID for container”, verify the container
 assignment and refresh automatic signing in Xcode. Apple's registration can take

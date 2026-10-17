@@ -76,18 +76,16 @@ final class ChromeFeedbackTests: XCTestCase {
         background.update(loading: false, progress: 1, theme: .neutral)
         try await Task.sleep(for: .milliseconds(80))
         let fill = try XCTUnwrap(background.layer?.sublayers?.first)
-        XCTAssertGreaterThan(try XCTUnwrap(fill.presentation()).bounds.width, 150)
+        XCTAssertGreaterThan(background.shownWidth, 150)
         background.update(loading: true, progress: 0.1, theme: .neutral)
-        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            let movement = try XCTUnwrap(fill.animation(forKey: "progress") as? CABasicAnimation)
-            XCTAssertEqual(try XCTUnwrap(movement.fromValue as? CGFloat), 0,
-                           "Do not animate backwards from the previous page's full-width background")
-            XCTAssertEqual(try XCTUnwrap(movement.toValue as? CGFloat), 21, accuracy: 0.001)
-        }
-        XCTAssertEqual(fill.position.x, 0)
+        XCTAssertLessThanOrEqual(background.shownWidth, 21.001,
+                                 "Do not move backwards from the previous page's full-width background")
         XCTAssertEqual(background.fraction, 0.1, accuracy: 0.001)
         try await Task.sleep(for: .milliseconds(80))
-        XCTAssertLessThan(try XCTUnwrap(fill.presentation()).bounds.width, 22)
+        XCTAssertLessThan(background.shownWidth, 22)
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertEqual(background.shownWidth, 21, accuracy: 0.5)
+        XCTAssertEqual(fill.position.x+fill.bounds.width, background.shownWidth, accuracy: 0.001)
         XCTAssertEqual(fill.opacity, 1)
     }
     @MainActor func testLateReadyEventDoesNotShimmerADifferentDestination() {

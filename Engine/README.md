@@ -47,6 +47,7 @@ The checkout lives outside the repo: `RISE_CHROMIUM_ROOT`, by default
 | `0003-rise-settings-sections.patch` | Chrome's settings leave out what Rise's pages don't use or Rise does its own way (Google sign-in, autofill and passwords, extensions, startup, performance, AI, Safety Check, downloads, and Appearance's rows for Chrome's own window) and the update status of Chrome's updater |
 | `0004-rise-settings-rows.patch` | Rise's own settings in Chrome's settings page: rows Rise describes (so a new Rise setting needs no engine change), at the end of Appearance, System and Privacy, and in new Tabs and AI sections, and Rise's mark for About Rise |
 | `0005-extension-install-prompt.patch` | Rise asks about extension installs in its own sheet in place of Chrome's dialog |
+| `0006-rise-site-search-settings.patch` | Settings' Site search section: the sites Tab searches from the address bar, added and edited by hand (name, search address, colour) or learned, kept by Rise and reached through `riseSettings.request` |
 
 `0002` is exported from the fork's tree with `git diff HEAD` over `base` and `chrome`, less the
 paths the other patches and `brand.py` own (see `Engine/fork-plan.md`); new files are added

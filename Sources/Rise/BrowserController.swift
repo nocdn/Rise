@@ -316,8 +316,9 @@ import RiseCore
             let button: ChromeButton
             if symbol == "arrow.left" || symbol == "arrow.right" {
                 button = HistoryArrowButton(direction: symbol == "arrow.left" ? .back : .forward, title: title, action: action)
+            } else if symbol == "arrow.clockwise" {
+                button = ReloadButton(title: title, action: action)
             } else { button = ChromeButton(symbol: symbol, size: 16, title: title, action: action) }
-            if symbol == "arrow.clockwise" { button.image = NavigationIcon.reload }
             toolbarHost.addSubview(button); toolbarButtons.append(button)
         }
         developerAddress.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
@@ -359,6 +360,7 @@ import RiseCore
         palette.queryChanged = { [weak self] text in self?.suggestions(for: text) ?? [] }
         palette.submit = { [weak self] text, suggestion in self?.submitAddress(text, suggestion: suggestion) }
         palette.learnedSite = { [weak self] text in self?.siteSearchLearner.searches.site(forAddress: text) }
+        palette.customSite = { [weak self] text in self?.siteSearchLearner.searches.customSite(forAddress: text) }
         siteSearchLearner.onLearn = { [weak self] in self?.scheduleSave() }
         palette.siteFavicon = { [weak self] url in
             guard let self else { return nil }
@@ -632,7 +634,7 @@ import RiseCore
         window?.title = (selectedTab?.title).map { "\($0) — Rise" } ?? "Rise"
         toolbarButtons[1].isEnabled = historyPage.map { canNavigate($0, .back) } ?? false
         toolbarButtons[2].isEnabled = historyPage.map { canNavigate($0, .forward) } ?? false
-        toolbarButtons[3].image = selectedTab?.isLoading == true ? NavigationIcon.stop : NavigationIcon.reload
+        (toolbarButtons[3] as? ReloadButton)?.setMode(selectedTab?.isLoading == true ? .stop : .reload)
         developerAddress.updateURL(selectedTab?.url?.absoluteString ?? "")
         errorSurface.isHidden = errorWebView == nil || errorWebView !== selectedTab?.page.view
         layoutChrome(); refreshTabSwitcher(); scheduleSave()
@@ -727,7 +729,7 @@ import RiseCore
         if let tab = selectedTab, tab.page.url == nil, let url = tab.requestedURL { tab.load(url) } else { selectedTab?.page.reloadIgnoringCache() }
         update()
     }
-    @objc func reload() { historySwipe.cancel(); errorWebView = nil; if selectedTab?.isLoading == true { selectedTab?.cancelLoad() } else if let tab = selectedTab, tab.page.url == nil, let url = tab.requestedURL { tab.load(url) } else { selectedTab?.page.reload() }; update() }
+    @objc func reload() { historySwipe.cancel(); errorWebView = nil; (toolbarButtons[3] as? ReloadButton)?.armAnimation(); if selectedTab?.isLoading == true { selectedTab?.cancelLoad() } else if let tab = selectedTab, tab.page.url == nil, let url = tab.requestedURL { tab.load(url) } else { selectedTab?.page.reload() }; update() }
     @objc func retry() { errorWebView = nil; if let url = selectedTab?.url { selectedTab?.load(url) }; update() }
     @objc func toggleSidebar() {
         if keepPeekedSidebar() { return }

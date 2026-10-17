@@ -90,4 +90,59 @@ final class LearnedSearchesTests: XCTestCase {
         XCTAssertEqual(a.merging(b), b.merging(a))
         XCTAssertEqual(a.merging(b).merging(a), a.merging(b))
     }
+    func testSitesSetUpByHandComeFirstKeepTheirColourAndOutlastLearningAndClearing() throws {
+        let file = storage(); defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let searches = LearnedSearches(storageURL: file)
+        // A well-known site renamed by hand, with %s for the search and a colour picked.
+        let domain = try searches.save(site: "https://www.amazon.com/", name: "Amz", template: "www.amazon.com/s?k=%s", color: "#ff9900")
+        XCTAssertEqual(domain, "amazon.com")
+        let amazon = try XCTUnwrap(searches.customSite(forAddress: "amazon.com"))
+        XCTAssertEqual(amazon.name, "Amz"); XCTAssertEqual(amazon.color, 0xFF9900)
+        XCTAssertEqual(amazon.searchURL(for: "usb c")?.absoluteString, "https://www.amazon.com/s?k=usb%20c")
+        XCTAssertThrowsError(try searches.save(site: "nope", name: "X", template: "https://nope/?q=%s", color: nil)) {
+            XCTAssertEqual($0 as? LearnedSearches.EditError, .site)
+        }
+        XCTAssertThrowsError(try searches.save(site: "shop.example", name: "", template: "https://shop.example/?q=%s", color: nil))
+        XCTAssertThrowsError(try searches.save(site: "shop.example", name: "Shop", template: "https://elsewhere.example/?q=%s", color: nil)) {
+            XCTAssertEqual($0 as? LearnedSearches.EditError, .template, "Another site's search")
+        }
+
+        // Learned, then edited: it moves to the hand-set ones, and learning no longer changes it.
+        XCTAssertTrue(searches.learn(from: URL(string: "https://lamps.example/find?term=floor")!, terms: ["floor"], name: "Lamp Shop"))
+        XCTAssertNil(searches.customSite(forAddress: "lamps.example"))
+        try searches.save(site: "lamps.example", name: "Lamps", template: "https://lamps.example/find?term=%s", color: nil, replacing: "lamps.example")
+        XCTAssertEqual(searches.customSite(forAddress: "lamps.example")?.name, "Lamps")
+        searches.learn(from: URL(string: "https://lamps.example/results?q=desk")!, terms: ["desk"], name: "Lamp Shop")
+        XCTAssertEqual(searches.searches["lamps.example"]?.template, "https://lamps.example/find?term={q}")
+        // Changing its address replaces the old one.
+        try searches.save(site: "lamps.example.com", name: "Lamps", template: "https://lamps.example.com/?q=%s", color: nil, replacing: "lamps.example")
+        XCTAssertNil(searches.searches["lamps.example"]); XCTAssertNotNil(searches.searches["lamps.example.com"])
+
+        // Clearing history forgets what was learned, not what was set up.
+        XCTAssertTrue(searches.learn(from: URL(string: "https://shop.example/search?q=usb")!, terms: ["usb"], name: nil))
+        try searches.clear()
+        XCTAssertNil(searches.site(forAddress: "shop.example"))
+        XCTAssertEqual(searches.customSite(forAddress: "amazon.com")?.name, "Amz")
+        try searches.save()
+        XCTAssertEqual(LearnedSearches(storageURL: file).customSite(forAddress: "amazon.com")?.color, 0xFF9900, "Kept across launches")
+    }
+    func testARemovedSiteStaysRemovedOnEveryDeviceUntilItIsLearnedAgain() throws {
+        let file = storage(); defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let searches = LearnedSearches(storageURL: file)
+        let start = Date(timeIntervalSince1970: 1_000_000)
+        searches.learn(from: URL(string: "https://shop.example/search?q=usb")!, terms: ["usb"], name: nil, at: start)
+        let offline = searches.snapshot
+        searches.remove(site: "shop.example", at: start.addingTimeInterval(10))
+        XCTAssertNil(searches.site(forAddress: "shop.example"))
+        // A device that still has it doesn't bring it back.
+        searches.merge(offline)
+        XCTAssertNil(searches.site(forAddress: "shop.example"))
+        XCTAssertNil(offline.merging(searches.snapshot).searches["shop.example"])
+        // Older data without removals still decodes.
+        let legacy = Data(#"{"searches":{}}"#.utf8)
+        XCTAssertEqual(try JSONDecoder().decode(LearnedSearches.Snapshot.self, from: legacy).removed, [:])
+        // Searching on it again learns it again.
+        searches.learn(from: URL(string: "https://shop.example/search?q=lamp")!, terms: ["lamp"], name: nil, at: start.addingTimeInterval(20))
+        XCTAssertNotNil(searches.site(forAddress: "shop.example"))
+    }
 }

@@ -52,11 +52,27 @@ class FadingTextField: NSTextField {
     }
 }
 
+/// The tab's loading sweep: a solid band where the load has reached, with a gradient trailing
+/// behind it to the left, as long as the tab, slid in from the left as the page loads. The front
+/// follows the progress on a spring, frame by frame, keeping its speed as each new report comes:
+/// restarting an ease for every report stalled it at each one, which read as flickering.
 final class TabLoadingBackground: FlippedView {
+    /// The solid band at the front, in points.
+    static let head: CGFloat = 12
+    /// How far past the tab's end a finished load's front carries on, out of sight, so it
+    /// doesn't slow to a stop at the end; it fades from the moment it reaches it.
+    static let overrun: CGFloat = 48
     private let fillLayer = CAGradientLayer()
     private(set) var loading = false
     private(set) var fraction: CGFloat = 0
-    private var finishWork: DispatchWorkItem?
+    /// The load finished: the sweep fades once its front reaches the tab's end.
+    private var fadesAtEnd = false
+    /// Where the front is, how fast it's moving there, and where it's going, in points.
+    private var front: CGFloat = 0, speed: CGFloat = 0, target: CGFloat = 0
+    private var link: CADisplayLink?
+    private var lastTick: CFTimeInterval = 0
+    /// The spring's angular frequency: critically damped, it settles in about half a second.
+    static let stiffness: CGFloat = 11
     init() {
         super.init(frame: .zero); wantsLayer = true
         layer?.cornerRadius = 12; layer?.cornerCurve = .continuous; layer?.masksToBounds = true
@@ -73,14 +89,13 @@ final class TabLoadingBackground: FlippedView {
         if loading || fillLayer.colors == nil {
             CATransaction.begin(); CATransaction.setDisableActions(true)
             let color = hard ? Self.hardReloadColor : theme.accent
-            fillLayer.colors = [0.07, 0.11, 0.16, 0].map { color.withAlphaComponent($0).cgColor }
-            fillLayer.locations = [0, 0.65, 0.9, 1]
+            fillLayer.colors = [0.03, 0.16, 0.16].map { color.withAlphaComponent($0).cgColor }
             CATransaction.commit()
         }
         if loading {
             let starting = !self.loading
             if starting {
-                finishWork?.cancel(); finishWork = nil
+                fadesAtEnd = false
                 fillLayer.removeAllAnimations(); fraction = 0
                 setWidth(0, animated: false)
                 fillLayer.opacity = 1
@@ -89,47 +104,75 @@ final class TabLoadingBackground: FlippedView {
             let next = max(fraction, min(0.97, max(0.07, CGFloat(progress))))
             if next != fraction {
                 fraction = next
-                // A removed animation's presentation layer can still show the last
-                // load for this transaction. A new load always grows from the left.
+                // A new load always grows from the left, not from the last one's full width.
                 setWidth(bounds.width * fraction, animated: true, from: starting ? 0 : nil)
-            }
-            if fraction >= 0.8, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
-               fillLayer.animation(forKey: "waiting") == nil {
-                let pulse = CABasicAnimation(keyPath: "opacity")
-                pulse.fromValue = 0.6; pulse.toValue = 1; pulse.duration = 1.4
-                pulse.autoreverses = true; pulse.repeatCount = .infinity
-                pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                fillLayer.add(pulse, forKey: "waiting")
             }
         } else if self.loading {
             self.loading = false; fraction = 1
-            fillLayer.removeAnimation(forKey: "waiting")
-            setWidth(bounds.width, animated: true)
-            let work = DispatchWorkItem { [weak self] in
-                guard let self, !self.loading else { return }
-                let fade = CABasicAnimation(keyPath: "opacity")
-                fade.fromValue = self.fillLayer.presentation()?.opacity ?? 1; fade.toValue = 0
-                fade.duration = 0.35; fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                self.fillLayer.opacity = 0; self.fillLayer.add(fade, forKey: "finish")
-            }
-            finishWork = work; DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: work)
+            fadesAtEnd = true
+            setWidth(bounds.width+Self.overrun, animated: true)
         }
+    }
+    private func fadeOut() {
+        fadesAtEnd = false
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = fillLayer.presentation()?.opacity ?? 1; fade.toValue = 0
+        fade.duration = 0.35; fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        fillLayer.opacity = 0; fillLayer.add(fade, forKey: "finish")
     }
     override func layout() {
         super.layout()
-        setWidth(bounds.width * fraction, animated: false)
-    }
-    private func setWidth(_ width: CGFloat, animated: Bool, from startWidth: CGFloat? = nil) {
-        let old = startWidth ?? fillLayer.presentation()?.bounds.width ?? fillLayer.bounds.width
+        // The tab's length of colour, strengthening to the solid band at its front.
+        let length = bounds.width
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        fillLayer.position = .zero; fillLayer.bounds = CGRect(x: 0, y: 0, width: width, height: bounds.height)
+        fillLayer.bounds = CGRect(x: 0, y: 0, width: length, height: bounds.height)
+        let band = 1-min(1, Self.head/max(1, length))
+        fillLayer.locations = [0, band, 1].map { NSNumber(value: Double($0)) }
         CATransaction.commit()
-        if animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            let movement = CABasicAnimation(keyPath: "bounds.size.width")
-            movement.fromValue = old; movement.toValue = width; movement.duration = 0.4
-            movement.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            fillLayer.add(movement, forKey: "progress")
+        // A resize moves where the front is headed; one already moving keeps going.
+        let width = loading ? bounds.width * fraction : fraction >= 1 ? length+Self.overrun : 0
+        if link != nil { target = width; front = min(front, width); place() } else { setWidth(width, animated: false) }
+    }
+    /// How far from the left the colour reaches now, for checks.
+    var shownWidth: CGFloat { front }
+    /// Sends the front of the band to `width` from the left: the colour shown so far.
+    private func setWidth(_ width: CGFloat, animated: Bool, from startWidth: CGFloat? = nil) {
+        target = width
+        if let startWidth { front = startWidth; speed = 0 }
+        // Off any screen, no frames come to move it: it goes there at once.
+        guard animated, window?.screen != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            front = width; speed = 0; stopFollowing(); place(); return
         }
+        if link == nil {
+            let link = displayLink(target: self, selector: #selector(follow(_:)))
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+            link.add(to: .main, forMode: .common); self.link = link; lastTick = CACurrentMediaTime()
+        }
+        place()
+    }
+    @objc private func follow(_ link: CADisplayLink) {
+        let now = CACurrentMediaTime(), dt = CGFloat(min(1.0/30, max(0, now-lastTick))); lastTick = now
+        // The exact step of a critically damped spring towards the target.
+        let omega = Self.stiffness, offset = front-target, decay = exp(-omega*dt)
+        let carried = speed+omega*offset
+        front = target+(offset+carried*dt)*decay
+        speed = (speed-omega*carried*dt)*decay
+        // Never past where it's going. With speed only ever towards a target that only moves
+        // on, the critically damped front doesn't turn back.
+        if front >= target { front = target; speed = 0 }
+        if abs(front-target) < 0.25, abs(speed) < 2 { front = target; speed = 0; stopFollowing() }
+        place()
+    }
+    private func stopFollowing() { link?.invalidate(); link = nil }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil, link != nil { front = target; speed = 0; stopFollowing(); place() }
+    }
+    private func place() {
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        fillLayer.position = CGPoint(x: front-fillLayer.bounds.width, y: 0)
+        CATransaction.commit()
+        if fadesAtEnd, front >= bounds.width { fadeOut() }
     }
 }
 

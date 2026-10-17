@@ -73,7 +73,98 @@ import AppKit
         var target = URLComponents(url: url, resolvingAgainstBaseURL: false)
         var origin = source.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }
         target?.fragment = nil; origin?.fragment = nil
-        return target?.url != origin?.url
+        return target?.url != origin?.url && !looksLikeAnAction(url)
+    }
+
+    // MARK: Smart filter
+
+    /// Words naming something a link does rather than a page it shows: loading one ahead could sign
+    /// out, delete, vote, buy, or spend a one-time link. Missing out on a preload costs little, so
+    /// the list leans wide. Matched against whole words, and pairs and triples run together, so
+    /// "sign-out", "signOut" and "add_to_cart" are caught as well as "logout".
+    nonisolated static let actionWords: Set<String> = [
+        // Signing out, in English and the languages Rise is most used in.
+        "logout", "logoff", "signout", "signoff", "loggaut", "abmelden", "ausloggen", "deconnexion", "deconnecter",
+        "cerrarsesion", "wyloguj", "wylogowanie", "wylogujsie", "uitloggen", "esci", "disconnetti",
+        // Removing things, and taking back access.
+        "delete", "remove", "destroy", "erase", "purge", "trash", "discard", "revoke", "deactivate", "disable",
+        "disconnect", "unlink", "unpair", "deauthorize", "usun", "loschen", "entfernen", "supprimer", "eliminar", "borrar",
+        "rimuovi", "elimina", "verwijderen", "kasuj", "wypisz",
+        // Leaving, cancelling and unsubscribing.
+        "unsubscribe", "unsub", "optout", "cancel", "leave", "abbestellen", "desabonner", "desinscribir", "anuluj", "rezygnuj",
+        // Votes, follows and other marks on someone else's page. Words as common in addresses of pages
+        // ("star", "report", "block") are left to the one-time keys such links carry.
+        "vote", "upvote", "downvote", "unvote", "unlike", "dislike", "unfollow", "subscribe", "fave", "unfave",
+        "favorite", "favourite", "unfavorite", "unfavourite", "unstar", "unbookmark", "unblock", "mute", "unmute", "unhide", "unflag",
+        // Answering requests and changing state.
+        "approve", "reject", "accept", "decline", "confirm", "verify", "verification", "activate", "activation", "reset",
+        "restore", "undo", "clear", "empty", "dismiss", "snooze", "toggle", "markread", "markasread", "markallread",
+        "markunread", "markallasread", "markseen", "submit", "publish", "unpublish", "impersonate", "sudo",
+        // Paying.
+        "checkout", "purchase", "buynow", "pay", "paynow", "addtocart", "addtobasket", "addtobag", "placeorder",
+        "oneclick",
+        // Signing in elsewhere, which a preload could complete or spend.
+        "oauth", "oauth2", "authorize", "authorise", "callback", "sso", "saml", "openid", "magiclink",
+        // Files, which download rather than open.
+        "download",
+    ]
+    /// Query keys holding a one-time or secret value, which says the link acts for the user.
+    nonisolated static let secretKeys: Set<String> = [
+        "auth", "token", "csrf", "xsrf", "nonce", "wpnonce", "sig", "signature", "otp", "hmac", "ticket", "magic", "key",
+        "accesstoken", "idtoken", "authtoken", "authenticitytoken", "csrftoken", "xsrftoken", "requestverificationtoken",
+        "confirmationtoken", "resettoken", "invitetoken", "unsubscribetoken", "sessionid",
+    ]
+    /// Files that download rather than show a page.
+    nonisolated static let fileExtensions: Set<String> = [
+        "zip", "dmg", "pkg", "exe", "msi", "iso", "img", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar", "apk", "ipa", "deb",
+        "rpm", "appimage", "mp4", "mov", "mkv", "avi", "webm", "mp3", "wav", "flac", "m4a", "pdf", "psd", "torrent", "ics", "vcf",
+    ]
+    /// A word's lowercase parts, split at punctuation and camel case, without accents.
+    nonisolated static func words(_ text: String) -> [String] {
+        let folded = text.folding(options: [.diacriticInsensitive, .widthInsensitive], locale: nil)
+        var words: [String] = [], current = ""
+        var previous: Character?
+        for character in folded {
+            if character.isLetter || character.isNumber {
+                // camelCase starts a new word.
+                if let previous, (previous.isLowercase && character.isUppercase) { words.append(current); current = "" }
+                current.append(character)
+            } else if !current.isEmpty { words.append(current); current = "" }
+            previous = character
+        }
+        if !current.isEmpty { words.append(current) }
+        return words.map { $0.lowercased() }
+    }
+    /// Whether `words` hold an action word, alone or run together with the next one or two.
+    nonisolated static func namesAnAction(_ words: [String]) -> Bool {
+        for index in words.indices {
+            if actionWords.contains(words[index]) { return true }
+            if index+1 < words.count, actionWords.contains(words[index]+words[index+1]) { return true }
+            if index+2 < words.count, actionWords.contains(words[index]+words[index+1]+words[index+2]) { return true }
+        }
+        // "mark all as read", "mark-spam" and the like.
+        return words.contains("mark") && !Set(words).isDisjoint(with: ["read", "unread", "seen", "unseen", "spam", "done", "complete"])
+    }
+    /// A link that does something rather than shows a page: signing out, deleting, voting,
+    /// confirming, paying, a one-time or signed link, an OAuth step, or a file to download.
+    nonisolated static func looksLikeAnAction(_ url: URL) -> Bool {
+        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return true }
+        let path = parts.percentEncodedPath.removingPercentEncoding ?? parts.percentEncodedPath
+        let segments = path.split(separator: "/").map(String.init)
+        if let last = segments.last, let dot = last.lastIndex(of: "."),
+           fileExtensions.contains(last[last.index(after: dot)...].lowercased()) { return true }
+        if namesAnAction(segments.flatMap(words)) { return true }
+        let items = parts.queryItems ?? []
+        let keys = items.map { $0.name.lowercased().filter { $0.isLetter || $0.isNumber } }
+        if keys.contains(where: { key in secretKeys.contains(key) || key.hasSuffix("token") || key.hasSuffix("nonce") || key.hasPrefix("csrf") }) { return true }
+        // An OAuth or sign-in redirect hands over a code with its state.
+        if keys.contains("code") && keys.contains("state") { return true }
+        // The keys, and values naming the action, as in ?action=delete or ?logout.
+        if namesAnAction(items.flatMap { words($0.name) }) { return true }
+        let actionKeys: Set<String> = ["action", "do", "cmd", "command", "op", "operation", "method", "task", "mode", "act", "how", "type"]
+        if items.contains(where: { actionKeys.contains($0.name.lowercased()) && namesAnAction(words($0.value ?? "")) }) { return true }
+        // A method other than GET, spelled out in the address.
+        return items.contains { ["method", "_method"].contains($0.name.lowercased()) && $0.value?.lowercased() != "get" }
     }
     nonisolated static func cacheKey(_ url: URL) -> URL {
         var parts = URLComponents(url: url, resolvingAgainstBaseURL: false)
@@ -88,7 +179,9 @@ import AppKit
         onComplete?(url)
     }
 
-    static let hoverScript = #"""
+    static let hoverScript = hoverScriptSource.replacingOccurrences(of: "ACTION_WORDS",
+        with: "[" + actionWords.sorted().map { "'\($0)'" }.joined(separator: ",") + "]")
+    private static let hoverScriptSource = #"""
     (() => {
         globalThis.riseLinkPreload?.dispose();
         let timer = null, hovered = null;
@@ -100,8 +193,24 @@ import AppKit
         };
         const linkAt = event => event.composedPath().find(node =>
             node instanceof Element && node.matches('a[href], area[href]'));
+        // The smart filter's element half: links that say they act, by their words or by asking
+        // for another method or a confirmation, as Rails and Turbo links do. Rise checks the address.
+        const actionWords = new Set(ACTION_WORDS);
+        const words = text => (text || '').slice(0, 200).normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+            .replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+        const namesAnAction = list => list.some((word, i) => actionWords.has(word) ||
+            (i+1 < list.length && actionWords.has(word+list[i+1])) ||
+            (i+2 < list.length && actionWords.has(word+list[i+1]+list[i+2])));
+        const acts = link => {
+            const method = (link.dataset.method || link.dataset.turboMethod || link.dataset.httpMethod || 'get').toLowerCase();
+            if (method !== 'get') return true;
+            if (link.hasAttribute('data-confirm') || link.hasAttribute('data-turbo-confirm')) return true;
+            const said = [link.innerText, link.getAttribute('aria-label'), link.title, link.id,
+                typeof link.className === 'string' ? link.className : ''].join(' ');
+            return namesAnAction(words(said));
+        };
         const eligible = link => {
-            if (!link || link.hasAttribute('download')) return null;
+            if (!link || link.hasAttribute('download') || acts(link)) return null;
             try {
                 const url = new URL(link.href, document.baseURI);
                 if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return null;

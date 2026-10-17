@@ -46,7 +46,10 @@ def main():
     command = ["xcodebuild", "-project", str(PROJECT), "-scheme", "RiseiOS",
                "-configuration", args.configuration, "-destination", destination,
                "-derivedDataPath", str(derived_data), "-allowProvisioningUpdates",
-               "-allowProvisioningDeviceRegistration"]
+               "-allowProvisioningDeviceRegistration",
+               # Local installs share the Mac's Development iCloud data, even as Release builds;
+               # only distribution builds use Production, which has its own data (docs/TabSync.md).
+               "RISE_CLOUDKIT_ENVIRONMENT=Development"]
     if args.team:
         command.append("DEVELOPMENT_TEAM=" + args.team)
     run(*command, "test" if args.action == "test" else "build")

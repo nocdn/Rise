@@ -25,6 +25,5 @@ xcrun actool "$PWD/Assets/AppIcon/Rise.icon" --compile "$APP/Contents/Resources"
   --minimum-deployment-target 14.0 --output-format human-readable-text --errors > /dev/null
 # The engine's framework, with its helper apps, as Chromium.app has it.
 rsync -a --delete "$FRAMEWORK/" "$APP/Contents/Frameworks/Chromium Framework.framework/"
-codesign --force --deep --sign - "$APP/Contents/Frameworks/Chromium Framework.framework" 2> /dev/null
 python3 scripts/sign-app.py "$APP"
 echo "Built $APP"

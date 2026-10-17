@@ -7,17 +7,36 @@ public final class LearnedSearches {
     public struct Search: Codable, Equatable {
         public var name: String
         public var template: String
+        /// When it was learned, or last changed in Settings: the newest wins between devices.
         public var learned: Date
+        /// Added or changed in Settings. Learning doesn't replace it, nor does clearing history.
+        public var manual: Bool?
+        /// A colour picked in Settings, as "#RRGGBB"; without one, the name takes its icon's colour.
+        public var color: String?
+        public init(name: String, template: String, learned: Date, manual: Bool? = nil, color: String? = nil) {
+            self.name = name; self.template = template; self.learned = learned; self.manual = manual; self.color = color
+        }
+        public var isManual: Bool { manual == true }
     }
-    /// A clear is a durable tombstone, so an offline device cannot restore deleted templates.
+    /// A clear, and each removal, is a durable tombstone, so an offline device cannot restore
+    /// deleted templates.
     public struct Snapshot: Codable, Equatable {
         public var searches: [String: Search]
         public var clearedAt: Date?
-        public init(searches: [String: Search] = [:], clearedAt: Date? = nil) {
-            self.searches = searches; self.clearedAt = clearedAt
+        /// Sites removed in Settings, by domain, with when.
+        public var removed: [String: Date]
+        public init(searches: [String: Search] = [:], clearedAt: Date? = nil, removed: [String: Date] = [:]) {
+            self.searches = searches; self.clearedAt = clearedAt; self.removed = removed
+        }
+        public init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            searches = try container.decode([String: Search].self, forKey: .searches)
+            clearedAt = try container.decodeIfPresent(Date.self, forKey: .clearedAt)
+            removed = try container.decodeIfPresent([String: Date].self, forKey: .removed) ?? [:]
         }
         public func merging(_ other: Snapshot) -> Snapshot {
             let cleared = [clearedAt, other.clearedAt].compactMap { $0 }.max()
+            var removals = removed.merging(other.removed, uniquingKeysWith: max)
             var values = searches
             for (domain, incoming) in other.searches {
                 guard LearnedSearches.valid(incoming, for: domain) else { continue }
@@ -29,11 +48,21 @@ public final class LearnedSearches {
                 }
                 values[domain] = incoming
             }
-            values = values.filter { LearnedSearches.valid($0.value, for: $0.key) && (cleared == nil || $0.value.learned > cleared!) }
+            // Clearing history leaves the sites set up by hand; removing one takes it out either way.
+            values = values.filter { domain, search in
+                LearnedSearches.valid(search, for: domain) && (search.isManual || cleared == nil || search.learned > cleared!) &&
+                    (removals[domain].map { search.learned > $0 } ?? true)
+            }
+            removals = removals.filter { values[$0.key] == nil }
+            if removals.count > LearnedSearches.maximumSearches {
+                removals = Dictionary(uniqueKeysWithValues: removals.sorted { $0.value > $1.value }.prefix(LearnedSearches.maximumSearches).map { ($0.key, $0.value) })
+            }
+            // Sites set up by hand are kept first.
             let keep = values.sorted {
-                $0.value.learned == $1.value.learned ? $0.key < $1.key : $0.value.learned > $1.value.learned
+                if $0.value.isManual != $1.value.isManual { return $0.value.isManual }
+                return $0.value.learned == $1.value.learned ? $0.key < $1.key : $0.value.learned > $1.value.learned
             }.prefix(LearnedSearches.maximumSearches)
-            return Snapshot(searches: Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) }), clearedAt: cleared)
+            return Snapshot(searches: Dictionary(uniqueKeysWithValues: keep.map { ($0.key, $0.value) }), clearedAt: cleared, removed: removals)
         }
     }
     public static let maximumSearches = 500
@@ -41,7 +70,8 @@ public final class LearnedSearches {
     /// By the domain typed for the site, without "www.".
     public private(set) var searches: [String: Search] = [:]
     public private(set) var clearedAt: Date?
-    public var snapshot: Snapshot { Snapshot(searches: searches, clearedAt: clearedAt) }
+    public private(set) var removed: [String: Date] = [:]
+    public var snapshot: Snapshot { Snapshot(searches: searches, clearedAt: clearedAt, removed: removed) }
     private var dirty = false
 
     public init(storageURL: URL) {
@@ -51,7 +81,7 @@ public final class LearnedSearches {
                 (try? JSONDecoder().decode([String: Search].self, from: data)).map { Snapshot(searches: $0) }
             if let saved {
                 let bounded = Snapshot().merging(saved)
-                searches = bounded.searches; clearedAt = bounded.clearedAt
+                searches = bounded.searches; clearedAt = bounded.clearedAt; removed = bounded.removed
             }
         }
     }
@@ -67,23 +97,100 @@ public final class LearnedSearches {
                             learned: max(date, clearedAt?.addingTimeInterval(0.001) ?? date))
         guard Self.valid(search, for: domains[0]) else { return false }
         for (index, domain) in domains.enumerated() {
+            // A site set up by hand keeps that.
+            if searches[domain]?.isManual == true { continue }
             // A domain whose own pages have a search keeps it over a subdomain's.
             if index > 0, let existing = searches[domain], Self.searchesItself(existing, domain) { continue }
             if searches[domain] != search { searches[domain] = search; dirty = true }
         }
         if searches.count > Self.maximumSearches {
-            for (domain, _) in searches.sorted(by: { $0.value.learned < $1.value.learned }).prefix(searches.count-Self.maximumSearches) {
+            for (domain, _) in searches.filter({ !$0.value.isManual }).sorted(by: { $0.value.learned < $1.value.learned })
+                .prefix(searches.count-Self.maximumSearches) {
                 searches[domain] = nil
             }
         }
         return true
     }
 
-    /// The learned site whose address `text` is exactly.
+    /// The learned or hand-set site whose address `text` is exactly.
     public func site(forAddress text: String) -> PopularSite? {
         let domain = PopularSites.domain(ofAddress: text)
         guard let search = searches[domain] else { return nil }
-        return PopularSite(name: search.name, domain: domain, search: search.template, color: nil)
+        return PopularSite(name: search.name, domain: domain, search: search.template, color: search.color.flatMap(Self.colorValue))
+    }
+    /// A site set up by hand, which comes before even the well-known sites Rise searches itself.
+    public func customSite(forAddress text: String) -> PopularSite? {
+        guard searches[PopularSites.domain(ofAddress: text)]?.isManual == true else { return nil }
+        return site(forAddress: text)
+    }
+
+    // MARK: Settings
+
+    public enum EditError: Error, Equatable, CustomStringConvertible {
+        case site, name, template
+        public var description: String {
+            switch self {
+            case .site: "Enter a site's address, such as amazon.com"
+            case .name: "Enter a name of up to 40 characters"
+            case .template: "Enter the site's search address, with %s where the search goes"
+            }
+        }
+        /// The setting it's about, as Settings' page names its field.
+        public var field: String {
+            switch self {
+            case .site: "site"
+            case .name: "name"
+            case .template: "template"
+            }
+        }
+    }
+    /// The domain Settings keeps a site under: `text` as an address, without "www.".
+    public static func domain(forSite text: String) -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty, !trimmed.contains(where: { $0.isWhitespace }) else { return nil }
+        let host = URL(string: trimmed.contains("://") ? trimmed : "https://" + trimmed)?.host ?? trimmed
+        let domain = PopularSites.domain(ofAddress: host)
+        return domain.contains(".") && !domain.hasPrefix(".") && !domain.hasSuffix(".") ? domain : nil
+    }
+    /// What Settings starts a site with: the search Rise knows for it, well-known or learned.
+    public func defaults(forSite text: String) -> (domain: String, name: String, template: String)? {
+        guard let domain = Self.domain(forSite: text) else { return nil }
+        if let search = searches[domain] { return (domain, search.name, search.template) }
+        if let site = PopularSites.site(forAddress: domain), let search = site.search {
+            let language = Locale.current.language.languageCode?.identifier ?? "en"
+            return (domain, site.name, search.replacingOccurrences(of: "{domain}", with: site.domain)
+                .replacingOccurrences(of: "{language}", with: language))
+        }
+        let word = domain.split(separator: ".").first.map(String.init) ?? domain
+        return (domain, word.prefix(1).uppercased() + word.dropFirst(), "")
+    }
+    /// Sets up a site by hand, or changes one (moving a learned one to the hand-set ones),
+    /// replacing `original` if its address changed. `%s` stands for the search as `{q}` does.
+    @discardableResult public func save(site text: String, name: String, template: String, color: String?, replacing original: String? = nil,
+                                        at date: Date = Date()) throws -> String {
+        guard let domain = Self.domain(forSite: text) else { throw EditError.site }
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name.count <= 40 else { throw EditError.name }
+        var template = template.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "%s", with: "{q}")
+        if !template.isEmpty, !template.contains("://") { template = "https://" + template }
+        let color = color.flatMap { Self.colorValue($0) != nil ? $0.uppercased() : nil }
+        let stamp = max(date, clearedAt?.addingTimeInterval(0.001) ?? date, (searches.values.map(\.learned).max() ?? .distantPast).addingTimeInterval(0.001))
+        let search = Search(name: name, template: template, learned: stamp, manual: true, color: color)
+        guard Self.valid(search, for: domain) else { throw EditError.template }
+        if let original, let old = Self.domain(forSite: original), old != domain { remove(site: old, at: stamp) }
+        searches[domain] = search; removed[domain] = nil; dirty = true
+        return domain
+    }
+    /// Takes a site out, for every device: learned again, it comes back.
+    public func remove(site text: String, at date: Date = Date()) {
+        guard let domain = Self.domain(forSite: text), let search = searches[domain] else { return }
+        searches[domain] = nil
+        removed[domain] = max(date, search.learned); dirty = true
+    }
+    /// "#RRGGBB" as a number.
+    public static func colorValue(_ hex: String) -> UInt32? {
+        guard hex.count == 7, hex.hasPrefix("#") else { return nil }
+        return UInt32(hex.dropFirst(), radix: 16)
     }
 
     /// `url` with the parameter, or else the path segment, holding a searched-for term as `{q}`.
@@ -141,7 +248,7 @@ public final class LearnedSearches {
     @discardableResult public func merge(_ incoming: Snapshot) -> Bool {
         let merged = snapshot.merging(incoming)
         guard merged != snapshot else { return false }
-        searches = merged.searches; clearedAt = merged.clearedAt; dirty = true
+        searches = merged.searches; clearedAt = merged.clearedAt; removed = merged.removed; dirty = true
         return true
     }
     /// The page's own name for its site, or else its domain's main word ("Onet" for szukaj.onet.pl).
@@ -152,10 +259,11 @@ public final class LearnedSearches {
         return word.prefix(1).uppercased() + word.dropFirst()
     }
 
+    /// Forgets what was learned; sites set up by hand stay.
     public func clear() throws {
         let previous = snapshot
-        clearedAt = max(Date(), searches.values.map(\.learned).max() ?? .distantPast)
-        searches = [:]; dirty = true
+        clearedAt = max(Date(), searches.values.filter { !$0.isManual }.map(\.learned).max() ?? .distantPast)
+        searches = searches.filter { $0.value.isManual }; dirty = true
         do { try save() }
         catch { searches = previous.searches; clearedAt = previous.clearedAt; dirty = true; throw error }
     }

@@ -135,6 +135,10 @@ def main():
     info_path.write_bytes(plistlib.dumps(info))
     embedded = app / "Contents/embedded.provisionprofile"
     command = ["codesign", "--force", "--sign", identity]
+    # The engine's framework, with its helper apps, signed as the app is: under the hardened runtime,
+    # the app only loads a framework signed by its own team.
+    for framework in (app / "Contents/Frameworks").glob("*.framework"):
+        subprocess.run([*command, "--deep", str(framework)], check=True, stderr=subprocess.DEVNULL)
     if profile_file:
         if profile_file.resolve() != embedded.resolve():
             shutil.copyfile(profile_file, embedded)

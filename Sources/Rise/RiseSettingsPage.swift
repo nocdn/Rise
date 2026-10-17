@@ -133,6 +133,7 @@ import RiseChromium
             case "run":
                 if let key = body["key"] as? String { self.runRiseSetting(key) }
                 reply(true, nil)
+            case "siteSearch": self.handleSiteSearchRequest(body, from: message.page, reply: reply)
             default: reply(nil, "Unknown request")
             }
         }
@@ -152,6 +153,8 @@ import RiseChromium
         rows: section => send({kind: 'rows', section}),
         set: (key, value) => send({kind: 'set', key, value}),
         run: key => send({kind: 'run', key}),
+        // Requests for sections with their own controls, such as Site search.
+        request: (kind, body) => send({...body, kind}),
       });
       dispatchEvent(new Event('rise-settings-ready'));
     })();
