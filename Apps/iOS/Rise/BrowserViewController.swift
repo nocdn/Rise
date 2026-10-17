@@ -87,6 +87,13 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     let panelMotion = PanelMotion()
     #if DEBUG
     var onPanelCloseCommit: (() -> Void)?
+    /// How far below the bar's drawn bottom edge the underfill reaches, as drawn.
+    var bottomBarUnderfillCoverage: Double {
+        let bar = bottomBar.layer.presentation()?.frame ?? bottomBar.frame
+        let fill = bottomBarUnderfill.layer.presentation()?.frame ?? bottomBarUnderfill.frame
+        guard fill.minY <= bar.maxY+0.5 else { return 0 }
+        return Double(max(0, fill.maxY-bar.maxY))
+    }
     #endif
     private(set) var downloadsSheet = DownloadsSheetState()
     private var historyReturnPanel: BottomBar.Panel?

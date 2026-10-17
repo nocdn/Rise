@@ -43,6 +43,12 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             HomeScreenActionsAudit.run(in: controller)
             return
         }
+        if ProcessInfo.processInfo.arguments.contains(PanelCloseGapAudit.argument) {
+            let controller = BrowserViewController(startURL: nil)
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            PanelCloseGapAudit.run(in: controller)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains(PanelMotionAudit.argument) {
             let controller = BrowserViewController(startURL: nil)
             window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()

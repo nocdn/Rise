@@ -117,8 +117,16 @@ import UIKit
         for index in 0...4 { select(index) }
         try check("two-finger-selection-enters-mode-and-selects-each-crossed-row", panel.isSelecting && list.isRangeSelecting
                   && panel.selected == Set(urls.prefix(5).map(\.absoluteString)) && opened == 0)
+        try await wait()
         deselect(4); deselect(3)
         try check("reversing-the-range-deselects-only-the-rows-leaving-it", panel.selected == Set(urls.prefix(3).map(\.absoluteString)))
+        try await wait(30)
+        let fadingChecks = [cell(3), cell(4)].compactMap { $0.checkbox.subviews.first }
+        try check("unchecking-empties-the-circle-at-once-and-fades-the-blue-check", fadingChecks.count == 2
+                  && [cell(3), cell(4)].allSatisfy { $0.checkbox.tintColor == .tertiaryLabel }
+                  && fadingChecks.allSatisfy { ($0.layer.presentation()?.opacity ?? 1) < 1 && $0.tintColor == SiteSettingsPanel.switchBlue })
+        try await wait(200)
+        try check("the-fading-check-is-gone-within-a-fifth-of-a-second", cell(3).checkbox.subviews.isEmpty && cell(4).checkbox.subviews.isEmpty)
         let newURL = URL(string: "https://history.invalid/new-arrival")!
         source.history.record(newURL, title: "A new visit", at: Date(timeIntervalSince1970: 2_000_000_001))
         panel.reload()

@@ -76,10 +76,32 @@ final class PanelSelectionIndicator: UIImageView {
         isAccessibilityElement = false
     }
     required init?(coder: NSCoder) { fatalError() }
+    /// The filled check fading out over the empty circle as it's unchecked.
+    private var fading: UIImageView?
     func setChecked(_ checked: Bool, animated: Bool) {
         let image = UIImage(systemName: checked ? "checkmark.circle.fill" : "circle")!
-        if animated, !UIAccessibility.isReduceMotionEnabled {
+        let wasChecked = tintColor == SiteSettingsPanel.switchBlue
+        fading?.removeFromSuperview(); fading = nil
+        if checked, animated, !UIAccessibility.isReduceMotionEnabled {
             setSymbolImage(image, contentTransition: .replace)
+        } else if !checked, wasChecked, animated, !UIAccessibility.isReduceMotionEnabled {
+            // Unchecking shouldn't wait for the check's transition to reverse: the circle empties
+            // at once and the blue check fades quickly away over it, so a swipe back feels immediate.
+            let check = UIImageView(image: self.image)
+            check.preferredSymbolConfiguration = preferredSymbolConfiguration
+            check.contentMode = contentMode
+            check.tintColor = SiteSettingsPanel.switchBlue
+            check.frame = bounds
+            check.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            addSubview(check)
+            fading = check
+            self.image = image
+            UIView.animate(withDuration: 0.12, delay: 0, options: [.curveEaseOut, .beginFromCurrentState]) {
+                check.alpha = 0
+            } completion: { [weak self, weak check] _ in
+                check?.removeFromSuperview()
+                if self?.fading === check { self?.fading = nil }
+            }
         } else { self.image = image }
         tintColor = checked ? SiteSettingsPanel.switchBlue : .tertiaryLabel
     }
