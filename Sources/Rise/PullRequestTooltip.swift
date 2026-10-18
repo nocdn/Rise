@@ -166,9 +166,9 @@ final class PullRequestMetaRow: CardLinkRow {
     }
 }
 
-/// The hover card for a GitHub pull request or GitLab merge request tab: title, status and diff size, then a short
-/// description that streams in like the find bar's answers. It shares the find bar's
-/// surface, its height spring and its word reveal.
+/// The hover card for a GitHub pull request or GitLab merge request tab, or a link to one on a
+/// page: title, status and diff size, then a short description that streams in like the find
+/// bar's answers. It shares the find bar's surface, its height spring and its word reveal.
 @MainActor final class PullRequestTooltip: FlippedView {
     struct Content {
         var title: String
@@ -176,6 +176,8 @@ final class PullRequestMetaRow: CardLinkRow {
         var details: PullRequestDetails?
         var summary: String
         var phase: PullRequestSummaries.Phase
+        /// What writing the description took in, for the menu.
+        var inputTokens: Int? = nil
     }
     /// As wide as the find bar, so the status row fits on one line; wider, up to the maximum,
     /// when a merge request's pipeline and merge checks need it to stay on one line too.
@@ -196,13 +198,22 @@ final class PullRequestMetaRow: CardLinkRow {
     private let pipelineRow = PipelineRow()
     private let mergeRow = MergeCheckRow()
     private var skeleton = SkeletonLine()
+    /// The find bar's ⋯ after an answer, with its menu: Regenerate, Copy and the input tokens.
+    let moreButton = ChromeButton(symbol: "ellipsis", size: 10, title: "More", action: {})
+    private var menuOpen = false
     private let summaryView = TokenTextView()
     private var stream = TokenStream(), paintedFrom = 0, laidOut = ""
     private var height = MotionSpring(0), top = MotionSpring(0)
     private var link: CADisplayLink?, lastTick: CFTimeInterval?
     private var theme = RiseTheme.neutral
     private var current: Content?
-    private var anchorTop: CGFloat = 0, maxBottom: CGFloat = 0
+    /// Beside a tab the card hangs from the tab's top, growing down; above a link it stands on
+    /// the link, growing up, so it never covers it.
+    enum Placement: Equatable { case beside(top: CGFloat, maxBottom: CGFloat), above(bottom: CGFloat, minTop: CGFloat) }
+    private var placement = Placement.beside(top: 0, maxBottom: 0)
+    /// A link's card is as wide as the link, within limits; a tab's is the find bar's width.
+    private var preferredWidth: CGFloat?
+    private var exits = 0
     private(set) var key: String?
     /// The pointer went into the card, or left it.
     var onPointer: ((Bool) -> Void)?
@@ -212,6 +223,8 @@ final class PullRequestMetaRow: CardLinkRow {
     var onOpenPipeline: ((Pipeline) -> Void)?
     /// The merge status was clicked.
     var onOpenMergeChecks: (() -> Void)?
+    /// Regenerate was picked in the ⋯ menu.
+    var onRegenerate: (() -> Void)?
 
     private(set) var cardWidth = PullRequestTooltip.width
     private var textWidth: CGFloat { cardWidth-2*Self.inset.width }
@@ -245,7 +258,8 @@ final class PullRequestMetaRow: CardLinkRow {
         summaryView.isRichText = true; summaryView.textContainerInset = .zero
         summaryView.textContainer?.lineFragmentPadding = 0; summaryView.textContainer?.widthTracksTextView = false
         summaryView.textContainer?.containerSize = NSSize(width: textWidth, height: .greatestFiniteMagnitude)
-        [titleLabel, meta, pipelineRow, mergeRow, skeleton, summaryView].forEach(content.addSubview)
+        [titleLabel, meta, pipelineRow, mergeRow, skeleton, summaryView, moreButton].forEach(content.addSubview)
+        moreButton.actionBlock = { [weak self] in self?.showMoreMenu() }
         mergeRow.onOpen = { [weak self] in self?.onOpenMergeChecks?() }
         meta.onOpen = { [weak self] in self?.onOpenFiles?() }
         pipelineRow.onOpen = { [weak self] in if let pipeline = self?.current?.details?.pipeline { self?.onOpenPipeline?(pipeline) } }
@@ -254,29 +268,79 @@ final class PullRequestMetaRow: CardLinkRow {
         top.configure(response: FindMotion.swapResponse, bounce: 0)
     }
     required init?(coder: NSCoder) { fatalError() }
-    override func hitTest(_ point: NSPoint) -> NSView? { isHidden ? nil : super.hitTest(point) }
+    override func hitTest(_ point: NSPoint) -> NSView? { isHidden || key == nil ? nil : super.hitTest(point) }
     override func updateTrackingAreas() {
         super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
     }
     override func mouseEntered(with event: NSEvent) { onPointer?(true) }
-    override func mouseExited(with event: NSEvent) { onPointer?(false) }
+    // The menu takes the pointer while it's open; leaving is judged once it closes.
+    override func mouseExited(with event: NSEvent) { if !menuOpen { onPointer?(false) } }
+
+    func makeMoreMenu() -> NSMenu {
+        let menu = NSMenu()
+        let regenerate = NSMenuItem(title: "Regenerate", action: #selector(regenerateFromMenu), keyEquivalent: "")
+        let copy = NSMenuItem(title: "Copy", action: #selector(copyFromMenu), keyEquivalent: "")
+        [regenerate, copy].forEach { $0.target = self; menu.addItem($0) }
+        if current?.phase == .done, let count = current?.inputTokens {
+            menu.addItem(.separator())
+            let usage = NSMenuItem(title: count.formatted(.number.locale(Locale(identifier: "en_US"))) + " tok", action: nil, keyEquivalent: "")
+            usage.isEnabled = false
+            menu.addItem(usage)
+        }
+        return menu
+    }
+    private func showMoreMenu() {
+        menuOpen = true
+        makeMoreMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: moreButton.isFlipped ? moreButton.bounds.maxY+4 : -4), in: moreButton)
+        menuOpen = false
+        guard key != nil, let window else { return }
+        if !bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) { onPointer?(false) }
+    }
+    @objc private func regenerateFromMenu() { onRegenerate?() }
+    /// The description, as the find bar's Copy takes its answer.
+    @objc private func copyFromMenu() {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents(); pasteboard.setString(current?.summary ?? laidOut, forType: .string)
+    }
 
     /// Shows the card beside a tab at once, or glides an open one over to it.
     /// `glides` continues from where a card that just closed was, rather than appearing in place.
-    func present(key: String, content next: Content, left: CGFloat, anchorTop: CGFloat, maxBottom: CGFloat, theme: RiseTheme, glides: Bool = false) {
+    /// `pops` unfolds it from its edge nearest what it's about, as Arc's link previews open.
+    /// `fromTab` comes and goes with the hover cards' motion (Develop ▸ Card Motion Tester),
+    /// out of its tab, or out of `growsFrom` when given, as the Calendar and Gmail cards do.
+    func present(key: String, content next: Content, left: CGFloat, placement: Placement, theme: RiseTheme,
+                 width: CGFloat? = nil, glides: Bool = false, pops: Bool = false, fromTab: Bool = false, growsFrom: NSPoint? = nil) {
         let appearing = self.key == nil
         let switching = key != self.key
+        if appearing {
+            exits += 1; layer?.removeAnimation(forKey: "card.exit.opacity"); layer?.removeAnimation(forKey: "card.exit.transform")
+            CardMotionAnimator.cancelOut(self)
+        }
         self.key = key; self.theme = theme; isHidden = false
-        frame.origin.x = left; self.anchorTop = anchorTop; self.maxBottom = maxBottom
+        frame.origin.x = left; self.placement = placement; preferredWidth = width
+        self.fromTab = fromTab; tabPoint = growsFrom
         applyTheme()
         if switching { resetSummary(next) }
         update(next)
         if appearing { height.settle(); if !glides { top.settle() }; render() }
+        if appearing && pops { popIn() }
+        if appearing && fromTab && !glides { CardMotionAnimator.animateIn(self, CardMotion.selected, tab: tabOrigin) }
         animate()
+    }
+    private var fromTab = false, tabPoint: NSPoint?
+    /// Where the card comes out of its tab, in its own coordinates: its left edge level with the
+    /// tab's middle, or the point it was given.
+    private var tabOrigin: CGPoint {
+        var anchorTop = frame.minY
+        if case .beside(let top, _) = placement { anchorTop = top }
+        let point = tabPoint ?? NSPoint(x: frame.minX, y: anchorTop+TabAppearance.height/2)
+        return CGPoint(x: point.x-frame.minX, y: point.y-frame.minY)
     }
     /// New details or more of the description for the card's pull request.
     func update(_ next: Content) {
+        // Regenerate starts the description over rather than carrying on from the old one.
+        if key != nil, next.summary.isEmpty, current?.summary.isEmpty == false { resetSummary(next) }
         current = next
         titleLabel.attributedStringValue = Self.title(next.title, color: theme.text, muted: fadedTitle)
         meta.details = next.details; meta.reference = next.reference; pipelineRow.pipeline = next.details?.pipeline; mergeRow.mergeCheck = next.details?.mergeCheck
@@ -290,17 +354,117 @@ final class PullRequestMetaRow: CardLinkRow {
     }
     private func fitWidth() {
         let row = max(StatusLinkRow.width(current?.details?.pipeline.map(PipelineRow.number)), StatusLinkRow.width(current?.details?.mergeCheck.map(MergeCheckRow.text)))
-        let width = max(Self.width, min(Self.maximumWidth, ceil(row)+2*Self.inset.width+1))
+        // Room beside the last status row for the ⋯.
+        let width = max(preferredWidth ?? Self.width, min(Self.maximumWidth, ceil(row)+2*Self.inset.width+1+Self.moreRoom))
         guard width != cardWidth else { return }
         cardWidth = width
         summaryView.textContainer?.containerSize = NSSize(width: textWidth, height: .greatestFiniteMagnitude)
     }
-    /// Gone at once, like a tooltip.
-    func dismiss() {
+    /// Gone at once, like a tooltip, or with `fades`, folding back into its edge by the link as
+    /// Arc's previews do, fading as it goes.
+    /// Plays the way in again beside a tab, for the motion tester.
+    func replayMotion() {
+        guard fromTab, key != nil, !isHidden else { return }
+        CardMotionAnimator.animateIn(self, CardMotion.selected, tab: tabOrigin)
+    }
+    /// Beside a tab it goes with the hover cards' motion unless `immediately`.
+    func dismiss(fades: Bool = false, immediately: Bool = false) {
         guard key != nil else { return }
         key = nil; link?.invalidate(); link = nil
         stream.revealAll(at: CACurrentMediaTime()); paint()
-        height.settle(); top.settle(); isHidden = true
+        height.settle(); top.settle()
+        if fromTab, !fades, !immediately {
+            let exit = exits
+            CardMotionAnimator.animateOut(self, CardMotion.selected, tab: tabOrigin) { [weak self] in
+                if let self, self.key == nil, self.exits == exit { self.isHidden = true }
+            }
+            return
+        }
+        guard fades, let layer, window != nil, !isHidden else { isHidden = true; return }
+        exits += 1
+        let exit = exits
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            guard let self, self.exits == exit else { return }
+            self.isHidden = true
+            layer.removeAnimation(forKey: "card.exit.opacity"); layer.removeAnimation(forKey: "card.exit.transform")
+        }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = layer.presentation()?.opacity ?? 1; fade.toValue = 0
+        fade.duration = Self.foldDuration
+        var animations: [(CAAnimation, String)] = [(fade, "card.exit.opacity")]
+        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            // A card still unfolding folds from the height it has reached.
+            let reached = max(0.001, layer.presentation()?.transform.m22 ?? 1)
+            let toward: CGFloat = if case .above = placement { 1 } else { -1 }
+            let steps = Int(ceil(Self.foldDuration*120))
+            let values = (0...steps).map { step -> NSValue in
+                let time = Self.foldDuration*Double(step)/Double(steps)
+                let fold = CGFloat(1-Self.foldGrowth(time)), settle = CGFloat(1-Self.foldSettle(time))
+                return NSValue(caTransform3D: pivot(1, y: max(0.001, fold*reached), shift: toward*Self.foldSag*(settle-fold)))
+            }
+            let collapse = CAKeyframeAnimation(keyPath: "transform")
+            collapse.values = values; collapse.duration = Self.foldDuration; collapse.calculationMode = .linear
+            collapse.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
+            animations.append((collapse, "card.exit.transform"))
+        }
+        for (animation, key) in animations {
+            animation.fillMode = .forwards; animation.isRemovedOnCompletion = false
+            layer.add(animation, forKey: key)
+        }
+        layer.removeAnimation(forKey: "card.pop.opacity"); layer.removeAnimation(forKey: "card.pop.transform")
+        CATransaction.commit()
+    }
+    /// Arc's close, fitted the same way: the card folds back into its edge by the link in about
+    /// 0.14 s, accelerating, while that edge sags towards the link by up to 7.5 points and
+    /// comes back as the card goes. Arc keeps it opaque; here it also fades out on the way.
+    static let foldGrowth = ClosedSpring(response: 0.458, damping: 0.3109)
+    static let foldSettle = ClosedSpring(response: 0.5026, damping: 0.2)
+    static let foldSag: CGFloat = 213.63
+    /// Until the fold reaches nothing.
+    static let foldDuration: Double = {
+        var time = 0.0
+        while foldGrowth(time) < 0.999 { time += 0.0005 }
+        return time
+    }()
+    /// Arc's link preview, fitted to its edges in two screen recordings (within about half a
+    /// point): the card grows from nothing at its edge by the link on one spring, overshooting
+    /// its height by about 2%, its content squashed rather than cropped, with no fade and no
+    /// change in width. That edge sags towards the link by a fixed 24.5 points times the gap
+    /// between the growth and a second, softer spring that starts 41 ms later: about 7.5
+    /// points at first, then a point the other way as the card overshoots.
+    static let unfoldGrowth = ClosedSpring(response: 0.3647, damping: 0.7935)
+    static let unfoldSettle = ClosedSpring(response: 0.3823, damping: 0.6944)
+    static let unfoldLag = 0.0408, unfoldSag: CGFloat = 24.46, unfoldDuration = 0.8
+    /// A scale about the middle of the card's edge nearest what it shows (the link, when it's
+    /// above one), then a nudge along y.
+    private func pivot(_ scale: CGFloat, y yScale: CGFloat? = nil, shift: CGFloat = 0) -> CATransform3D {
+        guard let layer else { return CATransform3DIdentity }
+        let size = layer.bounds.size, anchor = layer.anchorPoint
+        let edge: CGFloat = if case .above = placement { 1 } else { 0 }
+        let point = CGPoint(x: (0.5-anchor.x)*size.width, y: (edge-anchor.y)*size.height)
+        return CATransform3DConcat(CATransform3DConcat(CATransform3DMakeTranslation(-point.x, -point.y, 0), CATransform3DMakeScale(scale, yScale ?? scale, 1)),
+                                   CATransform3DMakeTranslation(point.x, point.y+shift, 0))
+    }
+    private func popIn() {
+        guard let layer, window != nil else { return }
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 0; fade.toValue = 1; fade.duration = Self.unfoldDuration
+            layer.add(fade, forKey: "card.pop.opacity"); return
+        }
+        // Towards the link: down when the card is above it, up when it's below.
+        let toward: CGFloat = if case .above = placement { 1 } else { -1 }
+        let steps = Int(Self.unfoldDuration*120)
+        let values = (0...steps).map { step -> NSValue in
+            let time = Self.unfoldDuration*Double(step)/Double(steps)
+            let growth = CGFloat(Self.unfoldGrowth(time)), settle = CGFloat(Self.unfoldSettle(time-Self.unfoldLag))
+            return NSValue(caTransform3D: pivot(1, y: max(0.001, growth), shift: toward*Self.unfoldSag*(growth-settle)))
+        }
+        let unfold = CAKeyframeAnimation(keyPath: "transform")
+        unfold.values = values; unfold.duration = Self.unfoldDuration; unfold.calculationMode = .linear
+        unfold.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
+        layer.add(unfold, forKey: "card.pop.transform")
     }
     /// `type(`, scope, `):` (or `)!:`) at the start of a conventional commit title.
     private static let conventionalPrefix = try! NSRegularExpression(pattern: #"\G([A-Za-z]+\()([^()]+)(\)!?:)"#)
@@ -334,6 +498,7 @@ final class PullRequestMetaRow: CardLinkRow {
         panel.layer?.shadowOpacity = theme == .dark ? 0.45 : 0.12
         titleLabel.textColor = theme.text
         meta.dark = theme == .dark; meta.muted = theme.muted
+        moreButton.contentTintColor = theme.muted; moreButton.hoverColor = theme.text.withAlphaComponent(0.07)
         pipelineRow.dark = theme == .dark; pipelineRow.muted = theme.muted
         mergeRow.dark = theme == .dark; mergeRow.muted = theme.muted; mergeRow.cutout = background
         skeleton.applyTheme(dark: theme == .dark)
@@ -394,6 +559,27 @@ final class PullRequestMetaRow: CardLinkRow {
         }
     }
     private var shownPipeline = false
+    /// The ⋯ once the model has answered (or failed to), at the same moment as the status rows.
+    private var showsMore: Bool {
+        switch current?.phase {
+        case .done: return stream.hiddenFrom == nil
+        case .failed: return true
+        default: return false
+        }
+    }
+    private var shownMore = false
+    static let moreSize = NSSize(width: 22, height: 20), moreRoom: CGFloat = 26
+    /// Without status rows the ⋯ sits at the end of the description's last line, or on a row of
+    /// its own when the line runs too close to the edge.
+    private var moreNeedsRow: Bool {
+        guard showsMore, !showsPipeline else { return false }
+        guard hasSummaryText, let manager = summaryView.layoutManager, let container = summaryView.textContainer else { return true }
+        manager.ensureLayout(for: container)
+        let glyphs = manager.numberOfGlyphs
+        guard glyphs > 0 else { return true }
+        let last = manager.lineFragmentUsedRect(forGlyphAt: glyphs-1, effectiveRange: nil)
+        return last.maxX > textWidth-Self.moreRoom
+    }
     private var showsSkeleton: Bool { !hasSummaryText && (current?.phase == .idle || current?.phase == .generating) }
     private var titleHeight: CGFloat {
         ceil(titleLabel.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: textWidth+2*Self.labelPadding, height: 1000)).height ?? 18)
@@ -411,15 +597,22 @@ final class PullRequestMetaRow: CardLinkRow {
             let rows = [current?.details?.pipeline != nil, current?.details?.mergeCheck != nil].filter { $0 }.count
             height += Self.pipelineGap+CGFloat(rows)*StatusLinkRow.height+CGFloat(rows-1)*Self.mergeGap
         }
+        if moreNeedsRow { height += Self.pipelineGap+StatusLinkRow.height }
         return height+Self.inset.height
     }
     private func retarget() {
-        shownPipeline = showsPipeline
+        shownPipeline = showsPipeline; shownMore = showsMore
         height.target = contentHeight
-        top.target = max(8, min(anchorTop, maxBottom-height.target))
+        switch placement {
+        case .beside(let anchorTop, let maxBottom): top.target = max(8, min(anchorTop, maxBottom-height.target))
+        case .above(let bottom, let minTop): top.target = max(minTop, bottom-height.target)
+        }
     }
     private func render() {
-        frame = NSRect(x: frame.minX, y: top.value, width: cardWidth, height: max(0, height.value))
+        // Above a link the bottom edge stays put while the card grows.
+        var cardTop = top.value
+        if case .above(let bottom, let minTop) = placement { cardTop = max(minTop, bottom-height.value) }
+        frame = NSRect(x: frame.minX, y: cardTop, width: cardWidth, height: max(0, height.value))
         panel.frame = bounds; content.frame = panel.bounds
         panel.layer?.shadowPath = PageOutline.path(in: panel.bounds, radius: FindBar.radius, continuous: true)
         // Laid out at full height and revealed as the card grows, like the find bar's answer.
@@ -446,6 +639,22 @@ final class PullRequestMetaRow: CardLinkRow {
         if !pipelineRow.isHidden { y += StatusLinkRow.height+Self.mergeGap }
         mergeRow.isHidden = !showsPipeline || current?.details?.mergeCheck == nil
         mergeRow.frame = NSRect(x: Self.inset.width-1, y: y, width: textWidth+1, height: StatusLinkRow.height)
+        // The ⋯ at the right, level with the last status row, the description's last line, or its own row.
+        moreButton.isHidden = !showsMore
+        if showsMore {
+            let lastRow = [mergeRow, pipelineRow].first { !$0.isHidden }
+            var midY: CGFloat
+            if let lastRow { midY = lastRow.frame.midY }
+            else if moreNeedsRow { midY = (hasSummaryText ? summaryView.frame.maxY : y-Self.pipelineGap)+Self.pipelineGap+StatusLinkRow.height/2 }
+            else {
+                let manager = summaryView.layoutManager!
+                let last = manager.lineFragmentRect(forGlyphAt: manager.numberOfGlyphs-1, effectiveRange: nil)
+                midY = summaryView.frame.minY+last.midY
+            }
+            midY = round(midY)
+            moreButton.frame = NSRect(x: cardWidth-Self.inset.width-18, y: midY-Self.moreSize.height/2,
+                                      width: Self.moreSize.width, height: Self.moreSize.height)
+        }
     }
     private func animate() {
         guard window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { settle(); return }
@@ -463,7 +672,7 @@ final class PullRequestMetaRow: CardLinkRow {
         let now = CACurrentMediaTime(), dt = min(0.05, now-(lastTick ?? now)); lastTick = now
         height.step(dt); top.step(dt)
         _ = stream.step(at: now); paint()
-        if showsPipeline != shownPipeline { retarget() }
+        if showsPipeline != shownPipeline || showsMore != shownMore { retarget() }
         let resting = height.isResting(within: 0.05) && top.isResting(within: 0.05) && !stream.needsFrames
         if resting { link.invalidate(); self.link = nil; height.settle(); top.settle() }
         render()

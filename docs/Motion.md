@@ -369,10 +369,11 @@ older cards compress into the left stack, reducing by 2% per step left of focus,
 at 8%, shrinking equally at the top and bottom. The centred card and every card to its
 right remain at full size; moving farther right must never shrink a card. Left-side pages
 also gain a black overlay continuously with depth: 14% per step, capped at 36%. Centred
-and right-side pages remain undimmed. Captions align
-with the page’s left edge. Only the centred card shows its title text: it fades out
-before the next title fades in, while neighbouring favicons remain visible. Hidden cards
-outside the nearby stack do not lay out every frame, and slot lookup is constant time.
+and right-side pages remain undimmed. Captions sit 6 pt to the right of the page’s left
+edge, including the favicon when its title is hidden. Only the centred card shows its
+title text: it fades out before the next title fades in, while neighbouring favicons remain
+visible. Hidden cards outside the nearby stack do not lay out every frame, and slot lookup
+is constant time.
 
 The switcher retains a local most-recently-used display order by tab identity, with the
 active page last. It never reorders the browser's shared tab list or changes selection

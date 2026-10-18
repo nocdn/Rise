@@ -168,7 +168,7 @@ import WebKit
         })
         try check("titles-and-favicons-are-above-the-cards", front.caption.frame.maxY < front.card.frame.minY
                   && abs(front.title.frame.midY-front.favicon.frame.midY) < 1)
-        try check("caption-leading-edge-aligns-with-its-page", abs(front.caption.frame.minX-front.card.frame.minX) < 0.1
+        try check("caption-leading-edge-is-inset-from-its-page", abs(front.caption.frame.minX-front.card.frame.minX-TabCell.captionOffset) < 0.1
                   && front.favicon.frame.minX == 0 && front.title.frame.minX == front.favicon.frame.maxX+6)
         try check("active-page-remains-visible-at-the-right-edge", switcher.cellFrame(switcher.current).minX > size.width*0.65
                   && switcher.cellFrame(switcher.current).minX < size.width)

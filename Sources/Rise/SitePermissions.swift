@@ -35,7 +35,7 @@ enum SitePermission: String, CaseIterable {
         self.preferences = preferences
         decisions = preferences.dictionary(forKey: Self.preferenceKey) as? [String: [String: String]] ?? [:]
     }
-    static func origin(_ url: URL?) -> String? {
+    nonisolated static func origin(_ url: URL?) -> String? {
         guard let url, let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme), let host = url.host?.lowercased() else { return nil }
         let port = url.port ?? (scheme == "https" ? 443 : 80)
         return "\(scheme)://\(host):\(port)"

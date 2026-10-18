@@ -51,6 +51,9 @@ import RiseCore
         }
         return nil
     }
+    func cachedDarkImage(for url: URL) -> NSImage? {
+        SitePermissions.origin(url).flatMap { images[Self.key($0, dark: true)] }
+    }
     func image(for url: URL?, fetch allowFetch: Bool = true, dark: Bool = false) -> NSImage? {
         guard let origin = SitePermissions.origin(url), let url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return nil }
         if dark {
@@ -102,6 +105,16 @@ import RiseCore
               requested[Self.key(origin, dark: dark)] != iconURL else { return }
         fetch(iconURL, origin: origin, dark: dark)
     }
+    /// Background tab metadata uses the same decoding, appearance variants and persistent cache.
+    @discardableResult func storePageIcon(_ bytes: Data, for pageURL: URL, dark: Bool = false) -> Bool {
+        guard bytes.count <= 1_000_000, let origin = SitePermissions.origin(pageURL),
+              let image = FaviconImage.decode(bytes, dark: dark), image.isValid, let png = FaviconSnapshot.encode(image) else { return false }
+        store(image, png: png, origin: origin, dark: dark)
+        if !dark, FaviconImage.hasAppearanceStyles(bytes), let variant = FaviconImage.decode(bytes, dark: true), let png = FaviconSnapshot.encode(variant) {
+            store(variant, png: png, origin: origin, dark: true)
+        }
+        return true
+    }
     private func fetch(_ iconURL: URL, origin: String, discoverIfNeeded: Bool = false, dark: Bool = false) {
         let key = Self.key(origin, dark: dark)
         tasks[key]?.cancel(); requested[key] = iconURL
@@ -110,12 +123,9 @@ import RiseCore
             Task { @MainActor in
                 guard let self, self.requested[key] == iconURL else { return }
                 self.tasks[key] = nil
-                if let bytes, bytes.count <= 1_000_000, (response as? HTTPURLResponse)?.statusCode == 200,
-                   let image = FaviconImage.decode(bytes, dark: dark), image.isValid, let png = FaviconSnapshot.encode(image) {
-                    self.store(image, png: png, origin: origin, dark: dark)
-                    if !dark, FaviconImage.hasAppearanceStyles(bytes), let variant = FaviconImage.decode(bytes, dark: true), let png = FaviconSnapshot.encode(variant) {
-                        self.store(variant, png: png, origin: origin, dark: true)
-                    }
+                if let bytes, (response as? HTTPURLResponse)?.statusCode == 200,
+                   self.storePageIcon(bytes, for: URL(string: origin)!, dark: dark) {
+                    return
                 } else if discoverIfNeeded {
                     if let bytes, let declared = FaviconDiscovery.icon(in: bytes, baseURL: response?.url ?? iconURL), declared != iconURL {
                         self.fetch(declared, origin: origin)

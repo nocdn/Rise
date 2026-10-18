@@ -6,6 +6,7 @@ final class AddressSuggestionRow: UIButton {
     static let showsURLSubtitles = false
     let pressBackground = UIView()
     let icon = UIImageView()
+    private let missingFavicon = FaviconView()
     let titleLabelView = UILabel()
     let addressLabel = UILabel()
     let fillButton = UIButton(type: .custom)
@@ -28,6 +29,7 @@ final class AddressSuggestionRow: UIButton {
         icon.contentMode = .scaleAspectFit
         icon.clipsToBounds = true
         icon.layer.cornerCurve = .continuous
+        icon.addSubview(missingFavicon)
         titleLabelView.font = SearchPanel.font
         titleLabelView.textColor = .label
         addressLabel.font = UIFontMetrics(forTextStyle: .footnote).scaledFont(for: .systemFont(ofSize: 12, weight: .medium))
@@ -66,7 +68,8 @@ final class AddressSuggestionRow: UIButton {
         addressLabel.text = candidate.symbol == "globe" && candidate.title != candidate.subtitle
             ? Self.displayAddress(candidate.subtitle) : nil
         addressLabel.isHidden = !Self.showsURLSubtitles || addressLabel.text == nil
-        icon.image = image ?? (candidate.symbol == "globe" ? UIImage(systemName: "globe") : SearchPanel.searchIcon)
+        icon.image = image ?? (candidate.symbol == "globe" ? nil : SearchPanel.searchIcon)
+        missingFavicon.isHidden = image != nil || candidate.symbol != "globe"
         roundsIconCorners = image != nil
         iconSide = candidate.symbol == "globe" ? 20 : 16
         iconOffset = candidate.symbol == "globe" ? 1 : 0
@@ -85,7 +88,8 @@ final class AddressSuggestionRow: UIButton {
         fillGlyph.image = SearchPanel.searchIcon
         fillGlyphOffset = -2
         addressLabel.isHidden = true
-        icon.image = image ?? UIImage(systemName: "globe")
+        icon.image = image
+        missingFavicon.isHidden = image != nil
         roundsIconCorners = image != nil
         iconSide = 20
         iconOffset = 1
@@ -100,6 +104,7 @@ final class AddressSuggestionRow: UIButton {
         pressBackground.frame = bounds.insetBy(dx: -6, dy: 0)
         icon.frame = CGRect(x: SearchPanel.rowIndent+(22-iconSide)/2+iconOffset, y: bounds.midY-iconSide/2, width: iconSide, height: iconSide)
         icon.layer.cornerRadius = roundsIconCorners ? iconSide*FaviconView.cornerRadiusFraction : 0
+        missingFavicon.frame = icon.bounds
         fillButton.bounds = CGRect(x: 0, y: 0, width: 44, height: bounds.height)
         fillButton.center = CGPoint(x: bounds.width-22, y: bounds.midY)
         let glyphSide = SearchPanel.searchIcon.size.width

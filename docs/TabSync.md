@@ -40,15 +40,36 @@ Each device keeps its current selection where possible and lazily loads restored
 background tabs. Remote updates wait while a mobile panel, Peek, summary or tab
 gesture is active.
 
+On Mac, dormant synced and restored tabs fill missing titles and favicons through
+three bounded HTTP metadata workers. They reuse the existing light/dark favicon
+cache, including declared CDN icons, and persist the results with the local session.
+Custom names and actual titles received from the phone take precedence over the
+public HTML title; redirecting to a different site's login cannot replace them.
+These requests do not start Chromium pages, execute scripts, select tabs or add
+history visits. Navigating, opening or closing a tab cancels its stale work. Failed
+page requests retry with backoff from 30 seconds to five minutes. Local addresses,
+files, internal pages and addresses with embedded credentials are excluded.
+
 On iOS, restored and imported background tabs get page previews and favicons without
-being selected. A single temporary WebKit page renders them in sequence behind the
-browser, using the same cookies and ad-blocking preferences. It cannot play media,
-open popups, prompt for permissions or start downloads. Capturing does not navigate
+being selected. At most two temporary WebKit pages render them behind the browser,
+using the same cookies and ad-blocking preferences. Independent, bounded first-party
+favicon requests fill icons before slow pages finish. The focused card and its neighbours
+get preview priority over offscreen tabs. The temporary pages cannot play media, open
+popups, prompt for permissions or start downloads. Capturing does not navigate
 the real tab or change its synced URL/title. New pictures update an already open grid.
 Pictures and icons are cached locally in `Library/Caches/TabPreviews`, checked against
 the tab's URL on restore and removed when the tab closes. Rendering pauses while the
-app is inactive and waits for panels, gestures and tab flights to finish. Failed loads
-retain any existing preview and can retry on a later update/foreground activation.
+app is inactive and waits for panels, horizontal scrolling, close gestures and tab flights
+to finish. Captures begin after document commit, without waiting for slow adverts or
+subresources, and retry empty frames while client-rendered content paints. Uniform blank
+cached images are rejected. Failed page/icon loads retry automatically after 30 seconds,
+backing off to at most once every five minutes, without needing another sync event;
+favicon-only cache entries survive a relaunch too.
+
+`-RiseTabPreviewAudit` runs isolated real-HTTP checks for batch imports, early favicons,
+slow resources, delayed client rendering, blank-cache recovery and automatic retry. It
+also verifies that previews update the open deck, keep real tabs lazy, preserve shared
+titles/URLs and selection, and restore from the local cache without reloading pages.
 
 Restored mobile tabs keep their pending destination until WebKit commits a real
 document. A failed first load preserves that URL in the address menu and saved
@@ -107,7 +128,8 @@ time to propagate; local tabs and pending changes remain saved meanwhile.
 ## Verification
 
 ```sh
-swift test --filter SharedTabs
+./scripts/test.sh --filter 'SharedTabs|SyncedTabMetadata'
+python3 scripts/test-chromium-live.py Tests/Live/ChromiumSyncedTabsChecks.swift
 python3 scripts/test-passkey-signing.py
 ```
 

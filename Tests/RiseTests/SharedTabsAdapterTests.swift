@@ -25,13 +25,14 @@ final class SharedTabsAdapterTests: XCTestCase {
         a.pinned = true; a.rename("Personal name"); a.developer = true
         let c = SharedBrowserTab(id: UUID(), url: nil, title: "From iPhone")
         browser.applySharedTabs([c, .init(id: b.id, url: nil, title: "B"), .init(id: a.id, url: nil, title: "Remote name")])
-        XCTAssertEqual(browser.tabs.map(\.id), [c.id, b.id, a.id])
+        // Pinned tabs stay first, wherever the other device has them.
+        XCTAssertEqual(browser.tabs.map(\.id), [a.id, c.id, b.id])
         XCTAssertEqual(browser.selectedID, b.id)
-        XCTAssertTrue(browser.tabs[2] === a)
+        XCTAssertTrue(browser.tabs[0] === a)
         XCTAssertTrue(a.pinned); XCTAssertTrue(a.developer)
         XCTAssertEqual(a.customTitle, "Personal name")
         XCTAssertEqual(a.title, "Personal name")
-        XCTAssertNil(browser.tabs[0].page.url, "Unselected remote tabs stay unloaded")
+        XCTAssertNil(browser.tabs[1].page.url, "Unselected remote tabs stay unloaded")
     }
 
     @MainActor func testRemoteCloseKeepsFilesLocalAndChoosesASurvivingPage() {

@@ -6,7 +6,7 @@ final class TabPreviewCache: Sendable {
     struct Entry: Codable, Sendable {
         let version: Int
         let url: URL
-        let picture: Data
+        let picture: Data?
         let favicon: Data?
     }
     private let folder: URL
@@ -23,10 +23,11 @@ final class TabPreviewCache: Sendable {
         }
     }
 
-    func save(id: UUID, url: URL, picture: UIImage, favicon: UIImage?) {
+    func save(id: UUID, url: URL, picture: UIImage?, favicon: UIImage?) {
         let folder = folder
         writer.async {
-            guard let data = picture.jpegData(compressionQuality: 0.82),
+            let data = picture?.jpegData(compressionQuality: 0.82)
+            guard data != nil || favicon != nil,
                   let entry = try? JSONEncoder().encode(Entry(version: Self.formatVersion, url: url, picture: data, favicon: favicon?.pngData())) else { return }
             do {
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

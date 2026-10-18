@@ -7,6 +7,7 @@ import AppKit
         guard visible.contains(where: { $0 === webView }), webView.superview != nil,
               page(showing: webView)?.isCovered != true else { return }
         if url == nil, hoveredWebView !== webView { return }
+        linkHoverChanged(url, in: webView)
         refusedPeekHide?.cancel(); refusedPeekHide = nil
         // Pressing a link ends its hover just before a Shift-click is refused; keep "Cannot
         // open … in Peek" up through the press so the refusal shakes it rather than re-showing it.
@@ -35,11 +36,18 @@ import AppKit
         }
         updatePeekStandby(modifiers: flags)
     }
+    /// The page went away or changed: no link status, and no pull request card over its links.
     func hideLinkStatus() {
+        clearLinkStatus()
+        hideLinkCard()
+    }
+    /// Only the status. Leaving a link ends its hover, but its card stays while the pointer
+    /// crosses into it.
+    private func clearLinkStatus() {
         hoveredWebView = nil; linkStatus.show(nil, theme: theme)
     }
     func layoutLinkStatus() {
-        guard let webView = hoveredWebView, webView.superview != nil else { hideLinkStatus(); return }
+        guard let webView = hoveredWebView, webView.superview != nil else { clearLinkStatus(); return }
         let page = webView.convert(webView.bounds, to: root)
         if let url = linkStatus.url { linkStatus.show(url, theme: theme, peek: shouldPeek(modifiers: NSEvent.modifierFlags), blocked: hoversInsidePeek) }
         linkStatus.place(in: page)

@@ -92,6 +92,7 @@ import RiseCore
         hover.summaries.provider = { [weak self] in self?.modelChoice ?? .openRouter }
         return hover
     }()
+    let linkPullRequests = LinkPullRequestCards()
     lazy var calendarAgenda: CalendarAgenda = {
         let agenda = CalendarAgenda()
         agenda.onChange = { [weak self] in self?.calendarAgendaChanged() }
@@ -169,6 +170,7 @@ import RiseCore
     var tabSync: SharedTabsSync?
     var isApplyingSharedTabs = false
     var hasPendingSharedTabs = false
+    var syncedTabMetadata: SyncedTabMetadata?
     /// The page, as its view, whose load failed.
     var errorWebView: NSView?
     let adBlocker: AdBlocker
@@ -202,6 +204,10 @@ import RiseCore
         suggestionFavicons = SuggestionFavicons(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("suggestion-icons.json"))
         let window = BrowserWindow(contentRect: NSRect(x: 0, y: 0, width: 1496, height: 944), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         super.init(window: window)
+        if ChromiumEngine.isRunning {
+            syncedTabMetadata = SyncedTabMetadata(icons: suggestionFavicons)
+            syncedTabMetadata?.onChange = { [weak self] in self?.update() }
+        }
         pageFullscreen.onChange = { [weak self] in self?.reconcileFullscreenSidebar() }
         googleSearchSuggestions.onLoad = { [weak self] query in
             guard let self, self.palette.isPresented, self.palette.query.trimmingCharacters(in: .whitespacesAndNewlines) == query,
@@ -285,8 +291,7 @@ import RiseCore
             sidebarWidth = SidebarWidth.previousIdeals.contains(saved.sidebarWidth) ? SidebarWidth.ideal
                 : min(SidebarWidth.range.upperBound, max(SidebarWidth.range.lowerBound, saved.sidebarWidth))
             tabs = saved.tabs.map { configure(BrowserTab(saved: $0)) }
-            // Old sessions can fill their missing icons without loading every page.
-            tabs.forEach { $0.updateIcon() }
+            // The metadata queue fills dormant pages' missing titles and icons in bounded batches.
             splitGroups = saved.splitGroups
             selectedID = saved.selectedID.flatMap { id in tabs.contains { $0.id == id } ? id : nil } ?? tabs.first?.id
         }
@@ -486,7 +491,7 @@ import RiseCore
         if !tabSwitcher.isHidden { tabSwitcher.place(in: b) }
     }
     func windowDidResize(_ notification: Notification) { layoutChrome() }
-    func windowWillClose(_ notification: Notification) { tabPressed(); gmailInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); saveNow() }
+    func windowWillClose(_ notification: Notification) { tabPressed(); gmailInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); saveNow() }
     func windowDidResignKey(_ notification: Notification) {
         pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch(); endSidebarPeek(); tabPressed()
         sidebar?.cancelTabInteractions()
@@ -655,6 +660,7 @@ import RiseCore
         findBar.reattached()
     }
     func update() {
+        syncedTabMetadata?.update(tabs: tabs)
         extensionTabsChanged()
         reconcileFullscreenSidebar()
         splitPeekReturns = splitPeekReturns.filter { id, undo in

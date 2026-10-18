@@ -52,7 +52,7 @@ import ImageIO
     func image(for url: URL?, fetch: Bool = true) -> UIImage? {
         guard let url, let origin = Self.origin(url) else { return nil }
         if let image = images[origin] { return image }
-        // Only complete public domains are fetched. In-progress/local addresses keep a globe.
+        // Only complete public domains are fetched. In-progress/local addresses keep the placeholder.
         guard fetch, allowsNetwork, !AddressResolver.isLocal(url), let host = url.host, host.contains("."),
               !host.hasSuffix(".test"), !host.hasSuffix(".example"), !host.hasSuffix(".invalid"),
               attempted.insert(origin).inserted else { return nil }

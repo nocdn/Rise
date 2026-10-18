@@ -164,10 +164,11 @@ final class TabDetachmentTests: XCTestCase {
     }
     @MainActor func testListEndsResistThenDetachAndRedockWithProgressiveShadow() throws {
         let browser = browser(); defer { clean(browser) }
-        let bottom = browser.addTab(); _ = browser.addTab(); let top = browser.addTab()
+        let bottom = browser.addTab(); _ = browser.addTab(); _ = browser.addTab()
         browser.root.layoutSubtreeIfNeeded()
         var releases = 0; browser.sidebar.detachmentClick = { releases += 1 }
-        for (tab, direction): (BrowserTab, CGFloat) in [(bottom, 1), (top, -1)] {
+        // Only the bottom end: dragging the top row up pins it (PinnedTabsTests).
+        for (tab, direction): (BrowserTab, CGFloat) in [(bottom, 1)] {
             let row = browser.sidebar.rows[tab.id]!, slot = row.frame
             let start = row.convert(NSPoint(x: 50, y: 18), to: browser.sidebar.rowsHost)
             let order = browser.tabs.map(\.id)
@@ -205,7 +206,7 @@ final class TabDetachmentTests: XCTestCase {
             browser.sidebar.finishReturningTab()
             XCTAssertEqual(row.frame, slot)
         }
-        XCTAssertEqual(releases, 2)
+        XCTAssertEqual(releases, 1)
     }
     @MainActor func testReleasedHoverClearsOnTheFirstPointerMoveBeforeTheSpringFinishes() throws {
         let browser = browser(); defer { clean(browser) }

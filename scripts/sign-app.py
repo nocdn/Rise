@@ -144,7 +144,9 @@ def main():
             shutil.copyfile(profile_file, embedded)
         with tempfile.NamedTemporaryFile(suffix=".entitlements") as temporary:
             plistlib.dump(entitlements, temporary); temporary.flush()
-            subprocess.run([*command, "--options", "runtime", "--timestamp", "--entitlements", temporary.name, str(app)], check=True)
+            # Local development can stay certificate-signed when Apple's timestamp service is offline.
+            timestamp = "--timestamp=none" if os.environ.get("RISE_SIGNING_TIMESTAMP") == "none" else "--timestamp"
+            subprocess.run([*command, "--options", "runtime", timestamp, "--entitlements", temporary.name, str(app)], check=True)
         print("Signed with Apple's provisioning profile. CloudKit: " + str(info["RiseCloudKitEnabled"]) + "; browser passkeys: " + str(PASSKEY in entitlements))
     else:
         # An ad-hoc app claiming this restricted entitlement can fail to launch.

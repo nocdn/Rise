@@ -325,9 +325,9 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         let composing = field.markedTextRange != nil
         let local = AddressSuggestionEngine.suggestions(for: query, history: source.history, tabs: openTabs(),
             currentURL: currentAddress, editingCurrentAddress: editingAddress != nil && query == currentAddress?.absoluteString,
-            limit: Self.maximumSuggestions)
+            limit: Self.maximumSuggestions+1)
         let terms = composing || !allowsRemoteSuggestions ? [] : remote.suggestions(for: query)
-        candidates = AddressSuggestionEngine.merging(terms, into: local, limit: Self.maximumSuggestions, tabs: openTabs())
+        candidates = AddressSuggestionEngine.merging(terms, into: local, limit: Self.maximumSuggestions+1, tabs: openTabs())
         if allowCompletion || composing {
             let completed = !composing ? candidates.first?.completion : nil
             UIView.performWithoutAnimation {
@@ -348,7 +348,8 @@ final class SearchPanel: UIView, UITextFieldDelegate {
             ? candidates.first?.url : (fieldAddress == currentAddress?.absoluteString ? currentAddress : nil)
         let fetchIcon = candidates.first?.fetchFavicon != false
         source.icons.previewCandidate(fetchIcon ? nil : url)
-        let visible = candidates.filter { !$0.isAutofill }
+        // Go still uses the typed action; the list only shows actual suggestions and pages.
+        let visible = candidates.filter { !$0.isAutofill && !($0.isTypedAction && $0.symbol == "magnifyingglass") }
         suggestions = visible.map(\.title)
         renderRows(Array(visible.prefix(Self.maximumSuggestions-(offeredSite == nil ? 0 : 1))))
     }

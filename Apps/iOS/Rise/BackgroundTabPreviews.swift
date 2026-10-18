@@ -1,242 +1,223 @@
 import UIKit
 import WebKit
 
-/// Serial preview capture uses a temporary page, leaving restored tabs' history and lazy pages
-/// alone. The renderer sits behind the browser in the same window so WebKit can paint normally.
+/// A bounded pool paints disposable pages behind the browser. Real tabs stay lazy,
+/// and icon requests never have to wait for a slow page's screenshot.
 @MainActor final class BackgroundTabPreviews {
     let host = UIView()
     let cache: TabPreviewCache
     var canRender: () -> Bool = { false }
     private let adBlocker: MobileAdBlocker
+    private let retryDelay: TimeInterval
     private var tabs: [BrowserTab] = []
+    private var queue: [BrowserTab] = []
+    private var priorityIDs: [UUID] = []
     private weak var selected: BrowserTab?
     private var viewport = CGSize.zero
     private var stripHeight: CGFloat = 0
     private var active = true
+    private var revision = 0
     private var work: Task<Void, Never>?
-    private var renderer: TabPreviewRenderer?
+    private var retry: Task<Void, Never>?
+    private var renderers: [Key: TabPreviewRenderer] = [:]
+    private var rendering = Set<Key>()
+    private var fetchingIcons = Set<Key>()
     private var cached = Set<Key>()
-    private var failures: [Key: Date] = [:]
+    private var failures: [Key: Retry] = [:]
+    private var iconFailures: [Key: Retry] = [:]
+    private var declaredIcons: [Key: [URL]] = [:]
     private var openIDs = Set<UUID>()
     private struct Key: Hashable { let id: UUID; let url: URL }
+    private struct Retry {
+        let attempts: Int
+        let date: Date
+        init(after previous: Retry?, delay: TimeInterval) {
+            attempts = min(6, (previous?.attempts ?? 0)+1)
+            date = Date().addingTimeInterval(min(300, delay*pow(2, Double(attempts-1))))
+        }
+    }
 
-    init(cacheURL: URL, adBlocker: MobileAdBlocker) {
+    init(cacheURL: URL, adBlocker: MobileAdBlocker, retryDelay: TimeInterval = 30) {
         cache = TabPreviewCache(folder: cacheURL)
-        self.adBlocker = adBlocker
+        self.adBlocker = adBlocker; self.retryDelay = retryDelay
         host.isUserInteractionEnabled = false
         host.accessibilityElementsHidden = true
     }
 
     func update(tabs: [BrowserTab], selected: BrowserTab, viewport: CGSize, stripHeight: CGFloat) {
         self.tabs = tabs; self.selected = selected; self.viewport = viewport; self.stripHeight = stripHeight
-        let ids = Set(tabs.map(\.id))
-        if ids != openIDs {
-            openIDs = ids; cache.prune(keeping: ids)
-            cached = cached.filter { ids.contains($0.id) }
-            failures = failures.filter { ids.contains($0.key.id) }
-        }
+        reorderQueue()
+        revision += 1
+        let ids = Set(tabs.map(\.id)), keys = Set(tabs.compactMap { key(for: $0) })
+        if ids != openIDs { openIDs = ids; cache.prune(keeping: ids) }
+        cached.formIntersection(keys)
+        failures = failures.filter { keys.contains($0.key) }
+        iconFailures = iconFailures.filter { keys.contains($0.key) }
+        declaredIcons = declaredIcons.filter { keys.contains($0.key) }
+        for (key, renderer) in renderers where !keys.contains(key) { renderer.cancel() }
         start()
+    }
+
+    func prioritize(_ ids: [UUID]) {
+        guard priorityIDs != ids else { return }
+        priorityIDs = ids; reorderQueue(); revision += 1; start()
+    }
+    private func reorderQueue() {
+        let byID = Dictionary(uniqueKeysWithValues: tabs.map { ($0.id, $0) })
+        let preferred = Set(priorityIDs)
+        queue = priorityIDs.compactMap { byID[$0] } + tabs.reversed().filter { !preferred.contains($0.id) }
     }
 
     func setActive(_ active: Bool) {
         self.active = active
         if active { start() }
-        else { work?.cancel(); renderer?.cancel() }
-    }
-
-    func save(_ tab: BrowserTab) {
-        guard let url = tab.sessionTab.url, let image = tab.snapshot else { return }
-        cache.save(id: tab.id, url: url, picture: image, favicon: tab.favicon)
-    }
-
-    private func start() {
-        guard active, work == nil, host.window != nil, viewport.width > 0 else { return }
-        work = Task { [weak self] in
-            await self?.run()
-            guard let self else { return }
-            work = nil
-            // A foreground callback may have arrived while the cancelled job was unwinding.
-            if active, Task.isCancelled { start() }
+        else {
+            retry?.cancel(); retry = nil
+            work?.cancel()
+            renderers.values.forEach { $0.cancel() }
         }
     }
 
+    func save(_ tab: BrowserTab) {
+        guard let url = tab.sessionTab.url, tab.snapshot != nil || tab.favicon != nil else { return }
+        cache.save(id: tab.id, url: url, picture: tab.snapshot, favicon: tab.favicon)
+    }
+
+    private func key(for tab: BrowserTab) -> Key? {
+        tab.sessionTab.url.map { Key(id: tab.id, url: $0) }
+    }
     private func isCurrent(_ tab: BrowserTab, key: Key) -> Bool {
         tabs.contains { $0 === tab } && tab.sessionTab.url == key.url
+    }
+    private func canRetry(_ retry: Retry?) -> Bool { retry.map { Date() >= $0.date } ?? true }
+
+    private func start() {
+        guard active, work == nil, host.window != nil, viewport.width > 0 else { return }
+        retry?.cancel(); retry = nil
+        let started = revision
+        work = Task { [weak self] in
+            guard let self else { return }
+            await withTaskGroup(of: Void.self) { group in
+                for _ in 0..<2 { group.addTask { await self.renderPreviews() } }
+                for _ in 0..<3 { group.addTask { await self.fetchFavicons() } }
+            }
+            work = nil
+            // Foregrounding or a new sync batch can arrive as the old pool is unwinding.
+            guard active else { return }
+            if Task.isCancelled || revision != started { start() }
+            else { scheduleRetry() }
+        }
+    }
+
+    private func scheduleRetry() {
+        let pending = tabs.compactMap { tab -> Date? in
+            guard let key = key(for: tab) else { return nil }
+            let picture = tab !== selected && tab.snapshot == nil ? failures[key] : nil
+            let icon = tab.favicon == nil ? iconFailures[key] : nil
+            return [picture, icon].compactMap { $0?.date }.min()
+        }.min()
+        guard let pending else { return }
+        retry = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(max(0.1, pending.timeIntervalSinceNow))) }
+            catch { return }
+            guard let self else { return }
+            retry = nil; start()
+        }
     }
 
     private func waitUntilIdle() async throws {
         while !canRender() {
             guard active, host.window != nil else { throw CancellationError() }
-            try await Task.sleep(for: .milliseconds(250))
+            try Task.checkCancellation()
+            try await Task.sleep(for: .milliseconds(200))
         }
         try Task.checkCancellation()
     }
 
-    private func run() async {
+    private func restoreCachedPreviews() async {
+        while !Task.isCancelled, let tab = tabs.first(where: {
+            ($0.snapshot == nil || $0.favicon == nil) && key(for: $0).map { !cached.contains($0) } == true
+        }), let key = key(for: tab) {
+            cached.insert(key)
+            guard let entry = await cache.load(id: key.id, url: key.url), isCurrent(tab, key: key) else { continue }
+            if tab.snapshot == nil, let bytes = entry.picture, let picture = UIImage(data: bytes),
+               !TabPreviewRenderer.isBlank(picture, topInset: stripHeight) {
+                tab.snapshot = picture
+            }
+            tab.restoreFavicon(entry.favicon.flatMap(UIImage.init(data:)))
+        }
+    }
+
+    private func fetchFavicons() async {
         while active, !Task.isCancelled {
-            // Restore cached cards before doing any networking, including the selected tab's.
-            if let tab = tabs.first(where: { tab in
-                tab.snapshot == nil && tab.sessionTab.url.map { !cached.contains(Key(id: tab.id, url: $0)) } == true
-            }), let url = tab.sessionTab.url {
-                let key = Key(id: tab.id, url: url)
-                cached.insert(key)
-                if let entry = await cache.load(id: tab.id, url: url), isCurrent(tab, key: key), tab.snapshot == nil {
-                    tab.snapshot = UIImage(data: entry.picture)
-                    tab.restoreFavicon(entry.favicon.flatMap(UIImage.init(data:)))
-                }
+            await restoreCachedPreviews()
+            guard let tab = queue.first(where: {
+                guard $0.favicon == nil, let key = key(for: $0) else { return false }
+                return !fetchingIcons.contains(key) && canRetry(iconFailures[key])
+            }), let key = key(for: tab) else {
+                // Renderers can discover declared icons after the initial root-icon pass.
+                guard !rendering.isEmpty else { return }
+                do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
                 continue
             }
-            guard let tab = tabs.first(where: { tab in
-                guard tab !== selected, tab.snapshot == nil, let url = tab.sessionTab.url else { return false }
-                return failures[Key(id: tab.id, url: url)].map { Date().timeIntervalSince($0) >= 60 } ?? true
-            }), let url = tab.sessionTab.url else { return }
-            let key = Key(id: tab.id, url: url)
+            fetchingIcons.insert(key)
+            defer { fetchingIcons.remove(key) }
+            let candidates = declaredIcons[key]
+            let icon: UIImage?
+            if let candidates { icon = await BrowserTab.favicon(at: candidates) }
+            else { icon = await BrowserTab.favicon(for: key.url) }
+            guard !Task.isCancelled else { return }
+            guard isCurrent(tab, key: key) else { continue }
+            if let icon {
+                tab.restoreFavicon(icon); iconFailures[key] = nil; save(tab)
+            } else if candidates == declaredIcons[key] {
+                iconFailures[key] = Retry(after: iconFailures[key], delay: retryDelay)
+            }
+        }
+    }
+
+    private func renderPreviews() async {
+        while active, !Task.isCancelled {
+            await restoreCachedPreviews()
+            guard let tab = queue.first(where: {
+                guard $0 !== selected, $0.snapshot == nil, let key = key(for: $0) else { return false }
+                return !rendering.contains(key) && canRetry(failures[key])
+            }), let key = key(for: tab) else { return }
+            rendering.insert(key)
+            defer { rendering.remove(key) }
             do {
-                // Creating a WebKit page or composing a bitmap must not land in a gesture.
-                try await Task.sleep(for: .milliseconds(300))
+                // Stagger creation so a large sync batch cannot create WebKit pages in one frame.
+                try await Task.sleep(for: .milliseconds(rendering.count == 1 ? 300 : 600))
                 try await waitUntilIdle()
                 guard isCurrent(tab, key: key), tab !== selected, tab.snapshot == nil else { continue }
-                let page = TabPreviewRenderer(host: host, size: CGSize(width: viewport.width, height: viewport.height-stripHeight),
-                                              top: stripHeight, adBlocker: adBlocker)
-                renderer = page
-                defer { page.cancel(); renderer = nil }
-                let picture = try await page.picture(for: url)
+                let size = viewport, top = stripHeight
+                let page = TabPreviewRenderer(host: host, size: CGSize(width: size.width, height: size.height-top),
+                                              top: top, adBlocker: adBlocker)
+                renderers[key] = page
+                defer { page.cancel(); renderers[key] = nil }
+                let picture = try await page.picture(for: key.url, beforeCapture: { [weak self] in
+                    guard let self else { throw CancellationError() }
+                    try await self.waitUntilIdle()
+                })
                 try await waitUntilIdle()
-                try Task.checkCancellation()
                 guard isCurrent(tab, key: key), tab !== selected, tab.snapshot == nil else { continue }
                 let format = UIGraphicsImageRendererFormat()
-                format.scale = min(1.5, 600/viewport.width); format.opaque = true
+                format.scale = min(1.5, 600/size.width); format.opaque = true
                 let strip = picture.cgImage.flatMap(PageEdgeColor.dominantColor) ?? .systemBackground
-                let image = UIGraphicsImageRenderer(size: viewport, format: format).image { context in
-                    strip.setFill(); context.fill(CGRect(origin: .zero, size: viewport))
-                    picture.draw(in: CGRect(x: 0, y: stripHeight, width: viewport.width, height: viewport.height-stripHeight))
+                tab.snapshot = UIGraphicsImageRenderer(size: size, format: format).image { context in
+                    strip.setFill(); context.fill(CGRect(origin: .zero, size: size))
+                    picture.draw(in: CGRect(x: 0, y: top, width: size.width, height: size.height-top))
                 }
-                tab.snapshot = image
-                save(tab)
-                let icon = await BrowserTab.favicon(for: page.webView)
-                guard !Task.isCancelled, isCurrent(tab, key: key) else { continue }
-                tab.restoreFavicon(icon)
-                save(tab)
-            } catch is CancellationError { return }
-            catch { failures[key] = Date() }
-        }
-    }
-}
-
-/// No popups, downloads, permission prompts or media playback from preview-only pages.
-@MainActor private final class TabPreviewRenderer: NSObject, WKNavigationDelegate, WKUIDelegate {
-    let webView: WKWebView
-    private let adBlocker: MobileAdBlocker
-    private var loading: CheckedContinuation<Void, Error>?
-    private var snapshot: CheckedContinuation<UIImage, Error>?
-    private var deadline: Task<Void, Never>?
-    private var cancelled = false
-    private var failure: Error?
-    private enum Failure: Error { case unavailable, timedOut }
-
-    init(host: UIView, size: CGSize, top: CGFloat, adBlocker: MobileAdBlocker) {
-        let configuration = WKWebViewConfiguration()
-        configuration.websiteDataStore = .default()
-        configuration.mediaTypesRequiringUserActionForPlayback = .all
-        configuration.allowsPictureInPictureMediaPlayback = false
-        // Match the real page's position below the status strip. Starting at y=0 would
-        // make automatic safe-area insets include that strip a second time in the picture.
-        webView = WKWebView(frame: CGRect(origin: CGPoint(x: 0, y: top), size: size), configuration: configuration)
-        self.adBlocker = adBlocker
-        super.init()
-        webView.navigationDelegate = self; webView.uiDelegate = self
-        webView.isUserInteractionEnabled = false
-        webView.setAllMediaPlaybackSuspended(true, completionHandler: nil)
-        host.addSubview(webView)
-    }
-
-    func picture(for url: URL) async throws -> UIImage {
-        deadline = Task { [weak self] in
-            do { try await Task.sleep(for: .seconds(20)); self?.fail(Failure.timedOut) }
-            catch { }
-        }
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                loading = continuation
-                webView.load(URLRequest(url: url, timeoutInterval: 15))
-            }
-            // Let fonts, image decoding and client-rendered articles reach their first paint.
-            // Includes the first consent-API fallback, so closed-shadow banners aren't
-            // baked into restored/synced cards before their acceptance callback finishes.
-            try await Task.sleep(for: .milliseconds(1400))
-            try Task.checkCancellation()
-            if let failure { throw failure }
-            guard !cancelled else { throw CancellationError() }
-            let configuration = WKSnapshotConfiguration()
-            configuration.snapshotWidth = NSNumber(value: Double(min(600, webView.bounds.width*1.5)))
-            configuration.afterScreenUpdates = true
-            let image: UIImage = try await withCheckedThrowingContinuation { continuation in
-                snapshot = continuation
-                webView.takeSnapshot(with: configuration) { [weak self] image, error in
-                    guard let self, let waiting = snapshot else { return }
-                    snapshot = nil
-                    if let image { waiting.resume(returning: image) }
-                    else { waiting.resume(throwing: error ?? Failure.unavailable) }
+                failures[key] = nil; save(tab)
+                // Prefer the declared icon when the fast first-party favicon lookup found none.
+                if tab.favicon == nil {
+                    let candidates = await BrowserTab.faviconCandidates(for: page.webView)
+                    guard !Task.isCancelled, isCurrent(tab, key: key) else { continue }
+                    declaredIcons[key] = candidates; iconFailures[key] = nil; revision += 1
                 }
-            }
-            deadline?.cancel(); deadline = nil
-            return image
-        } onCancel: {
-            Task { @MainActor [weak self] in self?.cancel() }
+            } catch is CancellationError {
+                if Task.isCancelled || !active { return }
+            } catch { failures[key] = Retry(after: failures[key], delay: retryDelay) }
         }
     }
-
-    func cancel() {
-        cancelled = true
-        deadline?.cancel(); deadline = nil
-        fail(CancellationError())
-        webView.navigationDelegate = nil; webView.uiDelegate = nil
-        webView.stopLoading(); webView.removeFromSuperview()
-    }
-
-    private func fail(_ error: Error) {
-        failure = error
-        let load = loading, picture = snapshot
-        loading = nil; snapshot = nil
-        load?.resume(throwing: error); picture?.resume(throwing: error)
-    }
-
-    private func allow(_ url: URL?, decision: @escaping @MainActor @Sendable (Bool) -> Void) {
-        guard !cancelled, let url, MobileBrowserSession.canRestore(url) else { decision(false); return }
-        if adBlocker.prepareIfReady(webView, for: url) { decision(true); return }
-        Task {
-            do { try await adBlocker.prepare(webView, for: url); decision(!cancelled) }
-            catch { decision(false); fail(error) }
-        }
-    }
-
-    func webView(_ page: WKWebView, decidePolicyFor action: WKNavigationAction,
-                 decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
-        guard !action.shouldPerformDownload, action.targetFrame != nil else { decisionHandler(.cancel); return }
-        guard action.targetFrame?.isMainFrame == true else { decisionHandler(.allow); return }
-        allow(action.request.url) { decisionHandler($0 ? .allow : .cancel) }
-    }
-
-    func webView(_ page: WKWebView, decidePolicyFor response: WKNavigationResponse,
-                 decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void) {
-        guard !BrowserViewController.shouldDownload(response) else { decisionHandler(.cancel); fail(Failure.unavailable); return }
-        guard response.isForMainFrame else { decisionHandler(.allow); return }
-        allow(response.response.url) { decisionHandler($0 ? .allow : .cancel) }
-    }
-
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        let waiting = loading; loading = nil; waiting?.resume()
-    }
-    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { fail(error) }
-    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { fail(error) }
-    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { fail(Failure.unavailable) }
-    func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
-                 initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
-                 decisionHandler: @escaping @MainActor (WKPermissionDecision) -> Void) { decisionHandler(.deny) }
-    func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
-                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor () -> Void) { completionHandler() }
-    func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
-                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor (Bool) -> Void) { completionHandler(false) }
-    func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?,
-                 initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping @MainActor (String?) -> Void) { completionHandler(nil) }
 }

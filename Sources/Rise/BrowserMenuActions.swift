@@ -83,6 +83,8 @@ extension BrowserController: NSMenuItemValidation {
         case #selector(reload), #selector(hardReload),
              #selector(peekCurrentPage), #selector(savePageScreenshot), #selector(capturePageImage), #selector(capturePagePDF),
              #selector(showSiteInformation): return hasPage
+        case #selector(toggleCardMotionTester):
+            item.state = CardMotionTester.shared.isOn ? .on : .off; return true
         default: return true
         }
     }

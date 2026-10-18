@@ -154,7 +154,7 @@ final class CalendarTimeline: FlippedView {
     }
     required init?(coder: NSCoder) { fatalError() }
     deinit { NotificationCenter.default.removeObserver(self) }
-    override func hitTest(_ point: NSPoint) -> NSView? { isHidden ? nil : super.hitTest(point) }
+    override func hitTest(_ point: NSPoint) -> NSView? { isHidden || key == nil ? nil : super.hitTest(point) }
     override func updateTrackingAreas() {
         super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self))
@@ -169,10 +169,13 @@ final class CalendarTimeline: FlippedView {
         for chip in chips + allDayChips { chip.isHovered = chip === hit }
     }
 
-    func present(key: String, agenda: CalendarAgenda, left: CGFloat, anchorTop: CGFloat, maxBottom: CGFloat, theme: RiseTheme, glides: Bool = false) {
+    /// `growsFrom` is where it comes out of its tab, in the superview, when that isn't beside the tab's middle.
+    func present(key: String, agenda: CalendarAgenda, left: CGFloat, anchorTop: CGFloat, maxBottom: CGFloat, theme: RiseTheme,
+                 glides: Bool = false, growsFrom: NSPoint? = nil) {
         let appearing = self.key == nil, switching = self.key != key
+        if appearing { CardMotionAnimator.cancelOut(self) }
         self.key = key; self.theme = theme; isHidden = false
-        frame.origin.x = left; self.anchorTop = anchorTop; self.maxBottom = maxBottom
+        frame.origin.x = left; self.anchorTop = anchorTop; self.maxBottom = maxBottom; tabPoint = growsFrom
         appearance = theme.appearance
         panel.fill = background
         panel.layer?.borderColor = theme.border.cgColor
@@ -181,6 +184,7 @@ final class CalendarTimeline: FlippedView {
         if switching { events = []; (chips+allDayChips).forEach { $0.removeFromSuperview() }; chips = []; allDayChips = [] }
         update(agenda)
         if appearing { height.settle(); if !glides { top.settle() }; render() }
+        if appearing && !glides { CardMotionAnimator.animateIn(self, CardMotion.selected, tab: tabOrigin) }
         // Opens at the hour now, a little of the hour before showing above it.
         if appearing || switching { scrollToNow(); scroll.hideScrollerUntilScrolled() }
         animate()
@@ -212,9 +216,28 @@ final class CalendarTimeline: FlippedView {
         timeline.alphaValue = agenda.error != nil ? 0.35 : 1
         layoutCard(); updateHover(); animate()
     }
-    func dismiss() {
-        key = nil; isHidden = true; link?.invalidate(); link = nil; clock?.invalidate(); clock = nil; shimmer.cancel()
+    /// Where the card comes out of its tab, in its superview: by default its own left edge level
+    /// with the middle of the tab beside it.
+    private var tabPoint: NSPoint?
+    /// The same, in the card's own coordinates.
+    private var tabOrigin: CGPoint {
+        let point = tabPoint ?? NSPoint(x: frame.minX, y: anchorTop+TabAppearance.height/2)
+        return CGPoint(x: point.x-frame.minX, y: point.y-frame.minY)
+    }
+    /// Plays the way in again, for the motion tester.
+    func replayMotion() {
+        guard key != nil, !isHidden else { return }
+        CardMotionAnimator.animateIn(self, CardMotion.selected, tab: tabOrigin)
+    }
+    /// Goes with the motion picked with Develop ▸ Card Motion Tester, or at once with `animated: false`.
+    func dismiss(animated: Bool = true) {
+        let wasShown = key != nil
+        key = nil; link?.invalidate(); link = nil; clock?.invalidate(); clock = nil; shimmer.cancel()
         height.settle(); top.settle()
+        guard animated, wasShown else { isHidden = true; return }
+        CardMotionAnimator.animateOut(self, CardMotion.selected, tab: tabOrigin) { [weak self] in
+            if self?.key == nil { self?.isHidden = true }
+        }
     }
     private func timeText(_ event: CalendarEvent) -> String {
         let formatter = DateIntervalFormatter(); formatter.dateStyle = .none; formatter.timeStyle = .short

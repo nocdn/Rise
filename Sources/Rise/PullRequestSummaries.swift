@@ -258,13 +258,19 @@ enum PullRequestSummarizer {
         if !page.isEmpty { context += "\nPull request page:\n\(page.prefix(20_000))\n" }
         return [["role": "system", "content": systemPrompt], ["role": "user", "content": context]]
     }
+    /// `inputTokens` hears how many tokens the request took in, as the find bar's menu shows.
     static func summarize(_ messages: [[String: Any]], provider: ModelChoice = .openRouter,
-                          session: URLSession = .shared) -> AsyncThrowingStream<String, Error> {
+                          session: URLSession = .shared,
+                          inputTokens: @escaping @MainActor (Int) -> Void = { _ in }) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
                     try await ModelService.run(messages, provider: provider, session: session) { event in
-                        if case .text(let content) = event { continuation.yield(content) }
+                        switch event {
+                        case .text(let content): continuation.yield(content)
+                        case .inputTokens(let count): await inputTokens(count)
+                        case .responded: break
+                        }
                     }
                     continuation.finish()
                 } catch { continuation.finish(throwing: error) }
@@ -282,8 +288,10 @@ enum PullRequestSummarizer {
         var details: PullRequestDetails?
         var summary = ""
         var phase = Phase.idle
+        /// What writing the description took in, for the card's menu.
+        var inputTokens: Int?
     }
-    private struct Saved: Codable { var summary: String?; var details: PullRequestDetails? }
+    private struct Saved: Codable { var summary: String?; var details: PullRequestDetails?; var inputTokens: Int? }
     private(set) var entries: [String: Entry] = [:]
     private var saved: [String: Saved]
     private var tasks: [String: Task<Void, Never>] = [:]
@@ -305,7 +313,8 @@ enum PullRequestSummarizer {
     func entry(for pr: PullRequest) -> Entry {
         if let entry = entries[pr.key] { return entry }
         let saved = saved[pr.key]
-        return Entry(details: saved?.details, summary: saved?.summary ?? "", phase: saved?.summary == nil ? .idle : .done)
+        return Entry(details: saved?.details, summary: saved?.summary ?? "", phase: saved?.summary == nil ? .idle : .done,
+                     inputTokens: saved?.summary == nil ? nil : saved?.inputTokens)
     }
     /// Fetches the details and, unless one is saved, writes the description. Keeps going
     /// when the card closes, so the description is ready next time.
@@ -331,7 +340,11 @@ enum PullRequestSummarizer {
             do {
                 guard details != nil || !pageText.isEmpty else { throw URLError(.resourceUnavailable) }
                 let messages = PullRequestSummarizer.messages(title: details?.title ?? title, body: details?.body ?? "", diff: diff, page: pageText)
-                for try await chunk in PullRequestSummarizer.summarize(messages, provider: self.provider()) {
+                let counted: @MainActor (Int) -> Void = { [weak self] count in
+                    self?.update(key) { $0.inputTokens = count }
+                    self?.saved[key, default: Saved()].inputTokens = count
+                }
+                for try await chunk in PullRequestSummarizer.summarize(messages, provider: self.provider(), inputTokens: counted) {
                     text += chunk
                     self.update(key) { $0.summary = text }
                 }
@@ -344,6 +357,15 @@ enum PullRequestSummarizer {
             }
             self.tasks[key] = nil
         }
+    }
+    /// Writes the description again, in place of the saved one. Not while one is being written.
+    func regenerate(_ pr: PullRequest, title: String, page: @escaping @MainActor () async -> String?) {
+        let key = pr.key
+        guard tasks[key] == nil else { return }
+        saved[key]?.summary = nil; saved[key]?.inputTokens = nil; save()
+        entries[key] = nil
+        load(pr, title: title, page: page)
+        onChange?(key)
     }
     /// Pipelines and merge checks change by the minute, unlike the rest of a merge request;
     /// each time its card shows, a GitLab merge request checks them again.

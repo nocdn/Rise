@@ -206,7 +206,8 @@ final class GmailTooltipTests: XCTestCase {
         browser.cardPointerChanged(true)
         XCTAssertTrue(tab.page.isCovered)
         browser.tabPressed()
-        XCTAssertNil(browser.tabHoverCards.shownID); XCTAssertTrue(browser.tabHoverCards.gmailCard.isHidden)
+        XCTAssertNil(browser.tabHoverCards.shownID)
+        try await wait { browser.tabHoverCards.gmailCard.isHidden }
         browser.tabHoverChanged(tab.id, hovering: true)
         try await wait { browser.tabHoverCards.shownID == tab.id }
         tab.requestedURL = URL(string: "https://example.com/"); browser.refreshTabHoverCard()

@@ -79,3 +79,59 @@ final class PullRequestTooltipTests: XCTestCase {
         XCTAssertEqual(PullRequestPalette.blocks(additions: 1000, deletions: 1).deleted, 1, "Any deletions keep a square")
     }
 }
+
+/// The find bar's ⋯ at the card's bottom right, with the same menu.
+final class PullRequestCardMenuTests: XCTestCase {
+    @MainActor private func card(summary: String, mergeCheck: Bool, tokens: Int? = 12_345) -> PullRequestTooltip {
+        let card = PullRequestTooltip()
+        var details = PullRequestDetails(title: "fix: it", state: .open, commits: 1, changedFiles: 2, additions: 3, deletions: 4)
+        if mergeCheck {
+            details.mergeCheck = MergeCheck(gitLab: ["state": "opened", "detailed_merge_status": "ci_must_pass"], approvals: nil)
+            details.pipeline = Pipeline(gitLab: ["id": 1, "status": "failed", "web_url": "https://gitlab.com/g/p/-/pipelines/1"])
+        }
+        card.present(key: "k", content: .init(title: "fix: it", reference: "!1", details: details, summary: summary, phase: .done, inputTokens: tokens),
+                     left: 0, placement: .beside(top: 0, maxBottom: 2000), theme: .neutral)
+        return card
+    }
+    @MainActor func testTheButtonSitsInlineWithTheLastStatusRow() throws {
+        let card = card(summary: "Fixes the sidebar.", mergeCheck: true)
+        XCTAssertFalse(card.moreButton.isHidden)
+        let merge = try XCTUnwrap(card.subviews.first?.subviews.first?.subviews.first { $0 is MergeCheckRow })
+        XCTAssertEqual(card.moreButton.frame.midY, round(merge.frame.midY), accuracy: 0.5)
+        XCTAssertEqual(card.moreButton.frame.maxX, card.bounds.width-PullRequestTooltip.inset.width+4, accuracy: 0.5)
+        XCTAssertEqual(card.moreButton.frame.size, NSSize(width: 22, height: 20), "The find bar's size")
+    }
+    @MainActor func testWithoutStatusRowsItEndsTheDescriptionOrGetsItsOwnRow() {
+        let short = card(summary: "Fixes it.", mergeCheck: false)
+        let shortHeight = short.frame.height
+        XCTAssertFalse(short.moreButton.isHidden)
+        XCTAssertGreaterThan(short.moreButton.frame.minY, 40, "On the description's line, under the title and stats")
+        let long = card(summary: String(repeating: "Rewrites the whole thing ", count: 6) + "and the end of the line runs right to the edge of the card yes", mergeCheck: false)
+        XCTAssertFalse(long.moreButton.isHidden)
+        XCTAssertGreaterThan(long.frame.height, shortHeight)
+        XCTAssertLessThanOrEqual(long.moreButton.frame.maxY, long.frame.height-PullRequestTooltip.inset.height+2)
+    }
+    @MainActor func testTheMenuMatchesTheFindBars() {
+        let card = card(summary: "Fixes the sidebar.", mergeCheck: true)
+        XCTAssertEqual(card.makeMoreMenu().items.map(\.title), ["Regenerate", "Copy", "", "12,345 tok"])
+        XCTAssertFalse(card.makeMoreMenu().items.last!.isEnabled)
+        XCTAssertEqual(self.card(summary: "Fixes it.", mergeCheck: false, tokens: nil).makeMoreMenu().items.map(\.title), ["Regenerate", "Copy"])
+        var regenerated = 0; card.onRegenerate = { regenerated += 1 }
+        let menu = card.makeMoreMenu()
+        menu.performActionForItem(at: 0)
+        XCTAssertEqual(regenerated, 1)
+        let pasteboard = NSPasteboard.general, kept = pasteboard.string(forType: .string)
+        defer { pasteboard.clearContents(); if let kept { pasteboard.setString(kept, forType: .string) } }
+        menu.performActionForItem(at: 1)
+        XCTAssertEqual(pasteboard.string(forType: .string), "Fixes the sidebar.")
+    }
+    @MainActor func testRegeneratingStartsTheDescriptionOver() {
+        let card = card(summary: "Fixes the sidebar.", mergeCheck: true)
+        card.update(.init(title: "fix: it", reference: "!1", details: nil, summary: "", phase: .generating))
+        XCTAssertTrue(card.moreButton.isHidden, "Not while it's being written")
+        card.update(.init(title: "fix: it", reference: "!1", details: nil, summary: "Adds", phase: .generating))
+        card.update(.init(title: "fix: it", reference: "!1", details: nil, summary: "Adds a thing.", phase: .done, inputTokens: 9))
+        XCTAssertFalse(card.moreButton.isHidden)
+        XCTAssertEqual(card.makeMoreMenu().items.last?.title, "9 tok")
+    }
+}

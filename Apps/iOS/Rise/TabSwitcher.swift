@@ -225,15 +225,30 @@ import WebKit
         }
     }
 
+    /// A quick first-party lookup, independent of the page's loading progress.
+    static func favicon(for page: URL) async -> UIImage? {
+        guard MobileBrowserSession.canRestore(page),
+              let fallback = URL(string: "/favicon.ico", relativeTo: page)?.absoluteURL else { return nil }
+        return await icon(at: fallback)
+    }
+
     /// Used by the temporary preview page too, without changing a real tab's address/history.
     static func favicon(for web: WKWebView) async -> UIImage? {
+        await favicon(at: faviconCandidates(for: web))
+    }
+
+    static func faviconCandidates(for web: WKWebView) async -> [URL] {
         guard web.configuration.websiteDataStore.isPersistent,
-              let page = web.url, MobileBrowserSession.canRestore(page) else { return nil }
+              let page = web.url, MobileBrowserSession.canRestore(page) else { return [] }
         let result = try? await web.evaluateJavaScript(iconScript)
         var candidates = ((result as? [String]) ?? []).compactMap(URL.init(string:))
             .filter { ["http", "https", "data"].contains($0.scheme?.lowercased() ?? "") }
         candidates = Array(candidates.prefix(4))
         if let fallback = URL(string: "/favicon.ico", relativeTo: page)?.absoluteURL { candidates.append(fallback) }
+        return candidates
+    }
+
+    static func favicon(at candidates: [URL]) async -> UIImage? {
         for url in candidates {
             guard !Task.isCancelled else { return nil }
             if let image = await icon(at: url) { return image }
@@ -416,6 +431,7 @@ final class TabCell: UIControl {
     private lazy var closePan = UIPanGestureRecognizer(target: self, action: #selector(dragToClose))
     private let closePanDelegate = TabClosePanDelegate()
     private static let iconGap: CGFloat = 6
+    static let captionOffset: CGFloat = 6
     static let pressedScale: CGFloat = 0.97
 
     static func styleShadow(_ view: UIView) {
@@ -538,7 +554,7 @@ final class TabCell: UIControl {
         let close = TabSwitcherView.closeSize
         closeButton.frame = CGRect(x: card.frame.maxX-7-close, y: card.frame.minY+7, width: close, height: close)
         caption.bounds = CGRect(x: 0, y: 0, width: bounds.width, height: TabSwitcherView.titleHeight-10)
-        caption.center = CGPoint(x: bounds.midX, y: card.frame.minY-7-caption.bounds.height/2)
+        caption.center = CGPoint(x: bounds.midX+Self.captionOffset, y: card.frame.minY-7-caption.bounds.height/2)
         let icon = FaviconView.size, lead = icon+Self.iconGap
         let text = min(ceil(title.sizeThatFits(caption.bounds.size).width), caption.bounds.width-lead)
         favicon.frame = CGRect(x: 0, y: ((caption.bounds.height-icon)/2).rounded(), width: icon, height: icon)
@@ -603,6 +619,9 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
     /// holds it.
     private(set) var moving: TabCard?
     private(set) var movingShadow: UIView?
+    var isAnimatingOrTracking: Bool {
+        moving != nil || closing != nil || reflowing || scroll.isTracking || scroll.isDragging || scroll.isDecelerating
+    }
     private var heading: Heading?
     /// Counts the page's moves, so one that's been turned around doesn't finish.
     private var move = 0
@@ -703,6 +722,8 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
         guard !displayOrder.isEmpty else { return nil }
         return displayOrder[min(displayOrder.count-1, max(0, Int(focus.rounded())))]
     }
+    var onFocusChange: ((Int) -> Void)?
+    private var previewFocus: Int?
     /// A cell's frame in the viewport. The scroll view supplies native momentum; card
     /// positions compress on the left, rather than becoming a flat row of thumbnails.
     func cellFrame(_ index: Int) -> CGRect {
@@ -735,6 +756,9 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
         flightContainer.bounds = bounds
         flightContainer.center = grid.center
         if let closing { closing.apply(); return }
+        if let focusedIndex, focusedIndex != previewFocus {
+            previewFocus = focusedIndex; onFocusChange?(focusedIndex)
+        }
         let blend = min(1, abs(scroll.contentOffset.x-caughtOffset)/90)
         for (index, cell) in cells.enumerated() {
             let slot = slots[index] ?? 0
@@ -776,6 +800,7 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
 
     /// Lays out a card for each tab.
     func load(_ tabs: [BrowserTab], current: Int) {
+        previewFocus = nil
         closing = nil; reflowing = false; focusMove += 1
         entrance.stop(cells: cells)
         cells.forEach { $0.removeFromSuperview() }

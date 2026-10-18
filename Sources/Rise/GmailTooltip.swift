@@ -146,7 +146,7 @@ final class GmailEmailRow: NSButton {
     }
     required init?(coder: NSCoder) { fatalError() }
     deinit { NotificationCenter.default.removeObserver(self) }
-    override func hitTest(_ point: NSPoint) -> NSView? { isHidden ? nil : super.hitTest(point) }
+    override func hitTest(_ point: NSPoint) -> NSView? { isHidden || key == nil ? nil : super.hitTest(point) }
     override func updateTrackingAreas() {
         super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self))
@@ -161,17 +161,27 @@ final class GmailEmailRow: NSButton {
         for row in rows { row.isHovered = inside && point.map(row.frame.contains) == true }
     }
 
-    func present(key: String, inbox: GmailInbox, left: CGFloat, anchorTop: CGFloat, maxBottom: CGFloat, theme: RiseTheme, glides: Bool = false) {
+    /// Comes and goes with the hover cards' motion, out of its tab or out of `growsFrom` when given.
+    func present(key: String, inbox: GmailInbox, left: CGFloat, anchorTop: CGFloat, maxBottom: CGFloat, theme: RiseTheme,
+                 glides: Bool = false, growsFrom: NSPoint? = nil) {
         let appearing = self.key == nil, switching = self.key != key
+        if appearing { CardMotionAnimator.cancelOut(self) }
         self.key = key; self.theme = theme; isHidden = false
-        frame.origin.x = left; self.anchorTop = anchorTop; self.maxBottom = maxBottom
+        frame.origin.x = left; self.anchorTop = anchorTop; self.maxBottom = maxBottom; tabPoint = growsFrom
         appearance = theme.appearance
         panel.fill = theme == .dark ? theme.popup : TabAppearance.selectedFill(theme)
         panel.layer?.borderColor = theme.border.cgColor
         if switching { rows.forEach { $0.removeFromSuperview() }; rows = []; scroll.contentView.scroll(to: .zero); scroll.hideScrollerUntilScrolled() }
         update(inbox)
         if appearing { height.settle(); if !glides { top.settle() }; render() }
+        if appearing && !glides { CardMotionAnimator.animateIn(self, CardMotion.selected, tab: tabOrigin) }
         animate()
+    }
+    private var tabPoint: NSPoint?
+    /// Where the card comes out of its tab, in its own coordinates.
+    private var tabOrigin: CGPoint {
+        let point = tabPoint ?? NSPoint(x: frame.minX, y: anchorTop+TabAppearance.height/2)
+        return CGPoint(x: point.x-frame.minX, y: point.y-frame.minY)
     }
     func update(_ inbox: GmailInbox) {
         guard key != nil else { return }
@@ -190,9 +200,20 @@ final class GmailEmailRow: NSButton {
         layoutList(); updateHover(); animate()
         DispatchQueue.main.async { [weak self] in self?.loadIfNearEnd() }
     }
-    func dismiss() {
-        key = nil; isHidden = true; link?.invalidate(); link = nil; shimmer.cancel()
+    /// Plays the way in again, for the motion tester.
+    func replayMotion() {
+        guard key != nil, !isHidden else { return }
+        CardMotionAnimator.animateIn(self, CardMotion.selected, tab: tabOrigin)
+    }
+    /// Goes with the hover cards' motion, or at once with `animated: false`.
+    func dismiss(animated: Bool = true) {
+        let wasShown = key != nil
+        key = nil; link?.invalidate(); link = nil; shimmer.cancel()
         height.settle(); top.settle()
+        guard animated, wasShown else { isHidden = true; return }
+        CardMotionAnimator.animateOut(self, CardMotion.selected, tab: tabOrigin) { [weak self] in
+            if self?.key == nil { self?.isHidden = true }
+        }
     }
     private func layoutList() {
         layingOut = true

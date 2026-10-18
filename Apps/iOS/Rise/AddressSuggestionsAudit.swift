@@ -76,6 +76,16 @@ import WebKit
         browser.openPanel()
         try await Task.sleep(for: .milliseconds(650))
         let panel = browser.bottomBar.search, field = panel.field
+        // Programmatic insertText skips the editing delegate on newer UIKit. A real paste
+        // asks it first, so exercise that route instead of treating a paste as typing.
+        func paste(_ text: String) {
+            let selection = field.selectedTextRange!
+            let start = field.offset(from: field.beginningOfDocument, to: selection.start)
+            let length = field.offset(from: selection.start, to: selection.end)
+            if panel.textField(field, shouldChangeCharactersIn: NSRange(location: start, length: length), replacementString: text) {
+                field.insertText(text)
+            }
+        }
         try check("empty-query-offers-links", panel.candidates.contains { $0.url == fixture })
         let rest = field.editingRect(forBounds: field.bounds).minX
         field.insertText("l"); field.insertText("a")
@@ -167,7 +177,7 @@ import WebKit
         for character in "lamps.example/d" { field.insertText(String(character)) }
         try check("path-completion-keeps-full-path", field.text == "lamps.example/d" && field.inlineCompletion == "lamps.example/docs/lighting")
         panel.clearButton.sendActions(for: .primaryActionTriggered)
-        field.insertText("lamps.example")
+        paste("lamps.example")
         try check("pasted-address-is-not-rewritten", field.text == "lamps.example" && panel.completionPrefix == nil)
         try await Task.sleep(for: .milliseconds(300))
         let retainedRows = panel.resultRows
@@ -268,7 +278,7 @@ import WebKit
         try check("url-editor-replaces-selected-address", field.text == "https://different.example/path")
         panel.clearAddress()
         try check("url-editor-clear-preserves-focus", field.text == "" && field.isFirstResponder)
-        field.insertText("lamps.example")
+        paste("lamps.example")
         try await Task.sleep(for: .milliseconds(350))
         fullHeight = browser.bottomBar.bounds.height
         panel.siteRow.sendActions(for: .primaryActionTriggered)
@@ -481,11 +491,11 @@ import WebKit
         field.insertText("/more")
         try check("typing-after-fill-appends-to-the-address", field.text == fixture.absoluteString+"/more")
         field.text = "diagonal suggestions"; field.sendActions(for: .editingChanged); panel.layoutIfNeeded()
-        guard let searchRow = panel.resultRows.first(where: { $0.titleLabelView.text == "Search Google for “diagonal suggestions”" }) else {
-            throw Failure(check: "missing search fill row")
-        }
-        searchRow.fillButton.sendActions(for: .primaryActionTriggered)
-        try check("search-arrow-fills-search-terms-without-submitting", field.text == "diagonal suggestions" && filledOpen == nil && filledSwitch == nil)
+        try check("typed-google-search-action-does-not-appear-as-a-row", panel.resultRows.isEmpty
+                  && panel.candidates.contains { $0.isTypedAction && $0.symbol == "magnifyingglass" })
+        _ = panel.textFieldShouldReturn(field)
+        try check("go-searches-the-typed-terms-without-a-redundant-row", filledOpen == SearchPanel.searchURL(for: "diagonal suggestions") && filledSwitch == nil)
+        filledOpen = nil
         field.text = "amazo"; field.sendActions(for: .editingChanged); panel.layoutIfNeeded()
         let home = panel.offeredSite!.homeURL
         panel.siteRow.fillButton.sendActions(for: .primaryActionTriggered)

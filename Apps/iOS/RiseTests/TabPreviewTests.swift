@@ -31,7 +31,7 @@ final class TabPreviewTests: XCTestCase {
         window.rootViewController = browser; window.makeKeyAndVisible(); browser.view.layoutIfNeeded()
         browser.showTabSwitcher()
         try await wait { browser.tabs.dropFirst().allSatisfy { $0.snapshot != nil && $0.favicon != nil } }
-        XCTAssertEqual(fixture.pageRequests, 2, "One serial temporary renderer loads each missing preview once")
+        XCTAssertEqual(fixture.pageRequests, 2, "The bounded pool loads each missing preview once")
         XCTAssertEqual(browser.tabIndex, 0)
         XCTAssertTrue(browser.tabs.dropFirst().allSatisfy { $0.webView.url == nil }, "Previewing must preserve lazy tabs and their history")
         XCTAssertEqual(browser.tabs.map(\.sessionTab), session.tabs, "Rendering redirects/titles must not change the shared list")

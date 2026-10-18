@@ -378,7 +378,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             tabPreviews.canRender = { [weak self] in
                 guard let self else { return false }
                 return view.window?.windowScene?.activationState == .foregroundActive
-                    && !isSwipingToTabs && tabSwitcher.moving == nil && summarise == nil
+                    && !isSwipingToTabs && !tabSwitcher.isAnimatingOrTracking && summarise == nil
                     && !isPanelOpen && presentedViewController == nil
             }
         }
@@ -708,6 +708,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.tabsButton.count = tabs.count
         tabSwitcher.onSelect = { [weak self] index in self?.selectTab(index) }
         tabSwitcher.onClose = { [weak self] index in self?.closeTab(index) }
+        tabSwitcher.onFocusChange = { [weak self] index in
+            guard let self, let previews = tabPreviews, let slot = tabSwitcher.displayOrder.firstIndex(of: index) else { return }
+            let order = tabSwitcher.displayOrder
+            let nearby = (max(0, slot-3)...min(order.count-1, slot+2)).sorted { abs($0-slot) < abs($1-slot) }
+            previews.prioritize(nearby.compactMap { tabs.indices.contains(order[$0]) ? tabs[order[$0]].id : nil })
+        }
         tabSwitcher.onFlight = { [weak self] in
             guard self?.pendingCard != nil else { return }
             // Once the flight is with the render server.
@@ -1025,8 +1031,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
 
     @objc private func closePanelOnTap() {
-        guard bottomBar.panel != .history else { return }
-        closePanel()
+        if bottomBar.panel == .history { closeHistory() }
+        else { closePanel() }
     }
 
     /// Grow directly from the current surface; no toolbar dismissal or modal presentation first.

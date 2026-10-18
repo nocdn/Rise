@@ -60,8 +60,14 @@ import AppKit
                 hover.hoveredID = nil; return
             }
             hover.hoveredID = id; hover.safeOrigin = nil; hover.safeTarget = nil; hover.leftRow = nil
-            if hover.shownID != nil || CACurrentMediaTime()-hover.hiddenAt < TabHoverCards.grace { showTabHoverCard(id); return }
-            hover.timer = Timer.scheduledTimer(withTimeInterval: TabHoverCards.delay, repeats: false) { [weak self] _ in
+            // Only previews hand over to the next preview at once; a title waits its full delay
+            // every time, and whatever was showing goes first.
+            let warm = hover.shownID != nil || CACurrentMediaTime()-hover.hiddenAt < TabHoverCards.grace
+            if warm, hover.kind != .title, TabHoverCards.hasPreview(url) { showTabHoverCard(id); return }
+            if hover.shownID != nil { hideTabHoverCard(); hover.hoveredID = id }
+            // Previews (pull requests, Gmail, Calendar) wait as long as the motion tester has them set to.
+            let delay = TabHoverCards.hasPreview(url) ? CardMotion.hoverDelay : TabHoverCards.delay
+            hover.timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
                 MainActor.assumeIsolated { self?.showTabHoverCard(id) }
             }
         } else {
@@ -106,11 +112,11 @@ import AppKit
         }
         guard let pr = PullRequest(url: tab.url) else {
             hover.pullRequestCard.dismiss(); hover.gmailCard.dismiss(); hover.calendarCard.dismiss(); hover.kind = .title; hover.shownID = id
-            if hover.titleCard.superview !== root { root.addSubview(hover.titleCard, positioned: .below, relativeTo: dismissArea) }
+            raiseHoverCard(hover.titleCard)
             if !hover.tracksPointer, let window { hover.tracksPointer = !window.acceptsMouseMovedEvents; window.acceptsMouseMovedEvents = true }
-            let pointer = pointerInRoot ?? row.convert(NSPoint(x: 24, y: row.bounds.midY), to: root)
             hover.titleCard.showsHint = !(row is PinnedTabTile)
-            hover.titleCard.present(title: tab.title, near: pointer, theme: theme)
+            hover.titleCard.present(title: tab.title, beside: row.convert(row.bounds, to: root), left: sidebar.frame.maxX+6,
+                                    pinned: row is PinnedTabTile, theme: theme)
             return
         }
         hover.shownID = id
@@ -122,18 +128,19 @@ import AppKit
         }
         hover.summaries.refreshStatus(pr)
         if hover.pullRequestCard.superview !== root {
-            root.addSubview(hover.pullRequestCard, positioned: .below, relativeTo: dismissArea)
             hover.pullRequestCard.onPointer = { [weak self] inside in self?.cardPointerChanged(inside) }
             hover.pullRequestCard.onOpenFiles = { [weak self] in self?.openFromPullRequestCard(.files) }
             hover.pullRequestCard.onOpenPipeline = { [weak self] pipeline in self?.openFromPullRequestCard(.pipeline(pipeline)) }
             hover.pullRequestCard.onOpenMergeChecks = { [weak self] in self?.openFromPullRequestCard(.mergeChecks) }
+            hover.pullRequestCard.onRegenerate = { [weak self] in self?.regenerateTabCardSummary() }
         }
+        raiseHoverCard(hover.pullRequestCard)
         // The safe triangle needs every pointer move, not only those over tracked views.
         if !hover.tracksPointer, let window { hover.tracksPointer = !window.acceptsMouseMovedEvents; window.acceptsMouseMovedEvents = true }
-        let anchor = row.convert(row.bounds, to: root)
+        let anchor = previewAnchor(row)
         hover.pullRequestCard.present(key: pr.key, content: tooltipContent(pr, title: title), left: sidebar.frame.maxX+6,
-                              anchorTop: anchor.minY, maxBottom: root.bounds.height-8, theme: theme,
-                              glides: CACurrentMediaTime()-hover.hiddenAt < TabHoverCards.grace)
+                              placement: .beside(top: anchor.top, maxBottom: root.bounds.height-8), theme: theme,
+                              glides: CACurrentMediaTime()-hover.hiddenAt < TabHoverCards.grace, fromTab: true, growsFrom: anchor.growsFrom)
     }
     /// The card's tab closed, changed accounts, or stopped being a supported page.
     func refreshTabHoverCard() {
@@ -166,10 +173,22 @@ import AppKit
         hover.titleCard.dismiss()
     }
     func pullRequestSummaryChanged(_ key: String) {
+        linkCardSummaryChanged(key)
         let hover = tabHoverCards
         guard hover.pullRequestCard.key == key, let id = hover.shownID, let tab = tabs.first(where: { $0.id == id }),
               let pr = PullRequest(url: tab.url), pr.key == key else { return }
         hover.pullRequestCard.update(tooltipContent(pr, title: pr.title(fromTab: tab.title)))
+    }
+    private func regenerateTabCardSummary() {
+        guard let id = tabHoverCards.shownID, let tab = tabs.first(where: { $0.id == id }), let pr = PullRequest(url: tab.url) else { return }
+        regenerateSummary(pr, title: pr.title(fromTab: tab.title), page: tab.page)
+    }
+    /// The ⋯ menu's Regenerate: a new description, reading the page when it's the request's own.
+    func regenerateSummary(_ pr: PullRequest, title: String, page: WebPage?) {
+        tabHoverCards.summaries.regenerate(pr, title: title) { [weak page] in
+            guard let page, PullRequest(url: page.url) == pr else { return nil }
+            return try? await PageAssistant.snapshot(of: page).text
+        }
     }
     enum PullRequestCardLink { case files, pipeline(Pipeline), mergeChecks }
     /// Each goes to the card's tab: the file count on the changed files, the pipeline number
@@ -178,6 +197,9 @@ import AppKit
         guard let id = tabHoverCards.shownID, let tab = tabs.first(where: { $0.id == id }), let pr = PullRequest(url: tab.url) else { return }
         tabPressed()
         if selectedID != id { select(id) }
+        open(link, of: pr, in: tab)
+    }
+    func open(_ link: PullRequestCardLink, of pr: PullRequest, in tab: BrowserTab) {
         switch link {
         case .pipeline(let pipeline): if let url = pipeline.jobsURL { showPeek(url: url) }
         case .files: if let url = pr.filesURL, tab.url != url { tab.load(url) }
@@ -238,7 +260,7 @@ import AppKit
         guard let point = pointerInRoot, let id = sidebar.tabID(at: sidebar.convert(point, from: root)) else { return false }
         return TabHoverCards.hasPreview(tabs.first(where: { $0.id == id })?.url)
     }
-    private var pointerInRoot: NSPoint? {
+    var pointerInRoot: NSPoint? {
         guard let window else { return nil }
         return root.convert(window.mouseLocationOutsideOfEventStream, from: nil)
     }
@@ -258,10 +280,23 @@ import AppKit
         let d1 = side(point, a, b), d2 = side(point, b, c), d3 = side(point, c, a)
         return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0))
     }
-    private func tooltipContent(_ pr: PullRequest, title: String) -> PullRequestTooltip.Content {
+    /// Hover cards go over everything on the page, Peeks and their controls included, which
+    /// are added later and would otherwise sit above a card added before them.
+    func raiseHoverCard(_ card: NSView) {
+        if let index = root.subviews.firstIndex(of: dismissArea), index > 0, root.subviews[index-1] === card { return }
+        root.addSubview(card, positioned: .below, relativeTo: dismissArea)
+    }
+    /// Where a preview card starts and grows from: level with a row's top, out of the row beside
+    /// it; a pinned tile's card starts level with the tile's bottom and comes out of its
+    /// bottom-right corner.
+    func previewAnchor(_ row: NSView) -> (top: CGFloat, growsFrom: NSPoint?) {
+        let frame = row.convert(row.bounds, to: root)
+        return row is PinnedTabTile ? (frame.maxY, NSPoint(x: frame.maxX, y: frame.maxY)) : (frame.minY, nil)
+    }
+    func tooltipContent(_ pr: PullRequest, title: String) -> PullRequestTooltip.Content {
         let entry = tabHoverCards.summaries.entry(for: pr)
         return PullRequestTooltip.Content(title: entry.details?.title ?? title, reference: pr.reference, details: entry.details,
-                                          summary: entry.summary, phase: entry.phase)
+                                          summary: entry.summary, phase: entry.phase, inputTokens: entry.inputTokens)
     }
 
     func showGmailTooltip(_ id: UUID) {
@@ -271,17 +306,17 @@ import AppKit
               let row = sidebar.anchor(for: id), row.window != nil else { return }
         hover.pullRequestCard.dismiss(); hover.calendarCard.dismiss(); hover.titleCard.dismiss(); hover.kind = .gmail; hover.shownID = id
         if hover.gmailCard.superview !== root {
-            root.addSubview(hover.gmailCard, positioned: .below, relativeTo: dismissArea)
             hover.gmailCard.onPointer = { [weak self] in self?.cardPointerChanged($0) }
             hover.gmailCard.onLoadMore = { [weak self] in self?.gmailInbox.loadMore() }
             hover.gmailCard.onOpen = { [weak self] email in self?.openGmailEmail(email) }
         }
+        raiseHoverCard(hover.gmailCard)
         if !hover.tracksPointer, let window { hover.tracksPointer = !window.acceptsMouseMovedEvents; window.acceptsMouseMovedEvents = true }
         gmailInbox.prepare(account: account, category: gmailCategory, source: tab.page, host: root)
-        let anchor = row.convert(row.bounds, to: root)
+        let anchor = previewAnchor(row)
         hover.gmailCard.present(key: account.baseURL.absoluteString+"|"+gmailCategory.rawValue, inbox: gmailInbox,
-                            left: sidebar.frame.maxX+6, anchorTop: anchor.minY, maxBottom: root.bounds.height-8,
-                            theme: theme, glides: CACurrentMediaTime()-hover.hiddenAt < TabHoverCards.grace)
+                            left: sidebar.frame.maxX+6, anchorTop: anchor.top, maxBottom: root.bounds.height-8,
+                            theme: theme, glides: CACurrentMediaTime()-hover.hiddenAt < TabHoverCards.grace, growsFrom: anchor.growsFrom)
     }
     func gmailInboxChanged() {
         guard tabHoverCards.kind == .gmail, tabHoverCards.shownID != nil else { return }
@@ -338,17 +373,18 @@ import AppKit
               let row = sidebar.anchor(for: id), row.window != nil else { return }
         hover.pullRequestCard.dismiss(); hover.gmailCard.dismiss(); hover.titleCard.dismiss(); hover.kind = .calendar; hover.shownID = id
         if hover.calendarCard.superview !== root {
-            root.addSubview(hover.calendarCard, positioned: .below, relativeTo: dismissArea)
             hover.calendarCard.onPointer = { [weak self] in self?.cardPointerChanged($0) }
             hover.calendarCard.onRetry = { [weak self] in self?.calendarAgenda.retry() }
             hover.calendarCard.onOpen = { [weak self] event in self?.openCalendarEvent(event) }
         }
+        raiseHoverCard(hover.calendarCard)
         if !hover.tracksPointer, let window { hover.tracksPointer = !window.acceptsMouseMovedEvents; window.acceptsMouseMovedEvents = true }
         calendarAgenda.prepare(account: account, source: tab.page, host: root)
-        let anchor = row.convert(row.bounds, to: root)
+        let anchor = previewAnchor(row)
         hover.calendarCard.present(key: account.baseURL.absoluteString, agenda: calendarAgenda,
-                                   left: sidebar.frame.maxX+6, anchorTop: anchor.minY, maxBottom: root.bounds.height-8,
-                                   theme: theme, glides: CACurrentMediaTime()-hover.hiddenAt < TabHoverCards.grace)
+                                   left: sidebar.frame.maxX+6, anchorTop: anchor.top, maxBottom: root.bounds.height-8,
+                                   theme: theme, glides: CACurrentMediaTime()-hover.hiddenAt < TabHoverCards.grace,
+                                   growsFrom: anchor.growsFrom)
     }
     func calendarAgendaChanged() {
         refreshCalendarBadges()
