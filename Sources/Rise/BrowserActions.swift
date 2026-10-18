@@ -61,15 +61,18 @@ import RiseCore
     }
     var hoveredSidebarTabID: UUID? {
         sidebar.rows.first { $0.value.isHovered && !$0.value.isHiddenOrHasHiddenAncestor && $0.value.window != nil }?.key
+            ?? sidebar.pinnedView.tiles.values.first { $0.isHovered && $0.window != nil }?.tabID
     }
     func tabMenu(_ id: UUID, event: NSEvent) {
-        guard let menu = makeTabMenu(id), let row = sidebar.rows[id] else { return }
+        guard let menu = makeTabMenu(id), let row = sidebar.anchor(for: id) else { return }
         NSMenu.popUpContextMenu(menu, with: event, for: row)
     }
     func makeTabMenu(_ id: UUID) -> NSMenu? {
         guard let tab = tabs.first(where: { $0.id == id }) else { return nil }
         let menu = NSMenu()
-        menu.addItem(menuItem(tab.pinned ? "Unpin Tab" : "Pin Tab") { [weak self, weak tab] in tab?.pinned.toggle(); self?.update() })
+        let pin = menuItem(tab.pinned ? "Unpin Tab" : "Pin Tab") { [weak self] in self?.togglePin(id) }
+        pin.isEnabled = tab.pinned || canPinTab && !splitGroups.contains { $0.contains(id) }
+        menu.addItem(pin)
         menu.addItem(menuItem("Duplicate Tab") { [weak self, weak tab] in if let url = tab?.url { self?.addTab(url: url) } })
         menu.addItem(menuItem("Smart Rename") { [weak self] in self?.smartRename(id) })
         menu.addItem(menuItem("Open in Split View") { [weak self, weak tab] in if let tab { self?.showSplit(tab) } })

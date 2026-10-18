@@ -299,6 +299,9 @@ import RiseCore
         sidebar.onClose = { [weak self] id in self?.closeTab(id) }
         sidebar.onTabMenu = { [weak self] id, event in self?.tabMenu(id, event: event) }
         sidebar.onReorder = { [weak self] in self?.reorderTabs($0) }
+        sidebar.onPin = { [weak self] id, slot in self?.pinTab(id, at: slot) }
+        sidebar.onUnpin = { [weak self] id, index in self?.unpinTab(id, at: index) }
+        sidebar.onReorderPinned = { [weak self] in self?.reorderPinnedTabs($0) }
         sidebar.onRename = { [weak self] id, title in self?.renameTab(id, title: title) }
         sidebar.onTabHover = { [weak self] id, hovering in self?.tabHoverChanged(id, hovering: hovering) }
         sidebar.playbackState = { [weak self] id in self?.playbackPaused(id) }
@@ -652,6 +655,9 @@ import RiseCore
             splitGroups.contains { $0.id == id && $0.contains(undo.tab.id) } && tabs.contains { $0 === undo.tab }
         }
         applyTheme()
+        if let first = tabs.firstIndex(where: { !$0.pinned }), tabs[first...].contains(where: \.pinned) {
+            tabs = tabs.filter(\.pinned) + tabs.filter { !$0.pinned }
+        }
         sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: splitGroups)
         refreshTabHoverCard(); preloadGmailInbox(); preloadCalendarAgenda()
         window?.title = (selectedTab?.title).map { "\($0) — Rise" } ?? "Rise"

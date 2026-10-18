@@ -17,7 +17,10 @@ import AppKit
     /// The countdowns move on every few seconds while a Calendar tab is open, which also keeps
     /// its events fresh.
     func refreshCalendarBadges() {
-        for tab in tabs { sidebar.rows[tab.id]?.setBadge(calendarBadge(for: tab)) }
+        for tab in tabs {
+            let badge = calendarBadge(for: tab)
+            sidebar.rows[tab.id]?.setBadge(badge); sidebar.pinnedView.tiles[tab.id]?.setBadge(badge)
+        }
         let counting = showsCalendarBadge && tabs.contains { CalendarAccount(url: $0.url) != nil }
         if counting, calendarAgenda.clock == nil {
             calendarAgenda.clock = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in

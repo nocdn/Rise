@@ -8,10 +8,51 @@ import AppKit
             for member in pair.map({ [$0.leftID, $0.rightID] }) ?? [id] where !ids.contains(member) { ids.append(member) }
         }
         ids += tabs.map(\.id).filter { !ids.contains($0) }
+        // Pinned tabs stay first, as Chrome extensions count them.
+        let pinned = Set(tabs.filter(\.pinned).map(\.id))
+        ids = ids.filter { pinned.contains($0) } + ids.filter { !pinned.contains($0) }
         guard ids != tabs.map(\.id) else { return }
         let existing = Dictionary(uniqueKeysWithValues: tabs.map { ($0.id,$0) })
         tabs = ids.compactMap { existing[$0] }
         sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: splitGroups, animated: animated)
+        scheduleSave()
+    }
+    /// The sidebar's tiles hold this many; Pin Tab is off once they're full.
+    var canPinTab: Bool { tabs.filter { $0.pinned && !isSplit($0.id) }.count < PinnedLayout.maximum }
+    private func isSplit(_ id: UUID) -> Bool { splitGroups.contains { $0.contains(id) } }
+    /// Pins a tab into the tiles at `slot`, or last.
+    func pinTab(_ id: UUID, at slot: Int? = nil) {
+        guard let tab = tabs.first(where: { $0.id == id }), !tab.pinned, !isSplit(id), canPinTab else { update(); return }
+        tab.pinned = true
+        var pinned = tabs.filter { $0.pinned && $0 !== tab }
+        pinned.insert(tab, at: min(slot ?? pinned.count, pinned.count))
+        tabs = pinned + tabs.filter { !$0.pinned }
+        update()
+    }
+    /// Unpins a tab into the list at `index` among its rows, or at its top.
+    /// Dropped into the list, the rows have already made room; from a menu, they make it now.
+    func unpinTab(_ id: UUID, at index: Int = 0, animated: Bool = false) {
+        guard let tab = tabs.first(where: { $0.id == id }), tab.pinned else { update(); return }
+        tab.pinned = false
+        var order = sidebar.orderedIDs.filter { $0 != id }
+        order.insert(id, at: min(index, order.count))
+        reorderTabs(order, animated: animated)
+        update()
+    }
+    /// From a menu: the tab travels to the tiles, or back to the top of the list.
+    func togglePin(_ id: UUID) {
+        guard let tab = tabs.first(where: { $0.id == id }) else { return }
+        let wasPinned = tab.pinned, start = sidebar.pinFlightStart(for: id)
+        if wasPinned { unpinTab(id, animated: true) } else { pinTab(id) }
+        if tab.pinned != wasPinned, let start { sidebar.flyPinChange(id, from: start) }
+    }
+    func reorderPinnedTabs(_ order: [UUID]) {
+        let byID = Dictionary(uniqueKeysWithValues: tabs.map { ($0.id, $0) })
+        let pinned = order.compactMap { byID[$0] }.filter(\.pinned)
+        let next = pinned + tabs.filter { !pinned.contains($0) }
+        guard next.map(\.id) != tabs.map(\.id) else { return }
+        tabs = next
+        sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: splitGroups)
         scheduleSave()
     }
     func renameTab(_ id: UUID, title: String) { tabs.first { $0.id == id }?.rename(title) }

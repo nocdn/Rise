@@ -34,6 +34,9 @@ import AppKit
     }
     func moveTabDrag(_ event: NSEvent) {
         guard let drag else { return }; drag.event = event
+        let pinning = updatePinning(drag, event: event)
+        if pinning == .pinning { return }
+        defer { followRow(drag) }
         let point = rowsHost.convert(event.locationInWindow, from: nil)
         let pull = point.x-drag.startPoint.x
         let maxY = max(0, targetFrames.values.map(\.minY).max() ?? 0)
@@ -41,7 +44,8 @@ import AppKit
         let slotY = min(max(0, desiredY), maxY)
         let verticalPull = desiredY-slotY
         let distance = max(max(0, pull), abs(verticalPull))
-        var springs = false
+        var springs = pinning == .stopped
+        if pinning == .stopped { drag.isDetached = false }
         if drag.isDetached, distance <= TabDragMotion.captureDistance,
                   scroll.frame.contains(convert(event.locationInWindow, from: nil)) {
             drag.isDetached = false; springs = true
@@ -113,6 +117,12 @@ import AppKit
         guard let drag else { return }
         self.drag = nil; dragScrollTimer?.invalidate(); dragScrollTimer = nil
         (window as? BrowserWindow)?.isDraggingTab = false
+        if drag.pinSlot != nil {
+            if !cancelled { landPinnedRow(drag); return }
+            pinnedView.setOpening(nil); drag.pinSlot = nil
+            orderedIDs.insert(drag.id, at: 0); displayedRows.insert(drag.view, at: 0)
+        }
+        retireGhost(drag)
         if drag.overlay != nil { returningDrag = drag }
         if cancelled {
             let byID = Dictionary(uniqueKeysWithValues: displayedRows.compactMap { row in canonicalID(for: row).map { ($0,row) } })
@@ -178,12 +188,13 @@ import AppKit
     }
     func cancelTabInteractions() {
         endTabDrag(cancelled: true)
+        endPinnedDrag(cancelled: true)
         finishReturningTab()
         rows.values.forEach { $0.cancelPress(); $0.refreshHover(); $0.finishRename(save: false) }
     }
     private func autoscrollDraggedTab() {
         guard let drag else { dragScrollTimer?.invalidate(); dragScrollTimer = nil; return }
-        guard !drag.isDetached else { return }
+        guard !drag.isDetached, drag.pinSlot == nil else { return }
         let point = convert(drag.event.locationInWindow, from: nil)
         let y = point.y-scroll.frame.minY, height = scroll.bounds.height
         let delta: CGFloat = y < 24 ? -min(8,(24-y)/3) : y > height-24 ? min(8,(y-height+24)/3) : 0

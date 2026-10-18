@@ -10,7 +10,7 @@ import AppKit
         guard let tab = selectedTab, let url = tab.url else { return }
         addTab(url: url, opener: tab.id)
     }
-    @objc func pinCurrentTab() { selectedTab?.pinned.toggle(); update() }
+    @objc func pinCurrentTab() { if let id = selectedTab?.id { togglePin(id) } }
     /// Pinned tabs and the other half of a split stay open during bulk closes.
     var otherClosableTabs: [BrowserTab] {
         let visible = Set(visibleTabIDs)
@@ -55,7 +55,8 @@ extension BrowserController: NSMenuItemValidation {
         case #selector(nextTab), #selector(previousTab), #selector(cleanUpTabs): return tabs.count > 1
         case #selector(duplicateCurrentTab): return hasPage
         case #selector(pinCurrentTab):
-            item.title = tab?.pinned == true ? "Unpin Tab" : "Pin Tab"; return tab != nil
+            item.title = tab?.pinned == true ? "Unpin Tab" : "Pin Tab"
+            return tab.map { tab in tab.pinned || canPinTab && !splitGroups.contains { $0.contains(tab.id) } } ?? false
         case #selector(closeOtherTabs): return tab != nil && !otherClosableTabs.isEmpty
         case #selector(closeTabsBelow): return !closableTabsBelow.isEmpty
         case #selector(toggleSidebar):

@@ -48,7 +48,7 @@ import AppKit
         let hover = tabHoverCards
         if hovering {
             hover.timer?.invalidate()
-            guard sidebar.drag == nil, tabs.contains(where: { $0.id == id }), sidebar.rows[id]?.isRenaming == false else {
+            guard sidebar.drag == nil, sidebar.pinnedDrag == nil, tabs.contains(where: { $0.id == id }), (sidebar.anchor(for: id) != nil && !sidebar.isRenaming(id)) else {
                 hover.hoveredID = nil
                 // Crossing another tab on the way to the card doesn't close it.
                 if !pointerIsHeadingForCard() { hideTabHoverCard() }
@@ -70,7 +70,7 @@ import AppKit
             guard hover.shownID != nil else { return }
             if hover.kind == .title { hideTabHoverCard(); return }
             hover.safeOrigin = pointerInRoot; hover.safeTarget = nil
-            hover.leftRow = sidebar.rows[id].map { $0.convert($0.bounds, to: root).insetBy(dx: 0, dy: -(TabAppearance.spacing+1)) }
+            hover.leftRow = sidebar.anchor(for: id).map { $0.convert($0.bounds, to: root).insetBy(dx: 0, dy: -(TabAppearance.spacing+1)) }
             // Crossing to the next row exits this one first; the next row claims the card in the same turn.
             DispatchQueue.main.async { [weak self] in self?.closeCardIfAbandoned() }
         }
@@ -79,7 +79,7 @@ import AppKit
     func tabHoverPointerMoved() {
         let hover = tabHoverCards
         if hover.kind == .title, let id = hover.shownID {
-            guard let row = sidebar.rows[id], let point = pointerInRoot,
+            guard let row = sidebar.anchor(for: id), let point = pointerInRoot,
                   row.visibleRect.intersection(row.bounds).contains(row.convert(point, from: root)) else {
                 hideTabHoverCard(); return
             }
@@ -96,8 +96,8 @@ import AppKit
     }
     func showTabHoverCard(_ id: UUID) {
         let hover = tabHoverCards
-        guard hover.hoveredID == id, sidebar.drag == nil, isSidebarShown, window?.isVisible == true,
-              let tab = tabs.first(where: { $0.id == id }), let row = sidebar.rows[id], row.window != nil, !row.isRenaming else { return }
+        guard hover.hoveredID == id, sidebar.drag == nil, sidebar.pinnedDrag == nil, isSidebarShown, window?.isVisible == true,
+              let tab = tabs.first(where: { $0.id == id }), let row = sidebar.anchor(for: id), row.window != nil, !sidebar.isRenaming(id) else { return }
         if GmailAccount(url: tab.url) != nil {
             showGmailTooltip(id); return
         }
@@ -109,6 +109,7 @@ import AppKit
             if hover.titleCard.superview !== root { root.addSubview(hover.titleCard, positioned: .below, relativeTo: dismissArea) }
             if !hover.tracksPointer, let window { hover.tracksPointer = !window.acceptsMouseMovedEvents; window.acceptsMouseMovedEvents = true }
             let pointer = pointerInRoot ?? row.convert(NSPoint(x: 24, y: row.bounds.midY), to: root)
+            hover.titleCard.showsHint = !(row is PinnedTabTile)
             hover.titleCard.present(title: tab.title, near: pointer, theme: theme)
             return
         }
@@ -137,7 +138,7 @@ import AppKit
     /// The card's tab closed, changed accounts, or stopped being a supported page.
     func refreshTabHoverCard() {
         guard let id = tabHoverCards.shownID else { return }
-        guard let tab = tabs.first(where: { $0.id == id }), sidebar.rows[id]?.isRenaming == false else { hideTabHoverCard(); return }
+        guard let tab = tabs.first(where: { $0.id == id }), (sidebar.anchor(for: id) != nil && !sidebar.isRenaming(id)) else { hideTabHoverCard(); return }
         if tabHoverCards.kind == .title {
             tabHoverCards.titleCard.update(title: tab.title, theme: theme)
             return
@@ -221,7 +222,7 @@ import AppKit
         // Heading back from the card to its tab crosses a gap first; a triangle toward the tab
         // keeps the card from blinking out on the way.
         hover.safeOrigin = pointerInRoot
-        hover.safeTarget = hover.shownID.flatMap { sidebar.rows[$0] }.map { $0.convert($0.bounds, to: root) }
+        hover.safeTarget = hover.shownID.flatMap { sidebar.anchor(for: $0) }.map { $0.convert($0.bounds, to: root) }
         DispatchQueue.main.async { [weak self] in self?.closeCardIfAbandoned() }
     }
     private func closeCardIfAbandoned() {
@@ -267,7 +268,7 @@ import AppKit
         let hover = tabHoverCards
         guard hover.hoveredID == id, isSidebarShown, window?.isVisible == true,
               let tab = tabs.first(where: { $0.id == id }), let account = GmailAccount(url: tab.url),
-              let row = sidebar.rows[id], row.window != nil else { return }
+              let row = sidebar.anchor(for: id), row.window != nil else { return }
         hover.pullRequestCard.dismiss(); hover.calendarCard.dismiss(); hover.titleCard.dismiss(); hover.kind = .gmail; hover.shownID = id
         if hover.gmailCard.superview !== root {
             root.addSubview(hover.gmailCard, positioned: .below, relativeTo: dismissArea)
@@ -334,7 +335,7 @@ import AppKit
         let hover = tabHoverCards
         guard hover.hoveredID == id, isSidebarShown, window?.isVisible == true,
               let tab = tabs.first(where: { $0.id == id }), let account = CalendarAccount(url: tab.url),
-              let row = sidebar.rows[id], row.window != nil else { return }
+              let row = sidebar.anchor(for: id), row.window != nil else { return }
         hover.pullRequestCard.dismiss(); hover.gmailCard.dismiss(); hover.titleCard.dismiss(); hover.kind = .calendar; hover.shownID = id
         if hover.calendarCard.superview !== root {
             root.addSubview(hover.calendarCard, positioned: .below, relativeTo: dismissArea)

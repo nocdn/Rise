@@ -62,6 +62,10 @@ import QuartzCore
     var overlay: TabDragOverlay?
     var returnWork: DispatchWorkItem?
     var event: NSEvent
+    /// Above New Tab: the grid slot it would be pinned in, and the tile it shows as meanwhile.
+    var pinSlot: Int?
+    var ghost: PinnedTabTile?
+    var grab = NSPoint.zero
     init(view: NSView, id: UUID, order: [UUID], startPoint: NSPoint, event: NSEvent) {
         self.view = view; self.id = id; originalOrder = order; self.startPoint = startPoint; self.event = event
         grabOffset = NSPoint(x: startPoint.x-view.frame.minX, y: startPoint.y-view.frame.minY)

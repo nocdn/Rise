@@ -66,7 +66,7 @@ final class TabOrganizationTests: XCTestCase {
     @MainActor func testVerticalDragCrossesBothWaysWithOneHapticPerNeighborAndPreservesEverything() throws {
         let browser = browser(); defer { clean(browser) }
         let a = browser.addTab(), b = browser.addTab(), c = browser.addTab(), d = browser.addTab()
-        b.developer = true; b.pinned = true; b.favicon = NSImage(size:NSSize(width:16,height:16))
+        b.developer = true; b.favicon = NSImage(size:NSSize(width:16,height:16))
         browser.update(); browser.root.layoutSubtreeIfNeeded()
         let row = browser.sidebar.rows[b.id]!, web = b.page.view, icon = row.icon.image, loading = row.loadingBackground
         var clicks = 0; browser.sidebar.crossingClick = { clicks += 1 }
@@ -76,7 +76,7 @@ final class TabOrganizationTests: XCTestCase {
         XCTAssertEqual(browser.tabs.map(\.id),[b.id,d.id,c.id,a.id]); XCTAssertEqual(clicks,2)
         XCTAssertEqual(row.frame.minX,6); XCTAssertEqual(row.frame.height,TabAppearance.subtitleRowHeight)
         XCTAssertTrue(browser.sidebar.rows[b.id] === row); XCTAssertTrue(b.page.view === web); XCTAssertTrue(row.loadingBackground === loading)
-        XCTAssertTrue(row.icon.image === icon); XCTAssertTrue(b.developer && b.pinned)
+        XCTAssertTrue(row.icon.image === icon); XCTAssertTrue(b.developer)
         XCTAssertEqual(browser.selectedID,d.id, "Dragging an inactive tab must preserve its selected styling")
         browser.window!.sendEvent(event(.leftMouseDragged,at:NSPoint(x:45,y:500),in:browser.sidebar.rowsHost))
         XCTAssertEqual(browser.tabs.map(\.id),[d.id,c.id,a.id,b.id]); XCTAssertEqual(clicks,5)

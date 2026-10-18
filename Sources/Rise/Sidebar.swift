@@ -28,6 +28,15 @@ import RiseCore
     let archiveButton: ArchiveButton
     let cleanUpButton: HoverHintButton
     var rows: [UUID: TabRow] = [:]
+    /// Pinned tabs, as tiles between the address and New Tab (`PinnedTabs.swift`).
+    let pinnedView = PinnedTabsView()
+    var pinnedDrag: PinnedDrag?
+    /// Holds a pinned tab's place in the list while one is dragged down to it.
+    let listPlaceholder = FlippedView()
+    var tabsByID: [UUID: BrowserTab] = [:]
+    var onPin: ((UUID, Int) -> Void)?
+    var onUnpin: ((UUID, Int) -> Void)?
+    var onReorderPinned: (([UUID]) -> Void)?
     var splitRows: [UUID: SplitTabRow] = [:]
     var displayedRows: [NSView] = []
     var targetFrames: [UUID: NSRect] = [:]
@@ -73,7 +82,7 @@ import RiseCore
         selectedTabShadow.shadow = TabAppearance.shadow(.neutral)
         selectedTabShadow.isHidden = true
         addSubview(selectedTabShadow)
-        [address, copyButton, settingsButton, newTab, scroll, archiveButton, cleanUpButton].forEach(addSubview)
+        [address, copyButton, settingsButton, pinnedView, newTab, scroll, archiveButton, cleanUpButton].forEach(addSubview)
         updateAddressControlVisibility(animated: false)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -97,6 +106,10 @@ import RiseCore
         }
         cleanUpButton.hintAppearance = theme.appearance
         for id in Array(rows.keys) where !tabs.contains(where: { $0.id == id }) { rows.removeValue(forKey: id)?.removeFromSuperview() }
+        tabsByID = Dictionary(tabs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let splitIDs = Set(splits.flatMap { [$0.leftID, $0.rightID] })
+        let pinned = Array(tabs.filter { $0.pinned && !splitIDs.contains($0.id) }.prefix(PinnedLayout.maximum).map(\.id))
+        updatePinned(pinned, selected: selected, theme: theme)
         for tab in tabs {
             let row: TabRow
             if let existing = rows[tab.id] { row = existing }
@@ -120,7 +133,8 @@ import RiseCore
             let isSelected = group.map { group in selected.map { group.contains($0.id) } ?? false } ?? (tab.id == selected?.id)
             row.update(tab: tab, selected: isSelected, theme: theme, configuration: .forTab(tab, theme: theme, peek: peekState?(tab.id)))
             row.setPlayback(paused: playbackState?(tab.id))
-            if group == nil && row.superview !== rowsHost && drag?.view !== row && returningDrag?.view !== row { rowsHost.addSubview(row) }
+            if pinned.contains(tab.id) { if row.superview === rowsHost { row.removeFromSuperview() } }
+            else if group == nil && row.superview !== rowsHost && drag?.view !== row && returningDrag?.view !== row { rowsHost.addSubview(row) }
         }
         for id in Array(splitRows.keys) where !splits.contains(where: { $0.id == id }) { splitRows.removeValue(forKey: id)?.removeFromSuperview() }
         for group in splits {
@@ -132,14 +146,15 @@ import RiseCore
         }
         displayedRows = []; orderedIDs = []
         var seen = Set<UUID>()
-        for tab in tabs where !seen.contains(tab.id) {
+        for tab in tabs where !seen.contains(tab.id) && !pinned.contains(tab.id) {
             if let group = splits.first(where: { $0.contains(tab.id) }), let row = splitRows[group.id] {
                 displayedRows.append(row); orderedIDs.append(group.leftID); seen.formUnion([group.leftID, group.rightID])
             } else if let row = rows[tab.id] {
                 displayedRows.append(row); orderedIDs.append(tab.id); seen.insert(tab.id)
             }
         }
-        if let drag, !displayedRows.contains(where: { $0 === drag.view }) { endTabDrag() }
+        if let drag, drag.pinSlot == nil, !displayedRows.contains(where: { $0 === drag.view }) { endTabDrag() }
+        applyDragToList()
         needsLayout = true
         if bounds.width > 0 { layoutSubtreeIfNeeded() }
     }
@@ -152,6 +167,9 @@ import RiseCore
         layoutSubtreeIfNeeded()
     }
     func tabID(at point: NSPoint) -> UUID? {
+        if let tile = pinnedView.tiles.values.first(where: { $0.superview === pinnedView && $0.convert($0.bounds, to: self).contains(point) }) {
+            return tile.tabID
+        }
         guard scroll.frame.contains(point) else { return nil }
         for row in displayedRows where row.convert(row.bounds, to: self).contains(point) {
             if let tab = row as? TabRow { return tab.tabID }
@@ -170,10 +188,18 @@ import RiseCore
         settingsButton.frame = NSRect(x: address.frame.maxX-31, y: 56, width: 27, height: 24)
         layoutExtensionButtons()
         updateAddressTextBoundary(animated: false)
-        let start: CGFloat = 98
+        let pinnedHeight = PinnedLayout.height(count: pinnedView.count)
+        pinnedView.frame = NSRect(x: 0, y: PinnedLayout.top, width: w, height: max(0, pinnedHeight-PinnedLayout.bottom))
+        pinnedView.layoutTiles(animated: animatesRows && window != nil)
+        let start: CGFloat = pinnedHeight > 0 ? PinnedLayout.top+pinnedHeight : 98
+        let shift = start-newTab.frame.minY
         newTab.frame = NSRect(x: TabAppearance.inset, y: start, width: w-2*TabAppearance.inset, height: TabAppearance.height)
         let scrollY = newTab.frame.maxY+TabAppearance.spacing
         scroll.frame = NSRect(x: 0, y: scrollY, width: w, height: max(0, bounds.height-scrollY-44))
+        // The grid grows and shrinks as tabs are pinned; what's below it slides to make room.
+        if shift != 0, animatesRows, window != nil, newTab.frame.width > 0 {
+            [newTab, scroll, selectedTabShadow].forEach { PinnedLayout.slideVertically($0, from: -shift) }
+        }
         var y: CGFloat = 0; targetFrames = [:]
         for (index, row) in displayedRows.enumerated() {
             let h: CGFloat = (row as? SplitTabRow)?.rowHeight ?? (row as? TabRow)?.rowHeight ?? TabAppearance.height

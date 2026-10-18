@@ -10,6 +10,8 @@ import AppKit
     let hint = label("Double-click to rename", size: 12)
     let shape = CAShapeLayer()
     private var anchor = NSPoint.zero
+    /// Pinned tiles can't be renamed in place, so theirs leaves the hint out.
+    var showsHint = true
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -40,19 +42,20 @@ import AppKit
         let font = titleLabel.font!
         let textWidth = max(1, min(Self.maximumWidth, available.width)-2*Self.inset.width)
         // NSTextField's cell leaves two points on either side of its glyphs.
-        let naturalWidth = max((title as NSString).size(withAttributes: [.font: font]).width, hint.intrinsicContentSize.width)+4
+        let naturalWidth = max((title as NSString).size(withAttributes: [.font: font]).width, showsHint ? hint.intrinsicContentSize.width : 0)+4
         let width = ceil(min(textWidth, naturalWidth))
         let textHeight = ceil((title as NSString).boundingRect(with: NSSize(width: max(1, width-4), height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font]).height)
-        let hintHeight = ceil(hint.intrinsicContentSize.height)
-        let titleHeight = max(1, min(textHeight, available.height-2*Self.inset.height-1-hintHeight))
-        let size = NSSize(width: width+2*Self.inset.width, height: titleHeight+1+hintHeight+2*Self.inset.height)
+        let hintHeight = showsHint ? 1+ceil(hint.intrinsicContentSize.height) : 0
+        let titleHeight = max(1, min(textHeight, available.height-2*Self.inset.height-hintHeight))
+        let size = NSSize(width: width+2*Self.inset.width, height: titleHeight+hintHeight+2*Self.inset.height)
         CATransaction.begin(); CATransaction.setDisableActions(true)
         frame = NSRect(x: max(available.minX, min(anchor.x+12, available.maxX-size.width)),
                        y: max(available.minY, min(anchor.y+12, available.maxY-size.height)), width: size.width, height: size.height)
         titleLabel.stringValue = title; titleLabel.textColor = theme.text; hint.textColor = theme.muted
         titleLabel.frame = NSRect(origin: NSPoint(x: Self.inset.width, y: Self.inset.height), size: NSSize(width: width, height: titleHeight))
-        hint.frame = NSRect(x: Self.inset.width, y: titleLabel.frame.maxY+1, width: width, height: hintHeight)
+        hint.frame = NSRect(x: Self.inset.width, y: titleLabel.frame.maxY+1, width: width, height: max(0, hintHeight-1))
+        hint.isHidden = !showsHint
         shape.frame = bounds
         let path = Self.outline(in: bounds)
         shape.path = path; shape.shadowPath = path
