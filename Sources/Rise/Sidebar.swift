@@ -4,7 +4,6 @@ import RiseCore
 @MainActor final class SidebarView: Surface {
     let address = SidebarAddressButton()
     let addressText = FadingTextField(frame: .zero)
-    let searchIcon = NSImageView()
     let copyButton: SidebarCopyButton
     let settingsButton: SidebarHoverButton
     var isSidebarHovered = false
@@ -63,9 +62,7 @@ import RiseCore
         address.isBordered = false; address.title = ""; address.wantsLayer = true
         address.layer?.cornerRadius = AddressAppearance.cornerRadius; address.layer?.cornerCurve = .continuous
         address.target = self; address.action = #selector(openAddress); address.setAccessibilityLabel("Search or Enter URL")
-        searchIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
-        searchIcon.contentTintColor = NSColor(hex: 0xA09E9E)
-        address.addSubview(searchIcon); address.addSubview(addressText)
+        address.addSubview(addressText)
         addressText.font = .systemFont(ofSize: 13)
         newTab.target = self; newTab.action = #selector(createTab)
         scroll.drawsBackground = false; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true; scroll.scrollerStyle = .overlay
@@ -91,13 +88,13 @@ import RiseCore
         addressText.stringValue = AddressResolver.displayHost(selected?.url)
         let blank = selected?.url == nil || selected?.url?.absoluteString == "about:blank"
         addressText.textColor = blank ? theme.muted : theme.text.withAlphaComponent(theme == .dark ? 0.95 : 0.85)
-        searchIcon.isHidden = !blank; hasAddress = !blank
+        hasAddress = !blank
+        addressText.font = .systemFont(ofSize: 13, weight: blank ? AddressAppearance.placeholderWeight : .regular)
         updateAddressControlVisibility()
         ([copyButton, settingsButton, archiveButton, cleanUpButton] + extensionButtons).forEach {
             $0.contentTintColor = $0 === archiveButton || $0 === cleanUpButton ? theme.sidebarIcon : theme.muted
             $0.hoverColor = theme.text.withAlphaComponent(0.07)
         }
-        searchIcon.contentTintColor = theme.muted
         cleanUpButton.hintAppearance = theme.appearance
         for id in Array(rows.keys) where !tabs.contains(where: { $0.id == id }) { rows.removeValue(forKey: id)?.removeFromSuperview() }
         for tab in tabs {
@@ -167,8 +164,7 @@ import RiseCore
     override func layout() {
         super.layout(); let w = bounds.width
         address.frame = NSRect(x: TabAppearance.inset, y: 50, width: w-2*TabAppearance.inset, height: 36)
-        searchIcon.frame = NSRect(x: 12, y: 10, width: 14, height: 16)
-        let textX: CGFloat = searchIcon.isHidden ? 13 : 34
+        let textX: CGFloat = 13
         addressText.frame = NSRect(x: textX, y: 10, width: max(0, address.bounds.width-textX-13), height: 18)
         copyButton.frame = NSRect(x: address.frame.maxX-59, y: 56, width: 27, height: 24)
         settingsButton.frame = NSRect(x: address.frame.maxX-31, y: 56, width: 27, height: 24)

@@ -75,7 +75,7 @@ struct AddressSuggestion {
         input.font = .systemFont(ofSize: AddressAppearance.textSize, weight: AddressAppearance.textWeight); input.textColor = NSColor(hex: 0x3D3D3D)
         input.placeholderString = "Search or Enter URL…"; input.delegate = self
         input.setAccessibilityLabel("Address or search")
-        leadingIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
+        leadingIcon.image = AddressAppearance.searchIcon
         leadingIcon.contentTintColor = .secondaryLabelColor
         siteHint.alphaValue = 0; siteHint.setAccessibilityElement(false)
         addSubview(input); addSubview(leadingIcon); addSubview(siteHint)
@@ -153,7 +153,7 @@ struct AddressSuggestion {
         } else if let page = currentPage, !createsTab, !address.isEmpty, address == page.address, let favicon = page.favicon {
             leadingIcon.image = favicon; leadingIcon.contentTintColor = nil
         } else {
-            leadingIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil); leadingIcon.contentTintColor = theme.muted
+            leadingIcon.image = AddressAppearance.searchIcon; leadingIcon.contentTintColor = theme.muted
         }
     }
     func replaceSuggestions(_ updated: [AddressSuggestion]) {
@@ -188,8 +188,15 @@ struct AddressSuggestion {
             let imageView = FaviconView(frame: .zero)
             imageView.image = suggestion.command == "Change Theme"
                 ? TablerIcon.themeImage(size: 16)
-                : suggestion.favicon ?? NSImage(systemSymbolName: suggestion.symbol, accessibilityDescription: nil)
-            imageView.contentTintColor = suggestion.favicon == nil ? theme.muted : nil
+                : suggestion.favicon ?? (suggestion.symbol == "magnifyingglass" ? AddressAppearance.searchIcon
+                    : NSImage(systemSymbolName: suggestion.symbol, accessibilityDescription: nil))
+            // Search rows' glyphs sit a shade lighter than the field's own.
+            imageView.contentTintColor = suggestion.favicon != nil ? nil
+                : suggestion.symbol == "magnifyingglass" ? theme.muted.withAlphaComponent(0.75) : theme.muted
+            // A page without its icon gets the sidebar's empty square, until its icon loads.
+            if suggestion.favicon == nil, suggestion.symbol == "globe", suggestion.command != "Change Theme" {
+                imageView.showEmptyPlaceholder(theme: theme)
+            }
             let text = label(suggestion.title, size: AddressAppearance.textSize, weight: AddressAppearance.textWeight, color: AddressAppearance.textColor(theme))
             if suggestion.symbol == "globe", suggestion.fetchFavicon, !suggestion.subtitle.isEmpty,
                suggestion.title != suggestion.subtitle {
@@ -381,7 +388,8 @@ struct AddressSuggestion {
 
     private func applyPlaceholder() {
         input.placeholderAttributedString = NSAttributedString(string: siteSearch.map { "Search \($0.name)…" } ?? "Search or Enter URL…",
-                                                               attributes: [.foregroundColor: theme.muted, .font: input.font!])
+                                                               attributes: [.foregroundColor: theme.muted,
+                                                                            .font: NSFont.systemFont(ofSize: AddressAppearance.textSize, weight: AddressAppearance.placeholderWeight)])
     }
     /// Offers the site's search while the address is a site that has one.
     private func updateOffer() {
