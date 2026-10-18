@@ -1,332 +1,266 @@
 import AppKit
 import QuartzCore
 
-/// Tuned in Playgrounds/download-flight.html; the math below mirrors that page step for
-/// step, so values copied from it reproduce the same motion. Springs use the
-/// (perceptual duration, bounce) pair of `CASpringAnimation(perceptualDuration:bounce:)`.
+/// Springs the find bar, info plaque and the download tray share.
 enum DownloadMotion {
-    static let iconSize = 28.0
-    static let popFrom = 0.5, popResponse = 0.28, popBounce = 0.3
-    static let launchDelay = 0.0
-    /// For a 600 pt throw; longer throws take a little longer.
-    static let duration = 0.56, distanceInfluence = 0.35
-    static let arcHeight = 0.18, peakPosition = 0.35
-    static let easing = (x1: 0.42, y1: 0.0, x2: 0.72, y2: 0.19)
-    static let shrinkStart = 0.6, endScale = 0.24, shrinkCurve = 1.6
-    static let lidOpenAt = 0.55, lidAngle = 24.0, lidLift = 1.2, bodyAngle = 9.0
-    static let lidCloseDelay = 0.07, lidResponse = 0.24, lidBounce = 0.25
-    /// How far below the rim the download lands inside the box.
-    static let depth = 4.0
-    static let kick = 1.8, tilt = 2.0, squash = 0.0, directionInfluence = 1.0
-    static let reactResponse = 0.34, reactBounce = 0.4
-    /// With the sidebar collapsed, the archive slides in on its own tile and leaves
-    /// shortly after the last download lands, in case more follow.
     static let trayInResponse = 0.3, trayInBounce = 0.28, trayOutResponse = 0.3, trayOutBounce = 0.0
+    /// With the sidebar hidden, the tile stays this long after the last download lands.
     static let trayHold = 0.5
 }
 
-/// A damped spring integrated in 1 ms steps, matching the playground's.
-struct MotionSpring {
-    var value: Double, velocity = 0.0, target: Double
-    private var stiffness = 0.0, damping = 0.0
-    init(_ value: Double = 0) { self.value = value; target = value }
-    mutating func configure(response: Double, bounce: Double) {
-        let ratio = 1 - min(0.95, max(0, bounce))
-        stiffness = pow(2 * .pi/response, 2); damping = 4 * .pi*ratio/response
-    }
-    mutating func step(_ dt: Double) {
-        var left = dt
-        while left > 0 {
-            let h = min(0.001, left)
-            velocity += (-stiffness*(value-target) - damping*velocity)*h; value += velocity*h
-            left -= 0.001
-        }
-    }
-    func isResting(within tolerance: Double) -> Bool { abs(value-target) < tolerance && abs(velocity) < tolerance*10 }
-    /// Peak displacement after a unit velocity kick, so a kick can be specified in points.
-    static func unitPeak(response: Double, bounce: Double) -> Double {
-        var spring = MotionSpring(0); spring.configure(response: response, bounce: bounce); spring.velocity = 1
-        var peak = 0.0, t = 0.0
-        while t < 2 { spring.step(0.004); peak = max(peak, abs(spring.value)); t += 0.004 }
-        return peak == 0 ? 1 : peak
-    }
-}
+/// The iOS app's download flight (`MobileDownloadFlightPath`), mirrored to arc over the
+/// top: the card pops out near the click, rises, then accelerates round a shallow curve
+/// and collapses into the downloads button, which takes a small jolt along the way it came.
+/// Only the side of the curve and the lean that goes with it differ from the phone's.
+struct DownloadFlightPath {
+    static let cardSize = CGSize(width: 232, height: DownloadRow.height)
+    static let cornerRadius: CGFloat = 12
+    static let reactionDuration = 0.55
+    private static let ease = CubicEasing(0.42, 0, 0.72, 0.19)
+    private static let pop = ClosedSpring(response: 0.24, damping: 0.78)
+    private static let reaction = ClosedSpring(response: 0.34, damping: 0.6)
+    let origin: CGPoint, destination: CGPoint, control: CGPoint
+    let duration: Double
+    var totalDuration: Double { duration+Self.reactionDuration }
 
-/// Downloads thrown along an arc into the archive, which opens to catch them and
-/// recoils along the direction they arrived from. Coordinates are y-down points.
-struct DownloadFlightModel {
-    typealias M = DownloadMotion
-    struct Flight {
-        let id = UUID()
-        let start: Double, origin: CGPoint, control: CGPoint, entry: CGPoint
-        /// The arc's direction where it reaches the box.
-        let direction: CGVector
-        let duration: Double, rim: Double
-        var pop: MotionSpring
-        var impacted = false, done = false
-        var position: CGPoint, scale = 1.0, opacity = 1.0
-    }
-    private(set) var flights: [Flight] = []
-    private(set) var time = 0.0
-    private(set) var lid = MotionSpring(0)
-    private(set) var hinge = ArchiveGlyph.Hinge.left
-    private(set) var closeAt = 0.0
-    private(set) var offsetX = MotionSpring(0), offsetY = MotionSpring(0), rotation = MotionSpring(0), squash = MotionSpring(0)
-    /// Whether the archive arrives on its own tile, and how far it has slid in.
-    let usesTray: Bool
-    private(set) var tray = MotionSpring(0)
-    private static let ease = CubicEasing(M.easing.x1, M.easing.y1, M.easing.x2, M.easing.y2)
-    private static let reactionPeak = MotionSpring.unitPeak(response: M.reactResponse, bounce: M.reactBounce)
-
-    init(usesTray: Bool = false) {
-        self.usesTray = usesTray
-        configureReaction()
-    }
-    var pose: ArchiveGlyph.Pose {
-        ArchiveGlyph.Pose(offset: CGPoint(x: offsetX.value, y: offsetY.value), rotation: rotation.value,
-                          squash: squash.value, open: lid.value, hinge: hinge)
-    }
-    var isIdle: Bool {
-        flights.isEmpty && time >= closeAt && lid.value < 1e-4 && (!usesTray || (tray.target == 0 && tray.isResting(within: 1e-3)))
-            && [offsetX, offsetY, rotation, squash].allSatisfy { $0.isResting(within: 1e-3) }
-    }
-
-    /// Throws a download from `origin` into the archive drawn in the 28 pt `archive` button rect.
-    mutating func launch(from origin: CGPoint, into archive: CGRect) {
-        let rim = archive.minY+ArchiveGlyph.rim
-        let entry = CGPoint(x: archive.midX, y: rim+M.depth)
-        let dx = entry.x-origin.x, dy = entry.y-origin.y, distance = hypot(dx, dy), length = distance == 0 ? 1 : distance
-        // Bulge the arc upward; the control point sits at twice the apex height.
-        var normal = CGVector(dx: dy/length, dy: -dx/length)
+    /// In y-down coordinates, as on iOS.
+    init(from origin: CGPoint, to destination: CGPoint, within bounds: CGRect) {
+        self.origin = origin; self.destination = destination
+        let dx = destination.x-origin.x, dy = destination.y-origin.y
+        let distance = hypot(dx, dy), length = max(1, distance)
+        var normal = CGVector(dx: -dy/length, dy: dx/length)
+        // The phone's curve bows downward; here it bows upward, over the page, towards a
+        // button low in the sidebar.
         if normal.dy > 0 { normal = CGVector(dx: -normal.dx, dy: -normal.dy) }
-        let base = CGPoint(x: origin.x+(entry.x-origin.x)*M.peakPosition, y: origin.y+(entry.y-origin.y)*M.peakPosition)
-        let control = CGPoint(x: base.x+normal.dx*M.arcHeight*length*2, y: base.y+normal.dy*M.arcHeight*length*2)
-        let tail = hypot(entry.x-control.x, entry.y-control.y), tailLength = tail == 0 ? 1 : tail
-        var pop = MotionSpring(M.popFrom); pop.target = 1; pop.configure(response: M.popResponse, bounce: M.popBounce)
-        var flight = Flight(start: time, origin: origin, control: control, entry: entry,
-                            direction: CGVector(dx: (entry.x-control.x)/tailLength, dy: (entry.y-control.y)/tailLength),
-                            duration: M.duration*pow(length/600, M.distanceInfluence), rim: rim, pop: pop, position: origin)
-        render(&flight)
-        flights.append(flight)
-    }
-    mutating func step(_ dt: Double) {
-        time += dt
-        for index in flights.indices {
-            var flight = flights[index]
-            flight.pop.step(dt); render(&flight)
-            flights[index] = flight
-        }
-        flights.removeAll { $0.done }
-        updateLid(dt)
-        offsetX.step(dt); offsetY.step(dt); rotation.step(dt); squash.step(dt)
-        if usesTray { updateTray(dt) }
+        // The slight rise before the card sweeps away.
+        let x = origin.x+dx*0.35+normal.dx*distance*0.36
+        let y = origin.y+dy*0.35+normal.dy*distance*0.36
+        control = CGPoint(x: min(bounds.maxX-12, max(bounds.minX+12, x)),
+                          y: min(bounds.maxY-12, max(bounds.minY+12, y)))
+        duration = min(0.54, max(0.34, 0.44*pow(Double(distance)/600, 0.2)))
     }
 
-    private mutating func render(_ flight: inout Flight) {
-        let t = time-flight.start
-        var position: CGPoint, scale: Double, opacity = 1.0
-        if t < M.launchDelay { position = flight.origin; scale = 1 }
-        else {
-            let u = min(1, (t-M.launchDelay)/flight.duration), e = Self.ease(u)
-            position = Self.point(flight.origin, flight.control, flight.entry, e)
-            let k = e <= M.shrinkStart ? 0 : (e-M.shrinkStart)/(1-M.shrinkStart)
-            scale = 1+(M.endScale-1)*pow(min(1, max(0, k)), M.shrinkCurve)
-            // The box reacts the moment the download drops past its rim, pushed along
-            // the direction it was travelling; the box's front then hides it.
-            if !flight.impacted && (position.y >= flight.rim || u >= 1) {
-                let tx = 2*(1-e)*(flight.control.x-flight.origin.x)+2*e*(flight.entry.x-flight.control.x)
-                let ty = 2*(1-e)*(flight.control.y-flight.origin.y)+2*e*(flight.entry.y-flight.control.y)
-                let tangent = hypot(tx, ty), length = tangent == 0 ? 1 : tangent
-                flight.impacted = true; closeAt = max(closeAt, time+M.lidCloseDelay)
-                kick(CGVector(dx: tx/length, dy: ty/length))
-            }
-            if u >= 1 {
-                let after = t-M.launchDelay-flight.duration
-                opacity = 1-min(1, after/0.06)
-                if after >= 0.06 { flight.done = true }
-            }
-        }
-        flight.position = position; flight.scale = scale*flight.pop.value; flight.opacity = opacity
+    struct Pose { let position: CGPoint; let scale: CGFloat; let rotation: CGFloat; let opacity: Float }
+    func pose(at time: Double) -> Pose {
+        let u = min(1, max(0, time/duration)), p = Self.ease(u), q = 1-p
+        let position = CGPoint(x: q*q*origin.x+2*q*p*control.x+p*p*destination.x,
+                               y: q*q*origin.y+2*q*p*control.y+p*p*destination.y)
+        let shrink = pow(max(0, (p-0.6)/0.4), 1.6)
+        let pop = 0.42+0.58*Self.pop(max(0, time))
+        let scale = (0.86+(0.025-0.86)*shrink)*pop
+        // Mirrored with the curve, so it leans the other way to the phone.
+        let direction = destination.x >= origin.x ? -1.0 : 1.0
+        return Pose(position: position, scale: scale, rotation: direction*0.055*sin(.pi*p),
+                    opacity: Float(1-max(0, (p-0.9)/0.1)))
     }
-    /// Hinged on the side away from the incoming download, so it opens toward it.
-    /// A closing lid stops against the box instead of swinging through it.
-    private mutating func updateLid(_ dt: Double) {
-        lid.configure(response: M.lidResponse, bounce: M.lidBounce)
-        let waiting = flights.first { !$0.impacted && time-$0.start-M.launchDelay >= $0.duration*M.lidOpenAt }
-        if let waiting, lid.target == 0 { hinge = waiting.direction.dx < 0 ? .left : .right }
-        lid.target = waiting != nil || time < closeAt ? 1 : 0
-        lid.step(dt)
-        if lid.value < 0 { lid.value = 0; lid.velocity = max(0, lid.velocity) }
-    }
-    private mutating func updateTray(_ dt: Double) {
-        let shown = !flights.isEmpty || time < closeAt+M.trayHold
-        if shown { tray.configure(response: M.trayInResponse, bounce: M.trayInBounce) }
-        else { tray.configure(response: M.trayOutResponse, bounce: M.trayOutBounce) }
-        tray.target = shown ? 1 : 0
-        tray.step(dt)
-    }
-    private mutating func configureReaction() {
-        for keyPath in [\Self.offsetX, \Self.offsetY, \Self.rotation, \Self.squash] {
-            self[keyPath: keyPath].configure(response: M.reactResponse, bounce: M.reactBounce)
-        }
-    }
-    private mutating func kick(_ direction: CGVector) {
-        configureReaction()
-        let toward = CGVector(dx: direction.dx*M.directionInfluence, dy: 1+(direction.dy-1)*M.directionInfluence)
-        let size = hypot(toward.dx, toward.dy), length = size == 0 ? 1 : size
-        let x = toward.dx/length, y = toward.dy/length, velocity = 1/Self.reactionPeak
-        offsetX.velocity += velocity*x*M.kick; offsetY.velocity += velocity*y*M.kick
-        rotation.velocity += velocity*x*M.tilt; squash.velocity += velocity*max(0, y)*M.squash
-    }
-    static func point(_ a: CGPoint, _ control: CGPoint, _ b: CGPoint, _ t: Double) -> CGPoint {
-        CGPoint(x: (1-t)*(1-t)*a.x+2*(1-t)*t*control.x+t*t*b.x, y: (1-t)*(1-t)*a.y+2*(1-t)*t*control.y+t*t*b.y)
+
+    /// A velocity impulse: about 2 points along the incoming tangent, a small tilt and
+    /// squeeze, then a damped return through rest.
+    func impact(at time: Double) -> CATransform3D {
+        guard time > 0, time < Self.reactionDuration else { return CATransform3DIdentity }
+        let dx = destination.x-control.x, dy = destination.y-control.y, length = max(1, hypot(dx, dy))
+        let k = Self.reaction.value(from: 0, to: 0, velocity: 46, at: time)
+        var result = CATransform3DMakeTranslation(dx/length*2.2*k, dy/length*2.2*k, 0)
+        result = CATransform3DRotate(result, dx/length*0.035*k, 0, 0, 1)
+        return CATransform3DScale(result, 1+0.025*k, 1-0.04*k, 1)
     }
 }
 
-/// One download in flight: a blue disc with a white arrow, drawn in the playground's
-/// 32-unit space and hidden wherever the archive covers it.
-final class DownloadIconView: FlippedView {
-    static let padding: CGFloat = 6
-    var scale: CGFloat = 1
-    /// The archive's silhouette in this view's coordinates.
-    var cover: CGPath? { didSet { needsDisplay = true } }
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    func place(at center: CGPoint, scale: CGFloat) {
-        self.scale = scale
-        let half = DownloadMotion.iconSize*scale/2+Self.padding
-        frame = CGRect(x: center.x-half, y: center.y-half, width: 2*half, height: 2*half)
-        needsDisplay = true
-    }
-    override func draw(_ dirtyRect: NSRect) {
-        guard let context = NSGraphicsContext.current?.cgContext, scale > 0 else { return }
-        if let cover {
-            context.addRect(bounds); context.addPath(cover); context.clip(using: .evenOdd)
-        }
-        let unit = DownloadMotion.iconSize*scale/32
-        context.translateBy(x: Self.padding, y: Self.padding); context.scaleBy(x: unit, y: unit)
-        let disc = CGRect(x: 1, y: 1, width: 30, height: 30)
-        // Shadow offsets ignore flipping: negative is down. The playground's shadow scales with the icon.
-        context.saveGState()
-        context.setShadow(offset: CGSize(width: 0, height: -1.5*scale), blur: 2.5*scale, color: NSColor.black.withAlphaComponent(0.22).cgColor)
-        context.setFillColor(NSColor(hex: 0x1E74F0).cgColor); context.fillEllipse(in: disc)
-        context.restoreGState()
-        context.saveGState()
-        context.addEllipse(in: disc); context.clip()
-        let colors = [NSColor(hex: 0x58A8FF).cgColor, NSColor(hex: 0x1E74F0).cgColor] as CFArray
-        if let gradient = CGGradient(colorsSpace: CGColorSpace(name: CGColorSpace.sRGB), colors: colors, locations: [0, 1]) {
-            context.drawLinearGradient(gradient, start: CGPoint(x: 16, y: 1), end: CGPoint(x: 16, y: 31), options: [])
-        }
-        context.restoreGState()
-        context.setStrokeColor(NSColor.white.withAlphaComponent(0.25).cgColor); context.setLineWidth(1)
-        context.strokeEllipse(in: CGRect(x: 1.5, y: 1.5, width: 29, height: 29))
-        context.move(to: CGPoint(x: 16, y: 8.6)); context.addLine(to: CGPoint(x: 16, y: 21.8))
-        context.move(to: CGPoint(x: 10.6, y: 16.6)); context.addLine(to: CGPoint(x: 16, y: 22)); context.addLine(to: CGPoint(x: 21.4, y: 16.6))
-        context.setStrokeColor(NSColor.white.cgColor); context.setLineWidth(2.6)
-        context.setLineCap(.round); context.setLineJoin(.round); context.strokePath()
-    }
-}
-
-/// Draws download flights above the whole window, with a stand-in archive on top
-/// that hides each download as it drops in. Removes itself once everything settles.
-@MainActor final class DownloadFlightView: FlippedView {
-    private(set) var model: DownloadFlightModel
-    private weak var button: ArchiveButton?
-    private let tile = Surface(radius: 10)
-    private let glyph = ArchiveGlyphView()
-    private var icons: [UUID: DownloadIconView] = [:]
-    private var link: CADisplayLink?
-    private var lastTick: CFTimeInterval?
-    var finished: (() -> Void)?
+/// Download flights above the whole window, drawn in layers it owns (y down, as on iOS) so
+/// AppKit never moves them. Each download's card flies on render-server keyframes into a
+/// stand-in for the downloads button, or, with the sidebar hidden, a tile that slides into
+/// the bottom-left corner. Each flight's jolt is additive, so quick downloads don't cancel
+/// one another's. It removes itself once everything has landed.
+@MainActor final class DownloadFlight: NSView {
     static let tileSize: CGFloat = 36, tileMargin: CGFloat = 12
-    /// Room around the archive for its lid to lift and the whole thing to recoil.
-    private static let glyphMargin: CGFloat = 12
+    private let root = CALayer(), landing = CALayer(), glyph = CALayer()
+    private weak var button: DownloadsButton?
+    /// The icon whose progress the stand-in shows, kept up to date even with the sidebar hidden.
+    private weak var source: DownloadGlyphView?
+    private let theme: RiseTheme, tint: NSColor
+    private var endTime: CFTimeInterval = 0, endWork: DispatchWorkItem?
+    var finished: (() -> Void)?
+    var usesTray: Bool { button == nil }
+    private(set) var flights = 0
 
-    /// Lands in the sidebar's archive button, or, with no button, on a tile that slides
-    /// into the window's bottom-left corner.
-    init(button: ArchiveButton?, tint: NSColor, tileColor: NSColor, tileBorder: NSColor) {
-        self.button = button
-        model = DownloadFlightModel(usesTray: button == nil)
-        super.init(frame: .zero)
-        wantsLayer = true
-        tile.fill = tileColor; tile.layer?.cornerCurve = .continuous
-        tile.layer?.borderWidth = 0.5; tile.layer?.borderColor = tileBorder.cgColor
-        tile.shadow = chromeShadow(opacity: 0.16, blur: 6, offset: -1)
-        tile.isHidden = button != nil
-        glyph.tint = tint; glyph.buttonOrigin = CGPoint(x: Self.glyphMargin, y: Self.glyphMargin)
-        addSubview(tile); addSubview(glyph)
+    init(frame: NSRect, button: DownloadsButton?, source: DownloadGlyphView?, theme: RiseTheme, tint: NSColor) {
+        self.button = button; self.source = source; self.theme = theme; self.tint = tint
+        super.init(frame: frame)
+        layer = root; wantsLayer = true
+        root.isGeometryFlipped = true; root.masksToBounds = false
+        landing.addSublayer(glyph)
+        root.addSublayer(landing)
+        setAccessibilityElement(false)
     }
     required init?(coder: NSCoder) { fatalError() }
+    override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
-    override func layout() { super.layout(); render() }
 
-    /// The 28 pt archive button rect at rest, in this view's coordinates.
-    var restingArchive: CGRect {
-        if let button { return button.convert(button.bounds, to: self) }
-        let side = Self.tileSize, inset = (side-28)/2
-        return CGRect(x: Self.tileMargin+inset, y: bounds.height-Self.tileMargin-side+inset, width: 28, height: 28)
+    /// Where the downloads button sits, or the tile would, in this view.
+    var landingFrame: CGRect {
+        if let button, button.window != nil { return convert(button.bounds, from: button) }
+        let side = Self.tileSize
+        return CGRect(x: Self.tileMargin, y: bounds.height-Self.tileMargin-side, width: side, height: side)
     }
-    /// Off-screen to the left while hidden; a spring carries it in, slightly overshooting.
-    private var slide: CGFloat {
-        guard model.usesTray else { return 0 }
-        return -(1-model.tray.value)*(Self.tileMargin+Self.tileSize+12)
-    }
-    func launch(from origin: CGPoint) {
-        model.launch(from: origin, into: restingArchive)
-        button?.isGlyphHidden = true
-        if link == nil {
-            lastTick = CACurrentMediaTime()
-            let link = displayLink(target: self, selector: #selector(tick(_:)))
-            link.add(to: .main, forMode: .common); self.link = link
+
+    func launch(_ item: DownloadList.Item, from origin: CGPoint) {
+        let scale = window?.backingScaleFactor ?? 2
+        let target = landingFrame
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        if flights == 0 { prepareLanding(target, scale: scale) }
+        let path = DownloadFlightPath(from: origin, to: CGPoint(x: target.midX, y: target.midY), within: bounds)
+        let card = Self.card(for: item, theme: theme, scale: scale)
+        card.position = path.destination; card.opacity = 0
+        root.insertSublayer(card, below: landing)
+        CATransaction.commit()
+        flights += 1
+        let start = CACurrentMediaTime(), count = Int(ceil(path.totalDuration*120))
+        var positions: [NSValue] = [], transforms: [NSValue] = [], opacity: [Float] = [], impacts: [NSValue] = []
+        for index in 0...count {
+            let time = path.totalDuration*Double(index)/Double(count), pose = path.pose(at: time)
+            positions.append(NSValue(point: pose.position)); opacity.append(pose.opacity)
+            var transform = CATransform3DMakeRotation(pose.rotation, 0, 0, 1)
+            transform = CATransform3DScale(transform, pose.scale, pose.scale, 1)
+            transforms.append(NSValue(caTransform3D: transform))
+            impacts.append(NSValue(caTransform3D: path.impact(at: time-path.duration)))
         }
-        render()
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        CATransaction.setCompletionBlock { card.removeFromSuperlayer() }
+        func animate(_ layer: CALayer, _ key: String, _ values: [Any], additive: Bool = false) {
+            let animation = CAKeyframeAnimation(keyPath: key)
+            animation.values = values; animation.duration = path.totalDuration
+            animation.beginTime = layer.convertTime(start, from: nil)
+            animation.calculationMode = .linear; animation.isAdditive = additive
+            animation.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
+            layer.add(animation, forKey: additive ? "download-impact-\(UUID())" : "download.\(key)")
+        }
+        animate(card, "position", positions)
+        animate(card, "transform", transforms)
+        animate(card, "opacity", opacity)
+        animate(glyph, "transform", impacts, additive: true)
+        CATransaction.commit()
+        // A tap on the trackpad as it lands, as the phone gives one.
+        DispatchQueue.main.asyncAfter(deadline: .now()+path.duration) { [weak self] in
+            guard self?.window != nil else { return }
+            NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+        }
+        scheduleEnd(after: start+path.totalDuration)
     }
-    @objc private func tick(_ link: CADisplayLink) {
-        let now = CACurrentMediaTime()
-        model.step(min(0.05, now-(lastTick ?? now))); lastTick = now
-        render()
-        if model.isIdle { finish() }
+
+    /// The button's icon as it shows now, hidden underneath until the flights land; or the tile.
+    private func prepareLanding(_ target: CGRect, scale: CGFloat) {
+        landing.frame = target
+        glyph.frame = landing.bounds.insetBy(dx: (target.width-28)/2, dy: (target.height-28)/2)
+        glyph.contentsScale = scale; glyph.contentsGravity = .resize
+        let shown = source?.displayed ?? (.idle, 0)
+        glyph.contents = DownloadGlyph.image(state: shown.state, tint: tint, spin: shown.spin)
+        if let button {
+            button.isGlyphHidden = true
+            landing.backgroundColor = nil; landing.shadowOpacity = 0; landing.borderWidth = 0
+        } else {
+            let dark = theme == .dark
+            // A little lighter than the sidebar, with a hairline edge to set it off the page.
+            landing.backgroundColor = (theme.background.blended(withFraction: dark ? 0.13 : 0.7, of: .white) ?? theme.background).cgColor
+            landing.cornerRadius = 10; landing.cornerCurve = .continuous
+            landing.borderWidth = 0.5
+            landing.borderColor = (dark ? NSColor.white.withAlphaComponent(0.1) : NSColor.black.withAlphaComponent(0.09)).cgColor
+            landing.shadowColor = NSColor.black.cgColor; landing.shadowOpacity = 0.16
+            landing.shadowRadius = 3; landing.shadowOffset = CGSize(width: 0, height: 1)
+            slideTile(in: true)
+        }
+    }
+    /// The tile springs in from beyond the window's left edge, slightly overshooting.
+    private func slideTile(in coming: Bool, completion: (() -> Void)? = nil) {
+        let away = -(Self.tileMargin+Self.tileSize+12)
+        let animation = CASpringAnimation(perceptualDuration: coming ? DownloadMotion.trayInResponse : DownloadMotion.trayOutResponse,
+                                          bounce: coming ? DownloadMotion.trayInBounce : DownloadMotion.trayOutBounce)
+        animation.keyPath = "transform.translation.x"
+        let shown = (landing.presentation()?.value(forKeyPath: "transform.translation.x") as? CGFloat) ?? (coming ? away : 0)
+        animation.fromValue = shown; animation.toValue = coming ? 0 : away
+        animation.duration = animation.settlingDuration
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        CATransaction.setCompletionBlock(completion)
+        landing.setValue(coming ? 0 : away, forKeyPath: "transform.translation.x")
+        landing.add(animation, forKey: "tray")
+        CATransaction.commit()
+    }
+    private func scheduleEnd(after time: CFTimeInterval) {
+        endTime = max(endTime, time)
+        endWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.end() }
+        endWork = work
+        let delay = endTime-CACurrentMediaTime()+(usesTray ? DownloadMotion.trayHold : 0)
+        DispatchQueue.main.asyncAfter(deadline: .now()+max(0, delay), execute: work)
+    }
+    private func end() {
+        if usesTray { slideTile(in: false) { [weak self] in self?.finish() } } else { finish() }
     }
     func finish() {
-        link?.invalidate(); link = nil
+        endWork?.cancel(); endWork = nil
         button?.isGlyphHidden = false
+        root.sublayers?.filter { $0 !== landing }.forEach { $0.removeFromSuperlayer() }
+        flights = 0
         finished?()
     }
-    private func render() {
-        var archive = restingArchive; archive.origin.x += slide
-        let inset = (Self.tileSize-28)/2
-        tile.frame = archive.insetBy(dx: -inset, dy: -inset)
-        glyph.frame = archive.insetBy(dx: -Self.glyphMargin, dy: -Self.glyphMargin)
-        glyph.pose = model.pose
-        let cover = ArchiveGlyph.silhouette(model.pose, origin: archive.origin)
-        for flight in model.flights {
-            let icon = icons[flight.id] ?? {
-                let view = DownloadIconView(); addSubview(view, positioned: .below, relativeTo: glyph)
-                icons[flight.id] = view; return view
-            }()
-            icon.place(at: flight.position, scale: flight.scale)
-            icon.alphaValue = flight.opacity
-            var shift = CGAffineTransform(translationX: -icon.frame.minX, y: -icon.frame.minY)
-            icon.cover = cover.copy(using: &shift)
+
+    /// The download as its row in the downloads list shows it: the progress ring, the
+    /// file's name and how much has come, on a card like the list's.
+    static func card(for item: DownloadList.Item, theme: RiseTheme, scale: CGFloat) -> CALayer {
+        let size = DownloadFlightPath.cardSize, dark = theme == .dark
+        let card = CALayer()
+        card.bounds = CGRect(origin: .zero, size: size)
+        card.backgroundColor = (dark ? NSColor(white: 0.17, alpha: 1) : NSColor.white).cgColor
+        card.cornerRadius = DownloadFlightPath.cornerRadius; card.cornerCurve = .continuous
+        card.borderWidth = 0.5
+        card.borderColor = (dark ? NSColor.white.withAlphaComponent(0.1) : NSColor.black.withAlphaComponent(0.06)).cgColor
+        card.shadowColor = NSColor.black.cgColor; card.shadowOpacity = 0.18
+        card.shadowRadius = 10; card.shadowOffset = CGSize(width: 0, height: 4)
+        card.shadowPath = CGPath(roundedRect: card.bounds, cornerWidth: card.cornerRadius, cornerHeight: card.cornerRadius, transform: nil)
+        // As DownloadRow lays out its icon, ring, name and detail.
+        let ring = CGRect(x: 10, y: (size.height-28)/2, width: 28, height: 28)
+        let circle = CGMutablePath()
+        circle.addArc(center: CGPoint(x: ring.midX, y: ring.midY), radius: 10, startAngle: -.pi/2, endAngle: 3 * .pi/2, clockwise: false)
+        let fraction = item.fraction
+        for (color, end) in [(theme.text.withAlphaComponent(0.14), 1.0), (DownloadGlyph.blue, fraction ?? 0.25)] {
+            let shape = CAShapeLayer()
+            shape.frame = card.bounds; shape.path = circle; shape.fillColor = nil
+            shape.lineWidth = 2.5; shape.lineCap = .round
+            shape.strokeColor = color.cgColor; shape.strokeEnd = CGFloat(end)
+            card.addSublayer(shape)
         }
-        let live = Set(model.flights.map(\.id))
-        for (id, icon) in icons where !live.contains(id) { icon.removeFromSuperview(); icons[id] = nil }
+        let format = { (bytes: Int64) in ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
+        let detail = item.totalBytes > 0 ? "\(format(item.receivedBytes)) of \(format(item.totalBytes))" : "Starting…"
+        let width = size.width-45-12
+        for (text, font, color, frame) in [
+            (item.record.url.lastPathComponent, NSFont.systemFont(ofSize: 13), theme.text, CGRect(x: 45, y: 6, width: width, height: 17)),
+            (detail, NSFont.systemFont(ofSize: 11), theme.muted, CGRect(x: 45, y: 24, width: width, height: 14)),
+        ] {
+            let label = CATextLayer()
+            label.frame = frame; label.contentsScale = scale
+            label.string = NSAttributedString(string: text, attributes: [.font: font, .foregroundColor: color])
+            label.truncationMode = .middle; label.isWrapped = false
+            card.addSublayer(label)
+        }
+        return card
     }
 }
 
 @MainActor extension BrowserController {
-    /// Throws a download from the pointer into the archive, or from the page's center
-    /// when the pointer is outside the window.
-    func launchDownloadFlight() {
-        guard let window, window.isVisible, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+    /// Throws a download from the pointer into the downloads button, or from the page's
+    /// center when the pointer is outside the window.
+    func launchDownloadFlight(_ item: DownloadList.Item) {
+        guard let window, window.isVisible else { return }
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now)
+            return
+        }
+        let tray = !sidebarVisible || sidebar.isHidden
+        root.layoutSubtreeIfNeeded()
         let flight = downloadFlight ?? {
-            let tray = !sidebarVisible || sidebar.isHidden
-            // The tile is a little lighter than the sidebar, with a hairline edge to set it off the page.
-            let dark = theme == .dark
-            // On the tile the archive takes the stronger text color, so it stands out from the page.
-            let view = DownloadFlightView(button: tray ? nil : sidebar.archiveButton, tint: tray ? theme.text : theme.sidebarIcon,
-                                          tileColor: theme.background.blended(withFraction: dark ? 0.13 : 0.7, of: .white) ?? theme.background,
-                                          tileBorder: dark ? NSColor.white.withAlphaComponent(0.1) : NSColor.black.withAlphaComponent(0.09))
-            view.frame = root.bounds; view.autoresizingMask = [.width, .height]
+            // On the tile the icon takes the stronger text color, so it stands out from the page.
+            let view = DownloadFlight(frame: root.bounds, button: tray ? nil : sidebar.archiveButton, source: sidebar.archiveButton.glyph, theme: theme,
+                                      tint: tray ? theme.text : theme.sidebarIcon)
+            view.autoresizingMask = [.width, .height]
             view.finished = { [weak self, weak view] in
                 view?.removeFromSuperview()
                 if self?.downloadFlight === view { self?.downloadFlight = nil }
@@ -335,14 +269,25 @@ final class DownloadIconView: FlippedView {
         }()
         if flight.superview == nil { root.addSubview(flight) }
         downloadFlight = flight
-        flight.launch(from: downloadFlightOrigin)
+        flight.launch(item, from: downloadFlightOrigin)
     }
     var downloadFlightOrigin: CGPoint {
         guard let window else { return CGPoint(x: pageShadow.frame.midX, y: pageShadow.frame.midY) }
         let point = root.convert(window.mouseLocationOutsideOfEventStream, from: nil)
         return root.bounds.contains(point) ? point : CGPoint(x: pageShadow.frame.midX, y: pageShadow.frame.midY)
     }
-    /// A free name in `folder`, numbered like Finder ("report 2.pdf") when taken.
+    /// The downloads button follows the downloads in progress: how much of them has come, or
+    /// a turning loop while any of their sizes is unknown.
+    func updateDownloadsButton() {
+        let active = downloads.items.filter { !$0.isFinished }
+        let state: DownloadGlyph.State
+        if active.isEmpty { state = .idle }
+        else if active.allSatisfy({ $0.totalBytes > 0 }) {
+            let total = active.reduce(Int64(0)) { $0+$1.totalBytes }, received = active.reduce(Int64(0)) { $0+$1.receivedBytes }
+            state = .progress(min(1, Double(received)/Double(max(1, total))))
+        } else { state = .indeterminate }
+        sidebar.archiveButton.glyph.setState(state)
+    }
     nonisolated static func downloadDestination(for suggestedName: String, in folder: URL, isTaken: (URL) -> Bool) -> URL {
         var name = suggestedName.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
             .trimmingCharacters(in: .whitespacesAndNewlines)

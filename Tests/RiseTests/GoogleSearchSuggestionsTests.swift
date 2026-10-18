@@ -119,7 +119,7 @@ final class GoogleSearchSuggestionsTests: XCTestCase {
         type("offline query")
         XCTAssertEqual(palette.suggestions.count, rows)
         for _ in 0..<50 where palette.suggestions.count != 1 { try await Task.sleep(for: .milliseconds(10)) }
-        XCTAssertEqual(titles(), ["Search Google for “offline query”"], "With no answer coming, the held rows go")
+        XCTAssertEqual(titles(), ["offline query"], "With no answer coming, the held rows go")
     }
     @MainActor func testOpeningTheAddressBarWarmsTheConnectionWithoutAnyTypedText() async throws {
         _ = NSApplication.shared
@@ -236,6 +236,6 @@ final class GoogleSearchSuggestionsTests: XCTestCase {
         editor.selectAll(nil); editor.insertText("kagi query", replacementRange: editor.selectedRange())
         try await Task.sleep(for: .milliseconds(130))
         XCTAssertEqual(SearchProtocol.snapshot().count, 1)
-        XCTAssertEqual(browser.palette.suggestions.first?.title, "Search Kagi for “kagi query”")
+        XCTAssertEqual(browser.palette.suggestions.first?.title, "kagi query")
     }
 }

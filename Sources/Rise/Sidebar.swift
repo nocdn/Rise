@@ -25,7 +25,7 @@ import RiseCore
     // The shadow is a sibling of the scroller, so NSClipView cannot crop it.
     let selectedTabShadow = Surface(radius: TabAppearance.radius)
     var selectedTabID: UUID?
-    let archiveButton: ArchiveButton
+    let archiveButton: DownloadsButton
     let cleanUpButton: HoverHintButton
     var rows: [UUID: TabRow] = [:]
     /// Pinned tabs, as tiles between the address and New Tab (`PinnedTabs.swift`).
@@ -64,7 +64,7 @@ import RiseCore
         copyButton = SidebarCopyButton(action: copy)
         settingsButton = SidebarHoverButton(symbol: "slider.horizontal.3", size: 14, title: "Site controls", action: settings)
         settingsButton.image = TablerIcon.image(TablerIcon.adjustments, size: 16, description: "Site controls")
-        archiveButton = ArchiveButton(title: "Downloads", action: archive)
+        archiveButton = DownloadsButton(title: "Downloads", action: archive)
         cleanUpButton = HoverHintButton(image: TablerIcon.image(TablerIcon.tabCleanup, size: 20, description: "Sort tabs by domain"),
                                         text: "Sort tabs by domain", shortcut: "⇧⌘K", action: cleanUp)
         super.init()

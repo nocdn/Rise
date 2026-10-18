@@ -193,7 +193,7 @@ private final class DownloadsListView: NSView {
         }
         controller.preview = { [weak self] url in self?.quickLook(url) }
         controller.dismiss = { [weak self] in self?.downloadsPopover.performClose(nil) }
-        downloads.onChange = { [weak controller] in controller?.reload() }
+        reloadDownloadsList = { [weak controller] in controller?.reload() }
         downloadsPopover.contentViewController = controller
         downloadsPopover.delegate = controller
         if let id { controller.focus(id) }
@@ -202,7 +202,7 @@ private final class DownloadsListView: NSView {
             downloadsPopover.show(relativeTo: button.bounds, of: button, preferredEdge: button.isFlipped ? .minY : .maxY)
         } else {
             // With the sidebar collapsed, point at the corner where downloads land on their tile.
-            let side = DownloadFlightView.tileSize, margin = DownloadFlightView.tileMargin
+            let side = DownloadFlight.tileSize, margin = DownloadFlight.tileMargin
             let tile = NSRect(x: margin, y: root.isFlipped ? root.bounds.height-margin-side : margin, width: side, height: side)
             downloadsPopover.show(relativeTo: tile, of: root, preferredEdge: root.isFlipped ? .minY : .maxY)
         }

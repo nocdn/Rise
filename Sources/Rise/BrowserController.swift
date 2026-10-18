@@ -142,10 +142,16 @@ import RiseCore
     let peekStandbyView = PeekStandbyView()
     var peekStandbyWork: DispatchWorkItem?
     var peekStandbyExpiry: DispatchWorkItem?
-    var downloadFlight: DownloadFlightView?
+    var downloadFlight: DownloadFlight?
     /// Downloads save here without asking; tests point it elsewhere.
     var downloadsFolder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
-    lazy var downloads = DownloadList(storeURL: sessionURL.deletingLastPathComponent().appendingPathComponent("downloads.json"))
+    lazy var downloads: DownloadList = {
+        let list = DownloadList(storeURL: sessionURL.deletingLastPathComponent().appendingPathComponent("downloads.json"))
+        list.onChange = { [weak self] in self?.reloadDownloadsList?(); self?.updateDownloadsButton() }
+        return list
+    }()
+    /// Refreshes the downloads popover's rows while it's open.
+    var reloadDownloadsList: (() -> Void)?
     let downloadsPopover = NSPopover()
     /// The download Quick Look is showing, while Rise controls the preview panel.
     var quickLookURL: URL?

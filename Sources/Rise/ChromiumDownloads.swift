@@ -62,7 +62,7 @@ import RiseChromium
                 self?.showMessage("Download failed", error.localizedDescription)
             }
         }
-        launchDownloadFlight()
+        if let item = downloads.items.first(where: { $0.record.url == destination }) { launchDownloadFlight(item) }
         return destination
     }
 }

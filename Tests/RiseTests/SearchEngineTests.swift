@@ -33,7 +33,7 @@ final class SearchEngineTests: XCTestCase {
         defer { clean(browser); preferences.removePersistentDomain(forName: suite) }
         browser.selectSearchEngine(.kagi)
         let suggestion = try XCTUnwrap(browser.suggestions(for: "cats & dogs").first)
-        XCTAssertEqual(suggestion.title, "Search Kagi for “cats & dogs”")
+        XCTAssertEqual(suggestion.title, "cats & dogs")
         XCTAssertEqual(suggestion.url, SearchEngine.kagi.searchURL(for: "cats & dogs"))
         XCTAssertEqual(browser.suggestions(for: "https://www.google.com/search?q=literal").first?.url?.host, "www.google.com")
         browser.paletteCreatesTab = true
@@ -42,7 +42,7 @@ final class SearchEngineTests: XCTestCase {
         browser.navigateDeveloperAddress("another query")
         XCTAssertEqual(browser.selectedTab?.url, SearchEngine.kagi.searchURL(for: "another query"))
         browser.selectSearchEngine(.google)
-        XCTAssertEqual(browser.suggestions(for: "cats & dogs").first?.title, "Search Google for “cats & dogs”")
+        XCTAssertEqual(browser.suggestions(for: "cats & dogs").first?.title, "cats & dogs")
         XCTAssertEqual(browser.suggestions(for: "cats & dogs").first?.url?.host, "www.google.com")
     }
     @MainActor private func clean(_ browser: BrowserController) {

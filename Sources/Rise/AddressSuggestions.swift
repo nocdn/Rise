@@ -20,7 +20,8 @@ import RiseCore
             currentURL: selectedTab?.url, editingCurrentAddress: isEditingCurrentAddress(query),
             search: searchProvider, limit: AddressAppearance.maximumSuggestions)
         var result = candidates.map { value in
-            AddressSuggestion(title: value.title, subtitle: value.subtitle, symbol: value.symbol, url: value.url,
+            // What Enter searches for reads as the search itself, like Google's suggestions below it.
+            AddressSuggestion(title: value.isTypedAction && value.url == searchProvider.searchURL(query) ? query : value.title, subtitle: value.subtitle, symbol: value.symbol, url: value.url,
                 tabID: value.tabID, command: nil, completion: value.completion, fetchFavicon: value.fetchFavicon,
                 isTypedAction: value.isTypedAction, isAutofill: value.isAutofill)
         }
