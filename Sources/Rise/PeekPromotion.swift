@@ -70,6 +70,7 @@ struct PeekUndo {
         let previous = splitGroups, sourceID = peekSourceTabID ?? selectedID, opensNewTab = peekOpensNewTab, origin = peekOrigin
         let finish = { [weak self] in
             guard let self, tab === self.peekTab else { return }
+            self.suspendFindBar(for: tab)
             tab.page.view.removeFromSuperview()
             self.peekTab = nil; self.closePeek(); self.tabs.insert(tab, at: 0); self.showSplit(tab)
             self.registerPeekUndo(.split(previous: previous), tab: tab, sourceID: sourceID, opensNewTab: opensNewTab, origin: origin)
@@ -86,6 +87,7 @@ struct PeekUndo {
             // The tab keeps its place and history, as a normal link click would, and takes the
             // Peek's live page; `tab` now holds the tab's page from before, for Back and ⌘Z.
             if selectedID != source.id { select(source.id) }
+            findBars.removeValue(forKey: tab.id)?.discard()
             handOff(tab, into: source)
             // The page from before stays drawn around the growing card until it covers it all.
             let cover = ghost == nil ? nil : snapshots.under.map { freeze(source.page.view, as: $0) }
@@ -106,12 +108,14 @@ struct PeekUndo {
     private func takePeekViews() -> (card: Surface?, backdrop: Surface?, controls: [PeekControl]) {
         if let peek = peekTab {
             historySwipe.cancel(for: peek.page); permissionCoordinator.cancel(for: peek.page.view)
+            suspendFindBar(for: peek)
             if hoveredWebView === peek.page.view { hideLinkStatus() }
         }
         let views = (card: peekCard, backdrop: peekBackdrop, controls: peekControls)
         finishPeekMotion(); finishPeekPromotion()
         peekSourceTabID = nil; peekOpensNewTab = false; peekSwipePull = 0; peekOrigin = nil
         peekTab = nil; peekCard = nil; peekBackdrop = nil; peekControls = []
+        swapFindBar(from: nil)
         updatePeekCovers()
         return views
     }

@@ -240,7 +240,11 @@ enum RisePages {
     }
     func evaluate(_ body: String, arguments: [String: Any], in frame: PageFrame?, world: ScriptWorld,
                   completion: @escaping (Result<Any?, Error>) -> Void) {
-        browserView.evaluateFunctionBody(body, arguments: arguments, frame: frame?.handle as? RCFrame, world: world.name) { value, error in
+        evaluate(body, arguments: arguments, in: frame, world: world, userGesture: true, completion: completion)
+    }
+    func evaluate(_ body: String, arguments: [String: Any], in frame: PageFrame?, world: ScriptWorld, userGesture: Bool,
+                  completion: @escaping (Result<Any?, Error>) -> Void) {
+        browserView.evaluateFunctionBody(body, arguments: arguments, frame: frame?.handle as? RCFrame, world: world.name, userGesture: userGesture) { value, error in
             MainActor.assumeIsolated { completion(error.map { .failure(PageScriptError(message: $0)) } ?? .success(value)) }
         }
     }

@@ -21,6 +21,7 @@ struct SuspendedPeek {
         guard let tab = peekTab else { return }
         guard let owner = peekOwnerID, tabs.contains(where: { $0.id == owner }) else { closePeek(); return }
         suspendedPeeks[owner] = SuspendedPeek(tab: tab, sourceID: peekSourceTabID, opensNewTab: peekOpensNewTab, origin: peekOrigin)
+        suspendFindBar(for: tab)
         // Closing the presentation mustn't stop the page's current load.
         peekTab = nil
         closePeek()
@@ -47,6 +48,7 @@ struct SuspendedPeek {
         if peekOwnerID == owner { closePeek() }
         guard let saved = suspendedPeeks.removeValue(forKey: owner) else { return }
         permissionCoordinator.cancel(for: saved.tab.page.view)
+        findBars.removeValue(forKey: saved.tab.id)?.discard()
         saved.tab.cancelLoad(); saved.tab.page.view.removeFromSuperview()
         tabMedia.remove(saved.tab.id)
     }

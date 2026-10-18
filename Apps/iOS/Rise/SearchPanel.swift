@@ -339,7 +339,9 @@ final class SearchPanel: UIView, UITextFieldDelegate {
             }
         }
         let fieldAddress = field.inlineCompletion ?? field.text ?? ""
-        let siteAddress = field.inlineCompletion ?? candidates.first?.completion ?? fieldAddress
+        let siteAddress = candidates.first.flatMap { candidate in
+            candidate.completion == nil ? nil : candidate.url.flatMap { BrowsingHistory.completion(for: query, url: $0) }
+        } ?? fieldAddress
         let site = PopularSites.site(forAddress: siteAddress) ?? source.learner.searches.site(forAddress: siteAddress)
         updateSite(site?.isSearchable == true && !composing ? site : nil)
         let url = (candidates.first?.symbol == "globe" && candidates.first?.isTypedAction == true)

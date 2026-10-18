@@ -817,8 +817,10 @@ class FindInputCell: NSTextFieldCell {
 }
 
 @MainActor extension BrowserController {
-    /// The selected tab's find bar.
-    var findBar: FindBar { selectedTab.map(findBar(for:)) ?? tablessFindBar }
+    /// Find and Ask act on the frontmost page, including a Peek over the selected tab.
+    var findTab: BrowserTab? { peekTab ?? selectedTab }
+    var findBar: FindBar { findTab.map(findBar(for:)) ?? tablessFindBar }
+    var selectedFindBar: FindBar { selectedTab.map(findBar(for:)) ?? tablessFindBar }
     func findBar(for tab: BrowserTab) -> FindBar {
         if let bar = findBars[tab.id] { return bar }
         let bar = FindBar(); bar.applyTheme(theme)
@@ -826,37 +828,57 @@ class FindInputCell: NSTextFieldCell {
             guard let webView = tab?.page else { return PageFind.Matches(count: 0, index: -1) }
             return await PageFind.find(query, direction: direction, in: webView)
         }
-        bar.dismiss = { [weak self] in self?.hideFind() }
+        bar.dismiss = { [weak self, weak tab] in
+            guard let tab else { return }
+            self?.hideFind(in: tab)
+        }
         configurePageAssistant(bar, for: tab)
         findBars[tab.id] = bar
         return bar
     }
-    /// Only the selected tab's bar is in the window. A bar left empty has nothing worth keeping,
-    /// so leaving its tab closes it; one with a search or question waits for the tab to return.
-    func swapFindBar(from previousID: UUID?) {
-        if let previousID, previousID != selectedID, let bar = findBars[previousID] {
-            bar.removeFromSuperview()
-            if bar.isPresented && bar.input.stringValue.isEmpty && !bar.isAnswering {
-                bar.closeInstantly()
-                if let webView = tabs.first(where: { $0.id == previousID })?.page { Task { await PageFind.clearPassage(webView) } }
-            }
+    /// A bar left empty has nothing worth keeping; a search or question waits for its page.
+    func suspendFindBar(for tab: BrowserTab) {
+        guard let bar = findBars[tab.id] else { return }
+        bar.removeFromSuperview()
+        if bar.isPresented && bar.input.stringValue.isEmpty && !bar.isAnswering {
+            bar.closeInstantly()
+            let page = tab.page
+            Task { await PageFind.clearPassage(page) }
         }
-        let bar = findBar
+    }
+    /// A background tab's bar stays out of the window while a Peek is in front of it.
+    func swapFindBar(from previousID: UUID?) {
+        if let previousID, previousID != selectedID, let tab = tabs.first(where: { $0.id == previousID }) {
+            suspendFindBar(for: tab)
+        }
+        let bar = selectedFindBar
+        guard peekTab == nil else { bar.removeFromSuperview(); return }
+        bar.autoresizingMask = []
         if bar.superview !== root { root.addSubview(bar, positioned: .below, relativeTo: linkStatus) }
     }
+    /// Inside the rounded card, so the normal Find animation and insets follow its live size.
+    func layoutPeekFindBar() {
+        guard let tab = peekTab, let bar = findBars[tab.id], let clip = peekCard?.subviews.first else { return }
+        if bar.superview !== clip { clip.addSubview(bar) }
+        bar.frame = clip.bounds; bar.topInset = 0
+    }
     /// ⌘F opens the bar or focuses and selects its input without losing an answer.
-    @objc func showFind() { findBar.present() }
+    @objc func showFind() {
+        let bar = findBar
+        layoutPeekFindBar()
+        bar.present()
+    }
     @objc func findNext() { findAgain(.next) }
     @objc func findPrevious() { findAgain(.previous) }
     /// ⌘G and ⇧⌘G reopen a closed bar on the last search; an open one steps through its matches.
     private func findAgain(_ direction: PageFind.Direction) {
-        if findBar.isPresented { findBar.run(direction) } else if !findBar.input.stringValue.isEmpty { findBar.present() }
+        if findBar.isPresented { findBar.run(direction) } else if !findBar.input.stringValue.isEmpty { showFind() }
     }
-    func hideFind() {
-        findBar.hide()
-        if let webView = selectedTab?.page {
-            Task { await PageFind.clear(webView, selectingCurrent: true); await PageFind.clearPassage(webView) }
-        }
-        window?.makeFirstResponder(selectedTab?.page.view)
+    func hideFind() { if let tab = findTab { hideFind(in: tab) } else { tablessFindBar.hide() } }
+    private func hideFind(in tab: BrowserTab) {
+        findBars[tab.id]?.hide()
+        let page = tab.page
+        Task { await PageFind.clear(page, selectingCurrent: true); await PageFind.clearPassage(page) }
+        if findTab === tab { window?.makeFirstResponder(page.view) }
     }
 }

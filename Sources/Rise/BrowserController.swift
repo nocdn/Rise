@@ -20,6 +20,7 @@ import RiseCore
     var airDropService: NSSharingService?
     var airDropHandler: ((URL) -> Void)?
     let sitePermissions: SitePermissions
+    let cookieConsent: CookieConsent
     lazy var permissionCoordinator = PermissionCoordinator(browser: self)
     lazy var pictureInPicture = VideoPictureInPicture(browser: self)
     lazy var tabMedia: TabMedia = {
@@ -90,6 +91,11 @@ import RiseCore
         hover.summaries.onChange = { [weak self] key in self?.pullRequestSummaryChanged(key) }
         hover.summaries.provider = { [weak self] in self?.modelChoice ?? .openRouter }
         return hover
+    }()
+    lazy var calendarAgenda: CalendarAgenda = {
+        let agenda = CalendarAgenda()
+        agenda.onChange = { [weak self] in self?.calendarAgendaChanged() }
+        return agenda
     }()
     lazy var gmailInbox: GmailInbox = {
         let inbox = GmailInbox()
@@ -179,6 +185,7 @@ import RiseCore
         self.preferences = preferences
         googleSearchSuggestions = searchSuggestions ?? GoogleSearchSuggestions()
         sitePermissions = SitePermissions(preferences: preferences)
+        cookieConsent = CookieConsent(preferences: preferences)
         adBlocker = AdBlocker(preferences: preferences)
         linkPreloader = LinkPreloader(preferences: preferences)
         pageFullscreen = PageFullscreen(preferences: preferences)
@@ -452,7 +459,7 @@ import RiseCore
         errorTitle.frame = NSRect(x: 40, y: body.height/2-60, width: body.width-80, height: 34)
         errorMessage.frame = NSRect(x: 60, y: body.height/2-12, width: body.width-120, height: 56)
         retryButton.frame = NSRect(x: body.width/2-55, y: body.height/2+55, width: 110, height: 32)
-        findBar.frame = pageShadow.frame; findBar.topInset = devHeight
+        selectedFindBar.frame = pageShadow.frame; selectedFindBar.topInset = devHeight
         infoPlaque.frame = pageShadow.frame; infoPlaque.topInset = devHeight
         dismissArea.frame = b
         let paletteWidth: CGFloat = paletteCreatesTab ? 520 : 600
@@ -470,7 +477,7 @@ import RiseCore
         if !tabSwitcher.isHidden { tabSwitcher.place(in: b) }
     }
     func windowDidResize(_ notification: Notification) { layoutChrome() }
-    func windowWillClose(_ notification: Notification) { tabPressed(); gmailInbox.tearDown(); settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); saveNow() }
+    func windowWillClose(_ notification: Notification) { tabPressed(); gmailInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); saveNow() }
     func windowDidResignKey(_ notification: Notification) {
         pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch(); endSidebarPeek(); tabPressed()
         sidebar?.cancelTabInteractions()
@@ -573,6 +580,7 @@ import RiseCore
         tab.showsRepositorySubtitle = showsRepositorySubtitle
         tab.page.setTheme(theme.appearance, background: theme.page)
         adBlocker.install(on: tab.page)
+        cookieConsent.install(on: tab.page)
         HistorySwipeController.install(on: tab.page)
         siteSearchLearner.install(on: tab.page)
         linkPreloader.install(on: tab.page)
@@ -645,7 +653,7 @@ import RiseCore
         }
         applyTheme()
         sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: splitGroups)
-        refreshTabHoverCard(); preloadGmailInbox()
+        refreshTabHoverCard(); preloadGmailInbox(); preloadCalendarAgenda(); if root.window != nil { CalendarProbe.start(host: root) }
         window?.title = (selectedTab?.title).map { "\($0) — Rise" } ?? "Rise"
         toolbarButtons[1].isEnabled = historyPage.map { canNavigate($0, .back) } ?? false
         toolbarButtons[2].isEnabled = historyPage.map { canNavigate($0, .forward) } ?? false

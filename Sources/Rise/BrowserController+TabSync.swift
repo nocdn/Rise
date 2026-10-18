@@ -18,7 +18,11 @@ import RiseCore
             guard let self, self.palette.isPresented else { return }
             self.palette.refresh()
         }
-        sync.start(tabs: sharedTabsSnapshot, learnedSearches: siteSearchLearner.searches)
+        sync.onHistoryChange = { [weak self] in
+            guard let self, self.palette.isPresented else { return }
+            self.palette.refresh()
+        }
+        sync.start(tabs: sharedTabsSnapshot, learnedSearches: siteSearchLearner.searches, browsingHistory: browsingHistory)
     }
 
     var canApplySharedTabs: Bool {

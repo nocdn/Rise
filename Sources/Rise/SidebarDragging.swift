@@ -109,13 +109,10 @@ import AppKit
         if let shadow = drag.overlay?.shadowView { TabDragMotion.move(shadow, to: target, spring: spring) }
         TabDragMotion.move(drag.view, to: target, spring: spring)
     }
-    func endTabDrag(cancelled: Bool = false) {
+    func endTabDrag(at location: NSPoint? = nil, cancelled: Bool = false) {
         guard let drag else { return }
         self.drag = nil; dragScrollTimer?.invalidate(); dragScrollTimer = nil
         (window as? BrowserWindow)?.isDraggingTab = false
-        if let shadow = drag.overlay?.shadowView { TabDragMotion.fadeShadow(shadow, to: 0, duration: TabDragMotion.shadowOutDuration) }
-        // Attached releases immediately resume normal hover, even while the row is settling.
-        if !drag.isDetached { clearDragFill(drag.view) }
         if drag.overlay != nil { returningDrag = drag }
         if cancelled {
             let byID = Dictionary(uniqueKeysWithValues: displayedRows.compactMap { row in canonicalID(for: row).map { ($0,row) } })
@@ -127,6 +124,12 @@ import AppKit
         layoutDragSlots()
         if drag.overlay != nil, let target = targetFrames[drag.id], displayedRows.contains(where: { $0 === drag.view }) {
             placeDraggedTab(drag, frame: target, spring: true)
+            clearDragFill(drag.view, at: location ?? drag.event.locationInWindow, animated: true)
+            if let shadow = drag.overlay?.shadowView {
+                let selected = selectedTabID.flatMap { displayedRow(for: $0) } === drag.view
+                let visible = scroll.frame.contains(drag.view.convert(drag.view.bounds, to: self))
+                TabDragMotion.returnShadow(shadow, matching: selected && visible ? selectedTabShadow : nil)
+            }
             let work = DispatchWorkItem { [weak self, weak drag] in
                 guard let self, let drag, self.returningDrag === drag else { return }
                 self.finishReturningTab()
@@ -156,9 +159,17 @@ import AppKit
     private func clearDragAppearance(_ view: NSView) {
         clearDragFill(view)
     }
-    private func clearDragFill(_ view: NSView) {
-        (view as? TabRow)?.dragFill = nil
-        (view as? SplitTabRow)?.dragFill = nil
+    private func clearDragFill(_ view: NSView, at location: NSPoint? = nil, animated: Bool = false) {
+        TabDragMotion.fadeBackground(view, animated: animated) {
+            if let row = view as? TabRow {
+                row.dragFill = nil; row.refreshHover(at: location)
+            }
+            (view as? SplitTabRow)?.dragFill = nil
+        }
+        if let pair = view as? SplitTabRow {
+            clearDragFill(pair.left, at: location, animated: animated)
+            clearDragFill(pair.right, at: location, animated: animated)
+        }
     }
     func refreshReturningTabHover(at location: NSPoint) {
         guard let view = returningDrag?.view else { return }

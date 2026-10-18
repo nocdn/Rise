@@ -81,7 +81,13 @@ import WebKit
         field.insertText("l"); field.insertText("a")
         try check("site-row-appears-immediately", panel.offeredSite?.name == "Lamp Shop" && !panel.siteRow.isHidden && panel.siteRow.alpha == 1)
         try await Task.sleep(for: .milliseconds(350))
-        try check("completion-is-immediate-and-keeps-typed-text", field.text == "la" && field.inlineCompletion == "lamps.example")
+        try check("completion-is-immediate-and-keeps-typed-text", field.text == "la" && field.inlineCompletion == "lamps.example/docs/lighting")
+        var learnedDestination: URL?
+        let originalOpen = panel.onOpen
+        panel.onOpen = { learnedDestination = $0 }
+        _ = panel.textFieldShouldReturn(field)
+        panel.onOpen = originalOpen
+        try check("go-opens-the-frequently-visited-path", learnedDestination == fixture)
         let selected = field.selectedTextRange!
         try check("completion-has-no-native-selection-handles", selected.isEmpty && field.offset(from: field.beginningOfDocument, to: selected.start) == 2)
         let prefixEdge = field.editingRect(forBounds: field.bounds).minX+("la" as NSString).size(withAttributes: [.font: field.font!]).width
@@ -146,7 +152,7 @@ import WebKit
         try await Task.sleep(for: .milliseconds(350))
         let selectionBefore = field.offset(from: field.beginningOfDocument, to: field.selectedTextRange!.start)
         panel.refresh()
-        try check("late-results-preserve-text-and-selection", field.text == "la" && field.inlineCompletion == "lamps.example"
+        try check("late-results-preserve-text-and-selection", field.text == "la" && field.inlineCompletion == "lamps.example/docs/lighting"
                   && field.offset(from: field.beginningOfDocument, to: field.selectedTextRange!.start) == selectionBefore)
         try capture("learned-site")
         field.deleteBackward()

@@ -282,6 +282,22 @@ final class AddressSuggestionsTests: XCTestCase {
         palette.hide(); palette.mouseMoved(with: event)
         XCTAssertEqual(palette.selectedIndex, 1, "Hidden results ignore pointer events")
     }
+    @MainActor func testAFrequentlyVisitedPathFillsTheNativeFieldAndKeepsTheSitesSearchAvailable() throws {
+        let browser = browser(); defer { browser.hidePalette(); clean(browser) }
+        let account = URL(string: "https://amazon.co.uk/account")!
+        browser.browsingHistory.record(URL(string: "https://amazon.co.uk/")!, title: "Amazon")
+        for _ in 0..<10 { browser.browsingHistory.record(account, title: "Your account") }
+        browser.showWindow(nil); browser.newTab()
+        let palette = browser.palette, editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
+        for letter in "ama" { editor.insertText(String(letter), replacementRange: editor.selectedRange()) }
+        XCTAssertEqual(palette.input.stringValue, "amazon.co.uk/account")
+        XCTAssertEqual(editor.selectedRange(), NSRange(location: 3, length: "zon.co.uk/account".utf16.count))
+        XCTAssertEqual(palette.offeredSite?.name, "Amazon", "Completing a learned path must keep Search in Amazon available")
+        var destination: URL?
+        palette.submit = { _, suggestion in destination = suggestion?.url }
+        editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        XCTAssertEqual(destination, account)
+    }
     @MainActor func testAPopularSiteFillsInAndTabSearchesItThroughItsOwnSearch() throws {
         let region = PopularSites.region; PopularSites.region = "GB"; defer { PopularSites.region = region }
         let browser = browser(); defer { browser.hidePalette(); clean(browser) }

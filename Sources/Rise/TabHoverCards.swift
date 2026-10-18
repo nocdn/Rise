@@ -1,17 +1,24 @@
 import AppKit
 
-/// Hovering a pull request, merge request or Gmail tab opens its card, which opens and closes at
-/// once like a tooltip. While one is open, or just after it closes, another supported tab
-/// shows its card immediately, gliding the open one over. The pointer can cross from the tab
-/// into the card through a safe triangle, to select its text.
+/// Hovering a tab shows its title and rename hint, or a pull request, merge request, Gmail or
+/// Google Calendar preview. Each appears and disappears at once, without a fade. Moving to a neighboring
+/// tab keeps the hover session warm. Interactive previews glide over and allow crossing
+/// into the card through a safe triangle to select text.
 @MainActor final class TabHoverCards {
     static let delay = 0.5, grace = 0.35
     /// How old a preloaded Gmail list gets before browsing refreshes it; opening the card refreshes after a minute.
     static let backgroundRefresh: TimeInterval = 300
+    /// Calendar refreshes more often, so a new event's countdown appears in time.
+    static let calendarRefresh: TimeInterval = 120
     let pullRequestCard = PullRequestTooltip()
     let gmailCard = GmailTooltip()
-    fileprivate var showsGmail = false
-    fileprivate var card: NSView { showsGmail ? gmailCard : pullRequestCard }
+    let calendarCard = CalendarTooltip()
+    let titleCard = TabTitleTooltip(frame: .zero)
+    fileprivate enum Kind { case title, pullRequest, gmail, calendar }
+    fileprivate var kind = Kind.title
+    fileprivate var card: NSView {
+        switch kind { case .title: titleCard; case .pullRequest: pullRequestCard; case .gmail: gmailCard; case .calendar: calendarCard }
+    }
     let summaries: PullRequestSummaries
     fileprivate var hoveredID: UUID?
     fileprivate(set) var shownID: UUID?
@@ -30,6 +37,10 @@ import AppKit
     weak var popoutSource: NSView?
     fileprivate var tracksPointer = false
     init(storageURL: URL) { summaries = PullRequestSummaries(storageURL: storageURL) }
+    /// Tabs whose card is interactive, rather than their title.
+    static func hasPreview(_ url: URL?) -> Bool {
+        PullRequest(url: url) != nil || GmailAccount(url: url) != nil || CalendarAccount(url: url) != nil
+    }
 }
 
 @MainActor extension BrowserController {
@@ -37,12 +48,16 @@ import AppKit
         let hover = tabHoverCards
         if hovering {
             hover.timer?.invalidate()
-            let url = tabs.first(where: { $0.id == id })?.url
-            guard sidebar.drag == nil, PullRequest(url: url) != nil || GmailAccount(url: url) != nil else {
+            guard sidebar.drag == nil, tabs.contains(where: { $0.id == id }), sidebar.rows[id]?.isRenaming == false else {
                 hover.hoveredID = nil
                 // Crossing another tab on the way to the card doesn't close it.
                 if !pointerIsHeadingForCard() { hideTabHoverCard() }
                 return
+            }
+            let url = tabs.first(where: { $0.id == id })?.url
+            if hover.shownID != nil, hover.kind != .title, !TabHoverCards.hasPreview(url), pointerIsHeadingForCard() {
+                // Preserve the route through neighboring tabs into an interactive preview.
+                hover.hoveredID = nil; return
             }
             hover.hoveredID = id; hover.safeOrigin = nil; hover.safeTarget = nil; hover.leftRow = nil
             if hover.shownID != nil || CACurrentMediaTime()-hover.hiddenAt < TabHoverCards.grace { showTabHoverCard(id); return }
@@ -53,6 +68,7 @@ import AppKit
             guard hover.hoveredID == id else { return }
             hover.hoveredID = nil; hover.timer?.invalidate()
             guard hover.shownID != nil else { return }
+            if hover.kind == .title { hideTabHoverCard(); return }
             hover.safeOrigin = pointerInRoot; hover.safeTarget = nil
             hover.leftRow = sidebar.rows[id].map { $0.convert($0.bounds, to: root).insetBy(dx: 0, dy: -(TabAppearance.spacing+1)) }
             // Crossing to the next row exits this one first; the next row claims the card in the same turn.
@@ -62,6 +78,13 @@ import AppKit
     /// The pointer moved while the card is open: off the tab, outside the card and its safe triangle closes it.
     func tabHoverPointerMoved() {
         let hover = tabHoverCards
+        if hover.kind == .title, let id = hover.shownID {
+            guard let row = sidebar.rows[id], let point = pointerInRoot,
+                  row.visibleRect.intersection(row.bounds).contains(row.convert(point, from: root)) else {
+                hideTabHoverCard(); return
+            }
+            return
+        }
         guard hover.shownID != nil, hover.safeOrigin != nil else { return }
         closeCardIfAbandoned()
     }
@@ -73,14 +96,24 @@ import AppKit
     }
     func showTabHoverCard(_ id: UUID) {
         let hover = tabHoverCards
-        if let tab = tabs.first(where: { $0.id == id }), GmailAccount(url: tab.url) != nil {
+        guard hover.hoveredID == id, sidebar.drag == nil, isSidebarShown, window?.isVisible == true,
+              let tab = tabs.first(where: { $0.id == id }), let row = sidebar.rows[id], row.window != nil, !row.isRenaming else { return }
+        if GmailAccount(url: tab.url) != nil {
             showGmailTooltip(id); return
         }
-        guard hover.hoveredID == id, isSidebarShown, window?.isVisible == true,
-              let tab = tabs.first(where: { $0.id == id }), let pr = PullRequest(url: tab.url),
-              let row = sidebar.rows[id], row.window != nil else { return }
+        if CalendarAccount(url: tab.url) != nil {
+            showCalendarTooltip(id); return
+        }
+        guard let pr = PullRequest(url: tab.url) else {
+            hover.pullRequestCard.dismiss(); hover.gmailCard.dismiss(); hover.calendarCard.dismiss(); hover.kind = .title; hover.shownID = id
+            if hover.titleCard.superview !== root { root.addSubview(hover.titleCard, positioned: .below, relativeTo: dismissArea) }
+            if !hover.tracksPointer, let window { hover.tracksPointer = !window.acceptsMouseMovedEvents; window.acceptsMouseMovedEvents = true }
+            let pointer = pointerInRoot ?? row.convert(NSPoint(x: 24, y: row.bounds.midY), to: root)
+            hover.titleCard.present(title: tab.title, near: pointer, theme: theme)
+            return
+        }
         hover.shownID = id
-        hover.gmailCard.dismiss(); hover.showsGmail = false
+        hover.gmailCard.dismiss(); hover.calendarCard.dismiss(); hover.titleCard.dismiss(); hover.kind = .pullRequest
         let title = pr.title(fromTab: tab.title)
         hover.summaries.load(pr, title: title) { [weak tab] in
             guard let page = tab?.page, PullRequest(url: page.url) == pr else { return nil }
@@ -104,8 +137,17 @@ import AppKit
     /// The card's tab closed, changed accounts, or stopped being a supported page.
     func refreshTabHoverCard() {
         guard let id = tabHoverCards.shownID else { return }
-        if tabHoverCards.showsGmail {
+        guard let tab = tabs.first(where: { $0.id == id }), sidebar.rows[id]?.isRenaming == false else { hideTabHoverCard(); return }
+        if tabHoverCards.kind == .title {
+            tabHoverCards.titleCard.update(title: tab.title, theme: theme)
+            return
+        }
+        if tabHoverCards.kind == .gmail {
             if GmailAccount(url: tabs.first(where: { $0.id == id })?.url) != gmailInbox.request?.account { hideTabHoverCard() }
+            return
+        }
+        if tabHoverCards.kind == .calendar {
+            if CalendarAccount(url: tabs.first(where: { $0.id == id })?.url) != calendarAgenda.account { hideTabHoverCard() }
             return
         }
         if PullRequest(url: tabs.first(where: { $0.id == id })?.url) == nil { hideTabHoverCard() }
@@ -119,6 +161,8 @@ import AppKit
         if hover.tracksPointer { window?.acceptsMouseMovedEvents = false; hover.tracksPointer = false }
         hover.pullRequestCard.dismiss()
         hover.gmailCard.dismiss()
+        hover.calendarCard.dismiss()
+        hover.titleCard.dismiss()
     }
     func pullRequestSummaryChanged(_ key: String) {
         let hover = tabHoverCards
@@ -191,8 +235,7 @@ import AppKit
     /// instead of closing and popping back open.
     private var pointerIsOverCardTab: Bool {
         guard let point = pointerInRoot, let id = sidebar.tabID(at: sidebar.convert(point, from: root)) else { return false }
-        let url = tabs.first(where: { $0.id == id })?.url
-        return PullRequest(url: url) != nil || GmailAccount(url: url) != nil
+        return TabHoverCards.hasPreview(tabs.first(where: { $0.id == id })?.url)
     }
     private var pointerInRoot: NSPoint? {
         guard let window else { return nil }
@@ -225,7 +268,7 @@ import AppKit
         guard hover.hoveredID == id, isSidebarShown, window?.isVisible == true,
               let tab = tabs.first(where: { $0.id == id }), let account = GmailAccount(url: tab.url),
               let row = sidebar.rows[id], row.window != nil else { return }
-        hover.pullRequestCard.dismiss(); hover.showsGmail = true; hover.shownID = id
+        hover.pullRequestCard.dismiss(); hover.calendarCard.dismiss(); hover.titleCard.dismiss(); hover.kind = .gmail; hover.shownID = id
         if hover.gmailCard.superview !== root {
             root.addSubview(hover.gmailCard, positioned: .below, relativeTo: dismissArea)
             hover.gmailCard.onPointer = { [weak self] in self?.cardPointerChanged($0) }
@@ -240,7 +283,7 @@ import AppKit
                             theme: theme, glides: CACurrentMediaTime()-hover.hiddenAt < TabHoverCards.grace)
     }
     func gmailInboxChanged() {
-        guard tabHoverCards.showsGmail, tabHoverCards.shownID != nil else { return }
+        guard tabHoverCards.kind == .gmail, tabHoverCards.shownID != nil else { return }
         tabHoverCards.gmailCard.update(gmailInbox)
     }
     /// The tab goes to the card's category, with the email popped out in a Peek over it: Gmail's
@@ -285,5 +328,68 @@ import AppKit
         guard tabHoverCards.shownID == nil, root.window != nil else { return }
         gmailInbox.prepare(account: account, category: gmailCategory, source: tab.page, host: root,
                            refreshAfter: TabHoverCards.backgroundRefresh)
+    }
+
+    func showCalendarTooltip(_ id: UUID) {
+        let hover = tabHoverCards
+        guard hover.hoveredID == id, isSidebarShown, window?.isVisible == true,
+              let tab = tabs.first(where: { $0.id == id }), let account = CalendarAccount(url: tab.url),
+              let row = sidebar.rows[id], row.window != nil else { return }
+        hover.pullRequestCard.dismiss(); hover.gmailCard.dismiss(); hover.titleCard.dismiss(); hover.kind = .calendar; hover.shownID = id
+        if hover.calendarCard.superview !== root {
+            root.addSubview(hover.calendarCard, positioned: .below, relativeTo: dismissArea)
+            hover.calendarCard.onPointer = { [weak self] in self?.cardPointerChanged($0) }
+            hover.calendarCard.onRetry = { [weak self] in self?.calendarAgenda.retry() }
+            hover.calendarCard.onOpen = { [weak self] event in self?.openCalendarEvent(event) }
+        }
+        if !hover.tracksPointer, let window { hover.tracksPointer = !window.acceptsMouseMovedEvents; window.acceptsMouseMovedEvents = true }
+        calendarAgenda.prepare(account: account, source: tab.page, host: root)
+        let anchor = row.convert(row.bounds, to: root)
+        hover.calendarCard.present(key: account.baseURL.absoluteString, agenda: calendarAgenda,
+                                   left: sidebar.frame.maxX+6, anchorTop: anchor.minY, maxBottom: root.bounds.height-8,
+                                   theme: theme, glides: CACurrentMediaTime()-hover.hiddenAt < TabHoverCards.grace)
+    }
+    func calendarAgendaChanged() {
+        refreshCalendarBadges()
+        guard tabHoverCards.kind == .calendar, tabHoverCards.shownID != nil else { return }
+        tabHoverCards.calendarCard.update(calendarAgenda)
+    }
+    /// The card's tab opens the event's details, as a click on its chip does. A chip the tab
+    /// doesn't show sends the tab to the event's day first, in the view the tab was in.
+    private func openCalendarEvent(_ event: CalendarEvent) {
+        guard let id = tabHoverCards.shownID, let tab = tabs.first(where: { $0.id == id }),
+              let account = CalendarAccount(url: tab.url) else { return }
+        tabPressed()
+        if selectedID != id { select(id) }
+        let web = tab.page, script = "return " + CalendarPageReader.open(event.id)
+        func open(_ web: WebPage) async -> Bool {
+            guard !web.isLoading else { return false }
+            return (try? await web.evaluate(script, arguments: [:], in: nil, world: .named(CalendarPageReader.world))) as? Bool == true
+        }
+        Task { [weak tab, weak web] in
+            guard let web, await !open(web), let tab else { return }
+            let day = Calendar.current.dateComponents([.year, .month, .day], from: event.start)
+            tab.load(account.url(view: CalendarAccount.view(of: web.url) ?? "week", day: day))
+            // Up to 12 s for Calendar to load and draw the day's events.
+            for _ in 0..<60 {
+                try? await Task.sleep(for: .milliseconds(200))
+                if await open(tab.page) { return }
+            }
+        }
+    }
+    /// While a Calendar tab is open its events load in the background, for the card and the
+    /// tab's countdown. The selected Calendar tab's account wins, then the one already loaded.
+    func preloadCalendarAgenda() {
+        let calendars = tabs.filter { CalendarAccount(url: $0.url) != nil }
+        guard let tab = calendars.first(where: { $0.id == selectedID })
+                ?? calendars.first(where: { CalendarAccount(url: $0.url) == calendarAgenda.account }) ?? calendars.first,
+              let account = CalendarAccount(url: tab.url) else {
+            if calendarAgenda.account != nil, tabHoverCards.shownID == nil { calendarAgenda.tearDown() }
+            refreshCalendarBadges()
+            return
+        }
+        refreshCalendarBadges()
+        guard tabHoverCards.shownID == nil, root.window != nil else { return }
+        calendarAgenda.prepare(account: account, source: tab.page, host: root, refreshAfter: TabHoverCards.calendarRefresh)
     }
 }

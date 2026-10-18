@@ -120,7 +120,7 @@ final class PeekPersistenceTests: XCTestCase {
         XCTAssertEqual(browser.tabs.map(\.id), [other.id])
     }
 
-    @MainActor func testIndicatorUsesConcentricRadiiAndSlidesAsideForCloseAndPlayback() async throws {
+    @MainActor func testIndicatorStaysFixedAndCloseSlidesBackWhenPeekCloses() async throws {
         let browser = browser(); browser.showWindow(nil)
         let source = browser.addTab()
         browser.showPeek(url: URL(string: "about:blank?peek")!, from: source.page.view, animated: false)
@@ -131,24 +131,25 @@ final class PeekPersistenceTests: XCTestCase {
         row.mouseExited(with: NSEvent()); row.layoutSubtreeIfNeeded()
         XCTAssertTrue(row.showsPeek); XCTAssertFalse(row.peekIndicator.isHidden)
         XCTAssertTrue(row.peekIndicator.favicon.image === image)
-        XCTAssertEqual(row.peekIndicator.frame.midX, row.close.frame.midX)
+        XCTAssertEqual(row.peekIndicator.frame.minX, row.close.frame.maxX+2)
         XCTAssertEqual(row.peekIndicator.layer!.cornerRadius-row.peekIndicator.favicon.layer!.cornerRadius, PeekFaviconIndicator.inset)
         XCTAssertLessThanOrEqual(row.titleField.frame.maxX, row.peekIndicator.frame.minX)
-        let close = row.close.frame
+        let close = row.close.frame, indicator = row.peekIndicator.frame
         row.mouseEntered(with: NSEvent()); row.layoutSubtreeIfNeeded()
         XCTAssertFalse(row.close.isHidden); XCTAssertEqual(row.close.frame, close)
-        XCTAssertLessThan(row.subviews.firstIndex(of: row.peekIndicator)!, row.subviews.firstIndex(of: row.close)!,
-                          "The X stays visible above the indicator while it starts sliding away")
-        XCTAssertEqual(row.peekIndicator.frame.maxX+2, close.minX)
-        XCTAssertNotNil(row.peekIndicator.layer?.animation(forKey: TabListMotion.slideKey))
+        XCTAssertEqual(row.peekIndicator.frame, indicator, "Hovering leaves the Peek favicon in its usual slot")
+        XCTAssertNil(row.peekIndicator.layer?.animation(forKey: TabListMotion.slideKey))
         row.setPlayback(paused: false); row.layoutSubtreeIfNeeded()
         XCTAssertFalse(row.playback.isHidden)
-        XCTAssertLessThan(row.peekIndicator.frame.maxX, row.playback.frame.minX)
+        XCTAssertEqual(row.peekIndicator.frame, indicator)
         XCTAssertLessThan(row.playback.frame.maxX, row.close.frame.minX)
         let point = NSPoint(x: close.midX, y: close.midY)
         XCTAssertTrue(row.hitTest(row.convert(point, to: row.superview)) === row.close)
         browser.closePeek()
+        row.layoutSubtreeIfNeeded()
         XCTAssertFalse(row.showsPeek); XCTAssertEqual(row.peekIndicator.alphaValue, 0)
+        XCTAssertEqual(row.close.frame, close.offsetBy(dx: 26, dy: 0))
+        XCTAssertNotNil(row.close.layer?.animation(forKey: TabListMotion.slideKey), "The hovered X springs back into its normal slot")
         try await Task.sleep(for: .milliseconds(180))
         XCTAssertTrue(row.peekIndicator.isHidden)
     }

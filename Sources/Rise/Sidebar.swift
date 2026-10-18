@@ -111,7 +111,7 @@ import RiseCore
                 row.onRename = { [weak self] title in self?.onRename?(id, title) }
                 row.onDragStart = { [weak self] event in self?.beginTabDrag(id, event: event) }
                 row.onDragMove = { [weak self] event in self?.moveTabDrag(event) }
-                row.onDragEnd = { [weak self] in self?.endTabDrag() }
+                row.onDragEnd = { [weak self] event in self?.endTabDrag(at: event.locationInWindow) }
                 row.onHover = { [weak self] hovering in self?.onTabHover?(id, hovering) }
                 row.onPress = { [weak self] in self?.onTabPress?() }
                 row.onTogglePlayback = { [weak self] in self?.onTogglePlayback?(id) }

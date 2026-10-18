@@ -1,5 +1,15 @@
 # Third-party notices
 
+## Cookie consent automation
+
+Desktop and iOS bundle DuckDuckGo Autoconsent 16.52.0 (MPL-2.0), along with
+tldts-core and tldts-experimental (MIT). Source, versions and copyright details
+are in `CookieConsent/NOTICE.md`; complete licenses ship alongside the verified
+rule assets in each app. Rise's shared acceptance-only integration and reproducible
+build are in `scripts/ios-cookie-consent/`.
+
+Source: https://github.com/duckduckgo/autoconsent/tree/39dba9ea267ce98037a4cec7fea38abfc50b3d3d
+
 ShimmeringTextField.swift adapts the gradient mechanics of ElevenLabs UI’s Shimmering Text component.
 Source: https://github.com/elevenlabs/ui
 

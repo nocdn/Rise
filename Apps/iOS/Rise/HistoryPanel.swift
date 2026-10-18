@@ -1,6 +1,6 @@
 import UIKit
 
-/// Local visits in the toolbar's expanding surface, using the address suggestions' exact rows.
+/// Browsing history in the toolbar's expanding surface, using the address suggestions' exact rows.
 final class HistoryPanel: UIView, UICollectionViewDataSource {
     static let extraHorizontalInset: CGFloat = 4
     let header = PanelHeader(title: "History")

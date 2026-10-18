@@ -49,25 +49,25 @@ public enum AddressSuggestionEngine {
         let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
         var result: [AddressCandidate] = [], seen = Set<String>()
         let ranked = history.ranked(for: query, limit: limit)
-        func appendSite(title: String, url: URL, learned: Bool = false, fetch: Bool = true, typed: Bool = false) {
+        func appendSite(title: String, url: URL, learned: Bool = false, fetch: Bool = true, typed: Bool = false, completePath: Bool = false) {
             guard url.user == nil, url.password == nil, let key = BrowsingHistory.key(url), seen.insert(key).inserted else { return }
             result.append(AddressCandidate(title: title, subtitle: url.absoluteString, url: url,
-                tabID: openTab(for: url, in: tabs)?.id, completion: learned ? BrowsingHistory.completion(for: query, url: url) : nil,
+                tabID: openTab(for: url, in: tabs)?.id, completion: learned ? BrowsingHistory.completion(for: query, url: url, includePath: completePath) : nil,
                 fetchFavicon: fetch, isTypedAction: typed))
         }
-        func appendHistory(_ entry: HistoryEntry, typed: Bool = false) {
+        func appendHistory(_ entry: HistoryEntry, typed: Bool = false, completePath: Bool = false) {
             guard let url = URL(string: entry.url) else { return }
-            appendSite(title: openTab(for: url, in: tabs)?.title ?? entry.title, url: url, learned: true, typed: typed)
+            appendSite(title: openTab(for: url, in: tabs)?.title ?? entry.title, url: url, learned: true, typed: typed, completePath: completePath)
         }
         if editingCurrentAddress, let key = BrowsingHistory.key(currentURL) { seen.insert(key) }
         if !query.isEmpty, let first = ranked.first, let url = URL(string: first.url),
-           let completion = BrowsingHistory.completion(for: query, url: url) {
+           let completion = BrowsingHistory.completion(for: query, url: url, includePath: first.visits > 1 && url.query == nil) {
             if let site = BrowsingHistory.site(of: url), BrowsingHistory.completion(for: query, url: site) == completion {
                 let saved = history.entries.first { $0.url == BrowsingHistory.key(site) }
                 let domain = PopularSites.domain(ofAddress: site.absoluteString)
                 appendSite(title: PopularSites.site(forAddress: domain)?.name ?? openTab(for: site, in: tabs)?.title ?? saved?.title ?? domain,
                            url: site, learned: true, typed: true)
-            } else { appendHistory(first, typed: true) }
+            } else { appendHistory(first, typed: true, completePath: true) }
         }
         if result.first?.completion == nil, let popular = PopularSites.completion(for: query),
            let key = BrowsingHistory.key(popular.site.homeURL), seen.insert(key).inserted {

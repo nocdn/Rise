@@ -1,0 +1,61 @@
+diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
+--- a/chrome/browser/rise/RiseChromium.h
++++ b/chrome/browser/rise/RiseChromium.h
+@@ -379,6 +379,14 @@
+                        frame:(nullable RCFrame *)frame
+                        world:(nullable NSString *)world
+                   completion:(void (^)(id _Nullable result, NSString *_Nullable error))completion;
++/// Background automation uses NO: inspecting or accepting consent must not synthesize a
++/// trusted user activation. User-invoked page tools keep the overload above.
++- (void)evaluateFunctionBody:(NSString *)functionBody
++                   arguments:(NSDictionary<NSString *, id> *)arguments
++                       frame:(nullable RCFrame *)frame
++                       world:(nullable NSString *)world
++                 userGesture:(BOOL)userGesture
++                  completion:(void (^)(id _Nullable result, NSString *_Nullable error))completion;
+ /// The page's live picture, `rect` of it (in this view's coordinates), for showing elsewhere in
+ /// the window, as a Peek's card does on its way to and from its link: Chromium draws into it as
+ /// into the page, with nothing copied. Nil until the page has drawn. Scale it with a transform.
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -2185,11 +2185,26 @@
+                        frame:(RCFrame*)frame
+                        world:(NSString*)world
+                   completion:(void (^)(id, NSString*))completion {
++  [self evaluateFunctionBody:functionBody
++                   arguments:arguments
++                       frame:frame
++                       world:world
++                 userGesture:YES
++                  completion:completion];
++}
++
++- (void)evaluateFunctionBody:(NSString*)functionBody
++                   arguments:(NSDictionary<NSString*, id>*)arguments
++                       frame:(RCFrame*)frame
++                       world:(NSString*)world
++                 userGesture:(BOOL)userGesture
++                  completion:(void (^)(id, NSString*))completion {
+   content::RenderFrameHost* host =
+       !_contents ? nullptr
+       : frame    ? content::RenderFrameHost::FromID([frame frameID])
+                  : _contents->GetPrimaryMainFrame();
+   if (!host || !host->IsRenderFrameLive() ||
++      !host->IsActive() ||
+       content::WebContents::FromRenderFrameHost(host) != _contents) {
+     completion(nil, frame ? @"The frame isn't there" : @"The page isn't there");
+     return;
+@@ -2206,9 +2221,9 @@
+                        [names componentsJoinedByString:@", "], functionBody,
+                        [values componentsJoinedByString:@", "]];
+   static_cast<content::RenderFrameHostImpl*>(host)->ExecuteJavaScriptForTests(
+-      // Rise runs these for the user, as a button of its own does: media
+-      // plays and windows open as they would from a click.
+-      base::SysNSStringToUTF16(script), /*has_user_gesture=*/true,
++      // Explicit page commands may act as a click. Automatic consent and other
++      // background work must not activate a frame or grant storage access.
++      base::SysNSStringToUTF16(script), /*has_user_gesture=*/userGesture,
+       /*resolve_promises=*/true, /*honor_js_content_settings=*/false,
+       WorldID(world),
+       // Answered even if the frame goes away first, as when it navigates.

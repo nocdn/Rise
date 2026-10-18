@@ -12,6 +12,44 @@ final class AddressSuggestionEngineTests: XCTestCase {
                        "github.enterprise.example/docs/swift")
         XCTAssertNil(AddressSuggestionEngine.suggestions(for: "internal docs", history: history, tabs: []).first?.completion)
     }
+    func testRepeatedPageVisitsCompleteThePreferredPathFromExistingSavedHistory() throws {
+        let file = URL.temporaryDirectory.appendingPathComponent("RiseAddress-\(UUID())/history.json")
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let history = BrowsingHistory(storageURL: file)
+        let home = URL(string: "https://voxi.co.uk/")!, account = URL(string: "https://voxi.co.uk/account")!
+        let yesterday = Date().addingTimeInterval(-86400)
+        for _ in 0..<12 { history.record(account, title: "My account", at: yesterday) }
+        for _ in 0..<3 { history.record(home, title: "VOXI") }
+        try history.save()
+        let restored = BrowsingHistory(storageURL: file)
+        let tab = AddressSuggestionTab(id: UUID(), title: "Your VOXI account", url: account)
+        for (query, completion) in [("vox", "voxi.co.uk/account"), ("VOX", "VOXi.co.uk/account"),
+                                    ("https://vox", account.absoluteString), ("voxi.co.uk/a", "voxi.co.uk/account")] {
+            let values = AddressSuggestionEngine.suggestions(for: query, history: restored, tabs: [tab])
+            XCTAssertEqual(values.first?.completion, completion)
+            XCTAssertEqual(values.first?.url, account, "Go must open the completed path, not its homepage")
+            XCTAssertEqual(values.first?.tabID, tab.id)
+            XCTAssertEqual(values.filter { $0.url == account }.count, 1)
+        }
+        for _ in 0..<40 { restored.record(home, title: "VOXI") }
+        XCTAssertEqual(AddressSuggestionEngine.suggestions(for: "vox", history: restored, tabs: []).first?.completion,
+                       "voxi.co.uk", "A changed browsing habit can make the homepage preferred again")
+        restored.remove(home)
+        XCTAssertEqual(AddressSuggestionEngine.suggestions(for: "vox", history: restored, tabs: []).first?.completion, "voxi.co.uk/account")
+    }
+    func testOneOffDeepLinksAndRepeatedSearchQueriesDoNotFillAnIncidentalPath() {
+        let history = BrowsingHistory(storageURL: URL.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let article = URL(string: "https://news.example/some-article")!
+        history.record(article, title: "An article")
+        XCTAssertEqual(AddressSuggestionEngine.suggestions(for: "news", history: history, tabs: []).first?.completion, "news.example")
+        let results = URL(string: "https://shop.example/search?q=lamps")!
+        for _ in 0..<10 { history.record(results, title: "Lamps") }
+        let result = AddressSuggestionEngine.suggestions(for: "shop", history: history, tabs: []).first
+        XCTAssertEqual(result?.completion, "shop.example")
+        XCTAssertEqual(result?.url, URL(string: "https://shop.example/"))
+        XCTAssertEqual(AddressSuggestionEngine.suggestions(for: "shop.example/s", history: history, tabs: []).first?.completion,
+                       "shop.example/search?q=lamps", "An explicitly typed path can still complete its full address")
+    }
     func testOpenTabsDeduplicateHistoryAndRequireExactQueryAndAnchor() {
         let history = BrowsingHistory(storageURL: URL.temporaryDirectory.appendingPathComponent(UUID().uuidString))
         let url = URL(string: "https://example.com/docs?q=one#intro")!

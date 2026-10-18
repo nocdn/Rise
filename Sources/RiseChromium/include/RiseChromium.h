@@ -379,6 +379,14 @@ RC_EXPORT @interface RCBrowserView : NSView
                        frame:(nullable RCFrame *)frame
                        world:(nullable NSString *)world
                   completion:(void (^)(id _Nullable result, NSString *_Nullable error))completion;
+/// Background automation uses NO: inspecting or accepting consent must not synthesize a
+/// trusted user activation. User-invoked page tools keep the overload above.
+- (void)evaluateFunctionBody:(NSString *)functionBody
+                   arguments:(NSDictionary<NSString *, id> *)arguments
+                       frame:(nullable RCFrame *)frame
+                       world:(nullable NSString *)world
+                 userGesture:(BOOL)userGesture
+                  completion:(void (^)(id _Nullable result, NSString *_Nullable error))completion;
 /// The page's live picture, `rect` of it (in this view's coordinates), for showing elsewhere in
 /// the window, as a Peek's card does on its way to and from its link: Chromium draws into it as
 /// into the page, with nothing copied. Nil until the page has drawn. Scale it with a transform.

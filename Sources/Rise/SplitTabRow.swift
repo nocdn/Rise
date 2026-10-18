@@ -23,7 +23,9 @@ import RiseCore
     required init?(coder: NSCoder) { fatalError() }
     func update(selected: Bool, theme: RiseTheme) {
         self.selected = selected; self.theme = theme
-        fill = selected ? TabAppearance.selectedFill(theme) : dragFill ?? .clear
+        let background = selected ? TabAppearance.selectedFill(theme) : dragFill ?? .clear
+        if layer?.backgroundColor != background.cgColor { layer?.removeAnimation(forKey: TabDragMotion.backgroundKey) }
+        fill = background
         layer?.borderWidth = selected ? 0.5 : 0
         layer?.borderColor = NSColor.white.withAlphaComponent(theme == .dark ? 0.08 : 0.7).cgColor
         divider.fill = theme.text.withAlphaComponent(0.15)

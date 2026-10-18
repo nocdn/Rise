@@ -53,8 +53,15 @@ import Foundation
             b.onTabsChange = { [weak b] in b?.acknowledge($0) }
             let searchesA = LearnedSearches(storageURL: directory.appendingPathComponent("searches-a.json"))
             let searchesB = LearnedSearches(storageURL: directory.appendingPathComponent("searches-b.json"))
-            a.start(tabs: [one], learnedSearches: searchesA); b.start(tabs: [two], learnedSearches: searchesB)
+            let visitsA = BrowsingHistory(storageURL: directory.appendingPathComponent("visits-a.json"))
+            let visitsB = BrowsingHistory(storageURL: directory.appendingPathComponent("visits-b.json"))
+            let account = URL(string: "https://voxi.co.uk/account")!, home = URL(string: "https://voxi.co.uk/")!
+            for _ in 0..<7 { visitsA.record(account, title: "Account") }
+            for _ in 0..<5 { visitsB.record(account, title: "Account") }
+            a.start(tabs: [one], learnedSearches: searchesA, browsingHistory: visitsA)
+            b.start(tabs: [two], learnedSearches: searchesB, browsingHistory: visitsB)
             try await require({ Set(a.tabs.map(\.id)) == [one.id, two.id] && a.tabs == b.tabs }, "simultaneous inserts converge")
+            try await require({ visitsA.entries.first?.visits == 12 && visitsA.snapshot == visitsB.snapshot }, "concurrent visit counters sum once through real CloudKit")
             two.url = "https://example.org/navigated"; two.title = "Navigated"
             a.capture([two, one])
             try await require({ b.tabs == [two, one] }, "navigation and ordering reach the other client")
@@ -83,7 +90,28 @@ import Foundation
             _ = searchesB.learn(from: URL(string: "https://shop.example/find?query=chairs")!, terms: ["chairs"], name: "Shop")
             b.captureSearches()
             try await require({ searchesA.site(forAddress: "shop.example")?.searchURL(for: "table")?.path == "/find" }, "searches learned after clearing sync normally")
-            print("Live tabs and learned-search sync integration passed")
+            b.setEnabled(false)
+            visitsA.record(account, title: "Account"); _ = await a.refreshAndWait()
+            visitsB.record(account, title: "Account"); visitsB.record(account, title: "Account")
+            b.setEnabled(true)
+            try await require({ visitsA.entries.first?.visits == 15 && visitsA.snapshot == visitsB.snapshot }, "offline visits merge with the other device's new visits")
+            for _ in 0..<2 { _ = await a.refreshAndWait(); _ = await b.refreshAndWait() }
+            guard visitsA.entries.first?.visits == 15, visitsB.entries.first?.visits == 15 else {
+                throw NSError(domain: "Rise.TabSyncAudit", code: 3, userInfo: [NSLocalizedDescriptionKey: "Repeated sync inflated the visit counters"])
+            }
+            print("PASS: repeated fetch/send cycles do not count visits again")
+            b.setEnabled(false)
+            try visitsA.clear(); _ = await a.refreshAndWait()
+            visitsB.record(account, title: "Stale offline visit"); b.setEnabled(true)
+            try await require({ visitsA.entries.isEmpty && visitsB.entries.isEmpty }, "clearing visit learning wins over an offline edit")
+            visitsB.record(account, title: "New account visit")
+            visitsB.record(home, title: "Home")
+            try await require({ visitsA.entries.count == 2 && visitsA.snapshot == visitsB.snapshot }, "new visits after clearing sync with fresh counters")
+            b.setEnabled(false)
+            _ = visitsA.remove(account); _ = await a.refreshAndWait()
+            visitsB.record(account, title: "Offline old counter"); b.setEnabled(true)
+            try await require({ visitsA.entries.map(\.url) == [home.absoluteString] && visitsB.entries.map(\.url) == [home.absoluteString] }, "individual history deletion survives reconnection without removing other pages")
+            print("Live tabs, learned-search and visit-learning sync integration passed")
         } catch { print("FAIL: \(error.localizedDescription)"); result = 1 }
         a.onTabsChange = nil; b.onTabsChange = nil
         a.setEnabled(false); b.setEnabled(false)

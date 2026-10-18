@@ -13,6 +13,14 @@ Mobile saves bounded history and learned searches beside its browser session. On
 actual foreground-tab navigation/SPA URL changes count as visits; title changes do
 not. Preview-only pages have their own delegates and never enter browsing history.
 
+The most frequent/recent literal URL match can complete a stable page path after repeat
+visits, so a regularly used `voxi.co.uk/account` can outrank `voxi.co.uk`. One-off deep
+links and query-bearing URLs still complete only the site until a path is typed.
+This uses saved visit counts on both platforms without resetting existing learning.
+Those counts, page addresses, titles and recency also sync through the existing iCloud
+switch. Per-installation counters prevent repeated syncs from inflating frequency;
+clear and deletion generations prevent stale offline clients from restoring removed visits.
+
 Autocomplete keeps the person's typed text in the native field and draws only its
 suggested suffix with a Safari-style blue highlight. No native selection handles
 are created and typing/backspace updates it immediately, without a spring. Tap the
@@ -50,7 +58,7 @@ Favicon fetches go directly to site origins, without browser cookies or a third-
 favicon service. In-progress literal addresses wait 300 ms before fetching. Icons
 are downsampled and cached locally; local/reserved test domains are never fetched.
 
-Learned templates sync through the existing private CloudKit zone. See `TabSync.md`
+Learned templates and address learning sync through the existing private CloudKit zone. See `TabSync.md`
 for conflict merging, account switching, and production schema deployment.
 
 Validation:

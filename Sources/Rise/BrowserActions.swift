@@ -99,6 +99,7 @@ import RiseCore
         // A page already rendering from a Shift-hover shows from the first frame.
         let standby = existing == nil ? takePeekStandby(for: url) : nil
         let tab = existing ?? standby ?? configure(BrowserTab()); peekTab = tab
+        selectedFindBar.removeFromSuperview()
         let backdrop = PeekBackdrop(color: theme.background.withAlphaComponent(0.72));
         backdrop.dismiss = { [weak self] in self?.closePeek(animated: true) }; backdrop.frame = pageClip.bounds
         // Dimming lives inside the page so it recedes with it and never covers the page's shadow.
@@ -122,6 +123,7 @@ import RiseCore
         revealPeek(reveal)
         if !animated { recedePage(true, along: nil) }
         update()
+        findBars[tab.id]?.reattached()
     }
     var peekCardFrame: NSRect {
         let page = pageShadow.frame; let margin = min(120, page.width*0.1)
@@ -140,6 +142,7 @@ import RiseCore
         (peekCard as? PageSurface)?.refreshOutline()
         peekCard.subviews.first?.frame = peekCard.bounds
         peekTab.page.view.frame = peekCard.bounds
+        layoutPeekFindBar()
         for (i, button) in peekControls.enumerated() { button.frame = PeekControl.frame(cardMaxX: peekCard.frame.maxX, top: 20+CGFloat(i)*44) }
         if peekSwipePull > 0 { applyPeekSwipeTransform() }
     }
@@ -160,8 +163,10 @@ import RiseCore
         peekOrigin = nil
         if let peekTab { permissionCoordinator.cancel(for: peekTab.page.view) }
         if let peekTab, hoveredWebView === peekTab.page.view { hideLinkStatus() }
+        if let peekTab { findBars.removeValue(forKey: peekTab.id)?.discard() }
         peekTab?.cancelLoad(); peekTab = nil
         peekBackdrop = nil; peekCard = nil
+        swapFindBar(from: nil)
         if motion, let card {
             recedePage(false, along: Self.peekPageReturnSpring)
             if let growing { shrinkPeek(growing, into: peekFrame(of: origin), backdrop: backdrop); retire(card, behind: growing) }

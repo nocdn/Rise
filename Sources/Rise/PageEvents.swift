@@ -57,7 +57,7 @@ import RiseCore
         } else if let peek = allPeekTabs.first(where: { $0.page.view === webView }) {
             discoverPageFavicon(peek.page)
         }; update()
-        if let tab = tabs.first(where: { $0.page.view === webView }) { findBars[tab.id]?.pageChanged() }
+        if let tab = (tabs + allPeekTabs).first(where: { $0.page.view === webView }) { findBars[tab.id]?.pageChanged() }
     }
     func showNavigationError(_ error: Error, in webView: NSView) {
         guard (error as NSError).code != NSURLErrorCancelled else { return }

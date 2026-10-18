@@ -116,6 +116,7 @@ import QuartzCore
         card.frame = frame
         card.subviews.first?.frame = card.bounds
         if web.superview === card.subviews.first { web.frame = card.bounds }
+        for case let bar as FindBar in card.subviews.first?.subviews ?? [] { bar.frame = card.bounds }
         (card as? PageSurface)?.refreshOutline()
         CATransaction.commit()
     }

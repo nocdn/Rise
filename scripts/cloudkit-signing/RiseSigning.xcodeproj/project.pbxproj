@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+        A00000000000000000000045 = {isa = PBXBuildFile; fileRef = A00000000000000000000044; };
+        A00000000000000000000043 = {isa = PBXBuildFile; fileRef = A00000000000000000000042; };
+        A00000000000000000000041 = {isa = PBXBuildFile; fileRef = A00000000000000000000040; };
         A00000000000000000000032 = {isa = PBXBuildFile; fileRef = A00000000000000000000033; };
         A00000000000000000000030 = {isa = PBXBuildFile; fileRef = A00000000000000000000031; };
 		A00000000000000000000020 = {isa = PBXBuildFile; fileRef = A00000000000000000000021; };
@@ -16,6 +19,9 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+        A00000000000000000000044 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../../Sources/RiseCore/SharedHistorySyncState.swift; sourceTree = "<group>"; };
+        A00000000000000000000042 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../../Sources/RiseCore/SharedHistory.swift; sourceTree = "<group>"; };
+        A00000000000000000000040 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../../Sources/RiseCore/BrowsingHistory.swift; sourceTree = "<group>"; };
         A00000000000000000000033 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../../Sources/RiseCore/PopularSites.swift; sourceTree = "<group>"; };
         A00000000000000000000031 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../../Sources/RiseCore/LearnedSearches.swift; sourceTree = "<group>"; };
 		A00000000000000000000021 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ../../Sources/RiseCore/SharedTabsLedger.swift; sourceTree = "<group>"; };
@@ -41,6 +47,9 @@
 			children = (
 				A00000000000000000000031,
                 A00000000000000000000033,
+                A00000000000000000000044,
+                A00000000000000000000042,
+                A00000000000000000000040,
                 A0000000000000000000000D /* main.swift */,
 				A00000000000000000000021,
 				A00000000000000000000023,
@@ -133,6 +142,9 @@
 			files = (
 				A00000000000000000000030,
                 A00000000000000000000032,
+                A00000000000000000000045,
+                A00000000000000000000043,
+                A00000000000000000000041,
                 A0000000000000000000000E /* main.swift in Sources */,
 				A00000000000000000000020,
 				A00000000000000000000022,

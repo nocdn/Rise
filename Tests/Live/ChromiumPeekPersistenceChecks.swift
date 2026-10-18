@@ -79,11 +79,12 @@ import RiseChromium
         let row = browser.sidebar.rows[source.id]!
         check(row.showsPeek && row.peekIndicator.favicon.image === peek.favicon, "The source tab shows the actual Peek favicon")
         row.mouseExited(with: NSEvent()); row.layoutSubtreeIfNeeded()
-        check(row.peekIndicator.frame.midX == row.close.frame.midX, "At rest the indicator sits in the close button's slot")
+        let indicator = row.peekIndicator.frame
+        check(indicator.minX == row.close.frame.maxX+2, "The X sits to the left of the Peek indicator")
         row.mouseEntered(with: NSEvent()); row.layoutSubtreeIfNeeded()
-        check(!row.close.isHidden && row.peekIndicator.frame.maxX < row.close.frame.minX,
-              "Hover keeps the close button in place and slides the favicon left")
-        check(row.peekIndicator.layer?.animation(forKey: TabListMotion.slideKey) != nil, "The slide uses the existing sidebar spring")
+        check(!row.close.isHidden && row.peekIndicator.frame == indicator,
+              "Hover reveals the X without moving the favicon")
+        check(row.peekIndicator.layer?.animation(forKey: TabListMotion.slideKey) == nil, "The favicon stays fixed")
         browser.select(other.id)
         check(browser.peekTab == nil && browser.peek(for: source.id) === peek && row.showsPeek, "Switching away retains the live page and its indicator")
         check(CATransform3DIsIdentity(browser.pageShadow.layer!.transform), "The other tab has no recede or Peek overlay")

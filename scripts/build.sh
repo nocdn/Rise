@@ -20,6 +20,8 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Framewor
 cp .build/release/Rise "$APP/Contents/MacOS/Rise"
 cp scripts/Info.plist "$APP/Contents/Info.plist"
 cp THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/THIRD_PARTY_NOTICES.md"
+# Both platforms ship the same verified bundle, rebuilt from scripts/ios-cookie-consent.
+rsync -a --delete Apps/iOS/Rise/CookieConsent/ "$APP/Contents/Resources/CookieConsent/"
 xcrun actool "$PWD/Assets/AppIcon/Rise.icon" --compile "$APP/Contents/Resources" --app-icon Rise --include-all-app-icons \
   --output-partial-info-plist "$PWD/.build/icon-info.plist" --target-device mac --platform macosx \
   --minimum-deployment-target 14.0 --output-format human-readable-text --errors > /dev/null

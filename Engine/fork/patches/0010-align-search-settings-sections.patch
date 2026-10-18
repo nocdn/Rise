@@ -1,0 +1,26 @@
+diff --git a/chrome/browser/resources/settings/rise_page/rise_site_search_page.html.ts b/chrome/browser/resources/settings/rise_page/rise_site_search_page.html.ts
+--- a/chrome/browser/resources/settings/rise_page/rise_site_search_page.html.ts
++++ b/chrome/browser/resources/settings/rise_page/rise_site_search_page.html.ts
+@@ -9,7 +9,7 @@
+ export function getHtml(this: SettingsRiseSiteSearchPageElement) {
+   // clang-format off
+   return html`<!--_html_template_start_-->
+-<settings-section page-title="Site search" class="cr-centered-card-container">
++<settings-section page-title="Site search">
+   <div class="cr-row first">
+     <div class="flex cr-padded-text">
+       <div>Search a site from the address bar</div>
+diff --git a/chrome/browser/resources/settings/rise_page/rise_site_search_page.ts b/chrome/browser/resources/settings/rise_page/rise_site_search_page.ts
+--- a/chrome/browser/resources/settings/rise_page/rise_site_search_page.ts
++++ b/chrome/browser/resources/settings/rise_page/rise_site_search_page.ts
+@@ -73,6 +73,10 @@
+       getCrSharedStyle(),
+       getSettingsSharedStyle(),
+       css`
++        :host {
++          display: block;
++          padding-bottom: 24px;
++        }
+         .list-header {
+           color: var(--cr-primary-text-color);
+           font-weight: 500;

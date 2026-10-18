@@ -7,22 +7,42 @@ public struct HistoryEntry: Codable, Equatable {
     public var lastVisited: Date
 }
 
-/// Local, bounded frecency ranking: literal URL prefixes outrank text matches;
+/// Bounded frecency ranking: literal URL prefixes outrank text matches;
 /// within a match tier, frequently and recently visited pages rise to the top.
 public final class BrowsingHistory {
     public static let maximumEntries = 2000
     public let storageURL: URL
     public private(set) var entries: [HistoryEntry] = []
+    /// Local mutations only. Receiving a remote snapshot never counts as a visit.
+    public var onChange: (() -> Void)?
+    private struct Storage: Codable {
+        var deviceID = UUID()
+        var clock: Int64 = 0
+        var snapshot = SharedHistorySnapshot()
+    }
+    private var storage = Storage()
+    var snapshot: SharedHistorySnapshot { storage.snapshot }
     private var dirty = false
 
     public init(storageURL: URL) {
         self.storageURL = storageURL
-        if let data = try? Data(contentsOf: storageURL), data.count <= 8_000_000,
-           let saved = try? JSONDecoder().decode([HistoryEntry].self, from: data) {
-            var seen = Set<String>()
-            entries = saved.filter {
-                Self.key(URL(string: $0.url)) == $0.url && $0.visits > 0 && seen.insert($0.url).inserted
-            }.sorted { $0.lastVisited > $1.lastVisited }.prefix(Self.maximumEntries).map { $0 }
+        if let data = try? Data(contentsOf: storageURL), data.count <= 64_000_000 {
+            if let saved = try? JSONDecoder().decode(Storage.self, from: data) {
+                storage = saved; storage.snapshot = .init().merging(saved.snapshot)
+                storage.clock = max(storage.clock, storage.snapshot.maximumClock)
+            } else if let saved = try? JSONDecoder().decode([HistoryEntry].self, from: data) {
+                var seen = Set<String>()
+                for entry in saved.sorted(by: { $0.lastVisited > $1.lastVisited }).prefix(Self.maximumEntries)
+                where Self.key(URL(string: entry.url)) == entry.url && entry.visits > 0 && seen.insert(entry.url).inserted {
+                    let record = SharedHistoryRecord(url: entry.url, title: String(entry.title.prefix(512)), titleVersion: nextVersion(),
+                        generation: SharedHistorySnapshot.initial,
+                        counts: [storage.deviceID: min(1_000_000, entry.visits)], lastVisited: entry.lastVisited)
+                    if record.isValid { storage.snapshot.records[record.id] = record }
+                }
+                // Persist the installation ID with the migrated counters before they can sync.
+                dirty = true; try? save()
+            }
+            entries = storage.snapshot.entries
         }
     }
 
@@ -37,32 +57,50 @@ public final class BrowsingHistory {
     }
 
     public func record(_ url: URL, title: String, at date: Date = Date()) {
-        guard let key = Self.key(url) else { return }
+        guard let key = Self.key(url), key.utf8.count <= 16_384, date.timeIntervalSince1970.isFinite else { return }
         let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let index = entries.firstIndex(where: { $0.url == key }) {
-            entries[index].visits = min(1_000_000, entries[index].visits + 1)
-            entries[index].lastVisited = date
-            if !title.isEmpty { entries[index].title = String(title.prefix(512)) }
-        } else {
-            entries.append(HistoryEntry(url: key, title: String((title.isEmpty ? url.host ?? key : title).prefix(512)), visits: 1, lastVisited: date))
+        let id = SharedHistoryRecord.id(for: key), version = nextVersion()
+        var record = storage.snapshot.records[id] ?? SharedHistoryRecord(url: key, title: String((title.isEmpty ? url.host ?? key : title).prefix(512)),
+            titleVersion: version, generation: storage.snapshot.clearedAt, counts: [:], lastVisited: date)
+        record.lastVisited = record.counts.isEmpty ? date : max(date, record.lastVisited)
+        record.counts[storage.deviceID] = min(1_000_000, (record.counts[storage.deviceID] ?? 0)+1)
+        if !title.isEmpty { record.title = String(title.prefix(512)); record.titleVersion = version }
+        storage.snapshot.records[id] = record
+        entries = storage.snapshot.entries
+        if storage.snapshot.records.count > Self.maximumEntries {
+            let keep = Set(entries.map { SharedHistoryRecord.id(for: $0.url) })
+            storage.snapshot.records = storage.snapshot.records.filter { $0.value.counts.isEmpty || keep.contains($0.key) }
         }
-        if entries.count > Self.maximumEntries {
-            entries.sort { $0.lastVisited > $1.lastVisited }; entries.removeLast(entries.count-Self.maximumEntries)
-        }
-        dirty = true
+        dirty = true; onChange?()
     }
 
     public func updateTitle(_ title: String, for url: URL) {
-        guard !title.isEmpty, let key = Self.key(url), let index = entries.firstIndex(where: { $0.url == key }),
-              entries[index].title != title else { return }
-        entries[index].title = String(title.prefix(512)); dirty = true
+        guard !title.isEmpty, let key = Self.key(url) else { return }
+        let id = SharedHistoryRecord.id(for: key), title = String(title.prefix(512))
+        guard var record = storage.snapshot.records[id], record.visits > 0, record.title != title else { return }
+        record.title = title; record.titleVersion = nextVersion(); storage.snapshot.records[id] = record
+        entries = storage.snapshot.entries; dirty = true; onChange?()
     }
 
-    /// Removes the whole local visit record, including its suggestion ranking.
+    /// Removes the visit record and its suggestion ranking on every synced device.
     @discardableResult public func remove(_ url: URL) -> Bool {
-        guard let key = Self.key(url), let index = entries.firstIndex(where: { $0.url == key }) else { return false }
-        entries.remove(at: index)
-        dirty = true
+        guard let key = Self.key(url) else { return false }
+        let id = SharedHistoryRecord.id(for: key)
+        guard var record = storage.snapshot.records[id], record.visits > 0 else { return false }
+        record.generation = nextVersion(); record.counts = [:]; storage.snapshot.records[id] = record
+        entries = storage.snapshot.entries; dirty = true; onChange?()
+        return true
+    }
+
+    private func nextVersion() -> TabSyncVersion {
+        storage.clock = max(storage.clock+1, Int64(Date().timeIntervalSince1970*1000))
+        return TabSyncVersion(clock: storage.clock, device: storage.deviceID)
+    }
+    @discardableResult func merge(_ incoming: SharedHistorySnapshot) -> Bool {
+        let merged = snapshot.merging(incoming)
+        guard merged != snapshot else { return false }
+        storage.snapshot = merged; storage.clock = max(storage.clock, merged.maximumClock)
+        entries = merged.entries; dirty = true
         return true
     }
 
@@ -88,14 +126,14 @@ public final class BrowsingHistory {
 
     /// Only complete a literal URL prefix, never a title/search substring.
     /// Keep the user's prefix/casing and select only the appended suffix in UI.
-    /// Typing a site's name fills in only the site, as in other browsers; its
-    /// pages are filled in once the address goes on past the site.
-    public static func completion(for query: String, url: URL) -> String? {
+    /// A one-off page fills only its site until a path is typed. The ranking engine
+    /// can include a repeatedly visited page's path when it is the preferred destination.
+    public static func completion(for query: String, url: URL, includePath: Bool = false) -> String? {
         guard query.count >= 2, !query.contains(where: { $0.isWhitespace }),
               let key = key(url) else { return nil }
         for var candidate in forms(key) where candidate.lowercased().hasPrefix(query.lowercased()) {
             let site = siteEnd(candidate)
-            if query.utf16.count <= site { candidate = (candidate as NSString).substring(to: site) }
+            if !includePath && query.utf16.count <= site { candidate = (candidate as NSString).substring(to: site) }
             guard candidate.utf16.count > query.utf16.count else { return nil }
             let suffix = (candidate as NSString).substring(from: query.utf16.count)
             return query + suffix
@@ -126,15 +164,17 @@ public final class BrowsingHistory {
     }
 
     public func clear() throws {
-        let previous = entries
+        let previous = storage
+        storage.snapshot = SharedHistorySnapshot(clearedAt: nextVersion())
         entries = []; dirty = true
         do { try save() }
-        catch { entries = previous; dirty = true; throw error }
+        catch { storage = previous; entries = previous.snapshot.entries; dirty = true; throw error }
+        onChange?()
     }
     public func save() throws {
         guard dirty else { return }
         try FileManager.default.createDirectory(at: storageURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try JSONEncoder().encode(entries).write(to: storageURL, options: .atomic)
+        try JSONEncoder().encode(storage).write(to: storageURL, options: .atomic)
         dirty = false
     }
 }

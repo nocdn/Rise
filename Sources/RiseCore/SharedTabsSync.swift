@@ -32,11 +32,14 @@ import Foundation
         var learnedSearches: LearnedSearches.Snapshot?
         var searchSystemFields: Data?
         var searchesDirty: Bool?
+        var history: SharedHistorySyncState?
         var lastStatus: String?
         var lastError: String?
     }
     nonisolated private static let searchesRecordName = "learned-site-searches"
     private var searchStore: LearnedSearches?
+    private var historyStore: BrowsingHistory?
+    public var onHistoryChange: (() -> Void)?
     public var onSearchesChange: (() -> Void)?
     public var onTabsChange: (([SharedBrowserTab]) -> Void)?
     public var onStatusChange: ((Status) -> Void)?
@@ -72,10 +75,14 @@ import Foundation
         cache = (try? Data(contentsOf: cacheURL)).flatMap { try? JSONDecoder().decode(Cache.self, from: $0) } ?? Cache()
     }
 
-    public func start(tabs: [SharedBrowserTab], learnedSearches: LearnedSearches? = nil) {
+    public func start(tabs: [SharedBrowserTab], learnedSearches: LearnedSearches? = nil, browsingHistory: BrowsingHistory? = nil) {
         guard !started else { return }
         started = true
         searchStore = learnedSearches
+        historyStore = browsingHistory
+        restoreHistoryLearning()
+        browsingHistory?.onChange = { [weak self] in self?.captureHistory() }
+        captureHistory()
         capture(tabs)
         if isEnabled, self.tabs != tabs { onTabsChange?(self.tabs) }
         accountObserver = NotificationCenter.default.addObserver(forName: .CKAccountChanged, object: nil, queue: .main) { [weak self] _ in
@@ -127,11 +134,47 @@ import Foundation
         } else { enqueueSearches() }
     }
 
+    /// The history store owns installation counters; the cache owns CloudKit acknowledgements.
+    public func captureHistory() {
+        guard let store = historyStore else { return }
+        var state = cache.history ?? SharedHistorySyncState()
+        let current = isEnabled ? store.snapshot : state.snapshot.merging(store.snapshot)
+        guard current != state.snapshot else { return }
+        let discarded = state.capture(current)
+        cache.history = state
+        engine?.state.remove(pendingRecordZoneChanges: discarded.map { .saveRecord(historyRecordID($0)) })
+        persist(); if isEnabled { enqueueHistory() }
+    }
+    private func restoreHistoryLearning() {
+        guard isEnabled, let snapshot = cache.history?.snapshot, historyStore?.merge(snapshot) == true else { return }
+        saveHistory(); onHistoryChange?()
+    }
+    private func saveHistory() {
+        do { try historyStore?.save() } catch { NSLog("Rise visit learning couldn't be saved: %@", error.localizedDescription) }
+    }
+    private func historyRecordID(_ name: String) -> CKRecord.ID { .init(recordName: name, zoneID: zoneID) }
+    private func enqueueHistory() {
+        engine?.state.add(pendingRecordZoneChanges: (cache.history?.dirtyIDs ?? []).map { .saveRecord(historyRecordID($0)) })
+    }
+    private func mergeHistory(_ record: CKRecord) {
+        guard historyStore != nil, record.recordID.zoneID == zoneID, let data = record["payload"] as? Data else { return }
+        var state = cache.history ?? SharedHistorySyncState()
+        let previous = state.dirtyIDs
+        let archive = NSKeyedArchiver(requiringSecureCoding: true)
+        record.encodeSystemFields(with: archive); archive.finishEncoding()
+        let changed = state.receive(data, id: record.recordID.recordName, fields: archive.encodedData)
+        cache.history = state
+        engine?.state.remove(pendingRecordZoneChanges: previous.subtracting(state.dirtyIDs).map { .saveRecord(historyRecordID($0)) })
+        enqueueHistory()
+        if changed, historyStore?.merge(state.snapshot) == true { saveHistory(); onHistoryChange?() }
+    }
+
     /// Called only after an adapter has installed the remote list, including deferred UI updates.
     public func acknowledge(_ tabs: [SharedBrowserTab]) { cache.ledger.observedTabs = tabs; persist() }
 
     public func setEnabled(_ enabled: Bool) {
         preferences.set(enabled, forKey: Self.preferenceKey)
+        if enabled { restoreHistoryLearning(); captureHistory() }
         connect(allowAccountChange: enabled)
     }
 
@@ -159,7 +202,7 @@ import Foundation
         guard self.engine === engine, isEnabled else { return false }
         switch result {
         case .success:
-            if cache.dirtyIDs.isEmpty, cache.searchesDirty != true { cache.lastError = nil; status = .ready }
+            if cache.dirtyIDs.isEmpty, cache.searchesDirty != true, cache.history?.dirtyIDs.isEmpty != false { cache.lastError = nil; status = .ready }
             return true
         case .failure(let error): syncFailed(error, from: engine); return false
         }
@@ -198,6 +241,7 @@ import Foundation
                     cache = Cache(); _ = cache.ledger.capture(current)
                     cache.dirtyIDs = Set(cache.ledger.records.keys)
                     captureSearches()
+                    captureHistory()
                 }
                 cache.accountID = identity
                 var configuration = CKSyncEngine.Configuration(database: container.privateCloudDatabase,
@@ -206,7 +250,7 @@ import Foundation
                 let created = CKSyncEngine(configuration)
                 engine = created
                 created.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))])
-                enqueue(cache.dirtyIDs); enqueueSearches()
+                enqueue(cache.dirtyIDs); enqueueSearches(); enqueueHistory()
                 persist()
                 if automaticallySync { refresh() }
             } catch {
@@ -263,11 +307,18 @@ import Foundation
         case .fetchedRecordZoneChanges(let event):
             var changed = false
             for modification in event.modifications {
-                if modification.record.recordID == searchesRecordID { mergeSearches(modification.record) }
+                if SharedHistorySyncState.recognizes(modification.record.recordID.recordName) { mergeHistory(modification.record) }
+                else if modification.record.recordID == searchesRecordID { mergeSearches(modification.record) }
                 else { changed = merge(modification.record) || changed }
             }
             // Ordinary closes use durable tombstones. External record/zone deletion is also a close.
             for deletion in event.deletions {
+                if deletion.recordID.zoneID == zoneID, SharedHistorySyncState.recognizes(deletion.recordID.recordName) {
+                    let name = deletion.recordID.recordName
+                    cache.history?.systemFields[name] = nil
+                    if cache.history?.payload(for: name) != nil { cache.history?.dirtyIDs.insert(name); enqueueHistory() }
+                    continue
+                }
                 if deletion.recordID == searchesRecordID {
                     cache.searchSystemFields = nil
                     if cache.learnedSearches != nil { cache.searchesDirty = true; enqueueSearches() }
@@ -283,6 +334,12 @@ import Foundation
             if event.deletions.contains(where: { $0.zoneID == zoneID }) {
                 cache.systemFields = [:]; cache.engineState = nil
                 cache.searchSystemFields = nil
+                cache.history?.systemFields = [:]
+                if let history = cache.history {
+                    cache.history?.dirtyIDs.formUnion(history.snapshot.records.keys)
+                    if history.snapshot.clearedAt.clock > 0 { cache.history?.dirtyIDs.insert(SharedHistorySyncState.clearID) }
+                    enqueueHistory()
+                }
                 if cache.learnedSearches != nil { cache.searchesDirty = true; enqueueSearches() }
                 for id in Array(cache.ledger.records.keys) {
                     let version = cache.ledger.nextVersion()
@@ -294,6 +351,7 @@ import Foundation
             }
         case .sentRecordZoneChanges(let event):
             for saved in event.savedRecords {
+                if SharedHistorySyncState.recognizes(saved.recordID.recordName) { mergeHistory(saved); continue }
                 if saved.recordID == searchesRecordID { receivedSearchSave(saved); continue }
                 guard saved.recordID.zoneID == zoneID, let id = UUID(uuidString: saved.recordID.recordName) else { continue }
                 rememberFields(saved, id: id)
@@ -307,6 +365,20 @@ import Foundation
                 }
             }
             for failure in event.failedRecordSaves {
+                if SharedHistorySyncState.recognizes(failure.record.recordID.recordName) {
+                    switch failure.error.code {
+                    case .serverRecordChanged:
+                        if let server = failure.error.serverRecord { mergeHistory(server) }
+                        enqueueHistory()
+                    case .zoneNotFound:
+                        cache.history?.systemFields[failure.record.recordID.recordName] = nil
+                        source.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: zoneID))]); enqueueHistory()
+                    case .unknownItem:
+                        cache.history?.systemFields[failure.record.recordID.recordName] = nil; enqueueHistory()
+                    default: cache.lastError = failure.error.localizedDescription; status = Self.status(for: failure.error)
+                    }
+                    continue
+                }
                 if failure.record.recordID == searchesRecordID {
                     switch failure.error.code {
                     case .serverRecordChanged:
@@ -371,7 +443,8 @@ import Foundation
             if let fields = snapshot.1[id.recordName], let decoder = try? NSKeyedUnarchiver(forReadingFrom: fields) {
                 decoder.requiresSecureCoding = true; record = CKRecord(coder: decoder); decoder.finishDecoding()
             }
-            let value = record ?? CKRecord(recordType: id.recordName == Self.searchesRecordName ? "RiseSearches" : "RiseTab", recordID: id)
+            let learning = id.recordName == Self.searchesRecordName || SharedHistorySyncState.recognizes(id.recordName)
+            let value = record ?? CKRecord(recordType: learning ? "RiseSearches" : "RiseTab", recordID: id)
             value["payload"] = payload as CKRecordValue
             return value
         }
@@ -385,6 +458,11 @@ import Foundation
         if let searches = cache.learnedSearches {
             payloads[Self.searchesRecordName] = try? JSONEncoder().encode(searches)
             fields[Self.searchesRecordName] = cache.searchSystemFields
+        }
+        if let history = cache.history {
+            for id in history.snapshot.records.keys { payloads[id] = history.payload(for: id) }
+            payloads[SharedHistorySyncState.clearID] = history.payload(for: SharedHistorySyncState.clearID)
+            fields.merge(history.systemFields, uniquingKeysWith: { _, newest in newest })
         }
         return (payloads, fields)
     }

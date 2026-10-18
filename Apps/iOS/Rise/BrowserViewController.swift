@@ -149,6 +149,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             self?.bottomBar.search.refresh()
         }
         self.tabSync?.onSearchesChange = { [weak self] in self?.bottomBar.search.refresh() }
+        self.tabSync?.onHistoryChange = { [weak self] in self?.bottomBar.search.refresh() }
         self.tabSync?.onTabsChange = { [weak self] in self?.applySharedTabs($0) }
         self.tabSync?.onStatusChange = { [weak self] _ in self?.updateAppSettings() }
     }
@@ -1739,7 +1740,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         }
         currentTab.loadIfNeeded()
         updateAppSettings()
-        tabSync?.start(tabs: sharedTabsSnapshot, learnedSearches: addressSuggestions.learner.searches)
+        tabSync?.start(tabs: sharedTabsSnapshot, learnedSearches: addressSuggestions.learner.searches, browsingHistory: addressSuggestions.history)
     }
 
     @objc private func holdNewPage(_ hold: UILongPressGestureRecognizer) {

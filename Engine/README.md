@@ -50,6 +50,8 @@ The checkout lives outside the repo: `RISE_CHROMIUM_ROOT`, by default
 | `0006-rise-site-search-settings.patch` | Settings' Site search section: the sites Tab searches from the address bar, added and edited by hand (name, search address, colour) or learned, kept by Rise and reached through `riseSettings.request` |
 | `0007-remove-privacy-guide-promo.patch` | Removes the Privacy Guide promotional card from settings, keeping the guide itself and the privacy controls |
 | `0008-unify-search-settings.patch` | One Search sidebar item for search engine and site search settings, and a plain colour swatch for a site's automatic colour |
+| `0009-automatic-script-evaluation.patch` | Background automation evaluates without synthetic user activation and skips inactive frames; user-invoked page commands retain their gesture |
+| `0010-align-search-settings-sections.patch` | Aligns Site search with the Search engine section and leaves space below its card |
 
 `0002` is exported from the fork's tree with `git diff HEAD` over `base` and `chrome`, less the
 paths the other patches and `brand.py` own (see `Engine/fork-plan.md`); new files are added

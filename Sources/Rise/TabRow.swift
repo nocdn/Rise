@@ -15,6 +15,9 @@ import RiseCore
     /// Between the favicon and the title while the tab plays sound or is muted.
     let audio = TabAudioButton()
     let peekIndicator = PeekFaviconIndicator(frame: .zero)
+    /// After the title: when a Calendar tab's next event starts, such as "in 17m".
+    let badge = TabBadge()
+    private(set) var badgeText: String?
     private(set) var showsPeek = false
     private(set) var showsAudio = false
     var onToggleMute: (() -> Void)?
@@ -47,7 +50,7 @@ import RiseCore
     var onRename: ((String) -> Void)?
     var onDragStart: ((NSEvent) -> Void)?
     var onDragMove: ((NSEvent) -> Void)?
-    var onDragEnd: (() -> Void)?
+    var onDragEnd: ((NSEvent) -> Void)?
     var onHover: ((Bool) -> Void)?
     var onPress: (() -> Void)?
     private var pressEvent: NSEvent?
@@ -67,6 +70,7 @@ import RiseCore
         target = self; action = #selector(selectTab)
         addSubview(loadingBackground); addSubview(icon); addSubview(titleField); addSubview(subtitle); addSubview(subtitleAccessory); addSubview(close); addSubview(playback); addSubview(audio)
         addSubview(peekIndicator, positioned: .below, relativeTo: close)
+        addSubview(badge); badge.isHidden = true
         peekIndicator.isHidden = true; peekIndicator.alphaValue = 0
         audio.acceptsFirstClick = false; audio.isHidden = true; audio.alphaValue = 0
         audio.action = { [weak self] in
@@ -133,12 +137,25 @@ import RiseCore
         playback.color = close.contentTintColor ?? theme.sidebarIcon; playback.hoverColor = close.hoverColor
         audio.color = playback.color; audio.hoverColor = close.hoverColor
         setAudio(playing: tab.isPlayingAudio, muted: tab.isAudioMuted)
+        badge.apply(theme, selected: selected)
         setPeek(configuration.peek)
         setAccessibilityLabel(tab.title + (configuration.subtitle.map { ", \($0.text)" } ?? "") + (configuration.peek.map { ", Peek: \($0.title)" } ?? "") + (selected ? ", selected" : ""))
         close.toolTip = "Close \(tab.title)"
         loadingBackground.update(loading: tab.isLoading, progress: tab.page.estimatedProgress,
                                  theme: theme, hard: tab.isHardReloading)
         style(); needsLayout = true; needsDisplay = true
+    }
+    func setBadge(_ text: String?) {
+        guard text != badgeText else { return }
+        let appearing = badgeText == nil && text != nil
+        badgeText = text
+        if let text { badge.text = text }
+        setAccessibilityValue(text)
+        if appearing, hasLaidOut, window?.isVisible == true, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            badge.alphaValue = 0; slideText = false
+            needsLayout = true; layoutSubtreeIfNeeded()
+            TabListMotion.fadeAccessory(badge, visible: true, animated: true) {}
+        } else { badge.alphaValue = 1; needsLayout = true }
     }
     /// Shows the button while the tab plays sound or is muted. It stays a
     /// moment after the sound stops, so a brief pause does not move the title.
@@ -193,7 +210,9 @@ import RiseCore
         layer?.cornerRadius = isSplitMember ? 8 : TabAppearance.radius
         loadingBackground.layer?.cornerRadius = isSplitMember ? 8 : TabAppearance.radius
         loadingBackground.layer?.cornerCurve = .continuous
-        layer?.backgroundColor = (selected ? (isSplitMember ? theme.pill : TabAppearance.selectedFill(theme)) : dragFill ?? (hover ? TabAppearance.hoverFill(theme) : .clear)).cgColor
+        let background = (selected ? (isSplitMember ? theme.pill : TabAppearance.selectedFill(theme)) : dragFill ?? (hover ? TabAppearance.hoverFill(theme) : .clear)).cgColor
+        if layer?.backgroundColor != background { layer?.removeAnimation(forKey: TabDragMotion.backgroundKey) }
+        layer?.backgroundColor = background
         // The border follows the same continuous contour as the background.
         layer?.borderColor = NSColor.white.withAlphaComponent(theme == .dark ? 0.08 : 0.7).cgColor
         layer?.borderWidth = selected && !isSplitMember ? 0.5 : 0
@@ -225,7 +244,18 @@ import RiseCore
         let closeRoom: CGFloat = isSplitMember ? Self.splitCloseSize+6 : 32
         let trailingRoom: CGFloat = close.isHidden ? (showsPeek ? closeRoom : 8) : (playback.isHidden ? closeRoom : 58) + (showsPeek ? 26 : 0)
         let textWidth = max(0, bounds.width - textX - trailingRoom)
-        place(titleField, NSRect(x: textX, y: textY, width: textWidth, height: titleHeight))
+        let badgeSize = badge.fittingSize
+        let showsBadge = badgeText != nil && !isRenaming && !isSplitMember && textWidth >= badgeSize.width+40
+        badge.isHidden = !showsBadge
+        if showsBadge {
+            // The pill follows the title's text, which gives up its room first.
+            let titleWidth = min(ceil(titleField.attributedStringValue.size().width)+2, textWidth-badgeSize.width-6)
+            place(titleField, NSRect(x: textX, y: textY, width: titleWidth, height: titleHeight))
+            place(badge, NSRect(x: textX+titleWidth+4, y: (textY+(titleHeight-badgeSize.height)/2).rounded(),
+                                width: badgeSize.width, height: badgeSize.height))
+        } else {
+            place(titleField, NSRect(x: textX, y: textY, width: textWidth, height: titleHeight))
+        }
         let subtitleWidth = max(0, textWidth - (subtitleAccessory.isHidden ? 0 : 24))
         titleField.setFadeBoundary(subtitleAccessory.isHidden ? nil : subtitleWidth)
         let subtitleY = showsSubtitle ? textY + titleHeight + 1 : max(0, bounds.height-subtitleHeight-2)
@@ -247,16 +277,22 @@ import RiseCore
                 DispatchQueue.main.asyncAfter(deadline: .now()+DeveloperModeMotion.duration, execute: work)
             }
         }
-        close.frame = isSplitMember
+        let normalClose = isSplitMember
             ? NSRect(x: bounds.width-Self.splitCloseSize-4, y: (bounds.height-Self.splitCloseSize)/2, width: Self.splitCloseSize, height: Self.splitCloseSize)
             : NSRect(x: bounds.width-28.5, y: (bounds.height-24)/2-0.5, width: 24, height: 24)
-        playback.frame = close.frame.offsetBy(dx: -26, dy: 0)
-        let peekFrame = NSRect(x: close.frame.midX-PeekFaviconIndicator.side/2, y: close.frame.midY-PeekFaviconIndicator.side/2,
+        let closeFrame = normalClose.offsetBy(dx: showsPeek ? -26 : 0, dy: 0)
+        let animatesAccessories = hasLaidOut && window?.isVisible == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        for (view, frame) in [(close as NSView, closeFrame), (playback, closeFrame.offsetBy(dx: -26, dy: 0))] {
+            if animatesAccessories && hover && view.frame.size == frame.size {
+                TabListMotion.slide(view, to: frame)
+            } else {
+                view.layer?.removeAnimation(forKey: TabListMotion.slideKey)
+                view.frame = frame
+            }
+        }
+        let peekFrame = NSRect(x: normalClose.midX-PeekFaviconIndicator.side/2, y: normalClose.midY-PeekFaviconIndicator.side/2,
                                width: PeekFaviconIndicator.side, height: PeekFaviconIndicator.side)
-            .offsetBy(dx: hover ? (playback.isHidden ? -26 : -52) : 0, dy: 0)
-        if hasLaidOut, window?.isVisible == true, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            TabListMotion.slide(peekIndicator, to: peekFrame)
-        } else { peekIndicator.frame = peekFrame }
+        peekIndicator.frame = peekFrame
         audio.frame = NSRect(x: iconX+21, y: (iconY+8-12).rounded(), width: 24, height: 24)
         let accessorySize = subtitleAccessory.image?.size ?? .zero
         subtitleAccessory.frame = NSRect(x: close.frame.midX - accessorySize.width/2,
@@ -290,7 +326,7 @@ import RiseCore
     }
     override func mouseEntered(with event: NSEvent) { setHovered(true) }
     override func mouseExited(with event: NSEvent) { if pressEvent == nil { setHovered(false) } else { onHover?(false) } }
-    override func rightMouseDown(with event: NSEvent) { onMenu?(event) }
+    override func rightMouseDown(with event: NSEvent) { onPress?(); onMenu?(event) }
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard !isHidden else { return nil }
         let local = convert(point, from: superview)
@@ -320,7 +356,7 @@ import RiseCore
         guard pressEvent != nil else { return }
         let wasDragging = dragging
         cancelPress()
-        if wasDragging { onDragEnd?() }
+        if wasDragging { onDragEnd?(event) }
         else if bounds.contains(convert(event.locationInWindow, from: nil)) { onSelect?() }
         refreshHover(at: event.locationInWindow)
     }
@@ -329,17 +365,18 @@ import RiseCore
     }
     func beginRename() {
         guard !isRenaming else { return }
+        onPress?()
         onSelect?()
         titleShimmer.cancel()
         titleField.layer?.removeAnimation(forKey: TabListMotion.movementKey)
-        originalTitle = titleField.stringValue; isRenaming = true
+        originalTitle = titleField.stringValue; isRenaming = true; needsLayout = true
         titleField.isEditable = true; titleField.isSelectable = true
         titleField.selectText(nil)
     }
     func finishRename(save: Bool) {
         guard isRenaming else { return }
         let value = (titleField.currentEditor()?.string ?? titleField.stringValue).trimmingCharacters(in: .whitespacesAndNewlines)
-        isRenaming = false
+        isRenaming = false; needsLayout = true
         window?.makeFirstResponder(nil)
         titleField.isEditable = false; titleField.isSelectable = false
         titleField.stringValue = save && !value.isEmpty ? value : originalTitle
@@ -351,4 +388,32 @@ import RiseCore
         return false
     }
     func controlTextDidEndEditing(_ notification: Notification) { finishRename(save: true) }
+}
+
+/// A small rounded pill of text, a shade off the row behind it.
+final class TabBadge: FlippedView {
+    private static let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+    var text = "" { didSet { needsDisplay = true } }
+    private var color = NSColor.labelColor
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true; layer?.cornerRadius = 5; layer?.cornerCurve = .continuous
+        setAccessibilityElement(false)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    private var attributed: NSAttributedString { NSAttributedString(string: text, attributes: [.font: Self.font, .foregroundColor: color]) }
+    override var fittingSize: NSSize { NSSize(width: ceil(attributed.size().width)+12, height: 17) }
+    func apply(_ theme: RiseTheme, selected: Bool) {
+        layer?.backgroundColor = theme.text.withAlphaComponent(theme == .dark ? 0.14 : selected ? 0.07 : 0.08).cgColor
+        color = TabAppearance.text(theme, selected: selected).withAlphaComponent(theme == .dark ? 0.8 : 0.72)
+        needsDisplay = true
+    }
+    /// Centred on the glyphs' cap height, not the line's box, which sits low in a short pill.
+    override func draw(_ dirtyRect: NSRect) {
+        let font = Self.font, string = attributed
+        let width = ceil(string.size().width)
+        let baseline = ((bounds.height+font.capHeight)/2).rounded()
+        // In a flipped view, a string draws from the top of its line, its ascender above the baseline.
+        string.draw(at: NSPoint(x: ((bounds.width-width)/2).rounded(), y: baseline-font.ascender))
+    }
 }

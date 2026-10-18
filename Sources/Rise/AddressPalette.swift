@@ -132,10 +132,14 @@ struct AddressSuggestion {
     private var fieldSite: PopularSite? { siteSearch ?? site(forAddress: input.stringValue) }
     /// A well-known site Rise searches itself, or else one whose search it learned.
     private func site(forAddress text: String) -> PopularSite? {
-        if let custom = customSite?(text) { return custom }
-        let popular = PopularSites.site(forAddress: text)
+        // A learned path can fill the field while the person is still typing its host.
+        // Keep the site's search available until they actually type into that path.
+        let address = completionRange.flatMap { _ in (autofill ?? suggestions.first)?.url }
+            .flatMap { BrowsingHistory.completion(for: completionPrefix, url: $0) } ?? text
+        if let custom = customSite?(address) { return custom }
+        let popular = PopularSites.site(forAddress: address)
         if popular?.isSearchable == true { return popular }
-        return learnedSite?(text) ?? popular
+        return learnedSite?(address) ?? popular
     }
     private func updateLeadingIcon() {
         let address = query.trimmingCharacters(in: .whitespacesAndNewlines)

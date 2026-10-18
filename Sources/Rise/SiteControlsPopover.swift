@@ -63,7 +63,14 @@ final class SiteSettingRow: NSButton {
     }
     required init?(coder: NSCoder) { fatalError() }
     /// The developer tabs' hammer and Tabler's bell, filled to match the symbols beside them.
-    static let hammer = TablerIcon.image(LucideIcon.hammer, size: 17*SiteControlsLayout.scale, filled: true, centered: true)
+    static let hammer: NSImage = {
+        let original = TablerIcon.image(LucideIcon.hammer, size: 17*SiteControlsLayout.scale, filled: true, centered: true)
+        let shift: CGFloat = 0.65
+        let image = NSImage(size: NSSize(width: original.size.width+2*shift, height: original.size.height+2*shift), flipped: false) { _ in
+            original.draw(in: NSRect(origin: NSPoint(x: 2*shift, y: 2*shift), size: original.size)); return true
+        }
+        image.isTemplate = true; return image
+    }()
     static let bell: NSImage = {
         let size = 18*SiteControlsLayout.scale
         let body = TablerIcon.image(TablerIcon.bell, size: size, filled: true)
@@ -128,9 +135,10 @@ final class SiteSettingRow: NSButton {
             row.frame = NSRect(x: 14, y: y, width: 216, height: 43); view.addSubview(row); rows[title] = row; y += 43
         }
         let origin = SitePermissions.origin(browser.selectedTab?.url)
-        let notification = browser.sitePermissions.permission(.notifications, origin: origin)
-        row("Notifications", subtitle: notification.subtitle, symbol: "gearshape.fill", image: SiteSettingRow.bell, active: notification == .allow) { [weak browser] in browser?.permissionSettingMenu(.notifications) }
         row("Developer Mode", subtitle: browser.selectedTab?.developer == true ? "On" : "Off", symbol: "hammer.fill", image: SiteSettingRow.hammer, active: browser.selectedTab?.developer == true) { [weak browser] in browser?.toggleDeveloper(); browser?.refreshSiteControls() }
+        let cookies = browser.cookieConsent.isEnabled(for: browser.selectedTab?.url)
+        row("Dismiss Cookie Dialogs", subtitle: cookies ? "On" : "Off", symbol: "", image: TablerIcon.image(TablerIcon.cookie, size: 17*scale), active: cookies, checked: cookies) { [weak browser] in browser?.toggleCookieConsent() }
+        rows["Dismiss Cookie Dialogs"]?.isEnabled = SitePermissions.origin(browser.selectedTab?.url) != nil
         row("Block Ads & Trackers", subtitle: browser.adBlocker.enabled ? "On" : "Off", symbol: "shield.fill", active: browser.adBlocker.enabled, checked: browser.adBlocker.enabled) { [weak browser] in browser?.toggleAdBlocking(); browser?.refreshSiteControls() }
         let pip = browser.sitePermissions.automaticPictureInPicture(origin: origin)
         row("Automatic Picture-In-Picture", subtitle: pip ? "Allowed" : "Blocked", symbol: "gearshape.fill", active: pip) { [weak browser] in browser?.toggleAutomaticPictureInPicture(); browser?.refreshSiteControls() }

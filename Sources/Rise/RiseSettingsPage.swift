@@ -31,6 +31,7 @@ import RiseChromium
                        GmailCategory.allCases.map { ($0.rawValue, $0.title) }),
                 toggle("hideNotificationCounts", "Hide notification counts", "Leave counts such as (3) out of tab titles and history", hidesNotificationCounts),
                 toggle("repositorySubtitle", "Show repository under merge request tabs", nil, showsRepositorySubtitle),
+                toggle("calendarBadge", "Show upcoming events on Calendar tabs", "A badge such as “in 17m” after the tab’s title, for an event starting within the hour", showsCalendarBadge),
             ]
         case "ai":
             let provider = aiProvider
@@ -61,8 +62,11 @@ import RiseChromium
             rows.append(toggle("copiesCaptures", "Copy page captures to the clipboard", nil, copiesCaptures))
             return rows
         case "privacy":
-            var rows: [[String: Any]] = [["key": "clearHistory", "type": "button", "label": "Clear address bar history",
-                                          "sublabel": "Pages and site searches Rise suggests as you type", "button": "Clear"]]
+            var rows: [[String: Any]] = [
+                select("notificationPermission", "Website notifications", "Default for sites without a saved notification choice",
+                       sitePermissions.defaultNotifications.rawValue, [("ask", "Sites can ask to send notifications"), ("block", "Don't allow sites to send notifications")]),
+                ["key": "clearHistory", "type": "button", "label": "Clear address bar history",
+                 "sublabel": "Pages and site searches Rise suggests as you type", "button": "Clear"]]
             for (origin, capability, permission) in sitePermissions.decidedSites {
                 rows.append(select("permission|\(capability.rawValue)|\(origin)", URL(string: origin).flatMap(\.host) ?? origin, capability.title,
                                    permission.rawValue, [("ask", "Ask every time"), ("allow", "Allow"), ("block", "Block")]))
@@ -82,6 +86,7 @@ import RiseChromium
         case "gmailCategory": if let category = GmailCategory(rawValue: text) { selectGmailCategory(category) }
         case "hideNotificationCounts": setHidesNotificationCounts(on)
         case "repositorySubtitle": setShowsRepositorySubtitle(on)
+        case "calendarBadge": setShowsCalendarBadge(on)
         case "aiProvider": if let provider = AIProvider(rawValue: text) { selectAIProvider(provider) }
         case "aiKey": if !text.isEmpty { setAIKey(text, for: aiProvider) }
         case "aiModel": setAIModel(text, for: aiProvider)
@@ -91,16 +96,14 @@ import RiseChromium
         case "collapseSidebar": setCollapsesSidebarInSimulatedFullscreen(on)
         case "savesCaptures": setSavesCapturesAutomatically(on)
         case "copiesCaptures": setCopiesCaptures(on)
+        case "notificationPermission":
+            sitePermissions.defaultNotifications = text == "block" ? .block : .ask
+            refreshPermissionScripts()
         default:
             let parts = key.split(separator: "|", maxSplits: 2).map(String.init)
             guard parts.count == 3, parts[0] == "permission", let capability = SiteCapability(rawValue: parts[1]),
                   let permission = SitePermission(rawValue: text) else { return }
-            sitePermissions.set(permission, for: capability, origin: parts[2])
-            refreshPermissionScripts(); refreshSiteControls()
-            // Revoke an active capture session as well as future requests.
-            if permission != .allow && (capability == .camera || capability == .microphone) {
-                for tab in tabs where SitePermissions.origin(tab.url) == parts[2] { tab.page.reload() }
-            }
+            setSitePermission(permission, for: capability, origin: parts[2])
         }
     }
 

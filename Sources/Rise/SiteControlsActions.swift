@@ -92,24 +92,26 @@ import Vision
         for permission in SitePermission.allCases {
             menu.addItem(menuItem(permission == .ask ? "Ask Every Time" : permission == .allow ? "Allow" : "Block",
                                   checked: sitePermissions.permission(capability, origin: origin) == permission) { [weak self] in
-                guard let self else { return }
-                if permission == .allow, capability == .notifications {
-                    self.permissionCoordinator.requestNotificationAuthorization { [weak self] allowed in
-                        self?.sitePermissions.set(allowed ? .allow : .block, for: capability, origin: origin)
-                        self?.refreshPermissionScripts(); self?.refreshSiteControls()
-                    }
-                } else {
-                    self.sitePermissions.set(permission, for: capability, origin: origin)
-                    self.refreshPermissionScripts(); self.refreshSiteControls()
-                    // Revoke an active capture session as well as future requests.
-                    if permission != .allow && (capability == .camera || capability == .microphone) {
-                        for tab in self.tabs where SitePermissions.origin(tab.url) == origin { tab.page.reload() }
-                    }
-                }
+                self?.setSitePermission(permission, for: capability, origin: origin)
             })
         }
         let anchor = row ?? view
         menu.popUp(positioning: nil, at: NSPoint(x: 40, y: anchor.bounds.maxY), in: anchor)
+    }
+    /// The popover and rise://settings use the same authorization and revocation path.
+    func setSitePermission(_ permission: SitePermission, for capability: SiteCapability, origin: String) {
+        if permission == .allow, capability == .notifications {
+            permissionCoordinator.requestNotificationAuthorization { [weak self] allowed in
+                self?.sitePermissions.set(allowed ? .allow : .block, for: capability, origin: origin)
+                self?.refreshPermissionScripts(); self?.refreshSiteControls()
+            }
+        } else {
+            sitePermissions.set(permission, for: capability, origin: origin)
+            refreshPermissionScripts(); refreshSiteControls()
+            if permission != .allow && (capability == .camera || capability == .microphone) {
+                for tab in tabs + allPeekTabs where SitePermissions.origin(tab.url) == origin { tab.page.reload() }
+            }
+        }
     }
     func toggleAutomaticPictureInPicture() {
         guard let origin = SitePermissions.origin(selectedTab?.url) else { return }

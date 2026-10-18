@@ -28,6 +28,7 @@ enum SitePermission: String, CaseIterable {
 /// Changing a site's preference never grants another frame or another site access.
 @MainActor final class SitePermissions {
     static let preferenceKey = "Rise.SitePermissions"
+    static let notificationDefaultKey = "Rise.NotificationPermission"
     private let preferences: UserDefaults
     private var decisions: [String: [String: String]]
     init(preferences: UserDefaults) {
@@ -40,8 +41,13 @@ enum SitePermission: String, CaseIterable {
         return "\(scheme)://\(host):\(port)"
     }
     func permission(_ capability: SiteCapability, origin: String?) -> SitePermission {
-        guard let origin, let value = decisions[origin]?[capability.rawValue] else { return .ask }
+        guard let origin else { return .ask }
+        guard let value = decisions[origin]?[capability.rawValue] else { return capability == .notifications ? defaultNotifications : .ask }
         return SitePermission(rawValue: value) ?? .ask
+    }
+    var defaultNotifications: SitePermission {
+        get { preferences.string(forKey: Self.notificationDefaultKey) == "block" ? .block : .ask }
+        set { preferences.set(newValue == .block ? "block" : "ask", forKey: Self.notificationDefaultKey) }
     }
     func set(_ value: SitePermission, for capability: SiteCapability, origin: String) {
         decisions[origin, default: [:]][capability.rawValue] = value.rawValue

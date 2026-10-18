@@ -16,13 +16,26 @@ the local tabs; turning it back on merges local changes with the shared list.
 The private CloudKit database in `iCloud.dev.bartosz.Rise`, zone `RiseSharedTabs`,
 stores tab IDs, HTTP(S) addresses, titles and order. It also stores learned site-search
 names and URL templates in a `RiseSearches` record (`payload: Bytes`), controlled by
-the same sync switch. Submitted search terms and browsing history stay local.
+the same sync switch. Address learning also syncs normalized HTTP(S) URLs, titles,
+visit counts and last-visit times, so both devices use the same learned destinations.
+Private browsing never contributes. Cookies, login state and page contents do not sync.
 Templates merge per domain by their learning time with deterministic conflict ties;
 a saved clear timestamp prevents an offline device from restoring cleared searches.
 Existing `searches.json` dictionaries migrate automatically to the version with that
 timestamp. Only same-site HTTP(S) templates with one `{q}` substitution are accepted. Selection, page history,
 cookies, logins, snapshots, pinned/custom Mac metadata and local files stay on the
 device. Ordinary tab opens, navigation, moves and closes sync automatically.
+
+Visit learning uses one `RiseSearches` record per normalized URL (`history-` plus a
+SHA-256 identifier) and a separate `history-cleared` marker, reusing the existing
+`payload: Bytes` schema. Installation counters merge by maximum before being summed;
+receiving a remote count never creates a new visit. Titles have independent versions.
+Deleting an item starts a new counter generation; clearing history advances a global
+generation. Stale offline counters cannot restore either. New visits after observing
+the deletion start at one. Local history arrays migrate once with their original counts
+and a persisted installation identity. Both clients retain the 2,000 most recent pages
+for history and suggestions. Turning sync off preserves local learning and queues local
+edits for reconnection; account changes follow the existing explicit re-enable rule.
 Each device keeps its current selection where possible and lazily loads restored
 background tabs. Remote updates wait while a mobile panel, Peek, summary or tab
 gesture is active.
@@ -101,7 +114,8 @@ python3 scripts/test-passkey-signing.py
 The Mac signing helper also has a live integration check. It uses the same sync
 implementation with two clients in a generated `RiseTabsAudit-UUID` private zone,
 then deletes only that disposable zone. It checks simultaneous inserts, ordering,
-navigation, closure during an offline edit and persistence across relaunch:
+navigation, closure during an offline edit, persistence across relaunch, concurrent
+visit counts, repeated sync without count inflation, and visit clear/deletion while offline:
 Automatic scheduling is disabled only for these test clients, following Apple's
 sample tests; the apps use automatic scheduling during normal use.
 

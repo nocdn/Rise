@@ -3,12 +3,18 @@ import { createFallback, visible } from './fallback.js';
 
 (() => {
     if (window.__riseCookieConsent) return;
+    const transport = typeof riseHandlers !== 'undefined' ? riseHandlers.riseCookieConsent : window.webkit?.messageHandlers?.riseCookieConsent;
+    // Chromium supplies its handler lexically. Retain the isolated-world transport so a
+    // bfcache resume evaluated by the native bridge can initialize the same runtime again.
+    const post = transport ? message => transport.postMessage(message) : globalThis.__riseCookieConsentPost;
+    if (typeof post !== 'function') return;
+    globalThis.__riseCookieConsentPost = post;
     const token = `${Date.now()}-${Math.random()}`;
     const born = performance.timeOrigin+performance.now();
     const state = { active:true, manual:false, clicks:0, lastClick:0 };
     const clicked = new WeakMap();
     const nativeClick = HTMLElement.prototype.click;
-    const send = message => { try { window.webkit.messageHandlers.riseCookieConsent.postMessage({ ...message, token }); } catch {} };
+    const send = message => { try { post({ ...message, token }); } catch {} };
     function click(element, source) {
         if (!state.active || state.manual || state.clicks >= 24 || !element?.isConnected || element.disabled || element.closest('[inert]')) return false;
         const label = element.getAttribute('aria-label') || element.value || element.textContent || '';
