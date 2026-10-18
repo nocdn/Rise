@@ -1,14 +1,40 @@
 import AppKit
 
-/// The native overlay scroller still handles fading and hit testing; its ink is just 3 pt.
+/// The native overlay scroller still handles fading and hit testing; its ink is a 3 pt line
+/// pinned to the edge, so it stays put as the scroller widens under the pointer. It's light,
+/// and darkens while the pointer is over it.
 final class GmailScroller: NSScroller {
+    /// A card keeps it out of sight from opening until the reader scrolls.
+    var isRevealed = true { didSet { if isRevealed != oldValue { needsDisplay = true } } }
+    private var isHovered = false { didSet { if isHovered != oldValue { needsDisplay = true } } }
+    private var hoverArea: NSTrackingArea?
     override class var isCompatibleWithOverlayScrollers: Bool { true }
     override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {}
     override func drawKnob() {
+        guard isRevealed else { return }
         let knob = rect(for: .knob)
-        let thin = NSRect(x: knob.midX-1.5, y: knob.minY, width: 3, height: knob.height)
-        NSColor.secondaryLabelColor.withAlphaComponent(0.5).setFill()
+        let thin = NSRect(x: bounds.maxX-7, y: knob.minY, width: 3, height: knob.height)
+        NSColor.secondaryLabelColor.withAlphaComponent(isHovered ? 0.6 : 0.28).setFill()
         NSBezierPath(roundedRect: thin, xRadius: 1.5, yRadius: 1.5).fill()
+    }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+        addTrackingArea(area); hoverArea = area
+        isHovered = window.map { visibleRect.contains(convert($0.mouseLocationOutsideOfEventStream, from: nil)) } ?? false
+    }
+    override func mouseEntered(with event: NSEvent) { super.mouseEntered(with: event); isHovered = true }
+    override func mouseExited(with event: NSEvent) { super.mouseExited(with: event); isHovered = false }
+    override func viewDidHide() { super.viewDidHide(); isHovered = false }
+}
+
+/// A card's list: its scroller appears once the reader scrolls, not as the card opens.
+final class CardScrollView: NSScrollView {
+    func hideScrollerUntilScrolled() { (verticalScroller as? GmailScroller)?.isRevealed = false }
+    override func scrollWheel(with event: NSEvent) {
+        (verticalScroller as? GmailScroller)?.isRevealed = true
+        super.scrollWheel(with: event)
     }
 }
 
@@ -77,7 +103,7 @@ final class GmailEmailRow: NSButton {
 @MainActor final class GmailTooltip: FlippedView {
     static let width = PullRequestTooltip.width
     static let maximumHeight: CGFloat = 400
-    let scroll = NSScrollView()
+    let scroll = CardScrollView()
     private let panel = Surface(radius: FindBar.radius)
     private let clip = FlippedView(), stack = FlippedView()
     private(set) var rows: [GmailEmailRow] = []
@@ -142,7 +168,7 @@ final class GmailEmailRow: NSButton {
         appearance = theme.appearance
         panel.fill = theme == .dark ? theme.popup : TabAppearance.selectedFill(theme)
         panel.layer?.borderColor = theme.border.cgColor
-        if switching { rows.forEach { $0.removeFromSuperview() }; rows = []; scroll.contentView.scroll(to: .zero) }
+        if switching { rows.forEach { $0.removeFromSuperview() }; rows = []; scroll.contentView.scroll(to: .zero); scroll.hideScrollerUntilScrolled() }
         update(inbox)
         if appearing { height.settle(); if !glides { top.settle() }; render() }
         animate()

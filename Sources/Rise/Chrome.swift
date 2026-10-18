@@ -12,7 +12,7 @@ enum RiseTheme: String, CaseIterable {
     }
     var pill: NSColor { NSColor(hex: self == .dark ? 0x404040 : self == .rose ? 0xE9CACE : 0xDEDEDE) }
     var addressFill: NSColor {
-        (self == .neutral ? NSColor(hex: 0xD2D1D1) : pill).blended(withFraction: self == .dark ? 0.03 : 0.15, of: .white)!
+        self == .neutral ? NSColor(hex: 0xE3E0DF) : pill.blended(withFraction: self == .dark ? 0.03 : 0.15, of: .white)!
     }
     var text: NSColor { NSColor(hex: self == .dark ? 0xD1D1D1 : self == .rose ? 0x42121F : 0x343434) }
     var selectedText: NSColor { self == .dark ? NSColor(hex: 0xFEFEFE) : self == .neutral ? NSColor(hex: 0x111111) : text }

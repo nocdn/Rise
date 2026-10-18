@@ -653,7 +653,7 @@ import RiseCore
         }
         applyTheme()
         sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: splitGroups)
-        refreshTabHoverCard(); preloadGmailInbox(); preloadCalendarAgenda(); if root.window != nil { CalendarProbe.start(host: root) }
+        refreshTabHoverCard(); preloadGmailInbox(); preloadCalendarAgenda()
         window?.title = (selectedTab?.title).map { "\($0) — Rise" } ?? "Rise"
         toolbarButtons[1].isEnabled = historyPage.map { canNavigate($0, .back) } ?? false
         toolbarButtons[2].isEnabled = historyPage.map { canNavigate($0, .forward) } ?? false

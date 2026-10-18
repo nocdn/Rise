@@ -1,5 +1,5 @@
 // Any site's floating video, the tab's play and sound buttons, page full screen, Gmail's inbox
-// reader, pausing downloads, what Page Assistant reads, site search learning, the swipe's page
+// and Google Calendar's readers, pausing downloads, what Page Assistant reads, site search learning, the swipe's page
 // probe and hard reloads, on Chromium: the XCTest cases these were written as, run in Rise windows
 // (Tests/Live/LiveXCTest.swift), with pages at the addresses they name. Run with
 // scripts/test-chromium-live.py media; RISE_CASES=<names> runs some.
@@ -30,6 +30,7 @@ import RiseChromium
             await TabMediaCases().runAll()
             await TabAudioCases().runAll()
             await GmailReaderCases().runAll()
+            await CalendarReaderCases().runAll()
             await DownloadCases().runAll()
             await PageAssistantCases().runAll()
             await SiteSearchLearningCases().runAll()
@@ -469,6 +470,77 @@ private final class HeaderRecordingServer {
         let empty = try await reader(GmailPageReader.snapshot) as? [String: Any]
         XCTAssertEqual(empty?["ready"] as? Bool, true, "An empty category finishes loading")
         XCTAssertEqual(empty?["hasMore"] as? Bool, false)
+    }
+}
+
+/// The scripts Google Calendar's card reads and opens events with, on a page made like Calendar's
+/// day view: a column of 60-point hours under a 1-point border, chips placed by their style as Calendar
+/// places them, and an all-day row above.
+@MainActor final class CalendarReaderCases {
+    func runAll() async {
+        let only = ProcessInfo.processInfo.environment["RISE_CASES"]?.split(separator: ",").map(String.init)
+        if only?.contains("ChipsAreReadFromTheDayViewAndOpenedWithAClick") ?? true {
+            await liveCase("ChipsAreReadFromTheDayViewAndOpenedWithAClick") { try await testChipsAreReadFromTheDayViewAndOpenedWithAClick() }
+        }
+    }
+    func testChipsAreReadFromTheDayViewAndOpenedWithAClick() async throws {
+        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"),
+                                        restore: false, preferences: UserDefaults(suiteName: "Rise.CalendarChecks.\(UUID().uuidString)")!)
+        browser.window?.setFrameAutosaveName(""); browser.window?.center(); browser.showWindow(nil)
+        defer { browser.saveWork?.cancel(); browser.tabs.forEach { $0.cancelLoad() }; browser.window?.orderOut(nil) }
+        let tab = browser.addTab(), web = tab.web
+        web.loadHTMLString("""
+        <style>body { margin: 0 } .scroll { height: 400px; overflow: auto; position: relative }
+        .BiKU4b { position: relative; height: 1440px; border-top: 1px solid #dadce0 } [data-eventchip] { position: absolute; left: 0; width: 90% }</style>
+        <header><button jsname="P6mm8" id="today">Today</button><button jsname="OCpkoe" id="next">Next day</button></header>
+        <div role="row"><div role="gridcell" class="qLWd9c" style="height: 24px; position: relative">
+          <div data-eventchip data-eventid="QUxMREFZ" style="border-color: rgb(11, 128, 67); top: 0">
+            <div role="button" style="background-color: rgb(11, 128, 67)"><span class="WBi6vc">Bank holiday</span>
+            <span class="XuJrye">All day, Bank holiday, Holidays in United Kingdom, 18 October 2026</span></div></div></div></div>
+        <div class="scroll"><div role="gridcell" data-datekey="29010" class="BiKU4b">
+          <div role="button" data-eventchip data-eventid="VEVTVElORw" style="top: 629px; height: 58px; background-color: rgb(158, 105, 175); border-color: rgb(158, 105, 175)">
+            <div class="XuJrye">10:30am to 11:30am, testing event in rise, Bartek Bak, No location, 18 October 2026</div>
+            <div aria-hidden="true"><span class="I0UMhf">testing event in rise</span><div>10:30 – 11:30am</div></div>
+            <div aria-hidden="true" class="leOeGd" data-eventid="VEVTVElORw"></div></div>
+          <div role="button" data-eventchip data-eventid="VElOWQ" style="top: 899px; height: 13px; background-color: rgb(242, 179, 179); border-color: rgb(234, 128, 128)">
+            <div class="XuJrye">3pm to 3:05pm, Tiny, Bartek Bak, No location, 18 October 2026</div><span class="I0UMhf">Tiny</span></div>
+        </div></div>
+        <script>
+          window.opened = [];
+          for (const chip of document.querySelectorAll('[data-eventchip]'))
+            (chip.matches('[role=button]') ? chip : chip.querySelector('[role=button]')).addEventListener('click', () => opened.push(chip.dataset.eventid));
+          next.onclick = () => document.querySelector('[data-datekey]').setAttribute('data-datekey', '29011');
+        </script>
+        """, baseURL: URL(string: "https://calendar.google.com/calendar/u/0/r/day/2026/10/18"))
+        for _ in 0..<200 where web.isLoading || web.url?.host != "calendar.google.com" { try await Task.sleep(for: .milliseconds(25)) }
+        func reader(_ script: String) async throws -> Any? {
+            try await tab.page.evaluate("return " + script, arguments: [:], in: nil, world: .named(CalendarPageReader.world))
+        }
+        let snapshot = try await reader(CalendarPageReader.snapshot)
+        let raw = try XCTUnwrap(snapshot as? [String: Any])
+        XCTAssertEqual(raw["ready"] as? Bool, true)
+        let day = try JSONDecoder().decode(CalendarDay.self, from: JSONSerialization.data(withJSONObject: raw))
+        XCTAssertEqual(day.key, 29010); XCTAssertEqual(day.height, 1441)
+        XCTAssertEqual(day.chips.map(\.id), ["QUxMREFZ", "VEVTVElORw", "VElOWQ"], "Each chip once, not its resize handle")
+        XCTAssertEqual(day.chips.map(\.title), ["Bank holiday", "testing event in rise", "Tiny"])
+        XCTAssertEqual(day.chips.map(\.allDay), [true, false, false])
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = TimeZone(identifier: "Europe/London")!
+        let events = CalendarSchedule.events([day], calendar: calendar)
+        let minutes = events.map { [$0.start, $0.end].map { Int($0.timeIntervalSince(calendar.date(from: day.date)!)/60) } }
+        XCTAssertEqual(minutes, [[0, 1440], [630, 690], [900, 905]])
+        XCTAssertEqual(events.map(\.color), [0x0B8043, 0x9E69AF, 0xD50101])
+        let opened = try await reader(CalendarPageReader.open("VEVTVElORw")) as? Bool
+        XCTAssertEqual(opened, true)
+        let allDay = try await reader(CalendarPageReader.open("QUxMREFZ")) as? Bool
+        XCTAssertEqual(allDay, true)
+        let clicks = try await web.evaluateJavaScript("JSON.stringify(window.opened)") as? String
+        XCTAssertEqual(clicks, #"["VEVTVElORw","QUxMREFZ"]"#, "One click on each chip's button")
+        let missing = try await reader(CalendarPageReader.open("TUlTU0lORw")) as? Bool
+        XCTAssertEqual(missing, false, "No chip, no click")
+        let stepped = try await reader(CalendarPageReader.step(CalendarPageReader.nextButton)) as? Bool
+        XCTAssertEqual(stepped, true)
+        let tomorrow = try await reader(CalendarPageReader.snapshot) as? [String: Any]
+        XCTAssertEqual(tomorrow?["key"] as? Int, 29011)
     }
 }
 

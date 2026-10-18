@@ -1,6 +1,7 @@
 import AppKit
 
-/// An event on the card's timeline, or an all-day event above it, in the theme's accent.
+/// An event on the card's timeline, or an all-day event above it, in a light wash of its own
+/// colour inside a deeper border.
 final class CalendarEventChip: NSButton {
     let event: CalendarEvent
     private let name = NSTextField(labelWithString: "")
@@ -19,15 +20,17 @@ final class CalendarEventChip: NSButton {
         setAccessibilityLabel(event.title); setAccessibilityValue(time ?? "All day")
     }
     required init?(coder: NSCoder) { fatalError() }
-    static func colors(_ theme: RiseTheme, panel: NSColor, hovered: Bool = false) -> (fill: NSColor, border: NSColor, text: NSColor) {
-        let dark = theme == .dark, base: CGFloat = dark ? 0.42 : 0.3
-        let fill = panel.blended(withFraction: base+(hovered ? 0.1 : 0), of: theme.accent) ?? theme.accent
-        let border = panel.blended(withFraction: dark ? 0.62 : 0.55, of: theme.accent) ?? theme.accent
+    /// The event's colour, or the theme's accent for one without: blended into the card's
+    /// surface, the fill lighter than the border.
+    static func colors(_ theme: RiseTheme, panel: NSColor, color: UInt32?, hovered: Bool = false) -> (fill: NSColor, border: NSColor, text: NSColor) {
+        let dark = theme == .dark, base: CGFloat = dark ? 0.32 : 0.2, tint = color.map(NSColor.init(hex:)) ?? theme.accent
+        let fill = panel.blended(withFraction: base+(hovered ? 0.08 : 0), of: tint) ?? tint
+        let border = panel.blended(withFraction: dark ? 0.48 : 0.38, of: tint) ?? tint
         return (fill, border, dark ? NSColor.white.withAlphaComponent(0.92) : theme.text)
     }
     func applyTheme(_ theme: RiseTheme, panel: NSColor) {
         self.theme = theme; self.panel = panel
-        name.textColor = Self.colors(theme, panel: panel).text; needsDisplay = true
+        name.textColor = Self.colors(theme, panel: panel, color: event.color).text; needsDisplay = true
     }
     override func layout() {
         super.layout()
@@ -39,18 +42,22 @@ final class CalendarEventChip: NSButton {
         name.isHidden = bounds.height < 9
     }
     override func draw(_ dirtyRect: NSRect) {
-        let colors = Self.colors(theme, panel: panel, hovered: isHovered)
-        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 4.5, yRadius: 4.5)
-        colors.fill.setFill(); path.fill()
-        colors.border.setStroke(); path.lineWidth = 1; path.stroke()
+        let colors = Self.colors(theme, panel: panel, color: event.color, hovered: isHovered)
+        // Continuous corners, like the card around it.
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        let path = PageOutline.path(in: bounds.insetBy(dx: 0.5, dy: 0.5), radius: 4.5, continuous: true)
+        context.addPath(path); context.setFillColor(colors.fill.cgColor); context.fillPath()
+        context.addPath(path); context.setStrokeColor(colors.border.cgColor); context.setLineWidth(1); context.strokePath()
     }
     override func hitTest(_ point: NSPoint) -> NSView? { bounds.contains(convert(point, from: superview)) ? self : nil }
     @objc private func open() { onOpen?() }
 }
 
-/// Today and tomorrow, hour by hour from midnight: lines, hour labels and the time now.
+/// Today, hour by hour from midnight: lines, hour labels and the time now.
 final class CalendarTimeline: FlippedView {
     static let hourHeight: CGFloat = 42, labelWidth: CGFloat = 54, trailing: CGFloat = 6
+    /// The hour lines, drawn below their hour's point, and an event's room from them.
+    static let lineWidth: CGFloat = 0.5, chipGap: CGFloat = 2
     var midnight = Calendar.current.startOfDay(for: Date())
     var theme = RiseTheme.neutral { didSet { needsDisplay = true } }
     private let now = FlippedView(), dot = FlippedView()
@@ -66,7 +73,9 @@ final class CalendarTimeline: FlippedView {
         addSubview(now); addSubview(dot)
     }
     required init?(coder: NSCoder) { fatalError() }
-    static var contentHeight: CGFloat { 48*hourHeight+8 }
+    /// The day, then the same room below it as beside the events.
+    static var dayHeight: CGFloat { 24*hourHeight }
+    static var contentHeight: CGFloat { dayHeight+trailing }
     func y(_ date: Date) -> CGFloat { CGFloat(date.timeIntervalSince(midnight)/3600)*Self.hourHeight }
     /// Above the events, as in Calendar.
     func raiseNow() { [now, dot].forEach { $0.removeFromSuperview(); addSubview($0) } }
@@ -80,22 +89,22 @@ final class CalendarTimeline: FlippedView {
     override func draw(_ dirtyRect: NSRect) {
         let line = theme.text.withAlphaComponent(theme == .dark ? 0.14 : 0.1)
         let attributes: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12, weight: .medium), .foregroundColor: theme.muted]
-        for hour in 0..<48 {
+        for hour in 0..<24 {
             let y = CGFloat(hour)*Self.hourHeight
             guard y+Self.hourHeight >= dirtyRect.minY, y <= dirtyRect.maxY else { continue }
-            line.setFill(); NSRect(x: 0, y: y, width: bounds.width, height: 1/(window?.backingScaleFactor ?? 2)).fill()
+            line.setFill(); NSRect(x: 0, y: y, width: bounds.width, height: Self.lineWidth).fill()
             guard let date = Calendar.current.date(byAdding: .hour, value: hour, to: midnight) else { continue }
             (Self.hourFormat.string(from: date).uppercased() as NSString).draw(at: NSPoint(x: 8, y: y+6), withAttributes: attributes)
         }
     }
 }
 
-/// The same surface and positioning springs as the Gmail card, over a timeline of today and
-/// tomorrow that opens at the hour now.
+/// The same surface and positioning springs as the Gmail card, over today's timeline, which
+/// opens at the hour now.
 @MainActor final class CalendarTooltip: FlippedView {
     static let width: CGFloat = 264, preferredHeight: CGFloat = 268
     static let allDayHeight: CGFloat = 22, allDayGap: CGFloat = 4
-    let scroll = NSScrollView()
+    let scroll = CardScrollView()
     let timeline = CalendarTimeline(frame: .zero)
     private let panel = Surface(radius: FindBar.radius)
     private let clip = FlippedView(), allDay = FlippedView(), divider = Surface()
@@ -173,7 +182,7 @@ final class CalendarTimeline: FlippedView {
         update(agenda)
         if appearing { height.settle(); if !glides { top.settle() }; render() }
         // Opens at the hour now, a little of the hour before showing above it.
-        if appearing || switching { scrollToNow() }
+        if appearing || switching { scrollToNow(); scroll.hideScrollerUntilScrolled() }
         animate()
         clock?.invalidate()
         // The time now moves down the timeline, and events it passes fade.
@@ -186,11 +195,12 @@ final class CalendarTimeline: FlippedView {
         let midnight = Calendar.current.startOfDay(for: Date())
         let dayChanged = timeline.midnight != midnight
         timeline.midnight = midnight
-        let shown = agenda.events.filter { $0.end > midnight }
+        // Tomorrow's events are loaded for the tab's countdown, not shown.
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: midnight) ?? midnight
+        let shown = agenda.events.filter { $0.end > midnight && $0.start < tomorrow }
         if shown != events || dayChanged {
             events = shown
-            let today = Calendar.current.date(byAdding: .day, value: 1, to: midnight) ?? midnight
-            rebuild(timed: shown.filter { !$0.allDay }, allDay: shown.filter { $0.allDay && $0.start < today })
+            rebuild(timed: shown.filter { !$0.allDay }, allDay: shown.filter(\.allDay))
         }
         let waiting = !agenda.hasLoaded
         let text = agenda.error ?? (waiting ? "Loading events" : "")
@@ -243,13 +253,18 @@ final class CalendarTimeline: FlippedView {
             guard let place = placed[chip.event.id] else { chip.isHidden = true; continue }
             chip.isHidden = false
             let width = (columnsWidth-CGFloat(place.columns-1)*2)/CGFloat(place.columns)
-            let top = timeline.y(chip.event.start), bottom = timeline.y(chip.event.end)
-            chip.frame = NSRect(x: CalendarTimeline.labelWidth+CGFloat(place.column)*(width+2), y: top+1,
-                                width: width, height: max(18, bottom-top-2)).integral
+            // An event across midnight runs off the end of the day.
+            let top = timeline.y(chip.event.start), bottom = min(timeline.y(chip.event.end), CalendarTimeline.dayHeight+CalendarTimeline.chipGap)
+            // As far below the hour line it starts on as above the one it ends on.
+            let start = top+CalendarTimeline.lineWidth+CalendarTimeline.chipGap
+            chip.frame = NSRect(x: (CalendarTimeline.labelWidth+CGFloat(place.column)*(width+2)).rounded(), y: start,
+                                width: width.rounded(), height: max(18, bottom-CalendarTimeline.chipGap-start))
         }
         var y = Self.allDayGap+2
         for chip in allDayChips {
-            chip.frame = NSRect(x: 8, y: y, width: Self.width-16, height: Self.allDayHeight); y += Self.allDayHeight+Self.allDayGap
+            // Inset from the card's sides as far as the timeline's events are from its right.
+            chip.frame = NSRect(x: CalendarTimeline.trailing, y: y, width: Self.width-2*CalendarTimeline.trailing, height: Self.allDayHeight)
+            y += Self.allDayHeight+Self.allDayGap
         }
         moreAllDay.textColor = theme.muted
         moreAllDay.frame = NSRect(x: 14, y: y+3, width: Self.width-28, height: 16)

@@ -38,6 +38,8 @@ struct CalendarEvent: Equatable {
     let start: Date
     let end: Date
     let allDay: Bool
+    /// The event's colour in Calendar, as 0xRRGGBB.
+    var color: UInt32? = nil
 }
 
 /// One day of Calendar's day view, as the page draws it.
@@ -51,6 +53,9 @@ struct CalendarDay: Decodable, Equatable {
         /// Points from the top of the day's column, and the chip's height.
         let top: Double
         let height: Double
+        /// The chip's fill and border, as CSS colours.
+        var fill: String? = nil
+        var border: String? = nil
     }
     /// Calendar's `data-datekey`: (year − 1970) << 9 | month << 5 | day.
     let key: Int
@@ -72,27 +77,47 @@ enum CalendarSchedule {
         var events: [String: CalendarEvent] = [:], order: [String] = []
         for day in days {
             guard day.height > 0, let midnight = calendar.date(from: day.date) else { continue }
-            let perMinute = day.height/1440
+            // The column has a border beyond its 24 hours: 1,441 points for 60-point hours.
+            let perMinute = max(1, (day.height/24).rounded())/60
             for chip in day.chips {
-                let event: CalendarEvent
+                let event: CalendarEvent, color = Self.color(fill: chip.fill, border: chip.border)
                 if chip.allDay {
                     let next = calendar.date(byAdding: .day, value: 1, to: midnight) ?? midnight
-                    event = CalendarEvent(id: chip.id, title: chip.title, start: midnight, end: next, allDay: true)
+                    event = CalendarEvent(id: chip.id, title: chip.title, start: midnight, end: next, allDay: true, color: color)
                 } else {
                     let start = max(0, min(1440, Int((chip.top/perMinute).rounded())))
                     var end = max(start+1, min(1440, Int(((chip.top+chip.height+chipGap)/perMinute).rounded())))
                     if end-start <= shortestChip, let labelled = labelledEnd(chip.label, after: start, before: end) { end = labelled }
                     event = CalendarEvent(id: chip.id, title: chip.title, start: midnight.addingTimeInterval(Double(start*60)),
-                                          end: midnight.addingTimeInterval(Double(end*60)), allDay: false)
+                                          end: midnight.addingTimeInterval(Double(end*60)), allDay: false, color: color)
                 }
                 // An event across midnight has a chip on each day: together they're the event.
                 if let earlier = events[chip.id] {
                     events[chip.id] = CalendarEvent(id: chip.id, title: earlier.title, start: min(earlier.start, event.start),
-                                                    end: max(earlier.end, event.end), allDay: earlier.allDay && event.allDay)
+                                                    end: max(earlier.end, event.end), allDay: earlier.allDay && event.allDay,
+                                                    color: earlier.color ?? event.color)
                 } else { events[chip.id] = event; order.append(chip.id) }
             }
         }
         return order.compactMap { events[$0] }.sorted { ($0.allDay ? 0 : 1, $0.start, $1.end) < ($1.allDay ? 0 : 1, $1.start, $0.end) }
+    }
+
+    /// The event's own colour from its chip's. Calendar fills a chip with it and borders it the
+    /// same; an event that has ended is washed 40% of the way to white inside a border washed
+    /// halfway, and one not yet answered is white inside a border of its colour.
+    static func color(fill: String?, border: String?) -> UInt32? {
+        func rgb(_ css: String?) -> [Double]? {
+            guard let css, let open = css.firstIndex(of: "("), let close = css.lastIndex(of: ")") else { return nil }
+            let parts = css[css.index(after: open)..<close].split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+            guard parts.count >= 3, parts.count < 4 || parts[3] > 0.5 else { return nil }
+            return Array(parts.prefix(3))
+        }
+        func hex(_ c: [Double]) -> UInt32 { c.reduce(0) { $0 << 8 | UInt32(max(0, min(255, $1.rounded()))) } }
+        let border = rgb(border)
+        guard let fill = rgb(fill), fill.min()! < 248 else { return border.map(hex) }
+        guard let border, fill != border else { return hex(fill) }
+        if zip(fill, border).allSatisfy({ abs($0 - ($1 + (255-$1)*0.4)) <= 6 }) { return hex(border.map { 2*$0 - 255 }) }
+        return hex(fill)
     }
 
     /// The earliest time in the label after `start` and no later than `end`, in minutes of the
@@ -316,8 +341,11 @@ enum CalendarSchedule {
         let title = clean(chip.querySelector('.I0UMhf, .WBi6vc')?.textContent);
         if (!title) title = clean(label.split(', ')[1]) || clean(chip.innerText.split('\n')[0]);
         const timed = column.contains(chip), rect = chip.getBoundingClientRect();
+        // All-day chips are filled on their button and bordered around it.
+        const painted = chip.matches('[role="button"]') ? chip : chip.querySelector('[role="button"]') || chip;
         chips.push({id, title: title || '(No title)', label, allDay: !timed,
-                    top: timed ? rect.top - box.top : 0, height: timed ? rect.height : 0});
+                    top: timed ? rect.top - box.top : 0, height: timed ? rect.height : 0,
+                    fill: getComputedStyle(painted).backgroundColor, border: getComputedStyle(chip).borderTopColor});
       }
       return {ready: true, key, height: box.height, chips: chips.filter(chip => chip.id)};
     })();
