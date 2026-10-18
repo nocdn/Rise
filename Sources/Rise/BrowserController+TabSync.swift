@@ -40,7 +40,9 @@ import RiseCore
         isApplyingSharedTabs = true; hasPendingSharedTabs = false
         let selected = selectedID, index = tabs.firstIndex { $0.id == selected } ?? 0
         let existing = Dictionary(uniqueKeysWithValues: tabs.map { ($0.id, $0) })
-        let displayed = Dictionary(uniqueKeysWithValues: sharedTabsSnapshot.map { ($0.id, $0) })
+        let snapshot = sharedTabsSnapshot
+        let incoming = SharedTabsReconciliation.preservingActiveTab(in: incoming, displayed: snapshot, activeID: selected)
+        let displayed = Dictionary(uniqueKeysWithValues: snapshot.map { ($0.id, $0) })
         let sharedIDs = Set(displayed.keys)
         let localTabs = tabs.filter { !sharedIDs.contains($0.id) }
         let next = incoming.map { value -> BrowserTab in

@@ -13,6 +13,20 @@ public struct SharedBrowserTab: Codable, Equatable, Sendable {
     }
 }
 
+/// Remote closures update background tabs without taking away the page being read on this device.
+/// The retained tab keeps its identity: the ledger's closure still wins, so retaining it locally
+/// never reopens it on the other device. A later sync may remove it once it is in the background.
+public enum SharedTabsReconciliation {
+    public static func preservingActiveTab(in incoming: [SharedBrowserTab],
+                                           displayed: [SharedBrowserTab], activeID: UUID?) -> [SharedBrowserTab] {
+        guard let activeID, !incoming.contains(where: { $0.id == activeID }),
+              let index = displayed.firstIndex(where: { $0.id == activeID }) else { return incoming }
+        var result = incoming
+        result.insert(displayed[index], at: min(index, result.count))
+        return result
+    }
+}
+
 struct TabSyncVersion: Codable, Equatable, Comparable, Sendable {
     let clock: Int64
     let device: UUID

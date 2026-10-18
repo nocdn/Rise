@@ -92,10 +92,15 @@ final class TabSyncTests: XCTestCase {
         browser.saveSession(flush: true)
         XCTAssertEqual(store.load()?.selectedTabID, b.id)
         sync.capture([]); sync.onTabsChange?([])
+        XCTAssertEqual(browser.tabs.map(\.id), [b.id])
+        XCTAssertEqual(browser.tabs[0].title, "Updated B")
+        XCTAssertTrue(sync.tabs.isEmpty, "Retaining the active tab locally must not reopen it on other devices")
+        XCTAssertTrue(sync.isClosed(b.id))
         browser.saveSession(flush: true)
         let restored = BrowserViewController(sessionStore: store)
         XCTAssertEqual(restored.tabs.count, 1)
-        XCTAssertTrue(restored.tabs[0].isSyncPlaceholder, "An empty remote list must not create a fresh shared tab after relaunch")
+        XCTAssertEqual(restored.tabs[0].id, b.id, "Relaunch keeps the page the user was reading")
+        XCTAssertFalse(restored.tabs[0].isSyncPlaceholder)
     }
 
     /// Opt-in device integration test. The generated private zone contains only disposable fixtures.

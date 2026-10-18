@@ -118,3 +118,31 @@ final class FloatingVideoMotionTests: XCTestCase {
         }
     }
 }
+
+final class FloatingLiftTests: XCTestCase {
+    func testLiftsWithALightBounceAndIsBackBeforeAFlickLands() {
+        var lift = FloatingLift()
+        lift.lift(true)
+        var peak: CGFloat = 1, time = 0.0
+        while !lift.isResting { lift.step(elapsed: 1.0/120); time += 1.0/120; peak = max(peak, lift.value) }
+        XCTAssertEqual(lift.value, FloatingLift.scale)
+        XCTAssertGreaterThan(peak, FloatingLift.scale, "It overshoots a little")
+        XCTAssertLessThan(peak, FloatingLift.scale+0.003, "But only a little")
+        XCTAssertLessThan(time, 0.8)
+
+        // Released into a flick: back to its size before the window settles in its corner.
+        lift.lift(false)
+        var motion = FloatingVideoMotion(frame: CGRect(x: 400, y: 300, width: 360, height: 240),
+                                         visibleFrame: CGRect(x: 0, y: 0, width: 1440, height: 875))
+        motion.begin(at: 0)
+        for frame in 1...6 { motion.drag(by: CGVector(dx: 30, dy: 20), at: Double(frame)/120) }
+        motion.end(at: 6.0/120)
+        var landed = false
+        while motion.phase != .idle {
+            motion.step(elapsed: 1.0/120); lift.step(elapsed: 1.0/120)
+            if hypot(motion.velocity.dx, motion.velocity.dy) < 60 && motion.phase == .settling { landed = true }
+            if landed { XCTAssertEqual(lift.value, 1, accuracy: 0.002); break }
+        }
+        XCTAssertTrue(landed)
+    }
+}

@@ -78,4 +78,34 @@ final class SharedTabsTests: XCTestCase {
                             .init(id: UUID(), url: "javascript:alert(1)", title: "Script")])
         XCTAssertEqual(ledger.tabs, [normal, blank])
     }
+
+    func testRemoteClosureKeepsOnlyTheLocallyActiveTabWithoutResurrectingIt() throws {
+        let one = tab("one"), active = tab("active"), three = tab("three"), added = tab("added")
+        var local = SharedTabsLedger(); _ = local.capture([one, active, three])
+        var remote = local; remote.deviceID = UUID()
+        _ = remote.capture([added])
+        exchange(&local, &remote)
+        let displayed = SharedTabsReconciliation.preservingActiveTab(in: local.tabs, displayed: local.observedTabs, activeID: active.id)
+        XCTAssertEqual(displayed, [added, active])
+        local.observedTabs = displayed
+        XCTAssertTrue(local.capture(displayed).isEmpty, "Retaining the active tab must not send an edit or new tab")
+        exchange(&local, &remote)
+        XCTAssertEqual(local.tabs, [added]); XCTAssertEqual(remote.tabs, [added])
+        var restored = try JSONDecoder().decode(SharedTabsLedger.self, from: JSONEncoder().encode(local))
+        let afterRelaunch = SharedTabsReconciliation.preservingActiveTab(in: restored.tabs, displayed: displayed, activeID: active.id)
+        XCTAssertEqual(afterRelaunch, displayed)
+        XCTAssertTrue(restored.capture(afterRelaunch).isEmpty)
+        XCTAssertNotNil(restored.records[active.id]?.closedAt)
+        XCTAssertEqual(SharedTabsReconciliation.preservingActiveTab(in: restored.tabs, displayed: displayed, activeID: added.id), [added])
+    }
+
+    func testRemoteCloseAllKeepsEachDevicesOwnActivePage() {
+        let one = tab("one"), two = tab("two"), three = tab("three")
+        let displayed = [one, two, three]
+        XCTAssertEqual(SharedTabsReconciliation.preservingActiveTab(in: [], displayed: displayed, activeID: one.id), [one])
+        XCTAssertEqual(SharedTabsReconciliation.preservingActiveTab(in: [], displayed: displayed, activeID: three.id), [three])
+        XCTAssertEqual(SharedTabsReconciliation.preservingActiveTab(in: [two, one], displayed: displayed, activeID: one.id), [two, one], "An existing active tab keeps the incoming order without duplication")
+        XCTAssertEqual(SharedTabsReconciliation.preservingActiveTab(in: [], displayed: displayed, activeID: nil), [])
+        XCTAssertEqual(SharedTabsReconciliation.preservingActiveTab(in: [], displayed: [], activeID: UUID()), [])
+    }
 }

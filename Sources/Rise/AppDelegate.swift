@@ -5,6 +5,7 @@ import AppKit
     func applicationDidFinishLaunching(_ notification: Notification) {
         browser = BrowserController(sessionURL: RiseProfile.directory?.appendingPathComponent("session.json")); buildMenu()
         browser.showWindow(nil)
+        FloatingPageGestures.shared.install()
         if Bundle.main.object(forInfoDictionaryKey: "RiseCloudKitEnabled") as? Bool == true {
             NSApp.registerForRemoteNotifications(matching: [])
         }

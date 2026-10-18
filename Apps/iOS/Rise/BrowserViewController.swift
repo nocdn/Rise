@@ -210,6 +210,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         hasPendingSharedTabs = false
         let previous = webView, selected = currentTab.id, previousIndex = tabIndex
         let existing = Dictionary(uniqueKeysWithValues: tabs.map { ($0.id, $0) })
+        let incoming = SharedTabsReconciliation.preservingActiveTab(in: incoming, displayed: sharedTabsSnapshot, activeID: selected)
         var next = incoming.map { saved -> BrowserTab in
             if let tab = existing[saved.id], tab.sessionTab.url?.absoluteString == saved.url {
                 tab.rememberSharedTitle(saved.title)

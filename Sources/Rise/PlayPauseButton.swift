@@ -1,6 +1,6 @@
 import AppKit
 
-/// A play/pause button shared by the floating player and the tab rows. Each
+/// A play/pause button shared by the floating player, the tab rows and downloads. Each
 /// symbol has its own layer, centered on its own bounds, so swapping never
 /// shifts either one. The outgoing symbol shrinks away while the incoming one
 /// springs up with a slight overshoot.
@@ -10,14 +10,16 @@ import AppKit
     var pointSize: CGFloat? { didSet { needsLayout = true } }
     var weight: NSFont.Weight = .bold { didSet { renderedKey = nil; needsLayout = true } }
     var color: NSColor = .white { didSet { if color != oldValue { renderedKey = nil; needsLayout = true } } }
-    /// Holds both symbols and shrinks slightly while pressed.
+    /// Holds both symbols. It doesn't shrink while pressed; with `growsOnHover`, it grows slightly under the pointer.
     private let glyph = CALayer()
     private let playLayer = CALayer()
     private let pauseLayer = CALayer()
     private var renderedKey: (size: CGFloat, scale: CGFloat)?
     static let hiddenScale: CGFloat = 0.25
-    static let pressedScale: CGFloat = 0.86
-    private var pressed = false
+    static let hoverScale: CGFloat = 1.08
+    /// The floating player's: a touch bigger under the pointer.
+    var growsOnHover = false { didSet { updateTrackingAreas(); refreshGrowth() } }
+    private var grown = false
     override init(frame: NSRect) {
         super.init(frame: frame)
         layer?.addSublayer(glyph)
@@ -115,16 +117,23 @@ import AppKit
         fade.fromValue = from; fade.toValue = to; fade.duration = duration
         return fade
     }
-    private func setPressed(_ pressed: Bool) {
-        guard pressed != self.pressed else { return }
-        self.pressed = pressed
-        PressScale.set(glyph, to: pressed ? Self.pressedScale : 1)
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if growsOnHover {
+            addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+        }
     }
-    override func mouseDown(with event: NSEvent) { if isEnabled { setPressed(true) } }
-    override func mouseDragged(with event: NSEvent) { setPressed(bounds.contains(convert(event.locationInWindow, from: nil))) }
-    override func mouseUp(with event: NSEvent) {
-        setPressed(false)
-        super.mouseUp(with: event)
+    override func mouseEntered(with event: NSEvent) { super.mouseEntered(with: event); refreshGrowth() }
+    override func mouseExited(with event: NSEvent) { super.mouseExited(with: event); refreshGrowth() }
+    /// Tracking only follows the pointer, so a player that moved or faded under a still one checks again.
+    func refreshGrowth() {
+        var hovering = false
+        if growsOnHover, let window, window.isVisible, !isHiddenOrHasHiddenAncestor {
+            hovering = bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
+        }
+        guard hovering != grown else { return }
+        grown = hovering
+        PressScale.set(glyph, to: hovering ? Self.hoverScale : 1)
     }
     // A pinch over the floating player's button resizes the player.
     override func magnify(with event: NSEvent) { superview?.magnify(with: event) }

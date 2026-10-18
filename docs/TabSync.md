@@ -40,6 +40,15 @@ Each device keeps its current selection where possible and lazily loads restored
 background tabs. Remote updates wait while a mobile panel, Peek, summary or tab
 gesture is active.
 
+Remote closures never take away the active page on either device, including when
+the other device closes every tab. The same live page and its local session stay
+in place; background closures and inserts still apply. This uses the shared
+`SharedTabsReconciliation` policy. The retained page keeps its original identity
+and its closure tombstone, so it cannot reopen itself on the other device. A later
+sync can remove it once it is in the background; closing it locally still works.
+`-RiseTabSyncAudit` checks the iOS adapter with an isolated WebKit page, repeated
+close-all updates, session restoration and background removal after switching tabs.
+
 On Mac, dormant synced and restored tabs fill missing titles and favicons through
 three bounded HTTP metadata workers. They reuse the existing light/dark favicon
 cache, including declared CDN icons, and persist the results with the local session.

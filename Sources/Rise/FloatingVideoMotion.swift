@@ -126,3 +126,30 @@ struct FloatingVideoMotion {
         if (previous <= max && value > max) || (previous > max && value <= max) { value = max; velocity = 0 }
     }
 }
+
+/// A floating window grows a touch while two fingers move it: up with a light bounce as they
+/// land, and back to its size on release, settled before a flick reaches its corner.
+struct FloatingLift {
+    static let scale: CGFloat = 1.02
+    struct Spring { let response: Double, bounce: Double }
+    static let up = Spring(response: 0.32, bounce: 0.35), down = Spring(response: 0.26, bounce: 0.12)
+    private(set) var value: CGFloat = 1
+    private(set) var velocity: CGFloat = 0
+    private(set) var lifted = false
+    var isResting: Bool { value == (lifted ? Self.scale : 1) && velocity == 0 }
+
+    mutating func lift(_ lifted: Bool) { self.lifted = lifted }
+
+    /// Display-link driven, in small steps so the stiff spring stays exact at any frame rate.
+    mutating func step(elapsed: TimeInterval) {
+        let spring = lifted ? Self.up : Self.down, target = lifted ? Self.scale : 1
+        let stiffness = pow(2*Double.pi/spring.response, 2), damping = 4*Double.pi*(1-spring.bounce)/spring.response
+        var remaining = max(0, min(1.0/30, elapsed))
+        while remaining > 0 {
+            let dt = min(1.0/480, remaining); remaining -= dt
+            velocity += CGFloat(stiffness*Double(target-value)-damping*Double(velocity))*CGFloat(dt)
+            value += velocity*CGFloat(dt)
+        }
+        if abs(value-target) < 0.0004 && abs(velocity) < 0.01 { value = target; velocity = 0 }
+    }
+}

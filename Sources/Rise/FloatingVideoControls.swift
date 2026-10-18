@@ -27,6 +27,7 @@ import AppKit
         minimizeControl.action = { [weak self] in self?.minimizeAction?() }
         returnControl.action = { [weak self] in self?.returnAction?() }
         playButton.action = { [weak self] in self?.toggle() }
+        playButton.growsOnHover = true
         progress.seek = { [weak self] fraction, final in self?.seek?(fraction, final) }
         faded.forEach { $0.alphaValue = 0; addSubview($0) }
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
@@ -61,6 +62,7 @@ import AppKit
     func refreshHover() {
         guard let window, window.isVisible else { setControlsVisible(false); return }
         setControlsVisible(bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)))
+        playButton.refreshGrowth()
     }
     private func setControlsVisible(_ visible: Bool) {
         guard visible != controlsVisible else { return }

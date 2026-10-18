@@ -60,6 +60,7 @@ struct FloatingVideoScrollInput {
     private var localScrollMonitor: Any?
     private var globalScrollMonitor: Any?
     private var mouseLocation: NSPoint?
+    private var isLifted = false
     private var screenObserver: NSObjectProtocol?
     private(set) var isDismissing = false
     private var dismissalID = UUID()
@@ -239,7 +240,7 @@ struct FloatingVideoScrollInput {
 
     /// Scales the window about its center: springing up to full size with a
     /// light bounce, or quickly down as it leaves.
-    private func scale(to scale: CGFloat, from start: CGFloat? = nil) {
+    private func scale(to scale: CGFloat, from start: CGFloat? = nil, spring lift: FloatingLift.Spring? = nil) {
         guard let layer = contentView?.layer else { return }
         let center = CGPoint(x: layer.bounds.midX, y: layer.bounds.midY)
         func scaled(_ scale: CGFloat) -> CATransform3D {
@@ -254,7 +255,10 @@ struct FloatingVideoScrollInput {
         CATransaction.commit()
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, !CATransform3DEqualToTransform(current, target) else { return }
         let animation: CABasicAnimation
-        if scale == 1 {
+        if let lift {
+            let spring = CASpringAnimation(perceptualDuration: lift.response, bounce: lift.bounce)
+            spring.keyPath = "transform"; spring.duration = spring.settlingDuration; animation = spring
+        } else if scale == 1 {
             let spring = CASpringAnimation(keyPath: "transform")
             spring.mass = 1; spring.stiffness = 420; spring.damping = 2*0.62*sqrt(420)
             spring.duration = spring.settlingDuration; animation = spring
@@ -414,6 +418,7 @@ struct FloatingVideoScrollInput {
         if input.momentumPhase.isEmpty,
            phase.contains(.began) || phase.contains(.changed) && motion.phase != .dragging {
             beginDrag(at: input.timestamp)
+            lift(true)
         }
         if motion.phase == .dragging, input.momentumPhase.isEmpty,
            phase.contains(.began) || phase.contains(.changed) {
@@ -478,7 +483,15 @@ struct FloatingVideoScrollInput {
         }
     }
 
+    /// Grows a touch while two fingers move it, and settles back as it's let go.
+    private func lift(_ lifted: Bool) {
+        guard lifted != isLifted, !isDismissing || !lifted else { return }
+        isLifted = lifted
+        scale(to: lifted ? FloatingLift.scale : 1, spring: lifted ? FloatingLift.up : FloatingLift.down)
+    }
+
     private func endDrag(at timestamp: TimeInterval, cancelled: Bool) {
+        lift(false)
         motion.end(at: timestamp, cancelled: cancelled, reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
         lastTrackpadInput = nil; stopScrollCapture(); startClock()
     }
@@ -518,7 +531,11 @@ struct FloatingVideoScrollInput {
         if let localScrollMonitor { NSEvent.removeMonitor(localScrollMonitor); self.localScrollMonitor = nil }
         if let globalScrollMonitor { NSEvent.removeMonitor(globalScrollMonitor); self.globalScrollMonitor = nil }
     }
-    private func stopMotion() { stopScrollCapture(); displayLink?.invalidate(); displayLink = nil; lastFrameTime = nil }
+    private func stopMotion() {
+        // A dismissal scales the window itself; anything else lets a lifted window settle back.
+        if isDismissing { isLifted = false } else { lift(false) }
+        stopScrollCapture(); displayLink?.invalidate(); displayLink = nil; lastFrameTime = nil
+    }
     private func observeScreenChanges() {
         guard screenObserver == nil else { return }
         screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
