@@ -282,6 +282,9 @@ class FindInputCell: NSTextFieldCell {
     private var answeredText: String?
     /// Holds "Done" for a moment before swapping to the close button.
     private var doneTask: Task<Void, Never>?
+    /// While the bar is open, Option turns the arrows into skips past the matches on screen.
+    private var optionMonitor: Any?
+    private var showsSkips = false
 
     init() {
         previous = ChromeButton(symbol: "chevron.up", size: 11, title: "Previous match (⇧⌘G)", action: {})
@@ -306,8 +309,8 @@ class FindInputCell: NSTextFieldCell {
         // The placeholders are drawn separately so they can swap like the rest of the row.
         [findPlaceholder, askPlaceholder].forEach(placeholders.addSubview)
 
-        previous.actionBlock = { [weak self] in self?.run(.previous) }
-        next.actionBlock = { [weak self] in self?.run(.next) }
+        previous.actionBlock = { [weak self] in self?.run(NSEvent.modifierFlags.contains(.option) ? .skipPrevious : .previous) }
+        next.actionBlock = { [weak self] in self?.run(NSEvent.modifierFlags.contains(.option) ? .skipNext : .next) }
         close.actionBlock = { [weak self] in self?.dismiss?() }
         count.alignment = .right; count.lineBreakMode = .byClipping
         [count, previous, next, close].forEach(findControls.addSubview)
@@ -400,23 +403,43 @@ class FindInputCell: NSTextFieldCell {
             // Reopening keeps the last search, highlighted again, as browsers do.
             if !input.stringValue.isEmpty { run(.restart) }
         }
+        watchOption(true)
         window?.makeFirstResponder(input); input.selectText(nil)
+    }
+    private func watchOption(_ watching: Bool) {
+        if watching, optionMonitor == nil {
+            optionMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+                self?.showSkips(event.modifierFlags.contains(.option)); return event
+            }
+        } else if !watching, let monitor = optionMonitor { NSEvent.removeMonitor(monitor); optionMonitor = nil }
+        showSkips(watching && NSEvent.modifierFlags.contains(.option))
+    }
+    private func showSkips(_ skips: Bool) {
+        guard skips != showsSkips else { return }
+        showsSkips = skips
+        for (button, symbol, title) in [(previous, "chevron.up", skips ? "Previous match above the screen (⌥⇧⌘G)" : "Previous match (⇧⌘G)"),
+                                        (next, "chevron.down", skips ? "Next match below the screen (⌥⌘G)" : "Next match (⌘G)")] {
+            button.image = NSImage(systemSymbolName: skips ? symbol + ".2" : symbol, accessibilityDescription: title)?
+                .withSymbolConfiguration(.init(pointSize: 11, weight: .regular))
+            button.toolTip = title; button.setAccessibilityLabel(title)
+        }
     }
     /// Back in the window after its tab was away: at rest, with the page's matches repainted
     /// where they were rather than searched afresh.
     func reattached() {
         link?.invalidate(); link = nil; revealAllTokens(); settle()
+        if isPresented { watchOption(true) }
         if isPresented && mode == .find && !input.stringValue.isEmpty { run(.refresh) }
     }
     /// Closed without sliding, for a bar whose tab is no longer shown.
     func closeInstantly() {
-        isPresented = false; cancelAnswer(); slide.target = 0; settle()
+        isPresented = false; cancelAnswer(); slide.target = 0; settle(); watchOption(false)
     }
     /// The tab closed.
     func discard() { closeInstantly(); removeFromSuperview() }
     func hide() {
         guard isPresented else { return }
-        isPresented = false; cancelAnswer()
+        isPresented = false; cancelAnswer(); watchOption(false)
         slide.configure(response: FindMotion.outResponse, bounce: DownloadMotion.trayOutBounce)
         slide.target = 0; animate()
     }
@@ -515,10 +538,13 @@ class FindInputCell: NSTextFieldCell {
         case #selector(NSResponder.cancelOperation(_:)): handleEscape(); return true
         case #selector(NSResponder.insertTab(_:)), #selector(NSResponder.insertBacktab(_:)): toggleMode(); return true
         case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)):
-            // Enter steps forward through the matches and Shift-Enter back, wrapping at either end.
+            // Enter steps forward through the matches and Shift-Enter back, wrapping at either end;
+            // with Option, either skips past the matches on screen.
             if mode == .find {
+                let flags = NSApp.currentEvent?.modifierFlags ?? []
                 if input.stringValue.isEmpty || lastMatches?.count == 0 { offerToAsk() }
-                else { run(NSApp.currentEvent?.modifierFlags.contains(.shift) == true ? .previous : .next) }
+                else if flags.contains(.option) { run(flags.contains(.shift) ? .skipPrevious : .skipNext) }
+                else { run(flags.contains(.shift) ? .previous : .next) }
             } else { send() }
             return true
         default: return false
@@ -870,6 +896,9 @@ class FindInputCell: NSTextFieldCell {
     }
     @objc func findNext() { findAgain(.next) }
     @objc func findPrevious() { findAgain(.previous) }
+    /// ⌥⌘G and ⌥⇧⌘G pass every match on screen, to the first below or above it.
+    @objc func skipToNextMatch() { findAgain(.skipNext) }
+    @objc func skipToPreviousMatch() { findAgain(.skipPrevious) }
     /// ⌘G and ⇧⌘G reopen a closed bar on the last search; an open one steps through its matches.
     private func findAgain(_ direction: PageFind.Direction) {
         if findBar.isPresented { findBar.run(direction) } else if !findBar.input.stringValue.isEmpty { showFind() }

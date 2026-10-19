@@ -32,7 +32,8 @@ extension WKWebView: ScriptablePage {
 /// WebKit builds without `Highlight`. The model's passage highlights use the same styling.
 @MainActor enum PageFind {
     /// `refresh` repaints the current search without stepping or scrolling, unless the page changed.
-    enum Direction: String { case restart, next, previous, refresh }
+    /// `skipNext` and `skipPrevious` pass every match on screen, to the first one below it or above it.
+    enum Direction: String { case restart, next, previous, refresh, skipNext, skipPrevious }
     /// `index` is zero-based; `count` is nil when only the fallback could search.
     struct Matches: Equatable { let count: Int?, index: Int }
 
@@ -45,14 +46,17 @@ extension WKWebView: ScriptablePage {
     private static let nativelyMarked = NSHashTable<WKWebView>.weakObjects()
     #endif
 
-    static func find(_ query: String, direction: Direction, in page: any ScriptablePage) async -> Matches {
-        switch await call("return __riseFind.find(query, direction)", ["query": query, "direction": direction.rawValue], in: page) {
+    /// `shown` is the part of the page's viewport that isn't covered, top to bottom in CSS pixels;
+    /// nil means all of it.
+    static func find(_ query: String, direction: Direction, shown: ClosedRange<Double>? = nil, in page: any ScriptablePage) async -> Matches {
+        let view: [String: Double] = shown.map { ["top": $0.lowerBound, "bottom": $0.upperBound] } ?? [:]
+        switch await call("return __riseFind.find(query, direction, view)", ["query": query, "direction": direction.rawValue, "view": view], in: page) {
         case .success(let result as [String: Any]):
             if let count = result["count"] as? Int, let index = result["index"] as? Int { return Matches(count: count, index: index) }
             return Matches(count: nil, index: -1)
         case .success:
             // Only a page that can't draw highlights at all searches natively.
-            return await findNatively(query, backwards: direction == .previous, in: page)
+            return await findNatively(query, backwards: direction == .previous || direction == .skipPrevious, in: page)
         case .failure:
             // A page mid-navigation can reject the call. Falling back here would leave native
             // marks the in-page finder knows nothing about, so report the count as unknown instead.
@@ -201,13 +205,35 @@ extension WKWebView: ScriptablePage {
           return range;
         } };
       }
-      function reveal(range, smooth) {
+      // `align` 'top' or 'bottom' puts a skipped-to match a fifth of the way into what's shown,
+      // so the screen after it (or before it) is all new.
+      function reveal(range, smooth, align = 'center', shown = { top: 0, bottom: innerHeight }) {
         const rect = range.getBoundingClientRect(), margin = 60;
-        if (rect.top >= margin && rect.bottom <= innerHeight-margin && rect.left >= 0 && rect.right <= innerWidth) return;
+        if (align === 'center' && rect.top >= margin && rect.bottom <= innerHeight-margin && rect.left >= 0 && rect.right <= innerWidth) return;
         const element = range.startContainer.parentElement;
         if (element) element.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
-        const after = range.getBoundingClientRect();
-        scrollBy({ top: after.top+after.height/2-innerHeight/2, behavior: smooth ? 'smooth' : 'instant' });
+        const after = range.getBoundingClientRect(), room = (shown.bottom-shown.top)/5;
+        const top = align === 'top' ? after.top-shown.top-room : align === 'bottom' ? after.bottom-shown.bottom+room
+          : after.top+after.height/2-innerHeight/2;
+        scrollBy({ top, behavior: smooth ? 'smooth' : 'instant' });
+      }
+      // The next match in `direction`. Stepping goes match by match while the current one is on
+      // screen, and otherwise from what's on screen, as the page was scrolled away from it.
+      // Skipping passes every match on screen. Either wraps at the end of the page.
+      function step(direction, shown) {
+        const count = state.ranges.length, back = direction === 'previous' || direction === 'skipPrevious';
+        const skip = direction === 'skipNext' || direction === 'skipPrevious';
+        const sequential = { index: (state.index+(back ? -1 : 1)+count) % count, align: 'center' };
+        const current = state.ranges[state.index]?.getBoundingClientRect();
+        if (!skip && current && current.bottom > shown.top && current.top < shown.bottom) return sequential;
+        // Matches with no box, such as in a collapsed section, aren't anywhere on the page.
+        const placed = state.ranges.map((range, index) => ({ index, rect: range.getBoundingClientRect() }))
+          .filter(({ rect }) => rect.width || rect.height);
+        if (!placed.length) return sequential;
+        const ahead = placed.filter(({ rect }) => back ? rect.top < (skip ? shown.top : shown.bottom) : rect.bottom > (skip ? shown.bottom : shown.top));
+        const pick = (ahead.length ? ahead : placed).reduce((best, match) =>
+          back ? (match.rect.bottom >= best.rect.bottom ? match : best) : (match.rect.top < best.rect.top ? match : best));
+        return { index: pick.index, align: skip ? (back ? 'bottom' : 'top') : 'center' };
       }
       function paint() {
         const { ranges, index } = state, others = mark('rise-find'), current = mark('rise-find-current');
@@ -232,18 +258,19 @@ extension WKWebView: ScriptablePage {
       const stale = () => state.ranges.some(r => !r.startContainer.isConnected || !r.endContainer.isConnected);
       return {
         sourceText() { return collect().context },
-        find(query, direction) {
+        find(query, direction, view) {
           if (!supported) return null;
           style();
           const reveals = direction !== 'refresh';
+          const shown = view && view.bottom > view.top ? view : { top: 0, bottom: innerHeight };
+          let align = 'center';
           if (direction === 'restart' || query !== state.query || stale()) {
             search(query);
           } else if (state.ranges.length && direction !== 'refresh') {
-            const count = state.ranges.length;
-            state.index = (state.index+(direction === 'previous' ? -1 : 1)+count) % count;
+            ({ index: state.index, align } = step(direction, shown));
           }
           paint();
-          if (state.index >= 0 && reveals) reveal(state.ranges[state.index], false);
+          if (state.index >= 0 && reveals) reveal(state.ranges[state.index], false, align, shown);
           return { count: state.ranges.length, index: state.index };
         },
         clear(select) {

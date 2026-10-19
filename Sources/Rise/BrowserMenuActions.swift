@@ -79,7 +79,7 @@ extension BrowserController: NSMenuItemValidation {
         case #selector(showPageSource): return ["http", "https", "file"].contains(tab?.url?.scheme ?? "")
         case #selector(javascriptConsole): return tab?.page is ChromiumPage
         case #selector(showSettings), #selector(manageExtensions): return ChromiumEngine.isRunning
-        case #selector(showFind), #selector(findNext), #selector(findPrevious): return findTab?.url != nil
+        case #selector(showFind), #selector(findNext), #selector(findPrevious), #selector(skipToNextMatch), #selector(skipToPreviousMatch): return findTab?.url != nil
         case #selector(reload), #selector(hardReload),
              #selector(peekCurrentPage), #selector(savePageScreenshot), #selector(capturePageImage), #selector(capturePagePDF),
              #selector(showSiteInformation): return hasPage

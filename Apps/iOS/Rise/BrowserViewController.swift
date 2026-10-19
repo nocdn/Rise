@@ -1183,7 +1183,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// keyboard, into the middle of what shows of the page.
     private func find(_ query: String, direction: PageFind.Direction) async -> PageFind.Matches {
         let page = webView
-        let matches = await PageFind.find(query, direction: direction, in: page)
+        // What shows of the page above Find's panel, so matches under it don't count as seen.
+        let scale: CGFloat = max(page.scrollView.zoomScale, 0.01)
+        let uncoveredTop: CGFloat = max(0, view.convert(CGPoint(x: 0, y: view.safeAreaInsets.top), to: page).y)
+        let uncoveredBottom: CGFloat = isPanelOpen ? view.convert(CGPoint(x: 0, y: bottomBar.frame.minY), to: page).y : page.bounds.height
+        let shown: ClosedRange<Double>? = uncoveredBottom > uncoveredTop ? Double(uncoveredTop/scale)...Double(uncoveredBottom/scale) : nil
+        let matches = await PageFind.find(query, direction: direction, shown: shown, in: page)
         guard matches.index >= 0, direction != .refresh, page === webView else { return matches }
         let script = """
         const current = CSS.highlights.get('rise-find-current');

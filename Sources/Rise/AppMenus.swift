@@ -60,7 +60,9 @@ import AppKit
         edit.addItem(.separator())
         item(edit, "Find on Page…", #selector(BrowserController.showFind), "f", target: browser)
         item(edit, "Find Next", #selector(BrowserController.findNext), "g", target: browser)
+        item(edit, "Skip to Next Match Below", #selector(BrowserController.skipToNextMatch), "g", modifiers: [.command, .option], target: browser).isAlternate = true
         item(edit, "Find Previous", #selector(BrowserController.findPrevious), "G", modifiers: [.command, .shift], target: browser)
+        item(edit, "Skip to Previous Match Above", #selector(BrowserController.skipToPreviousMatch), "G", modifiers: [.command, .option, .shift], target: browser).isAlternate = true
 
         let view = addMenu("View")
         item(view, "Hide Sidebar", #selector(BrowserController.toggleSidebar), "b", target: browser)

@@ -747,6 +747,22 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         check(found == PageFind.Matches(count: 3, index: 0), "Find counts every match: \(found)")
         let next = await PageFind.find("apple", direction: .next, in: text.page)
         check(next.index == 1, "Find steps to the next match: \(next)")
+        // Skipping passes every match on screen; stepping after scrolling away starts from what's on screen.
+        func rows(_ count: Int) -> String { String(repeating: "<div style='line-height:16px'>apple</div>", count: count) }
+        let gap = "<div style='height:3000px'></div>"
+        let long = await open(try page("skips", rows(20) + gap + rows(20) + gap + rows(5) + gap))
+        browser.showFind(); browser.findBar.input.stringValue = "apple"; browser.findBar.run(.restart)
+        _ = await waitUntil("Find counts the long page's matches") { browser.findBar.count.stringValue == "1/45" }
+        browser.skipToNextMatch()
+        _ = await waitUntil("⌥⌘G skips the matches on screen, to the first below it") { browser.findBar.count.stringValue == "21/45" }
+        browser.skipToNextMatch()
+        _ = await waitUntil("And again, to the next cluster (\(browser.findBar.count.stringValue))") { browser.findBar.count.stringValue == "41/45" }
+        browser.skipToPreviousMatch()
+        _ = await waitUntil("⌥⇧⌘G goes back to the last match above the screen (\(browser.findBar.count.stringValue))") { browser.findBar.count.stringValue == "40/45" }
+        _ = await value("scrollTo(0, 0)", in: long.page)
+        browser.findNext()
+        _ = await waitUntil("After scrolling away, Find Next starts from what's on screen") { browser.findBar.count.stringValue == "1/45" }
+        browser.hideFind(); browser.closeTab(long.id)
 
         // Downloads.
         let downloads = await open(try page("downloads", "<a id=d href=clip.mp4 download=clip-copy.mp4>Save</a>"))

@@ -116,6 +116,16 @@ final class FindPanel: UIView, UITextFieldDelegate {
         field.rightViewMode = .always
         previousButton.addAction(UIAction { [weak self] _ in self?.search(.previous) }, for: .primaryActionTriggered)
         nextButton.addAction(UIAction { [weak self] _ in self?.search(.next) }, for: .primaryActionTriggered)
+        // Holding an arrow for a moment skips past every match on screen; a tap steps one match.
+        for (button, skip, name) in [(previousButton, PageFind.Direction.skipPrevious, "Skip to Previous Match Above"),
+                                     (nextButton, PageFind.Direction.skipNext, "Skip to Next Match Below")] {
+            let hold = UILongPressGestureRecognizer(target: self, action: #selector(holdArrow(_:)))
+            hold.minimumPressDuration = 0.35
+            button.addGestureRecognizer(hold)
+            button.accessibilityCustomActions = [UIAccessibilityCustomAction(name: name) { [weak self] _ in
+                self?.skip(skip); return true
+            }]
+        }
         modeButton.layer.cornerCurve = .continuous
         modeButton.layer.cornerRadius = (SearchPanel.cornerRadius*30/SearchPanel.fieldHeight).rounded()
         modeButton.shrinksWhenPressed(to: BottomBar.pressedScale, filled: true, restingFill: Self.modeButtonFill)
@@ -252,6 +262,16 @@ final class FindPanel: UIView, UITextFieldDelegate {
             matchedQuery = query
             show(query.isEmpty ? nil : matches, stepping: direction != .restart)
         }
+    }
+
+    @objc private func holdArrow(_ hold: UILongPressGestureRecognizer) {
+        guard hold.state == .began, (count.total ?? 0) > 0 else { return }
+        UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+        skip(hold.view === previousButton ? .skipPrevious : .skipNext)
+    }
+    private func skip(_ direction: PageFind.Direction) {
+        guard (count.total ?? 0) > 0 else { return }
+        search(direction)
     }
 
     private func show(_ matches: PageFind.Matches?, stepping: Bool = false) {

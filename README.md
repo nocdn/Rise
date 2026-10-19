@@ -67,6 +67,7 @@ Run `python3 scripts/test-passkey-signing.py` to verify the profile eligibility 
 | ⌃D | Toggle developer mode |
 | ⇧⌘P | Peek current page |
 | ⌘F / ⌘G / ⇧⌘G | Find / next / previous match |
+| ⌥⌘G / ⌥⇧⌘G | Skip the matches on screen, to the first below / above it (also Option with the arrows, Option-Return and Option-Shift-Return; on iPhone, hold an arrow) |
 | ⌘+ / ⌘− / ⌘0 | Zoom in / out / reset |
 | Escape | Dismiss address popup, Find, or Peek |
 

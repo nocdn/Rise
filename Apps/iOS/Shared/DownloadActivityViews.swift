@@ -1,3 +1,4 @@
+import AppIntents
 import SwiftUI
 
 /// One compact row keeps the expanded island at the system's smallest useful height.
