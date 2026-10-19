@@ -20,7 +20,11 @@ import RiseCore
         for tab in tabs {
             // The engine's full-screen window holds the page until it hands it back.
             if pictureInPicture.owns(tab) || tab.isInNativeFullscreen { continue }
-            if !visible.contains(tab.id) { tab.page.view.removeFromSuperview(); continue }
+            if !visible.contains(tab.id) {
+                if tab.page.view.superview !== switcherPictureHost { tab.page.view.removeFromSuperview() }
+                continue
+            }
+            releaseBackgroundPicturePage(tab)
             if tab.needsBlockingReload, tab.page.url != nil { tab.needsBlockingReload = false; tab.page.reloadIgnoringCache() }
             if tab.page.url == nil, !tab.hasAttemptedNavigation, !tab.page.isLoading, let url = tab.requestedURL { tab.load(url) }
             if tab.page.view.superview !== pageClip { pageClip.addSubview(tab.page.view, positioned: .below, relativeTo: developerBar) }

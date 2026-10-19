@@ -1,6 +1,17 @@
 import AppKit
 
 @MainActor extension BrowserController {
+    static let tabSwitcherLimitKey = "Rise.TabSwitcherLimit"
+    static let tabSwitcherLimits = 2...15
+    /// The most tabs Control-Tab goes through, the current one first: 5 unless set in rise://settings.
+    var tabSwitcherLimit: Int {
+        let saved = preferences.integer(forKey: Self.tabSwitcherLimitKey)
+        return saved == 0 ? 5 : min(Self.tabSwitcherLimits.upperBound, max(Self.tabSwitcherLimits.lowerBound, saved))
+    }
+    func setTabSwitcherLimit(_ limit: Int) {
+        preferences.set(min(Self.tabSwitcherLimits.upperBound, max(Self.tabSwitcherLimits.lowerBound, limit)), forKey: Self.tabSwitcherLimitKey)
+        scheduleSwitcherPictures()
+    }
     var isSwitchingTabs: Bool { !tabSwitchOrder.isEmpty }
     var tabSwitchCandidate: UUID? { tabSwitchOrder.indices.contains(tabSwitchIndex) ? tabSwitchOrder[tabSwitchIndex] : nil }
     /// Sidebar order, not MRU order. ⌘9 means the ninth tab even when more are open.
@@ -45,12 +56,7 @@ import AppKit
         guard tabs.count > 1 else { return }
         if !isSwitchingTabs {
             hidePalette(); hideLinkStatus()
-            let ids = tabs.map(\.id)
-            tabSwitchOrder = recentTabIDs.filter { ids.contains($0) }
-            tabSwitchOrder += ids.filter { !tabSwitchOrder.contains($0) }
-            if let selectedID {
-                tabSwitchOrder.removeAll { $0 == selectedID }; tabSwitchOrder.insert(selectedID, at: 0)
-            }
+            tabSwitchOrder = switcherTabIDs
             tabSwitchIndex = 0
             tabSwitchGeneration += 1
             let generation = tabSwitchGeneration
@@ -59,9 +65,18 @@ import AppKit
                 self.revealTabSwitcher()
             }
             tabSwitchWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: work)
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.tabSwitcherDelay, execute: work)
         }
         tabSwitchIndex = (tabSwitchIndex + direction + tabSwitchOrder.count) % tabSwitchOrder.count
+        refreshTabSwitcher()
+    }
+    /// How long Control-Tab waits before showing the switcher: a quick press and release switches
+    /// without it.
+    static let tabSwitcherDelay: TimeInterval = 0.08
+    /// The pointer moving over a card picks it, as Tab does; letting go of Control switches to it.
+    func pickTabSwitchCard(_ id: UUID) {
+        guard let index = tabSwitchOrder.firstIndex(of: id), index != tabSwitchIndex else { return }
+        tabSwitchIndex = index
         refreshTabSwitcher()
     }
     private func revealTabSwitcher() {
@@ -72,6 +87,7 @@ import AppKit
         tabSwitcher.isHidden = false
         root.addSubview(tabSwitcher, positioned: .above, relativeTo: tabSwitchBackdrop)
         refreshTabSwitcher(); selectedTab?.captureThumbnail()
+        tabSwitcher.noteShown()
         window?.makeFirstResponder(tabSwitcher)
     }
     func refreshTabSwitcher() {

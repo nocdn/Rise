@@ -186,6 +186,9 @@ import RiseCore
     var tabSwitchIndex = 0
     var tabSwitchWork: DispatchWorkItem?
     var tabSwitchGeneration = 0
+    let switcherPictureHost = PeekStandbyView()
+    var switcherPictureWork: DispatchWorkItem?
+    var switcherPictureTask: Task<Void, Never>?
     var pendingMiddleTabID: UUID?
 
     init(sessionURL: URL? = nil, restore: Bool = true, preferences: UserDefaults = .standard, searchSuggestions: GoogleSearchSuggestions? = nil) {
@@ -243,6 +246,7 @@ import RiseCore
             self?.tabHoverPointerMoved()
         }
         tabSwitcher.choose = { [weak self] id in self?.commitTabSwitch(id) }
+        tabSwitcher.hover = { [weak self] id in self?.pickTabSwitchCard(id) }
         tabSwitchBackdrop.dismiss = { [weak self] in self?.cancelTabSwitch() }
         tabSwitchBackdrop.isHidden = true
         linkPreloader.loadPage = { url, page, done in
@@ -678,7 +682,7 @@ import RiseCore
         (toolbarButtons[3] as? ReloadButton)?.setMode(selectedTab?.isLoading == true ? .stop : .reload)
         developerAddress.updateURL(selectedTab?.url?.absoluteString ?? "")
         errorSurface.isHidden = errorWebView == nil || errorWebView !== selectedTab?.page.view
-        layoutChrome(); refreshTabSwitcher(); scheduleSave()
+        layoutChrome(); refreshTabSwitcher(); scheduleSave(); scheduleSwitcherPictures()
         if !isApplyingSharedTabs { tabSync?.capture(sharedTabsSnapshot) }
         if hasPendingSharedTabs, canApplySharedTabs { applyPendingSharedTabs() }
     }

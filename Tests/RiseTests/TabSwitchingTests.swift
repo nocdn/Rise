@@ -92,20 +92,46 @@ final class TabSwitchingTests: XCTestCase {
         XCTAssertTrue(browser.tabSwitcher.isHidden)
         XCTAssertFalse(browser.isSwitchingTabs)
     }
-    @MainActor func testManyTabsScrollHighlightedCardIntoViewWithSidebarClosed() async throws {
-        let browser = makeBrowser(); defer { clean(browser) }
-        for _ in 0..<10 { browser.addTab() }
+    @MainActor func testTheSwitcherShowsAtMostItsLimitInRowsOfFiveAllInSightAndThePointerPicks() async throws {
+        _ = NSApplication.shared
+        let suite = "Rise.TabSwitchingTests.\(UUID().uuidString)"
+        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"),
+                                        restore: false, preferences: UserDefaults(suiteName: suite)!)
+        defer { clean(browser); UserDefaults.standard.removePersistentDomain(forName: suite) }
+        for _ in 0..<13 { browser.addTab() }
         browser.toggleSidebar()
-        browser.advanceTabSwitch(-1)
-        try await Task.sleep(for: .milliseconds(160))
-        XCTAssertFalse(browser.tabSwitcher.isHidden)
-        XCTAssertEqual(browser.tabSwitcher.cards.count, 10)
-        let selected = try XCTUnwrap(browser.tabSwitcher.cards.first { $0.tabID == browser.tabSwitchCandidate })
-        XCTAssertTrue(browser.tabSwitcher.scroll.contentView.bounds.contains(selected.frame))
-        let target = selected.tabID
-        selected.performClick(nil)
-        XCTAssertEqual(browser.selectedID, target)
+        func open() async throws {
+            browser.advanceTabSwitch(1)
+            try await Task.sleep(for: .milliseconds(160))
+            XCTAssertFalse(browser.tabSwitcher.isHidden)
+        }
+        try await open()
+        XCTAssertEqual(browser.tabSwitcher.cards.count, 5, "Five unless set otherwise")
+        XCTAssertEqual(Set(browser.tabSwitcher.cards.map(\.frame.minY)).count, 1, "In one row")
+        browser.cancelTabSwitch()
+
+        browser.setTabSwitcherLimit(12)
+        browser.window?.setContentSize(NSSize(width: 900, height: 600))
+        try await open()
+        let cards = browser.tabSwitcher.cards, switcher = browser.tabSwitcher
+        XCTAssertEqual(cards.count, 12)
+        XCTAssertEqual(Dictionary(grouping: cards, by: \.frame.minY).values.map(\.count).sorted(), [2, 5, 5], "Five to a row")
+        XCTAssertTrue(cards.allSatisfy { switcher.bounds.contains($0.convert($0.bounds, to: switcher)) }, "No card out of sight")
+        XCTAssertTrue(browser.root.bounds.contains(switcher.frame))
+        XCTAssertEqual(switcher.layer?.cornerRadius, 27)
+        XCTAssertEqual(cards[0].layer?.cornerRadius, 15, "Concentric with the switcher's corners, inside its padding")
+
+        let hovered = cards[7]
+        browser.pickTabSwitchCard(hovered.tabID)
+        XCTAssertEqual(browser.tabSwitchCandidate, hovered.tabID, "The pointer picks a card as Tab does")
+        hovered.performClick(nil)
+        XCTAssertEqual(browser.selectedID, hovered.tabID)
         XCTAssertFalse(browser.sidebarVisible)
         XCTAssertTrue(browser.tabSwitcher.isHidden)
+
+        browser.setTabSwitcherLimit(40)
+        XCTAssertEqual(browser.tabSwitcherLimit, 15, "At most 15")
+        browser.setTabSwitcherLimit(1)
+        XCTAssertEqual(browser.tabSwitcherLimit, 2, "At least 2")
     }
 }

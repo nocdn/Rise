@@ -27,6 +27,8 @@ import RiseChromium
             ]
         case "tabs":
             return [
+                select("tabSwitcherLimit", "Tabs in the Control-Tab switcher", "The most it shows, the current tab first, five to a row",
+                       "\(tabSwitcherLimit)", Self.tabSwitcherLimits.map { ("\($0)", "\($0)") }),
                 select("gmailCategory", "Gmail preview category", "Which emails the Gmail tab's hover card shows", gmailCategory.rawValue,
                        GmailCategory.allCases.map { ($0.rawValue, $0.title) }),
                 toggle("hideNotificationCounts", "Hide notification counts", "Leave counts such as (3) out of tab titles and history", hidesNotificationCounts),
@@ -83,6 +85,7 @@ import RiseChromium
         case "theme": chooseTheme(text == "automatic" ? nil : RiseTheme(rawValue: text) ?? .neutral)
         case "livePeekResize": setLivePeekResize(on)
         case "animateDevTools": setAnimatesDevTools(on)
+        case "tabSwitcherLimit": if let limit = Int(text) { setTabSwitcherLimit(limit) }
         case "gmailCategory": if let category = GmailCategory(rawValue: text) { selectGmailCategory(category) }
         case "hideNotificationCounts": setHidesNotificationCounts(on)
         case "repositorySubtitle": setShowsRepositorySubtitle(on)

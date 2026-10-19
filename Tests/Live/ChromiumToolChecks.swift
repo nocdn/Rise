@@ -184,6 +184,26 @@ final class ServiceStub: URLProtocol {
             browser.commitTabSwitch()
             check(browser.selectedID == launch.id && launch.page.view.window != nil, "And switches to the last tab used")
 
+            // Tabs never shown get their pictures in the background, out of sight.
+            let unseen = (1...2).map { browser.addTab(url: URL(string: local + "/words.html?unseen=\($0)")!, background: true) }
+            let backgroundPictured = await waitUntil(20) { unseen.allSatisfy { $0.thumbnail != nil } }
+            let putBack = await waitUntil(3) { unseen.allSatisfy { $0.page.view.superview == nil } }
+            // The page drew: its picture isn't one flat colour.
+            func colours(_ image: NSImage?) -> Int {
+                guard let cg = image?.cgImage(forProposedRect: nil, context: nil, hints: nil),
+                      let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 32, pixelsHigh: 32, bitsPerSample: 8, samplesPerPixel: 4,
+                                                    hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return 0 }
+                NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+                NSGraphicsContext.current?.cgContext.draw(cg, in: CGRect(x: 0, y: 0, width: 32, height: 32)); NSGraphicsContext.restoreGraphicsState()
+                return Set((0..<32*32).map { bitmap.colorAt(x: $0%32, y: $0/32)?.description ?? "" }).count
+            }
+            check(backgroundPictured && putBack && browser.selectedID == launch.id && unseen.allSatisfy { colours($0.thumbnail) > 1 },
+                  "Tabs opened in the background get switcher pictures without being shown (\(unseen.filter { $0.thumbnail != nil }.count) of 2)")
+            browser.select(unseen[0].id)
+            check(unseen[0].page.view.window != nil && !unseen[0].heldSinceBackgroundPicture && !unseen[0].page.isCovered,
+                  "And show normally once picked")
+            browser.select(launch.id)
+
             // Smart Rename, for now, shimmers the tab's title.
             browser.smartRename(launch.id)
             check(browser.sidebar.rows[launch.id]?.titleShimmer.isRunning == true, "Smart Rename shimmers the tab's title")

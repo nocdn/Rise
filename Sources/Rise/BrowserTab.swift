@@ -39,6 +39,11 @@ import RiseCore
     var iconOrigin: String?
     var iconTask: URLSessionDataTask?
     var thumbnail: NSImage?
+    /// The address a background picture for the tab switcher was last tried at, so a page that
+    /// can't be pictured isn't tried again until it goes somewhere else.
+    var backgroundPictureURL: URL?
+    /// The page was loaded out of sight for its picture: muted and paused until it's first shown.
+    var heldSinceBackgroundPicture = false
     /// The saved back/forward history, restored when the tab first loads its saved page.
     private var restoredState: (url: String, data: Data)?
     static let maximumSessionState = 2_000_000
@@ -90,6 +95,7 @@ import RiseCore
         swap(&favicon, &other.favicon); swap(&darkFavicon, &other.darkFavicon); swap(&iconOrigin, &other.iconOrigin)
         swap(&thumbnail, &other.thumbnail); swap(&hasAttemptedNavigation, &other.hasAttemptedNavigation)
         swap(&isAudioMuted, &other.isAudioMuted)
+        swap(&backgroundPictureURL, &other.backgroundPictureURL); swap(&heldSinceBackgroundPicture, &other.heldSinceBackgroundPicture)
         restoredState = nil; other.restoredState = nil
         // An icon still on its way belongs to the page that's gone; fetch the new page's again.
         for tab in [self, other] {
