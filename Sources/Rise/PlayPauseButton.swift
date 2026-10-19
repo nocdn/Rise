@@ -10,6 +10,10 @@ import AppKit
     var pointSize: CGFloat? { didSet { needsLayout = true } }
     var weight: NSFont.Weight = .bold { didSet { renderedKey = nil; needsLayout = true } }
     var color: NSColor = .white { didSet { if color != oldValue { renderedKey = nil; needsLayout = true } } }
+    /// Pause bars drawn to measure instead of the symbol's, in points: each bar's size and corner
+    /// radius, and how far apart their middles are.
+    struct PauseBars { var width: CGFloat, height: CGFloat, radius: CGFloat, spacing: CGFloat }
+    var pauseBars: PauseBars? { didSet { renderedKey = nil; needsLayout = true } }
     /// Holds both symbols. It doesn't shrink while pressed; with `growsOnHover`, it grows slightly under the pointer.
     private let glyph = CALayer()
     private let playLayer = CALayer()
@@ -42,11 +46,13 @@ import AppKit
             if renderedKey?.size != size || renderedKey?.scale != scale,
                let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(
                    NSImage.SymbolConfiguration(pointSize: size, weight: weight).applying(.init(paletteColors: [color]))) {
-                let rasterScale = scale*2
-                let imageSize = NSSize(width: image.size.width, height: image.size.height*(symbol == "pause.fill" ? 1.06 : 1))
+                let rasterScale = scale*2, pause = symbol == "pause.fill"
+                let bars = pause ? pauseBars : nil
+                let imageSize = NSSize(width: image.size.width, height: max(image.size.height*(pause ? 1.06 : 1), bars?.height ?? 0))
                 symbolLayer.contentsScale = rasterScale
                 effectiveAppearance.performAsCurrentDrawingAppearance {
-                    symbolLayer.contents = Self.rasterize(image, size: imageSize, scale: rasterScale, pause: symbol == "pause.fill")
+                    symbolLayer.contents = bars.map { Self.rasterize($0, color: color, size: imageSize, scale: rasterScale) }
+                        ?? Self.rasterize(image, size: imageSize, scale: rasterScale, pause: pause)
                 }
                 symbolLayer.bounds = CGRect(origin: .zero, size: imageSize)
             }
@@ -75,6 +81,21 @@ import AppKit
                 context.restoreGState()
             }
         } else { image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1) }
+        return context.makeImage()
+    }
+    private static func rasterize(_ bars: PauseBars, color: NSColor, size: NSSize, scale: CGFloat) -> CGImage? {
+        guard let context = CGContext(data: nil, width: Int(ceil(size.width*scale)), height: Int(ceil(size.height*scale)),
+                                      bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.scaleBy(x: scale, y: scale)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        color.setFill()
+        for middle in [size.width/2-bars.spacing/2, size.width/2+bars.spacing/2] {
+            let bar = NSRect(x: middle-bars.width/2, y: (size.height-bars.height)/2, width: bars.width, height: bars.height)
+            NSBezierPath(roundedRect: bar, xRadius: bars.radius, yRadius: bars.radius).fill()
+        }
         return context.makeImage()
     }
     override func viewDidChangeBackingProperties() { super.viewDidChangeBackingProperties(); needsLayout = true }

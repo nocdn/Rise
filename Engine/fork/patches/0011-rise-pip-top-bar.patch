@@ -1,0 +1,656 @@
+diff --git a/chrome/browser/ui/views/frame/BUILD.gn b/chrome/browser/ui/views/frame/BUILD.gn
+index d1973034ee..30be51b744 100644
+--- a/chrome/browser/ui/views/frame/BUILD.gn
++++ b/chrome/browser/ui/views/frame/BUILD.gn
+@@ -31,7 +31,14 @@ source_set("shadow") {
+ 
+ source_set("picture_in_picture_browser_frame_view") {
+   public = [ "picture_in_picture_browser_frame_view.h" ]
+-  sources = [ "picture_in_picture_browser_frame_view.cc" ]
++  sources = [
++    "picture_in_picture_browser_frame_view.cc",
++    "rise_pip_top_bar.cc",
++    "rise_pip_top_bar.h",
++  ]
++  if (is_mac) {
++    sources += [ "rise_pip_top_bar_mac.mm" ]
++  }
+   public_deps = [
+     ":browser_frame_view",
+     ":browser_widget",
+@@ -67,6 +74,8 @@ source_set("picture_in_picture_browser_frame_view") {
+     "//components/webapps/isolated_web_apps:scheme",
+     "//content/public/common",
+     "//media",
++    "//skia",
++    "//ui/color",
+     "//ui/compositor",
+     "//ui/display",
+     "//ui/events",
+diff --git a/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.cc b/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.cc
+index 59bdfa1e11..a2e22977e7 100644
+--- a/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.cc
++++ b/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.cc
+@@ -22,6 +22,7 @@
+ #include "chrome/browser/ui/layout_constants.h"
+ #include "chrome/browser/ui/views/chrome_typography.h"
+ #include "chrome/browser/ui/views/frame/browser_view.h"
++#include "chrome/browser/ui/views/frame/rise_pip_top_bar.h"
+ #include "chrome/browser/ui/views/frame/top_container_view.h"
+ #include "chrome/browser/ui/views/overlay/overlay_window_image_button.h"
+ #include "chrome/browser/ui/views/page_info/page_info_bubble_specification.h"
+@@ -78,42 +79,17 @@
+ namespace {
+ 
+ constexpr int kWindowIconImageSize = 16;
+-constexpr int kBackToTabImageSize = 16;
+ constexpr int kContentSettingIconSize = 16;
+ 
+-// The height of the controls bar at the top of the window.
+-constexpr int kTopControlsHeight = 34;
++// The height of the controls bar at the top of the window: Rise's, a little
++// taller than Chrome's 34 to fit its buttons.
++constexpr int kTopControlsHeight = rise_pip::kTopBarHeight;
+ // The vertical margin for IconLabelBubbleView to have 24px height.
+ constexpr int KIconViewVerticalMargin = 5;
+ 
+ constexpr int kResizeBorder = 10;
+ constexpr int kResizeAreaCornerSize = 16;
+ 
+-class BackToTabButton : public OverlayWindowImageButton {
+-  METADATA_HEADER(BackToTabButton, OverlayWindowImageButton)
+-
+- public:
+-  explicit BackToTabButton(PressedCallback callback)
+-      : OverlayWindowImageButton(std::move(callback)) {
+-    auto* icon = &(features::IsRoundedIconsEnabled()
+-                       ? vector_icons::kBackToTabIcon
+-                       : vector_icons::kBackToTabChromeRefreshOldIcon);
+-    SetImageModel(views::Button::STATE_NORMAL,
+-                  ui::ImageModel::FromVectorIcon(
+-                      *icon, kColorPipWindowForeground, kBackToTabImageSize));
+-
+-    const std::u16string back_to_tab_button_label = l10n_util::GetStringUTF16(
+-        IDS_PICTURE_IN_PICTURE_BACK_TO_TAB_CONTROL_TEXT);
+-    SetTooltipText(back_to_tab_button_label);
+-  }
+-  BackToTabButton(const BackToTabButton&) = delete;
+-  BackToTabButton& operator=(const BackToTabButton&) = delete;
+-  ~BackToTabButton() override = default;
+-};
+-
+-BEGIN_METADATA(BackToTabButton)
+-END_METADATA
+-
+ // Helper class for observing mouse and key events from native window.
+ class WindowEventObserver : public ui::EventObserver {
+  public:
+@@ -213,14 +189,12 @@ PictureInPictureBrowserFrameView::PictureInPictureBrowserFrameView(
+   // Creates the window icon.
+   const gfx::FontList& font_list = views::TypographyProvider::Get().GetFont(
+       CONTEXT_OMNIBOX_PRIMARY, views::style::STYLE_PRIMARY);
++  // Rise's: in the window's top-left corner, as far from its left edge as from
++  // its top, and 4px from the origin.
+   location_icon_view_ = top_bar_container_view_->AddChildView(
+-      std::make_unique<LocationIconView>(font_list, this, this));
+-  // The PageInfo icon should be 8px from the left of the window and 4px from
+-  // the right of the origin. Meanwhile, it should have vertical margins set to
+-  // keep the hover-over highlight circular.
++      std::make_unique<rise_pip::LocationButton>(font_list, this, this));
+   location_icon_view_->SetProperty(
+-      views::kMarginsKey, gfx::Insets::TLBR(KIconViewVerticalMargin, 8,
+-                                            KIconViewVerticalMargin, 4));
++      views::kMarginsKey, gfx::Insets::TLBR(0, rise_pip::kEdgeInset, 0, 4));
+ 
+   // For file URLs, we want to elide the tail, since the file name and/or query
+   // part of the file URL can be made to look like an origin for spoofing. For
+@@ -303,25 +277,38 @@ PictureInPictureBrowserFrameView::PictureInPictureBrowserFrameView(
+   const std::optional<blink::mojom::PictureInPictureWindowOptions> pip_options =
+       browser_view->GetDocumentPictureInPictureOptions();
+   if (!pip_options.has_value() || !pip_options->disallow_return_to_opener) {
++    // Rise's, with the floating video's arrows.
+     back_to_tab_button_ = button_container_view_->AddChildView(
+-        std::make_unique<BackToTabButton>(base::BindRepeating(
+-            [](PictureInPictureBrowserFrameView* frame_view) {
+-              DefinitelyExitPictureInPicture(
+-                  *frame_view, PictureInPictureWindowManager::UiBehavior::
+-                                   kCloseWindowAndFocusOpener);
+-            },
+-            base::Unretained(this))));
++        std::make_unique<rise_pip::GlyphButton>(
++            rise_pip::GlyphButton::Glyph::kArrows,
++            rise_pip::ButtonCorners(/*top_left=*/false, /*top_right=*/false),
++            l10n_util::GetStringUTF16(
++                IDS_PICTURE_IN_PICTURE_BACK_TO_TAB_CONTROL_TEXT),
++            base::BindRepeating(
++                [](PictureInPictureBrowserFrameView* frame_view) {
++                  DefinitelyExitPictureInPicture(
++                      *frame_view, PictureInPictureWindowManager::UiBehavior::
++                                       kCloseWindowAndFocusOpener);
++                },
++                base::Unretained(this))));
++    back_to_tab_button_->SetProperty(views::kMarginsKey,
++                                     gfx::Insets::TLBR(0, 0, 0, 2));
+   }
+ 
+   // Creates the close button.
++  // Rise's cross, in the window's top-right corner.
+   close_image_button_ = button_container_view_->AddChildView(
+-      std::make_unique<CloseImageButton>(base::BindRepeating(
+-          [](PictureInPictureBrowserFrameView* frame_view) {
+-            DefinitelyExitPictureInPicture(
+-                *frame_view,
+-                PictureInPictureWindowManager::UiBehavior::kCloseWindowOnly);
+-          },
+-          base::Unretained(this))));
++      std::make_unique<rise_pip::GlyphButton>(
++          rise_pip::GlyphButton::Glyph::kCross,
++          rise_pip::ButtonCorners(/*top_left=*/false, /*top_right=*/true),
++          l10n_util::GetStringUTF16(IDS_PICTURE_IN_PICTURE_CLOSE_CONTROL_TEXT),
++          base::BindRepeating(
++              [](PictureInPictureBrowserFrameView* frame_view) {
++                DefinitelyExitPictureInPicture(
++                    *frame_view,
++                    PictureInPictureWindowManager::UiBehavior::kCloseWindowOnly);
++              },
++              base::Unretained(this))));
+ 
+   // Creates the controller that owns and drives the top-bar hover animations,
+   // now that the buttons and content-setting views it references exist. It
+@@ -969,10 +956,12 @@ LocationIconView* PictureInPictureBrowserFrameView::GetLocationIconView() {
+ }
+ 
+ void PictureInPictureBrowserFrameView::UpdateContentSettingsIcons() {
+-  const auto kButtonContainerViewWithCameraButtonInsets = gfx::Insets::TLBR(
+-      0, 0, 0, GetLayoutConstant(LayoutConstant::kTabAfterTitlePadding));
+-  const auto kButtonContainerViewInsets = gfx::Insets::VH(
+-      0, GetLayoutConstant(LayoutConstant::kTabAfterTitlePadding));
++  // The close button sits as far from the window's right edge as from its top.
++  const auto kButtonContainerViewWithCameraButtonInsets =
++      gfx::Insets::TLBR(0, 0, 0, rise_pip::kEdgeInset);
++  const auto kButtonContainerViewInsets = gfx::Insets::TLBR(
++      0, GetLayoutConstant(LayoutConstant::kTabAfterTitlePadding), 0,
++      rise_pip::kEdgeInset);
+ 
+   for (ContentSettingImageView* view : content_setting_views_) {
+     view->Update();
+diff --git a/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.h b/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.h
+index 98c4c26c87..a1c2e715ee 100644
+--- a/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.h
++++ b/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.h
+@@ -265,7 +265,7 @@ class PictureInPictureBrowserFrameView
+   std::vector<raw_ptr<ContentSettingImageView, VectorExperimental>>
+       content_setting_views_;
+ 
+-  raw_ptr<CloseImageButton> close_image_button_ = nullptr;
++  raw_ptr<views::View> close_image_button_ = nullptr;
+   raw_ptr<views::View> back_to_tab_button_ = nullptr;
+ 
+   base::ScopedObservation<views::Widget, views::WidgetObserver>
+diff --git a/chrome/browser/ui/views/frame/rise_pip_top_bar.h b/chrome/browser/ui/views/frame/rise_pip_top_bar.h
+new file mode 100644
+index 0000000000..a06e3354e8
+--- /dev/null
++++ b/chrome/browser/ui/views/frame/rise_pip_top_bar.h
+@@ -0,0 +1,129 @@
++// Copyright 2026 Rise
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_UI_VIEWS_FRAME_RISE_PIP_TOP_BAR_H_
++#define CHROME_BROWSER_UI_VIEWS_FRAME_RISE_PIP_TOP_BAR_H_
++
++#include <string>
++
++#include "base/callback_list.h"
++#include "base/functional/callback.h"
++#include "base/memory/raw_ref.h"
++#include "chrome/browser/ui/views/location_bar/location_icon_view.h"
++#include "ui/gfx/animation/animation_delegate.h"
++#include "ui/gfx/animation/linear_animation.h"
++#include "ui/gfx/geometry/rounded_corners_f.h"
++#include "ui/gfx/image/image_skia.h"
++#include "ui/views/controls/button/button.h"
++
++// Rise's look for the bar along the top of a page's picture-in-picture window
++// (Document Picture-in-Picture, such as Meet's call): buttons with rounded
++// square backgrounds that show the moment the pointer is over them, shrink a
++// touch while pressed, and in the window's corners follow its curve. The
++// return and close buttons carry the glyphs of Rise's own floating video.
++namespace rise_pip {
++
++inline constexpr int kTopBarHeight = 40;
++inline constexpr int kButtonSize = 28;
++// From the window's top and side edges to the buttons in its corners.
++inline constexpr int kEdgeInset = (kTopBarHeight - kButtonSize) / 2;
++
++// A button's corners: concentric with the window's in a corner it sits in, and
++// Rise's usual radius elsewhere.
++gfx::RoundedCornersF ButtonCorners(bool top_left, bool top_right);
++
++// A value moving to its target the way Rise's buttons move: an underdamped
++// spring (stiffness 520, damping ratio 0.6), or a quick ease-out.
++class Motion : public gfx::AnimationDelegate {
++ public:
++  Motion(float value, base::RepeatingClosure on_step);
++  ~Motion() override;
++
++  void SpringTo(float target);
++  void EaseTo(float target, base::TimeDelta duration);
++  float value() const { return value_; }
++
++ private:
++  void Start(float target, bool spring, base::TimeDelta duration);
++  void AnimationProgressed(const gfx::Animation* animation) override;
++
++  gfx::LinearAnimation animation_{this};
++  base::RepeatingClosure on_step_;
++  float from_ = 0, to_ = 0, value_ = 0;
++  bool spring_ = false;
++};
++
++// Rise's background and press for one of the bar's buttons: the background
++// shows at once under the pointer and deepens while pressed, and the button
++// shrinks a touch while pressed and springs back on release.
++class ButtonStyle {
++ public:
++  ButtonStyle(views::Button& button, const gfx::RoundedCornersF& corners);
++  ~ButtonStyle();
++
++  void PaintBackground(gfx::Canvas* canvas) const;
++
++ private:
++  void StateChanged();
++  void ApplyScale();
++
++  const raw_ref<views::Button> button_;
++  const gfx::RoundedCornersF corners_;
++  bool pressed_ = false;
++  Motion scale_;
++  base::CallbackListSubscription state_subscription_;
++};
++
++// The page's info button: Chrome's location icon, in Rise's style.
++class LocationButton : public LocationIconView {
++  METADATA_HEADER(LocationButton, LocationIconView)
++
++ public:
++  LocationButton(const gfx::FontList& font_list,
++                 IconLabelBubbleView::Delegate* parent_delegate,
++                 LocationIconView::Delegate* delegate);
++  ~LocationButton() override;
++
++  void OnPaintBackground(gfx::Canvas* canvas) override;
++
++ private:
++  void UpdateBackground() override;
++  void UpdateBorder() override;
++
++  ButtonStyle style_;
++};
++
++// The return and close buttons, with the floating video's arrows and cross.
++class GlyphButton : public views::Button {
++  METADATA_HEADER(GlyphButton, views::Button)
++
++ public:
++  enum class Glyph { kArrows, kCross };
++  GlyphButton(Glyph glyph,
++              const gfx::RoundedCornersF& corners,
++              const std::u16string& title,
++              PressedCallback callback);
++  ~GlyphButton() override;
++
++  gfx::Size CalculatePreferredSize(
++      const views::SizeBounds& available_size) const override;
++  void OnPaintBackground(gfx::Canvas* canvas) override;
++  void PaintButtonContents(gfx::Canvas* canvas) override;
++  void StateChanged(ButtonState old_state) override;
++  void OnThemeChanged() override;
++
++ private:
++  const Glyph glyph_;
++  ButtonStyle style_;
++  // The arrows spread apart under the pointer.
++  Motion spread_;
++  gfx::ImageSkia arrows_;
++};
++
++// The system symbol `name` at `point_size`, semibold, in `color`.
++gfx::ImageSkia SymbolImage(const char* name, float point_size, SkColor color);
++
++}  // namespace rise_pip
++
++#endif  // CHROME_BROWSER_UI_VIEWS_FRAME_RISE_PIP_TOP_BAR_H_
+diff --git a/chrome/browser/ui/views/frame/rise_pip_top_bar.cc b/chrome/browser/ui/views/frame/rise_pip_top_bar.cc
+new file mode 100644
+index 0000000000..ac6da37a7c
+--- /dev/null
++++ b/chrome/browser/ui/views/frame/rise_pip_top_bar.cc
+@@ -0,0 +1,292 @@
++// Copyright 2026 Rise
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/views/frame/rise_pip_top_bar.h"
++
++#include <cmath>
++
++#include "cc/paint/paint_flags.h"
++#include "chrome/browser/ui/color/chrome_color_id.h"
++#include "third_party/skia/include/core/SkPath.h"
++#include "third_party/skia/include/core/SkPathBuilder.h"
++#include "third_party/skia/include/core/SkRRect.h"
++#include "ui/base/metadata/metadata_impl_macros.h"
++#include "ui/color/color_provider.h"
++#include "ui/compositor/layer.h"
++#include "ui/gfx/animation/tween.h"
++#include "ui/gfx/canvas.h"
++#include "ui/gfx/color_utils.h"
++#include "ui/gfx/geometry/rrect_f.h"
++#include "ui/gfx/geometry/transform.h"
++#include "ui/gfx/scoped_canvas.h"
++#include "ui/views/accessibility/view_accessibility.h"
++#include "ui/views/animation/ink_drop.h"
++#include "ui/views/border.h"
++#include "ui/views/controls/highlight_path_generator.h"
++
++namespace rise_pip {
++
++namespace {
++
++// macOS rounds the window's corners to 16 points.
++constexpr float kWindowRadius = 16;
++constexpr float kButtonRadius = 6;
++constexpr float kPressedScale = 0.88f;
++// The glyphs of the floating video's 30-point buttons, at this size.
++constexpr float kGlyphPointSize = 11.5f;
++constexpr float kGlyphScale = kGlyphPointSize / 13;
++// Half the cross's ink, and its strokes: the 13-point semibold xmark.
++constexpr float kCrossArmX = 4.05f * kGlyphScale, kCrossArmY = 4.36f * kGlyphScale;
++constexpr float kCrossWidth = 1.9f * kGlyphScale;
++constexpr float kArrowsSpread = 1.5f * kGlyphScale;
++
++constexpr double kSpringStiffness = 520, kSpringDampingRatio = 0.6;
++constexpr base::TimeDelta kSpringDuration = base::Milliseconds(500);
++
++SkColor Foreground(const views::View& view) {
++  return view.GetColorProvider()->GetColor(kColorPipWindowForeground);
++}
++
++}  // namespace
++
++gfx::RoundedCornersF ButtonCorners(bool top_left, bool top_right) {
++  const float corner = kWindowRadius - kEdgeInset;
++  return gfx::RoundedCornersF(top_left ? corner : kButtonRadius,
++                              top_right ? corner : kButtonRadius, kButtonRadius,
++                              kButtonRadius);
++}
++
++Motion::Motion(float value, base::RepeatingClosure on_step)
++    : on_step_(std::move(on_step)), from_(value), to_(value), value_(value) {}
++
++Motion::~Motion() = default;
++
++void Motion::SpringTo(float target) {
++  Start(target, /*spring=*/true, kSpringDuration);
++}
++
++void Motion::EaseTo(float target, base::TimeDelta duration) {
++  Start(target, /*spring=*/false, duration);
++}
++
++void Motion::Start(float target, bool spring, base::TimeDelta duration) {
++  animation_.Stop();
++  from_ = value_;
++  to_ = target;
++  spring_ = spring;
++  if (gfx::Animation::PrefersReducedMotion() || from_ == to_) {
++    value_ = to_;
++    on_step_.Run();
++    return;
++  }
++  animation_.SetDuration(duration);
++  animation_.Start();
++}
++
++void Motion::AnimationProgressed(const gfx::Animation* animation) {
++  const double progress = animation_.GetCurrentValue();
++  if (progress >= 1) {
++    value_ = to_;
++  } else if (spring_) {
++    // The step response of an underdamped spring starting at rest.
++    const double t = progress * kSpringDuration.InSecondsF();
++    const double omega = std::sqrt(kSpringStiffness);
++    const double decay = kSpringDampingRatio * omega;
++    const double damped =
++        omega * std::sqrt(1 - kSpringDampingRatio * kSpringDampingRatio);
++    const double remaining =
++        std::exp(-decay * t) *
++        (std::cos(damped * t) + decay / damped * std::sin(damped * t));
++    value_ = to_ + (from_ - to_) * remaining;
++  } else {
++    value_ = gfx::Tween::FloatValueBetween(
++        gfx::Tween::CalculateValue(gfx::Tween::EASE_OUT, progress), from_, to_);
++  }
++  on_step_.Run();
++}
++
++ButtonStyle::ButtonStyle(views::Button& button,
++                         const gfx::RoundedCornersF& corners)
++    : button_(button),
++      corners_(corners),
++      scale_(1, base::BindRepeating(&ButtonStyle::ApplyScale,
++                                    base::Unretained(this))) {
++  // The background replaces the ink drop, which fades in.
++  views::InkDrop::Get(&button)->SetMode(views::InkDropHost::InkDropMode::OFF);
++  views::HighlightPathGenerator::Install(
++      &button, std::make_unique<views::RoundRectHighlightPathGenerator>(
++                   gfx::Insets(), corners));
++  if (!button.layer()) {
++    button.SetPaintToLayer();
++    button.layer()->SetFillsBoundsOpaquely(false);
++  }
++  state_subscription_ = button.AddStateChangedCallback(base::BindRepeating(
++      &ButtonStyle::StateChanged, base::Unretained(this)));
++}
++
++ButtonStyle::~ButtonStyle() = default;
++
++void ButtonStyle::PaintBackground(gfx::Canvas* canvas) const {
++  const views::Button::ButtonState state = button_->GetState();
++  if (state != views::Button::STATE_HOVERED &&
++      state != views::Button::STATE_PRESSED) {
++    return;
++  }
++  cc::PaintFlags flags;
++  flags.setAntiAlias(true);
++  flags.setColor(SkColorSetA(Foreground(*button_),
++                             state == views::Button::STATE_PRESSED ? 0x33 : 0x1F));
++  const gfx::RRectF shape(gfx::RectF(button_->GetLocalBounds()), corners_);
++  canvas->DrawPath(SkPath::RRect(SkRRect(shape)), flags);
++}
++
++void ButtonStyle::StateChanged() {
++  const bool pressed = button_->GetState() == views::Button::STATE_PRESSED;
++  if (pressed == pressed_) {
++    return;
++  }
++  pressed_ = pressed;
++  if (pressed) {
++    scale_.EaseTo(kPressedScale, base::Milliseconds(80));
++  } else {
++    scale_.SpringTo(1);
++  }
++}
++
++void ButtonStyle::ApplyScale() {
++  if (!button_->layer()) {
++    return;
++  }
++  const gfx::PointF center = gfx::RectF(button_->GetLocalBounds()).CenterPoint();
++  gfx::Transform transform;
++  transform.Translate(center.x(), center.y());
++  transform.Scale(scale_.value(), scale_.value());
++  transform.Translate(-center.x(), -center.y());
++  button_->layer()->SetTransform(transform);
++}
++
++LocationButton::LocationButton(const gfx::FontList& font_list,
++                               IconLabelBubbleView::Delegate* parent_delegate,
++                               LocationIconView::Delegate* delegate)
++    : LocationIconView(font_list, parent_delegate, delegate),
++      style_(*this, ButtonCorners(/*top_left=*/true, /*top_right=*/false)) {
++  UpdateBorder();
++}
++
++LocationButton::~LocationButton() = default;
++
++void LocationButton::OnPaintBackground(gfx::Canvas* canvas) {
++  style_.PaintBackground(canvas);
++}
++
++void LocationButton::UpdateBackground() {
++  // Chrome's chip background and its fading highlight give way to Rise's.
++  SetBackground(nullptr);
++  views::InkDrop::Get(this)->SetMode(views::InkDropHost::InkDropMode::OFF);
++}
++
++void LocationButton::UpdateBorder() {
++  // The 16-point icon in a square the size of the bar's other buttons.
++  SetBorder(views::CreateEmptyBorder(gfx::Insets((kButtonSize - 16) / 2)));
++}
++
++BEGIN_METADATA(LocationButton)
++END_METADATA
++
++GlyphButton::GlyphButton(Glyph glyph,
++                         const gfx::RoundedCornersF& corners,
++                         const std::u16string& title,
++                         PressedCallback callback)
++    : views::Button(std::move(callback)),
++      glyph_(glyph),
++      style_(*this, corners),
++      spread_(0, base::BindRepeating(&views::View::SchedulePaint,
++                                     base::Unretained(this))) {
++  SetTooltipText(title);
++  GetViewAccessibility().SetName(title);
++  SetInstallFocusRingOnFocus(true);
++}
++
++GlyphButton::~GlyphButton() = default;
++
++gfx::Size GlyphButton::CalculatePreferredSize(
++    const views::SizeBounds& available_size) const {
++  return gfx::Size(kButtonSize, kButtonSize);
++}
++
++void GlyphButton::OnPaintBackground(gfx::Canvas* canvas) {
++  style_.PaintBackground(canvas);
++}
++
++void GlyphButton::PaintButtonContents(gfx::Canvas* canvas) {
++  const gfx::PointF center = gfx::RectF(GetLocalBounds()).CenterPoint();
++  if (glyph_ == Glyph::kCross) {
++    cc::PaintFlags flags;
++    flags.setAntiAlias(true);
++    flags.setStyle(cc::PaintFlags::kStroke_Style);
++    flags.setStrokeCap(cc::PaintFlags::kRound_Cap);
++    flags.setStrokeWidth(kCrossWidth);
++    flags.setColor(Foreground(*this));
++    for (const float direction : {1.f, -1.f}) {
++      canvas->DrawLine(
++          gfx::PointF(center.x() - kCrossArmX, center.y() - direction * kCrossArmY),
++          gfx::PointF(center.x() + kCrossArmX, center.y() + direction * kCrossArmY),
++          flags);
++    }
++    return;
++  }
++  if (arrows_.isNull()) {
++    return;
++  }
++  // Each arrow is the symbol cut along its bottom-left to top-right diagonal,
++  // and moves out along the other diagonal.
++  const float width = arrows_.width(), height = arrows_.height();
++  const gfx::PointF origin(center.x() - width / 2, center.y() - height / 2);
++  const float distance = spread_.value() * kArrowsSpread;
++  for (const float direction : {-1.f, 1.f}) {
++    gfx::ScopedCanvas scoped(canvas);
++    canvas->sk_canvas()->translate(origin.x() + direction * distance,
++                                   origin.y() + direction * distance);
++    SkPathBuilder half;
++    if (direction < 0) {
++      half.moveTo(0, 0).lineTo(width, 0).lineTo(0, height).close();
++    } else {
++      half.moveTo(width, 0).lineTo(width, height).lineTo(0, height).close();
++    }
++    canvas->ClipPath(half.detach(), /*do_anti_alias=*/true);
++    canvas->DrawImageInt(arrows_, 0, 0);
++  }
++}
++
++void GlyphButton::StateChanged(ButtonState old_state) {
++  views::Button::StateChanged(old_state);
++  if (glyph_ != Glyph::kArrows) {
++    return;
++  }
++  const bool hovered = GetState() == STATE_HOVERED || GetState() == STATE_PRESSED;
++  const bool was_hovered = old_state == STATE_HOVERED || old_state == STATE_PRESSED;
++  if (hovered == was_hovered) {
++    return;
++  }
++  // Springs out under the pointer, and back quickly when it leaves.
++  if (hovered) {
++    spread_.SpringTo(1);
++  } else {
++    spread_.EaseTo(0, base::Milliseconds(100));
++  }
++}
++
++void GlyphButton::OnThemeChanged() {
++  views::Button::OnThemeChanged();
++  if (glyph_ == Glyph::kArrows) {
++    arrows_ = SymbolImage("arrow.up.left.and.arrow.down.right", kGlyphPointSize,
++                          Foreground(*this));
++  }
++  SchedulePaint();
++}
++
++BEGIN_METADATA(GlyphButton)
++END_METADATA
++
++}  // namespace rise_pip
+diff --git a/chrome/browser/ui/views/frame/rise_pip_top_bar_mac.mm b/chrome/browser/ui/views/frame/rise_pip_top_bar_mac.mm
+new file mode 100644
+index 0000000000..9197fe9aea
+--- /dev/null
++++ b/chrome/browser/ui/views/frame/rise_pip_top_bar_mac.mm
+@@ -0,0 +1,28 @@
++// Copyright 2026 Rise
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "chrome/browser/ui/views/frame/rise_pip_top_bar.h"
++
++#import <AppKit/AppKit.h>
++
++#include "skia/ext/skia_utils_mac.h"
++#include "ui/gfx/image/image_skia_util_mac.h"
++
++namespace rise_pip {
++
++gfx::ImageSkia SymbolImage(const char* name, float point_size, SkColor color) {
++  NSImage* symbol =
++      [NSImage imageWithSystemSymbolName:@(name) accessibilityDescription:nil];
++  NSImageSymbolConfiguration* configuration = [[NSImageSymbolConfiguration
++      configurationWithPointSize:point_size
++                          weight:NSFontWeightSemibold]
++      configurationByApplyingConfiguration:
++          [NSImageSymbolConfiguration configurationWithPaletteColors:@[
++            skia::SkColorToSRGBNSColor(color)
++          ]]];
++  NSImage* image = [symbol imageWithSymbolConfiguration:configuration];
++  return image ? gfx::ImageSkiaFromNSImage(image) : gfx::ImageSkia();
++}
++
++}  // namespace rise_pip

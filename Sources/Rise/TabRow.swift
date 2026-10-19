@@ -77,7 +77,10 @@ import RiseCore
             guard let self else { return }
             self.audio.setMuted(!self.audio.muted, animated: true); self.onToggleMute?()
         }
-        playback.pointSize = 11; playback.weight = .regular; playback.acceptsFirstClick = false; playback.isHidden = true
+        playback.pointSize = 11; playback.weight = .regular
+        // The symbol's bars are 2.5 by 9.4 pt with 0.55 pt corners: these are a touch slimmer, taller and squarer.
+        playback.pauseBars = .init(width: 2.3, height: 9.9, radius: 0.4, spacing: 4.125)
+        playback.acceptsFirstClick = false; playback.isHidden = true
         playback.action = { [weak self] in
             guard let self, let paused = self.playbackPaused else { return }
             // Shows the new state at once; the page's report confirms or corrects it.
