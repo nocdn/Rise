@@ -38,9 +38,9 @@ final class FaviconPersistenceTests: XCTestCase {
             XCTAssertEqual(bitmap.pixelsWide, 32); XCTAssertEqual(bitmap.pixelsHigh, 32)
         }
         restored.closeTab(a.id); restored.reopenTab()
-        XCTAssertEqual(restored.selectedID, a.id)
-        XCTAssertEqual(restored.selectedTab?.saved.faviconData, a.saved.faviconData)
-        XCTAssertNotNil(restored.selectedTab?.favicon)
+        let reopened = restored.tabs.first { $0.id == a.id }
+        XCTAssertEqual(reopened?.saved.faviconData, a.saved.faviconData)
+        XCTAssertNotNil(reopened?.favicon)
     }
     @MainActor func testReloadPreservesTheCachedIconButOtherOriginsAndBlankPagesCannotReuseIt() throws {
         _ = NSApplication.shared

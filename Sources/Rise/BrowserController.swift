@@ -176,6 +176,7 @@ import RiseCore
     let adBlocker: AdBlocker
     var blockingChangeGeneration = 0
     let linkPreloader: LinkPreloader
+    let openTabLinks: OpenTabLinks
     let pageFullscreen: PageFullscreen
     /// The docked sidebar's state before the visible page entered simulated fullscreen.
     var fullscreenSidebarWasVisible: Bool?
@@ -199,6 +200,7 @@ import RiseCore
         cookieConsent = CookieConsent(preferences: preferences)
         adBlocker = AdBlocker(preferences: preferences)
         linkPreloader = LinkPreloader(preferences: preferences)
+        openTabLinks = OpenTabLinks(preferences: preferences)
         pageFullscreen = PageFullscreen(preferences: preferences)
         let sessionURL = sessionURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Rise/session.json")
         self.sessionURL = sessionURL
@@ -254,6 +256,8 @@ import RiseCore
             let preload = ChromiumPreload(url, size: page.view.bounds.size, done: done)
             return { preload.cancel() }
         }
+        openTabLinks.openLinks = { [weak self] page in self?.linksOpenElsewhere(than: page) ?? [] }
+        openTabLinks.goTo = { [weak self] url, page in self?.goToOpenTab(url, from: page) }
         linkPreloader.onComplete = { [weak self] url in
             guard let self, let hovered = self.linkStatus.url,
                   LinkPreloader.cacheKey(hovered) == url else { return }
@@ -601,7 +605,7 @@ import RiseCore
         cookieConsent.install(on: tab.page)
         HistorySwipeController.install(on: tab.page)
         siteSearchLearner.install(on: tab.page)
-        linkPreloader.install(on: tab.page)
+        linkPreloader.install(on: tab.page); openTabLinks.install(on: tab.page)
         permissionCoordinator.install(on: tab.page)
         pageFullscreen.install(on: tab.page)
         pictureInPicture.install(on: tab.page)
@@ -682,7 +686,7 @@ import RiseCore
         (toolbarButtons[3] as? ReloadButton)?.setMode(selectedTab?.isLoading == true ? .stop : .reload)
         developerAddress.updateURL(selectedTab?.url?.absoluteString ?? "")
         errorSurface.isHidden = errorWebView == nil || errorWebView !== selectedTab?.page.view
-        layoutChrome(); refreshTabSwitcher(); scheduleSave(); scheduleSwitcherPictures()
+        layoutChrome(); refreshTabSwitcher(); scheduleSave(); scheduleSwitcherPictures(); openTabLinks.refresh(shownPages)
         if !isApplyingSharedTabs { tabSync?.capture(sharedTabsSnapshot) }
         if hasPendingSharedTabs, canApplySharedTabs { applyPendingSharedTabs() }
     }
@@ -740,15 +744,22 @@ import RiseCore
         }
         attachVisiblePages(); update()
     }
+    static let showsReopenedTabsKey = "Rise.ShowReopenedTabs"
+    /// Whether ⌘⇧T switches to the tab it brings back; off unless set in rise://settings.
+    var showsReopenedTabs: Bool { preferences.bool(forKey: Self.showsReopenedTabsKey) }
+    func setShowsReopenedTabs(_ on: Bool) { preferences.set(on, forKey: Self.showsReopenedTabsKey) }
+    /// ⌘⇧T brings the last closed tab back at the top, behind the current one unless set otherwise.
     @objc func reopenTab() {
         guard let id = closedTabs.last?.id else { return }
-        reopenClosedTab(id)
+        reopenClosedTab(id, shows: showsReopenedTabs)
     }
-    func reopenClosedTab(_ id: UUID) {
+    /// A tab picked from the recently closed list is shown. With no other tab open, it always is.
+    func reopenClosedTab(_ id: UUID, shows: Bool = true) {
         guard let index = closedTabs.firstIndex(where: { $0.id == id }) else { return }
         var saved = closedTabs.remove(at: index)
         if tabSync?.isClosed(saved.id) == true { saved.id = UUID() }
-        let tab = configure(BrowserTab(saved: saved)); tabs.insert(tab, at: 0); select(tab.id)
+        let tab = configure(BrowserTab(saved: saved)); tabs.insert(tab, at: 0)
+        if shows || selectedTab == nil { select(tab.id) } else { update() }
     }
     @objc func goBack() { navigateHistory(.back) }
     @objc func goForward() { navigateHistory(.forward) }

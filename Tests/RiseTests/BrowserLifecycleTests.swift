@@ -53,6 +53,21 @@ final class BrowserLifecycleTests: XCTestCase {
         XCTAssertEqual(browser.selectedTab?.id, tab.id)
         XCTAssertEqual(browser.selectedTab?.title, "Example")
     }
+    @MainActor func testReopeningStaysOnTheCurrentTabUnlessSetToSwitch() {
+        _ = NSApplication.shared
+        let suite = "Rise.BrowserLifecycleTests.\(UUID().uuidString)"
+        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"),
+                                        restore: false, preferences: UserDefaults(suiteName: suite)!)
+        defer { clean(browser); UserDefaults.standard.removePersistentDomain(forName: suite) }
+        let kept = browser.addTab(), closed = browser.addTab()
+        browser.closeTab(closed.id); browser.select(kept.id)
+        browser.reopenTab()
+        XCTAssertEqual(browser.tabs.first?.id, closed.id, "Back at the top")
+        XCTAssertEqual(browser.selectedID, kept.id, "Behind the current tab by default")
+        browser.closeTab(closed.id); browser.setShowsReopenedTabs(true)
+        browser.reopenTab()
+        XCTAssertEqual(browser.selectedID, closed.id, "Shown when set in rise://settings")
+    }
     @MainActor func testClosingSelectedSplitKeepsRemainingTabUsable() {
         let browser = makeBrowser(); defer { clean(browser) }
         let first = browser.addTab(); let second = browser.addTab()

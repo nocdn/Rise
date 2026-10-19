@@ -31,6 +31,8 @@ import RiseChromium
                        "\(tabSwitcherLimit)", Self.tabSwitcherLimits.map { ("\($0)", "\($0)") }),
                 select("gmailCategory", "Gmail preview category", "Which emails the Gmail tab's hover card shows", gmailCategory.rawValue,
                        GmailCategory.allCases.map { ($0.rawValue, $0.title) }),
+                toggle("goToOpenTabs", "Go to tabs that are already open", "Clicking a link you have open in another tab switches to that tab. ⌘-click still opens it in a new one.", openTabLinks.enabled),
+                toggle("showReopenedTabs", "Switch to reopened tabs", "⌘⇧T shows the tab it brings back, rather than keeping you where you are", showsReopenedTabs),
                 toggle("hideNotificationCounts", "Hide notification counts", "Leave counts such as (3) out of tab titles and history", hidesNotificationCounts),
                 toggle("repositorySubtitle", "Show repository under merge request tabs", nil, showsRepositorySubtitle),
                 toggle("calendarBadge", "Show upcoming events on Calendar tabs", "A badge such as “in 17m” after the tab’s title, for an event starting within the hour", showsCalendarBadge),
@@ -87,6 +89,8 @@ import RiseChromium
         case "animateDevTools": setAnimatesDevTools(on)
         case "tabSwitcherLimit": if let limit = Int(text) { setTabSwitcherLimit(limit) }
         case "gmailCategory": if let category = GmailCategory(rawValue: text) { selectGmailCategory(category) }
+        case "goToOpenTabs": openTabLinks.setEnabled(on); openTabLinks.refresh(shownPages)
+        case "showReopenedTabs": setShowsReopenedTabs(on)
         case "hideNotificationCounts": setHidesNotificationCounts(on)
         case "repositorySubtitle": setShowsRepositorySubtitle(on)
         case "calendarBadge": setShowsCalendarBadge(on)

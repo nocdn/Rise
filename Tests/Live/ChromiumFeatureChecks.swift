@@ -189,6 +189,17 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         _ = await waitUntil("A right-click on \(what) opens Rise's menu") { shown != nil }
         return shown
     }
+    /// Clicks the point `locate` returns, as [x, y] in the page, as the pointer would.
+    func leftClick(_ locate: String, in page: WebPage, modifiers: NSEvent.ModifierFlags = []) async {
+        guard let window = browser.window, let at = await value(locate, in: page) as? [Double] else { check(false, "There's something to click"); return }
+        let view = page.view
+        let point = view.convert(NSPoint(x: at[0], y: view.isFlipped ? at[1] : view.bounds.height-at[1]), to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            if let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime,
+                                              windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
+                                              pressure: type == .leftMouseDown ? 1 : 0) { window.sendEvent(event) }
+        }
+    }
     func titles(_ menu: NSMenu?) -> [String] { menu?.items.filter { !$0.isSeparatorItem }.map(\.title) ?? [] }
     func choose(_ title: String, in menu: NSMenu?) {
         guard let item = menu?.items.first(where: { $0.title == title }), let action = item.action else { check(false, "The menu has “\(title)”"); return }
@@ -763,6 +774,26 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         browser.findNext()
         _ = await waitUntil("After scrolling away, Find Next starts from what's on screen") { browser.findBar.count.stringValue == "1/45" }
         browser.hideFind(); browser.closeTab(long.id)
+
+        // A link already open in another tab goes to that tab; ⌘-click still opens a new one.
+        let already = await open(try page("already-open", "<h1>Already open</h1>"))
+        let alreadyURL = already.page.url ?? URL(string: "about:blank")!
+        let linking = await open(try page("linking", "<a id=go href='\(alreadyURL.absoluteString)' style='font-size:48px'>Go there</a>"))
+        try await Task.sleep(for: .milliseconds(400))
+        await leftClick(center("#go"), in: linking.page)
+        _ = await waitUntil("Clicking a link open in another tab goes to that tab") { browser.selectedID == already.id }
+        check(linking.page.url?.lastPathComponent == "linking.html", "And leaves the page it was clicked on as it was: \(linking.page.url?.lastPathComponent ?? "")")
+        browser.select(linking.id); try await Task.sleep(for: .milliseconds(300))
+        let count = browser.tabs.count
+        await leftClick(center("#go"), in: linking.page, modifiers: .command)
+        _ = await waitUntil("⌘-click still opens it in a new tab") { browser.tabs.count == count+1 }
+        check(browser.selectedID == linking.id, "Behind the current one")
+        browser.openTabLinks.setEnabled(false); browser.update(); try await Task.sleep(for: .milliseconds(300))
+        await leftClick(center("#go"), in: linking.page)
+        _ = await waitUntil("Turned off in rise://settings, the link opens in its page as usual") { linking.page.url == alreadyURL }
+        browser.openTabLinks.setEnabled(true)
+        for tab in browser.tabs where tab.id != linking.id && [alreadyURL, linking.page.url].contains(tab.page.url ?? tab.url) { browser.closeTab(tab.id) }
+        browser.closeTab(linking.id)
 
         // Downloads.
         let downloads = await open(try page("downloads", "<a id=d href=clip.mp4 download=clip-copy.mp4>Save</a>"))
