@@ -12,6 +12,21 @@ final class TokenTextView: NSTextView {
         super.init(frame: .zero, textContainer: container)
     }
     required init?(coder: NSCoder) { fatalError() }
+    /// Where a control drawn over the text, such as a ⋯ at the end of its last line, keeps the
+    /// pointer a hand: the text's own I-beam would otherwise cover it. In this view's coordinates.
+    var handCursorRect: (() -> NSRect?)?
+    private func overHandRect(_ event: NSEvent) -> Bool {
+        guard let rect = handCursorRect?() else { return false }
+        return rect.contains(convert(event.locationInWindow, from: nil))
+    }
+    override func cursorUpdate(with event: NSEvent) { if overHandRect(event) { NSCursor.pointingHand.set() } else { super.cursorUpdate(with: event) } }
+    override func mouseMoved(with event: NSEvent) { if overHandRect(event) { NSCursor.pointingHand.set() } else { super.mouseMoved(with: event) } }
+    /// A double-click while the text can't be edited, as a card's description turns editable.
+    var onDoubleClick: (() -> Void)?
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2, !isEditable, let onDoubleClick { onDoubleClick(); return }
+        super.mouseDown(with: event)
+    }
 }
 
 final class TokenLayoutManager: NSLayoutManager {

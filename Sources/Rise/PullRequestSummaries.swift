@@ -290,8 +290,15 @@ enum PullRequestSummarizer {
         var phase = Phase.idle
         /// What writing the description took in, for the card's menu.
         var inputTokens: Int?
+        /// The title and description as edited in the card (nil where not), shown instead of the
+        /// request's own while `usesCustom`.
+        var custom = Custom()
     }
-    private struct Saved: Codable { var summary: String?; var details: PullRequestDetails?; var inputTokens: Int? }
+    struct Custom: Codable, Equatable {
+        var title: String?, summary: String?, shown = false
+        var exists: Bool { title != nil || summary != nil }
+    }
+    private struct Saved: Codable { var summary: String?; var details: PullRequestDetails?; var inputTokens: Int?; var custom: Custom? }
     private(set) var entries: [String: Entry] = [:]
     private var saved: [String: Saved]
     private var tasks: [String: Task<Void, Never>] = [:]
@@ -311,10 +318,24 @@ enum PullRequestSummarizer {
             ?? data.flatMap { try? JSONDecoder().decode([String: String].self, from: $0) }?.mapValues { Saved(summary: $0) } ?? [:]
     }
     func entry(for pr: PullRequest) -> Entry {
-        if let entry = entries[pr.key] { return entry }
         let saved = saved[pr.key]
-        return Entry(details: saved?.details, summary: saved?.summary ?? "", phase: saved?.summary == nil ? .idle : .done,
-                     inputTokens: saved?.summary == nil ? nil : saved?.inputTokens)
+        var entry = entries[pr.key] ?? Entry(details: saved?.details, summary: saved?.summary ?? "", phase: saved?.summary == nil ? .idle : .done,
+                                             inputTokens: saved?.summary == nil ? nil : saved?.inputTokens)
+        entry.custom = saved?.custom ?? Custom()
+        return entry
+    }
+    /// Keeps what was edited in the card, a field left nil keeping its earlier edit, and shows it.
+    func setCustom(_ key: String, title: String?, summary: String?) {
+        var custom = saved[key]?.custom ?? Custom()
+        if let title { custom.title = title }
+        if let summary { custom.summary = summary }
+        custom.shown = true
+        saved[key, default: Saved()].custom = custom; save(); onChange?(key)
+    }
+    /// Shows the edited title and description, or the request's own again.
+    func showCustom(_ key: String, _ shown: Bool) {
+        guard saved[key]?.custom?.exists == true else { return }
+        saved[key]?.custom?.shown = shown; save(); onChange?(key)
     }
     /// Fetches the details and, unless one is saved, writes the description. Keeps going
     /// when the card closes, so the description is ready next time.
@@ -362,7 +383,8 @@ enum PullRequestSummarizer {
     func regenerate(_ pr: PullRequest, title: String, page: @escaping @MainActor () async -> String?) {
         let key = pr.key
         guard tasks[key] == nil else { return }
-        saved[key]?.summary = nil; saved[key]?.inputTokens = nil; save()
+        // A new description shows; the edits stay, to show again from the menu.
+        saved[key]?.summary = nil; saved[key]?.inputTokens = nil; saved[key]?.custom?.shown = false; save()
         entries[key] = nil
         load(pr, title: title, page: page)
         onChange?(key)

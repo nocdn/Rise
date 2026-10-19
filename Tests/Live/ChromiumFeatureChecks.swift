@@ -779,18 +779,22 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         let already = await open(try page("already-open", "<h1>Already open</h1>"))
         let alreadyURL = already.page.url ?? URL(string: "about:blank")!
         let linking = await open(try page("linking", "<a id=go href='\(alreadyURL.absoluteString)' style='font-size:48px'>Go there</a>"))
+        NSApp.activate(ignoringOtherApps: true); browser.window?.makeKeyAndOrderFront(nil)
         try await Task.sleep(for: .milliseconds(400))
+        // A click on a window that isn't in front only brings it forward.
+        let linkInFront = browser.window?.isKeyWindow == true && NSApp.isActive
+        let notInFront = linkInFront ? "" : " (Rise's window wasn't in front)"
         await leftClick(center("#go"), in: linking.page)
-        _ = await waitUntil("Clicking a link open in another tab goes to that tab") { browser.selectedID == already.id }
+        _ = await waitUntil("Clicking a link open in another tab goes to that tab\(notInFront)") { browser.selectedID == already.id }
         check(linking.page.url?.lastPathComponent == "linking.html", "And leaves the page it was clicked on as it was: \(linking.page.url?.lastPathComponent ?? "")")
         browser.select(linking.id); try await Task.sleep(for: .milliseconds(300))
         let count = browser.tabs.count
         await leftClick(center("#go"), in: linking.page, modifiers: .command)
-        _ = await waitUntil("⌘-click still opens it in a new tab") { browser.tabs.count == count+1 }
+        _ = await waitUntil("⌘-click still opens it in a new tab\(notInFront)") { browser.tabs.count == count+1 }
         check(browser.selectedID == linking.id, "Behind the current one")
         browser.openTabLinks.setEnabled(false); browser.update(); try await Task.sleep(for: .milliseconds(300))
         await leftClick(center("#go"), in: linking.page)
-        _ = await waitUntil("Turned off in rise://settings, the link opens in its page as usual") { linking.page.url == alreadyURL }
+        _ = await waitUntil("Turned off in rise://settings, the link opens in its page as usual\(notInFront)") { linking.page.url == alreadyURL }
         browser.openTabLinks.setEnabled(true)
         for tab in browser.tabs where tab.id != linking.id && [alreadyURL, linking.page.url].contains(tab.page.url ?? tab.url) { browser.closeTab(tab.id) }
         browser.closeTab(linking.id)

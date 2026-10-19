@@ -87,6 +87,8 @@ import AppKit
             card.onOpenFiles = { [weak self] in self?.openFromLinkCard(.files) }
             card.onOpenPipeline = { [weak self] pipeline in self?.openFromLinkCard(.pipeline(pipeline)) }
             card.onOpenMergeChecks = { [weak self] in self?.openFromLinkCard(.mergeChecks) }
+            card.onEdit = { [weak self] key, title, summary in self?.tabHoverCards.summaries.setCustom(key, title: title, summary: summary) }
+            card.onShowCustom = { [weak self] key, shown in self?.tabHoverCards.summaries.showCustom(key, shown) }
             card.onRegenerate = { [weak self] in
                 guard let self, let pr = self.linkPullRequests.shown else { return }
                 self.regenerateSummary(pr, title: self.linkPullRequests.title, page: self.page(showing: self.linkPullRequests.shownWeb))

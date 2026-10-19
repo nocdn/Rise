@@ -178,6 +178,16 @@ final class PullRequestMetaRow: CardLinkRow {
         var phase: PullRequestSummaries.Phase
         /// What writing the description took in, for the menu.
         var inputTokens: Int? = nil
+        /// The title and description as edited in the card.
+        var custom = PullRequestSummaries.Custom()
+        /// As it shows: the edits in place of the request's own while they're shown.
+        var shown: Content {
+            guard custom.shown else { return self }
+            var shown = self
+            if let title = custom.title { shown.title = title }
+            if let summary = custom.summary { shown.summary = summary; shown.phase = .done }
+            return shown
+        }
     }
     /// As wide as the find bar, so the status row fits on one line; wider, up to the maximum,
     /// when a merge request's pipeline and merge checks need it to stay on one line too.
@@ -193,15 +203,15 @@ final class PullRequestMetaRow: CardLinkRow {
 
     private let panel = Surface(radius: FindBar.radius)
     private let content = FlippedView()
-    private let titleLabel = NSTextField(wrappingLabelWithString: "")
+    let titleLabel = CardTitleField(wrappingLabelWithString: "")
     private let meta = PullRequestMetaRow()
     private let pipelineRow = PipelineRow()
     private let mergeRow = MergeCheckRow()
     private var skeleton = SkeletonLine()
     /// The find bar's ⋯ after an answer, with its menu: Regenerate, Copy and the input tokens.
-    let moreButton = ChromeButton(symbol: "ellipsis", size: 10, title: "More", action: {})
+    let moreButton = MenuButton()
     private var menuOpen = false
-    private let summaryView = TokenTextView()
+    let summaryView = TokenTextView()
     private var stream = TokenStream(), paintedFrom = 0, laidOut = ""
     private var height = MotionSpring(0), top = MotionSpring(0)
     private var link: CADisplayLink?, lastTick: CFTimeInterval?
@@ -225,6 +235,21 @@ final class PullRequestMetaRow: CardLinkRow {
     var onOpenMergeChecks: (() -> Void)?
     /// Regenerate was picked in the ⋯ menu.
     var onRegenerate: (() -> Void)?
+    /// The title or description was edited (nil for the one that wasn't), for the card's `key`.
+    var onEdit: ((_ key: String, _ title: String?, _ summary: String?) -> Void)?
+    /// Custom Content was checked or unchecked in the ⋯ menu.
+    var onShowCustom: ((_ key: String, _ shown: Bool) -> Void)?
+    /// The request as it came, before any edits were put in its place.
+    private var source: Content?
+    private enum Field { case title, summary }
+    /// What's being edited in place, as a tab's title is: its text before, and the height it keeps
+    /// at least until editing ends, so deleting text doesn't shrink the card under the typing.
+    /// `moreRow` is whether the ⋯ had a row of its own then, kept while the description is edited.
+    private var editing: (field: Field, before: String, floor: CGFloat, moreRow: Bool)?
+    private weak var responderBeforeEditing: NSResponder?
+    var isEditing: Bool { editing != nil }
+    /// Words of the description are still waiting to play in.
+    var isRevealingSummary: Bool { stream.isRevealing }
 
     private(set) var cardWidth = PullRequestTooltip.width
     private var textWidth: CGFloat { cardWidth-2*Self.inset.width }
@@ -249,17 +274,26 @@ final class PullRequestMetaRow: CardLinkRow {
         content.layer?.cornerRadius = FindBar.radius; content.layer?.cornerCurve = .continuous
         titleLabel.font = .systemFont(ofSize: 14, weight: .medium)
         titleLabel.maximumNumberOfLines = 3; titleLabel.cell?.truncatesLastVisibleLine = true
-        titleLabel.isSelectable = true
-        // Selecting keeps the faded `type(` and `):`; otherwise the field editor restyles the title plainly.
-        titleLabel.allowsEditingTextAttributes = true
+        // Double-clicked, the title is edited in place, as a tab's is.
+        titleLabel.isSelectable = false; titleLabel.focusRingType = .none; titleLabel.delegate = self
+        titleLabel.onDoubleClick = { [weak self] in self?.beginEditing(.title) }
         summaryView.isEditable = false; summaryView.isSelectable = true; summaryView.drawsBackground = false
         // Words only sharpen into place here; sliding sideways reads as jitter in a small card.
         summaryView.tokenLayout.travels = false
         summaryView.isRichText = true; summaryView.textContainerInset = .zero
         summaryView.textContainer?.lineFragmentPadding = 0; summaryView.textContainer?.widthTracksTextView = false
         summaryView.textContainer?.containerSize = NSSize(width: textWidth, height: .greatestFiniteMagnitude)
+        summaryView.focusRingType = .none; summaryView.delegate = self
+        summaryView.onDoubleClick = { [weak self] in self?.beginEditing(.summary) }
+        summaryView.handCursorRect = { [weak self] in
+            guard let self, !self.moreButton.isHidden else { return nil }
+            return self.summaryView.convert(self.moreButton.bounds, from: self.moreButton)
+        }
         [titleLabel, meta, pipelineRow, mergeRow, skeleton, summaryView, moreButton].forEach(content.addSubview)
-        moreButton.actionBlock = { [weak self] in self?.showMoreMenu() }
+        moreButton.makeMenu = { [weak self] in self?.makeMoreMenu() }
+        // The menu takes the pointer while it's open; leaving is judged once it closes.
+        moreButton.menuWillOpen = { [weak self] in self?.menuOpen = true }
+        moreButton.menuDidClose = { [weak self] in self?.menuOpen = false; self?.checkPointerLeft() }
         mergeRow.onOpen = { [weak self] in self?.onOpenMergeChecks?() }
         meta.onOpen = { [weak self] in self?.onOpenFiles?() }
         pipelineRow.onOpen = { [weak self] in if let pipeline = self?.current?.details?.pipeline { self?.onOpenPipeline?(pipeline) } }
@@ -275,13 +309,23 @@ final class PullRequestMetaRow: CardLinkRow {
     }
     override func mouseEntered(with event: NSEvent) { onPointer?(true) }
     // The menu takes the pointer while it's open; leaving is judged once it closes.
-    override func mouseExited(with event: NSEvent) { if !menuOpen { onPointer?(false) } }
+    // While editing, the card stays until editing ends.
+    override func mouseExited(with event: NSEvent) { if !menuOpen && editing == nil { onPointer?(false) } }
+    private func checkPointerLeft() {
+        guard key != nil, let window else { return }
+        if !bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) { onPointer?(false) }
+    }
 
     func makeMoreMenu() -> NSMenu {
         let menu = NSMenu()
         let regenerate = NSMenuItem(title: "Regenerate", action: #selector(regenerateFromMenu), keyEquivalent: "")
         let copy = NSMenuItem(title: "Copy", action: #selector(copyFromMenu), keyEquivalent: "")
-        [regenerate, copy].forEach { $0.target = self; menu.addItem($0) }
+        // Checked while the edits show; unchecked, the request's own title and description come back.
+        let custom = NSMenuItem(title: "Custom Content", action: #selector(toggleCustomFromMenu), keyEquivalent: "")
+        custom.state = source?.custom.shown == true ? .on : .off
+        custom.isEnabled = source?.custom.exists == true
+        menu.autoenablesItems = false
+        [regenerate, copy, custom].forEach { $0.target = self; menu.addItem($0) }
         if current?.phase == .done, let count = current?.inputTokens {
             menu.addItem(.separator())
             let usage = NSMenuItem(title: count.formatted(.number.locale(Locale(identifier: "en_US"))) + " tok", action: nil, keyEquivalent: "")
@@ -290,19 +334,85 @@ final class PullRequestMetaRow: CardLinkRow {
         }
         return menu
     }
-    private func showMoreMenu() {
-        menuOpen = true
-        makeMoreMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: moreButton.isFlipped ? moreButton.bounds.maxY+4 : -4), in: moreButton)
-        menuOpen = false
-        guard key != nil, let window else { return }
-        if !bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) { onPointer?(false) }
-    }
     @objc private func regenerateFromMenu() { onRegenerate?() }
+    @objc private func toggleCustomFromMenu() {
+        guard let key, let source, source.custom.exists else { return }
+        onShowCustom?(key, !source.custom.shown)
+    }
     /// The description, as the find bar's Copy takes its answer.
     @objc private func copyFromMenu() {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents(); pasteboard.setString(current?.summary ?? laidOut, forType: .string)
     }
+
+    // MARK: Editing
+
+    /// The title or description, double-clicked once it's written, edits in place with all of it
+    /// selected, as a tab's title does: no border, just a caret.
+    private func beginEditing(_ field: Field) {
+        guard key != nil, editing == nil, showsMore, let window else { return }
+        let before = field == .title ? (current?.title ?? "") : (hasSummaryText ? summaryView.string : "")
+        editing = (field, before, field == .title ? titleHeight : (hasSummaryText ? summaryHeight : lineHeight), moreNeedsRow)
+        responderBeforeEditing = window.firstResponder
+        onPointer?(true)
+        switch field {
+        case .title:
+            titleLabel.attributedStringValue = NSAttributedString(string: before, attributes: [.font: NSFont.systemFont(ofSize: 14, weight: .medium), .foregroundColor: theme.text])
+            titleLabel.maximumNumberOfLines = 0
+            titleLabel.isEditable = true; titleLabel.isSelectable = true
+            window.makeFirstResponder(titleLabel)
+            if let editor = titleLabel.currentEditor() as? NSTextView {
+                editor.insertionPointColor = theme.text; editor.drawsBackground = false
+                editor.selectedTextAttributes = summaryView.selectedTextAttributes
+                editor.selectAll(nil)
+            }
+        case .summary:
+            stream.revealAll(at: CACurrentMediaTime()); paint()
+            if let manager = summaryView.layoutManager, let length = summaryView.textStorage?.length, length > 0 {
+                manager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: length))
+            }
+            summaryView.typingAttributes = [.font: Self.summaryFont, .foregroundColor: summaryColor]
+            summaryView.insertionPointColor = theme.text
+            summaryView.isEditable = true
+            window.makeFirstResponder(summaryView)
+            summaryView.selectAll(nil)
+        }
+        retarget(); render()
+    }
+    /// Return keeps the edit, Escape leaves it as it was; closing the card or moving to another
+    /// request keeps it too.
+    private func endEditing(saving: Bool) {
+        guard let (field, before, _, _) = editing, let key else { return }
+        let text: String
+        switch field {
+        case .title: text = (titleLabel.currentEditor()?.string ?? titleLabel.stringValue).trimmingCharacters(in: .whitespacesAndNewlines)
+        case .summary: text = summaryView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        editing = nil
+        switch field {
+        case .title:
+            titleLabel.abortEditing(); titleLabel.isEditable = false; titleLabel.isSelectable = false
+            titleLabel.maximumNumberOfLines = 3
+        case .summary:
+            summaryView.isEditable = false; summaryView.setSelectedRange(NSRange(location: 0, length: 0))
+        }
+        // Focus goes back where it was, unless a click elsewhere already moved it.
+        if let window, window.firstResponder === summaryView || window.firstResponder === window || (window.firstResponder as? NSTextView)?.isFieldEditor == true {
+            window.makeFirstResponder(responderBeforeEditing)
+        }
+        // An empty title isn't one; the request's own stays.
+        let changed = saving && text != before.trimmingCharacters(in: .whitespacesAndNewlines) && !(field == .title && text.isEmpty)
+        if changed { onEdit?(key, field == .title ? text : nil, field == .summary ? text : nil) }
+        else if let source {
+            // As it was: the shown text back in place, and the card back to its height.
+            let shown = source.shown
+            if field == .title { titleLabel.attributedStringValue = Self.title(shown.title, color: theme.text, muted: fadedTitle) }
+            else { resetSummary(shown) }
+            retarget(); animate()
+        }
+        checkPointerLeft()
+    }
+    private func editedTextChanged() { retarget(); animate() }
 
     /// Shows the card beside a tab at once, or glides an open one over to it.
     /// `glides` continues from where a card that just closed was, rather than appearing in place.
@@ -313,6 +423,7 @@ final class PullRequestMetaRow: CardLinkRow {
                  width: CGFloat? = nil, glides: Bool = false, pops: Bool = false, fromTab: Bool = false, growsFrom: NSPoint? = nil) {
         let appearing = self.key == nil
         let switching = key != self.key
+        if switching { endEditing(saving: true) }
         if appearing {
             exits += 1; layer?.removeAnimation(forKey: "card.exit.opacity"); layer?.removeAnimation(forKey: "card.exit.transform")
             CardMotionAnimator.cancelOut(self)
@@ -321,7 +432,8 @@ final class PullRequestMetaRow: CardLinkRow {
         frame.origin.x = left; self.placement = placement; preferredWidth = width
         self.fromTab = fromTab; tabPoint = growsFrom
         applyTheme()
-        if switching { resetSummary(next) }
+        // Opened on what it shows, edits and all, so a saved description shows whole rather than playing in.
+        if switching { resetSummary(next.shown) }
         update(next)
         if appearing { height.settle(); if !glides { top.settle() }; render() }
         if appearing && pops { popIn() }
@@ -338,14 +450,23 @@ final class PullRequestMetaRow: CardLinkRow {
         return CGPoint(x: point.x-frame.minX, y: point.y-frame.minY)
     }
     /// New details or more of the description for the card's pull request.
-    func update(_ next: Content) {
-        // Regenerate starts the description over rather than carrying on from the old one.
-        if key != nil, next.summary.isEmpty, current?.summary.isEmpty == false { resetSummary(next) }
+    func update(_ incoming: Content) {
+        let showedCustom = source?.custom.shown == true
+        source = incoming
+        let next = incoming.shown
+        // What's being typed stays as it is until editing ends.
+        let editingSummary = editing?.field == .summary
+        // Regenerate starts the description over rather than carrying on from the old one, and the
+        // edits and the request's own description replace each other whole.
+        if key != nil, !editingSummary, (next.summary.isEmpty && current?.summary.isEmpty == false)
+            || showedCustom != incoming.custom.shown || (incoming.custom.shown && next.summary != laidOut) {
+            resetSummary(next)
+        }
         current = next
-        titleLabel.attributedStringValue = Self.title(next.title, color: theme.text, muted: fadedTitle)
+        if editing?.field != .title { titleLabel.attributedStringValue = Self.title(next.title, color: theme.text, muted: fadedTitle) }
         meta.details = next.details; meta.reference = next.reference; pipelineRow.pipeline = next.details?.pipeline; mergeRow.mergeCheck = next.details?.mergeCheck
         fitWidth()
-        if next.summary != laidOut || next.phase == .done {
+        if !editingSummary, next.summary != laidOut || next.phase == .done {
             stream.receive(next.summary)
             if next.phase == .done { stream.finish() }
             layOutSummary()
@@ -370,6 +491,7 @@ final class PullRequestMetaRow: CardLinkRow {
     /// Beside a tab it goes with the hover cards' motion unless `immediately`.
     func dismiss(fades: Bool = false, immediately: Bool = false) {
         guard key != nil else { return }
+        endEditing(saving: true)
         key = nil; link?.invalidate(); link = nil
         stream.revealAll(at: CACurrentMediaTime()); paint()
         height.settle(); top.settle()
@@ -548,7 +670,7 @@ final class PullRequestMetaRow: CardLinkRow {
 
     // MARK: Layout and motion
 
-    private var hasSummaryText: Bool { !laidOut.isEmpty }
+    private var hasSummaryText: Bool { !laidOut.isEmpty || editing?.field == .summary }
     /// The pipeline and merge checks come in under the description once it has finished playing out.
     private var showsPipeline: Bool {
         guard current?.details?.pipeline != nil || current?.details?.mergeCheck != nil else { return false }
@@ -573,6 +695,8 @@ final class PullRequestMetaRow: CardLinkRow {
     /// its own when the line runs too close to the edge.
     private var moreNeedsRow: Bool {
         guard showsMore, !showsPipeline else { return false }
+        // While the description is edited the ⋯ steps aside, and its row stays as it was.
+        if let editing, editing.field == .summary { return editing.moreRow }
         guard hasSummaryText, let manager = summaryView.layoutManager, let container = summaryView.textContainer else { return true }
         manager.ensureLayout(for: container)
         let glyphs = manager.numberOfGlyphs
@@ -582,12 +706,19 @@ final class PullRequestMetaRow: CardLinkRow {
     }
     private var showsSkeleton: Bool { !hasSummaryText && (current?.phase == .idle || current?.phase == .generating) }
     private var titleHeight: CGFloat {
-        ceil(titleLabel.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: textWidth+2*Self.labelPadding, height: 1000)).height ?? 18)
+        let bounds = NSRect(x: 0, y: 0, width: textWidth+2*Self.labelPadding, height: 1000)
+        if let editing, editing.field == .title, let typed = titleLabel.currentEditor()?.string, let cell = titleLabel.cell?.copy() as? NSCell {
+            cell.stringValue = typed.isEmpty ? " " : typed
+            return max(editing.floor, ceil(cell.cellSize(forBounds: bounds).height))
+        }
+        return ceil(titleLabel.cell?.cellSize(forBounds: bounds).height ?? 18)
     }
     private var summaryHeight: CGFloat {
         guard let container = summaryView.textContainer, let manager = summaryView.layoutManager else { return 0 }
         manager.ensureLayout(for: container)
-        return ceil(manager.usedRect(for: container).height)
+        let used = ceil(manager.usedRect(for: container).height)
+        if let editing, editing.field == .summary { return max(editing.floor, used) }
+        return used
     }
     private var contentHeight: CGFloat {
         var height = Self.inset.height+titleHeight
@@ -640,8 +771,8 @@ final class PullRequestMetaRow: CardLinkRow {
         mergeRow.isHidden = !showsPipeline || current?.details?.mergeCheck == nil
         mergeRow.frame = NSRect(x: Self.inset.width-1, y: y, width: textWidth+1, height: StatusLinkRow.height)
         // The ⋯ at the right, level with the last status row, the description's last line, or its own row.
-        moreButton.isHidden = !showsMore
-        if showsMore {
+        moreButton.isHidden = !showsMore || editing?.field == .summary
+        if !moreButton.isHidden {
             let lastRow = [mergeRow, pipelineRow].first { !$0.isHidden }
             var midY: CGFloat
             if let lastRow { midY = lastRow.frame.midY }
@@ -676,5 +807,41 @@ final class PullRequestMetaRow: CardLinkRow {
         let resting = height.isResting(within: 0.05) && top.isResting(within: 0.05) && !stream.needsFrames
         if resting { link.invalidate(); self.link = nil; height.settle(); top.settle() }
         render()
+    }
+}
+
+extension PullRequestTooltip: NSTextFieldDelegate, NSTextViewDelegate {
+    func controlTextDidChange(_ notification: Notification) { editedTextChanged() }
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        switch selector {
+        case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertNewlineIgnoringFieldEditor(_:)): endEditing(saving: true); return true
+        case #selector(NSResponder.cancelOperation(_:)): endEditing(saving: false); return true
+        default: return false
+        }
+    }
+    /// Clicking elsewhere keeps the title's edit.
+    func controlTextDidEndEditing(_ notification: Notification) { if editing?.field == .title { endEditing(saving: true) } }
+    func textDidChange(_ notification: Notification) { editedTextChanged() }
+    func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        guard textView === summaryView, editing?.field == .summary else { return false }
+        switch selector {
+        // Return keeps the edit; Shift-Return starts a new line.
+        case #selector(NSResponder.insertNewline(_:)):
+            if NSApp.currentEvent?.modifierFlags.contains(.shift) == true { return false }
+            endEditing(saving: true); return true
+        case #selector(NSResponder.cancelOperation(_:)): endEditing(saving: false); return true
+        default: return false
+        }
+    }
+    /// Clicking elsewhere keeps the description's edit.
+    func textDidEndEditing(_ notification: Notification) { if editing?.field == .summary { endEditing(saving: true) } }
+}
+
+/// The card's title: a label until it's double-clicked, then edited in place.
+final class CardTitleField: NSTextField {
+    var onDoubleClick: (() -> Void)?
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2, !isEditable, let onDoubleClick { onDoubleClick(); return }
+        super.mouseDown(with: event)
     }
 }

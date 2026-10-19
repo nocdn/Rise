@@ -237,7 +237,7 @@ class FindInputCell: NSTextFieldCell {
     private let footer = FlippedView()
     private let footerIcon = NSImageView(image: TablerIcon.image(TablerIcon.searchWindow, size: 13))
     let footerLabel = label(FindBar.answeredBy(.openRouter), size: 11)
-    let moreButton: ChromeButton
+    let moreButton = MenuButton()
     /// Where Copy puts the answer.
     var pasteboard = NSPasteboard.general
     private var findText: PresenceItem, askText: PresenceItem, controls: PresenceItem, badgeItem: PresenceItem
@@ -290,7 +290,6 @@ class FindInputCell: NSTextFieldCell {
         previous = ChromeButton(symbol: "chevron.up", size: 11, title: "Previous match (⇧⌘G)", action: {})
         next = ChromeButton(symbol: "chevron.down", size: 11, title: "Next match (⌘G)", action: {})
         close = ChromeButton(symbol: "xmark", size: 11, title: "Close Find", action: {})
-        moreButton = ChromeButton(symbol: "ellipsis", size: 10, title: "More", action: {})
         findText = PresenceItem(findPlaceholder, shown: true); askText = PresenceItem(askPlaceholder, shown: false)
         controls = PresenceItem(findControls, shown: true); badgeItem = PresenceItem(badge, shown: false)
         super.init(frame: .zero)
@@ -331,7 +330,7 @@ class FindInputCell: NSTextFieldCell {
         answerView.frame = NSRect(x: 0, y: 0, width: Self.width, height: 0)
         answerScroll.documentView = answerView
         footerIcon.imageScaling = .scaleNone
-        moreButton.actionBlock = { [weak self] in self?.showMoreMenu() }
+        moreButton.makeMenu = { [weak self] in self?.makeMoreMenu() }
         [footerIcon, footerLabel, moreButton].forEach(footer.addSubview)
 
         shimmer.field = input
@@ -581,10 +580,6 @@ class FindInputCell: NSTextFieldCell {
             menu.addItem(usage)
         }
         return menu
-    }
-    private func showMoreMenu() {
-        let menu = makeMoreMenu()
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: moreButton.isFlipped ? moreButton.bounds.maxY+4 : -4), in: moreButton)
     }
     func recordInputTokens(_ count: Int, for generation: Int) {
         guard generation == answerGeneration, count >= 0 else { return }

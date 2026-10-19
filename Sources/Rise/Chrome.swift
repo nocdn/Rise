@@ -117,6 +117,39 @@ class ChromeButton: NSButton {
     override func mouseEntered(with event: NSEvent) { refreshHoverState() }
     override func mouseExited(with event: NSEvent) { refreshHoverState() }
 }
+/// The ⋯ that opens a menu, as in the find bar's answers and the pull request card. The menu opens
+/// the moment the button is pressed: let go at once and it stays open, or drag onto an item and
+/// let go to pick it, as macOS's own pop-up buttons do. The icon keeps its color throughout, and
+/// the pointer is a hand over it.
+final class MenuButton: ChromeButton {
+    /// The menu to show, made fresh each time.
+    var makeMenu: (() -> NSMenu?)?
+    var menuWillOpen: (() -> Void)?
+    var menuDidClose: (() -> Void)?
+    init(title: String = "More") {
+        super.init(symbol: "ellipsis", size: 10, title: title, action: {})
+        (cell as? NSButtonCell)?.highlightsBy = []
+        // VoiceOver's press opens it too.
+        actionBlock = { [weak self] in self?.openMenu() }
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func highlight(_ flag: Bool) {}
+    override func mouseDown(with event: NSEvent) { if isEnabled { openMenu() } }
+    func openMenu() {
+        guard let menu = makeMenu?() else { return }
+        menuWillOpen?()
+        // Called while the press is under way, the menu follows it to an item and picks it on release.
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: isFlipped ? bounds.maxY+4 : -4), in: self)
+        menuDidClose?()
+        refreshHoverState()
+    }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.cursorUpdate, .activeAlways, .inVisibleRect], owner: self))
+    }
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
+    override func cursorUpdate(with event: NSEvent) { NSCursor.pointingHand.set() }
+}
 final class SidebarGrip: FlippedView {
     var resize: ((CGFloat) -> Void)?
     override func resetCursorRects() { addCursorRect(bounds, cursor: .resizeLeftRight) }

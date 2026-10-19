@@ -113,9 +113,10 @@ final class PullRequestCardMenuTests: XCTestCase {
     }
     @MainActor func testTheMenuMatchesTheFindBars() {
         let card = card(summary: "Fixes the sidebar.", mergeCheck: true)
-        XCTAssertEqual(card.makeMoreMenu().items.map(\.title), ["Regenerate", "Copy", "", "12,345 tok"])
+        XCTAssertEqual(card.makeMoreMenu().items.map(\.title), ["Regenerate", "Copy", "Custom Content", "", "12,345 tok"])
         XCTAssertFalse(card.makeMoreMenu().items.last!.isEnabled)
-        XCTAssertEqual(self.card(summary: "Fixes it.", mergeCheck: false, tokens: nil).makeMoreMenu().items.map(\.title), ["Regenerate", "Copy"])
+        XCTAssertEqual(self.card(summary: "Fixes it.", mergeCheck: false, tokens: nil).makeMoreMenu().items.map(\.title), ["Regenerate", "Copy", "Custom Content"])
+        XCTAssertFalse(card.makeMoreMenu().items[2].isEnabled, "Custom Content waits for an edit")
         var regenerated = 0; card.onRegenerate = { regenerated += 1 }
         let menu = card.makeMoreMenu()
         menu.performActionForItem(at: 0)

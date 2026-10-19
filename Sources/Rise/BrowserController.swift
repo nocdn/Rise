@@ -275,7 +275,9 @@ import RiseCore
             if event.type == .keyUp { defer { swallowingEscape = false }; return swallowingEscape }
             // Held Escape belongs to the same gesture even after the bar begins closing.
             if swallowingEscape && event.isARepeat { return true }
-            guard self.findBar.isPresented, self.palette.isHidden, !self.isSwitchingTabs, self.sidebar.drag == nil else { return false }
+            // Escape in a card being edited cancels the edit, not Find.
+            let editingCard = self.tabHoverCards.pullRequestCard.isEditing || self.linkPullRequests.card.isEditing
+            guard self.findBar.isPresented, self.palette.isHidden, !self.isSwitchingTabs, self.sidebar.drag == nil, !editingCard else { return false }
             swallowingEscape = true; self.findBar.handleEscape(); return true
         }
         window.escapeAction = { [weak self] in

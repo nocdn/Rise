@@ -133,6 +133,8 @@ import AppKit
             hover.pullRequestCard.onOpenPipeline = { [weak self] pipeline in self?.openFromPullRequestCard(.pipeline(pipeline)) }
             hover.pullRequestCard.onOpenMergeChecks = { [weak self] in self?.openFromPullRequestCard(.mergeChecks) }
             hover.pullRequestCard.onRegenerate = { [weak self] in self?.regenerateTabCardSummary() }
+            hover.pullRequestCard.onEdit = { [weak self] key, title, summary in self?.tabHoverCards.summaries.setCustom(key, title: title, summary: summary) }
+            hover.pullRequestCard.onShowCustom = { [weak self] key, shown in self?.tabHoverCards.summaries.showCustom(key, shown) }
         }
         raiseHoverCard(hover.pullRequestCard)
         // The safe triangle needs every pointer move, not only those over tracked views.
@@ -296,7 +298,7 @@ import AppKit
     func tooltipContent(_ pr: PullRequest, title: String) -> PullRequestTooltip.Content {
         let entry = tabHoverCards.summaries.entry(for: pr)
         return PullRequestTooltip.Content(title: entry.details?.title ?? title, reference: pr.reference, details: entry.details,
-                                          summary: entry.summary, phase: entry.phase, inputTokens: entry.inputTokens)
+                                          summary: entry.summary, phase: entry.phase, inputTokens: entry.inputTokens, custom: entry.custom)
     }
 
     func showGmailTooltip(_ id: UUID) {
