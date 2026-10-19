@@ -22,6 +22,9 @@ import RiseCore
     let newTab = NewTabButton()
     let scroll = NSScrollView()
     let rowsHost = FlippedView()
+    /// Holds closed tabs' rows while they fade, below the others.
+    private let leavingRows = LeavingRowsView()
+    private var appliedTheme: RiseTheme?
     // The shadow is a sibling of the scroller, so NSClipView cannot crop it.
     let selectedTabShadow = Surface(radius: TabAppearance.radius)
     var selectedTabID: UUID?
@@ -89,23 +92,32 @@ import RiseCore
     @objc func openAddress() { onAddress?() }
     @objc func createTab() { onNewTab?() }
     func update(tabs: [BrowserTab], selected: BrowserTab?, theme: RiseTheme, splits: [SplitTabGroup] = []) {
-        fill = theme.background; gradientColors = theme.backgroundGradient; address.layer?.backgroundColor = theme.addressFill.cgColor
+        // This runs on every change to any tab; only what changed is set, as each set is redrawn.
+        if appliedTheme != theme {
+            appliedTheme = theme
+            fill = theme.background; gradientColors = theme.backgroundGradient; address.layer?.backgroundColor = theme.addressFill.cgColor
+            selectedTabShadow.fill = TabAppearance.selectedFill(theme)
+            selectedTabShadow.shadow = TabAppearance.shadow(theme)
+            newTab.theme = theme
+            cleanUpButton.hintAppearance = theme.appearance
+        }
         selectedTabID = selected?.id
-        selectedTabShadow.fill = TabAppearance.selectedFill(theme)
-        selectedTabShadow.shadow = TabAppearance.shadow(theme)
-        newTab.theme = theme
-        addressText.stringValue = AddressResolver.displayHost(selected?.url)
+        let host = AddressResolver.displayHost(selected?.url)
+        if addressText.stringValue != host { addressText.stringValue = host }
         let blank = selected?.url == nil || selected?.url?.absoluteString == "about:blank"
-        addressText.textColor = blank ? theme.muted : theme.text.withAlphaComponent(theme == .dark ? 0.95 : 0.85)
+        let addressColor = blank ? theme.muted : theme.text.withAlphaComponent(theme == .dark ? 0.95 : 0.85)
+        if addressText.textColor != addressColor { addressText.textColor = addressColor }
         hasAddress = !blank
-        addressText.font = .systemFont(ofSize: 13, weight: blank ? AddressAppearance.placeholderWeight : .regular)
+        let addressFont = NSFont.systemFont(ofSize: 13, weight: blank ? AddressAppearance.placeholderWeight : .regular)
+        if addressText.font != addressFont { addressText.font = addressFont }
         updateAddressControlVisibility()
+        // Extension buttons come and go, so theirs are set each time.
         ([copyButton, settingsButton, archiveButton, cleanUpButton] + extensionButtons).forEach {
-            $0.contentTintColor = $0 === archiveButton || $0 === cleanUpButton ? theme.sidebarIcon : theme.muted
+            let tint = $0 === archiveButton || $0 === cleanUpButton ? theme.sidebarIcon : theme.muted
+            if $0.contentTintColor != tint { $0.contentTintColor = tint }
             $0.hoverColor = theme.text.withAlphaComponent(0.07)
         }
-        cleanUpButton.hintAppearance = theme.appearance
-        for id in Array(rows.keys) where !tabs.contains(where: { $0.id == id }) { rows.removeValue(forKey: id)?.removeFromSuperview() }
+        for id in Array(rows.keys) where !tabs.contains(where: { $0.id == id }) { if let row = rows.removeValue(forKey: id) { fadeOut(row) } }
         tabsByID = Dictionary(tabs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let splitIDs = Set(splits.flatMap { [$0.leftID, $0.rightID] })
         let pinned = Array(tabs.filter { $0.pinned && !splitIDs.contains($0.id) }.prefix(PinnedLayout.maximum).map(\.id))
@@ -211,9 +223,30 @@ import RiseCore
             y += h+TabAppearance.spacing
         }
         rowsHost.frame = NSRect(x: 0, y: 0, width: w, height: max(y+8, scroll.bounds.height))
+        leavingRows.frame = rowsHost.bounds
         archiveButton.frame = NSRect(x: w-37, y: bounds.height-39, width: 28, height: 28)
         cleanUpButton.frame = NSRect(x: 10, y: bounds.height-39, width: 28, height: 28)
         positionSelectedTabShadow()
+    }
+    /// A closed tab's row fades out quickly where it was, under the rows sliding into its place,
+    /// and takes no clicks or hover meanwhile.
+    private func fadeOut(_ row: TabRow) {
+        guard row.superview === rowsHost, animatesRows, window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            row.removeFromSuperview(); return
+        }
+        if leavingRows.superview !== rowsHost { rowsHost.addSubview(leavingRows, positioned: .below, relativeTo: nil) }
+        leavingRows.frame = rowsHost.bounds
+        row.onHover = nil
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        leavingRows.addSubview(row)
+        CATransaction.commit()
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = TabListMotion.fadeOutDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            row.animator().alphaValue = 0
+        } completionHandler: {
+            MainActor.assumeIsolated { row.removeFromSuperview() }
+        }
     }
     @objc func positionSelectedTabShadow() {
         guard let id = selectedTabID, let row: NSView = splitRows.values.first(where: { $0.group.contains(id) }) ?? rows[id] else { selectedTabShadow.isHidden = true; return }
@@ -248,4 +281,9 @@ import RiseCore
     override func mouseEntered(with event: NSEvent) { setSidebarHovered(true) }
     override func mouseExited(with event: NSEvent) { setSidebarHovered(false) }
     override func viewDidHide() { super.viewDidHide(); setSidebarHovered(false, animated: false) }
+}
+
+/// Rows fading out after their tabs closed: shown, but not there to click.
+final class LeavingRowsView: FlippedView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

@@ -28,7 +28,7 @@ index d1973034ee..30be51b744 100644
      "//ui/display",
      "//ui/events",
 diff --git a/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.cc b/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.cc
-index 59bdfa1e11..a2e22977e7 100644
+index 59bdfa1e11..ead64846a1 100644
 --- a/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.cc
 +++ b/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.cc
 @@ -22,6 +22,7 @@
@@ -104,7 +104,7 @@ index 59bdfa1e11..a2e22977e7 100644
  
    // For file URLs, we want to elide the tail, since the file name and/or query
    // part of the file URL can be made to look like an origin for spoofing. For
-@@ -303,25 +277,38 @@ PictureInPictureBrowserFrameView::PictureInPictureBrowserFrameView(
+@@ -303,25 +277,42 @@ PictureInPictureBrowserFrameView::PictureInPictureBrowserFrameView(
    const std::optional<blink::mojom::PictureInPictureWindowOptions> pip_options =
        browser_view->GetDocumentPictureInPictureOptions();
    if (!pip_options.has_value() || !pip_options->disallow_return_to_opener) {
@@ -124,6 +124,8 @@ index 59bdfa1e11..a2e22977e7 100644
 +                IDS_PICTURE_IN_PICTURE_BACK_TO_TAB_CONTROL_TEXT),
 +            base::BindRepeating(
 +                [](PictureInPictureBrowserFrameView* frame_view) {
++                  rise_pip::AnnounceClosing(
++                      frame_view->GetWidget()->GetNativeWindow());
 +                  DefinitelyExitPictureInPicture(
 +                      *frame_view, PictureInPictureWindowManager::UiBehavior::
 +                                       kCloseWindowAndFocusOpener);
@@ -149,6 +151,8 @@ index 59bdfa1e11..a2e22977e7 100644
 +          l10n_util::GetStringUTF16(IDS_PICTURE_IN_PICTURE_CLOSE_CONTROL_TEXT),
 +          base::BindRepeating(
 +              [](PictureInPictureBrowserFrameView* frame_view) {
++                rise_pip::AnnounceClosing(
++                    frame_view->GetWidget()->GetNativeWindow());
 +                DefinitelyExitPictureInPicture(
 +                    *frame_view,
 +                    PictureInPictureWindowManager::UiBehavior::kCloseWindowOnly);
@@ -157,7 +161,42 @@ index 59bdfa1e11..a2e22977e7 100644
  
    // Creates the controller that owns and drives the top-bar hover animations,
    // now that the buttons and content-setting views it references exist. It
-@@ -969,10 +956,12 @@ LocationIconView* PictureInPictureBrowserFrameView::GetLocationIconView() {
+@@ -559,11 +550,11 @@ void PictureInPictureBrowserFrameView::AddedToWidget() {
+ // Windows. On Windows, resizable windows can not be translucent. See
+ // crbug.com/425711450.
+ #if !BUILDFLAG(IS_WIN)
+-  if (!fade_animator_) {
+-    fade_animator_ = std::make_unique<PictureInPictureWidgetFadeAnimator>();
+-  }
+-  fade_animator_->AnimateShowWindow(
+-      GetWidget(), PictureInPictureWidgetFadeAnimator::WidgetShowType::kNone);
++  // Rise's: faint until the window shows, which the browser does a little
++  // later, then fading in from then on (OnWidgetVisibilityChanged) as Rise
++  // springs it in. Chrome's fade started here and was mostly done by then.
++  GetWidget()->SetOpacity(0.01f);
++  rise_pip::AnnounceShowing(GetWidget()->GetNativeWindow());
+ #endif
+ 
+   // If the AutoPiP setting overlay is set, then post a task to show it.  Don't
+@@ -841,6 +832,17 @@ void PictureInPictureBrowserFrameView::OnWidgetVisibilityChanged(
+     bool visible) {
+   if (visible) {
+     EnforceTucking();
++#if !BUILDFLAG(IS_WIN)
++    if (!rise_fade_) {
++      rise_fade_ = std::make_unique<views::WidgetFadeAnimator>(widget);
++      rise_fade_->set_fade_in_duration(
++          base::Milliseconds(rise_pip::kFadeInDurationMs));
++      rise_fade_->set_tween_type(gfx::Tween::EASE_IN_OUT);
++      rise_fade_->set_show_type(
++          views::WidgetFadeAnimator::WidgetShowType::kNone);
++      rise_fade_->FadeIn();
++    }
++#endif
+   }
+ }
+ 
+@@ -969,10 +971,12 @@ LocationIconView* PictureInPictureBrowserFrameView::GetLocationIconView() {
  }
  
  void PictureInPictureBrowserFrameView::UpdateContentSettingsIcons() {
@@ -175,7 +214,7 @@ index 59bdfa1e11..a2e22977e7 100644
    for (ContentSettingImageView* view : content_setting_views_) {
      view->Update();
 diff --git a/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.h b/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.h
-index 98c4c26c87..a1c2e715ee 100644
+index 98c4c26c87..e202bea42d 100644
 --- a/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.h
 +++ b/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.h
 @@ -265,7 +265,7 @@ class PictureInPictureBrowserFrameView
@@ -187,12 +226,21 @@ index 98c4c26c87..a1c2e715ee 100644
    raw_ptr<views::View> back_to_tab_button_ = nullptr;
  
    base::ScopedObservation<views::Widget, views::WidgetObserver>
+@@ -294,6 +294,8 @@ class PictureInPictureBrowserFrameView
+ 
+   // Used to animate the Picture-in-Picture window creation.
+   std::unique_ptr<PictureInPictureWidgetFadeAnimator> fade_animator_;
++  // Rise's fade in, from when the window first shows.
++  std::unique_ptr<views::WidgetFadeAnimator> rise_fade_;
+ 
+   // Used to tuck/untuck this widget into the side of the screen.
+   std::unique_ptr<PictureInPictureTucker> tucker_;
 diff --git a/chrome/browser/ui/views/frame/rise_pip_top_bar.h b/chrome/browser/ui/views/frame/rise_pip_top_bar.h
 new file mode 100644
-index 0000000000..a06e3354e8
+index 0000000000..ac22fcfebb
 --- /dev/null
 +++ b/chrome/browser/ui/views/frame/rise_pip_top_bar.h
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,145 @@
 +// Copyright 2026 Rise
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -210,6 +258,7 @@ index 0000000000..a06e3354e8
 +#include "ui/gfx/animation/linear_animation.h"
 +#include "ui/gfx/geometry/rounded_corners_f.h"
 +#include "ui/gfx/image/image_skia.h"
++#include "ui/gfx/native_ui_types.h"
 +#include "ui/views/controls/button/button.h"
 +
 +// Rise's look for the bar along the top of a page's picture-in-picture window
@@ -219,8 +268,10 @@ index 0000000000..a06e3354e8
 +// return and close buttons carry the glyphs of Rise's own floating video.
 +namespace rise_pip {
 +
-+inline constexpr int kTopBarHeight = 40;
++inline constexpr int kTopBarHeight = 36;
 +inline constexpr int kButtonSize = 28;
++// The window's fade in, as Rise's floating video's (FloatingEntrance).
++inline constexpr int kFadeInDurationMs = 160;
 +// From the window's top and side edges to the buttons in its corners.
 +inline constexpr int kEdgeInset = (kTopBarHeight - kButtonSize) / 2;
 +
@@ -280,6 +331,9 @@ index 0000000000..a06e3354e8
 +                 LocationIconView::Delegate* delegate);
 +  ~LocationButton() override;
 +
++  gfx::Size CalculatePreferredSize(
++      const views::SizeBounds& available_size) const override;
++  gfx::Size GetMinimumSize() const override;
 +  void OnPaintBackground(gfx::Canvas* canvas) override;
 +
 + private:
@@ -316,6 +370,16 @@ index 0000000000..a06e3354e8
 +  gfx::ImageSkia arrows_;
 +};
 +
++// Tells Rise the window is about to show and fade in, so Rise can spring it in
++// from its first frame ("RisePictureInPictureWillShow", posted with the
++// NSWindow).
++void AnnounceShowing(gfx::NativeWindow window);
++
++// Tells Rise the window is about to close from its own buttons, while it still
++// shows, so Rise can play its close over where it was
++// ("RisePictureInPictureWillClose", posted with the NSWindow).
++void AnnounceClosing(gfx::NativeWindow window);
++
 +// The system symbol `name` at `point_size`, semibold, in `color`.
 +gfx::ImageSkia SymbolImage(const char* name, float point_size, SkColor color);
 +
@@ -324,16 +388,17 @@ index 0000000000..a06e3354e8
 +#endif  // CHROME_BROWSER_UI_VIEWS_FRAME_RISE_PIP_TOP_BAR_H_
 diff --git a/chrome/browser/ui/views/frame/rise_pip_top_bar.cc b/chrome/browser/ui/views/frame/rise_pip_top_bar.cc
 new file mode 100644
-index 0000000000..ac6da37a7c
+index 0000000000..6b6288fe60
 --- /dev/null
 +++ b/chrome/browser/ui/views/frame/rise_pip_top_bar.cc
-@@ -0,0 +1,292 @@
+@@ -0,0 +1,308 @@
 +// Copyright 2026 Rise
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
 +
 +#include "chrome/browser/ui/views/frame/rise_pip_top_bar.h"
 +
++#include <algorithm>
 +#include <cmath>
 +
 +#include "cc/paint/paint_flags.h"
@@ -506,6 +571,21 @@ index 0000000000..ac6da37a7c
 +
 +LocationButton::~LocationButton() = default;
 +
++gfx::Size LocationButton::CalculatePreferredSize(
++    const views::SizeBounds& available_size) const {
++  // Chrome's chip is as tall as the omnibox's text; this is the bar's other
++  // buttons' square, wider only for a label such as "Not secure".
++  const int width =
++      ShouldShowLabel()
++          ? LocationIconView::CalculatePreferredSize(available_size).width()
++          : kButtonSize;
++  return gfx::Size(std::max(width, kButtonSize), kButtonSize);
++}
++
++gfx::Size LocationButton::GetMinimumSize() const {
++  return gfx::Size(kButtonSize, kButtonSize);
++}
++
 +void LocationButton::OnPaintBackground(gfx::Canvas* canvas) {
 +  style_.PaintBackground(canvas);
 +}
@@ -622,10 +702,10 @@ index 0000000000..ac6da37a7c
 +}  // namespace rise_pip
 diff --git a/chrome/browser/ui/views/frame/rise_pip_top_bar_mac.mm b/chrome/browser/ui/views/frame/rise_pip_top_bar_mac.mm
 new file mode 100644
-index 0000000000..9197fe9aea
+index 0000000000..30ae8143f7
 --- /dev/null
 +++ b/chrome/browser/ui/views/frame/rise_pip_top_bar_mac.mm
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,48 @@
 +// Copyright 2026 Rise
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -651,6 +731,26 @@ index 0000000000..9197fe9aea
 +          ]]];
 +  NSImage* image = [symbol imageWithSymbolConfiguration:configuration];
 +  return image ? gfx::ImageSkiaFromNSImage(image) : gfx::ImageSkia();
++}
++
++void AnnounceShowing(gfx::NativeWindow window) {
++  NSWindow* ns_window = window.GetNativeNSWindow();
++  if (!ns_window) {
++    return;
++  }
++  [NSNotificationCenter.defaultCenter
++      postNotificationName:@"RisePictureInPictureWillShow"
++                    object:ns_window];
++}
++
++void AnnounceClosing(gfx::NativeWindow window) {
++  NSWindow* ns_window = window.GetNativeNSWindow();
++  if (!ns_window) {
++    return;
++  }
++  [NSNotificationCenter.defaultCenter
++      postNotificationName:@"RisePictureInPictureWillClose"
++                    object:ns_window];
 +}
 +
 +}  // namespace rise_pip

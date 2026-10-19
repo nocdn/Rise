@@ -3,6 +3,8 @@ import QuartzCore
 
 @MainActor enum TabListMotion {
     static let duration = 0.18
+    /// A closed tab's row fades in about half the slide, gone before the rows below settle.
+    static let fadeOutDuration = 0.1
     static let movementKey = "Rise.TabMovement"
     /// Slides `view` to `frame`. It starts when the frame it's in reaches the screen, so work done
     /// before then, such as showing the next tab's page after a close, can't eat into the slide;

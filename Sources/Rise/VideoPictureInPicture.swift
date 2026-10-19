@@ -382,11 +382,13 @@ import AppKit
     func minimizeVideo() {
         guard let session = current else { return }
         if let tab = session.tab { dismissed.insert(tab.id) }
+        session.panel.beginClosing()
         restore(session, animated: true, pause: false)
     }
     func closeVideo() {
         guard let session = current else { return }
         if let tab = session.tab { dismissed.insert(tab.id) }
+        session.panel.beginClosing()
         restore(session, animated: true, pause: true)
     }
 

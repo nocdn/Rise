@@ -64,6 +64,8 @@ struct FloatingVideoScrollInput {
     private var screenObserver: NSObjectProtocol?
     private(set) var isDismissing = false
     private var dismissalID = UUID()
+    /// When the X started the window's close, which plays out before it goes.
+    private var closeStarted: CFTimeInterval?
 
     init(aspectRatio: CGFloat, screen: NSScreen, referenceWindow: NSWindow? = nil) {
         let aspect = min(3, max(0.45, aspectRatio))
@@ -206,6 +208,7 @@ struct FloatingVideoScrollInput {
     func showProgress(time: Double, duration: Double) { overlay.progress.show(time: time, duration: duration) }
 
     func present() {
+        resetClosing()
         installEventMonitors()
         observeScreenChanges(); orderFrontRegardless()
         fitToScreen(); acceptsMouse = true; overlay.refreshHover()
@@ -213,7 +216,8 @@ struct FloatingVideoScrollInput {
         // A window that isn't showing yet grows in; one called back mid-dismissal springs back to full size.
         if alphaValue < 0.05 { springIn() } else { scale(to: 1) }
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.18
+            context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : FloatingEntrance.fadeDuration
+            context.timingFunction = FloatingEntrance.fadeTiming
             animator().alphaValue = 1
         }
     }
@@ -222,7 +226,7 @@ struct FloatingVideoScrollInput {
     /// quick blur clears to sharp.
     private func springIn() {
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, let layer = contentView?.layer else { return }
-        scale(to: 1, from: 0.9)
+        scale(to: 1, from: FloatingEntrance.startScale)
 
         guard let blur = CIFilter(name: "CIGaussianBlur") else { return }
         blur.name = "springInBlur"; blur.setValue(0, forKey: kCIInputRadiusKey)
@@ -232,7 +236,9 @@ struct FloatingVideoScrollInput {
         CATransaction.begin()
         CATransaction.setCompletionBlock { [weak layer] in
             // A resting zero-radius blur still costs a filter pass every frame.
-            MainActor.assumeIsolated { if layer?.animation(forKey: "springInBlur") == nil { layer?.filters = nil } }
+            MainActor.assumeIsolated { [weak self] in
+                if self?.closeStarted == nil, layer?.animation(forKey: "springInBlur") == nil { layer?.filters = nil }
+            }
         }
         layer.filters = [blur]; layer.add(unblur, forKey: "springInBlur")
         CATransaction.commit()
@@ -260,7 +266,8 @@ struct FloatingVideoScrollInput {
             spring.keyPath = "transform"; spring.duration = spring.settlingDuration; animation = spring
         } else if scale == 1 {
             let spring = CASpringAnimation(keyPath: "transform")
-            spring.mass = 1; spring.stiffness = 420; spring.damping = 2*0.62*sqrt(420)
+            let stiffness = FloatingEntrance.stiffness
+            spring.mass = 1; spring.stiffness = stiffness; spring.damping = 2*FloatingEntrance.dampingRatio*sqrt(stiffness)
             spring.duration = spring.settlingDuration; animation = spring
         } else {
             animation = CABasicAnimation(keyPath: "transform")
@@ -270,10 +277,45 @@ struct FloatingVideoScrollInput {
         layer.add(animation, forKey: "scale")
     }
 
+    // MARK: Closing
+
+    /// Closing with the X or minimize button: the controls go at once, and the window starts on its
+    /// way out before the page has gone back to its tab.
+    func beginClosing() {
+        guard closeStarted == nil, !isDismissing, isVisible else { return }
+        overlay.isHidden = true
+        isLifted = false; stopMotion(); acceptsMouse = false; removeEventMonitors()
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, let layer = contentView?.layer else { return }
+        closeStarted = CACurrentMediaTime()
+        ["scale", "springInBlur"].forEach(layer.removeAnimation(forKey:))
+        FloatingClose.play(on: layer, width: surface.bounds.width)
+    }
+    /// Called back before it has gone, the window shows as it was.
+    private func resetClosing() {
+        guard closeStarted != nil || overlay.isHidden else { return }
+        closeStarted = nil; overlay.isHidden = false
+        guard let layer = contentView?.layer else { return }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        FloatingClose.keys.forEach(layer.removeAnimation(forKey:))
+        layer.opacity = 1; layer.transform = CATransform3DIdentity; layer.filters = nil
+        CATransaction.commit()
+    }
+
     func dismiss(animated: Bool, completion: @escaping () -> Void) {
         guard !isDismissing else { return }
         isDismissing = true; stopMotion(); acceptsMouse = false; removeEventMonitors()
         let token = UUID(); dismissalID = token
+        if let closeStarted {
+            // The X's close is under way; the window goes as it ends.
+            let remaining = max(0, closeStarted+FloatingClose.duration-CACurrentMediaTime())
+            DispatchQueue.main.asyncAfter(deadline: .now()+remaining) { [weak self] in
+                guard let self, self.dismissalID == token else { return }
+                self.orderOut(nil); NSApp.removeWindowsItem(self)
+                if let observer = self.screenObserver { NotificationCenter.default.removeObserver(observer); self.screenObserver = nil }
+                completion()
+            }
+            return
+        }
         // Shrinks a touch as it fades.
         if animated { scale(to: 0.95) }
         NSAnimationContext.runAnimationGroup { context in

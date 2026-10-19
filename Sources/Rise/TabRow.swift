@@ -106,7 +106,28 @@ import RiseCore
         guard !isRenaming else { return }
         titleShimmer.startSmartRename()
     }
+    /// What the row last showed. Rows are updated on every change to any tab, and each update
+    /// redraws the row, so an unchanged row is left alone: redrawing them all made the commit that
+    /// starts a close's slide heavy enough to miss its first frames.
+    private struct Shown: Equatable {
+        var title: String, selected: Bool, theme: RiseTheme, renaming: Bool, splitMember: Bool
+        var subtitle: String?, subtitleColor: NSColor?, subtitleRange: NSRange?, constructionBorder: Bool
+        var accessory: ObjectIdentifier?, peekIcon: ObjectIdentifier?, peekTitle: String?
+        var favicon: ObjectIdentifier?, host: String?
+        var playing: Bool, muted: Bool, loading: Bool, progress: Double, hardReloading: Bool
+    }
+    private var shown: Shown?
     func update(tab: BrowserTab, selected: Bool, theme: RiseTheme, configuration: TabRowConfiguration) {
+        let now = Shown(title: tab.title, selected: selected, theme: theme, renaming: isRenaming, splitMember: isSplitMember,
+                        subtitle: configuration.subtitle?.text, subtitleColor: configuration.subtitle?.color,
+                        subtitleRange: configuration.subtitle?.highlightRange, constructionBorder: configuration.constructionBorder,
+                        accessory: configuration.subtitleAccessory.map(ObjectIdentifier.init),
+                        peekIcon: configuration.peek?.favicon.map(ObjectIdentifier.init), peekTitle: configuration.peek?.title,
+                        favicon: tab.favicon(for: theme).map(ObjectIdentifier.init), host: tab.url?.host,
+                        playing: tab.isPlayingAudio, muted: tab.isAudioMuted, loading: tab.isLoading,
+                        progress: tab.page.estimatedProgress, hardReloading: tab.isHardReloading)
+        guard now != shown else { return }
+        shown = now
         let previouslyShowedSubtitle = showsSubtitle
         self.selected = selected; self.theme = theme; self.configuration = configuration
         if previouslyShowedSubtitle != showsSubtitle {

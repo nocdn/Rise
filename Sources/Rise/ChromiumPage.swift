@@ -367,7 +367,9 @@ enum RisePages {
     }
     func addScriptToEveryDocument(_ source: String, world: String) { browserView.addScript(toEveryDocument: source, world: world) }
     func setTheme(_ appearance: NSAppearance, background: NSColor) {
-        browserView.prefersDark = NSNumber(value: appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua)
+        // Each change reaches the page's renderer, so only a change is sent.
+        let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        if browserView.prefersDark?.boolValue != dark { browserView.prefersDark = NSNumber(value: dark) }
         if browserView.pageBackgroundColor != background { browserView.pageBackgroundColor = background }
     }
     func setMediaSuspended(_ suspended: Bool) {

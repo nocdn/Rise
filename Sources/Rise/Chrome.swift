@@ -50,7 +50,11 @@ class Surface: FlippedView {
         gradient.isHidden = true; layer?.insertSublayer(gradient, at: 0)
     }
     required init?(coder: NSCoder) { fatalError() }
-    var fill: NSColor { get { .clear } set { layer?.backgroundColor = newValue.cgColor } }
+    /// Only a different color is set: each set is a change Core Animation commits and redraws.
+    var fill: NSColor {
+        get { .clear }
+        set { let color = newValue.cgColor; if layer?.backgroundColor != color { layer?.backgroundColor = color } }
+    }
     /// Rounds the gradient along with the fill.
     var cornerRadius: CGFloat {
         get { layer?.cornerRadius ?? 0 }

@@ -137,6 +137,9 @@ final class SidebarShadowView: NSView {
     /// Moves the traffic lights by the sidebar's offset from its docked place, so they ride with it.
     func carryTitlebarControls(by offset: NSPoint) {
         let float = sidebarFloat
+        // Unmoved, they're already in place: AppKit moving them carries them straight back, below.
+        // Laying the whole titlebar out on every update cost each tab close a frame or two.
+        if !float.dockedOrigins.isEmpty, offset == float.carried { return }
         if float.dockedOrigins.isEmpty {
             // AppKit lays the titlebar out again whenever it changes; they're carried straight back.
             for button in trafficLights {

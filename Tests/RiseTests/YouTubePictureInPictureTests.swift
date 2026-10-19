@@ -115,4 +115,19 @@ final class YouTubePictureInPictureTests: XCTestCase {
         overlay.mouseExited(with: try XCTUnwrap(NSEvent.enterExitEvent(with: .mouseExited, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: panel.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil)))
         XCTAssertFalse(overlay.controlsVisible)
     }
+    @MainActor func testTheXClosesAsIOSDoesAndACallBackRestoresTheWindow() throws {
+        _ = NSApplication.shared
+        let panel = FloatingVideoWindow(aspectRatio: 16.0/9, screen: try XCTUnwrap(NSScreen.main)); defer { panel.closeImmediately() }
+        panel.present()
+        let layer = try XCTUnwrap(panel.contentView?.layer)
+        panel.beginClosing()
+        XCTAssertTrue(panel.overlay.isHidden, "The controls go at once")
+        XCTAssertEqual(layer.opacity, 0); XCTAssertNotNil(layer.filters, "It fades out blurred")
+        // Measured from iOS at 100 ms: 0.92 of its size, at 0.62 opacity.
+        let middle = FloatingClose.curves(at: 0.1, width: 371)
+        XCTAssertEqual(middle.scale, 0.92, accuracy: 0.01); XCTAssertEqual(middle.opacity, 0.62, accuracy: 0.02)
+        panel.present()
+        XCTAssertFalse(panel.overlay.isHidden); XCTAssertEqual(layer.opacity, 1); XCTAssertNil(layer.filters)
+        XCTAssertTrue(CATransform3DIsIdentity(layer.transform), "Called back mid-close, it shows as it was")
+    }
 }
