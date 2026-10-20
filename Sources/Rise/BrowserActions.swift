@@ -15,7 +15,7 @@ import RiseCore
     func makeThemeMenu() -> NSMenuItem {
         let item = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
         let submenu = NSMenu(title: "Theme")
-        for (title, choice) in [("Light", RiseTheme.neutral), ("Rose", .rose), ("Dark", .dark)] {
+        for (title, choice) in [("Light", RiseTheme.neutral), ("Rise", .rise), ("Rose", .rose), ("Dark", .dark)] {
             submenu.addItem(menuItem(title, checked: !automaticTheme && theme == choice) { [weak self] in self?.chooseTheme(choice) })
         }
         submenu.addItem(.separator())

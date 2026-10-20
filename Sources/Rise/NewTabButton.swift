@@ -7,7 +7,7 @@ final class NewTabButton: NSButton {
     var theme = RiseTheme.neutral {
         didSet {
             plus.contentTintColor = theme.sidebarIcon
-            caption.textColor = theme == .neutral ? .black.withAlphaComponent(0.5) : theme.muted
+            caption.textColor = theme.isLight ? .black.withAlphaComponent(0.5) : theme.muted
             updateBackground()
         }
     }

@@ -5,7 +5,11 @@ import RiseCore
 /// A separate place for the session, history and website data, for trying Rise out (with
 /// another engine, say) without touching the everyday ones: `RISE_PROFILE_DIR=<folder>`.
 enum RiseProfile {
-    static var directory: URL? { ProcessInfo.processInfo.environment["RISE_PROFILE_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) } }
+    static var directory: URL? {
+        ProcessInfo.processInfo.environment["RISE_PROFILE_DIR"].map { URL(fileURLWithPath: $0, isDirectory: true) }
+            // The palette lab keeps its own, beside the everyday one.
+            ?? (PaletteLab.isOn ? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Rise Palette Lab", isDirectory: true) : nil)
+    }
 }
 
 /// Chrome's own pages Rise shows as its own: rise://settings is chrome://settings, with every page

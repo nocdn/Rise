@@ -16,7 +16,9 @@ import AppKit
     private(set) var isSearching = false
     private var muted = NSColor.secondaryLabelColor, siteColor = NSColor.labelColor
     /// A step heavier than the address, so the offer reads apart from what's typed.
-    private var font: NSFont { .systemFont(ofSize: AddressAppearance.textSize, weight: .medium) }
+    /// The centred new tab palette's own, in place of the address palette's.
+    var fontOverride: NSFont?
+    private var font: NSFont { fontOverride ?? AddressAppearance.siteSearchFont }
     private var keyFont: NSFont { .systemFont(ofSize: Self.keySize, weight: .medium) }
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -53,6 +55,13 @@ import AppKit
         key.backgroundColor = theme.text.withAlphaComponent(theme == .dark ? 0.13 : 0.08).cgColor
         keyText.foregroundColor = muted.cgColor
         CATransaction.commit()
+    }
+    /// Takes up a changed font (`AddressAppearance.siteSearchFont`).
+    func applyFont() {
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        for text in [searchText, nameText] { text.font = font; text.fontSize = font.pointSize }
+        CATransaction.commit()
+        needsLayout = true
     }
     private func width(_ text: String, _ font: NSFont) -> CGFloat {
         ceil((text as NSString).size(withAttributes: [.font: font]).width)

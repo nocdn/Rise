@@ -62,6 +62,9 @@ class LocalIdentityTests(unittest.TestCase):
             '     3 valid identities found\n')
         self.assertEqual(signing.local_identity(listing), "0378CD50D675A3ECCD5C39A78159E47E2D01981B")
         self.assertEqual(signing.local_identity("     0 valid identities found\n"), "-")
+        # A Mac without a development certificate still signs every build the same way.
+        self.assertEqual(signing.local_identity(listing.replace("Apple Development", "Apple Distribution")),
+                         "353C762A57F47FAF8D1B8DC04484F99B3FDBF2DF")
 
 
 class CloudKitSigningTests(PasskeySigningTests):

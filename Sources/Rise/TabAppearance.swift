@@ -17,7 +17,7 @@ import AppKit
         return theme.muted.blended(withFraction: 0.8, of: tint) ?? theme.muted
     }
     static func selectedFill(_ theme: RiseTheme) -> NSColor {
-        theme == .neutral ? NSColor(hex: 0xFAFAFA) : theme.selectedTab
+        theme.isLight ? NSColor(hex: 0xFAFAFA) : theme.selectedTab
     }
     static func hoverFill(_ theme: RiseTheme) -> NSColor {
         theme == .rose ? theme.hoveredTab : .white.withAlphaComponent(theme == .dark ? 0.16 : 0.55)

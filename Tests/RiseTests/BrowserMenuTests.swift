@@ -8,6 +8,18 @@ final class BrowserMenuTests: XCTestCase {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         return BrowserController(sessionURL: folder.appendingPathComponent("session.json"), restore: false)
     }
+    @MainActor func testCommandZTakesBackASplitViewJustMade() throws {
+        let browser = makeBrowser(); defer { clean(browser) }
+        let other = browser.addTab(), current = browser.addTab(); browser.select(current.id); browser.showWindow(nil)
+        browser.submitAddress("split", suggestion: AddressSuggestion(title: "Split View", subtitle: "", symbol: "square.split.2x1", url: nil, tabID: nil, command: "Split View"))
+        XCTAssertNotNil(browser.activeSplitGroup)
+        let undo = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0, windowNumber: browser.window!.windowNumber,
+                                                  context: nil, characters: "z", charactersIgnoringModifiers: "z", isARepeat: false, keyCode: 6))
+        XCTAssertTrue(browser.window!.performKeyEquivalent(with: undo))
+        XCTAssertNil(browser.activeSplitGroup); XCTAssertEqual(browser.selectedID, current.id)
+        XCTAssertEqual(Set(browser.tabs.map(\.id)), [other.id, current.id])
+        XCTAssertFalse(browser.window!.performKeyEquivalent(with: undo), "Taken back once")
+    }
     @MainActor private func clean(_ browser: BrowserController) {
         browser.cancelTabSwitch(); browser.hidePalette(); browser.saveWork?.cancel()
         browser.tabs.forEach { $0.cancelLoad() }; browser.suggestionFavicons.cancel(); browser.window?.orderOut(nil)

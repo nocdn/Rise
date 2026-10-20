@@ -21,7 +21,7 @@ import RiseChromium
         case "appearance":
             return [
                 select("theme", "Theme", "The colours of Rise's window and its pages", automaticTheme ? "automatic" : theme.rawValue,
-                       [("automatic", "Automatic"), (RiseTheme.neutral.rawValue, "Light"), (RiseTheme.rose.rawValue, "Rose"), (RiseTheme.dark.rawValue, "Dark")]),
+                       [("automatic", "Automatic"), (RiseTheme.neutral.rawValue, "Light"), (RiseTheme.rise.rawValue, "Rise"), (RiseTheme.rose.rawValue, "Rose"), (RiseTheme.dark.rawValue, "Dark")]),
                 toggle("livePeekResize", "Live page while expanding Peek", "The page lays itself out at every size as a Peek grows into a tab", livePeekResize),
                 toggle("animateDevTools", "Animate developer tools", "DevTools slide in and out from the right", animatesDevTools),
             ]

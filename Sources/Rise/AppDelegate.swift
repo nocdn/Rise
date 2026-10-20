@@ -4,6 +4,7 @@ import AppKit
     var browser: BrowserController!
     func applicationDidFinishLaunching(_ notification: Notification) {
         browser = BrowserController(sessionURL: RiseProfile.directory?.appendingPathComponent("session.json")); buildMenu()
+        if PaletteLab.isOn { browser.installPaletteLab() }
         browser.showWindow(nil)
         FloatingPageGestures.shared.install()
         if Bundle.main.object(forInfoDictionaryKey: "RiseCloudKitEnabled") as? Bool == true {

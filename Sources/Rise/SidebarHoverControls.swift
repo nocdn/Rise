@@ -3,6 +3,11 @@ import AppKit
 /// The layer supplies the URL pill; the native cell must not clear its fill.
 final class SidebarAddressButton: NSButton {
     override func draw(_ dirtyRect: NSRect) {}
+    /// Opens the address palette as the button goes down, not when it comes back up.
+    override func mouseDown(with event: NSEvent) {
+        guard isEnabled, !event.modifierFlags.contains(.control) else { super.mouseDown(with: event); return }
+        sendAction(action, to: target)
+    }
 }
 
 /// Keep the anchor view attached while fading, but pass clicks through once

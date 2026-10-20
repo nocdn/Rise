@@ -33,10 +33,44 @@ import RiseCore
     @objc func toggleSplit() {
         if let selectedID, activeSplitGroup != nil { separateSplit(containing: selectedID); return }
         guard let current = selectedTab else { return }
+        let previous = splitGroups
+        var added: UUID?
         if let other = tabs.first(where: { $0.id != current.id }) { showSplit(other) }
         else if let url = current.url {
             let other = configure(BrowserTab()); tabs.insert(other, at: 0); other.load(url); showSplit(other)
+            added = other.id
         }
+        if let group = activeSplitGroup, splitGroups != previous { registerSplitUndo(group: group.id, previous: previous, selectedID: current.id, addedTabID: added) }
+    }
+    private func registerSplitUndo(group: UUID, previous: [SplitTabGroup], selectedID: UUID, addedTabID: UUID?) {
+        splitUndo?.expiry.cancel()
+        let expiry = DispatchWorkItem { [weak self] in self?.splitUndo = nil }
+        splitUndo = SplitUndo(groupID: group, previous: previous, selectedID: selectedID, addedTabID: addedTabID, expiry: expiry)
+        DispatchQueue.main.asyncAfter(deadline: .now()+Self.peekUndoDuration, execute: expiry)
+    }
+    /// ⌘Z shortly after Split View made a split, unless an address or search is being typed.
+    func handleSplitUndoKey(_ event: NSEvent) -> Bool {
+        guard splitUndo != nil, event.type == .keyDown,
+              event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
+              event.charactersIgnoringModifiers?.lowercased() == "z", palette.isHidden,
+              !(window?.firstResponder is NSText) else { return false }
+        return undoSplit()
+    }
+    /// Back to the one page and the splits there were, closing the copy of the page a split of a
+    /// lone tab opened.
+    @discardableResult func undoSplit() -> Bool {
+        guard let undo = splitUndo else { return false }
+        splitUndo = nil; undo.expiry.cancel()
+        // Already taken apart, or changed since.
+        guard splitGroups.contains(where: { $0.id == undo.groupID }) else { return false }
+        splitGroups = undo.previous
+        if let added = undo.addedTabID, tabs.contains(where: { $0.id == added }) {
+            closeTab(added)
+            if closedTabs.last?.id == added { closedTabs.removeLast() }
+        }
+        if tabs.contains(where: { $0.id == undo.selectedID }) { select(undo.selectedID) }
+        attachVisiblePages(); update()
+        return true
     }
     func showSplit(_ tab: BrowserTab) {
         guard let current = selectedID, tab.id != current, tabs.contains(where: { $0.id == tab.id }) else { return }
@@ -182,4 +216,14 @@ import RiseCore
             layer.setValue(value, forKey: key); layer.add(fade, forKey: "peek.split.\(key)")
         }
     }
+}
+
+/// A split Split View just made, and what there was before it.
+struct SplitUndo {
+    let groupID: UUID
+    let previous: [SplitTabGroup]
+    let selectedID: UUID
+    /// The copy of the page opened to split a lone tab.
+    let addedTabID: UUID?
+    let expiry: DispatchWorkItem
 }

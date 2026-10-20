@@ -77,6 +77,8 @@ import RiseCore
     let suggestionFavicons: SuggestionFavicons
     let googleSearchSuggestions: GoogleSearchSuggestions
     var theme: RiseTheme = .neutral
+    /// The palette lab's panel, in its build (`PaletteLab`).
+    var paletteLab: PaletteLabPanel?
     /// Follows macOS's appearance, Light by day and Dark by night when macOS
     /// itself is set to Auto, instead of keeping one chosen theme.
     var automaticTheme = false
@@ -117,6 +119,8 @@ import RiseCore
     var peekControls: [PeekControl] = []
     /// ⌘Z puts a Peek that became a tab or a split back, for a short while.
     var peekUndo: PeekUndo?
+    /// ⌘Z takes back a split just made, for as long as a Peek's (`SplitUndo`).
+    var splitUndo: SplitUndo?
     /// The divider can restore its original Peek even after the keyboard undo window expires.
     var splitPeekReturns: [UUID: PeekUndo] = [:]
     /// Waiting for the Peek's snapshot before it grows into the page.
@@ -234,7 +238,7 @@ import RiseCore
         window.addressPaletteEvent = { [weak self] event in self?.palette.handleKeyEquivalent(event) ?? false }
         window.undoEvent = { [weak self] event in
             guard let self else { return false }
-            return self.palette.handleUndoKey(event) || self.handlePeekUndoKey(event)
+            return self.palette.handleUndoKey(event) || self.handleSplitUndoKey(event) || self.handlePeekUndoKey(event)
         }
         window.smartRenameEvent = { [weak self] event in self?.handleSmartRenameKey(event) ?? false }
         window.extensionShortcutEvent = { [weak self] event in self?.runExtensionShortcut(event) ?? false }
@@ -286,8 +290,12 @@ import RiseCore
             if self.isSwitchingTabs { self.cancelTabSwitch(); return true }
             if !self.palette.isHidden {
                 // Out of a site's search first, back to the address.
-                if self.palette.siteSearch != nil { self.palette.leaveSiteSearch(); self.window?.makeFirstResponder(self.palette.input) }
-                else { self.hidePalette() }
+                if self.palette.siteSearch != nil {
+                    // Focused first: focusing the field selects all of it, over the selection put back.
+                    if self.palette.input.currentEditor() == nil { self.window?.makeFirstResponder(self.palette.input) }
+                    self.palette.leaveSiteSearch()
+                }
+                else { self.palette.dismiss?() }
                 return true
             }
             if self.findBar.isPresented { self.findBar.handleEscape(); return true }
@@ -424,6 +432,7 @@ import RiseCore
         // sidebar and titlebar controls have finished being constructed.
         guard let window, let sidebar else { return }; let b = root.bounds
         root.fill = theme.background; root.gradientColors = theme.backgroundGradient; window.backgroundColor = theme.background
+        root.glowColor = theme.backgroundGlow; sidebar.glowColor = theme.backgroundGlow
         let width = displayedSidebarWidth, shown = sidebarVisible || sidebarFloat.isVisible
         sidebar.isHidden = !shown
         let pageLeft = layoutFloatingSidebar(in: b, width: width)
@@ -486,15 +495,25 @@ import RiseCore
         selectedFindBar.frame = pageShadow.frame; selectedFindBar.topInset = devHeight
         infoPlaque.frame = pageShadow.frame; infoPlaque.topInset = devHeight
         dismissArea.frame = b
-        let paletteWidth: CGFloat = paletteCreatesTab ? 520 : 600
-        if isSidebarShown {
+        // The centred palette dims the window behind it.
+        dismissArea.wantsLayer = true
+        let veil = (palette.isCentered ? CenteredPaletteStyle.veil(theme) : .clear).cgColor
+        if dismissArea.layer?.backgroundColor != veil { dismissArea.layer?.backgroundColor = veil }
+        let paletteWidth = paletteCreatesTab ? AddressAppearance.tuning.newTabWidth : AddressAppearance.tuning.addressWidth
+        if palette.isCentered {
+            // Placed where, at its tallest, it's centred in the window, and grows down from there.
+            let width = min(CenteredPaletteStyle.width, b.width-16)
+            palette.place(at: NSPoint(x: round(b.midX-width/2), y: max(8, round(b.midY-CenteredPaletteStyle.maximumHeight/2))), width: width)
+        } else if isSidebarShown {
             let address = root.convert(sidebar.address.frame, from: sidebar)
             let paletteOrigin = NSPoint(x: address.minX, y: address.minY-2)
             palette.place(at: paletteOrigin, width: min(paletteWidth, b.width-paletteOrigin.x-8))
         } else {
-            let centeredWidth: CGFloat = paletteCreatesTab ? 640 : paletteWidth
+            let centeredWidth = paletteCreatesTab ? AddressAppearance.tuning.centeredNewTabWidth : paletteWidth
             palette.place(centeredAt: NSPoint(x: b.midX, y: b.midY), width: min(centeredWidth, b.width-16))
         }
+        // The sidebar's part of the window's glow, wherever it is.
+        sidebar.glowArea = sidebar.convert(b, from: root)
         layoutPeek()
         layoutLinkStatus()
         tabSwitchBackdrop.frame = b
@@ -694,14 +713,18 @@ import RiseCore
     }
     @objc func newTab() { paletteCreatesTab = true; showPalette(text: "") }
     @objc func focusAddress() { paletteCreatesTab = false; showPalette(text: selectedTab?.url?.absoluteString == "about:blank" ? "" : selectedTab?.url?.absoluteString ?? "") }
-    func showPalette(text: String) { if searchProvider.isGoogle { googleSearchSuggestions.warmUp() }; historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); permissionCoordinator.cancel(); dismissArea.isHidden = false; palette.currentPage = selectedTab.flatMap { tab in tab.url.map { ($0.absoluteString, tab.favicon(for: theme)) } }; palette.show(text: text, theme: theme, createsTab: paletteCreatesTab); layoutChrome() }
+    func showPalette(text: String) { if searchProvider.isGoogle { googleSearchSuggestions.warmUp() }; historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); permissionCoordinator.cancel(); dismissArea.isHidden = false; palette.currentPage = selectedTab.flatMap { tab in tab.url.map { ($0.absoluteString, tab.favicon(for: theme)) } }; palette.show(text: text, theme: theme, createsTab: paletteCreatesTab, centered: paletteLab == nil); layoutChrome() }
     func hidePalette() {
+        // The palette lab's palette stays open, whatever's clicked.
+        guard paletteLab == nil else { return }
         googleSearchSuggestions.cancel(); suggestionFavicons.cancelPreview()
         guard palette.isPresented else { return }
         palette.hide(); dismissArea.isHidden = true; window?.makeFirstResponder(selectedTab?.page.view)
         DispatchQueue.main.async { [weak self] in self?.applyPendingSharedTabs() }
     }
     func submitAddress(_ text: String, suggestion: AddressSuggestion?) {
+        // The palette lab opens nothing: Enter starts the palette over.
+        if paletteLab != nil { palette.dismiss?(); return }
         hidePalette()
         if let command = suggestion?.command {
             switch command {

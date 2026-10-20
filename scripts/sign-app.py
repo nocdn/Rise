@@ -86,16 +86,21 @@ def signing_certificate(identity):
 
 
 def local_identity(listing):
-    """An Apple Development identity for everyday builds, or ad-hoc ("-") without one.
+    """An Apple Development identity for everyday builds, else a Developer ID one, or
+    ad-hoc ("-") without either.
 
-    macOS keys privacy grants (such as Downloads folder access) to the signature's
-    designated requirement. Ad-hoc signatures pin each build's hash, so every rebuild
-    asks again; a development certificate keeps the requirement stable across builds.
-    Identities sharing a name produce the same requirement, so any match will do.
+    macOS keys privacy grants (such as Downloads folder access) and Keychain "Always
+    Allow" (Chromium Safe Storage) to the signature's designated requirement. Ad-hoc
+    signatures pin each build's hash, so every rebuild asks again; a certificate keeps
+    the requirement stable across builds. Identities sharing a name produce the same
+    requirement, so any match will do.
     """
-    matches = sorted(sha for sha, name in re.findall(r'([A-Fa-f0-9]{40})\s+"([^"]+)"', listing)
-                     if name.startswith("Apple Development:"))
-    return matches[0] if matches else "-"
+    identities = re.findall(r'([A-Fa-f0-9]{40})\s+"([^"]+)"', listing)
+    for kind in ("Apple Development:", "Developer ID Application:"):
+        matches = sorted(sha for sha, name in identities if name.startswith(kind))
+        if matches:
+            return matches[0]
+    return "-"
 
 
 def configuration(info):

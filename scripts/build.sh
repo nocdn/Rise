@@ -14,12 +14,23 @@ fi
 # Rise's Chromium fork, built by scripts/engine/build.sh (Engine/README.md).
 FRAMEWORK="$ENGINE_ROOT/fork/src/out/Release/Chromium.app/Contents/Frameworks/Chromium Framework.framework"
 [[ -d "$FRAMEWORK" ]] || { echo "The engine isn't built: $FRAMEWORK (see Engine/README.md)" >&2; exit 1; }
-APP="$PWD/build/Rise.app"
+APP="$PWD/build/Rise.app"; EXECUTABLE=Rise
+# The palette lab (scripts/palette-lab.sh): the same Rise under its own name, settings and profile.
+[[ "${RISE_PALETTE_LAB:-}" == 1 ]] && { APP="$PWD/build/Rise Palette Lab.app"; EXECUTABLE=RiseLab; }
 swift build -c release --jobs "${RISE_BUILD_JOBS:-4}" -Xlinker -platform_version -Xlinker macos -Xlinker 14.0 -Xlinker "$RISE_SDK_VERSION"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
-cp .build/release/Rise "$APP/Contents/MacOS/Rise"
+cp .build/release/Rise "$APP/Contents/MacOS/$EXECUTABLE"
 cp scripts/Info.plist "$APP/Contents/Info.plist"
+if [[ "$EXECUTABLE" == RiseLab ]]; then
+  for change in "Set :CFBundleIdentifier dev.bartosz.Rise.PaletteLab" "Set :CFBundleExecutable RiseLab" "Set :CFBundleName Rise Lab" \
+                "Set :CFBundleDisplayName Rise Palette Lab" "Add :RisePaletteLab bool true" "Delete :CFBundleURLTypes"; do
+    /usr/libexec/PlistBuddy -c "$change" "$APP/Contents/Info.plist"
+  done
+fi
 cp THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/THIRD_PARTY_NOTICES.md"
+# Inter, with its license, as the font's license asks.
+mkdir -p "$APP/Contents/Resources/Fonts"
+cp Assets/Fonts/InterVariable.ttf Assets/Fonts/Inter-LICENSE.txt "$APP/Contents/Resources/Fonts/"
 # Both platforms ship the same verified bundle, rebuilt from scripts/ios-cookie-consent.
 rsync -a --delete Apps/iOS/Rise/CookieConsent/ "$APP/Contents/Resources/CookieConsent/"
 xcrun actool "$PWD/Assets/AppIcon/Rise.icon" --compile "$APP/Contents/Resources" --app-icon Rise --include-all-app-icons \

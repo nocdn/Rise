@@ -4,18 +4,29 @@ extension NSColor {
     convenience init(hex: UInt32) { self.init(srgbRed: CGFloat((hex >> 16) & 255)/255, green: CGFloat((hex >> 8) & 255)/255, blue: CGFloat(hex & 255)/255, alpha: 1) }
 }
 enum RiseTheme: String, CaseIterable {
-    case neutral, rose, dark
-    var background: NSColor { NSColor(hex: self == .dark ? 0x363636 : self == .rose ? 0xF3D4D8 : 0xE0E0E0) }
+    /// Rise: Light on Kero's Mist wash (github.com/egoist/kero, theme.go), pale blue above and
+    /// cream below, with a blue glow from the top right.
+    case neutral, rose, dark, rise
+    /// Light, and Rise, which is Light in all but its window's wash.
+    var isLight: Bool { self == .neutral || self == .rise }
+    var background: NSColor { NSColor(hex: self == .dark ? 0x363636 : self == .rose ? 0xF3D4D8 : self == .rise ? 0xEBEFF6 : 0xE0E0E0) }
     /// Top to bottom.
     var backgroundGradient: [NSColor]? {
-        self == .neutral ? [NSColor(hex: 0xEDEDED), NSColor(hex: 0xFAFAFA)] : self == .dark ? [NSColor(hex: 0x363636), NSColor(hex: 0x2B2B2B)] : nil
+        switch self {
+        case .neutral: [NSColor(hex: 0xEDEDED), NSColor(hex: 0xFAFAFA)]
+        case .dark: [NSColor(hex: 0x363636), NSColor(hex: 0x2B2B2B)]
+        case .rise: [NSColor(hex: 0xE3E9F4), NSColor(hex: 0xEBEFF6), NSColor(hex: 0xF1F2F3), NSColor(hex: 0xF2F1EC)]
+        case .rose: nil
+        }
     }
+    /// A glow over the wash from the window's top right corner, gone halfway across.
+    var backgroundGlow: NSColor? { self == .rise ? NSColor(srgbRed: 210/255, green: 225/255, blue: 248/255, alpha: 0.75) : nil }
     var pill: NSColor { NSColor(hex: self == .dark ? 0x404040 : self == .rose ? 0xE9CACE : 0xDEDEDE) }
     var addressFill: NSColor {
-        self == .neutral ? NSColor(hex: 0xE1E1E1) : pill.blended(withFraction: self == .dark ? 0.03 : 0.15, of: .white)!
+        isLight ? NSColor(hex: 0xE1E1E1) : pill.blended(withFraction: self == .dark ? 0.03 : 0.15, of: .white)!
     }
     var text: NSColor { NSColor(hex: self == .dark ? 0xD1D1D1 : self == .rose ? 0x42121F : 0x343434) }
-    var selectedText: NSColor { self == .dark ? NSColor(hex: 0xFEFEFE) : self == .neutral ? NSColor(hex: 0x111111) : text }
+    var selectedText: NSColor { self == .dark ? NSColor(hex: 0xFEFEFE) : isLight ? NSColor(hex: 0x111111) : text }
     /// Sidebar chrome icons; the dark theme keeps its lighter muted tone for contrast.
     var sidebarIcon: NSColor { self == .dark ? muted : NSColor(hex: 0x717171) }
     var muted: NSColor { NSColor(hex: self == .dark ? 0xA0A1A0 : self == .rose ? 0x90777C : 0x888787) }
@@ -35,7 +46,7 @@ enum RiseTheme: String, CaseIterable {
 }
 class FlippedView: NSView { override var isFlipped: Bool { true } }
 class Surface: FlippedView {
-    private let gradient = CAGradientLayer()
+    private let gradient = CAGradientLayer(), glow = CAGradientLayer()
     var gradientColors: [NSColor]? {
         didSet {
             guard gradientColors != oldValue else { return }
@@ -43,11 +54,23 @@ class Surface: FlippedView {
             gradient.isHidden = gradientColors == nil
         }
     }
+    /// A glow from the top right corner of `glowArea` (the window's bounds, in this view's), as
+    /// CSS's 225° gradient: whole at that corner, gone halfway across. Surfaces drawing parts of
+    /// one window place theirs against the same area, so the glow runs on across them.
+    var glowColor: NSColor? {
+        didSet {
+            guard glowColor != oldValue else { return }
+            glow.colors = glowColor.map { [$0.cgColor, $0.withAlphaComponent(0).cgColor] }
+            glow.isHidden = glowColor == nil; needsLayout = true
+        }
+    }
+    var glowArea: NSRect? { didSet { if glowArea != oldValue { needsLayout = true } } }
     init(color: NSColor = .clear, radius: CGFloat = 0) {
         super.init(frame: .zero); wantsLayer = true; clipsToBounds = false
         layer?.backgroundColor = color.cgColor; layer?.cornerRadius = radius
         gradient.startPoint = CGPoint(x: 0.5, y: 0); gradient.endPoint = CGPoint(x: 0.5, y: 1)
         gradient.isHidden = true; layer?.insertSublayer(gradient, at: 0)
+        glow.locations = [0, 0.5]; glow.isHidden = true; layer?.insertSublayer(glow, above: gradient)
     }
     required init?(coder: NSCoder) { fatalError() }
     /// Only a different color is set: each set is a change Core Animation commits and redraws.
@@ -61,15 +84,22 @@ class Surface: FlippedView {
         set {
             guard newValue != cornerRadius else { return }
             CATransaction.begin(); CATransaction.setDisableActions(true)
-            layer?.cornerRadius = newValue; gradient.cornerRadius = newValue
-            gradient.cornerCurve = layer?.cornerCurve ?? .circular
+            layer?.cornerRadius = newValue
+            for wash in [gradient, glow] { wash.cornerRadius = newValue; wash.cornerCurve = layer?.cornerCurve ?? .circular }
             CATransaction.commit()
         }
     }
     override func layout() {
         super.layout()
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        gradient.frame = bounds
+        gradient.frame = bounds; glow.frame = bounds
+        if !glow.isHidden, bounds.width > 0, bounds.height > 0 {
+            // CSS's line for 225°: down and to the left, as long as the corners need.
+            let area = glowArea ?? bounds, length = (area.width+area.height)/2.squareRoot(), step = length/2/2.squareRoot()
+            let unit = { (point: CGPoint) in CGPoint(x: (point.x-self.bounds.minX)/self.bounds.width, y: (point.y-self.bounds.minY)/self.bounds.height) }
+            glow.startPoint = unit(CGPoint(x: area.midX+step, y: area.midY-step))
+            glow.endPoint = unit(CGPoint(x: area.midX-step, y: area.midY+step))
+        }
         CATransaction.commit()
     }
 }
