@@ -41,6 +41,8 @@ import UIKit
                     let anchor = CGPoint(x: browser.view.bounds.midX, y: browser.view.bounds.midY)
                     browser.startSummarise(.pinch, at: anchor)
                     guard let scene = browser.summarise else { throw Failure(name: name+" did not start") }
+                    // Each case asks afresh, rather than recalling the summary an earlier case got.
+                    scene.memorised = nil
                     scene.makeSummary = {
                         if revealed { return SummariseReplay.summary }
                         try await Task.sleep(for: .seconds(60))

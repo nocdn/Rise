@@ -1486,6 +1486,13 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             content.snapshotView(afterScreenUpdates: false) ?? UIView(frame: CGRect(origin: .zero, size: size))
         }, title: title, size: size, summaryHost: summaryHost)
         summarise.makeSummary = { try await PageSummary.make(of: PageAssistant.snapshot(of: page), provider: MobileAISettings.shared.modelChoice) }
+        // Summarised before and unchanged since, the page flies straight to its summary.
+        let tab = currentTab, url = page.url, item = page.backForwardList.currentItem
+        summarise.memorised = tab.summary(of: page)
+        summarise.onSummary = { [weak tab, weak page] summary in
+            guard let page else { return }
+            tab?.remember(summary, of: page, url: url, item: item)
+        }
         summarise.answerFollowUp = { question, summary, history in
             try await PageSummary.answer(question, after: summary, history: history, of: PageAssistant.snapshot(of: page), provider: MobileAISettings.shared.modelChoice)
         }

@@ -334,28 +334,44 @@ fades in `backDelay` 0.38 s after the card starts settling, over `backDuration` 
   - **Look:** the gap between its crop, corners and tilt and the pinch's own for that size fades
     on `grabBlend`, re-applied every frame even while the fingers rest.
   - **Continuity:** the glows carry on from their angle, and the swing stops.
-  - **Summary:** if it had one, it isn't asked for again. Let go, it shows again `reshow` 0.5 s
-    after release, at the next swing middle. A failed or missing summary is asked for again.
+  - **Summary:** if it had one, it isn't asked for again. Let go, it comes forward at once, as a
+    recalled summary does (below). A failed or missing summary is asked for again.
+
+### Recalling a summary (20 October 2026)
+
+- **Memory:** each tab keeps its last successful summary in memory, while the page is the one
+  summarised: the same web view, address and history entry, with no navigation or reload
+  committed since. It's lost when the app is killed.
+- **Re-summarising** (a pinch, or Summarise in More) an unchanged page doesn't ask the model.
+  The card flies straight to the revealed card's place (`revealScale`, `revealTop`) on the same
+  release or More springs, with no swing, hum or thud, and the glows settle as after a reveal.
+- **The text** is there from the start and comes forward: the close's sinking back, the other
+  way. It grows from 90% to full size about the middle of the screen on the `close` spring,
+  as it fades in over `recallFade` 0.15 s, already sharp. The follow-up field comes with it.
+- Laying out the recalled text happens at the release; its time is in the log's "summary
+  recalled" event.
 
 ### The follow-up field (20 October 2026, being tuned)
 
-- **The pull:** pulled on past the summary's end, a borderless, unfilled field's placeholder,
-  "Keep pulling to ask follow-up", rises out of the middle of the bottom of the screen. It rises
-  `followUpLead` 1.4× as fast as the summary and grows from 0.5 to 0.8 of its size, centred.
-  The field is anchored at its left edge, so the centring is its left at (width − text width ×
-  scale) / 2.
-- **Haptics:** a light tick every `followUpTick` 12 pt of overscroll, from intensity 0.25 to
-  0.45 at sharpness 0.45. At `followUpPull` 96 pt (overscroll as shown, after UIKit's rubber
-  band, about 200 pt of finger travel), there's one strong click (intensity 1, sharpness 0.7).
-- **The click:** the drag is ended and the scroll view's own bounce stopped. The placeholder
-  crossfades to "Ask follow up about page". The field flies up and grows to full size on
-  `followUpPlace` (ω 15, ζ 0.6). It slides across to the paragraphs' 24 pt edge
-  `followUpSlideDelay` 0.06 s later on `followUpSlide` (ω 12, ζ 0.85). It settles
-  `followUpGap` 12 pt under the last paragraph and is focused.
+- **Always there:** once the summary shows, a borderless, unfilled field rests `followUpGap`
+  12 pt under the last paragraph, its text on the paragraphs' 24 pt edge, unfocused, with
+  "Ask follow up about page" in 35% grey (as it showed after the keyboard went). It fades in
+  as one more block after the last paragraph, or after an answer's. It focuses, and the keyboard
+  starts up, the moment a finger lands on it (a zero-duration press), not when the finger lifts;
+  he asked for that over telling taps from scrolls.
+  The old pull-out ("Keep pulling to ask follow-up", rising and growing from the bottom of the
+  screen) was replaced on 20 October at his request.
+- **Pulling past the end** still focuses it: a light tick every `followUpTick` 12 pt of
+  overscroll, from intensity 0.25 to 0.45 at sharpness 0.45, then at `followUpPull` 96 pt
+  (overscroll as shown, after UIKit's rubber band) one strong click (intensity 1, sharpness
+  0.7). The drag is ended and the scroll view's own bounce stopped, and the field is focused.
 - **The keyboard:** the content grows to hold the field, and `contentInset.bottom` leaves 16 pt
-  between the field and the keyboard. The summary scrolls to it on `followUpScroll` (ω 14, ζ 1),
-  retargeted with its velocity when the keyboard's frame arrives. A touch takes the scroll over.
-  The keyboard dismisses interactively.
+  between the field and the keyboard. The summary scrolls to it inside the keyboard's own
+  animation: a UIView animation with the notification's duration and curve (curve 7 shifted
+  into the options), so the field and the summary rise exactly with the keyboard. It used a
+  `followUpScroll` spring before, which ran behind the keyboard and let it cover the field for
+  a moment (he asked for them to move together on 20 October). Going away, it scrolls back only
+  as far as the summary's end, in the same way. The keyboard dismisses interactively.
 - **Asking (Return):** the keyboard goes and the question replaces the field in the same place,
   as summary text at 50%, with Find's Ask shimmer: an 80 pt dark band sweeping its glyphs once a
   second. The summary's hum plays while the model answers. `PageSummary.answer` sends the page,
@@ -363,7 +379,7 @@ fades in `backDelay` 0.38 s after the card starts settling, over `backDuration` 
 - **The answer:** the shimmer fades over 0.15 s. The answer's paragraphs reveal as the
   summary's (same delay, stagger, blur and fade), with the reveal's thud ending the hum. The
   summary scrolls on if needed to show it, keeping the question at least `followUpAnswerTop`
-  110 pt down the screen. Then the field can be pulled out again under the answer.
+  110 pt down the screen. Then the field rests again under the answer.
 - **Closing:** the field fades and sinks back with the summary, and a pending question is
   cancelled. Caught and revealed again, the summary starts without its questions.
 
@@ -735,6 +751,12 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
     handoff rather than only a long drag whose last pose has already reached the screen.
   - `more`: opens More over Hacker News and leaves it open, to look at the receded page's corners
     (concentric with the screen's: its corner radius, read from UIKit, less the page's inset).
+  - `recall`: summarises the stand-in page, closes it, and pinches the unchanged page again,
+    saving `r-<t>.png` frames of the recalled card and text coming forward; `finished` reports
+    that no summary was asked for.
+  - `followUpKeyboard`: in real time, recalls a summary from More, focuses the follow-up field,
+    and lets the keyboard go 1.5 s later, for a screen recording. It needs a software keyboard:
+    a headless Simulator with a hardware keyboard shows none.
   - `tabsPress`: presses Tabs and taps the card back three times on Hacker News with nothing else
     asking for frames, for an Animation Hitches trace of the rate the flights really run at.
   - `tabsNew`: on a real page, six rounds of Tabs and then New Page 100 ms later, New Page alone

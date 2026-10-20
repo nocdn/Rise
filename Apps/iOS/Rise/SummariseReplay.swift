@@ -44,6 +44,8 @@ import UIKit
             case "live": await runLive(in: controller, savingFramesTo: folder)
             case "gentle": await run(in: controller, savingFramesTo: folder, pinch: .gentle)
             case "regrab": await run(in: controller, savingFramesTo: folder, regrab: true)
+            case "recall": await recall(in: controller, savingFramesTo: folder)
+            case "followUpKeyboard": await followUpKeyboard(in: controller)
             case "timing": await timeStart(in: controller)
             case "close": await timeClose(in: controller)
             case "tabs": await swipeToTabs(in: controller, savingTo: folder)
@@ -147,6 +149,66 @@ import UIKit
         result.finished = controller.summarise == nil
         result.summaryHeight = summaryHeight
         result.pageMoved = controller.webView.scrollView.contentOffset.y-pageOffset.y
+        return result
+    }
+
+    /// Summarises the stand-in page, closes it, then pinches the unchanged page again: the card
+    /// should fly straight to its summary, shown at once, with no request. Frames are saved as
+    /// `r-<t>.png`; `revealed` is whether it showed the summary at once on letting go.
+    static func recall(in controller: BrowserViewController, savingFramesTo folder: URL?) async -> Result {
+        _ = await run(in: controller, savingFramesTo: nil)
+        try? await Task.sleep(for: .milliseconds(300))
+        var result = Result()
+        let size = controller.view.bounds.size, pinch = Pinch.hard
+        let start = CGPoint(x: pinch.start.x*size.width, y: pinch.start.y*size.height)
+        controller.startSummarise(.pinch, at: start)
+        guard let summarise = controller.summarise, let window = controller.view.window else { return result }
+        var asked = false
+        summarise.makeSummary = { asked = true; return summary }
+        summarise.manualTime = 0
+        let pinchStart = 0.05, pinchEnd = pinchStart+pinch.duration
+        var began = false, ended = false
+        for step in 0...240 {
+            let t = Double(step)/120
+            summarise.manualTime = t
+            if t >= pinchStart, !began { began = true; summarise.beginPinch(at: start) }
+            if began, !ended {
+                let p = CGFloat(min(1, max(0, (t-pinchStart)/(pinchEnd-pinchStart))))
+                summarise.updatePinch(scale: 1-p*(1-pinch.endScale), centroid: CGPoint(x: start.x+p*pinch.drift.x, y: start.y+p*pinch.drift.y))
+                if t >= pinchEnd { ended = true; summarise.endPinch(cancelled: false); result.revealed = summarise.isRevealed }
+            }
+            summarise.advance(to: t)
+            if let folder, step%6 == 0, t >= pinchEnd {
+                await save(window, to: folder.appendingPathComponent(String(format: "r-%.2f.png", t)))
+            }
+        }
+        result.summaryHeight = summarise.summaryHeight
+        result.finished = !asked
+        summarise.finish()
+        return result
+    }
+
+    /// In real time: summarises the stand-in page from More, then focuses the follow-up field and,
+    /// 1.5 s later, lets the keyboard go, for a screen recording of the field rising with it.
+    static func followUpKeyboard(in controller: BrowserViewController) async -> Result {
+        var result = Result()
+        controller.webView.loadHTMLString(page, baseURL: URL(string: "https://lalinsky.com/"))
+        for _ in 0..<250 where controller.webView.isLoading { try? await Task.sleep(for: .milliseconds(20)) }
+        try? await Task.sleep(for: .milliseconds(800))
+        // Summarised before, so it shows without asking a model.
+        let web = controller.webView
+        controller.tabs[controller.tabIndex].remember(summary, of: web, url: web.url, item: web.backForwardList.currentItem)
+        controller.openPanel(.menu)
+        try? await Task.sleep(for: .milliseconds(400))
+        controller.summariseFromMenu()
+        guard let summarise = controller.summarise else { return result }
+        try? await Task.sleep(for: .seconds(2.5))
+        result.revealed = summarise.isRevealed
+        summarise.focusFollowUpField()
+        try? await Task.sleep(for: .seconds(1.5))
+        controller.view.endEditing(true)
+        try? await Task.sleep(for: .seconds(1))
+        result.finished = true
         return result
     }
 

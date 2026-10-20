@@ -106,27 +106,25 @@ enum SummariseMotion {
     static let closeRecede = 0.1
 
     // Caught by a pinch as it grows back: how quickly its crop, corners and tilt come to the
-    // pinch's own for its size, and how soon after it's let go the summary it had shows again.
+    // pinch's own for its size. Let go, the summary it had comes forward as a recalled one does.
     static let grabBlend = SummariseSpring(2*Double.pi/0.3, 1)
-    static let reshow = 0.5
 
-    // Pulled on past the summary's end, a follow-up field rises out of the bottom of the screen,
-    // small at first and growing, a light tick every `followUpTick` points of the pull. At
+    // Summarised before, with the page unchanged, the card flies straight to where it shows the
+    // summary, which comes forward as it fades in: the close's sinking back, the other way, on
+    // its spring.
+    static let recallFade = 0.15
+
+    // The follow-up field rests under the summary's end, unfocused, faded in after the last
+    // paragraph. Pulled on past the end, a light tick every `followUpTick` points; at
     // `followUpPull` (the overscroll as shown, after UIKit's rubber band) it clicks, lets go of the
-    // finger, and springs to full width under the last paragraph as the keyboard comes up.
+    // finger, and is focused as the keyboard comes up.
     static let followUpPull = 96.0
     static let followUpTick = 12.0
-    /// It rises this many times as fast as the summary, so it comes out from under the screen's edge.
-    static let followUpLead = 1.4
-    static let followUpPullScale = (from: 0.5, to: 0.8)
     static let followUpHeight = 48.0
     /// From the last paragraph's text to the field's top.
     static let followUpGap = 12.0
-    /// Clicked, it flies up into place, then slides to the side as its text lines up with the paragraphs.
-    static let followUpPlace = SummariseSpring(15, 0.6)
-    static let followUpSlide = SummariseSpring(12, 0.85)
-    static let followUpSlideDelay = 0.06
-    /// The summary scrolls up to keep it above the keyboard.
+    /// The summary scrolls on this to bring an answer into sight. To keep the field above the
+    /// keyboard, it scrolls with the keyboard itself, on its duration and curve.
     static let followUpScroll = SummariseSpring(14, 1)
     /// Between the field and the keyboard.
     static let followUpKeyboardGap = 16.0
@@ -288,6 +286,10 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
 
     /// Fetches the page's summary, from when it's committed to.
     var makeSummary: (@MainActor () async throws -> PageSummary)?
+    /// The page's summary from before, if it hasn't changed since: shown at once, without asking.
+    var memorised: PageSummary?
+    /// A summary that came back, to remember for the page.
+    var onSummary: ((PageSummary) -> Void)?
     /// Answers a question asked under the summary, after the ones before it.
     var answerFollowUp: (@MainActor (_ question: String, _ summary: PageSummary, _ history: [PageAssistant.Turn]) async throws -> [String])?
     /// Where the bottom bar should be: 0 in place and 1 off the bottom of the screen.
@@ -333,6 +335,8 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     private var tweens: [Key: Tween] = [:]
     private var swingT0: Double?, swingDirection = 1.0
     private var readyT = Double.infinity, revealT: Double?, pendingReveal: Double?, closeT: Double?
+    /// When a summary already known started coming forward, rather than being revealed.
+    private var recallT: Double?
     private var orbitT0: Double?, orbitStop: (t0: Double, a0: Double, a1: Double)?
     private var bar: (hide: Bool, t0: Double, from: Double)?
     private var closeScroll = 0.0
@@ -360,12 +364,12 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     private(set) var summaryHeight: CGFloat = 0
     /// The card, where it shows, for taps.
     private var cardArea = CGRect.null
-    /// The follow-up field under the summary, pulled out of the bottom of the screen.
+    /// The follow-up field at the summary's end.
     private let followUp = UITextField()
-    /// Clicked into place: when, and where it was in the content as it clicked.
-    private var followUpPlaced: (t0: Double, pose: FollowUpPose)?
-    /// The field's text's middle, from its left, and its scale.
-    private struct FollowUpPose { var centerY: Double, left: Double, scale: Double }
+    private lazy var followUpPress = UILongPressGestureRecognizer(target: self, action: #selector(pressedFollowUp))
+    /// Resting at the end: from when, and after how many blocks of what was just revealed, which
+    /// it fades in after, as one more; nil blocks when it comes forward with a recalled summary.
+    private var followUpShown: (t0: Double, after: Int?)?
     /// Asking the model about a question sent from the field, and when its answer was revealed.
     private var followUpTask: Task<Void, Never>?
     private var followUpReveals: [(followUp: SummaryFollowUp, t0: Double)] = []
@@ -436,9 +440,16 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         followUp.isHidden = true
         followUp.isUserInteractionEnabled = false
         followUp.delegate = self
-        // Pulled out, it grows from its text's left.
+        // Placed and scaled from its text's left.
         followUp.layer.anchorPoint = CGPoint(x: 0, y: 0.5)
-        setFollowUpPlaceholder(Self.pullPlaceholder)
+        setFollowUpPlaceholder(Self.askPlaceholder)
+        // Focused as soon as a finger lands on it, rather than when it lifts.
+        followUpPress.minimumPressDuration = 0
+        followUpPress.allowableMovement = .greatestFiniteMagnitude
+        // The field's own taps and the summary's scrolling still see the touch.
+        followUpPress.cancelsTouchesInView = false
+        followUpPress.delegate = self
+        followUp.addGestureRecognizer(followUpPress)
         content.addSubview(followUp)
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChange),
                                                name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
@@ -558,7 +569,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         let angle = orbitAngle(t)
         orbitT0 = t-(angle-Double.pi)/(2*Double.pi)*M.orbitPeriod; orbitStop = nil
         mode = .pinch; path = .pinch; t0 = t
-        swingT0 = nil; closeT = nil; revealT = nil; pendingReveal = nil
+        swingT0 = nil; closeT = nil; revealT = nil; pendingReveal = nil; recallT = nil
         // Its request was let go as it grew back; let go again, it shows the summary it had or asks again.
         task = nil; readyT = .infinity
         pinchHistory = []
@@ -651,9 +662,11 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     }
 
     private func startSummary() {
-        guard task == nil, let makeSummary else { return }
-        // Caught on its way back, it shows the summary it had again once it has landed.
-        if reveal.summary != nil, !summaryFailed { readyT = tick()+M.reshow; log?.event("summary again"); return }
+        guard task == nil else { return }
+        // Caught on its way back, or summarised before with the page unchanged, it has the summary
+        // already; a failed one is asked for again.
+        if let known = summaryFailed ? memorised : reveal.summary ?? memorised { recall(known); return }
+        guard let makeSummary else { return }
         startHum()
         let asked = log?.now
         task = Task { [weak self] in
@@ -668,6 +681,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
             guard !Task.isCancelled, let self else { return }
             log?.event("summary", String(format: "%@after %.2f s", failed ? "failed " : "", (log?.now ?? 0)-(asked ?? 0)))
             summaryFailed = failed
+            if !failed { onSummary?(summary) }
             summaryArrived(summary)
         }
     }
@@ -679,6 +693,22 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         summaryHost.view.isHidden = false
         readyT = tick()
         log?.event("laid out", String(format: "%.0f pt tall", summaryHeight))
+    }
+
+    /// A summary already known shows at once: `startCard` flies the card straight to where it
+    /// shows it, and the text comes forward as it fades in.
+    private func recall(_ summary: PageSummary) {
+        let t = tick(), started = CACurrentMediaTime()
+        if reveal.summary != summary || !reveal.followUps.isEmpty || summaryHeight == 0 {
+            reveal.summary = summary
+            reveal.followUps = []; followUpReveals = []
+            measureSummary()
+        }
+        summaryFailed = false
+        summaryHost.view.isHidden = false
+        recallT = t
+        log?.event("summary recalled", String(format: "%.0f pt tall, laid out in %.1f ms", summaryHeight,
+                                              (CACurrentMediaTime()-started)*1000))
     }
 
     /// Measured with what's changed in place, which the hosting controller only takes up on its next update.
@@ -703,20 +733,35 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         mode = .card; t0 = t; swingT0 = t; revealT = nil; closeT = nil
         swingDirection = Bool.random() ? 1 : -1
         hideBar(t)
+        // With the summary already here, it goes straight to where it shows it.
+        let recalled = recallT != nil
+        let scale = recalled ? M.revealScale : M.loadScale, top = recalled ? M.revealTop : M.loadTop
         let crop = velocity == nil ? M.menuCrop : M.placeCrop
         tween(.cropTop, to: M.cropTop, .spring(crop), t)
         tween(.cropH, to: cardHeight, .spring(crop), t)
         tween(.radius, to: M.cardRadius, .spring(crop), t)
         tween(.rotation, to: M.restTilt, .spring(crop), t)
         if let velocity {
-            tweens[.scale] = Tween(from: value(.scale, t), to: M.loadScale, t0: t, curve: .release(M.releaseScale, velocity: velocity.scale))
+            tweens[.scale] = Tween(from: value(.scale, t), to: scale, t0: t, curve: .release(M.releaseScale, velocity: velocity.scale))
             tweens[.x] = Tween(from: value(.x, t), to: 0, t0: t, curve: .release(M.releaseMove, velocity: velocity.x))
-            tweens[.top] = Tween(from: value(.top, t), to: M.loadTop, t0: t, curve: .release(M.releaseMove, velocity: velocity.top))
+            tweens[.top] = Tween(from: value(.top, t), to: top, t0: t, curve: .release(M.releaseMove, velocity: velocity.top))
         } else {
-            tween(.scale, to: M.loadScale, .spring(M.menuShrink), t)
+            tween(.scale, to: scale, .spring(M.menuShrink), t)
             tween(.x, to: 0, .spring(M.menuShrink), t)
-            tween(.top, to: M.loadTop, .spring(M.menuShrink), t)
+            tween(.top, to: top, .spring(M.menuShrink), t)
         }
+        if recalled {
+            // Shown from the start, so it never swings.
+            revealT = t; pendingReveal = nil
+            stopOrbit(t)
+            restFollowUp(t, after: nil)
+        }
+    }
+
+    /// The glows carry on to the left, then stop there.
+    private func stopOrbit(_ t: Double) {
+        let a = orbitAngle(t), turn = 2*Double.pi
+        orbitStop = (t, a, Double.pi+turn*ceil((a-Double.pi+1e-6)/turn))
     }
 
     private func swingPhase(_ t: Double) -> Double { 2*Double.pi*(t-(swingT0 ?? t))/M.swingPeriod }
@@ -748,14 +793,11 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         log?.event("reveal")
         tween(.scale, to: M.revealScale, .spring(M.reveal), t)
         tween(.top, to: M.revealTop, .spring(M.reveal), t)
-        // The glows carry on to the left, then stop there.
-        let a = orbitAngle(t), turn = 2*Double.pi
-        orbitStop = (t, a, Double.pi+turn*ceil((a-Double.pi+1e-6)/turn))
+        stopOrbit(t)
         stopHum()
         playRevealHaptic()
-        // Shown again after being caught, it starts afresh without the questions asked before.
         if !reveal.followUps.isEmpty { reveal.followUps = []; followUpReveals = []; measureSummary() }
-        resetFollowUp()
+        restFollowUp(t, after: reveal.blockCount)
     }
 
     /// Grows the card back into the page, from wherever it shows, as the summary fades and sinks
@@ -817,13 +859,32 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         if cardArea.contains(tap.location(in: content)) { close() }
     }
 
-    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool { mode == .card }
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        // Once focused, presses on the field are the text's, for the cursor and selection.
+        if gestureRecognizer === followUpPress { return mode == .card && followUp.isUserInteractionEnabled && !followUp.isFirstResponder }
+        return mode == .card
+    }
+
+    /// Taps on the follow-up field are its own, not the card's.
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        gestureRecognizer === followUpPress || !(touch.view?.isDescendant(of: followUp) ?? false)
+    }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+        gestureRecognizer === followUpPress
+    }
+
+    /// A finger landing on the field focuses it at once, without waiting for it to lift.
+    @objc private func pressedFollowUp(_ press: UILongPressGestureRecognizer) {
+        guard press.state == .began, !followUp.isFirstResponder else { return }
+        log?.event("follow-up pressed")
+        followUp.becomeFirstResponder()
+    }
 
     // MARK: The follow-up field
 
-    private static let pullPlaceholder = "Keep pulling to ask follow-up"
     private static let askPlaceholder = "Ask follow up about page"
-    private static let pullPlaceholderWidth = Double((pullPlaceholder as NSString).size(withAttributes: [.font: SummaryBlocks.font]).width)
 
     private func setFollowUpPlaceholder(_ text: String) {
         followUp.attributedPlaceholder = NSAttributedString(string: text, attributes: [
@@ -832,12 +893,12 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         ])
     }
 
-    /// Back under the bottom of the screen, to be pulled out again.
-    private func resetFollowUp() {
-        followUpPlaced = nil; followUpStep = 0
+    /// At rest under the end of what's been revealed, unfocused, ready to tap; it fades in as one
+    /// more block after the `after` blocks revealed from `t`, or, with none, shows as it is.
+    private func restFollowUp(_ t: Double, after blocks: Int?) {
+        followUpShown = (t, blocks); followUpStep = 0
         followUp.text = nil
-        followUp.isUserInteractionEnabled = false
-        setFollowUpPlaceholder(Self.pullPlaceholder)
+        followUp.isUserInteractionEnabled = true
     }
 
     /// The furthest the summary scrolls.
@@ -846,65 +907,44 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     /// How far the summary is pulled past its end, as it shows.
     private var pulledPast: Double { Double(scroll.contentOffset.y)-scrollEnd }
 
-    /// Where the field settles in the content: under the last paragraph, its text lined up with theirs.
-    private var followUpRest: FollowUpPose {
-        FollowUpPose(centerY: summaryTop+Double(summaryHeight)-SummaryBlocks.trailingSpace+M.followUpGap+M.followUpHeight/2,
-                     left: Double(SummaryBlocks.sideSpacing), scale: 1)
-    }
-
-    /// The field pulled this far: its text rising out of the middle of the bottom of the screen a
-    /// little ahead of the summary, and growing as it does.
-    private func pullPose(_ pulled: Double) -> FollowUpPose {
-        let scale = lerp(M.followUpPullScale.from, M.followUpPullScale.to, easeOut(pulled/M.followUpPull, 0.5))
-        let onScreen = height+M.followUpHeight*scale/2-M.followUpLead*pulled
-        return FollowUpPose(centerY: Double(scroll.contentOffset.y)+onScreen, left: (width-Self.pullPlaceholderWidth*scale)/2, scale: scale)
-    }
-
-    /// Clicked: up into place and to full size, then across to the paragraphs' edge a moment later.
-    private func placedPose(_ placed: (t0: Double, pose: FollowUpPose), _ t: Double) -> FollowUpPose {
-        let rest = followUpRest, elapsed = t-placed.t0
-        return FollowUpPose(centerY: M.followUpPlace.value(from: placed.pose.centerY, to: rest.centerY, velocity: 0, at: elapsed),
-                            left: M.followUpSlide.value(from: placed.pose.left, to: rest.left, velocity: 0, at: elapsed-M.followUpSlideDelay),
-                            scale: M.followUpPlace.value(from: placed.pose.scale, to: rest.scale, velocity: 0, at: elapsed))
+    /// The field's text's middle in the content: under the last paragraph, lined up with theirs.
+    private var followUpCenterY: Double {
+        summaryTop+Double(summaryHeight)-SummaryBlocks.trailingSpace+M.followUpGap+M.followUpHeight/2
     }
 
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        guard mode == .card, revealT != nil, followUpPlaced == nil, followUpTask == nil else { return }
+        guard mode == .card, revealT != nil, followUpShown != nil, followUpTask == nil, !followUp.isFirstResponder else { return }
         let pulled = pulledPast
         let step = pulled > 0 ? Int(pulled/M.followUpTick) : 0
         if scroll.isTracking, pulled >= M.followUpPull {
-            placeFollowUp()
+            focusFollowUp()
             return
         }
-        // Light ticks on the way out, a little firmer as it nears the click.
+        // Light ticks as it's pulled on past the end, a little firmer as it nears the click.
         if step > followUpStep, scroll.isTracking {
             let near = Float(clamp(pulled/M.followUpPull))
             playTransient(intensity: 0.25+0.2*near, sharpness: 0.45)
         }
         followUpStep = step
-        renderFollowUp(tick(), fadingOut: 0)
     }
 
-    /// Pulled far enough: it clicks, lets go of the finger, and flies into place under the last
-    /// paragraph as the keyboard comes up.
-    private func placeFollowUp() {
-        let t = tick()
-        followUpPlaced = (t, pullPose(pulledPast))
+    /// Pulled far enough past the end: it clicks, lets go of the finger, and focuses the field;
+    /// the summary scrolls to it as the keyboard comes up, in step with it.
+    private func focusFollowUp() {
         log?.event("follow-up")
         playTransient(intensity: 1, sharpness: 0.7)
+        followUpStep = 0
         // Ending the drag starts the scroll view's own bounce back, which the field's scroll replaces.
         scroll.panGestureRecognizer.isEnabled = false
         scroll.panGestureRecognizer.isEnabled = true
         scroll.setContentOffset(scroll.contentOffset, animated: false)
-        UIView.transition(with: followUp, duration: 0.18, options: .transitionCrossDissolve) {
-            self.setFollowUpPlaceholder(Self.askPlaceholder)
-        }
-        followUp.isUserInteractionEnabled = true
-        // Makes room for it in the content, then scrolls to it; the keyboard moves that on.
-        render(t)
-        scrollToFollowUp(t)
         followUp.becomeFirstResponder()
     }
+
+    #if DEBUG
+    /// For replays: focuses the field as a tap on it would.
+    func focusFollowUpField() { _ = followUp.becomeFirstResponder() }
+    #endif
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         sendFollowUp()
@@ -922,8 +962,8 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
             asked.answer.map { PageAssistant.Turn(question: asked.question, answer: $0.joined(separator: "\n\n")) }
         }
         let asked = SummaryFollowUp(question: question)
-        let questionTop = followUpRest.centerY-M.followUpHeight/2
-        followUpPlaced = nil
+        let questionTop = followUpCenterY-M.followUpHeight/2
+        followUpShown = nil
         followUp.text = nil
         followUp.isUserInteractionEnabled = false
         followUp.isHidden = true
@@ -946,7 +986,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     }
 
     /// The answer fades in and sharpens under its question as the summary did, with the same thud,
-    /// and the field can be pulled out again under it.
+    /// and the field comes back under it.
     private func followUpAnswered(_ asked: SummaryFollowUp, _ answer: [String], questionTop: Double) {
         guard mode == .card, reveal.followUps.contains(where: { $0 === asked }) else { return }
         let t = tick()
@@ -957,7 +997,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         followUpReveals.append((asked, t))
         stopHum()
         playRevealHaptic()
-        resetFollowUp()
+        restFollowUp(t, after: answer.count)
         render(t)
         // Brings the answer into sight, keeping its question on screen.
         let target = min(scrollEnd, questionTop-M.followUpAnswerTop)
@@ -971,11 +1011,6 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
             asked.elapsed = elapsed > settled ? .infinity : elapsed
             return elapsed > settled
         }
-    }
-
-    /// Scrolls to the end, where the field is.
-    private func scrollToFollowUp(_ t: Double, onlyBack: Bool = false) {
-        scroll(to: onlyBack ? min(Double(scroll.contentOffset.y), scrollEnd) : scrollEnd, t)
     }
 
     /// Scrolls on a spring, carrying on at the speed it's scrolling already.
@@ -998,39 +1033,57 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         if t-scrolling.t0 > 7/(spring.w*spring.z) { followUpScroll = nil }
     }
 
-    /// The summary makes room for the keyboard under the field, and scrolls to keep it in sight.
+    /// The summary makes room for the keyboard under the field, and scrolls to keep it just above
+    /// it. It scrolls in the keyboard's own animation, with its duration and curve, so the field
+    /// and the summary rise with the keyboard rather than chasing it. Going away, it only scrolls
+    /// back as far as the summary's end.
     @objc private func keyboardWillChange(_ note: Notification) {
-        guard mode == .card, let screen = window?.screen,
-              let end = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue else { return }
+        guard mode == .card, let screen = window?.screen, let info = note.userInfo,
+              let end = (info[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue else { return }
         let frame = convert(end, from: screen.coordinateSpace)
         keyboardHeight = frame.minY < bounds.maxY ? Double(bounds.maxY-frame.minY) : 0
         scroll.contentInset.bottom = CGFloat(max(0, keyboardHeight-(Double(SummaryBlocks.endSpacing)-M.followUpKeyboardGap)))
         guard !scroll.isDragging, !scroll.isDecelerating else { return }
-        scrollToFollowUp(tick(), onlyBack: !followUp.isFirstResponder || keyboardHeight == 0)
+        let current = Double(scroll.contentOffset.y)
+        let target = followUp.isFirstResponder && keyboardHeight > 0 ? scrollEnd : min(current, scrollEnd)
+        followUpScroll = nil
+        guard target != current else { return }
+        let duration = info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
+        let curve = info[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt ?? 7
+        UIView.animate(withDuration: duration, delay: 0,
+                       options: [UIView.AnimationOptions(rawValue: curve << 16), .beginFromCurrentState, .allowUserInteraction]) {
+            self.scroll.contentOffset.y = CGFloat(target)
+        }
     }
 
-    private func renderFollowUp(_ t: Double, fadingOut: Double) {
-        guard revealT != nil, mode == .card || (mode == .closing && followUpPlaced != nil) else { followUp.isHidden = true; return }
-        let pose: FollowUpPose
-        if let placed = followUpPlaced {
-            pose = placedPose(placed, t)
-        } else {
-            let pulled = pulledPast
-            guard pulled > 0, followUpTask == nil else { followUp.isHidden = true; return }
-            pose = pullPose(pulled)
-        }
+    /// The field at rest under the summary's end. It fades in after what was just revealed, comes
+    /// forward with a recalled summary, and sinks back with it on closing.
+    private func renderFollowUp(_ t: Double, fadingOut: Double, forward: (scale: Double, alpha: Double)?) {
+        guard revealT != nil, let shown = followUpShown, mode == .card || mode == .closing else { followUp.isHidden = true; return }
+        let left = Double(SummaryBlocks.sideSpacing), centerY = followUpCenterY
         followUp.isHidden = false
-        followUp.bounds = CGRect(x: 0, y: 0, width: width-2*Double(SummaryBlocks.sideSpacing), height: M.followUpHeight)
-        followUp.center = CGPoint(x: pose.left, y: pose.centerY)
-        var transform = CGAffineTransform(scaleX: pose.scale, y: pose.scale)
+        followUp.bounds = CGRect(x: 0, y: 0, width: width-2*left, height: M.followUpHeight)
+        followUp.center = CGPoint(x: left, y: centerY)
+        var alpha = 1-fadingOut
         if mode == .closing {
             // Sinks back with the summary, about the middle of the screen.
             let recede = closeRecede(t)
-            let x = width/2+recede*(pose.left-width/2), y = height/2+recede*(pose.centerY-closeScroll-height/2)
-            transform = CGAffineTransform(a: pose.scale*recede, b: 0, c: 0, d: pose.scale*recede, tx: x-pose.left, ty: y-pose.centerY)
+            let x = width/2+recede*(left-width/2), y = height/2+recede*(centerY-closeScroll-height/2)
+            followUp.transform = CGAffineTransform(a: recede, b: 0, c: 0, d: recede, tx: x-left, ty: y-centerY)
+        } else if let forward {
+            let middle = Double(scroll.contentOffset.y)+height/2
+            let x = width/2+forward.scale*(left-width/2), y = middle+forward.scale*(centerY-middle)
+            followUp.transform = CGAffineTransform(a: forward.scale, b: 0, c: 0, d: forward.scale, tx: x-left, ty: y-centerY)
+            alpha *= forward.alpha
+        } else {
+            followUp.transform = .identity
+            // One more block after those just revealed.
+            if let blocks = shown.after, !reducesMotion {
+                let elapsed = t-shown.t0-M.textDelay-M.stagger*Double(blocks)
+                alpha *= elapsed <= 0 ? 0 : 1-exp(-elapsed/M.fadeTau)
+            }
         }
-        followUp.transform = transform
-        followUp.alpha = 1-fadingOut
+        followUp.alpha = alpha
     }
 
     // MARK: The bar
@@ -1236,29 +1289,38 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         let view = summaryHost.view!
         view.bounds.size = CGSize(width: size.width, height: summaryHeight)
         view.center = CGPoint(x: size.width/2, y: summaryTop+summaryHeight/2)
+        // A recalled summary comes forward, as closing sinks it back, about the middle of the screen.
+        var forward: (scale: Double, alpha: Double)?
+        if let recallT, mode == .card {
+            let k = clamp(M.close(t-recallT)), alpha = reducesMotion ? 1 : clamp((t-recallT)/M.recallFade)
+            if k < 1 || alpha < 1 { forward = (reducesMotion ? 1 : 1-M.closeRecede*(1-k), alpha) }
+        }
         if mode == .closing {
             let recede = closeRecede(t)
             // Scaled about the middle of the screen, from where it showed when the card was tapped.
             let dy = (1-recede)*(height/2-Double(view.center.y))-recede*closeScroll
             view.transform = CGAffineTransform(a: recede, b: 0, c: 0, d: recede, tx: 0, ty: dy)
+        } else if let forward {
+            let dy = (1-forward.scale)*(Double(scroll.contentOffset.y)+height/2-Double(view.center.y))
+            view.transform = CGAffineTransform(a: forward.scale, b: 0, c: 0, d: forward.scale, tx: 0, ty: dy)
         } else {
             view.transform = .identity
         }
-        view.alpha = 1-fadingOut
+        view.alpha = (1-fadingOut)*(forward?.alpha ?? 1)
         let elapsed = revealed ? t-(revealT ?? t) : -1
-        // Past the last block's settling, it stays as it is.
+        // Past the last block's settling, it stays as it is; a recalled summary is settled already.
         let settled = M.textDelay+M.stagger*Double(reveal.blockCount)+6*max(M.blurTau, M.fadeTau)
-        let shown = elapsed > settled ? Double.infinity : elapsed
+        let shown = recallT != nil || elapsed > settled ? Double.infinity : elapsed
         if reveal.elapsed != shown { reveal.elapsed = shown; reveal.reducesMotion = reducesMotion }
         let scrolls = revealed && mode == .card
         scroll.isScrollEnabled = scrolls
-        let end = followUpPlaced == nil ? summaryTop+summaryHeight : followUpRest.centerY+M.followUpHeight/2+SummaryBlocks.endSpacing
+        let end = followUpShown == nil ? summaryTop+summaryHeight : followUpCenterY+M.followUpHeight/2+SummaryBlocks.endSpacing
         let contentHeight = scrolls ? max(size.height, end) : size.height
         if content.bounds.height != contentHeight {
             content.frame = CGRect(x: 0, y: 0, width: size.width, height: contentHeight)
             scroll.contentSize = content.bounds.size
         }
-        renderFollowUp(t, fadingOut: fadingOut)
+        renderFollowUp(t, fadingOut: fadingOut, forward: forward)
     }
 
     private func renderBackdrop(_ t: Double) {

@@ -15,8 +15,22 @@ import WebKit
             pendingHistory = nil; pendingInteractionState = nil; isRestoringHistory = false
             snapshot = nil
             favicon = nil
+            summary = nil
             observePage()
         }
+    }
+    /// The page's last summary, kept while it's still the same page: the same web view, address
+    /// and history entry, with nothing committed since. Only in memory.
+    private var summary: (url: URL?, item: WKBackForwardListItem?, summary: PageSummary)?
+    func summary(of page: WKWebView) -> PageSummary? {
+        guard page === webView, let summary, summary.url == page.url,
+              summary.item === page.backForwardList.currentItem else { return nil }
+        return summary.summary
+    }
+    /// Kept if the page is still the one summarised, from `url` and `item` as the request began.
+    func remember(_ summary: PageSummary, of page: WKWebView, url: URL?, item: WKBackForwardListItem?) {
+        guard page === webView, page.url == url, page.backForwardList.currentItem === item else { return }
+        self.summary = (url, item, summary)
     }
     /// Restored tabs keep their address/title while their page waits to be selected and loaded.
     private var rememberedURL: URL?
@@ -126,6 +140,8 @@ import WebKit
         }
     }
     func didCommit(_ navigation: WKNavigation) {
+        // A new document, or the same one reloaded, may say something else.
+        summary = nil
         if let active = activeNavigation, active !== navigation { return }
         if !isRestoringHistory, let restoring = restoreNavigation, restoring !== navigation { return }
         hasCommittedDocument = true
