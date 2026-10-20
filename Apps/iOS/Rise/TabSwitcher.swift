@@ -446,10 +446,15 @@ final class TabCard: UIView {
     }
 }
 
-/// A tab in the horizontal deck: its favicon/title above the page, and a separate close target.
+/// A tab in the horizontal deck: its favicon/title above the page. It's closed by swiping it up,
+/// or with VoiceOver's Close Tab action.
 final class TabCell: UIControl {
     private var touchOrigin: CGPoint?
     private var closeBaseTransform = CGAffineTransform.identity
+    /// The last tab can't be closed; it can still be pulled down against resistance.
+    var canClose = true
+    /// How far the caption moves right of its usual place, to keep a favicon on screen.
+    var captionNudge: CGFloat = 0 { didSet { if captionNudge != oldValue { setNeedsLayout() } } }
 
     override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
         touchOrigin = touch.location(in: window)
@@ -487,7 +492,6 @@ final class TabCell: UIControl {
         }
     }
     let card = TabCard()
-    let closeButton = TabCloseButton(type: .system)
     let cardShadow = UIView()
     private let shade = UIView()
     var roundingLayers: [CALayer] { [card.layer, shade.layer] }
@@ -500,6 +504,7 @@ final class TabCell: UIControl {
     var onSelect: () -> Void = {}
     var onClose: () -> Void = {}
     var onGestureActivity: (Bool) -> Void = { _ in }
+    /// `changed` carries the card's shown offset: negative up, or a resisted pull down.
     enum CloseGesture { case began, changed(CGFloat), ended(committed: Bool, velocity: CGFloat) }
     var onCloseGesture: (CloseGesture) -> Void = { _ in }
     var canBeginClose: () -> Bool = { true }
@@ -508,6 +513,14 @@ final class TabCell: UIControl {
     private static let iconGap: CGFloat = 6
     static let captionOffset: CGFloat = 6
     static let pressedScale: CGFloat = 0.97
+    /// How far a pull down can ever show the card moved, as UIScrollView's rubber band gives.
+    static let pullLimit: CGFloat = 150
+
+    /// A pull down follows the finger less and less, as a scroll view's edge does.
+    static func resisted(_ pull: CGFloat) -> CGFloat {
+        guard pull > 0 else { return pull }
+        return pullLimit*(1-1/(pull*0.55/pullLimit+1))
+    }
 
     static func styleShadow(_ view: UIView) {
         view.isUserInteractionEnabled = false
@@ -524,7 +537,7 @@ final class TabCell: UIControl {
         card.layer.cornerRadius = TabSwitcherView.cornerRadius
         card.isAccessibilityElement = true
         card.accessibilityTraits = .button
-        // The cell tracks the press; the close button remains a separate touch/VoiceOver target.
+        // The cell tracks the press; VoiceOver reaches the card itself.
         card.isUserInteractionEnabled = false
         card.onActivate = { [weak self] in self?.onSelect() }
         addSubview(card)
@@ -534,20 +547,11 @@ final class TabCell: UIControl {
         shade.alpha = 0
         addSubview(shade)
         isAccessibilityElement = false
-        accessibilityElements = [card, closeButton]
+        accessibilityElements = [card]
         addAction(UIAction { [weak self] _ in self?.setPressed(true) }, for: [.touchDown, .touchDragEnter])
         addAction(UIAction { [weak self] _ in self?.setPressed(false) },
                   for: [.touchUpInside, .touchUpOutside, .touchDragExit, .touchCancel])
         addAction(UIAction { [weak self] _ in self?.onSelect() }, for: .primaryActionTriggered)
-        closeButton.setImage(UIImage(systemName: "xmark", withConfiguration:
-            UIImage.SymbolConfiguration(pointSize: 9, weight: .bold)), for: .normal)
-        closeButton.tintColor = UIColor(white: 0.36, alpha: 1)
-        closeButton.backgroundColor = UIColor(white: 0.96, alpha: 0.95)
-        closeButton.layer.cornerRadius = TabSwitcherView.closeSize/2
-        closeButton.accessibilityLabel = "Close Tab"
-        closeButton.isAccessibilityElement = true
-        closeButton.addAction(UIAction { [weak self] _ in self?.onClose() }, for: .primaryActionTriggered)
-        addSubview(closeButton)
         title.font = SearchPanel.roundedFont(ofSize: 13, weight: .semibold, scaled: false)
         title.textColor = .label
         title.lineBreakMode = .byTruncatingTail
@@ -578,18 +582,23 @@ final class TabCell: UIControl {
     }
 
     @objc private func closeFromAccessibility() -> Bool {
-        guard !closeButton.isHidden else { return false }
+        guard canClose else { return false }
         onClose(); return true
     }
     @objc private func dragToClose(_ pan: UIPanGestureRecognizer) {
-        let rise = min(0, pan.translation(in: superview).y)
+        let translation = pan.translation(in: superview).y
         switch pan.state {
-        case .began: beginCloseDrag(); updateCloseDrag(rise)
-        case .changed: updateCloseDrag(rise)
+        case .began: beginCloseDrag(); updateCloseDrag(translation)
+        case .changed: updateCloseDrag(translation)
         case .ended, .cancelled, .failed:
-            endCloseDrag(rise, velocity: pan.velocity(in: self).y, cancelled: pan.state != .ended)
+            endCloseDrag(translation, velocity: pan.velocity(in: self).y, cancelled: pan.state != .ended)
         default: break
         }
+    }
+    /// Up, the card follows the finger to be closed (the last one can't go up at all); down, it
+    /// gives against resistance and springs back.
+    private func shownOffset(_ translation: CGFloat) -> CGFloat {
+        translation < 0 ? (canClose ? translation : 0) : Self.resisted(translation)
     }
     func beginCloseDrag() {
         closeBaseTransform = CATransform3DGetAffineTransform((layer.presentation() ?? layer).transform)
@@ -597,12 +606,13 @@ final class TabCell: UIControl {
         onCloseGesture(.began)
     }
     func updateCloseDrag(_ translation: CGFloat) {
-        let rise = min(0, translation)
-        transform = closeBaseTransform.translatedBy(x: 0, y: rise)
-        onCloseGesture(.changed(rise))
+        let offset = shownOffset(translation)
+        transform = closeBaseTransform.translatedBy(x: 0, y: offset)
+        onCloseGesture(.changed(offset))
     }
-    func endCloseDrag(_ rise: CGFloat, velocity: CGFloat, cancelled: Bool) {
-        let commit = !cancelled && !closeButton.isHidden && (rise < -bounds.height*0.18 || velocity < -650)
+    func endCloseDrag(_ translation: CGFloat, velocity: CGFloat, cancelled: Bool) {
+        let offset = shownOffset(translation)
+        let commit = !cancelled && canClose && (offset < -bounds.height*0.18 || (velocity < -650 && offset < 0))
         onCloseGesture(.ended(committed: commit, velocity: velocity))
         if commit {
             isUserInteractionEnabled = false
@@ -626,10 +636,8 @@ final class TabCell: UIControl {
         shade.frame = card.frame
         shade.layer.cornerRadius = card.layer.cornerRadius
         card.accessibilityLabel = title.text
-        let close = TabSwitcherView.closeSize
-        closeButton.frame = CGRect(x: card.frame.maxX-7-close, y: card.frame.minY+7, width: close, height: close)
         caption.bounds = CGRect(x: 0, y: 0, width: bounds.width, height: TabSwitcherView.titleHeight-10)
-        caption.center = CGPoint(x: bounds.midX+Self.captionOffset, y: card.frame.minY-7-caption.bounds.height/2)
+        caption.center = CGPoint(x: bounds.midX+Self.captionOffset+captionNudge, y: card.frame.minY-7-caption.bounds.height/2)
         let icon = FaviconView.size, lead = icon+Self.iconGap
         let text = min(ceil(title.sizeThatFits(caption.bounds.size).width), caption.bounds.width-lead)
         favicon.frame = CGRect(x: 0, y: ((caption.bounds.height-icon)/2).rounded(), width: icon, height: icon)
@@ -646,8 +654,7 @@ final class TabCell: UIControl {
 /// swipe up as it grows back.
 final class TabSwitcherView: UIView, UIScrollViewDelegate {
     static let titleHeight: CGFloat = 32
-    static let cornerRadius: CGFloat = 22
-    static let closeSize: CGFloat = 22
+    static let cornerRadius: CGFloat = 26
     /// The grid's own fade and growth.
     static let spring = (duration: 0.3, bounce: 0.14)
     static let returnSpring = (duration: 0.28, bounce: 0.0)
@@ -830,7 +837,7 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
         grid.center = CGPoint(x: scroll.contentOffset.x+bounds.midX, y: bounds.midY)
         flightContainer.bounds = bounds
         flightContainer.center = grid.center
-        if let closing { closing.apply(); return }
+        if let closing { closing.apply(); fadeCoveringFavicons(); return }
         if let focusedIndex, focusedIndex != previewFocus {
             previewFocus = focusedIndex; onFocusChange?(focusedIndex)
         }
@@ -846,9 +853,13 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
             cell.bounds = CGRect(origin: .zero, size: frame.size)
             cell.center = CGPoint(x: frame.midX, y: frame.midY)
             cell.shadeAmount = deck.shadeOpacity(at: slot)
+            // A card just off the left edge keeps its favicon 4 pt in, as Arc does, tucked
+            // under the next one's; further off, the favicon goes with its card.
+            let icon = frame.minX+TabCell.captionOffset
+            cell.captionNudge = max(icon, min(4, 3*frame.minX+43))-icon
             cell.title.alpha = deck.titleOpacity(at: slot)
             cell.card.layer.cornerRadius = Self.cornerRadius*frame.width/max(1, cardSize.width)
-            cell.closeButton.isHidden = cells.count < 2
+            cell.canClose = cells.count > 1
             cell.layoutIfNeeded()
             if entrance.isPrepared, index != current {
                 entrance.place(cell, depth: max(0, displayOrder.count-2-slot))
@@ -862,6 +873,29 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
                 cell.card.layer.cornerRadius = caught.radius+(targetRadius-caught.radius)*blend
                 cell.setNeedsLayout(); cell.layoutIfNeeded()
             }
+        }
+        fadeCoveringFavicons()
+    }
+
+    /// A card's favicon fades where it would sit over another card's title, so the title can be
+    /// read: the next card's icon over a long title of the centred one. It fades as that title
+    /// shows, and with how far the title reaches under it.
+    private func fadeCoveringFavicons() {
+        let titles = cells.compactMap { cell -> (cell: TabCell, frame: CGRect, shown: CGFloat)? in
+            let shown = cell.title.alpha*cell.caption.alpha
+            guard !cell.isHidden, shown > 0.01 else { return nil }
+            return (cell, cell.caption.convert(cell.title.frame, to: grid), shown)
+        }
+        for cell in cells where !cell.isHidden {
+            let icon = cell.caption.convert(cell.favicon.frame, to: grid)
+            var covered: CGFloat = 0
+            for title in titles where title.cell !== cell && abs(title.frame.midY-icon.midY) < icon.height {
+                // From 8 points short of the icon to 4 points under it.
+                let reach = min(1, max(0, (title.frame.maxX+8-icon.minX)/12))
+                    * min(1, max(0, (icon.maxX-title.frame.minX)/12))
+                covered = max(covered, reach*title.shown)
+            }
+            cell.favicon.alpha = 1-covered
         }
     }
 
@@ -935,7 +969,6 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
         cells[current].caption.alpha = 0
         cells[current].caption.transform = CGAffineTransform(translationX: 0, y: 6)
         cells[current].setCardOpacity(0)
-        cells[current].closeButton.alpha = 0
         let card = makeMovingCard(image: nil)
         card.replica = replica
         card.crop = 0
@@ -1095,7 +1128,6 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
             apply(cardShape(index, asShown: true), to: card)
         }
         cell.setCardOpacity(0)
-        cell.closeButton.alpha = 0
         anchorGridOnScreen()
         grow(card, alongside: {
             UIView.animate(withDuration: 0.18, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
@@ -1122,7 +1154,7 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
         self.current = current
         caughtCells = [:]
         if cell.isUserInteractionEnabled {
-            // The separate X button keeps its small shrink/fade dismissal.
+            // Closed from VoiceOver's action, it shrinks and fades where it is.
             cell.isUserInteractionEnabled = false
             UIView.animate(withDuration: 0.18, delay: 0, options: [.beginFromCurrentState, .curveEaseOut]) {
                 cell.alpha = 0
@@ -1168,6 +1200,48 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
         CATransaction.flush()
     }
 
+    /// Brings back a closed tab's card, focused, where it was in the deck: before `next`, the tab
+    /// that followed it. It drops back in from above, where it was swiped away, as the others
+    /// move from where they are to make room.
+    func restore(_ tabs: [BrowserTab], current: Int, restored index: Int, before next: UUID?) {
+        guard tabs.indices.contains(index) else { return }
+        var shown: [UUID: (centre: CGPoint, bounds: CGRect, radius: CGFloat)] = [:]
+        for (id, cell) in zip(tabIDs, cells) where !cell.isHidden {
+            shown[id] = (cell.center, cell.bounds, cell.card.layer.cornerRadius)
+        }
+        let id = tabs[index].id
+        recentIDs.removeAll { $0 == id }
+        recentIDs.insert(id, at: next.flatMap { recentIDs.firstIndex(of: $0) } ?? recentIDs.count)
+        load(tabs, current: current)
+        guard let slot = displayOrder.firstIndex(of: index) else { return }
+        let restored = cells[index]
+        UIView.performWithoutAnimation {
+            scroll.contentOffset = CGPoint(x: CGFloat(slot)*deck.step, y: 0)
+            layoutDeck()
+            for (id, cell) in zip(tabIDs, cells) {
+                guard let was = shown[id] else { continue }
+                cell.center = was.centre; cell.bounds = was.bounds
+                cell.card.layer.cornerRadius = was.radius
+                cell.layoutIfNeeded()
+            }
+            restored.transform = CGAffineTransform(translationX: 0, y: -restored.frame.maxY-40)
+        }
+        focusMove += 1
+        let reflow = focusMove
+        reflowing = true
+        holdRate(true)
+        UIView.animate(springDuration: 0.42, bounce: 0.08, initialSpringVelocity: 0, delay: 0,
+                       options: [.beginFromCurrentState, .allowUserInteraction]) {
+            for cell in self.cells { cell.transform = .identity }
+            self.layoutDeck()
+        } completion: { _ in
+            if self.focusMove == reflow {
+                self.reflowing = false
+                if self.moving == nil && !self.scroll.isDragging && !self.scroll.isDecelerating { self.holdRate(false) }
+            }
+        }
+    }
+
     private func closeGesture(_ gesture: TabCell.CloseGesture, at index: Int) {
         switch gesture {
         case .began:
@@ -1183,9 +1257,9 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
             // Freeze any previous release at its displayed pose before following the finger.
             UIView.performWithoutAnimation { reflow.catchMotion() }
             holdRate(true)
-        case .changed(let rise):
+        case .changed(let offset):
             guard let closing, closing.cell === cells[index], !closing.committed else { return }
-            UIView.performWithoutAnimation { closing.follow(rise: rise) }
+            UIView.performWithoutAnimation { closing.follow(offset: offset) }
         case .ended(let committed, let velocity):
             guard let reflow = closing, reflow.cell === cells[index] else { return }
             let move = focusMove
@@ -1211,10 +1285,7 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
         isHidden = true
         grid.alpha = 0
         grid.transform = .identity
-        for cell in cells {
-            cell.setCardOpacity(1)
-            cell.closeButton.alpha = 1
-        }
+        for cell in cells { cell.setCardOpacity(1) }
     }
 
     private func makeMovingCard(image: UIImage?) -> TabCard {
@@ -1513,7 +1584,6 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
         movingShadow = nil
         moving = nil
         heading = nil
-        UIView.animate(withDuration: 0.15, delay: 0, options: [.allowUserInteraction]) { cell?.closeButton.alpha = 1 }
     }
 
     /// Leaves the page where it shows, its flight dropped.
@@ -1556,6 +1626,8 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
     /// Also used by keyboard/VoiceOver navigation and deterministic native motion checks.
     func focusTab(_ index: Int, animated: Bool = false) {
         guard let slot = displayOrder.firstIndex(of: index) else { return }
+        // This takes over from any reflow, whose completion no longer clears it.
+        reflowing = false
         focusMove += 1
         let move = focusMove
         let changes = {
@@ -1606,6 +1678,8 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
         // The ancestor scroll pan may recognise alongside the upward close. Its
         // callbacks must not steal that gesture's focus or completion token.
         guard closing == nil else { return }
+        // This takes over from any reflow, whose completion no longer clears it.
+        reflowing = false
         focusMove += 1
         holdRate(true)
         let speed = scroll.panGestureRecognizer.velocity(in: self)
@@ -1676,7 +1750,8 @@ private final class TabClosePanDelegate: NSObject, UIGestureRecognizerDelegate {
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard let pan = gestureRecognizer as? UIPanGestureRecognizer, let cell = pan.view as? TabCell else { return true }
         let speed = pan.velocity(in: cell)
-        return !cell.closeButton.isHidden && cell.canBeginClose() && speed.y < 0 && abs(speed.y) > abs(speed.x)*1.15
+        // Up to close it; down, even the last tab, to pull it against resistance.
+        return cell.canBeginClose() && (speed.y > 0 || cell.canClose) && abs(speed.y) > abs(speed.x)*1.15
     }
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -1692,9 +1767,3 @@ private final class TabFlightContainer: UIView {
     }
 }
 
-/// The smaller visual keeps a forgiving hit area over the card corner.
-final class TabCloseButton: UIButton {
-    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
-        bounds.insetBy(dx: -9, dy: -9).contains(point)
-    }
-}

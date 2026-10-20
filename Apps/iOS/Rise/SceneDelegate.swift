@@ -5,7 +5,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let scene = scene as? UIWindowScene else { return }
-        let window = UIWindow(windowScene: scene)
+        let window = RiseWindow(windowScene: scene)
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains(TabSyncAudit.argument) {
             let controller = BrowserViewController(startURL: nil)
@@ -191,5 +191,24 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 
     private func saveSession() {
         (window?.rootViewController as? BrowserViewController)?.saveSession(flush: true)
+    }
+}
+
+/// Shakes that nothing on screen used, such as a search field clearing itself, reach the
+/// window: the browser in front brings back a closed tab, or the system's shake to undo runs.
+final class RiseWindow: UIWindow {
+    override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
+        guard motion == .motionShake, let browser = frontBrowser, browser.reopenClosedTab() else {
+            return super.motionEnded(motion, with: event)
+        }
+    }
+
+    private var frontBrowser: BrowserViewController? {
+        var front = rootViewController
+        while let presented = front?.presentedViewController { front = presented }
+        func browser(in controller: UIViewController) -> BrowserViewController? {
+            controller as? BrowserViewController ?? controller.children.lazy.compactMap(browser).first
+        }
+        return front.flatMap(browser)
     }
 }

@@ -37,9 +37,10 @@ import UIKit
                 c: mix(transform.c, target.transform.c), d: mix(transform.d, target.transform.d),
                 tx: mix(transform.tx, target.transform.tx), ty: mix(transform.ty, target.transform.ty))
             pose.radius = mix(radius, target.radius)
-            pose.shade = mix(shade, target.shade)
+            pose.shade = max(0, mix(shade, target.shade))
             // Keep the deck's one-title-at-a-time rule while focus passes behind the closing page.
-            let titleProgress = title > target.title ? min(1, p*2) : max(0, p*2-1)
+            // A pull down (p below 0) leaves the titles as they are.
+            let titleProgress = title > target.title ? min(1, max(0, p*2)) : max(0, p*2-1)
             pose.title = title+(target.title-title)*titleProgress
             return pose
         }
@@ -48,7 +49,15 @@ import UIKit
     let cell: TabCell
     let nextFocus: CGFloat
     private let poses: [(cell: TabCell, from: Pose, to: Pose)]
+    /// How far up the finger goes for the others to make most of their way, and how far down
+    /// the card is pulled for them to lean half their most away.
     private let travel: CGFloat
+    private let pullTravel: CGFloat
+    /// Under the finger, the others go only this far towards their new places; letting go
+    /// finishes the rest.
+    static let heldProgress: CGFloat = 0.85
+    /// Pulled down, the others lean at most this far the other way, back from their new places.
+    static let pullProgress: CGFloat = 0.45
     private(set) var progress: CGFloat = 0
     private(set) var committed = false
 
@@ -58,7 +67,8 @@ import UIKit
         nextFocus = Self.focusAfterRemoving(slot: closingSlot, from: layout)
         let target = TabDeckLayout(size: layout.size, stripHeight: layout.stripHeight,
             topInset: layout.topInset, bottomInset: layout.bottomInset, count: cells.count-1, focus: nextFocus)
-        travel = max(1, cell.bounds.height*0.22)
+        travel = max(1, cell.bounds.height*0.5)
+        pullTravel = max(1, cell.bounds.height*0.1)
         poses = order.enumerated().compactMap { slot, index -> (cell: TabCell, from: Pose, to: Pose)? in
             let cell = cells[index]
             let nextSlot = slot-(slot > closingSlot ? 1 : 0)
@@ -87,15 +97,22 @@ import UIKit
         return min(CGFloat(max(0, layout.count-2)), max(0, layout.focus-shift))
     }
 
-    func follow(rise: CGFloat) {
-        let distance = max(0, -rise)
-        progress = distance/(distance+travel)
+    /// Follows the card's shown offset. Going up, the others start gently and ease towards
+    /// `heldProgress`, so even far up they haven't quite arrived. Pulled down, they lean back
+    /// the other way, the opposite of making room, as far as `pullProgress`.
+    func follow(offset: CGFloat) {
+        if offset <= 0 {
+            progress = Self.heldProgress*(1-exp(offset/travel))
+        } else {
+            progress = -Self.pullProgress*offset/(offset+pullTravel)
+        }
         apply()
     }
 
     /// Normalised spring velocity carries the drag's speed into the remaining distance.
     func releaseVelocity(_ velocity: CGFloat) -> CGFloat {
-        min(12, max(-8, -velocity*(1-progress)/travel))
+        let rate = progress >= 0 ? (Self.heldProgress-progress)/travel : 0
+        return min(12, max(-8, -velocity*rate/max(0.01, 1-progress)))
     }
 
     func commit() { committed = true; progress = 1; apply() }

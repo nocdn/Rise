@@ -1680,11 +1680,27 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         pageChanged()
     }
 
+    /// A closed tab, kept in memory only, so shaking can bring it back while the app runs.
+    private struct ClosedTab {
+        let saved: MobileBrowserSession.Tab
+        let index: Int
+        let snapshot: UIImage?
+        let favicon: UIImage?
+        /// The tab after it in the switcher's recent order, to go back in before.
+        let before: UUID?
+    }
+    private var closedTabs: [ClosedTab] = []
+
     /// Closes a tab from its card; the last one stays.
     private func closeTab(_ index: Int) {
         guard isTabSwitcherOpen, tabs.count > 1, tabs.indices.contains(index) else { return }
         let closesSelected = index == tabIndex
+        let order = tabSwitcher.displayOrder
+        let after = order.firstIndex(of: index).flatMap { order.indices.contains($0+1) ? tabs[order[$0+1]].id : nil }
         let closing = tabs.remove(at: index)
+        closedTabs.append(ClosedTab(saved: closing.sessionTab, index: index, snapshot: closing.snapshot,
+                                    favicon: closing.favicon, before: after))
+        if closedTabs.count > 50 { closedTabs.removeFirst() }
         if pendingCard === closing { pendingCard = nil }
         if index < tabIndex {
             tabIndex -= 1
@@ -1701,6 +1717,38 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         }
         bottomBar.tabsButton.count = tabs.count
         saveSession()
+    }
+
+    /// Shaking brings back the last tab closed, and shaking again the one before it. In the
+    /// switcher its card drops back into the deck; on a page, it opens. False if there was none
+    /// to bring back, or the browser was busy.
+    @discardableResult func reopenClosedTab() -> Bool {
+        guard allowsPeek, let closed = closedTabs.last, !isSwipingToTabs, summarise == nil, !isPanelOpen,
+              presentedViewController == nil else { return false }
+        let inSwitcher = !tabSwitcher.isHidden
+        if inSwitcher && (!isTabSwitcherOpen || tabSwitcher.isAnimatingOrTracking) { return false }
+        closedTabs.removeLast()
+        let tab = BrowserTab(webView: Self.makeWebView(dataStore: websiteDataStore, videoPlayback: videoPlayback),
+                             restoring: closed.saved)
+        tab.snapshot = closed.snapshot
+        tab.restoreFavicon(closed.favicon)
+        track(tab)
+        if !inSwitcher {
+            currentTab.snapshot = snapshotPage()
+            tabPreviews?.save(currentTab)
+        }
+        let index = min(closed.index, tabs.count)
+        tabs.insert(tab, at: index)
+        if index <= tabIndex { tabIndex += 1 }
+        bottomBar.tabsButton.count = tabs.count
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        if inSwitcher {
+            tabSwitcher.restore(tabs, current: tabIndex, restored: index, before: closed.before)
+            saveSession()
+        } else {
+            switchTab(to: index)
+        }
+        return true
     }
 
     @objc private func swipeToTabs(_ pan: UIPanGestureRecognizer) {

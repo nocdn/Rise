@@ -89,12 +89,7 @@ import WebKit
         try check("moving-card-leaves-no-shadow-remnant", switcher.cells[switcher.current].cardShadow.alpha == 0)
         try await Task.sleep(for: .milliseconds(850))
         try check("cards-have-subtle-path-based-shadows", switcher.cells.allSatisfy { $0.cardShadow.layer.shadowPath != nil && $0.cardShadow.layer.shadowOpacity == 0.10 && $0.cardShadow.alpha == 1 })
-        try check("close-buttons-are-slightly-smaller", switcher.cells.allSatisfy { $0.closeButton.bounds.width == 22 })
-        var white: CGFloat = 0, alpha: CGFloat = 0
-        switcher.cells[0].closeButton.backgroundColor!.getWhite(&white, alpha: &alpha)
-        try check("close-button-background-is-light", white > 0.9)
-        switcher.cells[0].closeButton.tintColor.getWhite(&white, alpha: &alpha)
-        try check("close-button-cross-is-medium-grey", (0.3...0.45).contains(white))
+        try check("cards-have-no-close-buttons", switcher.cells.allSatisfy { !$0.subviews.contains { $0 is UIButton } })
         let image = UIGraphicsImageRenderer(bounds: cancelled.view.bounds).image { _ in
             cancelled.view.drawHierarchy(in: cancelled.view.bounds, afterScreenUpdates: true)
         }
@@ -144,7 +139,7 @@ import WebKit
         let scale = backdrop.scale, y = previewBrowser.view.safeAreaInsets.top+100
         let edge = backdrop.cgImage!.cropping(to: CGRect(x: 0, y: y*scale, width: 4*scale, height: 40*scale))!
         let edgeColor = PageEdgeColor.dominantColor(of: edge)!
-        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, alpha: CGFloat = 0
         edgeColor.getRed(&r, green: &g, blue: &b, alpha: &alpha)
         try check("receded-page-backdrop-stays-black-during-preview-rendering", r < 0.03 && g < 0.03 && b < 0.03)
         previewBrowser.closePanel()

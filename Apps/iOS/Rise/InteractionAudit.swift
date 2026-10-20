@@ -151,9 +151,9 @@ import WebKit
                 switcher.focusTab(switcher.current)
                 let hitCell = switcher.cells[switcher.current]
                 let hitCard = hitCell.card.convert(CGPoint(x: hitCell.card.bounds.midX, y: hitCell.card.bounds.midY), to: switcher)
-                let hitClose = hitCell.closeButton.convert(CGPoint(x: hitCell.closeButton.bounds.midX, y: hitCell.closeButton.bounds.midY), to: switcher)
+                let corner = hitCell.card.convert(CGPoint(x: hitCell.card.bounds.maxX-18, y: 18), to: switcher)
                 try check("card-touches-reach-the-pressing-button", switcher.hitTest(hitCard, with: nil) === hitCell)
-                try check("close-button-touches-stay-separate", switcher.hitTest(hitClose, with: nil) === hitCell.closeButton)
+                try check("card-corner-touches-reach-the-card-with-no-close-button", switcher.hitTest(corner, with: nil) === hitCell)
                 let cell = switcher.cells[0], selection = cell.onSelect
                 let cellBounds = cell.bounds
                 var selections = 0
@@ -161,23 +161,22 @@ import WebKit
                 for end in [UIControl.Event.touchCancel, .touchDragExit, .touchUpOutside] {
                     cell.sendActions(for: .touchDown)
                     try await Task.sleep(for: .milliseconds(150))
-                    try check("tab-press-scales-the-card-shadow-and-close-button", abs(cell.transform.a-TabCell.pressedScale) < 0.001
-                              && cell.bounds == cellBounds && cell.cardShadow.superview === cell && cell.closeButton.superview === cell)
+                    try check("tab-press-scales-the-card-and-shadow", abs(cell.transform.a-TabCell.pressedScale) < 0.001
+                              && cell.bounds == cellBounds && cell.cardShadow.superview === cell)
                     cell.sendActions(for: end)
                     try await Task.sleep(for: .milliseconds(350))
                     try check("cancelled-tab-press-returns-without-opening", cell.transform == .identity && selections == 0)
                 }
                 try check("tab-press-does-not-delay-or-prevent-grid-scrolling", !switcher.scroll.delaysContentTouches
                           && switcher.scroll.touchesShouldCancel(in: cell))
-                // A rear card's corner is covered by the next card in the deck. Check the
-                // visible Close target on the frontmost tab; rear tabs expose Close as an action.
+                // Cards have no Close button; VoiceOver closes them with an action.
                 let accessibleSelection = hitCell.onSelect
                 hitCell.onSelect = { selections += 1 }
                 let activated = hitCell.card.accessibilityActivate()
-                try check("voiceover-keeps-separate-tab-and-close-targets", !hitCell.isAccessibilityElement
-                          && hitCell.card.isAccessibilityElement && hitCell.closeButton.isAccessibilityElement
+                try check("voiceover-reaches-the-tab-as-one-target", !hitCell.isAccessibilityElement
+                          && hitCell.card.isAccessibilityElement && hitCell.accessibilityElements?.count == 1
                           && activated && selections == 1)
-                try check("overlapped-tabs-also-expose-an-accessible-close-action", cell.card.accessibilityCustomActions?.contains { $0.name == "Close Tab" } == true)
+                try check("tabs-expose-an-accessible-close-action", cell.card.accessibilityCustomActions?.contains { $0.name == "Close Tab" } == true)
                 hitCell.onSelect = accessibleSelection
                 cell.onSelect = selection
                 cell.sendActions(for: .touchDown)

@@ -173,7 +173,8 @@ import WebKit
         try check("active-page-remains-visible-at-the-right-edge", switcher.cellFrame(switcher.current).minX > size.width*0.65
                   && switcher.cellFrame(switcher.current).minX < size.width)
         try check("card-shadow-is-present-at-landing", front.cardShadow.layer.shadowOpacity == 0.10 && front.cardShadow.layer.shadowPath != nil)
-        try check("close-buttons-remain-explicit-accessibility-targets", switcher.cells.allSatisfy { $0.closeButton.isAccessibilityElement })
+        try check("cards-close-from-an-accessibility-action", switcher.cells.allSatisfy {
+            $0.card.accessibilityCustomActions?.contains { $0.name == "Close Tab" } == true })
         try screenshot("deck-entry")
 
         for index in browser.tabs.indices {
@@ -187,6 +188,26 @@ import WebKit
             })
         }
         try screenshot("deck-last")
+        do {
+            switcher.focusTab(switcher.displayOrder.last!)
+            try await pause(40)
+            let order = switcher.displayOrder
+            try check("deck-has-four-tabs-for-the-edge-checks", order.count == 4)
+            let behindLast = switcher.cellFrame(order[order.count-2]), third = switcher.cellFrame(order[order.count-3])
+            let lastFrame = switcher.cellFrame(order[order.count-1])
+            // Measured from Arc Search: the card behind starts about 7 pt in, and the one behind
+            // that about 13 pt off screen, showing much less of itself.
+            try check("the-last-card-shows-two-tabs-behind-it-as-arc-does",
+                      (size.width*0.01...size.width*0.03).contains(behindLast.minX)
+                      && (-size.width*0.05...(-size.width*0.015)).contains(third.minX)
+                      && lastFrame.minX-behindLast.minX > 2*(behindLast.minX-third.minX))
+            let thirdCell = switcher.cells[order[order.count-3]]
+            try check("the-third-cards-favicon-stays-on-screen", thirdCell.caption.convert(thirdCell.favicon.frame, to: switcher).minX >= 0)
+            let fourthCell = switcher.cells[order[0]]
+            try check("cards-further-back-go-off-screen-with-their-favicons",
+                      fourthCell.caption.convert(fourthCell.favicon.frame, to: switcher).maxX <= 0)
+            try screenshot("deck-at-last-card")
+        }
         let lastFocused = switcher.focusedIndex
         let previous = switcher.accessibilityScroll(.right)
         try await pause(400)
@@ -305,6 +326,14 @@ import WebKit
         try check("cancelled-close-drag-keeps-the-tab", browser.tabs.count == count && closing.transform == .identity && closing.alpha == 1)
         try check("cancelling-restores-the-neighbours-position-size-and-shade", abs(neighbour.frame.midX-resting.midX) < 0.1
                   && abs(neighbour.frame.width-resting.width) < 0.1 && abs(neighbour.shadeAmount-restingShade) < 0.001)
+        closing.beginCloseDrag(); closing.updateCloseDrag(200)
+        let pulled = neighbour.frame
+        try check("pulling-a-tab-down-gives-against-resistance", closing.transform.ty > 20 && closing.transform.ty < 100)
+        try check("pulling-a-tab-down-leans-the-tab-behind-away", pulled.midX < resting.midX-4 && pulled.width < resting.width)
+        closing.endCloseDrag(200, velocity: 0, cancelled: false)
+        try await pause(450)
+        try check("a-released-pull-down-keeps-the-tab-and-settles", browser.tabs.count == count && closing.transform == .identity
+                  && abs(neighbour.frame.midX-resting.midX) < 0.1)
         let closeAction = switcher.onClose
         var reflowBefore = CGRect.zero, reflowFirst = CGRect.zero
         var animationContinues = false
@@ -356,6 +385,17 @@ import WebKit
         try check("closing-a-card-keeps-order-and-focus-valid", switcher.displayOrder.count == browser.tabs.count
                   && Set(switcher.displayOrder) == Set(browser.tabs.indices) && switcher.focusedIndex != nil)
         try check("the-tab-behind-becomes-focused-after-the-close", switcher.focusedIndex.map { browser.tabs[$0].id } == neighbourID)
+        try await pause(450)
+        let reopened = browser.reopenClosedTab()
+        try check("shaking-drops-the-closed-tab-back-in-from-above", reopened
+                  && switcher.cells.contains { $0.layer.animation(forKey: "transform") != nil })
+        try await pause(600)
+        try check("shaking-reopens-the-closed-tab-focused-where-it-was", browser.tabs.count == count
+                  && switcher.focusedIndex.map { browser.tabs[$0].id } == id
+                  && switcher.displayOrder.count == count && switcher.cells.allSatisfy { $0.transform == .identity })
+        // The rest of the audit continues from the deck as the close left it.
+        switcher.cells[browser.tabs.firstIndex { $0.id == id }!].onClose()
+        try await pause(450)
         let firstIndex = switcher.displayOrder.first!, followingIndex = switcher.displayOrder[1]
         switcher.focusTab(firstIndex)
         try await pause(40)
@@ -420,7 +460,7 @@ import WebKit
         }
         switcher.focusTab(0)
         try check("single-tab-is-centred-and-cannot-be-swiped-away", abs(switcher.cells[0].frame.midX-size.width/2) < 1
-                  && switcher.cells[0].closeButton.isHidden)
+                  && !switcher.cells[0].canClose)
         browser.selectTab(0)
         try await pause(550)
         try check("last-tab-opens-with-no-flight-remnants", switcher.isHidden && switcher.moving == nil && switcher.movingShadow == nil)

@@ -403,10 +403,19 @@ older cards compress into the left stack, reducing by 2% per step left of focus,
 at 8%, shrinking equally at the top and bottom. The centred card and every card to its
 right remain at full size; moving farther right must never shrink a card. Left-side pages
 also gain a black overlay continuously with depth: 14% per step, capped at 36%. Centred
-and right-side pages remain undimmed. Captions sit 6 pt to the right of the page’s left
+and right-side pages remain undimmed. At the last card (20 October) the deck centres and the
+stack behind takes the shape measured from an Arc Search screenshot he supplied: the card
+behind is 97.2% tall with its left edge about 1.7% of the width in (7 pt), the next 91.6%
+with its left edge about 3% off screen (−13 pt), showing much less of itself, and the rest
+wholly off screen with their favicons. He first asked for equal slivers, then for Arc's
+shape instead. Between the last two cards the two layouts blend with the scroll position. A
+favicon whose card is just off the left edge stays 4 pt in, tucked under the next one's, as
+in Arc; further off, it goes with its card.
+Captions sit 6 pt to the right of the page’s left
 edge, including the favicon when its title is hidden. Only the centred card shows its
 title text: it fades out before the next title fades in, while neighbouring favicons remain
-visible. Hidden cards outside the nearby stack do not lay out every frame, and slot lookup
+visible, except where one would sit over a shown title: it fades with that title's opacity
+over 12 pt as the title reaches under it. Hidden cards outside the nearby stack do not lay out every frame, and slot lookup
 is constant time.
 
 The switcher retains a local most-recently-used display order by tab identity, with the
@@ -414,28 +423,40 @@ active page last. It never reorders the browser's shared tab list or changes sel
 merely because someone swipes through previews. It opens focused on the preceding tab,
 leaving the current page visible on the right; a single tab is centred.
 
-Cards have 22-point continuous corners. Their subtle shadow retains opacity 0.10,
+Cards have 26-point continuous corners (22 until 20 October, when he asked for a little more). Their subtle shadow retains opacity 0.10,
 radius 6 pt and a 2 pt downward offset, using an explicit rounded path. The moving page
 shares bounds, position, corner-path and opacity keyframes with its shadow, so the shadow
-forms during movement and hands over at landing. Existing small light close buttons
-remain available alongside swipe-to-close; the last tab cannot be removed. An upward
+forms during movement and hands over at landing. There are no close buttons (removed on
+20 October); cards close by swiping up, or with VoiceOver's Close Tab action. The last tab
+cannot be removed. An upward
 close keeps the whole tab opaque under the finger and throughout its offscreen flight.
 `TabDeckDismissal` captures the displayed cards when the drag begins. The tab behind the
 focused one moves right, grows to full size and loses its depth shading as the finger
-goes up. Progress is `rise / (rise + 0.22 × cell height)`, so even a short drag starts
-moving its neighbour and reversing the finger reverses that progress. Closing the first
+goes up. Progress is `0.85 × (1 − e^(−rise / (0.5 × cell height)))`: it starts gently (he
+found the old `rise / (rise + 0.22 × cell height)` far too quick, nearly arrived by 75% of
+the way up) and never passes 0.85 under the finger, so release finishes the last part.
+Reversing the finger reverses that progress. A card can also be pulled down, even the last
+one: it follows UIScrollView's rubber band (`150 × (1 − 1/(0.55 × pull/150 + 1))`), and the
+others lean the opposite way, progress `−0.45 × offset / (offset + 0.1 × cell height)`,
+before springing back on release. Closing the first
 card instead pulls its successor left. Cancelling springs the survivors back to their
 original layout. Release carries the drag's speed into a 0.36-second spring with 0.06
 bounce, matching the app's soft settles; this does not change the bounce-free entrance.
+
+Closed tabs are kept in memory (up to 50, gone when the app is killed). Shaking the phone
+reopens the last one, and the one before on each shake after: in the switcher its card
+drops back in from above, focused in its old place, as the others spring (0.42 s, bounce
+0.08) from where they were; on a page it opens. A medium impact confirms it. `RiseWindow`
+takes shakes nothing else used and calls the front browser; if it has nothing to reopen,
+the system's shake to undo runs.
 
 The discarded view is removed offscreen, without a second animation back towards the
 deck. The release spring already runs while that tab flies away, and deleting the tab
 does not restart it. Content offset and viewport anchoring update together so shrinking
 the scroll range cannot shift the deck abruptly. The reflow commits before live-page
-WebKit work; a new close or horizontal swipe can catch its displayed pose and size. The
-X button retains its separate small shrink/fade. Tab and Close
-remain separate VoiceOver targets, with horizontal accessibility scrolling and a Close
-Tab custom action.
+WebKit work; a new close or horizontal swipe can catch its displayed pose and size. A
+close from VoiceOver's action keeps a small shrink/fade. Each tab is one VoiceOver target,
+with horizontal accessibility scrolling and the Close Tab custom action.
 
 ### Springs and entry
 
