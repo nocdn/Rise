@@ -14,7 +14,7 @@ import Foundation
         do {
             let database = CKContainer(identifier: SharedTabsSync.containerIdentifier).privateCloudDatabase
             _ = try await database.deleteRecordZone(withID: .init(zoneName: name))
-            for suite in [name+"A", name+"B"] { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
+            for suite in [name+"A", name+"B", name+"C"] { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
             try FileManager.default.removeItem(at: directory)
             print("Removed disposable audit zone and its local fixtures")
             return 0
@@ -24,7 +24,7 @@ import Foundation
     static func run() async -> Int32 {
         let zoneName = "RiseTabsAudit-\(UUID())"
         let directory = URL.temporaryDirectory.appendingPathComponent(zoneName)
-        let names = [zoneName+"A", zoneName+"B"]
+        let names = [zoneName+"A", zoneName+"B", zoneName+"C"]
         let preferences = names.map { UserDefaults(suiteName: $0)! }
         let a = SharedTabsSync(cacheURL: directory.appendingPathComponent("a.json"), preferences: preferences[0], cloudAvailable: true, zoneName: zoneName, automaticallySync: false)
         let b = SharedTabsSync(cacheURL: directory.appendingPathComponent("b.json"), preferences: preferences[1], cloudAvailable: true, zoneName: zoneName, automaticallySync: false)
@@ -63,8 +63,28 @@ import Foundation
             try await require({ Set(a.tabs.map(\.id)) == [one.id, two.id] && a.tabs == b.tabs }, "simultaneous inserts converge")
             try await require({ visitsA.entries.first?.visits == 12 && visitsA.snapshot == visitsB.snapshot }, "concurrent visit counters sum once through real CloudKit")
             two.url = "https://example.org/navigated"; two.title = "Navigated"
+            two.navigationHistory = TabNavigationHistory(entries: [
+                .init(url: "https://example.org/two", title: "Two"),
+                .init(url: two.url!, title: two.title),
+                .init(url: "https://example.com/forward", title: "Forward")
+            ], index: 1)
             a.capture([two, one])
-            try await require({ b.tabs == [two, one] }, "navigation and ordering reach the other client")
+            try await require({ b.tabs == [two, one] }, "navigation, Back/Forward history, cursor and ordering reach the other client")
+            two.navigationHistory?.entries.insert(.init(url: two.url!, title: "Repeated visit"), at: 2)
+            two.navigationHistory?.index = 2
+            a.capture([two, one])
+            try await require({ b.tabs == [two, one] }, "history-only changes at an unchanged URL reach the other client")
+            let fresh = SharedTabsSync(cacheURL: directory.appendingPathComponent("fresh-install.json"), preferences: preferences[2], cloudAvailable: true, zoneName: zoneName, automaticallySync: false)
+            fresh.start(tabs: [])
+            var recovered = false
+            for _ in 0..<12 {
+                _ = await fresh.refreshAndWait()
+                if fresh.tabs == [two, one] { recovered = true; break }
+                try await Task.sleep(for: .milliseconds(500))
+            }
+            fresh.setEnabled(false)
+            guard recovered else { throw NSError(domain: "Rise.TabSyncAudit", code: 4, userInfo: [NSLocalizedDescriptionKey: "A fresh install did not recover the tab history from CloudKit"]) }
+            print("PASS: a fresh client with no local cache recovers Back/Forward history and cursor")
             b.setEnabled(false)
             a.capture([two])
             try await require({ a.isClosed(one.id) }, "closure is recorded")

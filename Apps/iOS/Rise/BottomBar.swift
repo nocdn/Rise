@@ -109,7 +109,7 @@ final class BottomBar: UIView {
     }
 
     static func appSettingsHeight(width: CGFloat, safeBottom: CGFloat) -> CGFloat {
-        siteSettingsHeight(width: width, safeBottom: safeBottom)+100
+        searchTop+AppSettingsPanel.height+max(safeBottom, 16)
     }
 
     static func historyHeight(screenHeight: CGFloat, safeTop: CGFloat) -> CGFloat {

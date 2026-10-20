@@ -21,9 +21,10 @@ final class PeekViewController: UIViewController, UIViewControllerTransitioningD
     /// `onExpand` receives the live page once the card has grown to fill the window, with the
     /// colour of its top edge.
     init(url: URL, isPrivateBrowsing: Bool = false, websiteDataStore: WKWebsiteDataStore? = nil,
-         adBlocker: MobileAdBlocker = .shared, onExpand: @escaping @MainActor (WKWebView, UIColor?) -> Void) {
+         adBlocker: MobileAdBlocker = .shared, videoPlayback: VideoPlaybackPolicy = .shared,
+         onExpand: @escaping @MainActor (WKWebView, UIColor?) -> Void) {
         browser = BrowserViewController(startURL: url, allowsPeek: false, adBlocker: adBlocker,
-                                        isPrivateBrowsing: isPrivateBrowsing, websiteDataStore: websiteDataStore)
+                                        isPrivateBrowsing: isPrivateBrowsing, websiteDataStore: websiteDataStore, videoPlayback: videoPlayback)
         self.onExpand = onExpand
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .custom

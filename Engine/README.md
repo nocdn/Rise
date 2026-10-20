@@ -38,6 +38,10 @@ toolchain (`xcodebuild -downloadComponent MetalToolchain`), and about 100 GB fre
 The checkout lives outside the repo: `RISE_CHROMIUM_ROOT`, by default
 `~/github/rise-chromium`. Only patches and scripts are committed.
 
+Engine builds reuse `out/Release` and its dependency cache. The script defaults to
+four parallel jobs to leave RAM for the desktop; set `RISE_CHROMIUM_JOBS` explicitly
+to change that limit. `./scripts/engine/build.sh -n` previews pending work.
+
 ## Patches
 
 | Patch | Why |
@@ -52,6 +56,9 @@ The checkout lives outside the repo: `RISE_CHROMIUM_ROOT`, by default
 | `0008-unify-search-settings.patch` | One Search sidebar item for search engine and site search settings, and a plain colour swatch for a site's automatic colour |
 | `0009-automatic-script-evaluation.patch` | Background automation evaluates without synthetic user activation and skips inactive frames; user-invoked page commands retain their gesture |
 | `0010-align-search-settings-sections.patch` | Aligns Site search with the Search engine section and leaves space below its card |
+| `0011-rise-pip-top-bar.patch` | Rise's picture-in-picture controls and window appearance hooks |
+| `0012-portable-tab-history.patch` | Exports URL/title entries and the committed cursor, and restores a portable history without visiting its other destinations |
+| `0013-avoid-unchanged-generator-rebuilds.patch` | Uses Siso's content comparison for generated files on macOS, preserving timestamps when their contents are unchanged |
 
 `0002` is exported from the fork's tree with `git diff HEAD` over `base` and `chrome`, less the
 paths the other patches and `brand.py` own (see `Engine/fork-plan.md`); new files are added

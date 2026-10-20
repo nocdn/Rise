@@ -5,11 +5,27 @@ public struct SharedBrowserTab: Codable, Equatable, Sendable {
     public let id: UUID
     public var url: String?
     public var title: String?
-    public init(id: UUID, url: String?, title: String?) { self.id = id; self.url = url; self.title = title }
+    public var navigationHistory: TabNavigationHistory?
+    public init(id: UUID, url: String?, title: String?, navigationHistory: TabNavigationHistory? = nil) {
+        self.id = id; self.url = url; self.title = title
+        self.navigationHistory = url.flatMap { navigationHistory?.validated(for: $0) }
+    }
+    private enum CodingKeys: String, CodingKey { case id, url, title, navigationHistory }
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(id: try values.decode(UUID.self, forKey: .id), url: try values.decodeIfPresent(String.self, forKey: .url),
+                  title: try values.decodeIfPresent(String.self, forKey: .title),
+                  navigationHistory: try? values.decodeIfPresent(TabNavigationHistory.self, forKey: .navigationHistory))
+    }
     public var isShareable: Bool {
         guard let url else { return true }
-        guard let parsed = URL(string: url) else { return false }
-        return ["http", "https"].contains(parsed.scheme?.lowercased() ?? "") && parsed.host != nil
+        return TabNavigationHistory.allows(url)
+    }
+    /// Older clients can still update a title without discarding history they cannot encode.
+    func preservingHistory(from previous: Self) -> Self {
+        var result = self
+        if navigationHistory == nil, url == previous.url { result.navigationHistory = previous.navigationHistory }
+        return result
     }
 }
 
@@ -49,7 +65,8 @@ struct SharedTabRecord: Codable, Equatable, Sendable {
     func merging(_ other: Self) -> Self {
         precondition(tab.id == other.tab.id)
         var result = self
-        if contentVersion < other.contentVersion { result.tab = other.tab; result.contentVersion = other.contentVersion }
+        if contentVersion < other.contentVersion { result.tab = other.tab.preservingHistory(from: tab); result.contentVersion = other.contentVersion }
+        else { result.tab = result.tab.preservingHistory(from: other.tab) }
         if positionVersion < other.positionVersion { result.position = other.position; result.positionVersion = other.positionVersion }
         if let closed = other.closedAt { result.closedAt = max(closedAt ?? closed, closed) }
         return result
@@ -77,7 +94,10 @@ struct SharedTabsLedger: Codable, Equatable, Sendable {
     /// Compare against the prior local view, so remote tabs that haven't been displayed yet
     /// cannot be mistaken for locally closed tabs. Unchanged local fields never overwrite remote edits.
     mutating func capture(_ snapshot: [SharedBrowserTab]) -> Set<UUID> {
-        let snapshot = snapshot.filter(\.isShareable)
+        let snapshot = snapshot.filter(\.isShareable).map { tab in
+            let normalized = SharedBrowserTab(id: tab.id, url: tab.url, title: tab.title, navigationHistory: tab.navigationHistory)
+            return records[tab.id].map { normalized.preservingHistory(from: $0.tab) } ?? normalized
+        }
         let previous = Dictionary(observedTabs.map { ($0.id, $0) }, uniquingKeysWith: { _, newest in newest })
         let oldIndices = Dictionary(observedTabs.enumerated().map { ($0.element.id, $0.offset) }, uniquingKeysWith: { _, newest in newest })
         let currentIDs = Set(snapshot.map(\.id))

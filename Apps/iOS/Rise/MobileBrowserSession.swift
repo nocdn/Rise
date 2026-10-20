@@ -7,12 +7,27 @@ struct MobileBrowserSession: Codable, Equatable, Sendable {
         var url: URL?
         var title: String?
         var isSyncPlaceholder: Bool?
+        var navigationHistory: TabNavigationHistory?
+        var interactionState: Data?
 
-        init(id: UUID = UUID(), url: URL?, title: String? = nil, isSyncPlaceholder: Bool? = nil) {
+        init(id: UUID = UUID(), url: URL?, title: String? = nil, isSyncPlaceholder: Bool? = nil,
+             navigationHistory: TabNavigationHistory? = nil, interactionState: Data? = nil) {
             self.id = id
             self.url = url
             self.title = title
             self.isSyncPlaceholder = isSyncPlaceholder
+            self.navigationHistory = navigationHistory?.validated(for: url?.absoluteString)
+            self.interactionState = interactionState.flatMap { $0.count <= MobileTabHistory.maximumStateBytes ? $0 : nil }
+        }
+
+        private enum CodingKeys: String, CodingKey { case id, url, title, isSyncPlaceholder, navigationHistory, interactionState }
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            self.init(id: try values.decode(UUID.self, forKey: .id), url: try values.decodeIfPresent(URL.self, forKey: .url),
+                title: try values.decodeIfPresent(String.self, forKey: .title),
+                isSyncPlaceholder: try values.decodeIfPresent(Bool.self, forKey: .isSyncPlaceholder),
+                navigationHistory: try? values.decodeIfPresent(TabNavigationHistory.self, forKey: .navigationHistory),
+                interactionState: try? values.decodeIfPresent(Data.self, forKey: .interactionState))
         }
     }
 
@@ -36,6 +51,9 @@ struct MobileBrowserSession: Codable, Equatable, Sendable {
         var seen = Set<UUID>()
         let usable = tabs.filter {
             ($0.url.map(Self.canRestore) ?? true) && seen.insert($0.id).inserted
+        }.map {
+            Tab(id: $0.id, url: $0.url, title: $0.title, isSyncPlaceholder: $0.isSyncPlaceholder,
+                navigationHistory: $0.navigationHistory, interactionState: $0.interactionState)
         }
         guard let first = usable.first else { return nil }
         let selected = usable.contains { $0.id == selectedTabID } ? selectedTabID : first.id

@@ -1,4 +1,5 @@
 import AppKit
+import RiseCore
 
 /// A Peek growing into its tab hands its live page over instead of loading it again. The
 /// tab's page from before is held, live and paused, so Back returns to it without reloading
@@ -12,7 +13,14 @@ import AppKit
         trade(tab, with: page)
         hold(page)
         tab.backPages.append(page)
-        while tab.backPages.count > Self.heldPageLimit { release(tab.backPages.removeFirst()) }
+        while tab.backPages.count > Self.heldPageLimit {
+            let oldest = tab.backPages.removeFirst()
+            if let history = oldest.navigationHistory {
+                tab.archivedBackEntries += history.entries.prefix(history.index+1)
+                tab.archivedBackEntries = Array(tab.archivedBackEntries.suffix(TabNavigationHistory.maximumEntries))
+            }
+            release(oldest)
+        }
         dropForwardPages(of: tab)
         settle(tab)
     }
@@ -24,7 +32,7 @@ import AppKit
     /// Whether `tab` can go that way, through its page's history or its held pages, and for
     /// Back, finally to the tab that opened it.
     func canGo(_ direction: HistoryDirection, in tab: BrowserTab) -> Bool {
-        direction == .back ? tab.page.canGoBack || !tab.backPages.isEmpty || opener(returningFrom: tab) != nil
+        direction == .back ? tab.page.canGoBack || !tab.backPages.isEmpty || !tab.archivedBackEntries.isEmpty || opener(returningFrom: tab) != nil
                            : tab.page.canGoForward || !tab.forwardPages.isEmpty
     }
     /// The tab Back returns to from `tab`, a page a site opened in a new tab, while it's still open.
@@ -36,6 +44,16 @@ import AppKit
     /// Back closes a page a site opened in a new tab and returns to the tab that opened it.
     @discardableResult func goThroughHeldPages(_ direction: HistoryDirection, in tab: BrowserTab) -> Bool {
         guard let held = direction == .back ? tab.backPages.popLast() : tab.forwardPages.popLast() else {
+            if direction == .back, !tab.archivedBackEntries.isEmpty, var history = tab.navigationHistory, history.index > 0 {
+                history.index -= 1
+                guard let entry = history.current, let url = URL(string: entry.url) else { return false }
+                let replacement = configure(BrowserTab(saved: SavedTab(url: entry.url, title: entry.title ?? tab.title, navigationHistory: history)))
+                releaseHeldPages(of: tab)
+                trade(tab, with: replacement)
+                release(replacement)
+                tab.load(url); settle(tab)
+                return true
+            }
             guard direction == .back, let opener = opener(returningFrom: tab) else { return false }
             // The opener shows first, so closing doesn't pass through a neighbouring tab.
             select(opener.id); closeTab(tab.id)
@@ -69,6 +87,7 @@ import AppKit
     /// Lets go of every page a closing tab was holding.
     func releaseHeldPages(of tab: BrowserTab) {
         (tab.backPages+tab.forwardPages).forEach(release); tab.backPages = []; tab.forwardPages = []
+        tab.archivedBackEntries = []
     }
     /// Keeps a page off screen, paused, until Back or Forward needs it.
     func hold(_ holder: BrowserTab) {

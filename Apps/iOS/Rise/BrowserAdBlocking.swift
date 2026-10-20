@@ -78,6 +78,10 @@ extension BrowserViewController {
 
     func webView(_ page: WKWebView, decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+        if let url = action.request.url, url.scheme == MobileTabHistory.scheme {
+            decisionHandler(action.targetFrame?.isMainFrame == true && MobileTabHistory.permits(url, in: page) ? .allow : .cancel)
+            return
+        }
         if action.shouldPerformDownload { finishAdBlockingReload(on: page); decisionHandler(.download); return }
         // A nil target opens another window; its own browser applies its policy. Do not
         // change this page's filtering while it is merely opening a link elsewhere.
@@ -92,6 +96,10 @@ extension BrowserViewController {
 
     func webView(_ page: WKWebView, decidePolicyFor response: WKNavigationResponse,
                  decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void) {
+        if let url = response.response.url, url.scheme == MobileTabHistory.scheme {
+            decisionHandler(response.isForMainFrame && MobileTabHistory.permits(url, in: page) ? .allow : .cancel)
+            return
+        }
         if Self.shouldDownload(response) { finishAdBlockingReload(on: page); decisionHandler(.download); return }
         guard response.isForMainFrame else { decisionHandler(.allow); return }
         // A server redirect can change the final host without another action-policy callback.

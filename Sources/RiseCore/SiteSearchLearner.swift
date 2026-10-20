@@ -20,7 +20,7 @@ import WebKit
     public static let worldName = "Rise.SiteSearch"
     #if os(iOS)
     public static let world = WKContentWorld.world(name: worldName)
-    private let controllers = NSHashTable<WKUserContentController>.weakObjects()
+    private static let bridges = NSMapTable<WKUserContentController, SiteSearchBridge>.weakToStrongObjects()
     #endif
     /// How long after a search the page has to get to its results.
     public static let window: TimeInterval = 15
@@ -34,10 +34,12 @@ import WebKit
     #if os(iOS)
     public func install(on webView: WKWebView) {
         let controller = webView.configuration.userContentController
-        // window.open can supply a configuration sharing the opener's controller.
-        guard !controllers.contains(controller) else { return }
-        controllers.add(controller)
-        controller.add(SiteSearchBridge(self), contentWorld: Self.world, name: "riseSiteSearch")
+        // A Peek hands its already configured page to the main browser. Transfer
+        // the bridge rather than registering the same handler name twice.
+        if let bridge = Self.bridges.object(forKey: controller) { bridge.learner = self; return }
+        let bridge = SiteSearchBridge(self)
+        Self.bridges.setObject(bridge, forKey: controller)
+        controller.add(bridge, contentWorld: Self.world, name: "riseSiteSearch")
         controller.addUserScript(WKUserScript(source: Self.script, injectionTime: .atDocumentStart, forMainFrameOnly: true, in: Self.world))
     }
     public func searched(_ terms: [String], name: String?, in webView: WKWebView) {

@@ -310,6 +310,10 @@ RC_EXPORT @interface RCBrowserView : NSView
 /// Gives a page that hasn't loaded anything that history and loads its current entry, or loads
 /// `fallback` if it can't use it.
 - (void)restoreNavigationState:(NSData *)state fallback:(NSURL *)fallback;
+/// HTTP(S) URL/title entries and the current index, for history shared with another engine.
+@property (nonatomic, readonly, nullable) NSDictionary<NSString *, id> *navigationHistory;
+/// Restores portable history on an empty page; only the current destination is loaded.
+- (BOOL)restoreNavigationHistory:(NSDictionary<NSString *, id> *)history fallback:(NSURL *)fallback;
 /// The link under the pointer.
 @property (nonatomic, readonly, nullable) NSURL *hoveredURL;
 /// Under something else, such as a Peek: the page takes no hover and sets no cursor, though

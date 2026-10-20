@@ -15,7 +15,7 @@ fi
 FRAMEWORK="$ENGINE_ROOT/fork/src/out/Release/Chromium.app/Contents/Frameworks/Chromium Framework.framework"
 [[ -d "$FRAMEWORK" ]] || { echo "The engine isn't built: $FRAMEWORK (see Engine/README.md)" >&2; exit 1; }
 APP="$PWD/build/Rise.app"
-swift build -c release -Xlinker -platform_version -Xlinker macos -Xlinker 14.0 -Xlinker "$RISE_SDK_VERSION"
+swift build -c release --jobs "${RISE_BUILD_JOBS:-4}" -Xlinker -platform_version -Xlinker macos -Xlinker 14.0 -Xlinker "$RISE_SDK_VERSION"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Frameworks"
 cp .build/release/Rise "$APP/Contents/MacOS/Rise"
 cp scripts/Info.plist "$APP/Contents/Info.plist"

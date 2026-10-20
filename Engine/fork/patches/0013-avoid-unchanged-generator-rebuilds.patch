@@ -1,0 +1,19 @@
+diff --git a/build/config/siso/mac.star b/build/config/siso/mac.star
+index 42a8efe9c1..3c4a0c660e 100644
+--- a/build/config/siso/mac.star
++++ b/build/config/siso/mac.star
+@@ -60,6 +60,14 @@ __handlers.update(clang.handlers)
+ 
+ def __step_config(ctx, step_config):
+     config.check(ctx)
++    # Generated headers with identical contents should keep their timestamp.
++    # Relinking a generator must not force every consumer to compile again.
++    step_config["rules"].append({
++        "name": "rise/generated_content",
++        "action": ".*__rule",
++        "restat_content": True,
++        "accumulate": True,
++    })
+     step_config = clang.step_config(ctx, step_config)
+     step_config["rules"].extend([
+         {

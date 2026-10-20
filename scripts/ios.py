@@ -2,6 +2,7 @@
 """Build, test, or install Rise on a paired iPhone or Simulator using Apple's developer tools."""
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -32,6 +33,7 @@ def main():
     parser.add_argument("--team", help="Override the project's Apple development team")
     parser.add_argument("--configuration", choices=["Debug", "Release"], default="Debug")
     parser.add_argument("--console", action="store_true", help="Stream app logs after installation")
+    parser.add_argument("--jobs", type=int, default=int(os.environ.get("RISE_BUILD_JOBS", "4")), help="Maximum parallel build jobs (default: 4)")
     args = parser.parse_args()
     if args.action in ["run", "test"] and not (args.device or args.simulator):
         parser.error("--device or --simulator is required for installation and tests")
@@ -45,7 +47,7 @@ def main():
     derived_data = ROOT / "build/ios-simulator" if args.simulator else DERIVED_DATA
     command = ["xcodebuild", "-project", str(PROJECT), "-scheme", "RiseiOS",
                "-configuration", args.configuration, "-destination", destination,
-               "-derivedDataPath", str(derived_data), "-allowProvisioningUpdates",
+               "-derivedDataPath", str(derived_data), "-jobs", str(args.jobs), "-allowProvisioningUpdates",
                "-allowProvisioningDeviceRegistration",
                # Local installs share the Mac's Development iCloud data, even as Release builds;
                # only distribution builds use Production, which has its own data (docs/TabSync.md).

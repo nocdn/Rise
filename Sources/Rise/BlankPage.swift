@@ -1,4 +1,5 @@
 import AppKit
+import RiseCore
 
 /// A page that draws nothing, for when Chromium isn't running, as in unit tests: it goes where
 /// it's sent, with its history, and says so as a page would, a moment later, but runs no scripts.
@@ -62,6 +63,20 @@ import AppKit
     @discardableResult func setAudioMuted(_ muted: Bool) -> Bool { true }
 
     private struct History: Codable { let back: [URL], current: URL?, forward: [URL] }
+    var navigationHistory: TabNavigationHistory? {
+        guard let url else { return nil }
+        return TabNavigationHistory(entries: (back + [url] + Array(forward.reversed())).map {
+            .init(url: $0.absoluteString, title: $0 == url ? title : nil)
+        }, index: back.count).validated()
+    }
+    func restoreNavigationHistory(_ history: TabNavigationHistory, fallback url: URL) -> Bool {
+        guard let history = history.validated(for: url.absoluteString), let current = history.current,
+              let destination = URL(string: current.url) else { return false }
+        back = history.entries.prefix(history.index).compactMap { URL(string: $0.url) }
+        forward = history.entries.dropFirst(history.index+1).reversed().compactMap { URL(string: $0.url) }
+        go(to: destination, .history)
+        return true
+    }
     /// Nil for a page with nowhere to go back or forward to, which its address alone restores.
     var sessionState: Data? {
         back.isEmpty && forward.isEmpty ? nil : try? JSONEncoder().encode(History(back: back, current: url, forward: forward))

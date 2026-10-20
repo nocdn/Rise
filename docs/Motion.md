@@ -104,6 +104,9 @@ These came out of many rounds of trying things on the phone. Follow them by defa
 - **At the reveal:** "one fairly short, strong but dull (not the sharp) haptic" (transient,
   intensity 1, sharpness 0.12). It ends the hum.
 - **Nothing while pinching.**
+- **Pulling up the follow-up field:** light ticks as it comes out, then one strong click when
+  it's pulled far enough (he asked for these on 20 October). Asking a follow-up hums as
+  summarising does, and its answer ends in the same thud.
 - **Nothing when releasing a swipe into the tab switcher.** Its rigid commit impact was removed
   after he asked for a silent release.
 
@@ -299,14 +302,15 @@ fades in `backDelay` 0.38 s after the card starts settling, over `backDuration` 
 - **The card:** it grows to `revealScale` 0.659, with its top at 134 pt, on the `reveal` spring;
   the swing dies away.
 - **Haptics:** the hum stops and the dull thud plays.
-- **The text:** each block (the overview, then each section) starts `textDelay` 0.12 s +
+- **The text:** each block (each of the summary's two paragraphs) starts `textDelay` 0.12 s +
   `stagger` 0.08 s × its index. Its opacity is `1 − e^(−t/0.12)` and its blur `20·e^(−t/0.15)`.
   The blur is dropped below 0.05.
+- **The summary itself:** two short plain paragraphs covering the page's important information.
+  The overview plus three to five symbol-headed sections was dropped on 20 October: "it kind of
+  throws off the visual design".
 - **Typography:**
   - Body: 17 pt system on 22 pt lines, #1C1C1E at 85%.
-  - Headings: semibold 17 at 90%.
-  - Symbols: white bold 13 pt in a 27 pt circle of (42, 48, 255).
-  - Spacing: 24 pt side padding, 30 pt after the overview, 22 between sections, 64 at the bottom.
+  - Spacing: 24 pt side padding, 18 pt between paragraphs, 64 at the bottom.
   - Placement: the first paragraph sits `textGap` 38 pt under the card (26 in Arc and the
     playground; he asked for more).
 - **Scrolling:** everything (card and summary) scrolls together over the fixed backdrop.
@@ -332,6 +336,36 @@ fades in `backDelay` 0.38 s after the card starts settling, over `backDuration` 
   - **Continuity:** the glows carry on from their angle, and the swing stops.
   - **Summary:** if it had one, it isn't asked for again. Let go, it shows again `reshow` 0.5 s
     after release, at the next swing middle. A failed or missing summary is asked for again.
+
+### The follow-up field (20 October 2026, being tuned)
+
+- **The pull:** pulled on past the summary's end, a borderless, unfilled field's placeholder,
+  "Keep pulling to ask follow-up", rises out of the middle of the bottom of the screen. It rises
+  `followUpLead` 1.4× as fast as the summary and grows from 0.5 to 0.8 of its size, centred.
+  The field is anchored at its left edge, so the centring is its left at (width − text width ×
+  scale) / 2.
+- **Haptics:** a light tick every `followUpTick` 12 pt of overscroll, from intensity 0.25 to
+  0.45 at sharpness 0.45. At `followUpPull` 96 pt (overscroll as shown, after UIKit's rubber
+  band, about 200 pt of finger travel), there's one strong click (intensity 1, sharpness 0.7).
+- **The click:** the drag is ended and the scroll view's own bounce stopped. The placeholder
+  crossfades to "Ask follow up about page". The field flies up and grows to full size on
+  `followUpPlace` (ω 15, ζ 0.6). It slides across to the paragraphs' 24 pt edge
+  `followUpSlideDelay` 0.06 s later on `followUpSlide` (ω 12, ζ 0.85). It settles
+  `followUpGap` 12 pt under the last paragraph and is focused.
+- **The keyboard:** the content grows to hold the field, and `contentInset.bottom` leaves 16 pt
+  between the field and the keyboard. The summary scrolls to it on `followUpScroll` (ω 14, ζ 1),
+  retargeted with its velocity when the keyboard's frame arrives. A touch takes the scroll over.
+  The keyboard dismisses interactively.
+- **Asking (Return):** the keyboard goes and the question replaces the field in the same place,
+  as summary text at 50%, with Find's Ask shimmer: an 80 pt dark band sweeping its glyphs once a
+  second. The summary's hum plays while the model answers. `PageSummary.answer` sends the page,
+  the summary as the model's first reply, and the earlier questions and answers.
+- **The answer:** the shimmer fades over 0.15 s. The answer's paragraphs reveal as the
+  summary's (same delay, stagger, blur and fade), with the reveal's thud ending the hum. The
+  summary scrolls on if needed to show it, keeping the question at least `followUpAnswerTop`
+  110 pt down the screen. Then the field can be pulled out again under the answer.
+- **Closing:** the field fades and sinks back with the summary, and a pending question is
+  cancelled. Caught and revealed again, the summary starts without its questions.
 
 ---
 

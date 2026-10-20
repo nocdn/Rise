@@ -1,0 +1,64 @@
+--- a/chrome/browser/rise/RiseChromium.h
++++ b/chrome/browser/rise/RiseChromium.h
+@@ -310,6 +310,10 @@
+ /// Gives a page that hasn't loaded anything that history and loads its current entry, or loads
+ /// `fallback` if it can't use it.
+ - (void)restoreNavigationState:(NSData *)state fallback:(NSURL *)fallback;
++/// HTTP(S) URL/title entries and the current index, for history shared with another engine.
++@property (nonatomic, readonly, nullable) NSDictionary<NSString *, id> *navigationHistory;
++/// Restores portable history on an empty page; only the current destination is loaded.
++- (BOOL)restoreNavigationHistory:(NSDictionary<NSString *, id> *)history fallback:(NSURL *)fallback;
+ /// The link under the pointer.
+ @property (nonatomic, readonly, nullable) NSURL *hoveredURL;
+ /// Under something else, such as a Peek: the page takes no hover and sets no cursor, though
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -2034,6 +2034,48 @@
+ // What a saved history starts with, to tell it from another engine's.
+ const char kHistoryFormat[] = "rise-fork-history-1";
+ 
++- (NSDictionary<NSString*, id>*)navigationHistory {
++  if (!_contents) return nil;
++  auto& controller = _contents->GetController();
++  auto* current = controller.GetLastCommittedEntry();
++  if (!current || current->IsInitialEntry()) return nil;
++  NSMutableArray* entries = [NSMutableArray array];
++  for (int i = 0; i < controller.GetEntryCount(); ++i) {
++    auto* entry = controller.GetEntryAtIndex(i);
++    [entries addObject:@{@"url": base::SysUTF8ToNSString(entry->GetVirtualURL().spec()),
++                         @"title": base::SysUTF16ToNSString(entry->GetTitle())}];
++  }
++  return @{@"entries": entries, @"index": @(controller.GetLastCommittedEntryIndex())};
++}
++
++- (BOOL)restoreNavigationHistory:(NSDictionary<NSString*, id>*)history fallback:(NSURL*)fallback {
++  NSArray* entries = history[@"entries"];
++  NSNumber* index = history[@"index"];
++  if (![entries isKindOfClass:[NSArray class]] || !entries.count || entries.count > 100 ||
++      ![index isKindOfClass:[NSNumber class]] || index.integerValue < 0 ||
++      index.unsignedIntegerValue >= entries.count) return NO;
++  base::Pickle pickle;
++  pickle.WriteString(kHistoryFormat);
++  pickle.WriteInt(index.intValue);
++  pickle.WriteInt(static_cast<int>(entries.count));
++  for (NSDictionary* item in entries) {
++    if (![item isKindOfClass:[NSDictionary class]]) return NO;
++    NSString* address = item[@"url"];
++    NSString* title = item[@"title"];
++    if (![address isKindOfClass:[NSString class]] || address.length > 8192) return NO;
++    GURL url(base::SysNSStringToUTF8(address));
++    if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS() || url.has_username() || url.has_password()) return NO;
++    sessions::SerializedNavigationEntry navigation;
++    navigation.set_virtual_url(url);
++    navigation.set_original_request_url(url);
++    if ([title isKindOfClass:[NSString class]]) navigation.set_title(base::SysNSStringToUTF16(title));
++    navigation.WriteToPickle(/*max_size=*/1 << 20, &pickle);
++  }
++  auto bytes = pickle.AsBytes();
++  [self restoreNavigationState:[NSData dataWithBytes:bytes.data() length:bytes.size()] fallback:fallback];
++  return YES;
++}
++
+ - (NSData*)navigationState {
+   if (!_contents) {
+     return nil;

@@ -416,7 +416,7 @@ import UIKit
         controller.webView.load(URLRequest(url: URL(string: "https://www.apple.com/")!))
         for _ in 0..<500 where controller.webView.isLoading { try? await Task.sleep(for: .milliseconds(20)) }
         try? await Task.sleep(for: .milliseconds(1500))
-        let longSummary = PageSummary(overview: summary.overview, sections: summary.sections+summary.sections)
+        let longSummary = PageSummary(paragraphs: summary.paragraphs+summary.paragraphs)
         var result = Result()
         for round in 0..<3 {
             // Install the fixture before committing starts its request.
@@ -562,12 +562,9 @@ import UIKit
     """
 
     /// The playground's summary.
-    static let summary = PageSummary(
-        overview: "The author, Lukáš Lalinský, discusses his journey in web development and the evolution of templating in Zig, a low-level programming language.",
-        sections: [
-            .init(symbol: "text.alignleft", heading: "Templating Library", text: "Lalinský introduces 'zt', a type-safe HTML templating library for Zig, designed to ensure compile-time checks, fast performance, and safe defaults against XSS."),
-            .init(symbol: "star.fill", heading: "Key Features", text: "The library allows for HTML escaping by default, requires proper element closures, and integrates seamlessly with Zig code, providing a familiar HTML-like syntax."),
-            .init(symbol: "bolt.fill", heading: "Performance", text: "Templates compile to plain Zig, so rendering a page is as fast as writing the strings by hand."),
-        ])
+    static let summary = PageSummary(paragraphs: [
+        "Lukáš Lalinský writes about building web apps in Zig, a low-level language, and introduces zt, a type-safe HTML templating library that checks templates at compile time and escapes HTML by default against XSS.",
+        "Templates use a familiar HTML-like syntax, must close their elements, and compile to plain Zig, so rendering a page is as fast as writing the strings by hand.",
+    ])
 }
 #endif

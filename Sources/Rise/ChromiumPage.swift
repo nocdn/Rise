@@ -1,5 +1,6 @@
 import AppKit
 import RiseChromium
+import RiseCore
 
 /// A separate place for the session, history and website data, for trying Rise out (with
 /// another engine, say) without touching the everyday ones: `RISE_PROFILE_DIR=<folder>`.
@@ -307,6 +308,17 @@ enum RisePages {
     /// Chromium's history is tagged, so a WebKit page's saved history is never handed to it.
     private static let stateTag = Data("RiseChromium1\0".utf8)
     var sessionState: Data? { browserView.navigationState.map { Self.stateTag + $0 } }
+    var navigationHistory: TabNavigationHistory? {
+        guard let value = browserView.navigationHistory, let data = try? JSONSerialization.data(withJSONObject: value),
+              let history = try? JSONDecoder().decode(TabNavigationHistory.self, from: data) else { return nil }
+        return history.validated()
+    }
+    func restoreNavigationHistory(_ history: TabNavigationHistory, fallback url: URL) -> Bool {
+        guard let history = history.validated(for: url.absoluteString), let data = try? JSONEncoder().encode(history),
+              let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        hasLoaded = true
+        return browserView.restoreNavigationHistory(value, fallback: url)
+    }
     func restoreSession(_ data: Data, fallback url: URL) -> Bool {
         guard data.starts(with: Self.stateTag) else { return false }
         hasLoaded = true

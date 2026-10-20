@@ -1,4 +1,5 @@
 import AppKit
+import RiseCore
 
 /// Everything Rise asks of a page. Rise lays out, clips and animates `view` like any other view;
 /// the engine only fills it.
@@ -36,6 +37,8 @@ import AppKit
     var sessionState: Data? { get }
     /// Restores history saved by `sessionState`; false if there was nothing to restore.
     func restoreSession(_ data: Data, fallback url: URL) -> Bool
+    var navigationHistory: TabNavigationHistory? { get }
+    func restoreNavigationHistory(_ history: TabNavigationHistory, fallback url: URL) -> Bool
     /// A picture of the page as it is now, `width` points wide (or its own width).
     func snapshot(width: CGFloat?) async -> NSImage?
     /// Whether the engine can show the page live elsewhere in the window (`liveLayer`), so motion
@@ -106,6 +109,8 @@ struct PageScriptError: Error, LocalizedError {
 }
 
 extension WebPage {
+    var navigationHistory: TabNavigationHistory? { nil }
+    func restoreNavigationHistory(_ history: TabNavigationHistory, fallback url: URL) -> Bool { false }
     func runScript(_ body: String, arguments: [String: Any], world: String?) async throws -> Any? {
         guard let world else { return await evaluate(body, arguments: arguments, world: nil) }
         return try await evaluate(body, arguments: arguments, in: nil, world: .named(world))

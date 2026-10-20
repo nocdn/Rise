@@ -5,6 +5,12 @@ import UIKit
 final class FindPanel: UIView, UITextFieldDelegate {
     enum Mode { case find, ask }
     private(set) var mode = Mode.find
+    private var aiEnabled = true
+    func setAIEnabled(_ enabled: Bool) {
+        aiEnabled = enabled
+        if !enabled, mode == .ask { end(); setMode(.find) }
+        modeButton.isHidden = !enabled
+    }
     let field = SearchField()
     let modeButton = UIButton(type: .custom)
     var askButton: UIButton { modeButton }
@@ -181,6 +187,7 @@ final class FindPanel: UIView, UITextFieldDelegate {
     }
 
     private func setMode(_ next: Mode) {
+        guard next != .ask || aiEnabled else { return }
         guard next != mode else { return }
         mode = next
         let animate = window != nil && !UIAccessibility.isReduceMotionEnabled

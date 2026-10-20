@@ -56,6 +56,11 @@ enum ModelService {
     /// so a slow handler holds the stream back instead of buffering it.
     @MainActor static func run(_ messages: [[String: Any]], provider: ModelChoice, session: URLSession = .shared,
                     handle: (ModelEvent) async throws -> Void) async throws {
+        #if os(iOS)
+        guard MobileAISettings.shared.enabled else {
+            throw PageAssistant.Failure.service("AI features are disabled in App settings.")
+        }
+        #endif
         switch provider.provider {
         case .openRouter: try await OpenRouterClient.run(messages, choice: provider, session: session, handle: handle)
         #if os(macOS)
@@ -83,7 +88,14 @@ enum OpenRouterClient {
                     handle: (ModelEvent) async throws -> Void) async throws {
         var request = URLRequest(url: PageAssistant.endpoint)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(choice.apiKey ?? PageAssistant.apiKey)", forHTTPHeaderField: "Authorization")
+        #if os(iOS)
+        guard let key = choice.apiKey, !key.isEmpty else {
+            throw PageAssistant.Failure.service("Add an OpenRouter API key in App settings.")
+        }
+        #else
+        let key = choice.apiKey ?? PageAssistant.apiKey
+        #endif
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Rise", forHTTPHeaderField: "X-Title")
         request.httpBody = try JSONSerialization.data(withJSONObject: [

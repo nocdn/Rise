@@ -1179,7 +1179,8 @@ final class WebKitBehaviorTests: XCTestCase {
             histories.append(history)
             return PageAssistant.answer(question, history: history,
                 page: { try await PageAssistant.snapshot(of: page) },
-                highlight: { await PageFind.highlightPassage($0, in: page) }, session: session)
+                highlight: { await PageFind.highlightPassage($0, in: page) },
+                provider: ModelChoice(provider: .openRouter, model: PageAssistant.model, effort: PageAssistant.reasoningEffort, apiKey: "test-key"), session: session)
         }
         browser.openPanel(.find)
         try await Task.sleep(for: .milliseconds(500))

@@ -4,8 +4,10 @@ import RiseCore
 @MainActor extension BrowserController {
     var sharedTabsSnapshot: [SharedBrowserTab] {
         tabs.compactMap { tab in
-            let address = tab.url?.absoluteString
-            let value = SharedBrowserTab(id: tab.id, url: address == "about:blank" ? nil : address, title: tab.title)
+            let saved = tab.saved
+            let address = saved.url
+            let value = SharedBrowserTab(id: tab.id, url: address == "about:blank" ? nil : address, title: tab.title,
+                                         navigationHistory: saved.navigationHistory)
             return value.isShareable ? value : nil
         }
     }
@@ -46,12 +48,14 @@ import RiseCore
         let sharedIDs = Set(displayed.keys)
         let localTabs = tabs.filter { !sharedIDs.contains($0.id) }
         let next = incoming.map { value -> BrowserTab in
-            if let tab = existing[value.id], displayed[value.id]?.url == value.url {
+            if let tab = existing[value.id], displayed[value.id]?.url == value.url,
+               value.navigationHistory.map({ tab.navigationHistory?.hasSameRoute(as: $0) == true }) ?? true {
                 if tab.customTitle == nil { tab.title = value.title ?? "New Tab" }
                 return tab
             }
             var saved = existing[value.id]?.saved ?? SavedTab(id: value.id, url: "about:blank", title: "New Tab")
             saved.url = value.url ?? "about:blank"; saved.title = value.title ?? "New Tab"
+            saved.navigationHistory = value.navigationHistory
             saved.sessionState = nil; saved.faviconData = nil; saved.darkFaviconData = nil; saved.faviconOrigin = nil
             return configure(BrowserTab(saved: saved))
         } + localTabs

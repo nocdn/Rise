@@ -6,8 +6,10 @@ import AppKit
 /// Answers questions about the open page through the chosen AI provider, streamed token by token.
 enum PageAssistant {
     struct Turn: Sendable { let question: String, answer: String }
-    // Temporary test key, hardcoded on purpose until it is rotated and moved to settings.
+    #if os(macOS)
+    // Desktop fallback. The mobile app only uses the user's saved Keychain credential.
     static let apiKey = "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"
+    #endif
     static let model = "openai/gpt-6-luna"
     static let reasoningEffort = "low"
     static let endpoint = URL(string: "https://openrouter.ai/api/v1/chat/completions")!

@@ -9,6 +9,8 @@ import RiseCore
     /// and later ones Forward reaches. Each holder only keeps a page; it isn't a tab in the list.
     var backPages: [BrowserTab] = []
     var forwardPages: [BrowserTab] = []
+    /// Older Peek pages can be released while their URLs remain reachable and restorable.
+    var archivedBackEntries: [TabNavigationHistory.Entry] = []
     var title: String
     var customTitle: String?
     /// Leaves YouTube's notification count out of the title.
@@ -46,6 +48,7 @@ import RiseCore
     var heldSinceBackgroundPicture = false
     /// The saved back/forward history, restored when the tab first loads its saved page.
     private var restoredState: (url: String, data: Data)?
+    private var restoredHistory: (url: String, history: TabNavigationHistory)?
     static let maximumSessionState = 2_000_000
     var onThumbnailChange: (() -> Void)?
     var onFullscreenChange: (() -> Void)?
@@ -60,6 +63,7 @@ import RiseCore
         pinned = saved?.pinned ?? false; developer = saved?.developer ?? false
         requestedURL = saved.flatMap { URL(string: $0.url) }
         if let saved, let data = saved.sessionState { restoredState = (saved.url, data) }
+        if let saved, let history = saved.navigationHistory?.validated(for: saved.url) { restoredHistory = (saved.url, history) }
         self.page = page ?? Self.makePage()
         super.init()
         if let data = saved?.faviconData, data.count <= FaviconSnapshot.maximumBytes,
@@ -96,7 +100,8 @@ import RiseCore
         swap(&thumbnail, &other.thumbnail); swap(&hasAttemptedNavigation, &other.hasAttemptedNavigation)
         swap(&isAudioMuted, &other.isAudioMuted)
         swap(&backgroundPictureURL, &other.backgroundPictureURL); swap(&heldSinceBackgroundPicture, &other.heldSinceBackgroundPicture)
-        restoredState = nil; other.restoredState = nil
+        swap(&restoredState, &other.restoredState)
+        swap(&restoredHistory, &other.restoredHistory)
         // An icon still on its way belongs to the page that's gone; fetch the new page's again.
         for tab in [self, other] {
             tab.iconTask?.cancel(); tab.iconTask = nil
@@ -107,17 +112,26 @@ import RiseCore
     }
     var url: URL? { page.url ?? requestedURL }
     var saved: SavedTab {
-        let origin = SitePermissions.origin(url)
+        let history = navigationHistory
+        let savedURL = history?.current.flatMap { URL(string: $0.url) } ?? url
+        let origin = SitePermissions.origin(savedURL)
         let data = origin != nil && origin == iconOrigin ? faviconData : nil
-        return SavedTab(id: id, url: url?.absoluteString ?? "about:blank", title: title, pinned: pinned, developer: developer, customTitle: customTitle,
+        return SavedTab(id: id, url: savedURL?.absoluteString ?? "about:blank", title: title, pinned: pinned, developer: developer, customTitle: customTitle,
                         faviconData: data, darkFaviconData: data == nil ? nil : darkFaviconData,
-                        faviconOrigin: data == nil ? nil : origin, sessionState: sessionState)
+                        faviconOrigin: data == nil ? nil : origin, sessionState: sessionState, navigationHistory: history)
     }
     /// The live history once the page has loaded; until then, the history it was restored with.
     var sessionState: Data? {
+        guard backPages.isEmpty, forwardPages.isEmpty, archivedBackEntries.isEmpty else { return nil }
         guard page.url != nil else { return restoredState?.data }
         guard let data = page.sessionState, data.count <= Self.maximumSessionState else { return nil }
         return data
+    }
+    var navigationHistory: TabNavigationHistory? {
+        guard let current = page.navigationHistory ?? restoredHistory?.history else { return nil }
+        let archived = archivedBackEntries.isEmpty ? [] : [TabNavigationHistory(entries: archivedBackEntries, index: archivedBackEntries.count-1)]
+        return TabNavigationHistory.combining(back: archived + backPages.compactMap(\.navigationHistory), current: current,
+                                             forward: forwardPages.reversed().compactMap(\.navigationHistory))
     }
     func rename(_ text: String) {
         let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -130,8 +144,11 @@ import RiseCore
         if AddressResolver.isLocal(url) { developer = true }
         // A restored tab reopens its saved page with its back/forward history.
         let state = restoredState; restoredState = nil
+        let history = restoredHistory
+        if history?.url != url.absoluteString { restoredHistory = nil }
         defer { onChange?() }
         if let state, state.url == url.absoluteString, page.restoreSession(state.data, fallback: url) { return }
+        if let history, history.url == url.absoluteString, page.restoreNavigationHistory(history.history, fallback: url) { return }
         page.load(url)
     }
     func setAudioMuted(_ muted: Bool) {

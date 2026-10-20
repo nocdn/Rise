@@ -3,23 +3,16 @@ import UIKit
 @testable import RiseiOS
 
 final class SummariseTests: XCTestCase {
-    func testDecodesTheSummaryAroundOtherText() throws {
+    func testReadsTheSummarysParagraphs() throws {
         let reply = """
-        ```json
-        {"overview":"An essay on templating.","sections":[{"symbol":"star.fill","heading":"Key Features","text":"Escaping by default."}]}
+        **An essay** on templating.
+
         ```
+        Escaping is on by default.
         """
         let summary = try PageSummary.decode(reply)
-        XCTAssertEqual(summary.overview, "An essay on templating.")
-        XCTAssertEqual(summary.sections.map(\.heading), ["Key Features"])
-        XCTAssertThrowsError(try PageSummary.decode("Sorry, I can't."))
-        XCTAssertThrowsError(try PageSummary.decode(#"{"overview":"  ","sections":[]}"#))
-    }
-
-    func testUnknownSymbolsFallBack() {
-        let section = PageSummary.Section(symbol: "not.a.symbol", heading: "", text: "")
-        XCTAssertEqual(PageSummary.symbol(for: section, at: 1), "star.fill")
-        XCTAssertEqual(PageSummary.symbol(for: PageSummary.Section(symbol: "bolt.fill", heading: "", text: ""), at: 0), "bolt.fill")
+        XCTAssertEqual(summary.paragraphs, ["An essay on templating.", "Escaping is on by default."])
+        XCTAssertThrowsError(try PageSummary.decode("  \n\n "))
     }
 
     /// The playground's springs: the reveal's and the close's, both critically damped.
@@ -140,8 +133,8 @@ final class SummariseTests: XCTestCase {
                                           baseURL: URL(string: "https://rise.test/"))
         for _ in 0..<100 where controller.webView.isLoading { try await Task.sleep(for: .milliseconds(10)) }
 
-        let short = PageSummary(overview: "First page.", sections: [])
-        let long = PageSummary(overview: String(repeating: "A different page with much more to summarise. ", count: 40), sections: [])
+        let short = PageSummary(paragraphs: ["First page."])
+        let long = PageSummary(paragraphs: [String(repeating: "A different page with much more to summarise. ", count: 40)])
         var heights: [CGFloat] = []
         weak var previous: SummariseView?
         for summary in [short, long] {

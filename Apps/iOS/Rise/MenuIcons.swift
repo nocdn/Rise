@@ -14,6 +14,11 @@ import UIKit
     static let downloads = UIImage(named: "MenuDownloads")
     static let history = UIImage(named: "MenuHistory")
     static let syncTabs = UIImage(named: "MenuSyncTabs")
+    static let video = UIImage(named: "MenuVideo")
+    static let aiFeatures = UIImage(named: "MenuAIFeatures")
+    static let openRouter = UIImage(named: "MenuOpenRouter")
+    static let openAI = UIImage(named: "MenuOpenAI")
+    static let apiKey = UIImage(named: "MenuAPIKey")
 
     static let summarise: UIImage = {
         let path = UIBezierPath()

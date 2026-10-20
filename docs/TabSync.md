@@ -14,7 +14,8 @@ transition. On Mac, use **Rise → Sync Tabs with iCloud**. Turning sync off ret
 the local tabs; turning it back on merges local changes with the shared list.
 
 The private CloudKit database in `iCloud.dev.bartosz.Rise`, zone `RiseSharedTabs`,
-stores tab IDs, HTTP(S) addresses, titles and order. It also stores learned site-search
+stores tab IDs, HTTP(S) addresses, titles, order and each tab's Back/Forward URL/title
+entries with its current position. It also stores learned site-search
 names and URL templates in a `RiseSearches` record (`payload: Bytes`), controlled by
 the same sync switch. Address learning also syncs normalized HTTP(S) URLs, titles,
 visit counts and last-visit times, so both devices use the same learned destinations.
@@ -22,9 +23,22 @@ Private browsing never contributes. Cookies, login state and page contents do no
 Templates merge per domain by their learning time with deterministic conflict ties;
 a saved clear timestamp prevents an offline device from restoring cleared searches.
 Existing `searches.json` dictionaries migrate automatically to the version with that
-timestamp. Only same-site HTTP(S) templates with one `{q}` substitution are accepted. Selection, page history,
+timestamp. Only same-site HTTP(S) templates with one `{q}` substitution are accepted. Selection, engine session archives,
 cookies, logins, snapshots, pinned/custom Mac metadata and local files stay on the
 device. Ordinary tab opens, navigation, moves and closes sync automatically.
+
+Back/Forward history travels with the tab's address as one versioned update. Repeated
+visits to the same URL remain distinct entries. Both directions survive relaunch and
+cross-engine restoration; only the selected destination loads during restoration.
+Each history is bounded to 100 entries around the current position and 750 KB encoded.
+Local/internal URLs and addresses containing credentials are excluded. Historical form
+values, POST bodies, cookies and login state do not transfer between devices.
+
+Installing an update retains the local session. Deleting and reinstalling the app can
+recover history already uploaded to iCloud, using the same account, container and
+environment with sync enabled. Unsynced offline changes cannot survive deletion of the
+app's data. Older clients without this field can update a title at the same URL without
+erasing history received from a newer client. See [Navigation history](NavigationHistory.md).
 
 Visit learning uses one `RiseSearches` record per normalized URL (`history-` plus a
 SHA-256 identifier) and a separate `history-cleared` marker, reusing the existing

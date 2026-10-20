@@ -12,6 +12,7 @@ import WebKit
             navigationError = nil; hasCommittedDocument = webView.url != nil
             rememberedURL = nil
             rememberedTitle = nil
+            pendingHistory = nil; pendingInteractionState = nil; isRestoringHistory = false
             snapshot = nil
             favicon = nil
             observePage()
@@ -21,6 +22,9 @@ import WebKit
     private var rememberedURL: URL?
     private var rememberedTitle: String?
     private var pendingURL: URL?
+    private var pendingHistory: TabNavigationHistory?
+    private var pendingInteractionState: Data?
+    private var isRestoringHistory = false
     private var restoreNavigation: WKNavigation?
     private var activeNavigation: WKNavigation?
     private var cancellationRetries = 0
@@ -32,14 +36,22 @@ import WebKit
     private(set) var hasCommittedDocument = false
     private(set) var navigationError: Error?
     var addressURL: URL? {
+        if isRestoringHistory { return rememberedURL }
+        if let url = webView.url, let entry = MobileTabHistory.entry(for: url) { return URL(string: entry.url) }
         if let url = webView.url, MobileBrowserSession.canRestore(url) { return url }
         return rememberedURL
     }
     private var pageObservations: [NSKeyValueObservation] = []
+    private var knownHistoryItems: [WKBackForwardListItem] = []
     var onPageChange: (() -> Void)?
     var isSyncPlaceholder = false
     func rememberSharedTitle(_ title: String?) { rememberedTitle = title }
     var previousPages: [WKWebView] = []
+    var forwardPages: [WKWebView] = []
+    func discardForwardPages() {
+        for page in forwardPages { page.stopLoading(); page.navigationDelegate = nil; page.uiDelegate = nil }
+        forwardPages.removeAll()
+    }
     /// The page, strip included, as it was when last left, for its card in the tab switcher.
     var snapshot: UIImage? { didSet { onSnapshotChange?() } }
     var onSnapshotChange: (() -> Void)?
@@ -59,39 +71,77 @@ import WebKit
         rememberedURL = (tab?.url ?? initialURL).flatMap { MobileBrowserSession.canRestore($0) ? $0 : nil }
         rememberedTitle = tab?.title
         pendingURL = tab?.url
+        pendingHistory = tab?.navigationHistory?.validated(for: tab?.url?.absoluteString)
+        pendingInteractionState = tab?.interactionState
         observePage()
     }
 
     var sessionTab: MobileBrowserSession.Tab {
-        MobileBrowserSession.Tab(id: id, url: rememberedURL, title: rememberedTitle, isSyncPlaceholder: isSyncPlaceholder ? true : nil)
+        let history = navigationHistory
+        // URL notifications can precede a commit. Save the committed history and its cursor
+        // together, rather than briefly replacing them with a provisional URL and no history.
+        let url = history?.current.flatMap { URL(string: $0.url) } ?? rememberedURL
+        return MobileBrowserSession.Tab(id: id, url: url, title: rememberedTitle, isSyncPlaceholder: isSyncPlaceholder ? true : nil,
+                                        navigationHistory: history, interactionState: interactionState)
+    }
+
+    var navigationHistory: TabNavigationHistory? {
+        if isRestoringHistory || pendingURL != nil && !hasCommittedDocument { return pendingHistory }
+        guard let current = MobileTabHistory.snapshot(of: webView) else { return pendingHistory }
+        return TabNavigationHistory.combining(back: previousPages.compactMap { MobileTabHistory.snapshot(of: $0) },
+            current: current, forward: forwardPages.reversed().compactMap { MobileTabHistory.snapshot(of: $0) })
+    }
+
+    private var interactionState: Data? {
+        if isRestoringHistory || pendingURL != nil && !hasCommittedDocument { return pendingInteractionState }
+        let list = webView.backForwardList
+        let items = list.backList + [list.currentItem].compactMap { $0 } + list.forwardList
+        // A placeholder is tied to this web view's private origin. Recreate it from portable
+        // history after relaunch rather than archiving that ephemeral capability.
+        guard previousPages.isEmpty, forwardPages.isEmpty, !items.isEmpty,
+              items.allSatisfy({ MobileBrowserSession.canRestore($0.url) }),
+              let data = webView.interactionState as? Data, data.count <= MobileTabHistory.maximumStateBytes else { return nil }
+        return data
     }
 
     func loadIfNeeded() {
-        guard let url = pendingURL, restoreNavigation == nil, !webView.isLoading, navigationError == nil else { return }
-        restoreNavigation = webView.load(URLRequest(url: url))
+        guard let url = pendingURL, !isRestoringHistory, restoreNavigation == nil, !webView.isLoading, navigationError == nil else { return }
+        if let state = pendingInteractionState {
+            isRestoringHistory = true
+            webView.interactionState = state
+            if webView.backForwardList.currentItem != nil { return }
+            isRestoringHistory = false; pendingInteractionState = nil
+        }
+        if let history = pendingHistory, history.entries.count > 1 {
+            isRestoringHistory = true
+            restoreNavigation = MobileTabHistory.restore(history, in: webView)
+        } else { restoreNavigation = webView.load(URLRequest(url: url)) }
     }
     func didStart(_ navigation: WKNavigation) {
         activeNavigation = navigation
         navigationError = nil
-        if let restoring = restoreNavigation, restoring !== navigation {
+        if !isRestoringHistory, let restoring = restoreNavigation, restoring !== navigation {
             // A new user navigation supersedes the restored request, rather than reopening it later.
             restoreNavigation = nil; pendingURL = nil
         }
     }
     func didCommit(_ navigation: WKNavigation) {
         if let active = activeNavigation, active !== navigation { return }
-        if let restoring = restoreNavigation, restoring !== navigation { return }
+        if !isRestoringHistory, let restoring = restoreNavigation, restoring !== navigation { return }
         hasCommittedDocument = true
         cancellationRetries = 0
         navigationError = nil
+        isRestoringHistory = false; pendingHistory = nil; pendingInteractionState = nil
         pendingURL = nil; restoreNavigation = nil
         rememberAddress()
     }
+    func didFinish() { pageDidChange() }
     /// A cancelled startup request gets one retry; ordinary failures keep the destination for Retry.
     func didFail(_ navigation: WKNavigation?, error: Error) -> Bool {
-        if let restoring = restoreNavigation, let navigation, restoring !== navigation { return false }
+        if !isRestoringHistory, let restoring = restoreNavigation, let navigation, restoring !== navigation { return false }
         if let active = activeNavigation, let navigation, active !== navigation { return false }
         let restoring = pendingURL != nil && !hasCommittedDocument
+        isRestoringHistory = false
         restoreNavigation = nil; activeNavigation = nil
         let cancelled = (error as NSError).domain == NSURLErrorDomain && (error as NSError).code == NSURLErrorCancelled
         if cancelled, restoring, cancellationRetries < 1 {
@@ -114,6 +164,8 @@ import WebKit
         }
     }
     func processTerminated() {
+        pendingHistory = navigationHistory
+        pendingInteractionState = interactionState
         pendingURL = addressURL
         restoreNavigation = nil; activeNavigation = nil
         hasCommittedDocument = false; navigationError = nil
@@ -129,6 +181,8 @@ import WebKit
     }
 
     private func observePage() {
+        knownHistoryItems = historyItems
+        MobileTabHistory.observe(webView) { [weak self] in self?.pageDidChange() }
         rememberAddress()
         if let title = webView.title, !title.isEmpty { rememberedTitle = title }
         pageObservations = [
@@ -138,6 +192,8 @@ import WebKit
             webView.observe(\.title) { [weak self] _, _ in
                 MainActor.assumeIsolated { self?.pageDidChange() }
             },
+            webView.observe(\.canGoBack) { [weak self] _, _ in MainActor.assumeIsolated { self?.onPageChange?() } },
+            webView.observe(\.canGoForward) { [weak self] _, _ in MainActor.assumeIsolated { self?.onPageChange?() } },
             webView.observe(\.isLoading, options: [.old, .new]) { [weak self] _, change in
                 MainActor.assumeIsolated {
                     guard let self else { return }
@@ -152,12 +208,14 @@ import WebKit
     /// An early stop can leave WebKit idle without a navigation failure callback. Let
     /// the usual commit/failure callbacks settle before recovering the same request.
     private func loadingStopped() {
-        guard let navigation = restoreNavigation, pendingURL != nil, !hasCommittedDocument else { return }
+        // The internal bootstrap intentionally stops before its replacement page
+        // starts (which can wait for content rules). Re-seeding here duplicates it.
+        guard !isRestoringHistory, let navigation = restoreNavigation, pendingURL != nil, !hasCommittedDocument else { return }
         let page = webView
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self, weak page] in
             guard let self, let page, self.webView === page,
                   self.restoreNavigation === navigation, self.pendingURL != nil,
-                  !self.hasCommittedDocument, !page.isLoading else { return }
+                  !self.isRestoringHistory, !self.hasCommittedDocument, !page.isLoading else { return }
             let cancelled = NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)
             if self.didFail(navigation, error: cancelled) { self.loadIfNeeded() }
             self.onPageChange?()
@@ -167,13 +225,30 @@ import WebKit
     /// WebKit can deliver title and address notifications in either order. Read the pair
     /// together so a later address notification cannot clear the already updated title.
     private func pageDidChange() {
+        if let current = webView.backForwardList.currentItem,
+           !knownHistoryItems.contains(where: { $0 === current }) {
+            // Reload and Back/Forward retain an existing item. A new document or
+            // pushState creates an item and abandons any later adopted Peek pages.
+            discardForwardPages()
+        }
+        knownHistoryItems = historyItems
         rememberAddress()
         if let title = webView.title, !title.isEmpty { rememberedTitle = title }
         onPageChange?()
     }
 
+    private var historyItems: [WKBackForwardListItem] {
+        let list = webView.backForwardList
+        return list.backList + [list.currentItem].compactMap { $0 } + list.forwardList
+    }
+
     private func rememberAddress() {
+        guard !isRestoringHistory else { return }
         guard let url = webView.url else { return }
+        if let entry = MobileTabHistory.entry(for: url) {
+            rememberedURL = URL(string: entry.url); rememberedTitle = entry.title
+            return
+        }
         if url.absoluteString == "about:blank" {
             if pendingURL != nil && !hasCommittedDocument { return }
             rememberedURL = nil

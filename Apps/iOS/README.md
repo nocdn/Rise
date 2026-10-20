@@ -8,7 +8,9 @@ navigation changes, including History API changes in background tabs. Scene life
 events flush pending writes; ordinary app updates retain the file. Only the selected
 restored tab loads at launch; other tabs retain their saved title/address and load when
 selected. Temporary Peek pages and DEBUG replays/audits have no session store. This
-restores page addresses, rather than live form contents or WebKit's back/forward history.
+restores the selected page and its Back/Forward list, including the current position.
+Local WebKit interaction archives retain the engine's session when possible; portable
+URL/title history restores tabs received from the Mac and adopted Peek pages.
 Returning to the app while it's still in memory preserves the existing page and panel.
 Tabs also form one shared list with the Mac app through the user's existing iCloud
 account. Sync is enabled by default under **More → Site settings → App settings**;
@@ -17,6 +19,30 @@ merge behavior, signing setup and verification.
 Web links navigate normally; new-window links use the
 same page, and WebKit's native back/forward gestures remain available. UIKit and
 WebKit manage safe areas, rotation, the keyboard and scrolling.
+
+Embedded videos play inline instead of opening fullscreen automatically. **More → Site
+settings → App settings → Autoplay videos** can also require tapping Play, including for
+muted videos. The green video row sits below iCloud sync. Changes apply to existing tabs
+and Peeks without reloading; deliberate fullscreen stays available. Long-press a video for
+Play/Pause, Mute/Unmute, supported fullscreen/Picture in Picture, and video address,
+sharing or download actions when available. The menu also works in embedded frames and
+through player overlays. The menu appears at your finger while the video stays embedded
+and keeps playing on the page. Nothing is lifted or duplicated, and paused videos stay
+paused. See
+[Video playback](../../docs/VideoPlayback.md) for WebKit details and verification.
+
+**More → Site settings → App settings → AI features** enables or disables page questions,
+Summarise, and summary follow-ups. It is enabled by default. The joined AI Provider and
+API key rows select OpenRouter or OpenAI and save a separate masked key for each provider
+in this device's Keychain (not in iCloud or preferences). The key's dots menu checks
+authentication without generating an answer; focusing the field reveals the key in system
+monospace, while leaving it restores masking dots. Both states fade at the right edge without
+an ellipsis, and the field is eight points narrower than the provider selector. Key checks distinguish
+invalid credentials and temporary service
+failures are distinguished. Requests use the selected provider's GPT-6 Luna with low
+reasoning effort. Mobile builds contain no embedded fallback API credential. Local Debug
+installs can migrate a development key once via `RISE_AI_OPENROUTER_KEY` in the launch
+environment, without including its value in source or the app binary.
 
 As in Arc, the strip behind the status bar takes the colour along the page's top edge
 (see Peek below for how it's found), and the page sits just below it. The clock and
@@ -280,7 +306,7 @@ As in Arc Search, pinching in on the page, from its smallest zoom, summarises it
 into Safari's tabs, the page follows the fingers at their scale, the spot pinched staying under
 them wherever they go, giving a little past its limits, while its corners round at once and it
 crops to its top and tips back a little as it shrinks towards the card over a pale backdrop where a
-purple and a pink glow circle each other. Let go smaller than 85%, or while shrinking quickly, it
+green and a pink glow circle each other. Let go smaller than 85%, or while shrinking quickly, it
 flies from wherever it is to the card at the top, carrying on at the speed it was going in scale
 and position, coasting the way the fingers were going before it curves round to its place: a
 gentle pinch glides into place, while a hard one shoots smaller than the card and springs back up

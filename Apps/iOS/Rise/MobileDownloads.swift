@@ -77,11 +77,12 @@ import WebKit
     #endif
 
     /// WebKit has turned a navigation into a download; ask about it once its name is known.
-    func begin(_ download: WKDownload, origin: CGPoint? = nil) {
+    func begin(_ download: WKDownload, origin: CGPoint? = nil, requiresVideoFile: Bool = false) {
         download.delegate = self
         pending.insert(ObjectIdentifier(download))
         retained[ObjectIdentifier(download)] = download
         origins[ObjectIdentifier(download)] = origin
+        if requiresVideoFile { videoFiles.insert(ObjectIdentifier(download)) }
     }
 
     func item(_ id: UUID) -> Item? { items.first { $0.id == id } }
@@ -125,6 +126,14 @@ import WebKit
     private var pending: Set<ObjectIdentifier> = []
     private var retained: [ObjectIdentifier: WKDownload] = [:]
     private var origins: [ObjectIdentifier: CGPoint] = [:]
+    private var videoFiles: Set<ObjectIdentifier> = []
+
+    static func isVideoFile(_ response: URLResponse) -> Bool {
+        if let response = response as? HTTPURLResponse, !(200..<300).contains(response.statusCode) { return false }
+        let type = response.mimeType?.lowercased() ?? ""
+        return !type.contains("mpegurl") && !type.contains("dash+xml") &&
+            (type.hasPrefix("video/") || ["application/mp4", "application/octet-stream", "binary/octet-stream"].contains(type))
+    }
     private struct CancelledDownload {
         let download: WKDownload
         let destination: URL
@@ -141,6 +150,14 @@ import WebKit
 
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String,
                   completionHandler: @escaping @MainActor @Sendable (URL?) -> Void) {
+        let key = ObjectIdentifier(download)
+        if videoFiles.remove(key) != nil, !Self.isVideoFile(response) {
+            pending.remove(key); retained[key] = nil; origins[key] = nil
+            completionHandler(nil)
+            failed?(NSError(domain: "Rise.VideoDownload", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                "This address doesn't provide a downloadable video file."]))
+            return
+        }
         let name = Self.cleanName(suggestedFilename)
         let host = download.originalRequest?.url?.host() ?? response.url?.host()
         let start = { [weak self] (accepted: Bool) in
@@ -188,6 +205,7 @@ import WebKit
 
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
         let key = ObjectIdentifier(download)
+        videoFiles.remove(key)
         pending.remove(key)
         retained[key] = nil
         origins[key] = nil

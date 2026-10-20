@@ -51,7 +51,7 @@ linker = ["-Xlinker", "-platform_version", "-Xlinker", "macos", "-Xlinker", "14.
 # The probe links individual objects from SwiftPM's native layout. Keep that build separate
 # from Xcode 27's default Swift Build layout used by the app and unit tests.
 build_path = ".build/chromium-live"
-subprocess.run(["swift", "build", "--build-system", "native", "--build-tests", "--build-path", build_path, *linker], cwd=root, check=True)
+subprocess.run(["swift", "build", "--build-system", "native", "--build-tests", "--jobs", os.environ.get("RISE_BUILD_JOBS", "4"), "--build-path", build_path, *linker], cwd=root, check=True)
 debug = root / build_path / "debug"
 sources = {path.name for path in (root / "Sources/Rise").glob("*.swift")} - {"RiseApp.swift"}
 objects = [str(path) for path in (debug / "Rise.build").glob("*.swift.o")
