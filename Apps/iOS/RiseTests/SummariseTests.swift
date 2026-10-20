@@ -22,6 +22,28 @@ final class SummariseTests: XCTestCase {
         XCTAssertEqual(SummariseMotion.close(2), 1, accuracy: 1e-6)
     }
 
+    /// The ChatGPT send's springs, as fitted to the recording; both are overdamped, and the
+    /// sideways one leaves at its full measured speed.
+    func testSendSpringsMatchTheRecording() {
+        XCTAssertEqual(SendMotion.across(0.05), 0.7575, accuracy: 1e-3)
+        XCTAssertEqual(SendMotion.up(0.15), 0.7605, accuracy: 1e-3)
+        XCTAssertEqual(SendMotion.across(1e-6)/1e-6, 112, accuracy: 0.1)
+    }
+
+    /// A sent question leaves the field where its text was and lands in its bubble at the top of
+    /// the screen, rising on the measured upward spring as the summary scrolls.
+    func testSendFlightLiftsOffTheFieldIntoTheBubble() {
+        let flight = SendFlight(from: CGPoint(x: 24, y: 640), to: CGPoint(x: 210, y: 642), scrollFrom: 300, scrollTo: 570)
+        XCTAssertEqual(flight.onScreen(at: 0), CGPoint(x: 24, y: 340))
+        XCTAssertEqual(flight.surface(at: SendMotion.surfaceDelay), 0)
+        let mid = 0.15, end = flight.onScreen(at: flight.duration)
+        XCTAssertEqual(flight.onScreen(at: mid).y, 340+(72-340)*SendMotion.up(mid), accuracy: 1e-9)
+        XCTAssertEqual(end.x, 210, accuracy: SendMotion.settled)
+        XCTAssertEqual(end.y, 72, accuracy: SendMotion.settled)
+        XCTAssertEqual(flight.surface(at: flight.duration), 1)
+        XCTAssertLessThan(flight.duration, SendMotion.longest)
+    }
+
     /// Size alone is not enough: stopping the uncropped height at release changes the speed of
     /// both visible edges, even when the page's centre and width keep their momentum.
     @MainActor func testTabSwipeReleaseKeepsBothEdgesMoving() {

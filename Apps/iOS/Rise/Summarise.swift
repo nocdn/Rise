@@ -123,13 +123,10 @@ enum SummariseMotion {
     static let followUpHeight = 48.0
     /// From the last paragraph's text to the field's top.
     static let followUpGap = 12.0
-    /// The summary scrolls on this to bring an answer into sight. To keep the field above the
-    /// keyboard, it scrolls with the keyboard itself, on its duration and curve.
-    static let followUpScroll = SummariseSpring(14, 1)
-    /// Between the field and the keyboard.
+    /// Between the field and the keyboard. The summary scrolls to keep it there with the keyboard
+    /// itself, on its duration and curve. A question sent from it flies to the top of the screen as
+    /// in the ChatGPT app (`SendMotion`), leaving room under it for the answer.
     static let followUpKeyboardGap = 16.0
-    /// An answer scrolls into sight with its question at least this far down the screen.
-    static let followUpAnswerTop = 110.0
 }
 
 /// A damped spring's progress from 0 towards 1 after t seconds.
@@ -160,7 +157,8 @@ struct SummariseSpring {
             d = exp(-w*t)*(-1+(v0-w)*t)
         } else {
             let r = (z*z-1).squareRoot(), r1 = -w*(z-r), r2 = -w*(z+r)
-            let c2 = (v0+r1)/(r1-r2), c1 = -1-c2
+            // 1 + c1·e^(r1 t) + c2·e^(r2 t), starting at 0 with speed v0.
+            let c2 = (v0+r1)/(r2-r1), c1 = -1-c2
             d = c1*exp(r1*t)+c2*exp(r2*t)
         }
         return 1+d
@@ -374,8 +372,8 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     private var followUpTask: Task<Void, Never>?
     private var followUpReveals: [(followUp: SummaryFollowUp, t0: Double)] = []
     private var followUpStep = 0
-    /// The summary scrolling to keep the field above the keyboard, which a touch takes over.
-    private var followUpScroll: (from: Double, to: Double, velocity: Double, t0: Double)?
+    /// A question flying from the field to its bubble, from `t0`, as its copy.
+    private var sending: (flight: SendFlight, t0: Double, followUp: SummaryFollowUp, ghost: SendGhost)?
     private var keyboardHeight = 0.0
     private lazy var cardElement = UIAccessibilityElement(accessibilityContainer: scroll)
 
@@ -811,7 +809,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         mode = .closing; closeT = t
         task?.cancel()
         stopHum()
-        followUpScroll = nil
+        endSend()
         followUpTask?.cancel(); followUpTask = nil
         followUp.isUserInteractionEnabled = false
         followUp.resignFirstResponder()
@@ -831,6 +829,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         guard mode != .done else { return }
         let ending = phase(now)
         mode = .done
+        endSend()
         followUp.resignFirstResponder()
         link?.invalidate(); link = nil
         task?.cancel()
@@ -912,6 +911,11 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         summaryTop+Double(summaryHeight)-SummaryBlocks.trailingSpace+M.followUpGap+M.followUpHeight/2
     }
 
+    /// A finger takes the summary from a question's flight, from where it's going.
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        scroll.layer.removeAnimation(forKey: "send.bounds")
+    }
+
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
         guard mode == .card, revealT != nil, followUpShown != nil, followUpTask == nil, !followUp.isFirstResponder else { return }
         let pulled = pulledPast
@@ -951,8 +955,9 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         return false
     }
 
-    /// The question takes the field's place in the summary, shimmering, while the model answers
-    /// it to the summary's hum.
+    /// The question lifts off the field and sweeps up into a blue bubble at the top of the screen,
+    /// as in the ChatGPT app, as the keyboard goes, leaving room under it for the answer. It
+    /// shimmers there while the model answers it to the summary's hum.
     private func sendFollowUp() {
         let question = (followUp.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard mode == .card, followUpTask == nil, !question.isEmpty, let summary = reveal.summary, let answerFollowUp else { return }
@@ -961,16 +966,38 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         let history = reveal.followUps.compactMap { asked in
             asked.answer.map { PageAssistant.Turn(question: asked.question, answer: $0.joined(separator: "\n\n")) }
         }
-        let asked = SummaryFollowUp(question: question)
-        let questionTop = followUpCenterY-M.followUpHeight/2
+        let scale = window?.screen.scale ?? traitCollection.displayScale
+        let drawn = SendBubble.render(question, screen: size.width, scale: max(1, scale))
+        let asked = SummaryFollowUp(question: question, textSize: drawn.size)
+        // Where the typed text sits in the field, and where the bubble's text will.
+        let from = CGPoint(x: SummaryBlocks.sideSpacing, y: followUpCenterY-Double(SummaryBlocks.font.lineHeight)/2)
+        asked.bubbleTop = summaryTop+Double(summaryHeight)-Double(SummaryBlocks.endSpacing)
+        let bubble = SendBubble.size(text: drawn.size)
+        let to = CGPoint(x: size.width-SendBubble.edgeInset-bubble.width+SendBubble.horizontalPadding,
+                         y: asked.bubbleTop+Double(SendBubble.verticalPadding))
+        asked.flying = !reducesMotion
         followUpShown = nil
         followUp.text = nil
         followUp.isUserInteractionEnabled = false
         followUp.isHidden = true
-        followUp.resignFirstResponder()
         reveal.followUps.append(asked)
         measureSummary()
+        // Grows the content first, so there's room to scroll the bubble up to the top.
         render(t)
+        let shown = Double(scroll.layer.presentation()?.bounds.minY ?? scroll.contentOffset.y)
+        let target = max(0, asked.bubbleTop-sendTop)
+        scroll.layer.removeAllAnimations()
+        scroll.contentOffset.y = CGFloat(target)
+        if !reducesMotion {
+            let flight = SendFlight(from: from, to: to, scrollFrom: shown, scrollTo: target)
+            let ghost = SendGhost(mask: drawn.image, textSize: drawn.size, scale: max(1, scale))
+            content.layer.addSublayer(ghost.layer)
+            ghost.fly(flight, startInk: followUp.textColor ?? .label, scroll: scroll.layer)
+            sending = (flight, t, asked, ghost)
+            // On the render server before the keyboard's teardown holds up the main thread.
+            CATransaction.flush()
+        }
+        followUp.resignFirstResponder()
         startHum()
         followUpTask = Task { [weak self] in
             let answer: [String]
@@ -981,13 +1008,33 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
                 answer = ["Rise couldn’t answer that. \(error.localizedDescription)"]
             }
             guard !Task.isCancelled, let self else { return }
-            followUpAnswered(asked, answer, questionTop: questionTop)
+            followUpAnswered(asked, answer)
         }
     }
 
-    /// The answer fades in and sharpens under its question as the summary did, with the same thud,
-    /// and the field comes back under it.
-    private func followUpAnswered(_ asked: SummaryFollowUp, _ answer: [String], questionTop: Double) {
+    /// The bubble's top on screen once a question has flown there: just under the status bar.
+    private var sendTop: Double { max(Double(safeAreaInsets.top), 20)+SendMotion.topGap }
+
+    /// Landed: the bubble takes over from its copy, in the same frame.
+    private func stepSend(_ t: Double) {
+        guard let sending, t-sending.t0 >= sending.flight.duration else { return }
+        endSend()
+    }
+
+    /// Hands over to the bubble, or, closing, drops the copy and the scroll where they are.
+    private func endSend() {
+        guard let sending else { return }
+        self.sending = nil
+        sending.followUp.flying = false
+        summaryHost.view.setNeedsLayout()
+        summaryHost.view.layoutIfNeeded()
+        sending.ghost.layer.removeFromSuperlayer()
+        if mode != .card { scroll.layer.removeAllAnimations() }
+    }
+
+    /// The answer fades in and sharpens under its question's bubble as the summary did, with the
+    /// same thud, in the room left under it; the field comes back under it.
+    private func followUpAnswered(_ asked: SummaryFollowUp, _ answer: [String]) {
         guard mode == .card, reveal.followUps.contains(where: { $0 === asked }) else { return }
         let t = tick()
         log?.event("follow-up answered")
@@ -999,9 +1046,6 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         playRevealHaptic()
         restFollowUp(t, after: answer.count)
         render(t)
-        // Brings the answer into sight, keeping its question on screen.
-        let target = min(scrollEnd, questionTop-M.followUpAnswerTop)
-        if !scroll.isTracking, target > Double(scroll.contentOffset.y) { scroll(to: target, t) }
     }
 
     private func stepFollowUpReveals(_ t: Double) {
@@ -1013,40 +1057,21 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         }
     }
 
-    /// Scrolls on a spring, carrying on at the speed it's scrolling already.
-    private func scroll(to target: Double, _ t: Double) {
-        let current = Double(scroll.contentOffset.y)
-        var velocity = 0.0
-        if let scrolling = followUpScroll {
-            let at = { M.followUpScroll.value(from: scrolling.from, to: scrolling.to, velocity: scrolling.velocity, at: $0-scrolling.t0) }
-            velocity = (at(t)-at(t-1/240.0))*240
-        }
-        guard target != current || velocity != 0 else { followUpScroll = nil; return }
-        followUpScroll = (current, target, velocity, t)
-    }
-
-    private func stepFollowUpScroll(_ t: Double) {
-        guard let scrolling = followUpScroll else { return }
-        if scroll.isTracking { followUpScroll = nil; return }
-        let spring = M.followUpScroll
-        scroll.contentOffset.y = CGFloat(spring.value(from: scrolling.from, to: scrolling.to, velocity: scrolling.velocity, at: t-scrolling.t0))
-        if t-scrolling.t0 > 7/(spring.w*spring.z) { followUpScroll = nil }
-    }
-
     /// The summary makes room for the keyboard under the field, and scrolls to keep it just above
     /// it. It scrolls in the keyboard's own animation, with its duration and curve, so the field
     /// and the summary rise with the keyboard rather than chasing it. Going away, it only scrolls
-    /// back as far as the summary's end.
+    /// back as far as the summary's end. A question just sent scrolls on its own flight instead.
     @objc private func keyboardWillChange(_ note: Notification) {
         guard mode == .card, let screen = window?.screen, let info = note.userInfo,
               let end = (info[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue else { return }
         let frame = convert(end, from: screen.coordinateSpace)
         keyboardHeight = frame.minY < bounds.maxY ? Double(bounds.maxY-frame.minY) : 0
         scroll.contentInset.bottom = CGFloat(max(0, keyboardHeight-(Double(SummaryBlocks.endSpacing)-M.followUpKeyboardGap)))
-        guard !scroll.isDragging, !scroll.isDecelerating else { return }
+        guard sending == nil, !scroll.isDragging, !scroll.isDecelerating else { return }
         let current = Double(scroll.contentOffset.y)
-        let target = followUp.isFirstResponder && keyboardHeight > 0 ? scrollEnd : min(current, scrollEnd)
-        followUpScroll = nil
+        // Just above the keyboard; under an answer's room, the field may be there already.
+        let field = followUpCenterY+M.followUpHeight/2+M.followUpKeyboardGap+keyboardHeight-height
+        let target = followUp.isFirstResponder && keyboardHeight > 0 ? min(scrollEnd, max(current, field)) : min(current, scrollEnd)
         guard target != current else { return }
         let duration = info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
         let curve = info[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt ?? 7
@@ -1196,7 +1221,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         if mode == .cancel, t-t0 > 7/(M.cancel.w*M.cancel.z) { finish(); return }
         if mode == .card {
             if let pendingReveal { if t >= pendingReveal { revealSummary(t) } } else { maybeReveal(t) }
-            stepFollowUpScroll(t)
+            stepSend(t)
             stepFollowUpReveals(t)
         }
         // Done once it has grown back.
@@ -1314,7 +1339,9 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         if reveal.elapsed != shown { reveal.elapsed = shown; reveal.reducesMotion = reducesMotion }
         let scrolls = revealed && mode == .card
         scroll.isScrollEnabled = scrolls
-        let end = followUpShown == nil ? summaryTop+summaryHeight : followUpCenterY+M.followUpHeight/2+SummaryBlocks.endSpacing
+        var end = followUpShown == nil ? summaryTop+summaryHeight : followUpCenterY+M.followUpHeight/2+SummaryBlocks.endSpacing
+        // Room for the latest question's bubble to stay at the top of the screen, its answer under it.
+        if let asked = reveal.followUps.last { end = max(end, asked.bubbleTop-sendTop+height) }
         let contentHeight = scrolls ? max(size.height, end) : size.height
         if content.bounds.height != contentHeight {
             content.frame = CGRect(x: 0, y: 0, width: size.width, height: contentHeight)
@@ -1382,10 +1409,16 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
 /// A question asked under the summary, and its answer once it comes.
 @Observable final class SummaryFollowUp {
     let question: String
+    /// Its text's size in the bubble, as its flying copy was drawn.
+    let textSize: CGSize
     var answer: [String]?
     /// Seconds since the answer's reveal; negative before it.
     var elapsed = -1.0
-    init(question: String) { self.question = question }
+    /// Its copy is still flying to the bubble, which waits hidden in its place.
+    var flying = false
+    /// The bubble's top in the summary's content.
+    var bubbleTop = 0.0
+    init(question: String, textSize: CGSize) { self.question = question; self.textSize = textSize }
 }
 
 /// The summary's two paragraphs, then each follow-up's question and answer. Each paragraph fades
@@ -1399,9 +1432,8 @@ struct SummaryBlocks: View {
     static let sideSpacing: CGFloat = 24
     static let paragraphSpacing: CGFloat = 18
     static let endSpacing: CGFloat = 64
-    /// Above a question, so its text sits where the follow-up field's did.
-    static let questionLead = CGFloat(SummariseMotion.followUpGap+(SummariseMotion.followUpHeight-font.lineHeight)/2)-paragraphSpacing
-    static let questionSpacing: CGFloat = 14
+    /// Between a question's bubble, which sits a paragraph's spacing under the text before it, and its answer.
+    static let questionSpacing: CGFloat = 24
 
     /// Below the last paragraph's text.
     static var trailingSpace: Double { Double(endSpacing+paragraphSpacing) }
@@ -1437,16 +1469,27 @@ private struct SummaryParagraph: View {
     }
 }
 
-/// A question, shimmering as in Find's Ask until its answer comes, then the answer revealed as the summary was.
+/// A question in its blue bubble on the right, shimmering as in Find's Ask until its answer comes,
+/// then the answer revealed under it as the summary was.
 private struct FollowUpBlocks: View {
     let reveal: SummaryReveal
     let followUp: SummaryFollowUp
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            QuestionText(question: followUp.question, asking: followUp.answer == nil, reducesMotion: reveal.reducesMotion)
-                .padding(.top, SummaryBlocks.questionLead)
-                .padding(.bottom, SummaryBlocks.questionSpacing)
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                QuestionText(question: followUp.question, asking: followUp.answer == nil, reducesMotion: reveal.reducesMotion)
+                    // As its flying copy was drawn, so it lands on the same lines.
+                    .frame(width: followUp.textSize.width, height: followUp.textSize.height, alignment: .topLeading)
+                    .padding(.horizontal, SendBubble.horizontalPadding)
+                    .padding(.vertical, SendBubble.verticalPadding)
+                    .background(Color(SendBubble.fill), in: RoundedRectangle(cornerRadius: SendBubble.radius, style: .continuous))
+                    .opacity(followUp.flying ? 0 : 1)
+            }
+            // Out past the paragraphs' edge, to `SendBubble.edgeInset` from the screen's.
+            .padding(.trailing, SendBubble.edgeInset-SummaryBlocks.sideSpacing)
+            .padding(.bottom, SummaryBlocks.questionSpacing)
             if let answer = followUp.answer {
                 ForEach(Array(answer.enumerated()), id: \.offset) { index, paragraph in
                     SummaryParagraph(text: paragraph)
@@ -1458,28 +1501,24 @@ private struct FollowUpBlocks: View {
     }
 }
 
-/// Muted, with a dark band sweeping across its glyphs once a second while it's being answered.
+/// The bubble's blue, with a deeper band sweeping across its glyphs once a second while it's being answered.
 private struct QuestionText: View {
     let question: String
     let asking: Bool
     let reducesMotion: Bool
     private static let band = 80.0
+    private static let shimmer = Color(SendBubble.shimmer)
 
-    private var text: some View {
-        Text(question)
-            .font(Font(SummaryBlocks.font))
-            .lineSpacing(SummaryBlocks.lineSpacing)
-            .fixedSize(horizontal: false, vertical: true)
-    }
+    private var text: some View { SendBubble.text(question) }
 
     var body: some View {
         text
-            .foregroundStyle(SummaryBlocks.ink.opacity(0.5))
+            .foregroundStyle(Color(SendBubble.ink))
             .overlay {
                 TimelineView(.animation(paused: !asking || reducesMotion)) { context in
                     GeometryReader { geometry in
                         let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1)
-                        LinearGradient(colors: [SummaryBlocks.ink.opacity(0), SummaryBlocks.ink, SummaryBlocks.ink.opacity(0)],
+                        LinearGradient(colors: [Self.shimmer.opacity(0), Self.shimmer, Self.shimmer.opacity(0)],
                                        startPoint: .leading, endPoint: .trailing)
                             .frame(width: Self.band)
                             .offset(x: -Self.band+phase*(geometry.size.width+Self.band))

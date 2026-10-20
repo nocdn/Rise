@@ -370,18 +370,56 @@ fades in `backDelay` 0.38 s after the card starts settling, over `backDuration` 
   animation: a UIView animation with the notification's duration and curve (curve 7 shifted
   into the options), so the field and the summary rise exactly with the keyboard. It used a
   `followUpScroll` spring before, which ran behind the keyboard and let it cover the field for
-  a moment (he asked for them to move together on 20 October). Going away, it scrolls back only
-  as far as the summary's end, in the same way. The keyboard dismisses interactively.
-- **Asking (Return):** the keyboard goes and the question replaces the field in the same place,
-  as summary text at 50%, with Find's Ask shimmer: an 80 pt dark band sweeping its glyphs once a
-  second. The summary's hum plays while the model answers. `PageSummary.answer` sends the page,
-  the summary as the model's first reply, and the earlier questions and answers.
-- **The answer:** the shimmer fades over 0.15 s. The answer's paragraphs reveal as the
-  summary's (same delay, stagger, blur and fade), with the reveal's thud ending the hum. The
-  summary scrolls on if needed to show it, keeping the question at least `followUpAnswerTop`
-  110 pt down the screen. Then the field rests again under the answer.
+  a moment (he asked for them to move together on 20 October). The target is the field's own
+  place just above the keyboard, so under an answer's room (below) it doesn't scroll if the
+  field shows there already. Going away, it scrolls back only as far as the summary's end, in
+  the same way. The keyboard dismisses interactively.
+- **Asking (Return):** the question flies to the top of the screen as in the ChatGPT app (see
+  "The send" below) as the keyboard goes, into a blue bubble on the right. It shimmers there
+  with Find's Ask shimmer in a deeper blue (an 80 pt band sweeping its glyphs once a second)
+  while the summary's hum plays and the model answers. `PageSummary.answer` sends the page, the
+  summary as the model's first reply, and the earlier questions and answers.
+- **The answer:** the shimmer fades over 0.15 s. The answer's paragraphs reveal under the bubble
+  as the summary's (same delay, stagger, blur and fade), plain text as the summary is, with the
+  reveal's thud ending the hum. The bubble is already at the top, so nothing scrolls (the old
+  scroll on to keep the question 110 pt down went). Then the field rests again under the answer.
 - **Closing:** the field fades and sinks back with the summary, and a pending question is
   cancelled. Caught and revealed again, the summary starts without its questions.
+
+### The send (20 October 2026)
+
+He asked for the ChatGPT app's send, from his recording of it (`chat-sending-animation.mp4`,
+720 × 720, 30 fps content at 60), first recreated in Stratus's Agent Lee sidebar, where it
+matched within 0.4% sideways and 0.65% up. Measured by tracking an emoji frame by frame over two
+sends and fitting springs (under 0.5% RMS; the second send agreed):
+
+- **Path:** the text lifts off where it sat in the field and sweeps up and right into its bubble.
+  Sideways and up have their own springs, and sideways finishing first bends the path. It's
+  `SendMotion` in `SendFlight.swift`:
+  - across: stiffness 7225, damping 357 (mass 1), leaving at 112 widths a second, i.e.
+    `SummariseSpring(85, 2.1, 112)`: 55% at +17 ms, 77% at 50, 95% at 117;
+  - up: stiffness 441, damping 48.3, from rest, i.e. `SummariseSpring(21, 1.15)`: 28% at 50 ms,
+    66% at 117, 93% at 250.
+- **Surface:** the text stays the same size. The bubble's fill fades in at full size, and the
+  text goes from the field's ink to the bubble's blue, together, after `surfaceDelay` 0.09 s
+  over `surfaceDuration` 0.35 s, ease-out cubic (0.33, 1, 0.68, 1).
+- **Where it lands:** the bubble's top `topGap` 12 pt under the status bar. The summary scrolls
+  it there on the same upward spring, so on screen the text rises exactly on that curve. The
+  content keeps a screen's room under the latest bubble, so the answer generates in empty space,
+  as in ChatGPT, and the summary doesn't jump back when a short answer comes.
+- **The bubble:** right-aligned 16 pt from the screen's edge, at most 72% of its width; 16 by
+  10 pt padding, 20 pt continuous corners; fill #E6F3FF and text #2D5B9F (sampled from the
+  recording's blue bubble; its text measured #3B5576, with the colour the video's compression
+  takes out of thin strokes put back at the same hue). Summary type, 17 pt on 22 pt lines.
+- **How it runs:** the copy (the text drawn once by `ImageRenderer` as a mask over a colour, and
+  the fill) and the scroll fly on Core Animation keyframes sampled at 120 a second, flushed
+  before the keyboard's teardown, which holds the main thread about 47 ms. The bubble lays its
+  text out in the size the copy was drawn at, so they land on the same lines. It waits hidden
+  and takes over once the copy is within `settled` 0.25 pt and the fade is done (about 0.6 s).
+  A drag takes the scroll from the flight; closing drops it.
+- **Reduce Motion:** the bubble shows in place and the summary jumps to it.
+- **`SummariseSpring` fix:** its overdamped branch (ζ > 1) had a sign wrong and started at the
+  wrong speed (−69 per second for a v₀ of 112). Nothing used ζ > 1 before these two springs.
 
 ---
 
