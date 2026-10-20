@@ -114,19 +114,52 @@ enum SummariseMotion {
     // its spring.
     static let recallFade = 0.15
 
-    // The follow-up field rests under the summary's end, unfocused, faded in after the last
-    // paragraph. Pulled on past the end, a light tick every `followUpTick` points; at
-    // `followUpPull` (the overscroll as shown, after UIKit's rubber band) it clicks, lets go of the
-    // finger, and is focused as the keyboard comes up.
-    static let followUpPull = 96.0
-    static let followUpTick = 12.0
+    // The follow-up field is held at the bottom of the screen, just above the keyboard as it
+    // opens, unfocused until touched, faded in after the summary's last paragraph. The summary
+    // scrolls behind it and fades out just above it. A question sent from it flies up into a
+    // bubble as in the ChatGPT app (`SendMotion`).
     static let followUpHeight = 48.0
-    /// From the last paragraph's text to the field's top.
-    static let followUpGap = 12.0
-    /// Between the field and the keyboard. The summary scrolls to keep it there with the keyboard
-    /// itself, on its duration and curve. A question sent from it flies to the top of the screen as
-    /// in the ChatGPT app (`SendMotion`), leaving room under it for the answer.
-    static let followUpKeyboardGap = 16.0
+    /// Under the field, to the keyboard.
+    static let followUpBottomGap = 12.0
+    /// With the keyboard down, the field is held this much higher again over the screen's bottom.
+    static let followUpRestLift = 12.0
+    /// The summary fades out above the field over 140 pt, quickly and then a long faint tail,
+    /// picked from fifteen side by side (`fades` in the replays). It ends `followUpFadeInto` into
+    /// the field's empty top, just above its text.
+    static let followUpFade = SummaryFade(height: 140, curve: .quick)
+    static let followUpFadeInto = 10.0
+}
+
+/// How the summary fades out above the follow-up field: over `height`, along `curve`, then held
+/// wholly gone over `hold` down to just above the field's text.
+struct SummaryFade: Equatable {
+    enum Curve { case linear, smooth, quick, late }
+    var height: Double
+    var hold = 0.0
+    var curve = Curve.linear
+
+    /// Scrolled to the end, the last line's bottom sits this far above the field's top: where the
+    /// fade starts, so it isn't dimmed.
+    var clearance: Double { height+hold-SummariseMotion.followUpFadeInto }
+
+    /// The text's opacity through the fade, `at` 0 at its top to 1 at its bottom.
+    var steps: [(at: Double, alpha: Double)] {
+        let count = curve == .linear ? 1 : 12
+        return (0...count).map { i in
+            let u = Double(i)/Double(count)
+            let alpha: Double = switch curve {
+            case .linear: 1-u
+            case .smooth: 1-u*u*(3-2*u)
+            // Gone quickly, a long faint tail: more solid near the field.
+            case .quick: (1-u)*(1-u)
+            // Stays longer, then goes.
+            case .late: 1-u*u
+            }
+            return (u, alpha)
+        }
+    }
+
+    static func == (a: SummaryFade, b: SummaryFade) -> Bool { a.height == b.height && a.hold == b.hold && a.curve == b.curve }
 }
 
 /// A damped spring's progress from 0 towards 1 after t seconds.
@@ -371,7 +404,14 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     /// Asking the model about a question sent from the field, and when its answer was revealed.
     private var followUpTask: Task<Void, Never>?
     private var followUpReveals: [(followUp: SummaryFollowUp, t0: Double)] = []
-    private var followUpStep = 0
+    /// Holds the field at the bottom of the screen, on the keyboard's layout guide, so it rides
+    /// on the keyboard as it opens, closes or is dragged away.
+    private let dock = UIView()
+    /// Fades the summary out just above the field.
+    private let summaryFade = CAGradientLayer()
+    /// The fade's shape over the field (the replay's `fades` tries others side by side).
+    var fadeShape = M.followUpFade { didSet { fadeShapeChanged = true } }
+    private var fadeShapeChanged = true
     /// A question flying from the field to its bubble, from `t0`, as its copy.
     private var sending: (flight: SendFlight, t0: Double, followUp: SummaryFollowUp, ghost: SendGhost)?
     private var keyboardHeight = 0.0
@@ -419,7 +459,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         scroll.frame = bounds
         scroll.contentInsetAdjustmentBehavior = .never
         scroll.showsVerticalScrollIndicator = false
-        // Short summaries can still be pulled past their end, for the follow-up field.
+        // Short summaries still give a little under a finger, as long ones do at their ends.
         scroll.alwaysBounceVertical = true
         scroll.isScrollEnabled = false
         scroll.contentSize = size
@@ -435,7 +475,6 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         followUp.tintColor = UIColor(red: 42/255, green: 48/255, blue: 1, alpha: 1)
         followUp.returnKeyType = .send
         followUp.enablesReturnKeyAutomatically = true
-        followUp.isHidden = true
         followUp.isUserInteractionEnabled = false
         followUp.delegate = self
         // Placed and scaled from its text's left.
@@ -448,7 +487,23 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         followUpPress.cancelsTouchesInView = false
         followUpPress.delegate = self
         followUp.addGestureRecognizer(followUpPress)
-        content.addSubview(followUp)
+        dock.isHidden = true
+        dock.translatesAutoresizingMaskIntoConstraints = false
+        dock.addSubview(followUp)
+        addSubview(dock)
+        // From the screen's bottom with the keyboard down, not the safe area's, which the browser
+        // raises over its bar. The keyboard picks the field up once it reaches it, and sets it
+        // back there going away.
+        keyboardLayoutGuide.usesBottomSafeArea = false
+        let riding = dock.bottomAnchor.constraint(equalTo: keyboardLayoutGuide.topAnchor)
+        riding.priority = .defaultHigh
+        NSLayoutConstraint.activate([
+            dock.leadingAnchor.constraint(equalTo: leadingAnchor),
+            dock.trailingAnchor.constraint(equalTo: trailingAnchor),
+            riding,
+            dock.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -M.followUpRestLift),
+            dock.heightAnchor.constraint(equalToConstant: M.followUpHeight+M.followUpBottomGap),
+        ])
         NotificationCenter.default.addObserver(self, selector: #selector(keyboardWillChange),
                                                name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
 
@@ -480,10 +535,14 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         let tap = UITapGestureRecognizer(target: self, action: #selector(tapped))
         tap.delegate = self
         scroll.addGestureRecognizer(tap)
+        // Around the field too, under and beside it.
+        let dockTap = UITapGestureRecognizer(target: self, action: #selector(tapped))
+        dockTap.delegate = self
+        dock.addGestureRecognizer(dockTap)
         cardElement.accessibilityLabel = title
         cardElement.accessibilityHint = "Returns to the page."
         cardElement.accessibilityTraits = .button
-        scroll.accessibilityElements = [cardElement, summaryHost.view!, followUp]
+        scroll.accessibilityElements = [cardElement, summaryHost.view!]
 
         let link = CADisplayLink(target: ticker, selector: #selector(FrameTicker.tick))
         link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
@@ -499,8 +558,6 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         // The browser parks this view while closed. Move it only once the new scene is in the
         // same window, avoiding a detach/reattach and SwiftUI environment rebuild at each end.
         content.addSubview(summaryHost.view)
-        // Over the summary's bottom padding, where it settles, so it takes the taps there.
-        content.addSubview(followUp)
         content.layer.addSublayer(group)
     }
 
@@ -813,6 +870,8 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         followUpTask?.cancel(); followUpTask = nil
         followUp.isUserInteractionEnabled = false
         followUp.resignFirstResponder()
+        // The card grows back over the whole screen, the summary under it fading as it goes.
+        summaryHost.view.layer.mask = nil
         closeScroll = Double(scroll.contentOffset.y)
         scroll.contentInset = .zero
         scroll.contentOffset = .zero
@@ -854,8 +913,12 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         return true
     }
 
+    /// A tap anywhere but the field lets the keyboard go, and does only that; without it, a tap
+    /// on the card returns to the page. A swipe isn't a tap, so it scrolls, and a swipe down
+    /// lets the keyboard go interactively as before.
     @objc private func tapped(_ tap: UITapGestureRecognizer) {
-        if cardArea.contains(tap.location(in: content)) { close() }
+        if followUp.isFirstResponder { followUp.resignFirstResponder(); return }
+        if tap.view === scroll, cardArea.contains(tap.location(in: content)) { close() }
     }
 
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -895,20 +958,25 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     /// At rest under the end of what's been revealed, unfocused, ready to tap; it fades in as one
     /// more block after the `after` blocks revealed from `t`, or, with none, shows as it is.
     private func restFollowUp(_ t: Double, after blocks: Int?) {
-        followUpShown = (t, blocks); followUpStep = 0
+        followUpShown = (t, blocks)
         followUp.text = nil
         followUp.isUserInteractionEnabled = true
     }
 
-    /// The furthest the summary scrolls.
-    private var scrollEnd: Double { max(0, Double(scroll.contentSize.height+scroll.contentInset.bottom)-height) }
+    /// The bottom inset that keeps the summary's last line clear of the field: under the field,
+    /// the keyboard as it will be, or the bottom of the screen.
+    private var bottomInset: Double {
+        max(0, max(keyboardHeight, M.followUpRestLift)+M.followUpBottomGap+M.followUpHeight+fadeShape.clearance-SummaryBlocks.trailingSpace)
+    }
 
-    /// How far the summary is pulled past its end, as it shows.
-    private var pulledPast: Double { Double(scroll.contentOffset.y)-scrollEnd }
+    /// The field's top on screen, where it shows, riding on the keyboard.
+    private var followUpTop: Double { Double(dock.layer.presentation()?.frame.minY ?? dock.frame.minY) }
 
-    /// The field's text's middle in the content: under the last paragraph, lined up with theirs.
-    private var followUpCenterY: Double {
-        summaryTop+Double(summaryHeight)-SummaryBlocks.trailingSpace+M.followUpGap+M.followUpHeight/2
+    /// Where the summary scrolls a question's bubble to: under the last few lines before it, so
+    /// they stay in sight above it, rather than at the very top with nothing above.
+    private func sendTarget(_ asked: SummaryFollowUp) -> Double {
+        let lines = Double(SendMotion.contextLines)*Double(SummaryBlocks.font.lineHeight+SummaryBlocks.lineSpacing)
+        return max(0, asked.bubbleTop-Double(SummaryBlocks.paragraphSpacing)-lines-sendTop)
     }
 
     /// A finger takes the summary from a question's flight, from where it's going.
@@ -916,38 +984,28 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         scroll.layer.removeAnimation(forKey: "send.bounds")
     }
 
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        guard mode == .card, revealT != nil, followUpShown != nil, followUpTask == nil, !followUp.isFirstResponder else { return }
-        let pulled = pulledPast
-        let step = pulled > 0 ? Int(pulled/M.followUpTick) : 0
-        if scroll.isTracking, pulled >= M.followUpPull {
-            focusFollowUp()
-            return
-        }
-        // Light ticks as it's pulled on past the end, a little firmer as it nears the click.
-        if step > followUpStep, scroll.isTracking {
-            let near = Float(clamp(pulled/M.followUpPull))
-            playTransient(intensity: 0.25+0.2*near, sharpness: 0.45)
-        }
-        followUpStep = step
-    }
-
-    /// Pulled far enough past the end: it clicks, lets go of the finger, and focuses the field;
-    /// the summary scrolls to it as the keyboard comes up, in step with it.
-    private func focusFollowUp() {
-        log?.event("follow-up")
-        playTransient(intensity: 1, sharpness: 0.7)
-        followUpStep = 0
-        // Ending the drag starts the scroll view's own bounce back, which the field's scroll replaces.
-        scroll.panGestureRecognizer.isEnabled = false
-        scroll.panGestureRecognizer.isEnabled = true
-        scroll.setContentOffset(scroll.contentOffset, animated: false)
-        followUp.becomeFirstResponder()
-    }
-
     #if DEBUG
     /// For replays: focuses the field as a tap on it would.
     func focusFollowUpField() { _ = followUp.becomeFirstResponder() }
+    /// For replays: tries a fade, drawn at once.
+    func tryFade(_ shape: SummaryFade) { fadeShape = shape; render(tick()) }
+    /// For replays: scrolls to the top.
+    func scrollSummaryToTop() { scroll.setContentOffset(.zero, animated: false) }
+    /// For replays: scrolls so the summary's last line sits at the bottom of the screen, under the field.
+    func scrollTextUnderField() {
+        let end = summaryTop+Double(summaryHeight)-Double(SummaryBlocks.trailingSpace)
+        scroll.setContentOffset(CGPoint(x: 0, y: max(0, end-height)), animated: false)
+    }
+    /// For replays: types `question` into the field and sends it, as Return would.
+    func sendFollowUp(_ question: String) { followUp.text = question; sendFollowUp() }
+    /// For replays: the scroll as it is, and the furthest it goes.
+    var followUpScroll: (offset: Double, max: Double) {
+        (Double(scroll.contentOffset.y), Double(scroll.contentSize.height+scroll.contentInset.bottom)-height)
+    }
+    /// For replays: scrolls as far down as it goes.
+    func scrollToSummaryEnd(less: Double = 0) {
+        scroll.setContentOffset(CGPoint(x: 0, y: max(0, followUpScroll.max-less)), animated: false)
+    }
     #endif
 
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
@@ -955,8 +1013,9 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         return false
     }
 
-    /// The question lifts off the field and sweeps up into a blue bubble at the top of the screen,
-    /// as in the ChatGPT app, as the keyboard goes, leaving room under it for the answer. It
+    /// The question lifts off the field and sweeps up into a blue bubble, as in the ChatGPT app, as
+    /// the keyboard goes, the last few lines before it left in sight above and room under it for
+    /// the answer. It
     /// shimmers there while the model answers it to the summary's hum.
     private func sendFollowUp() {
         let question = (followUp.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -969,30 +1028,36 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         let scale = window?.screen.scale ?? traitCollection.displayScale
         let drawn = SendBubble.render(question, screen: size.width, scale: max(1, scale))
         let asked = SummaryFollowUp(question: question, textSize: drawn.size)
-        // Where the typed text sits in the field, and where the bubble's text will.
-        let from = CGPoint(x: SummaryBlocks.sideSpacing, y: followUpCenterY-Double(SummaryBlocks.font.lineHeight)/2)
+        // Where the typed text sits in the field, on screen, and where the bubble's text will, in the content.
+        let shown = Double(scroll.layer.presentation()?.bounds.minY ?? scroll.contentOffset.y)
+        let field = followUpTop+M.followUpHeight/2-Double(SummaryBlocks.font.lineHeight)/2
         asked.bubbleTop = summaryTop+Double(summaryHeight)-Double(SummaryBlocks.endSpacing)
         let bubble = SendBubble.size(text: drawn.size)
         let to = CGPoint(x: size.width-SendBubble.edgeInset-bubble.width+SendBubble.horizontalPadding,
                          y: asked.bubbleTop+Double(SendBubble.verticalPadding))
         asked.flying = !reducesMotion
-        followUpShown = nil
+        // The field stays, empty, until the answer has come.
         followUp.text = nil
         followUp.isUserInteractionEnabled = false
-        followUp.isHidden = true
         reveal.followUps.append(asked)
         measureSummary()
-        // Grows the content first, so there's room to scroll the bubble up to the top.
+        // Grows the content first, so there's room to scroll the bubble up.
         render(t)
-        let shown = Double(scroll.layer.presentation()?.bounds.minY ?? scroll.contentOffset.y)
-        let target = max(0, asked.bubbleTop-sendTop)
+        let target = sendTarget(asked)
+        // The question is always the last thing, what it follows never under it. Scrolled up, with
+        // the summary's end below the field, the flight starts from where that end sits just
+        // above the field instead (a jump, as in ChatGPT), and the two rise together, the text
+        // carried in its place in the content by the scroll alone.
+        let start = min(target, max(shown, Double(to.y)-field))
+        let from = CGPoint(x: SummaryBlocks.sideSpacing, y: start+field)
         scroll.layer.removeAllAnimations()
         scroll.contentOffset.y = CGFloat(target)
         if !reducesMotion {
-            let flight = SendFlight(from: from, to: to, scrollFrom: shown, scrollTo: target)
+            let flight = SendFlight(from: from, to: to, scrollFrom: start, scrollTo: target)
             let ghost = SendGhost(mask: drawn.image, textSize: drawn.size, scale: max(1, scale))
-            content.layer.addSublayer(ghost.layer)
-            ghost.fly(flight, startInk: followUp.textColor ?? .label, scroll: scroll.layer)
+            // Over the field and the summary's fade, so it lifts off the field where it shows.
+            layer.addSublayer(ghost.layer)
+            ghost.fly(flight, startInk: followUp.textColor ?? .label, scroll: scroll.layer, onScreen: true)
             sending = (flight, t, asked, ghost)
             // On the render server before the keyboard's teardown holds up the main thread.
             CATransaction.flush()
@@ -1012,7 +1077,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         }
     }
 
-    /// The bubble's top on screen once a question has flown there: just under the status bar.
+    /// The top of what's left in sight above a question that has flown up: just under the status bar.
     private var sendTop: Double { max(Double(safeAreaInsets.top), 20)+SendMotion.topGap }
 
     /// Landed: the bubble takes over from its copy, in the same frame.
@@ -1044,7 +1109,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         followUpReveals.append((asked, t))
         stopHum()
         playRevealHaptic()
-        restFollowUp(t, after: answer.count)
+        followUp.isUserInteractionEnabled = true
         render(t)
     }
 
@@ -1057,48 +1122,57 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         }
     }
 
-    /// The summary makes room for the keyboard under the field, and scrolls to keep it just above
-    /// it. It scrolls in the keyboard's own animation, with its duration and curve, so the field
-    /// and the summary rise with the keyboard rather than chasing it. Going away, it only scrolls
-    /// back as far as the summary's end. A question just sent scrolls on its own flight instead.
+    /// The field rides on the keyboard by its layout guide. The summary makes room for it and
+    /// stays where it is as the keyboard comes up, or, scrolled to its end, stays at its end, its
+    /// last line rising with the field. Going away, it comes back only as far as it has to to
+    /// stay within its end. Both in the keyboard's own animation (its duration and curve). A
+    /// question just sent scrolls on its own flight instead.
     @objc private func keyboardWillChange(_ note: Notification) {
         guard mode == .card, let screen = window?.screen, let info = note.userInfo,
               let end = (info[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue else { return }
         let frame = convert(end, from: screen.coordinateSpace)
+        let current = Double(scroll.contentOffset.y), before = Double(scroll.contentInset.bottom)
+        let atEnd = current >= maxScroll(inset: before)-1
         keyboardHeight = frame.minY < bounds.maxY ? Double(bounds.maxY-frame.minY) : 0
-        scroll.contentInset.bottom = CGFloat(max(0, keyboardHeight-(Double(SummaryBlocks.endSpacing)-M.followUpKeyboardGap)))
-        guard sending == nil, !scroll.isDragging, !scroll.isDecelerating else { return }
-        let current = Double(scroll.contentOffset.y)
-        // Just above the keyboard; under an answer's room, the field may be there already.
-        let field = followUpCenterY+M.followUpHeight/2+M.followUpKeyboardGap+keyboardHeight-height
-        let target = followUp.isFirstResponder && keyboardHeight > 0 ? min(scrollEnd, max(current, field)) : min(current, scrollEnd)
-        guard target != current else { return }
+        let inset = bottomInset
+        // UIKit pulls the scroll back within its end as soon as the content shrinks or the inset
+        // does, so whichever grows goes first: the content gives up the answer's room as the
+        // keyboard takes it, and before the inset had grown that clamped the scroll, a jump up.
+        let grows = inset >= before
+        if grows { scroll.contentInset.bottom = CGFloat(inset) }
+        layOutContent(inset: inset)
+        let follows = sending == nil && !scroll.isDragging && !scroll.isDecelerating
+        let furthest = maxScroll(inset: inset)
+        let target = grows && atEnd ? furthest : min(current, furthest)
         let duration = info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
         let curve = info[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt ?? 7
         UIView.animate(withDuration: duration, delay: 0,
                        options: [UIView.AnimationOptions(rawValue: curve << 16), .beginFromCurrentState, .allowUserInteraction]) {
-            self.scroll.contentOffset.y = CGFloat(target)
+            // Within the new end before the inset shrinks to it, so it isn't clamped there at once.
+            if follows, target != current { self.scroll.contentOffset.y = CGFloat(target) }
+            self.scroll.contentInset.bottom = CGFloat(inset)
         }
     }
 
-    /// The field at rest under the summary's end. It fades in after what was just revealed, comes
-    /// forward with a recalled summary, and sinks back with it on closing.
+    /// The field at the bottom of the screen. It fades in after what was just revealed, comes
+    /// forward with a recalled summary, and sinks back with the summary on closing.
     private func renderFollowUp(_ t: Double, fadingOut: Double, forward: (scale: Double, alpha: Double)?) {
-        guard revealT != nil, let shown = followUpShown, mode == .card || mode == .closing else { followUp.isHidden = true; return }
-        let left = Double(SummaryBlocks.sideSpacing), centerY = followUpCenterY
-        followUp.isHidden = false
+        guard revealT != nil, let shown = followUpShown, mode == .card || mode == .closing else { dock.isHidden = true; return }
+        let left = Double(SummaryBlocks.sideSpacing)
+        dock.isHidden = false
         followUp.bounds = CGRect(x: 0, y: 0, width: width-2*left, height: M.followUpHeight)
-        followUp.center = CGPoint(x: left, y: centerY)
+        followUp.center = CGPoint(x: left, y: M.followUpHeight/2)
+        // About the middle of the screen, as the summary does.
+        let centerY = followUpTop+M.followUpHeight/2
+        func scaled(_ scale: Double) -> CGAffineTransform {
+            let x = width/2+scale*(left-width/2), y = height/2+scale*(centerY-height/2)
+            return CGAffineTransform(a: scale, b: 0, c: 0, d: scale, tx: x-left, ty: y-centerY)
+        }
         var alpha = 1-fadingOut
         if mode == .closing {
-            // Sinks back with the summary, about the middle of the screen.
-            let recede = closeRecede(t)
-            let x = width/2+recede*(left-width/2), y = height/2+recede*(centerY-closeScroll-height/2)
-            followUp.transform = CGAffineTransform(a: recede, b: 0, c: 0, d: recede, tx: x-left, ty: y-centerY)
+            followUp.transform = scaled(closeRecede(t))
         } else if let forward {
-            let middle = Double(scroll.contentOffset.y)+height/2
-            let x = width/2+forward.scale*(left-width/2), y = middle+forward.scale*(centerY-middle)
-            followUp.transform = CGAffineTransform(a: forward.scale, b: 0, c: 0, d: forward.scale, tx: x-left, ty: y-centerY)
+            followUp.transform = scaled(forward.scale)
             alpha *= forward.alpha
         } else {
             followUp.transform = .identity
@@ -1109,6 +1183,29 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
             }
         }
         followUp.alpha = alpha
+    }
+
+    /// The summary fades out over `followUpFade` just above the field, wherever it scrolls.
+    private func fadeSummary(over view: UIView) {
+        guard mode == .card, revealT != nil, followUpShown != nil else { view.layer.mask = nil; return }
+        let shownScroll = Double(scroll.layer.presentation()?.bounds.minY ?? scroll.contentOffset.y)
+        let top = Double(view.frame.minY)-shownScroll, tall = max(1, Double(view.bounds.height))
+        let shape = fadeShape, steps = shape.steps
+        // Placed outright each frame, never eased there by an implicit animation: one that ran
+        // after a long jump in the scroll (a question sent from far up) left the fade a quarter
+        // of a second behind, hiding the bubble and the text above it.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        defer { CATransaction.commit() }
+        if fadeShapeChanged {
+            fadeShapeChanged = false
+            summaryFade.colors = [UIColor.black.cgColor]+steps.map { UIColor(white: 0, alpha: $0.alpha).cgColor }+[UIColor.clear.cgColor]
+        }
+        // From where the fade starts down to where the text is wholly gone, then held gone.
+        let clear = (followUpTop+M.followUpFadeInto-shape.hold-top)/tall, fade = shape.height/tall
+        summaryFade.frame = view.bounds
+        summaryFade.locations = [0]+steps.map { NSNumber(value: clear-fade+$0.at*fade) }+[1]
+        if view.layer.mask !== summaryFade { view.layer.mask = summaryFade }
     }
 
     // MARK: The bar
@@ -1337,17 +1434,34 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         let settled = M.textDelay+M.stagger*Double(reveal.blockCount)+6*max(M.blurTau, M.fadeTau)
         let shown = recallT != nil || elapsed > settled ? Double.infinity : elapsed
         if reveal.elapsed != shown { reveal.elapsed = shown; reveal.reducesMotion = reducesMotion }
-        let scrolls = revealed && mode == .card
-        scroll.isScrollEnabled = scrolls
-        var end = followUpShown == nil ? summaryTop+summaryHeight : followUpCenterY+M.followUpHeight/2+SummaryBlocks.endSpacing
-        // Room for the latest question's bubble to stay at the top of the screen, its answer under it.
-        if let asked = reveal.followUps.last { end = max(end, asked.bubbleTop-sendTop+height) }
-        let contentHeight = scrolls ? max(size.height, end) : size.height
+        scroll.isScrollEnabled = revealed && mode == .card
+        // Clear of the field from the first summary on, not only once the keyboard has moved.
+        let inset = bottomInset
+        if Double(scroll.contentInset.bottom) != inset { scroll.contentInset.bottom = CGFloat(inset) }
+        layOutContent(inset: inset)
+        renderFollowUp(t, fadingOut: fadingOut, forward: forward)
+        fadeSummary(over: view)
+    }
+
+    /// How far down the content goes: to the summary's end, and far enough for the latest
+    /// question's bubble to stay where it was scrolled to with the screen under it free for the
+    /// answer, so a short answer doesn't jump it back.
+    private func contentEnd(inset: Double) -> Double {
+        var end = summaryTop+Double(summaryHeight)
+        if let asked = reveal.followUps.last { end = max(end, sendTarget(asked)+height-inset) }
+        return end
+    }
+
+    /// The furthest it scrolls: the summary's last line just clear of the field, never further.
+    private func maxScroll(inset: Double) -> Double { max(0, contentEnd(inset: inset)+inset-height) }
+
+    private func layOutContent(inset: Double) {
+        let scrolls = revealT != nil && mode == .card
+        let contentHeight = scrolls ? max(height-inset, contentEnd(inset: inset)) : height
         if content.bounds.height != contentHeight {
             content.frame = CGRect(x: 0, y: 0, width: size.width, height: contentHeight)
             scroll.contentSize = content.bounds.size
         }
-        renderFollowUp(t, fadingOut: fadingOut, forward: forward)
     }
 
     private func renderBackdrop(_ t: Double) {

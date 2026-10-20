@@ -25,6 +25,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private(set) var isTabSwitcherOpen = false
     /// A swipe up anywhere on the bottom bar shrinks the page into the tab switcher.
     private lazy var tabSwipe = UIPanGestureRecognizer(target: self, action: #selector(swipeToTabs))
+    /// A swipe down the open bar collapses it, as scrolling down the page does.
+    private lazy var barCollapseSwipe = UIPanGestureRecognizer(target: self, action: #selector(swipeBarDown))
     /// Holding New Page listens for a search; letting go opens New Page with it transcribed.
     private lazy var newPageHold = UILongPressGestureRecognizer(target: self, action: #selector(holdNewPage))
     let voice = VoiceInput()
@@ -617,6 +619,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             let velocity = tabSwipe.velocity(in: view)
             return canShowTabSwitcher && !voice.isRecording && velocity.y < 0 && abs(velocity.y) > abs(velocity.x)
         }
+        if gestureRecognizer === barCollapseSwipe {
+            // Only downwards, more down than sideways, on the bar at rest.
+            let velocity = barCollapseSwipe.velocity(in: view)
+            return !bottomBar.isCollapsed && !isPanelOpen && !isTabSwitcherOpen && !isSwipingToTabs && summarise == nil
+                && velocity.y > 0 && velocity.y > abs(velocity.x)
+        }
         if gestureRecognizer === summarisePinch { return (canSummarise || summarise?.canGrab == true) && !isPanelOpen }
         if gestureRecognizer === newPageHold {
             return VoiceInput.isSupported && !isPanelOpen && presentedViewController == nil && !isSwipingToTabs
@@ -743,6 +751,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.downloads.onRowsChange = { [weak self] in self?.resizeDownloadsPanel() }
         tabSwipe.delegate = self
         bottomBar.addGestureRecognizer(tabSwipe)
+        barCollapseSwipe.delegate = self
+        barCollapseSwipe.maximumNumberOfTouches = 1
+        bottomBar.addGestureRecognizer(barCollapseSwipe)
         bottomBar.tabsButton.addAction(UIAction { [weak self] _ in
             guard let self else { return }
             if isTabSwitcherOpen { selectTab(tabIndex) } else { showTabSwitcher() }
@@ -927,6 +938,13 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
 
     @objc private func openCollapsedBar() { setBottomBarCollapsed(false) }
+
+    /// Collapses the bar as soon as the swipe down is recognised, on the same spring as a scroll.
+    @objc private func swipeBarDown(_ pan: UIPanGestureRecognizer) {
+        guard pan.state == .began else { return }
+        scrollTravel = 0
+        setBottomBarCollapsed(true)
+    }
 
     func setBottomBarCollapsed(_ collapsed: Bool, animated: Bool = true) {
         guard collapsed != bottomBar.isCollapsed, !isPanelOpen else { return }

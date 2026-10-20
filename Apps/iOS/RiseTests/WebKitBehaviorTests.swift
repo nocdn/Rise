@@ -819,7 +819,7 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertEqual(browser.tabs.count, 1)
         try await Task.sleep(for: .milliseconds(500))
         XCTAssertEqual(switcher.cells.count, 1)
-        XCTAssertTrue(switcher.cells[0].closeButton.isHidden)
+        XCTAssertFalse(switcher.cells[0].canClose)
         browser.selectTab(0)
         try await Task.sleep(for: .milliseconds(600))
         XCTAssertTrue(switcher.isHidden)

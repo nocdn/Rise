@@ -46,6 +46,8 @@ import UIKit
             case "regrab": await run(in: controller, savingFramesTo: folder, regrab: true)
             case "recall": await recall(in: controller, savingFramesTo: folder)
             case "followUpKeyboard": await followUpKeyboard(in: controller)
+            case "send": await send(in: controller, savingFramesTo: folder)
+            case "fades": await fades(in: controller, savingFramesTo: folder)
             case "timing": await timeStart(in: controller)
             case "close": await timeClose(in: controller)
             case "tabs": await swipeToTabs(in: controller, savingTo: folder)
@@ -211,6 +213,130 @@ import UIKit
         result.finished = true
         return result
     }
+
+    /// In real time: shows the stand-in page's summary, sends two questions from the field with
+    /// a stand-in answer, saving frames through each flight, and then scrolls as far as it goes.
+    static func send(in controller: BrowserViewController, savingFramesTo folder: URL?) async -> Result {
+        var result = Result()
+        controller.webView.loadHTMLString(page, baseURL: URL(string: "https://lalinsky.com/"))
+        for _ in 0..<250 where controller.webView.isLoading { try? await Task.sleep(for: .milliseconds(20)) }
+        try? await Task.sleep(for: .milliseconds(800))
+        let web = controller.webView
+        controller.tabs[controller.tabIndex].remember(summary, of: web, url: web.url, item: web.backForwardList.currentItem)
+        controller.openPanel(.menu)
+        try? await Task.sleep(for: .milliseconds(400))
+        controller.summariseFromMenu()
+        guard let summarise = controller.summarise, let window = controller.view.window else { return result }
+        if let folder { try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
+        summarise.answerFollowUp = { _, _, _ in
+            try await Task.sleep(for: .seconds(1.2))
+            return ["zt parses each template at compile time with Zig's comptime, so a typo in a tag or a missing closing element is a build error rather than a broken page.",
+                    "Values are escaped for the context they land in, attribute or text, unless a template asks for raw output by name."]
+        }
+        try? await Task.sleep(for: .seconds(2.5))
+        result.revealed = summarise.isRevealed
+        for round in 0..<2 {
+            // The second asked from the top, the end of the first answer far below the field.
+            if round == 1 { summarise.scrollSummaryToTop() }
+            summarise.focusFollowUpField()
+            try? await Task.sleep(for: .seconds(1))
+            if let folder { await save(window, to: folder.appendingPathComponent("s\(round)-typing.png")) }
+            summarise.sendFollowUp(round == 0 ? "How does it check templates?" : "And what about escaping inside attributes?")
+            for step in 1...10 {
+                try? await Task.sleep(for: .milliseconds(150))
+                if let folder { await save(window, to: folder.appendingPathComponent(String(format: "s%d-%.2f.png", round, Double(step)*0.15))) }
+            }
+            try? await Task.sleep(for: .seconds(1.5))
+            if let folder { await save(window, to: folder.appendingPathComponent("s\(round)-answered.png")) }
+        }
+        summarise.scrollToSummaryEnd()
+        try? await Task.sleep(for: .milliseconds(300))
+        if let folder { await save(window, to: folder.appendingPathComponent("end.png")) }
+        summarise.scrollToSummaryEnd(less: 520)
+        try? await Task.sleep(for: .milliseconds(300))
+        if let folder { await save(window, to: folder.appendingPathComponent("under-field.png")) }
+        // A stand-in keyboard, as a headless Simulator shows none: scrolled to the end, the
+        // summary should stay at its end as it comes up and goes, never jump back.
+        summarise.scrollToSummaryEnd()
+        try? await Task.sleep(for: .milliseconds(200))
+        var lines = ["closed at end: \(summarise.followUpScroll)"]
+        func keyboard(_ height: CGFloat) {
+            let screen = window.screen.bounds
+            NotificationCenter.default.post(name: UIResponder.keyboardWillChangeFrameNotification, object: nil, userInfo: [
+                UIResponder.keyboardFrameEndUserInfoKey: NSValue(cgRect: CGRect(x: 0, y: screen.maxY-height, width: screen.width, height: height)),
+                UIResponder.keyboardAnimationDurationUserInfoKey: 0.25,
+                UIResponder.keyboardAnimationCurveUserInfoKey: UInt(7)])
+        }
+        keyboard(336)
+        lines.append("just after opening: \(summarise.followUpScroll)")
+        try? await Task.sleep(for: .milliseconds(400))
+        lines.append("opened: \(summarise.followUpScroll)")
+        keyboard(0)
+        try? await Task.sleep(for: .milliseconds(400))
+        lines.append("closed again: \(summarise.followUpScroll)")
+        if let folder { try? lines.joined(separator: "\n").write(to: folder.appendingPathComponent("keyboard.txt"), atomically: true, encoding: .utf8) }
+        summarise.focusFollowUpField()
+        try? await Task.sleep(for: .seconds(1))
+        let open = summarise.followUpScroll
+        summarise.scrollToSummaryEnd()
+        try? await Task.sleep(for: .milliseconds(300))
+        if let folder { await save(window, to: folder.appendingPathComponent("end-keyboard.png")) }
+        print("send replay: keyboard-open offset \(open.offset) of max \(open.max)")
+        controller.view.endEditing(true)
+        try? await Task.sleep(for: .seconds(1))
+        result.finished = true
+        return result
+    }
+
+    /// In real time: shows a long first summary, its first paragraph running on behind the
+    /// follow-up field, and saves it under each of `fadeTrials` as `fade-<n>.png`.
+    static func fades(in controller: BrowserViewController, savingFramesTo folder: URL?) async -> Result {
+        var result = Result()
+        controller.webView.loadHTMLString(page, baseURL: URL(string: "https://lalinsky.com/"))
+        for _ in 0..<250 where controller.webView.isLoading { try? await Task.sleep(for: .milliseconds(20)) }
+        try? await Task.sleep(for: .milliseconds(800))
+        let web = controller.webView
+        controller.tabs[controller.tabIndex].remember(longSummary, of: web, url: web.url, item: web.backForwardList.currentItem)
+        controller.openPanel(.menu)
+        try? await Task.sleep(for: .milliseconds(400))
+        controller.summariseFromMenu()
+        guard let summarise = controller.summarise, let window = controller.view.window else { return result }
+        if let folder { try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
+        try? await Task.sleep(for: .seconds(2.5))
+        result.revealed = summarise.isRevealed
+        for (i, shape) in fadeTrials.enumerated() {
+            summarise.tryFade(shape)
+            try? await Task.sleep(for: .milliseconds(150))
+            if let folder { await save(window, to: folder.appendingPathComponent(String(format: "fade-%02d.png", i+1))) }
+        }
+        result.finished = true
+        return result
+    }
+
+    /// A first summary long enough that its first paragraph runs on behind the field.
+    static let longSummary = PageSummary(paragraphs: [
+        "Lukáš Lalinský writes about building web apps in Zig, a low-level language, and introduces zt, a type-safe HTML templating library that checks templates at compile time and escapes HTML by default against XSS. He started web development around 2000, just after PHP 3.0, and has used raw PHP, string concatenation in Python, Smarty in PHP, Template Toolkit in Perl and Jinja and Django templates in Python, then single-page apps and JavaScript frameworks, before coming back to server-rendered pages. What he missed in Zig was a way to write HTML that the compiler understands, so that a mistyped tag, an unclosed element or a missing value fails the build instead of producing a broken page, and so that rendering costs no more than writing the strings out by hand.",
+        "Templates use a familiar HTML-like syntax, must close their elements, and compile to plain Zig, so rendering a page is as fast as writing the strings by hand. Values are escaped for the context they land in, attribute or text, unless a template asks for raw output by name.",
+    ])
+
+    /// Fades to compare over the field, for `fades`.
+    static let fadeTrials: [SummaryFade] = [
+        SummaryFade(height: 60),
+        SummaryFade(height: 90),
+        SummaryFade(height: 120),
+        SummaryFade(height: 60, curve: .smooth),
+        SummaryFade(height: 90, curve: .smooth),
+        SummaryFade(height: 120, curve: .smooth),
+        SummaryFade(height: 160, curve: .smooth),
+        SummaryFade(height: 60, hold: 16, curve: .smooth),
+        SummaryFade(height: 90, hold: 24, curve: .smooth),
+        SummaryFade(height: 120, hold: 32, curve: .smooth),
+        SummaryFade(height: 90, curve: .quick),
+        SummaryFade(height: 140, curve: .quick),
+        SummaryFade(height: 100, hold: 20, curve: .quick),
+        SummaryFade(height: 90, curve: .late),
+        SummaryFade(height: 80, hold: 40),
+    ]
 
     /// Summarise in More, from the open panel over the receded page: frames every 0.1 s to its card.
     static func runFromMenu(in controller: BrowserViewController, savingFramesTo folder: URL?) async -> Result {

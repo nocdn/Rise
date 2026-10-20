@@ -104,9 +104,9 @@ These came out of many rounds of trying things on the phone. Follow them by defa
 - **At the reveal:** "one fairly short, strong but dull (not the sharp) haptic" (transient,
   intensity 1, sharpness 0.12). It ends the hum.
 - **Nothing while pinching.**
-- **Pulling up the follow-up field:** light ticks as it comes out, then one strong click when
-  it's pulled far enough (he asked for these on 20 October). Asking a follow-up hums as
-  summarising does, and its answer ends in the same thud.
+- **Follow-ups:** asking one hums as summarising does, and its answer ends in the same thud.
+  (Pulling past the end to focus the field, with its ticks and click, was removed on
+  20 October on request.)
 - **Nothing when releasing a swipe into the tab switcher.** Its rigid commit impact was removed
   after he asked for a silent release.
 
@@ -353,36 +353,52 @@ fades in `backDelay` 0.38 s after the card starts settling, over `backDuration` 
 
 ### The follow-up field (20 October 2026, being tuned)
 
-- **Always there:** once the summary shows, a borderless, unfilled field rests `followUpGap`
-  12 pt under the last paragraph, its text on the paragraphs' 24 pt edge, unfocused, with
-  "Ask follow up about page" in 35% grey (as it showed after the keyboard went). It fades in
-  as one more block after the last paragraph, or after an answer's. It focuses, and the keyboard
-  starts up, the moment a finger lands on it (a zero-duration press), not when the finger lifts;
-  he asked for that over telling taps from scrolls.
+- **Always there, at the bottom:** once the summary shows, a borderless, unfilled field is held
+  `followUpBottomGap` 12 pt above the keyboard when it opens, and `followUpRestLift` 12 pt
+  higher again over the bottom of the screen when it's down, 24 pt in all (both asked for on
+  20 October, over resting it under the last paragraph; 12 pt over the bottom was a little low).
+  The keyboard picks it up once it reaches it. The keyboard layout guide doesn't use the bottom safe area: the browser raises that
+  over its bar, which held the field about 75 pt too high. Its
+  text is on the paragraphs' 24 pt edge, unfocused, with "Ask follow up about page" in 35% grey.
+  It fades in as one more block after the last paragraph. It focuses, and the keyboard starts
+  up, the moment a finger lands on it (a zero-duration press), not when the finger lifts; he
+  asked for that over telling taps from scrolls.
   The old pull-out ("Keep pulling to ask follow-up", rising and growing from the bottom of the
-  screen) was replaced on 20 October at his request.
-- **Pulling past the end** still focuses it: a light tick every `followUpTick` 12 pt of
-  overscroll, from intensity 0.25 to 0.45 at sharpness 0.45, then at `followUpPull` 96 pt
-  (overscroll as shown, after UIKit's rubber band) one strong click (intensity 1, sharpness
-  0.7). The drag is ended and the scroll view's own bounce stopped, and the field is focused.
-- **The keyboard:** the content grows to hold the field, and `contentInset.bottom` leaves 16 pt
-  between the field and the keyboard. The summary scrolls to it inside the keyboard's own
-  animation: a UIView animation with the notification's duration and curve (curve 7 shifted
-  into the options), so the field and the summary rise exactly with the keyboard. It used a
-  `followUpScroll` spring before, which ran behind the keyboard and let it cover the field for
-  a moment (he asked for them to move together on 20 October). The target is the field's own
-  place just above the keyboard, so under an answer's room (below) it doesn't scroll if the
-  field shows there already. Going away, it scrolls back only as far as the summary's end, in
-  the same way. The keyboard dismisses interactively.
-- **Asking (Return):** the question flies to the top of the screen as in the ChatGPT app (see
-  "The send" below) as the keyboard goes, into a blue bubble on the right. It shimmers there
+  screen) was replaced on 20 October on request, and so was pulling past the end to focus it.
+- **The summary under it** scrolls behind the field and fades out over `followUpFade`: 140 pt, the
+  text's opacity going as (1 − u)², so it's gone quickly and then a long faint tail. It was 24 pt
+  linear at first, then 60; on 20 October it was picked from fifteen tried side by side over a
+  first summary's paragraph (the `fades` replay: linear, smoothstep, (1 − u)² and 1 − u² curves,
+  60 to 160 pt, some held wholly gone over 16 to 40 pt above the field). It ends
+  `followUpFadeInto` 10 pt into the field's empty top, just above its text (a gradient mask on the summary, moved each frame with the field and the scroll).
+- **How far it scrolls:** to the last line 130 pt above the field, where the fade starts, and no
+  further, with the keyboard open or not. The inset is kept each frame from the first summary on;
+  set only when the keyboard moved, it left a long first summary's end under the field. It used to grow the content by the keyboard's height
+  as well, which let a swipe take everything off the screen (asked to go on
+  20 October).
+- **The keyboard:** the field rides on it by `keyboardLayoutGuide`, so it rises, falls and is
+  dragged away exactly with it. The summary's bottom inset follows, but the summary itself stays
+  where it is as the keyboard comes up, or, scrolled to its end, stays at its end, the last line
+  rising with the field. The inset grows before the content gives up an answer's room: the other
+  way round, UIKit clamped the scroll in between and it jumped up, hiding the end (reported
+  20 October, after asking a question and pressing into the field again). Moving it with the
+  field wherever it was scrolled went too, also asked for on 20 October (it was there for when
+  the field sat in the content). As the keyboard goes, it comes back only as far as its end
+  needs, inside the keyboard's own animation: a UIView animation with the notification's duration
+  and curve (curve 7 shifted into the options). A `followUpScroll` spring, before that, ran
+  behind the keyboard and let it cover the field for a moment. The keyboard dismisses interactively, and a tap anywhere but the field lets
+  it go (only that: a tap on the card with the keyboard up doesn't also return to the page).
+- **Asking (Return):** the question flies up as in the ChatGPT app (see "The send" below) as the
+  keyboard goes, into a blue bubble on the right, the last `contextLines` 4 lines before it left
+  in sight above (asked for on 20 October, over the bubble going to the very top). It shimmers there
   with Find's Ask shimmer in a deeper blue (an 80 pt band sweeping its glyphs once a second)
   while the summary's hum plays and the model answers. `PageSummary.answer` sends the page, the
   summary as the model's first reply, and the earlier questions and answers.
 - **The answer:** the shimmer fades over 0.15 s. The answer's paragraphs reveal under the bubble
   as the summary's (same delay, stagger, blur and fade), plain text as the summary is, with the
-  reveal's thud ending the hum. The bubble is already at the top, so nothing scrolls (the old
-  scroll on to keep the question 110 pt down went). Then the field rests again under the answer.
+  reveal's thud ending the hum. The bubble is already where it goes, so nothing scrolls (the old
+  scroll on to keep the question 110 pt down went). The field stays at the bottom throughout,
+  empty, and takes taps again once the answer has come.
 - **Closing:** the field fades and sinks back with the summary, and a pending question is
   cancelled. Caught and revealed again, the summary starts without its questions.
 
@@ -403,12 +419,23 @@ sends and fitting springs (under 0.5% RMS; the second send agreed):
 - **Surface:** the text stays the same size. The bubble's fill fades in at full size, and the
   text goes from the field's ink to the bubble's blue, together, after `surfaceDelay` 0.09 s
   over `surfaceDuration` 0.35 s, ease-out cubic (0.33, 1, 0.68, 1).
-- **Where it lands:** the bubble's top `topGap` 12 pt under the status bar. The summary scrolls
+- **Sent from further up:** the question is always the last thing, what it follows never under
+  it. With the summary's end below the field, the flight starts from where that end sits just
+  above the field (a jump, as in ChatGPT), and the scroll alone carries the text up, held in its
+  place in the content, so the end of the last answer rises with it. Before, the scroll's long
+  way left the end of the answer behind and the bubble flew over it (reported 20 October).
+- **Checking it:** window snapshots (`drawHierarchy`) show the summary's model scroll but the
+  fade placed from the presentation, so mid-flight frames from the replays look wrong (the
+  bubble missing, text near the top dimmed). Record the Simulator's screen instead
+  (`simctl io … recordVideo`) and take frames with ffmpeg.
+- **Where it lands:** the bubble's top under the last `contextLines` 4 lines before it (22 pt
+  each, after the 18 pt paragraph gap), the top of those `topGap` 12 pt under the status bar. In
+  ChatGPT it goes to the very top; here what it answers stays in sight, as asked. The summary scrolls
   it there on the same upward spring, so on screen the text rises exactly on that curve. The
   content keeps a screen's room under the latest bubble, so the answer generates in empty space,
   as in ChatGPT, and the summary doesn't jump back when a short answer comes.
 - **The bubble:** right-aligned 16 pt from the screen's edge, at most 72% of its width; 16 by
-  10 pt padding, 20 pt continuous corners; fill #E6F3FF and text #2D5B9F (sampled from the
+  12 pt padding (10 measured from ChatGPT; a little more was asked for on 20 October), 20 pt continuous corners; fill #E6F3FF and text #2D5B9F (sampled from the
   recording's blue bubble; its text measured #3B5576, with the colour the video's compression
   takes out of thin strokes put back at the same hue). Summary type, 17 pt on 22 pt lines.
 - **How it runs:** the copy (the text drawn once by `ImageRenderer` as a mask over a colour, and
@@ -795,6 +822,12 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
   - `followUpKeyboard`: in real time, recalls a summary from More, focuses the follow-up field,
     and lets the keyboard go 1.5 s later, for a screen recording. It needs a software keyboard:
     a headless Simulator with a hardware keyboard shows none.
+  - `fades`: recalls a long first summary from More and saves it under each of `fadeTrials`
+    (`fade-<n>.png`), its first paragraph running on behind the follow-up field.
+  - `send`: in real time, recalls a summary from More and sends two questions from the field with
+    a stand-in answer, saving `s<round>-<t>.png` frames through each flight, then the summary
+    scrolled as far as it goes (`end.png`) and 520 pt back from there (`under-field.png`, the
+    fade over the field).
   - `tabsPress`: presses Tabs and taps the card back three times on Hacker News with nothing else
     asking for frames, for an Animation Hitches trace of the rate the flights really run at.
   - `tabsNew`: on a real page, six rounds of Tabs and then New Page 100 ms later, New Page alone

@@ -21,8 +21,10 @@ enum SendMotion {
     /// The copy hands over to the bubble once it's within this of its place, and the fade is done.
     static let settled = 0.25
     static let longest = 1.2
-    /// The bubble's top under the status bar.
+    /// The top of the text left in sight above a sent question, under the status bar.
     static let topGap = 12.0
+    /// How many lines of what came before stay in sight above a sent question's bubble.
+    static let contextLines = 4
 }
 
 /// A question asked under the summary, as in the ChatGPT app: blue text in a light blue bubble on
@@ -34,7 +36,7 @@ enum SendBubble {
     /// The band sweeping the text while it's being answered.
     static let shimmer = UIColor(red: 20/255, green: 52/255, blue: 108/255, alpha: 1)
     static let horizontalPadding: CGFloat = 16
-    static let verticalPadding: CGFloat = 10
+    static let verticalPadding: CGFloat = 12
     static let radius: CGFloat = 20
     /// From the screen's right edge, a little further out than the paragraphs' 24.
     static let edgeInset: CGFloat = 16
@@ -140,13 +142,14 @@ final class SendGhost {
     }
 
     /// Starts the flight now, from `startInk`, scrolling `scroll` with it. Model values are left at
-    /// the end, so the flight's last frame and what's left after it match.
-    func fly(_ flight: SendFlight, startInk: UIColor, scroll: CALayer) {
+    /// the end, so the flight's last frame and what's left after it match. `onScreen`, the copy is
+    /// placed against the screen rather than in the scrolling content, where it lands all the same.
+    func fly(_ flight: SendFlight, startInk: UIColor, scroll: CALayer, onScreen: Bool = false) {
         let times = flight.keyTimes, begin = CACurrentMediaTime()
         let keyTimes = times.map { NSNumber(value: $0/flight.duration) }
         let inset = CGPoint(x: SendBubble.horizontalPadding, y: SendBubble.verticalPadding)
         func origin(_ t: Double) -> CGPoint {
-            let text = flight.textOrigin(at: t)
+            let text = onScreen ? flight.onScreen(at: t) : flight.textOrigin(at: t)
             return CGPoint(x: text.x-inset.x, y: text.y-inset.y)
         }
         let blend = { (t: Double) -> CGColor in
