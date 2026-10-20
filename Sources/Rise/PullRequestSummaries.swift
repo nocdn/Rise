@@ -65,7 +65,10 @@ struct PullRequestDetails: Equatable, Codable {
     var pipeline: Pipeline?, mergeCheck: MergeCheck?
     /// Only for writing the description; never saved.
     var body = "", diff = ""
-    private enum CodingKeys: String, CodingKey { case title, state, commits, changedFiles, additions, deletions, pipeline, mergeCheck }
+    /// The lines split by kind of file, when every changed file was counted: with the details on
+    /// GitLab, read on first hover of the file count on GitHub.
+    var breakdown: ChangeBreakdown?
+    private enum CodingKeys: String, CodingKey { case title, state, commits, changedFiles, additions, deletions, pipeline, mergeCheck, breakdown }
 }
 
 /// Whether an open merge request can be merged, and if not, what's in the way.
@@ -177,6 +180,25 @@ enum GitHubAPI {
         for try await byte in bytes { data.append(byte); if data.count >= PullRequestAPI.diffLimit { break } }
         return String(decoding: data, as: UTF8.self)
     }
+    /// The changed files' lines by kind, read 100 files at a time; nil when there are more files
+    /// than that reads, so the split always adds up to the whole.
+    static func breakdown(_ pr: PullRequest, changedFiles: Int, session: URLSession = .shared) async throws -> ChangeBreakdown? {
+        var breakdown = ChangeBreakdown(), counted = 0
+        for page in 1...GitLabAPI.maximumFilePages {
+            var call = request(pr, accept: "application/vnd.github+json")
+            call.url = URL(string: "https://api.github.com/repos/\(pr.project)/pulls/\(pr.number)/files?per_page=100&page=\(page)")
+            let (data, response) = try await session.data(for: call)
+            guard (response as? HTTPURLResponse)?.statusCode == 200, let files = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                throw URLError(.badServerResponse)
+            }
+            for file in files {
+                breakdown.add(path: file["filename"] as? String ?? "", additions: file["additions"] as? Int ?? 0, deletions: file["deletions"] as? Int ?? 0)
+            }
+            counted += files.count
+            if files.count < 100 { break }
+        }
+        return counted >= changedFiles ? breakdown : nil
+    }
     private static func request(_ pr: PullRequest, accept: String) -> URLRequest {
         var request = URLRequest(url: URL(string: "https://api.github.com/repos/\(pr.project)/pulls/\(pr.number)")!)
         request.setValue(accept, forHTTPHeaderField: "Accept")
@@ -210,15 +232,18 @@ enum GitLabAPI {
             default: object["draft"] as? Bool == true || object["work_in_progress"] as? Bool == true ? .draft : .open
         }
         // The merge request itself has no line counts; they come from its changed files.
-        var files = 0, additions = 0, deletions = 0, diff = ""
+        var files = 0, additions = 0, deletions = 0, diff = "", breakdown = ChangeBreakdown()
         for page in 1...maximumFilePages {
             guard let changes = try? await json(pr, path: "/diffs?per_page=100&page=\(page)", session: session) as? [[String: Any]] else { break }
             for change in changes {
                 files += 1
                 let text = change["diff"] as? String ?? ""
+                var added = 0, removed = 0
                 for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
-                    if line.hasPrefix("+") { additions += 1 } else if line.hasPrefix("-") { deletions += 1 }
+                    if line.hasPrefix("+") { added += 1 } else if line.hasPrefix("-") { removed += 1 }
                 }
+                additions += added; deletions += removed
+                breakdown.add(path: change["new_path"] as? String ?? change["old_path"] as? String ?? "", additions: added, deletions: removed)
                 if diff.utf8.count < PullRequestAPI.diffLimit, let path = change["new_path"] as? String {
                     diff += "diff --git a/\(change["old_path"] as? String ?? path) b/\(path)\n\(text)\n"
                 }
@@ -228,7 +253,9 @@ enum GitLabAPI {
         let changed = Int((object["changes_count"] as? String ?? "").filter(\.isNumber)) ?? files
         return PullRequestDetails(title: title, state: state, commits: 0, changedFiles: max(changed, files),
                                   additions: additions, deletions: deletions, pipeline: status.pipeline, mergeCheck: status.mergeCheck,
-                                  body: object["description"] as? String ?? "", diff: String(diff.prefix(PullRequestAPI.diffLimit)))
+                                  body: object["description"] as? String ?? "", diff: String(diff.prefix(PullRequestAPI.diffLimit)),
+                                  // Only when every file was read, so the split adds up to the whole.
+                                  breakdown: files >= changed ? breakdown : nil)
     }
     private static func json(_ pr: PullRequest, path: String, session: URLSession) async throws -> Any {
         guard case .gitlab(let host) = pr.forge,
@@ -302,6 +329,9 @@ enum PullRequestSummarizer {
     private(set) var entries: [String: Entry] = [:]
     private var saved: [String: Saved]
     private var tasks: [String: Task<Void, Never>] = [:]
+    private var breakdownTasks: [String: Task<Void, Never>] = [:]
+    /// GitHub pull requests whose split couldn't be read, not asked for again this launch.
+    private var breakdownFailures: Set<String> = []
     private var statusChecks: [String: Date] = [:]
     /// A pipeline and merge checks are checked again when the card shows, at most this often.
     static let statusRefresh: TimeInterval = 10
@@ -346,8 +376,13 @@ enum PullRequestSummarizer {
         tasks[key] = Task { [weak self] in
             let fetched = try? await PullRequestAPI.details(pr)
             guard let self else { return }
-            if let fetched {
+            if var fetched {
                 self.statusChecks[key] = Date()
+                // GitHub's split is read on its own; it holds while the diff's size does.
+                if fetched.breakdown == nil, let old = self.entries[key]?.details ?? self.saved[key]?.details, let split = old.breakdown,
+                   (old.changedFiles, old.additions, old.deletions) == (fetched.changedFiles, fetched.additions, fetched.deletions) {
+                    fetched.breakdown = split
+                }
                 self.update(key) { $0.details = fetched }
                 self.saved[key, default: Saved()].details = fetched; self.save()
             }
@@ -379,6 +414,24 @@ enum PullRequestSummarizer {
             self.tasks[key] = nil
         }
     }
+    /// The split of a GitHub pull request's lines by kind of file, read the first time its file
+    /// count is hovered, so a card nobody looks into costs no more requests.
+    func loadBreakdown(_ pr: PullRequest) {
+        let key = pr.key
+        guard case .github = pr.forge, breakdownTasks[key] == nil, !breakdownFailures.contains(key),
+              let details = entries[key]?.details, details.breakdown == nil else { return }
+        breakdownTasks[key] = Task { [weak self] in
+            let breakdown = try? await GitHubAPI.breakdown(pr, changedFiles: details.changedFiles)
+            guard let self else { return }
+            self.breakdownTasks[key] = nil
+            guard let breakdown else { self.breakdownFailures.insert(key); self.onChange?(key); return }
+            self.update(key) { $0.details?.breakdown = breakdown }
+            self.saved[key]?.details?.breakdown = breakdown; self.save()
+        }
+        onChange?(key)
+    }
+    /// The split is on its way.
+    func isLoadingBreakdown(_ pr: PullRequest) -> Bool { breakdownTasks[pr.key] != nil }
     /// Writes the description again, in place of the saved one. Not while one is being written.
     func regenerate(_ pr: PullRequest, title: String, page: @escaping @MainActor () async -> String?) {
         let key = pr.key

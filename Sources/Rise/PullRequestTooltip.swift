@@ -180,6 +180,8 @@ final class PullRequestMetaRow: CardLinkRow {
         var inputTokens: Int? = nil
         /// The title and description as edited in the card.
         var custom = PullRequestSummaries.Custom()
+        /// The split of the lines by kind of file is on its way.
+        var breakdownPending = false
         /// As it shows: the edits in place of the request's own while they're shown.
         var shown: Content {
             guard custom.shown else { return self }
@@ -204,7 +206,7 @@ final class PullRequestMetaRow: CardLinkRow {
     private let panel = Surface(radius: FindBar.radius)
     private let content = FlippedView()
     let titleLabel = CardTitleField(wrappingLabelWithString: "")
-    private let meta = PullRequestMetaRow()
+    let meta = PullRequestMetaRow()
     private let pipelineRow = PipelineRow()
     private let mergeRow = MergeCheckRow()
     private var skeleton = SkeletonLine()
@@ -229,6 +231,11 @@ final class PullRequestMetaRow: CardLinkRow {
     var onPointer: ((Bool) -> Void)?
     /// The file count was clicked.
     var onOpenFiles: (() -> Void)?
+    /// The file count was hovered, so its split of the lines is wanted.
+    var onWantsBreakdown: (() -> Void)?
+    /// Under the file count while it's hovered.
+    let breakdownCard = ChangeBreakdownCard()
+    private var breakdownDelay: DispatchWorkItem?
     /// The pipeline's number was clicked.
     var onOpenPipeline: ((Pipeline) -> Void)?
     /// The merge status was clicked.
@@ -296,6 +303,7 @@ final class PullRequestMetaRow: CardLinkRow {
         moreButton.menuDidClose = { [weak self] in self?.menuOpen = false; self?.checkPointerLeft() }
         mergeRow.onOpen = { [weak self] in self?.onOpenMergeChecks?() }
         meta.onOpen = { [weak self] in self?.onOpenFiles?() }
+        meta.onLinkHover = { [weak self] hovered in self?.fileCountHovered(hovered) }
         pipelineRow.onOpen = { [weak self] in if let pipeline = self?.current?.details?.pipeline { self?.onOpenPipeline?(pipeline) } }
         panel.addSubview(content); addSubview(panel)
         height.configure(response: FindMotion.swapResponse, bounce: 0)
@@ -423,7 +431,7 @@ final class PullRequestMetaRow: CardLinkRow {
                  width: CGFloat? = nil, glides: Bool = false, pops: Bool = false, fromTab: Bool = false, growsFrom: NSPoint? = nil) {
         let appearing = self.key == nil
         let switching = key != self.key
-        if switching { endEditing(saving: true) }
+        if switching { endEditing(saving: true); breakdownDelay?.cancel(); breakdownCard.hide(animated: false) }
         if appearing {
             exits += 1; layer?.removeAnimation(forKey: "card.exit.opacity"); layer?.removeAnimation(forKey: "card.exit.transform")
             CardMotionAnimator.cancelOut(self)
@@ -449,6 +457,27 @@ final class PullRequestMetaRow: CardLinkRow {
         let point = tabPoint ?? NSPoint(x: frame.minX, y: anchorTop+TabAppearance.height/2)
         return CGPoint(x: point.x-frame.minX, y: point.y-frame.minY)
     }
+    /// A moment on the file count shows its split, asked for the first time it's wanted.
+    private func fileCountHovered(_ hovered: Bool) {
+        breakdownDelay?.cancel(); breakdownDelay = nil
+        guard hovered else { breakdownCard.hide(); return }
+        let show = DispatchWorkItem { [weak self] in
+            guard let self, self.key != nil, self.meta.linkHovered else { return }
+            self.onWantsBreakdown?()
+            self.showBreakdown()
+        }
+        breakdownDelay = show
+        DispatchQueue.main.asyncAfter(deadline: .now()+Self.breakdownDelay, execute: show)
+    }
+    static let breakdownDelay: TimeInterval = 0.15
+    private func showBreakdown() {
+        guard key != nil, let details = current?.details, let host = superview else { breakdownCard.hide(animated: false); return }
+        if breakdownCard.superview !== host || host.subviews.last !== breakdownCard { host.addSubview(breakdownCard, positioned: .above, relativeTo: nil) }
+        breakdownCard.appearance = theme.appearance
+        breakdownCard.show(details.breakdown, loading: source?.breakdownPending == true,
+                           total: ChangeBreakdown.Lines(additions: details.additions, deletions: details.deletions),
+                           below: host.convert(meta.linkRect, from: meta), in: host.bounds, theme: theme, background: background, text: summaryColor)
+    }
     /// New details or more of the description for the card's pull request.
     func update(_ incoming: Content) {
         let showedCustom = source?.custom.shown == true
@@ -465,6 +494,7 @@ final class PullRequestMetaRow: CardLinkRow {
         current = next
         if editing?.field != .title { titleLabel.attributedStringValue = Self.title(next.title, color: theme.text, muted: fadedTitle) }
         meta.details = next.details; meta.reference = next.reference; pipelineRow.pipeline = next.details?.pipeline; mergeRow.mergeCheck = next.details?.mergeCheck
+        if breakdownCard.isShown { showBreakdown() }
         fitWidth()
         if !editingSummary, next.summary != laidOut || next.phase == .done {
             stream.receive(next.summary)
@@ -491,6 +521,7 @@ final class PullRequestMetaRow: CardLinkRow {
     /// Beside a tab it goes with the hover cards' motion unless `immediately`.
     func dismiss(fades: Bool = false, immediately: Bool = false) {
         guard key != nil else { return }
+        breakdownDelay?.cancel(); breakdownCard.hide(animated: !immediately)
         endEditing(saving: true)
         key = nil; link?.invalidate(); link = nil
         stream.revealAll(at: CACurrentMediaTime()); paint()

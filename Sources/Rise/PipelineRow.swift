@@ -4,11 +4,13 @@ import AppKit
 /// pointer the text lightens at once and the pointer becomes a hand; a click opens it.
 class CardLinkRow: FlippedView {
     var onOpen: (() -> Void)?
+    /// The pointer went onto the link's text, or off it.
+    var onLinkHover: ((Bool) -> Void)?
     var dark = false { didSet { needsDisplay = true } }
     var muted = NSColor.secondaryLabelColor { didSet { needsDisplay = true } }
     /// Where the link's text was last drawn.
     private(set) var linkRect = NSRect.zero
-    private(set) var linkHovered = false { didSet { if linkHovered != oldValue { needsDisplay = true } } }
+    private(set) var linkHovered = false { didSet { if linkHovered != oldValue { needsDisplay = true; onLinkHover?(linkHovered) } } }
     private var pressed = false
     override var mouseDownCanMoveWindow: Bool { false }
     var linkColor: NSColor { linkHovered ? muted.blended(withFraction: 0.45, of: .white) ?? muted : muted }

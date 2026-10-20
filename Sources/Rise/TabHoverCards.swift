@@ -130,6 +130,10 @@ import AppKit
         if hover.pullRequestCard.superview !== root {
             hover.pullRequestCard.onPointer = { [weak self] inside in self?.cardPointerChanged(inside) }
             hover.pullRequestCard.onOpenFiles = { [weak self] in self?.openFromPullRequestCard(.files) }
+            hover.pullRequestCard.onWantsBreakdown = { [weak self] in
+                guard let self, let id = self.tabHoverCards.shownID, let tab = self.tabs.first(where: { $0.id == id }), let pr = PullRequest(url: tab.url) else { return }
+                self.tabHoverCards.summaries.loadBreakdown(pr)
+            }
             hover.pullRequestCard.onOpenPipeline = { [weak self] pipeline in self?.openFromPullRequestCard(.pipeline(pipeline)) }
             hover.pullRequestCard.onOpenMergeChecks = { [weak self] in self?.openFromPullRequestCard(.mergeChecks) }
             hover.pullRequestCard.onRegenerate = { [weak self] in self?.regenerateTabCardSummary() }
@@ -298,7 +302,8 @@ import AppKit
     func tooltipContent(_ pr: PullRequest, title: String) -> PullRequestTooltip.Content {
         let entry = tabHoverCards.summaries.entry(for: pr)
         return PullRequestTooltip.Content(title: entry.details?.title ?? title, reference: pr.reference, details: entry.details,
-                                          summary: entry.summary, phase: entry.phase, inputTokens: entry.inputTokens, custom: entry.custom)
+                                          summary: entry.summary, phase: entry.phase, inputTokens: entry.inputTokens, custom: entry.custom,
+                                          breakdownPending: tabHoverCards.summaries.isLoadingBreakdown(pr))
     }
 
     func showGmailTooltip(_ id: UUID) {

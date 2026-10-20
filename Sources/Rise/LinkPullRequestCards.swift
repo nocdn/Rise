@@ -85,6 +85,7 @@ import AppKit
         if card.superview !== root {
             card.onPointer = { [weak self] inside in self?.linkCardPointerChanged(inside) }
             card.onOpenFiles = { [weak self] in self?.openFromLinkCard(.files) }
+            card.onWantsBreakdown = { [weak self] in if let self, let pr = self.linkPullRequests.shown { self.tabHoverCards.summaries.loadBreakdown(pr) } }
             card.onOpenPipeline = { [weak self] pipeline in self?.openFromLinkCard(.pipeline(pipeline)) }
             card.onOpenMergeChecks = { [weak self] in self?.openFromLinkCard(.mergeChecks) }
             card.onEdit = { [weak self] key, title, summary in self?.tabHoverCards.summaries.setCustom(key, title: title, summary: summary) }
