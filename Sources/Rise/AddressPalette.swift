@@ -68,9 +68,6 @@ struct AddressSuggestion {
     /// Styled after Kero's palette (`CenteredPaletteStyle`), centred over a veil: always, but in
     /// the palette lab, whose values are for the palette as it was.
     private(set) var isCentered = false
-    /// Under the pointer, with the centred style, where the pointer only tints a row and the
-    /// arrow keys pick one.
-    private var hoveredIndex = -1
     /// The centred style's tight shadow at the edge; the palette's own layer casts the wide one.
     private let edgeShadow = CALayer()
     private var headerHeight: CGFloat {
@@ -94,7 +91,7 @@ struct AddressSuggestion {
     }
     required init?(coder: NSCoder) { fatalError() }
     func show(text: String, theme: RiseTheme, createsTab: Bool = false, centered: Bool = false) {
-        self.createsTab = createsTab; isCentered = centered; hoveredIndex = -1
+        self.createsTab = createsTab; isCentered = centered
         siteHint.fontOverride = centered ? CenteredPaletteStyle.siteSearchFont : nil
         siteHint.applyFont()
         completionRange = nil; suppressCompletion = false
@@ -158,7 +155,7 @@ struct AddressSuggestion {
     }
     func refresh(query: String? = nil) {
         self.query = query ?? input.stringValue
-        suggestions = takeAutofill(queryChanged?(self.query) ?? []); selectedIndex = -1; selectionBeforeHover = nil; strippedCompletion = nil
+        suggestions = takeAutofill(queryChanged?(self.query) ?? []); selectedIndex = -1; selectionBeforeHover = nil; typedField = nil
         render()
         updateOffer(); updateLeadingIcon()
     }
@@ -214,7 +211,7 @@ struct AddressSuggestion {
         render()
     }
     func render() {
-        buttons.forEach { $0.removeFromSuperview() }; buttons = []; hoveredIndex = -1
+        buttons.forEach { $0.removeFromSuperview() }; buttons = []
         if isCentered { renderCentered(); return }
         for (index, suggestion) in suggestions.enumerated() {
             let button = NSButton(); button.title = ""; button.isBordered = false
@@ -244,7 +241,7 @@ struct AddressSuggestion {
                                                                                                   .kern: AddressAppearance.rowKern, .paragraphStyle: truncating])
             if suggestion.symbol == "globe", suggestion.fetchFavicon, !suggestion.subtitle.isEmpty,
                suggestion.title != suggestion.subtitle {
-                let address = suggestion.subtitle.replacingOccurrences(of: "^https?://", with: "", options: .regularExpression)
+                let address = AddressDisplay.text(suggestion.subtitle)
                 let title = NSMutableAttributedString(string: suggestion.title, attributes: [.font: AddressAppearance.rowFont, .foregroundColor: AddressAppearance.textColor(theme), .kern: AddressAppearance.rowKern])
                 title.append(NSAttributedString(string: " ", attributes: [.font: AddressAppearance.rowFont, .kern: AddressAppearance.tuning.addressGap]))
                 title.append(NSAttributedString(string: address, attributes: [.font: AddressAppearance.addressFont, .kern: AddressAppearance.rowKern, .foregroundColor: AddressAppearance.secondary(theme)]))
@@ -284,7 +281,7 @@ struct AddressSuggestion {
             title.font = style.titleFont; title.textColor = style.title(theme); title.lineBreakMode = .byTruncatingTail
             title.identifier = Self.titleID; button.addSubview(title)
             if suggestion.symbol == "globe", suggestion.fetchFavicon, !suggestion.subtitle.isEmpty, suggestion.title != suggestion.subtitle {
-                let address = NSTextField(labelWithString: suggestion.subtitle.replacingOccurrences(of: "^https?://", with: "", options: .regularExpression))
+                let address = NSTextField(labelWithString: AddressDisplay.text(suggestion.subtitle))
                 address.font = style.detailFont; address.textColor = style.detail(theme); address.lineBreakMode = .byTruncatingTail
                 address.identifier = Self.detailID; button.addSubview(address)
             }
@@ -294,43 +291,47 @@ struct AddressSuggestion {
         updateSelection()
         applyPresentation()
     }
-    /// What the field filled in, taken out while a row is picked with the arrow keys, to put back
-    /// on coming back to where it was.
-    private var strippedCompletion: (prefix: String, completed: String)?
-    /// Where the arrow keys rest with no row picked: the row Enter opens, shown as chosen, or
-    /// above the rows (-1) while the field fills in a site that has none.
-    private var restingIndex: Int {
-        if let stripped = strippedCompletion {
-            // Measured as if what was filled in were still there.
-            if autofill?.completion == stripped.completed { return -1 }
-            return suggestions.firstIndex { $0.isTypedAction && $0.completion == stripped.completed } ?? -1
-        }
-        return typedActionIndex ?? -1
-    }
-    /// The arrow keys, in Kero's way: from the row shown as chosen, to the next, and back to it,
-    /// with what the field had filled in.
+    /// The field as typed, kept while the arrow keys fill in the rows they pick, to put back past
+    /// the first row.
+    private struct TypedField { let text: String, selection: NSRange, completionRange: NSRange?, completionPrefix: String }
+    private var typedField: TypedField?
+    /// The arrow keys: down from the field to the first row and on, up past the first back to
+    /// none. Each row picked fills in the field, the cursor at its end, to edit; none puts back
+    /// what was typed, and what it filled in.
     private func moveCentered(by step: Int) {
-        let resting = restingIndex, current = selectedIndex >= 0 ? selectedIndex : resting
-        let next = max(resting == -1 ? -1 : 0, min(suggestions.count-1, current+step))
-        guard next != current else { return }
-        if next == resting { returnToRest() } else { selectResult(next) }
-    }
-    private func returnToRest() {
-        selectedIndex = -1
-        if let stripped = strippedCompletion, let editor = input.currentEditor() as? NSTextView {
-            strippedCompletion = nil
-            applyingCompletion = true
-            let range = NSRange(location: stripped.prefix.utf16.count, length: stripped.completed.utf16.count-stripped.prefix.utf16.count)
-            editor.string = stripped.completed; input.stringValue = stripped.completed; editor.setSelectedRange(range)
-            completionPrefix = stripped.prefix; completionRange = range
-            applyingCompletion = false
+        let next = max(-1, min(suggestions.count-1, selectedIndex+step))
+        guard next != selectedIndex, let editor = input.currentEditor() as? NSTextView else { return }
+        if typedField == nil {
+            typedField = TypedField(text: editor.string, selection: editor.selectedRange(), completionRange: completionRange, completionPrefix: completionPrefix)
         }
+        selectedIndex = next
+        applyingCompletion = true
+        if next >= 0 {
+            completionRange = nil
+            setText(Self.fieldText(for: suggestions[next]) ?? typedField?.text ?? editor.string)
+        } else if let typed = typedField {
+            typedField = nil
+            editor.string = typed.text; input.stringValue = typed.text; editor.setSelectedRange(typed.selection)
+            completionRange = typed.completionRange; completionPrefix = typed.completionPrefix
+        }
+        applyingCompletion = false
         updateOffer(); updateLeadingIcon(); updateSelection()
     }
-    /// The row standing for what's typed, which Enter opens while none is picked.
-    private var typedActionIndex: Int? {
-        guard autofill.map({ !$0.isTypedAction || $0.completion != nil && $0.completion != input.stringValue }) ?? true else { return nil }
-        return suggestions.firstIndex { $0.isTypedAction && ($0.completion == nil || $0.completion == input.stringValue) }
+    /// What a row puts in the field: a search's words or a page's address; a command leaves it.
+    static func fieldText(for suggestion: AddressSuggestion) -> String? {
+        guard suggestion.command == nil else { return nil }
+        if suggestion.symbol == "magnifyingglass" {
+            // "Search Kagi for “x”" is a search for x.
+            if let open = suggestion.title.range(of: " for “"), suggestion.title.hasSuffix("”") {
+                return String(suggestion.title[open.upperBound..<suggestion.title.index(before: suggestion.title.endIndex)])
+            }
+            return suggestion.title
+        }
+        guard let url = suggestion.url else { return nil }
+        var address = AddressDisplay.text(url.absoluteString)
+        // A site's own page reads as the site.
+        if url.path.isEmpty || url.path == "/", url.query == nil, url.fragment == nil, address.hasSuffix("/") { address.removeLast() }
+        return address
     }
     private static let titleID = NSUserInterfaceItemIdentifier("title"), detailID = NSUserInterfaceItemIdentifier("detail")
     /// Picks a row, or with -1 none, back to the typed text.
@@ -346,10 +347,8 @@ struct AddressSuggestion {
         for (index, button) in buttons.enumerated() {
             let selected = index == selectedIndex
             if isCentered {
-                // With no row picked, the one Enter opens shows as chosen, as Kero always has one.
-                let chosen = selected || (selectedIndex == -1 && index == typedActionIndex)
-                button.layer?.backgroundColor = (chosen ? CenteredPaletteStyle.selection(theme)
-                    : index == hoveredIndex ? CenteredPaletteStyle.hover(theme) : .clear).cgColor
+                // One gray, under the pointer or the arrow keys alike.
+                button.layer?.backgroundColor = (selected ? CenteredPaletteStyle.hover(theme) : .clear).cgColor
                 continue
             }
             button.layer?.backgroundColor = (selected ? AddressAppearance.selection(theme) : .clear).cgColor
@@ -368,7 +367,7 @@ struct AddressSuggestion {
     override func mouseMoved(with event: NSEvent) {
         guard isPresented else { return }
         let point = convert(event.locationInWindow, from: nil)
-        if isCentered { setHovered(buttons.firstIndex { $0.frame.contains(point) } ?? -1); return }
+        if isCentered { pointerMovedCentered(to: point); return }
         if let index = buttons.firstIndex(where: { $0.frame.contains(point) }) {
             if selectionBeforeHover == nil { selectionBeforeHover = selectedIndex }
             selectResult(index)
@@ -377,15 +376,24 @@ struct AddressSuggestion {
             pointerLeftResults()
         }
     }
-    override func mouseExited(with event: NSEvent) { if isCentered { setHovered(-1) } else { pointerLeftResults() } }
-    private func setHovered(_ index: Int) {
-        guard index != hoveredIndex else { return }
-        hoveredIndex = index; updateSelection()
+    override func mouseExited(with event: NSEvent) { pointerLeftResults() }
+    /// The row under the pointer is the one picked, for Enter too, while the pointer's on it;
+    /// what the field filled in stays. Off the rows, the pick goes back to the arrow keys'.
+    private func pointerMovedCentered(to point: NSPoint) {
+        if let index = buttons.firstIndex(where: { $0.frame.contains(point) }) {
+            if selectionBeforeHover == nil { selectionBeforeHover = selectedIndex }
+            guard selectedIndex != index else { return }
+            selectedIndex = index; updateSelection()
+        } else if !buttons.reduce(NSRect.null, { $0.union($1.frame) }).contains(point) {
+            pointerLeftResults()
+        }
     }
     /// The row the pointer had picked was only for as long as it was there.
     private func pointerLeftResults() {
         guard let previous = selectionBeforeHover else { return }
         selectionBeforeHover = nil
+        // The centred palette's pointer never took back what the field filled in.
+        if isCentered { if selectedIndex != previous { selectedIndex = previous; updateSelection() }; return }
         selectResult(previous)
     }
     // Padding belongs to the popup. Do not forward its clicks down the
@@ -459,7 +467,6 @@ struct AddressSuggestion {
     }
     func removeInlineCompletion() {
         if let editor = input.currentEditor() as? NSTextView, let range = completionRange, editor.selectedRange() == range {
-            strippedCompletion = (prefix: completionPrefix, completed: editor.string)
             editor.string = completionPrefix; input.stringValue = completionPrefix
             editor.setSelectedRange(NSRange(location: completionPrefix.utf16.count, length: 0))
         }
@@ -470,7 +477,7 @@ struct AddressSuggestion {
     func controlTextDidEndEditing(_ obj: Notification) { input.needsLayout = true }
     func controlTextDidChange(_ obj: Notification) {
         guard !applyingCompletion else { return }
-        completionRange = nil; strippedCompletion = nil
+        completionRange = nil; typedField = nil
         let editor = input.currentEditor() as? NSTextView
         let typed = editor?.string ?? input.stringValue
         // A site's search takes words, not addresses: nothing to match or fill in.

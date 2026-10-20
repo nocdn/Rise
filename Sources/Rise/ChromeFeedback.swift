@@ -208,7 +208,7 @@ final class LinkStatusPill: Surface {
         peekBlocked = peek && blocked; peekPrefix.stringValue = peekBlocked ? "Cannot open " : "Open "
         self.url = url; isHidden = url == nil
         guard let url else { return }
-        let value = peek ? url.absoluteString : url.absoluteString.replacingOccurrences(of: "^https?://", with: "", options: .regularExpression)
+        let value = peek ? url.absoluteString : AddressDisplay.text(url.absoluteString)
         text.stringValue = value; text.textColor = theme.text.withAlphaComponent(0.8)
         peekPrefix.textColor = theme.text.withAlphaComponent(0.6); peekSuffix.textColor = peekPrefix.textColor
         text.shimmerColor = theme.linkShimmer

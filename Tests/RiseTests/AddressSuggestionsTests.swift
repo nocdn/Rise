@@ -198,34 +198,41 @@ final class AddressSuggestionsTests: XCTestCase {
         editor.insertText("weather", replacementRange: editor.selectedRange())
         let search = try XCTUnwrap(palette.suggestions.firstIndex { $0.symbol == "magnifyingglass" })
         XCTAssertTrue((palette.buttons[search].subviews.first as? NSImageView)?.image === glyph, "Search rows have the same glyph")
-        // As in Kero, the pointer tints a row and leaves the choice where it was.
-        let row = try XCTUnwrap(palette.buttons.first { $0.layer?.backgroundColor?.alpha == 0 }, "A row not already chosen"), picked = palette.selectedIndex
+        // No blue: nothing's highlighted until the pointer or the arrow keys pick a row, then in gray.
+        XCTAssertTrue(palette.buttons.allSatisfy { $0.layer?.backgroundColor?.alpha == 0 })
+        let last = palette.buttons.count-1, row = palette.buttons[last]
         palette.mouseMoved(with: try XCTUnwrap(NSEvent.mouseEvent(with: .mouseMoved, location: palette.convert(NSPoint(x: row.frame.midX, y: row.frame.midY), to: nil),
             modifierFlags: [], timestamp: 0, windowNumber: browser.window!.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0)))
-        XCTAssertEqual(palette.selectedIndex, picked)
+        XCTAssertEqual(palette.selectedIndex, last)
         XCTAssertEqual(row.layer?.backgroundColor, CenteredPaletteStyle.hover(browser.theme).cgColor)
+        palette.mouseExited(with: NSEvent())
+        XCTAssertEqual(palette.selectedIndex, -1, "Off the rows, the gray goes")
+        XCTAssertEqual(row.layer?.backgroundColor?.alpha, 0)
         browser.hidePalette(); browser.focusAddress()
         XCTAssertTrue(palette.isCentered); XCTAssertTrue(palette.leadingIcon.image === glyph, "⌘L is the same panel")
     }
-    @MainActor func testNewTabArrowKeysMoveFromTheChosenRowAndComingBackFillsTheAddressInAgain() throws {
+    @MainActor func testArrowKeysPickRowsInGrayFillingThemInAndPuttingBackWhatWasTyped() throws {
         let browser = browser(); defer { browser.hidePalette(); clean(browser) }
         for _ in 0..<3 { browser.browsingHistory.record(URL(string: "https://news.ycombinator.com/")!, title: "Hacker News") }
         browser.showWindow(nil); browser.newTab()
         let palette = browser.palette, editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
         editor.insertText("news", replacementRange: editor.selectedRange())
-        let filled = editor.string, filledRange = editor.selectedRange(), offer = palette.offeredSite?.name
-        XCTAssertEqual(filled, "news.ycombinator.com"); XCTAssertEqual(offer, "Hacker News")
-        func chosen() -> Int? { palette.buttons.firstIndex { $0.layer?.backgroundColor == CenteredPaletteStyle.selection(browser.theme).cgColor } }
-        let resting = chosen()
+        let filled = editor.string, filledRange = editor.selectedRange()
+        XCTAssertEqual(filled, "news.ycombinator.com"); XCTAssertEqual(palette.offeredSite?.name, "Hacker News")
+        let search = try XCTUnwrap(palette.suggestions.firstIndex { $0.symbol == "magnifyingglass" })
+        func highlighted() -> [Int] { palette.buttons.indices.filter { palette.buttons[$0].layer?.backgroundColor == CenteredPaletteStyle.hover(browser.theme).cgColor } }
+        func cursorAtEnd() -> Bool { editor.selectedRange() == NSRange(location: editor.string.utf16.count, length: 0) }
+        XCTAssertEqual(highlighted(), [])
         editor.doCommand(by: #selector(NSResponder.moveDown(_:)))
-        XCTAssertEqual(chosen(), (resting ?? -1)+1, "One press moves to the next row")
-        XCTAssertEqual(palette.selectedIndex, (resting ?? -1)+1); XCTAssertEqual(editor.string, "news")
-        editor.doCommand(by: #selector(NSResponder.moveUp(_:)))
-        XCTAssertEqual(chosen(), resting); XCTAssertEqual(palette.selectedIndex, -1)
-        XCTAssertEqual(editor.string, filled, "Back where it was, the address fills in again")
-        XCTAssertEqual(editor.selectedRange(), filledRange); XCTAssertEqual(palette.offeredSite?.name, offer)
-        editor.doCommand(by: #selector(NSResponder.moveUp(_:)))
-        XCTAssertEqual(chosen(), resting, "Nothing above it to move to")
+        XCTAssertEqual(highlighted(), [0]); XCTAssertEqual(editor.string, "news.ycombinator.com", "A page fills in its address")
+        XCTAssertTrue(cursorAtEnd(), "To edit from the end"); XCTAssertEqual(palette.offeredSite?.name, "Hacker News")
+        for _ in 0..<search { editor.doCommand(by: #selector(NSResponder.moveDown(_:))) }
+        XCTAssertEqual(highlighted(), [search]); XCTAssertEqual(editor.string, palette.suggestions[search].title, "A search fills in its words")
+        XCTAssertTrue(cursorAtEnd())
+        for _ in 0...search { editor.doCommand(by: #selector(NSResponder.moveUp(_:))) }
+        XCTAssertEqual(highlighted(), [], "Above the first row, none"); XCTAssertEqual(palette.selectedIndex, -1)
+        XCTAssertEqual(editor.string, filled, "And what was typed comes back, filled in as it was")
+        XCTAssertEqual(editor.selectedRange(), filledRange); XCTAssertEqual(palette.offeredSite?.name, "Hacker News")
     }
     @MainActor func testEscapeFromASiteSearchKeepsAFilledInPageOfferingTheSiteAgain() throws {
         let browser = browser(); defer { browser.hidePalette(); clean(browser) }
@@ -256,6 +263,17 @@ final class AddressSuggestionsTests: XCTestCase {
         // A plain button would track the press here until a release, which never comes.
         address.mouseDown(with: down)
         XCTAssertTrue(browser.palette.isPresented); XCTAssertTrue(browser.palette.isCentered)
+    }
+    @MainActor func testAddressesShowWithoutHTTPSAndWWWUnlessTurnedOffInSettings() {
+        let browser = browser(); defer { clean(browser) }
+        let address = "https://www.youtube.com/watch?v=1"
+        XCTAssertEqual(AddressDisplay.text(address), "youtube.com/watch?v=1", "Both hidden by default")
+        browser.setRiseSetting("hideAddressScheme", false)
+        XCTAssertEqual(AddressDisplay.text(address), "https://youtube.com/watch?v=1")
+        browser.setRiseSetting("hideAddressScheme", true); browser.setRiseSetting("hideAddressWWW", false)
+        XCTAssertEqual(AddressDisplay.text(address), "www.youtube.com/watch?v=1")
+        browser.setRiseSetting("hideAddressWWW", true)
+        XCTAssertEqual(AddressDisplay.text("http://www.example.com/"), "example.com/")
     }
     @MainActor private func browser() -> BrowserController {
         _ = NSApplication.shared
@@ -309,12 +327,12 @@ final class AddressSuggestionsTests: XCTestCase {
         editor.insertText("a", replacementRange: editor.selectedRange())
         XCTAssertEqual(editor.string, "example.com")
         editor.doCommand(by: #selector(NSResponder.moveDown(_:)))
-        XCTAssertEqual(editor.string, "exa")
-        XCTAssertEqual(palette.selectedIndex, 1, "Down moves on from the row shown as chosen, the one filling in")
+        XCTAssertEqual(palette.selectedIndex, 0, "Down from the field picks the first row")
+        XCTAssertEqual(editor.string, "example.com", "And fills it in, to edit")
         editor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
         XCTAssertFalse(palette.isPresented)
     }
-    @MainActor func testPointerTintsRowsArrowKeysPickThemWithoutRebuildingAndEnterUsesThePick() throws {
+    @MainActor func testPointerAndArrowKeysPickRowsWithoutRebuildingAndEnterUsesThePick() throws {
         let browser = browser(); defer { clean(browser) }
         for index in 0..<3 {
             browser.browsingHistory.record(URL(string: "https://example.com/docs/\(index)")!, title: "Document \(index)")
@@ -327,16 +345,20 @@ final class AddressSuggestionsTests: XCTestCase {
         let event = try XCTUnwrap(NSEvent.mouseEvent(with: .mouseMoved, location: palette.convert(NSPoint(x: target.midX, y: target.midY), to: nil), modifierFlags: [],
                                                    timestamp: 0, windowNumber: browser.window!.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0))
         palette.mouseMoved(with: event)
-        XCTAssertEqual(palette.selectedIndex, -1, "The pointer tints a row without picking it")
-        XCTAssertEqual(editor.string, typed, "Nor does it take back what the field filled in")
+        XCTAssertEqual(palette.selectedIndex, targetIndex, "The row under the pointer is picked")
+        XCTAssertEqual(editor.string, typed, "Without taking back what the field filled in")
         XCTAssertEqual(rows[targetIndex].layer?.backgroundColor, CenteredPaletteStyle.hover(.dark).cgColor)
-        editor.doCommand(by: #selector(NSResponder.moveDown(_:))); editor.doCommand(by: #selector(NSResponder.moveDown(_:)))
-        XCTAssertEqual(palette.selectedIndex, targetIndex)
-        XCTAssertTrue(zip(rows, palette.buttons).allSatisfy { $0 === $1 }, "Picking doesn't rebuild the rows")
-        XCTAssertEqual(palette.buttons.map(\.frame), frames)
         var submitted: URL?
         palette.submit = { _, suggestion in submitted = suggestion?.url }
         editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        XCTAssertEqual(submitted, palette.suggestions[targetIndex].url, "Enter opens the row under the pointer")
+        palette.mouseExited(with: NSEvent())
+        XCTAssertEqual(palette.selectedIndex, -1)
+        for _ in 0...targetIndex { editor.doCommand(by: #selector(NSResponder.moveDown(_:))) }
+        XCTAssertEqual(palette.selectedIndex, targetIndex)
+        XCTAssertTrue(zip(rows, palette.buttons).allSatisfy { $0 === $1 }, "Picking doesn't rebuild the rows")
+        XCTAssertEqual(palette.buttons.map(\.frame), frames)
+        submitted = nil; editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
         XCTAssertEqual(submitted, palette.suggestions[targetIndex].url)
         rows[1].performClick(nil)
         XCTAssertEqual(submitted, palette.suggestions[1].url)

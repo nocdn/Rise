@@ -400,6 +400,7 @@ import RiseCore
         dismissArea.dismiss = { [weak self] in self?.hidePalette() }; dismissArea.isHidden = true
         root.addSubview(linkStatus); root.addSubview(dismissArea); root.addSubview(palette)
         palette.dismiss = { [weak self] in self?.hidePalette() }
+        loadAddressDisplay()
         palette.queryChanged = { [weak self] text in self?.suggestions(for: text) ?? [] }
         palette.submit = { [weak self] text, suggestion in self?.submitAddress(text, suggestion: suggestion) }
         palette.learnedSite = { [weak self] text in self?.siteSearchLearner.searches.site(forAddress: text) }

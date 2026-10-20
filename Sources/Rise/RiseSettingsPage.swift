@@ -24,6 +24,8 @@ import RiseChromium
                        [("automatic", "Automatic"), (RiseTheme.neutral.rawValue, "Light"), (RiseTheme.rise.rawValue, "Rise"), (RiseTheme.rose.rawValue, "Rose"), (RiseTheme.dark.rawValue, "Dark")]),
                 toggle("livePeekResize", "Live page while expanding Peek", "The page lays itself out at every size as a Peek grows into a tab", livePeekResize),
                 toggle("animateDevTools", "Animate developer tools", "DevTools slide in and out from the right", animatesDevTools),
+                toggle("hideAddressScheme", "Hide https:// in addresses", "Leave http:// and https:// off addresses in the address panel and link previews", hidesAddressScheme),
+                toggle("hideAddressWWW", "Hide www. in addresses", "Show www.youtube.com as youtube.com. Pages still open at their own address", hidesAddressWWW),
             ]
         case "tabs":
             return [
@@ -87,6 +89,8 @@ import RiseChromium
         case "theme": chooseTheme(text == "automatic" ? nil : RiseTheme(rawValue: text) ?? .neutral)
         case "livePeekResize": setLivePeekResize(on)
         case "animateDevTools": setAnimatesDevTools(on)
+        case "hideAddressScheme": setHidesAddressScheme(on)
+        case "hideAddressWWW": setHidesAddressWWW(on)
         case "tabSwitcherLimit": if let limit = Int(text) { setTabSwitcherLimit(limit) }
         case "gmailCategory": if let category = GmailCategory(rawValue: text) { selectGmailCategory(category) }
         case "goToOpenTabs": openTabLinks.setEnabled(on); openTabLinks.refresh(shownPages)
