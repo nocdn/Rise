@@ -23,12 +23,14 @@ appears structurally eligible to apply for the iOS default-browser capability.
 
 ## Findings to resolve before review
 
-### Private UIKit API in Release
+### Private UIKit corner lookup replaced
 
-`Apps/iOS/Rise/PageRecede.swift:41–47` uses `_displayCornerRadius` through a
-selector and KVC, without a DEBUG guard. Normal sheet/tab transitions call it.
-Replace that dependency with public geometry or a fallback. Apple requires
-public APIs under guideline 2.5.1.
+`PageRecede` now uses iOS 26's public container-concentric corner configuration
+and `UIView.effectiveRadius(corner:)`. A transparent, noninteractive measuring
+view lives behind the window's root view, outside the page's animated transform.
+It is reused and laid out before the first moving frame. Earlier iOS versions
+and detached views use the existing 32-point fallback; square windows keep the
+existing square-screen behavior. No private selector or KVC lookup remains.
 
 ### Generic video-download action is a review risk
 
@@ -144,11 +146,24 @@ App Store Connect still shows No Builds; TestFlight gets the icon from an
 accepted upload, not a separate image field. The previous upload's unsupported
 Xcode/SDK rejection remains unresolved; only Xcode 27 beta is installed.
 
-For the remaining private corner-radius lookup, iOS 26+ has public
-`UIView.cornerConfiguration`, `UICornerRadius.containerConcentric()` and
-`UIView.effectiveRadius(corner:)` APIs. A replacement should preserve the current
-continuous curve and motion and use a calibrated fallback on earlier iOS. This
-is a proposed follow-up; `PageRecede` has not been changed in this fix.
+The public corner geometry resolves to 55 points on the paired iPhone 14 Pro.
+The existing scale, downward travel, continuous curves and spring timing are
+preserved. Full-size content explicitly clears its temporary corner clipping
+at the end of the return animation.
+
+The physical iPhone passed the three `PageRecedeTests`, including all 92 deck
+audit checks: the first page/card radius is 55 pt, landing at the unchanged
+26 pt card radius, and interrupted flights still work. Light/dark panel captures
+were inspected; Peek's drag/return test also passed. An older broad bottom-bar
+test still has stale font/opacity, tile-aspect and animation-timing expectations;
+this is a focused corner verification, not a full UI-suite pass.
+Debug and Release builds succeeded, and the Release executable no longer contains
+the private corner selector. Panel-control hit testing passed on the physical
+device. Manual Mirroring tap/drag delivery was inconclusive; the same behavior
+occurred in a comparison build without the measuring view, so a full manual
+interaction pass is not claimed.
+The owner subsequently tested the installed fix on the iPhone and confirmed that
+it looks good.
 
 Sources: [App icons in App Store Connect](https://developer.apple.com/help/app-store-connect/manage-app-information/add-an-app-icon),
 [Public concentric radii](https://developer.apple.com/documentation/uikit/uicornerradius-swift.struct/containerconcentric(minimum:)),

@@ -108,7 +108,9 @@ import WebKit
         try JSONSerialization.data(withJSONObject: ["first": corners.first ?? -1, "last": corners.last ?? -1,
                                                     "model": active.layer.cornerRadius])
             .write(to: folder.appendingPathComponent("initial-corners.json"))
-        try check("page-is-device-rounded-in-the-first-animation-frame", (corners.first ?? 0) >= 28.7)
+        let screenRadius = Double(PageRecede.screenCornerRadius(of: switcher))
+        let initialRadius = screenRadius > 0 ? screenRadius : TabSwitcherView.swipeRadius
+        try check("page-is-device-rounded-in-the-first-animation-frame", abs((corners.first ?? 0)-initialRadius) < 0.1)
         let buttonDuration = active.layer.animation(forKey: "flight.bounds")?.duration ?? 0
         try check("button-flight-has-arcs-short-duration", (0.25...0.65).contains(buttonDuration))
         let others = switcher.cells.enumerated().filter { $0.offset != switcher.current && !$0.element.isHidden }.map(\.element)
@@ -144,7 +146,7 @@ import WebKit
         try check("every-rising-tab-is-rounded-from-its-first-frame", others.allSatisfy {
             let values = ($0.card.layer.animation(forKey: "deck.cornerRadius") as? CAKeyframeAnimation)?.values?
                 .compactMap { ($0 as? NSNumber)?.doubleValue } ?? []
-            return (values.first ?? 0) >= 28.7
+            return abs((values.first ?? 0)-initialRadius) < 0.1
         })
         try check("both-page-and-stack-keyframes-request-promotion", active.layer.animation(forKey: "flight.bounds")?.preferredFrameRateRange.preferred == 120
                   && others.allSatisfy { $0.layer.animation(forKey: "deck.position")?.preferredFrameRateRange.preferred == 120 })

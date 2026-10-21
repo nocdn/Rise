@@ -5,7 +5,7 @@ enum PageRecede {
     /// Insets the page about 20 points per side on an iPhone, and lowers it a little.
     static let scale: CGFloat = 0.9
     static let drop: CGFloat = 16
-    /// For screens with square corners, or if the screen's can't be read.
+    /// Fallback for earlier iOS versions, detached views and square-cornered containers.
     static let cornerRadius: CGFloat = 32
 
     /// 0 leaves the page at full size and 1 sets it back behind a sheet; beyond 1 it carries on
@@ -35,15 +35,39 @@ enum PageRecede {
 
     /// Squares the page's corners once it's back at full size, after the move that brought it there.
     @MainActor static func settle(_ page: UIView) {
-        if page.transform == .identity { apply(0, to: page) }
+        if page.transform == .identity {
+            UIView.performWithoutAnimation { page.layer.cornerRadius = 0 }
+        }
     }
 
-    /// The screen's own corner radius, which UIKit knows but doesn't make public.
+    /// Resolve the window's screen-concentric corners through public UIKit geometry. Keep
+    /// the measuring view outside the page's transform so shrinking never feeds back into
+    /// the next radius, and reuse it for the page and every tab-card flight in this window.
     @MainActor static func screenCornerRadius(of view: UIView) -> CGFloat {
-        let screen = view.window?.windowScene?.screen ?? UIScreen.main
-        let key = "_displayCornerRadius"
-        // Asking for a key it doesn't have would crash.
-        guard screen.responds(to: NSSelectorFromString(key)) else { return 0 }
-        return (screen.value(forKey: key) as? CGFloat) ?? 0
+        guard let window = view.window else { return cornerRadius }
+        if #available(iOS 26, *) {
+            let geometry = window.subviews.first { $0 is WindowCorners } as? WindowCorners ?? WindowCorners(window: window)
+            if geometry.frame != window.bounds { geometry.frame = window.bounds }
+            // UIKit resolves the concentric configuration during layout, including the
+            // very first call made from an animation's opening frame.
+            geometry.layoutIfNeeded()
+            return geometry.effectiveRadius(corner: .allCorners)
+        }
+        return cornerRadius
     }
+}
+
+/// Transparent, noninteractive geometry only; it never clips or changes the window's content.
+@available(iOS 26, *)
+private final class WindowCorners: UIView {
+    init(window: UIWindow) {
+        super.init(frame: window.bounds)
+        autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        isUserInteractionEnabled = false
+        accessibilityElementsHidden = true
+        alpha = 0
+        cornerConfiguration = .uniformCorners(radius: .containerConcentric(minimum: 0))
+        window.insertSubview(self, at: 0)
+    }
+    required init?(coder: NSCoder) { fatalError() }
 }

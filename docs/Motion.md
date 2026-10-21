@@ -614,6 +614,12 @@ to its starting point; ordinary taps retain the 97% press scale and quick openin
 - **The full page starts with the device's own corner radius, all four corners, in its
   very first moving frame.** It eases towards the card's radius. Older cards likewise
   start with generous device-like rounding before they grow out of the small stack.
+  As of 21 October this comes from public iOS 26 container-concentric corner geometry,
+  resolved on an invisible, noninteractive view behind the window's root content.
+  It measures 55 pt on the physical iPhone 14 Pro. Resolve its initial layout before
+  querying, and keep it outside the shrinking page's transform so the measurement
+  cannot change with the animation. Older iOS and detached views use the 32 pt fallback.
+  A returning full-size page clears its temporary clipping explicitly at completion.
 - A bottom-bar swipe uses the same early rounding and finger anchor as before. Progress
   remains `rise / (0.45 × screen height)`; scale now reaches the deck's 0.70, rather than
   the old grid's 0.50, at full travel, and gives exponentially beyond that.
