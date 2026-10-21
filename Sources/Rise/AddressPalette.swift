@@ -68,6 +68,8 @@ struct AddressSuggestion {
     /// Styled after Kero's palette (`CenteredPaletteStyle`), centred over a veil: always, but in
     /// the palette lab, whose values are for the palette as it was.
     private(set) var isCentered = false
+    /// The first row the centred palette shows, when there are more than fit.
+    private(set) var firstRow = 0
     /// The centred style's tight shadow at the edge; the palette's own layer casts the wide one.
     private let edgeShadow = CALayer()
     private var headerHeight: CGFloat {
@@ -177,6 +179,16 @@ struct AddressSuggestion {
         return learnedSite?(address) ?? popular
     }
     private func updateLeadingIcon() {
+        if let list = choice {
+            leadingIcon.image = list.symbol == "paintbrush" ? TablerIcon.themeImage(size: 16) : NSImage(systemSymbolName: list.symbol, accessibilityDescription: nil)
+            leadingIcon.contentTintColor = fieldIconColor; return
+        }
+        if isCentered, typedField != nil, suggestions.indices.contains(selectedIndex), let command = suggestions[selectedIndex].command {
+            // The picked command's own icon, not a page's the words might name.
+            leadingIcon.image = Self.isThemeCommand(command) ? TablerIcon.themeImage(size: 16)
+                : NSImage(systemSymbolName: suggestions[selectedIndex].symbol, accessibilityDescription: nil)
+            leadingIcon.contentTintColor = fieldIconColor; return
+        }
         let address = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if let site = fieldSite, let favicon = siteFavicon?(site.homeURL) {
             leadingIcon.image = favicon; leadingIcon.contentTintColor = nil
@@ -194,7 +206,7 @@ struct AddressSuggestion {
     private var fieldIconColor: NSColor { isCentered ? CenteredPaletteStyle.fieldIcon(theme) : AddressAppearance.iconColor(theme) }
     func replaceSuggestions(_ updated: [AddressSuggestion]) {
         // Late results for the address don't belong to a site's search.
-        guard siteSearch == nil else { return }
+        guard siteSearch == nil, !isChoosing else { return }
         let selected = suggestions.indices.contains(selectedIndex) ? suggestions[selectedIndex] : nil
         suggestions = takeAutofill(updated)
         if let selected {
@@ -223,7 +235,7 @@ struct AddressSuggestion {
                 button.setAccessibilityHelp("Open existing tab")
             }
             let imageView = FaviconView(frame: .zero)
-            imageView.image = suggestion.command == "Change Theme"
+            imageView.image = Self.isThemeCommand(suggestion.command)
                 ? TablerIcon.themeImage(size: 16)
                 : suggestion.favicon ?? (suggestion.symbol == "magnifyingglass" ? AddressAppearance.searchIcon
                     : NSImage(systemSymbolName: suggestion.symbol, accessibilityDescription: nil))
@@ -269,7 +281,7 @@ struct AddressSuggestion {
             button.setAccessibilityLabel(suggestion.title)
             if suggestion.tabID != nil { button.setAccessibilityHelp("Open existing tab") }
             let imageView = FaviconView(frame: .zero)
-            imageView.image = suggestion.command == "Change Theme" ? TablerIcon.themeImage(size: style.rowIconSize)
+            imageView.image = Self.isThemeCommand(suggestion.command) ? TablerIcon.themeImage(size: style.rowIconSize)
                 : suggestion.favicon ?? (suggestion.symbol == "magnifyingglass" ? style.searchIcon
                     : NSImage(systemSymbolName: suggestion.symbol, accessibilityDescription: nil))
             imageView.contentTintColor = suggestion.favicon != nil ? nil : style.detail(theme)
@@ -288,6 +300,7 @@ struct AddressSuggestion {
             addSubview(button); buttons.append(button)
         }
         restingFrame.size.height = style.height(rows: suggestions.count)
+        firstRow = 0
         updateSelection()
         applyPresentation()
     }
@@ -308,7 +321,8 @@ struct AddressSuggestion {
         applyingCompletion = true
         if next >= 0 {
             completionRange = nil
-            setText(Self.fieldText(for: suggestions[next]) ?? typedField?.text ?? editor.string)
+            // A command leaves what was typed, without the address that was filling in after it.
+            setText(Self.fieldText(for: suggestions[next]) ?? typedField.map { $0.completionRange == nil ? $0.text : $0.completionPrefix } ?? editor.string)
         } else if let typed = typedField {
             typedField = nil
             editor.string = typed.text; input.stringValue = typed.text; editor.setSelectedRange(typed.selection)
@@ -344,6 +358,7 @@ struct AddressSuggestion {
     }
     private func updateSelection() {
         CATransaction.begin(); CATransaction.setDisableActions(true)
+        scrollToSelection()
         for (index, button) in buttons.enumerated() {
             let selected = index == selectedIndex
             if isCentered {
@@ -368,6 +383,7 @@ struct AddressSuggestion {
         guard isPresented else { return }
         let point = convert(event.locationInWindow, from: nil)
         if isCentered { pointerMovedCentered(to: point); return }
+
         if let index = buttons.firstIndex(where: { $0.frame.contains(point) }) {
             if selectionBeforeHover == nil { selectionBeforeHover = selectedIndex }
             selectResult(index)
@@ -380,13 +396,37 @@ struct AddressSuggestion {
     /// The row under the pointer is the one picked, for Enter too, while the pointer's on it;
     /// what the field filled in stays. Off the rows, the pick goes back to the arrow keys'.
     private func pointerMovedCentered(to point: NSPoint) {
-        if let index = buttons.firstIndex(where: { $0.frame.contains(point) }) {
+        if let index = buttons.firstIndex(where: { !$0.isHidden && $0.frame.contains(point) }) {
             if selectionBeforeHover == nil { selectionBeforeHover = selectedIndex }
             guard selectedIndex != index else { return }
             selectedIndex = index; updateSelection()
-        } else if !buttons.reduce(NSRect.null, { $0.union($1.frame) }).contains(point) {
+        } else if !buttons.filter({ !$0.isHidden }).reduce(NSRect.null, { $0.union($1.frame) }).contains(point) {
             pointerLeftResults()
         }
+    }
+    /// A list longer than fits scrolls a row at a time, under the pointer or to keep the row the
+    /// arrow keys pick in view.
+    override func scrollWheel(with event: NSEvent) {
+        guard isCentered, isPresented, suggestions.count > CenteredPaletteStyle.visibleRows else { super.scrollWheel(with: event); return }
+        scrollAmount += event.hasPreciseScrollingDeltas ? event.scrollingDeltaY : event.scrollingDeltaY*CenteredPaletteStyle.rowHeight
+        let rows = Int(scrollAmount/CenteredPaletteStyle.rowHeight)
+        guard rows != 0 else { return }
+        scrollAmount -= CGFloat(rows)*CenteredPaletteStyle.rowHeight
+        scroll(to: firstRow-rows)
+        // What's under the pointer now is what it picks.
+        pointerMovedCentered(to: convert(event.locationInWindow, from: nil))
+    }
+    private var scrollAmount: CGFloat = 0
+    private func scroll(to row: Int) {
+        let first = max(0, min(row, suggestions.count-CenteredPaletteStyle.visibleRows))
+        guard first != firstRow else { return }
+        firstRow = first; needsLayout = true; layoutSubtreeIfNeeded()
+    }
+    /// The picked row in view, the list moving as little as it can.
+    private func scrollToSelection() {
+        let visible = CenteredPaletteStyle.visibleRows
+        guard isCentered, suggestions.indices.contains(selectedIndex) else { return }
+        if selectedIndex < firstRow { scroll(to: selectedIndex) } else if selectedIndex >= firstRow+visible { scroll(to: selectedIndex-visible+1) }
     }
     /// The row the pointer had picked was only for as long as it was there.
     private func pointerLeftResults() {
@@ -440,7 +480,8 @@ struct AddressSuggestion {
         input.frame = NSRect(x: inputX, y: (headerHeight-inputHeight)/2, width: max(0, bounds.width-inputX-padding-hintRoom), height: inputHeight)
         let list = style.listPadding
         for (i, button) in buttons.enumerated() {
-            button.frame = NSRect(x: list, y: headerHeight+list+CGFloat(i)*style.rowHeight, width: bounds.width-2*list, height: style.rowHeight)
+            button.isHidden = i < firstRow || i >= firstRow+style.visibleRows
+            button.frame = NSRect(x: list, y: headerHeight+list+CGFloat(i-firstRow)*style.rowHeight, width: bounds.width-2*list, height: style.rowHeight)
             let rowIcon = style.rowIconSize, inner = button.bounds
             button.subviews.first { $0 is NSImageView }?.frame = NSRect(x: style.rowPadding, y: (inner.height-rowIcon)/2, width: rowIcon, height: rowIcon)
             var x = style.rowPadding+rowIcon+style.gap
@@ -480,6 +521,7 @@ struct AddressSuggestion {
         completionRange = nil; typedField = nil
         let editor = input.currentEditor() as? NSTextView
         let typed = editor?.string ?? input.stringValue
+        if isChoosing { input.stringValue = typed; showChoices(matching: typed); return }
         // A site's search takes words, not addresses: nothing to match or fill in.
         if siteSearch != nil { input.stringValue = typed; return }
         if editor?.hasMarkedText() == true { refresh(query: typed); return }
@@ -499,13 +541,16 @@ struct AddressSuggestion {
         switch commandSelector {
         case #selector(NSResponder.insertNewline(_:)): chooseSelected(); return true
         case #selector(NSResponder.insertTab(_:)):
+            if isChoosing { return true }
             if siteSearch == nil, let site = offeredSite { enterSiteSearch(site); return true }
             return siteSearch != nil
         case #selector(NSResponder.insertBacktab(_:)):
             guard siteSearch != nil else { return false }
             leaveSiteSearch(); return true
         // Escape steps back out of a site's search first, then closes.
-        case #selector(NSResponder.cancelOperation(_:)): if siteSearch != nil { leaveSiteSearch() } else { dismiss?() }; return true
+        case #selector(NSResponder.cancelOperation(_:)):
+            if isChoosing { leaveChoice() } else if siteSearch != nil { leaveSiteSearch() } else { dismiss?() }
+            return true
         case #selector(NSResponder.moveDown(_:)):
             selectionBeforeHover = nil
             if isCentered { moveCentered(by: 1) } else { selectResult(min(suggestions.count-1, selectedIndex+1)) }
@@ -516,6 +561,7 @@ struct AddressSuggestion {
             return true
         case #selector(NSResponder.deleteBackward(_:)), #selector(NSResponder.deleteForward(_:)), #selector(NSResponder.deleteWordBackward(_:)):
             // Deleting past the start of an empty query goes back to the address.
+            if isChoosing, textView.string.isEmpty, commandSelector != #selector(NSResponder.deleteForward(_:)) { leaveChoice(); return true }
             if siteSearch != nil, textView.string.isEmpty, commandSelector != #selector(NSResponder.deleteForward(_:)) { leaveSiteSearch(); return true }
             suppressCompletion = true; completionRange = nil; return false
         case #selector(NSResponder.deleteToBeginningOfLine(_:)), #selector(NSResponder.deleteToBeginningOfParagraph(_:)):
@@ -536,6 +582,12 @@ struct AddressSuggestion {
     }
     func chooseSelected() {
         guard isPresented else { return }
+        if isChoosing {
+            // The row picked, or the first left by what's typed.
+            guard let row = suggestions.indices.contains(selectedIndex) ? suggestions[selectedIndex] : suggestions.first else { return }
+            submit?(input.stringValue, row); return
+        }
+        if let command = chosenSuggestion?.command, let list = choices?(command) { enterChoice(list); return }
         if let site = siteSearch {
             // An empty search, or the address left as it was, goes to the site itself.
             var words = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -554,16 +606,71 @@ struct AddressSuggestion {
             : ([autofill].compactMap { $0 }+suggestions).first { $0.isTypedAction && ($0.completion == nil || $0.completion == input.stringValue) }
     }
 
+    // MARK: Choosing from a list
+
+    /// A command's list to pick from, such as the themes: its rows in place of the suggestions.
+    struct Choice {
+        let placeholder: String
+        /// The field's icon while it shows: an SF Symbol, or "paintbrush" for the theme brush.
+        let symbol: String
+        let rows: [AddressSuggestion]
+        /// The row to start on: the setting in use.
+        var picked: Int?
+    }
+    /// A command that opens a list rather than running, and its list.
+    var choices: ((String) -> Choice?)?
+    /// A theme row's command: this, then the theme's raw value, or "automatic".
+    static let themeCommandPrefix = "Theme:"
+    static func isThemeCommand(_ command: String?) -> Bool { command == "Change Theme" || command?.hasPrefix(themeCommandPrefix) == true }
+    /// The list showing, after its command; typing narrows it.
+    private(set) var choice: Choice?
+    var isChoosing: Bool { choice != nil }
+    private var addressBeforeChoice: AddressState?
+    /// The list in place of the rows, the setting in use picked; the field empties to narrow it.
+    func enterChoice(_ list: Choice) {
+        let address = input.stringValue
+        addressBeforeChoice = AddressState(text: address, query: query, selection: (input.currentEditor() as? NSTextView)?.selectedRange() ?? NSRange(location: address.utf16.count, length: 0),
+                                           completionRange: completionRange, completionPrefix: completionPrefix, suggestions: suggestions, autofill: autofill)
+        choice = list; completionRange = nil; typedField = nil
+        updateOffer()
+        setText(""); applyPlaceholder(); input.setAccessibilityLabel(list.placeholder)
+        showChoices(matching: "")
+    }
+    private func showChoices(matching text: String) {
+        guard let list = choice else { return }
+        let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        suggestions = list.rows.filter { words.isEmpty || $0.title.localizedCaseInsensitiveContains(words) }
+        autofill = nil; selectionBeforeHover = nil; typedField = nil
+        selectedIndex = words.isEmpty ? list.picked.flatMap { list.rows.indices.contains($0) ? $0 : nil } ?? -1 : suggestions.isEmpty ? -1 : 0
+        render(); updateLeadingIcon()
+    }
+    /// Back to what was typed before the command, as it was, with its rows.
+    func leaveChoice() {
+        guard choice != nil else { return }
+        choice = nil
+        let before = addressBeforeChoice; addressBeforeChoice = nil
+        setText(before?.text ?? "")
+        if let before, let editor = input.currentEditor() as? NSTextView, NSMaxRange(before.selection) <= (editor.string as NSString).length {
+            editor.setSelectedRange(before.selection)
+        }
+        applyPlaceholder(); input.setAccessibilityLabel("Address or search")
+        guard let before else { refresh(); return }
+        query = before.query; suggestions = before.suggestions; autofill = before.autofill
+        completionRange = before.completionRange; completionPrefix = before.completionPrefix
+        selectedIndex = -1; selectionBeforeHover = nil; typedField = nil
+        render(); updateOffer(); updateLeadingIcon()
+    }
+
     // MARK: Site search
 
     private func applyPlaceholder() {
-        input.placeholderAttributedString = NSAttributedString(string: siteSearch.map { "Search \($0.name)…" } ?? "Search or Enter URL…",
+        input.placeholderAttributedString = NSAttributedString(string: choice?.placeholder ?? siteSearch.map { "Search \($0.name)…" } ?? "Search or Enter URL…",
                                                                attributes: [.foregroundColor: isCentered ? CenteredPaletteStyle.placeholder(theme) : AddressAppearance.secondary(theme),
                                                                             .font: isCentered ? CenteredPaletteStyle.fieldFont : AddressAppearance.placeholderFont])
     }
     /// Offers the site's search while the address is a site that has one.
     private func updateOffer() {
-        let site = siteSearch == nil ? site(forAddress: input.stringValue).flatMap { $0.isSearchable ? $0 : nil } : nil
+        let site = siteSearch == nil && !isChoosing ? site(forAddress: input.stringValue).flatMap { $0.isSearchable ? $0 : nil } : nil
         guard site != offeredSite else { return }
         offeredSite = site
         if let site { siteHint.configure(site: site.name, color: color(for: site), theme: theme) }
@@ -643,12 +750,18 @@ struct AddressSuggestion {
     }
     /// Straight back to the address, at rest, for a palette opening or closing.
     private func resetSiteSearch() {
+        if choice != nil { choice = nil; addressBeforeChoice = nil; applyPlaceholder(); input.setAccessibilityLabel("Address or search") }
         if siteSearch != nil { siteSearch = nil; applyPlaceholder(); input.setAccessibilityLabel("Address or search") }
         addressBeforeSiteSearch = nil
         offeredSite = nil; siteHint.alphaValue = 0; siteHint.setAccessibilityElement(false)
         siteHint.setSearching(false, animated: false)
         needsLayout = true
     }
+}
+
+/// Seen and never clicked: what's under it takes the pointer.
+final class PassThroughView: FlippedView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 final class DismissView: FlippedView {

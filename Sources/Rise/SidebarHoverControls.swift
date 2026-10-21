@@ -29,11 +29,13 @@ class SidebarHoverButton: ChromeButton {
         let visible = hasAddress && (isSidebarHovered || isSiteControlsOpen) && !isHidden
         updateAddressTextBoundary(animated: animated)
         let pinned = visibleExtensionButtons
-        for button in [copyButton,settingsButton] + extensionButtons {
+        for button in [copyButton, settingsButton, zoomButton] + extensionButtons {
             let shown = !(button is SidebarExtensionButton) || pinned.contains(button as! SidebarExtensionButton)
-            button.allowsInteraction = visible && shown
+            // The zoom button stays while the page is zoomed, hovered or not.
+            let on = button === zoomButton ? showsZoom : visible && shown
+            button.allowsInteraction = on
             button.isHidden = !hasAddress || !shown
-            let target: CGFloat = visible ? 1 : 0
+            let target: CGFloat = on ? 1 : 0
             guard button.alphaValue != target else {
                 if !animated { button.layer?.removeAnimation(forKey: Self.controlsFadeKey) }
                 continue
@@ -41,11 +43,11 @@ class SidebarHoverButton: ChromeButton {
             let old = button.layer?.presentation()?.opacity ?? Float(button.alphaValue)
             CATransaction.begin(); CATransaction.setDisableActions(true)
             button.alphaValue = target
-            if !visible { button.hover = false; button.layer?.backgroundColor = button.baseColor.cgColor }
+            if !on { button.hover = false; button.layer?.backgroundColor = button.baseColor.cgColor }
             CATransaction.commit()
             if animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
                 let fade = CABasicAnimation(keyPath: "opacity")
-                fade.fromValue = old; fade.toValue = Float(target); fade.duration = visible ? 0.14 : 0.12
+                fade.fromValue = old; fade.toValue = Float(target); fade.duration = on ? 0.14 : 0.12
                 fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
                 button.layer?.add(fade,forKey:Self.controlsFadeKey)
             } else { button.layer?.removeAnimation(forKey: Self.controlsFadeKey) }
@@ -53,7 +55,8 @@ class SidebarHoverButton: ChromeButton {
     }
     func updateAddressTextBoundary(animated: Bool) {
         let visible = hasAddress && (isSidebarHovered || isSiteControlsOpen) && !isHidden
-        let edge = visible ? addressControlsMinX-address.frame.minX-addressText.frame.minX-2 : addressText.bounds.width
+        let controls = visible ? addressControlsMinX : showsZoom ? zoomButton.frame.minX : nil
+        let edge = controls.map { $0-address.frame.minX-addressText.frame.minX-2 } ?? addressText.bounds.width
         addressText.setFadeBoundary(max(0, edge), duration: animated ? (visible ? 0.14 : 0.12) : 0)
     }
     var settingsAnchorRect: NSRect { address.convert(settingsButton.bounds, from: settingsButton) }

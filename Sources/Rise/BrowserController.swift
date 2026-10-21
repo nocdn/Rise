@@ -14,6 +14,8 @@ import RiseCore
     lazy var developerMotion = DeveloperModeMotion { [weak self] in self?.layoutChrome() }
     let siteInfoPopover = NSPopover()
     let siteControlsPopover = NSPopover()
+    /// The sidebar zoom button's: smaller, larger and back to 100%.
+    let zoomPopover = NSPopover()
     /// The camera button's JPEG and PDF.
     let capturePopover = NSPopover()
     var linkPasteboard: NSPasteboard = .general
@@ -34,6 +36,10 @@ import RiseCore
     let errorMessage = label("", size: 13, color: .secondaryLabelColor)
     var retryButton: NSButton!
     let dismissArea = DismissView()
+    /// The centred palette's dim over the window, under `dismissArea`. It takes no clicks, so it
+    /// can fade out after the palette closes while the next click goes where it's aimed.
+    let veil = PassThroughView()
+    private var veilExits = 0
     let palette = AddressPalette()
     let grip = SidebarGrip()
     /// One find bar per tab, so a search or question stays with the page it was made on.
@@ -290,10 +296,10 @@ import RiseCore
             if self.isSwitchingTabs { self.cancelTabSwitch(); return true }
             if !self.palette.isHidden {
                 // Out of a site's search first, back to the address.
-                if self.palette.siteSearch != nil {
+                if self.palette.siteSearch != nil || self.palette.isChoosing {
                     // Focused first: focusing the field selects all of it, over the selection put back.
                     if self.palette.input.currentEditor() == nil { self.window?.makeFirstResponder(self.palette.input) }
-                    self.palette.leaveSiteSearch()
+                    if self.palette.isChoosing { self.palette.leaveChoice() } else { self.palette.leaveSiteSearch() }
                 }
                 else { self.palette.dismiss?() }
                 return true
@@ -319,7 +325,7 @@ import RiseCore
     }
     required init?(coder: NSCoder) { fatalError() }
     func buildChrome() {
-        sidebar = SidebarView(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() }, archive: { [weak self] in self?.showDownloads() }, cleanUp: { [weak self] in self?.cleanUpTabs() })
+        sidebar = SidebarView(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() }, archive: { [weak self] in self?.showDownloads() }, cleanUp: { [weak self] in self?.cleanUpTabs() }, zoom: { [weak self] in self?.showZoomControls() })
         sidebar.onAddress = { [weak self] in self?.focusAddress() }
         // Recently closed tabs stay one right-click away on the downloads button.
         sidebar.archiveButton.secondaryAction = { [weak self] in self?.archiveMenu() }
@@ -398,9 +404,11 @@ import RiseCore
         pageClip.addSubview(errorSurface)
         dismissArea.protectedView = palette
         dismissArea.dismiss = { [weak self] in self?.hidePalette() }; dismissArea.isHidden = true
-        root.addSubview(linkStatus); root.addSubview(dismissArea); root.addSubview(palette)
+        veil.wantsLayer = true; veil.isHidden = true
+        root.addSubview(linkStatus); root.addSubview(veil); root.addSubview(dismissArea); root.addSubview(palette)
         palette.dismiss = { [weak self] in self?.hidePalette() }
         loadAddressDisplay()
+        palette.choices = { [weak self] command in self?.paletteChoice(for: command) }
         palette.queryChanged = { [weak self] text in self?.suggestions(for: text) ?? [] }
         palette.submit = { [weak self] text, suggestion in self?.submitAddress(text, suggestion: suggestion) }
         palette.learnedSite = { [weak self] text in self?.siteSearchLearner.searches.site(forAddress: text) }
@@ -497,9 +505,9 @@ import RiseCore
         infoPlaque.frame = pageShadow.frame; infoPlaque.topInset = devHeight
         dismissArea.frame = b
         // The centred palette dims the window behind it.
-        dismissArea.wantsLayer = true
-        let veil = (palette.isCentered ? CenteredPaletteStyle.veil(theme) : .clear).cgColor
-        if dismissArea.layer?.backgroundColor != veil { dismissArea.layer?.backgroundColor = veil }
+        veil.frame = b
+        let dim = (palette.isCentered ? CenteredPaletteStyle.veil(theme) : .clear).cgColor
+        if veil.layer?.backgroundColor != dim { veil.layer?.backgroundColor = dim }
         let paletteWidth = paletteCreatesTab ? AddressAppearance.tuning.newTabWidth : AddressAppearance.tuning.addressWidth
         if palette.isCentered {
             // Placed where, at its tallest, it's centred in the window, and grows down from there.
@@ -714,28 +722,55 @@ import RiseCore
     }
     @objc func newTab() { paletteCreatesTab = true; showPalette(text: "") }
     @objc func focusAddress() { paletteCreatesTab = false; showPalette(text: selectedTab?.url?.absoluteString == "about:blank" ? "" : selectedTab?.url?.absoluteString ?? "") }
-    func showPalette(text: String) { if searchProvider.isGoogle { googleSearchSuggestions.warmUp() }; historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); permissionCoordinator.cancel(); dismissArea.isHidden = false; palette.currentPage = selectedTab.flatMap { tab in tab.url.map { ($0.absoluteString, tab.favicon(for: theme)) } }; palette.show(text: text, theme: theme, createsTab: paletteCreatesTab, centered: paletteLab == nil); layoutChrome() }
+    func showPalette(text: String) { if searchProvider.isGoogle { googleSearchSuggestions.warmUp() }; historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); permissionCoordinator.cancel(); let veilWasHidden = dismissArea.isHidden; dismissArea.isHidden = false; palette.currentPage = selectedTab.flatMap { tab in tab.url.map { ($0.absoluteString, tab.favicon(for: theme)) } }; palette.show(text: text, theme: theme, createsTab: paletteCreatesTab, centered: paletteLab == nil); layoutChrome(); if veilWasHidden { fadeInVeil() } }
+    /// The centred palette's veil comes in quickly but not at once: Material's fast effects
+    /// (150 ms, decelerating), so it starts at the keypress and settles softly. The palette itself
+    /// shows at once. Coming back while it fades out, it turns from where it got to.
+    private func fadeInVeil() {
+        veilExits += 1
+        guard palette.isCentered else { veil.isHidden = true; return }
+        let reached = veil.isHidden ? 0 : veil.layer?.presentation()?.opacity ?? 1
+        veil.isHidden = false
+        guard let layer = veil.layer else { return }
+        layer.removeAnimation(forKey: "veil.fade")
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, reached < 1 else { return }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = reached; fade.toValue = 1; fade.duration = Self.veilFadeDuration*Double(1-reached)
+        fade.timingFunction = CAMediaTimingFunction(controlPoints: 0.31, 0.94, 0.34, 1)
+        layer.add(fade, forKey: "veil.fade")
+    }
+    /// Out a little quicker than in (100 ms), speeding up as it goes, as exits do.
+    private func fadeOutVeil() {
+        veilExits += 1
+        guard !veil.isHidden, let layer = veil.layer, window?.isVisible == true,
+              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { veil.isHidden = true; return }
+        let exit = veilExits
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            guard let self, self.veilExits == exit else { return }
+            self.veil.isHidden = true; layer.removeAnimation(forKey: "veil.fade")
+        }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = layer.presentation()?.opacity ?? 1; fade.toValue = 0; fade.duration = Self.veilFadeOutDuration
+        fade.timingFunction = CAMediaTimingFunction(controlPoints: 0.3, 0, 1, 1)
+        fade.fillMode = .forwards; fade.isRemovedOnCompletion = false
+        layer.add(fade, forKey: "veil.fade")
+        CATransaction.commit()
+    }
+    static let veilFadeDuration: CFTimeInterval = 0.15, veilFadeOutDuration: CFTimeInterval = 0.1
     func hidePalette() {
         // The palette lab's palette stays open, whatever's clicked.
         guard paletteLab == nil else { return }
         googleSearchSuggestions.cancel(); suggestionFavicons.cancelPreview()
         guard palette.isPresented else { return }
-        palette.hide(); dismissArea.isHidden = true; window?.makeFirstResponder(selectedTab?.page.view)
+        palette.hide(); dismissArea.isHidden = true; fadeOutVeil(); window?.makeFirstResponder(selectedTab?.page.view)
         DispatchQueue.main.async { [weak self] in self?.applyPendingSharedTabs() }
     }
     func submitAddress(_ text: String, suggestion: AddressSuggestion?) {
         // The palette lab opens nothing: Enter starts the palette over.
         if paletteLab != nil { palette.dismiss?(); return }
         hidePalette()
-        if let command = suggestion?.command {
-            switch command {
-            case "Toggle Developer Mode": toggleDeveloper()
-            case "Change Theme": toggleTheme()
-            case "Toggle Sidebar": toggleSidebar()
-            case "Split View": toggleSplit()
-            default: break
-            }; return
-        }
+        if let command = suggestion?.command { runPaletteCommand(command); return }
         guard let url = suggestion?.url ?? AddressResolver.resolve(text, search: searchProvider.searchURL) else { return }
         // Resolve again at activation time: an open tab may have navigated or
         // closed since the result was built. Never create an exact duplicate.
@@ -863,9 +898,15 @@ import RiseCore
     @objc func nextTab() { cycleTab(1) }
     @objc func previousTab() { cycleTab(-1) }
     func cycleTab(_ direction: Int) { guard !tabs.isEmpty else { return }; let index = tabs.firstIndex { $0.id == selectedID } ?? 0; select(tabs[(index+direction+tabs.count)%tabs.count].id) }
-    @objc func zoomIn() { selectedTab?.page.zoom = min(3, (selectedTab?.page.zoom ?? 1)+0.1) }
-    @objc func zoomOut() { selectedTab?.page.zoom = max(0.3, (selectedTab?.page.zoom ?? 1)-0.1) }
-    @objc func actualSize() { selectedTab?.page.zoom = 1 }
+    @objc func zoomIn() { setPageZoom(PageZoom.next(after: selectedTab?.page.zoom ?? 1)) }
+    @objc func zoomOut() { setPageZoom(PageZoom.previous(before: selectedTab?.page.zoom ?? 1)) }
+    @objc func actualSize() { setPageZoom(1) }
+    /// The page's zoom, shown by the sidebar's zoom button while it isn't 100%.
+    func setPageZoom(_ zoom: CGFloat) {
+        guard let tab = selectedTab else { return }
+        tab.page.zoom = zoom
+        sidebar.pageZoom = zoom; zoomControls?.refresh()
+    }
     func scheduleSave() {
         saveWork?.cancel(); let work = DispatchWorkItem { [weak self] in self?.saveNow() }; saveWork = work
         DispatchQueue.main.asyncAfter(deadline: .now()+0.4, execute: work)

@@ -45,18 +45,20 @@ final class SidebarExtensionButton: SidebarHoverButton {
     /// Room for the pinned extensions' buttons left of the copy button, leaving the address some.
     static let extensionButtonStride: CGFloat = 26
     var visibleExtensionButtons: [SidebarExtensionButton] {
-        let room = copyButton.frame.minX-address.frame.minX-60
+        let room = fixedControlsMinX-address.frame.minX-60
         let count = max(0, Int(room/Self.extensionButtonStride))
         return Array(extensionButtons.prefix(count))
     }
     /// The left edge of the address row's buttons, as many as show.
     var addressControlsMinX: CGFloat {
-        visibleExtensionButtons.last.map(\.frame.minX) ?? copyButton.frame.minX
+        visibleExtensionButtons.last.map(\.frame.minX) ?? fixedControlsMinX
     }
+    /// The copy button's left edge, or the zoom button's while it shows.
+    var fixedControlsMinX: CGFloat { showsZoom ? zoomButton.frame.minX : copyButton.frame.minX }
     func layoutExtensionButtons() {
         let visible = visibleExtensionButtons
         for (index, button) in extensionButtons.enumerated() {
-            button.frame = NSRect(x: copyButton.frame.minX-Self.extensionButtonStride*CGFloat(index+1), y: copyButton.frame.minY,
+            button.frame = NSRect(x: fixedControlsMinX-Self.extensionButtonStride*CGFloat(index+1), y: copyButton.frame.minY,
                                   width: 25, height: copyButton.frame.height)
             button.isHidden = !hasAddress || !visible.contains(button)
         }

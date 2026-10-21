@@ -30,8 +30,10 @@ import AppKit
     static let detailFont = NSFont.systemFont(ofSize: 12.5)
     static let titleMaximumWidth: CGFloat = 300
 
+    /// The most rows the tallest palette shows; a longer list scrolls, a whole row at a time.
+    static let visibleRows = Int((maximumHeight-fieldHeight-2*listPadding)/rowHeight)
     static func height(rows: Int) -> CGFloat {
-        rows == 0 ? fieldHeight : min(maximumHeight, fieldHeight + 2*listPadding + CGFloat(rows)*rowHeight)
+        rows == 0 ? fieldHeight : fieldHeight + 2*listPadding + CGFloat(min(rows, visibleRows))*rowHeight
     }
 
     private static func dark(_ theme: RiseTheme) -> Bool { theme == .dark }

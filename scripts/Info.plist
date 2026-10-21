@@ -17,6 +17,8 @@
 <key>NSCameraUsageDescription</key><string>Allow websites you choose to use your camera.</string>
 <key>NSMicrophoneUsageDescription</key><string>Allow websites you choose to use your microphone.</string>
 <key>NSLocationUsageDescription</key><string>Allow websites you choose to use your location.</string>
+<!-- Only fields marked for one-time codes are offered them; otherwise macOS checks every field focused, which flashes the first time. -->
+<key>NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac</key><true/>
 <key>NSBluetoothAlwaysUsageDescription</key><string>Allow websites you choose to use passkeys from your phone and nearby security keys.</string>
 <key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>Web URLs</string><key>CFBundleURLSchemes</key><array><string>http</string><string>https</string></array></dict></array>
 </dict></plist>

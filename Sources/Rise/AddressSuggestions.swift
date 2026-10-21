@@ -25,14 +25,7 @@ import RiseCore
                 tabID: value.tabID, command: nil, completion: value.completion, fetchFavicon: value.fetchFavicon,
                 isTypedAction: value.isTypedAction, isAutofill: value.isAutofill)
         }
-        if !query.isEmpty {
-            for (name, symbol) in [("Toggle Developer Mode", "hammer"), ("Change Theme", "paintbrush"), ("Toggle Sidebar", "sidebar.left"), ("Split View", "rectangle.split.2x1")] where name.localizedCaseInsensitiveContains(query) {
-                let command = AddressSuggestion(title: name, subtitle: "", symbol: symbol, url: nil, tabID: nil, command: name)
-                if result.first?.completion != nil { result.append(command) } else { result.insert(command, at: 0) }
-            }
-        }
-        if searchProvider.isGoogle, palette.isPresented, (palette.input.currentEditor() as? NSTextView)?.hasMarkedText() != true,
-           result.first?.command == nil {
+        if searchProvider.isGoogle, palette.isPresented, (palette.input.currentEditor() as? NSTextView)?.hasMarkedText() != true {
             let remote = googleSearchSuggestions.suggestions(for: query)
             let mixed = AddressSuggestionEngine.merging(remote, into: result.map {
                 AddressCandidate(title: $0.title, subtitle: $0.subtitle, symbol: $0.symbol, url: $0.url, tabID: $0.tabID,
@@ -43,6 +36,15 @@ import RiseCore
                     AddressSuggestion(title: value.title, subtitle: value.subtitle, symbol: value.symbol, url: value.url, tabID: value.tabID, command: nil)
             }
         } else { googleSearchSuggestions.cancel() }
+        if !query.isEmpty {
+            // Room is kept for every command that answers, however many pages and searches do.
+            let commands = paletteCommands(matching: query).map {
+                AddressSuggestion(title: $0.title, subtitle: "", symbol: $0.symbol, url: nil, tabID: nil, command: $0.id)
+            }
+            result = Array(result.prefix(AddressAppearance.maximumSuggestions-commands.count))
+            // A completion stays first, as the field shows it.
+            result.insert(contentsOf: commands, at: result.first?.completion != nil ? 1 : 0)
+        }
         let typedURL = candidates.first { $0.isTypedAction && !$0.fetchFavicon }?.url
         suggestionFavicons.preview(typedURL)
         return result.prefix(AddressAppearance.maximumSuggestions).map { suggestion in

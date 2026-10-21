@@ -6,6 +6,13 @@ import RiseCore
     let addressText = FadingTextField(frame: .zero)
     let copyButton: SidebarCopyButton
     let settingsButton: SidebarHoverButton
+    /// Left of the copy button while the page isn't at 100%, hovered or not; it opens the zoom controls.
+    let zoomButton: SidebarHoverButton
+    /// The selected page's zoom.
+    var pageZoom: CGFloat = 1 {
+        didSet { guard pageZoom != oldValue else { return }; needsLayout = true; updateAddressControlVisibility() }
+    }
+    var showsZoom: Bool { hasAddress && !PageZoom.isActual(pageZoom) }
     var isSidebarHovered = false
     var isSiteControlsOpen = false {
         didSet { updateAddressControlVisibility() }
@@ -63,8 +70,10 @@ import RiseCore
     var onTogglePlayback: ((UUID) -> Void)?
     var onToggleMute: ((UUID) -> Void)?
     var onTabPress: (() -> Void)?
-    init(copy: @escaping () -> Void, settings: @escaping () -> Void, archive: @escaping () -> Void, cleanUp: @escaping () -> Void) {
+    init(copy: @escaping () -> Void, settings: @escaping () -> Void, archive: @escaping () -> Void, cleanUp: @escaping () -> Void, zoom: @escaping () -> Void = {}) {
         copyButton = SidebarCopyButton(action: copy)
+        zoomButton = SidebarHoverButton(symbol: "plus.magnifyingglass", size: 14, title: "Zoom", action: zoom)
+        zoomButton.image = TablerIcon.image(TablerIcon.zoomIn, size: 16, description: "Zoom")
         settingsButton = SidebarHoverButton(symbol: "slider.horizontal.3", size: 14, title: "Site controls", action: settings)
         settingsButton.image = TablerIcon.image(TablerIcon.adjustments, size: 16, description: "Site controls")
         archiveButton = DownloadsButton(title: "Downloads", action: archive)
@@ -85,7 +94,7 @@ import RiseCore
         selectedTabShadow.shadow = TabAppearance.shadow(.neutral)
         selectedTabShadow.isHidden = true
         addSubview(selectedTabShadow)
-        [address, copyButton, settingsButton, pinnedView, newTab, scroll, archiveButton, cleanUpButton].forEach(addSubview)
+        [address, copyButton, settingsButton, zoomButton, pinnedView, newTab, scroll, archiveButton, cleanUpButton].forEach(addSubview)
         updateAddressControlVisibility(animated: false)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -108,11 +117,12 @@ import RiseCore
         let addressColor = blank ? theme.muted : theme.text.withAlphaComponent(theme == .dark ? 0.95 : 0.85)
         if addressText.textColor != addressColor { addressText.textColor = addressColor }
         hasAddress = !blank
+        pageZoom = selected?.page.zoom ?? 1
         let addressFont = NSFont.systemFont(ofSize: 13, weight: blank ? AddressAppearance.placeholderWeight : .regular)
         if addressText.font != addressFont { addressText.font = addressFont }
         updateAddressControlVisibility()
         // Extension buttons come and go, so theirs are set each time.
-        ([copyButton, settingsButton, archiveButton, cleanUpButton] + extensionButtons).forEach {
+        ([copyButton, settingsButton, zoomButton, archiveButton, cleanUpButton] + extensionButtons).forEach {
             let tint = $0 === archiveButton || $0 === cleanUpButton ? theme.sidebarIcon : theme.muted
             if $0.contentTintColor != tint { $0.contentTintColor = tint }
             $0.hoverColor = theme.text.withAlphaComponent(0.07)
@@ -198,6 +208,7 @@ import RiseCore
         addressText.frame = NSRect(x: textX, y: 10, width: max(0, address.bounds.width-textX-13), height: 18)
         copyButton.frame = NSRect(x: address.frame.maxX-59, y: 56, width: 27, height: 24)
         settingsButton.frame = NSRect(x: address.frame.maxX-31, y: 56, width: 27, height: 24)
+        zoomButton.frame = copyButton.frame.offsetBy(dx: copyButton.frame.minX-settingsButton.frame.minX, dy: 0)
         layoutExtensionButtons()
         updateAddressTextBoundary(animated: false)
         let pinnedHeight = PinnedLayout.height(count: pinnedView.count)

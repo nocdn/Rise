@@ -35,7 +35,9 @@ import RiseCore
         guard let current = selectedTab else { return }
         let previous = splitGroups
         var added: UUID?
-        if let other = tabs.first(where: { $0.id != current.id }) { showSplit(other) }
+        // Beside the tab before this one, or else the first other.
+        let recent = recentTabIDs.lazy.filter { $0 != current.id }.compactMap { id in self.tabs.first { $0.id == id } }.first
+        if let other = recent ?? tabs.first(where: { $0.id != current.id }) { showSplit(other) }
         else if let url = current.url {
             let other = configure(BrowserTab()); tabs.insert(other, at: 0); other.load(url); showSplit(other)
             added = other.id

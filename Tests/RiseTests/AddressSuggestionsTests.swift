@@ -190,6 +190,17 @@ final class AddressSuggestionsTests: XCTestCase {
         browser.showWindow(nil); browser.newTab()
         let palette = browser.palette, glyph = CenteredPaletteStyle.searchIcon
         XCTAssertTrue(palette.isCentered)
+        // The veil fades in quickly, while the palette shows at once, and out a little quicker,
+        // while the next click already goes where it's aimed.
+        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            XCTAssertEqual(browser.veil.layer?.animation(forKey: "veil.fade")?.duration, BrowserController.veilFadeDuration)
+            browser.hidePalette()
+            XCTAssertTrue(browser.dismissArea.isHidden); XCTAssertFalse(browser.veil.isHidden)
+            XCTAssertNil(browser.veil.hitTest(NSPoint(x: 10, y: 10)))
+            XCTAssertEqual(browser.veil.layer?.animation(forKey: "veil.fade")?.duration, BrowserController.veilFadeOutDuration)
+            browser.newTab()
+        }
+        XCTAssertNil(palette.layer?.animationKeys(), "The palette itself doesn't animate in")
         XCTAssertTrue(glyph.representations.first.map { "\(type(of: $0))".contains("SVG") } ?? false, "Kero's own glyph, not a stand-in")
         XCTAssertEqual(palette.frame.width, CenteredPaletteStyle.width)
         XCTAssertEqual(palette.frame.minY, max(8, round(browser.root.bounds.midY-CenteredPaletteStyle.maximumHeight/2)), "Centred at its tallest")
@@ -234,6 +245,22 @@ final class AddressSuggestionsTests: XCTestCase {
         XCTAssertEqual(editor.string, filled, "And what was typed comes back, filled in as it was")
         XCTAssertEqual(editor.selectedRange(), filledRange); XCTAssertEqual(palette.offeredSite?.name, "Hacker News")
     }
+    @MainActor func testArrowingOntoACommandShowsWhatWasTypedAndTheCommandsIcon() throws {
+        let browser = browser(); defer { browser.hidePalette(); clean(browser) }
+        for _ in 0..<3 { browser.browsingHistory.record(URL(string: "https://zoom.us/")!, title: "Zoom") }
+        let tab = browser.addTab(); tab.requestedURL = URL(string: "https://example.com/")
+        browser.showWindow(nil); browser.focusAddress()
+        let palette = browser.palette, editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
+        let favicon = NSImage(size: NSSize(width: 16, height: 16)); palette.siteFavicon = { _ in favicon }
+        editor.selectAll(nil); editor.insertText("zoom", replacementRange: editor.selectedRange())
+        XCTAssertEqual(editor.string, "zoom.us")
+        let zoom = try XCTUnwrap(palette.suggestions.firstIndex { $0.command == "Zoom" })
+        for _ in 0...zoom { editor.doCommand(by: #selector(NSResponder.moveDown(_:))) }
+        XCTAssertEqual(palette.selectedIndex, zoom)
+        XCTAssertEqual(editor.string, "zoom", "What was typed, not the address filling in")
+        XCTAssertFalse(palette.leadingIcon.image === favicon); XCTAssertFalse(palette.leadingIcon.image === CenteredPaletteStyle.searchIcon)
+        XCTAssertEqual(palette.leadingIcon.contentTintColor, CenteredPaletteStyle.fieldIcon(browser.theme), "The command's own glyph")
+    }
     @MainActor func testEscapeFromASiteSearchKeepsAFilledInPageOfferingTheSiteAgain() throws {
         let browser = browser(); defer { browser.hidePalette(); clean(browser) }
         let page = URL(string: "https://github.com/pingdotgg/t3code/pull/21819")!
@@ -274,6 +301,105 @@ final class AddressSuggestionsTests: XCTestCase {
         XCTAssertEqual(AddressDisplay.text(address), "www.youtube.com/watch?v=1")
         browser.setRiseSetting("hideAddressWWW", true)
         XCTAssertEqual(AddressDisplay.text("http://www.example.com/"), "example.com/")
+    }
+    @MainActor func testChangeThemeListsTheThemesToPickNarrowedByTypingAndEscapeGoesBack() throws {
+        let browser = browser(); defer { browser.hidePalette(); clean(browser) }
+        browser.theme = .neutral; browser.automaticTheme = false; browser.showWindow(nil); browser.newTab()
+        let palette = browser.palette, editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
+        editor.insertText("theme", replacementRange: editor.selectedRange())
+        let rows = palette.suggestions.map(\.title)
+        palette.selectResult(try XCTUnwrap(palette.suggestions.firstIndex { $0.command == "Change Theme" }))
+        editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        XCTAssertTrue(palette.isPresented, "Change Theme lists the themes rather than cycling them")
+        XCTAssertEqual(palette.suggestions.map(\.title), ["Light", "Dark", "Automatic", "Rose", "Rise"])
+        XCTAssertEqual(palette.selectedIndex, 0, "Starting on the theme in use"); XCTAssertEqual(editor.string, "")
+        editor.insertText("ro", replacementRange: editor.selectedRange())
+        XCTAssertEqual(palette.suggestions.map(\.title), ["Rose"])
+        editor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        XCTAssertFalse(palette.isChoosing); XCTAssertEqual(editor.string, "theme", "Escape goes back to what was typed")
+        XCTAssertEqual(palette.suggestions.map(\.title), rows)
+        palette.selectResult(try XCTUnwrap(palette.suggestions.firstIndex { $0.command == "Change Theme" }))
+        editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        for _ in 0..<4 { editor.doCommand(by: #selector(NSResponder.moveDown(_:))) }
+        editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        XCTAssertEqual(browser.theme, .rise); XCTAssertFalse(browser.automaticTheme); XCTAssertFalse(palette.isPresented)
+    }
+    @MainActor func testALongListScrollsInsideThePanelToKeepThePickedRowInView() throws {
+        let browser = browser(); defer { browser.hidePalette(); clean(browser) }
+        browser.showWindow(nil)
+        let tab = browser.addTab(); tab.requestedURL = URL(string: "https://example.com/"); browser.select(tab.id)
+        browser.setPageZoom(1.75); browser.focusAddress()
+        let palette = browser.palette, editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
+        palette.enterChoice(try XCTUnwrap(browser.paletteChoice(for: "Zoom")))
+        palette.layoutSubtreeIfNeeded()
+        let shown = { palette.buttons.indices.filter { !palette.buttons[$0].isHidden } }
+        XCTAssertLessThanOrEqual(palette.frame.height, CenteredPaletteStyle.maximumHeight)
+        XCTAssertEqual(shown().count, CenteredPaletteStyle.visibleRows)
+        XCTAssertEqual(palette.suggestions[palette.selectedIndex].title, "175%")
+        XCTAssertTrue(shown().contains(palette.selectedIndex), "Starting scrolled to the zoom in use")
+        XCTAssertTrue(palette.buttons.filter { !$0.isHidden }.allSatisfy { palette.bounds.contains($0.frame) })
+        for _ in 0..<palette.selectedIndex { editor.doCommand(by: #selector(NSResponder.moveUp(_:))) }
+        XCTAssertEqual(palette.selectedIndex, 0); XCTAssertEqual(shown().first, 0, "↑ scrolls back up")
+    }
+    @MainActor func testSplitViewSplitsWithTheTabBeforeThisOne() {
+        let browser = browser(); defer { clean(browser) }
+        let first = browser.addTab(), second = browser.addTab(), third = browser.addTab()
+        let current = third, fallback = browser.tabs.first { $0.id != current.id }!
+        let previous = [first, second].first { $0.id != fallback.id }!
+        browser.select(previous.id); browser.select(current.id)
+        browser.submitAddress("split", suggestion: AddressSuggestion(title: "Split View", subtitle: "", symbol: "rectangle.split.2x1", url: nil, tabID: nil, command: "Split View"))
+        let group = browser.activeSplitGroup
+        XCTAssertEqual(Set([group?.leftID, group?.rightID]), [current.id, previous.id], "The tab you were just on, not the first in the list")
+    }
+    @MainActor func testPaletteCommandsAnswerToTheirWordsShowOnlyWhenUsefulAndRun() {
+        let browser = browser(); defer { clean(browser) }
+        let tabs = (0..<3).map { index -> BrowserTab in
+            let tab = browser.addTab(); tab.requestedURL = URL(string: "https://example.com/\(index)"); return tab
+        }
+        let middle = browser.tabs[1]; browser.select(middle.id)
+        func titles(_ query: String) -> [String] { browser.paletteCommands(matching: query).map(\.title) }
+        XCTAssertEqual(Set(titles("close")), ["Close Tab", "Close Tabs Below", "Close Tabs Above"])
+        XCTAssertEqual(titles("url"), ["Copy Link"], "Keywords count too")
+        XCTAssertEqual(titles("pin"), ["Pin Tab"]); XCTAssertEqual(titles("develop"), ["Enable Developer Mode"])
+        XCTAssertEqual(titles("swap"), [], "Only in a split")
+        let above = browser.tabs[0]
+        browser.runPaletteCommand("Close Tabs Above")
+        XCTAssertFalse(browser.tabs.contains { $0 === above }); XCTAssertEqual(browser.selectedID, middle.id)
+        browser.toggleSplit()
+        let group = try! XCTUnwrap(browser.activeSplitGroup)
+        XCTAssertEqual(titles("swap"), ["Swap Sides"])
+        browser.runPaletteCommand("Swap Sides")
+        XCTAssertEqual(browser.activeSplitGroup?.leftID, group.rightID); XCTAssertEqual(browser.activeSplitGroup?.rightID, group.leftID)
+        XCTAssertEqual(browser.paletteChoice(for: "Capture Page")?.rows.map(\.title), ["JPEG", "PDF"])
+        _ = tabs
+    }
+    @MainActor func testEveryCommandShowsForItsNameEvenWithAFullListAndAnAddressCompletion() {
+        let browser = browser(); defer { clean(browser) }
+        for index in 0..<2 { let tab = browser.addTab(); tab.requestedURL = URL(string: "https://example.com/\(index)") }
+        browser.setPageZoom(1.5)
+        for command in browser.paletteCommands {
+            let word = command.title.split(separator: " ")[0].lowercased()
+            for page in 0..<10 { browser.browsingHistory.record(URL(string: "https://\(word).com/\(page)")!, title: "\(word) \(page)") }
+            let rows = browser.suggestions(for: word)
+            XCTAssertTrue(rows.contains { $0.command == command.id }, "\(command.title) missing for “\(word)”: \(rows.map(\.title))")
+            XCTAssertLessThanOrEqual(rows.count, AddressAppearance.maximumSuggestions)
+        }
+        XCTAssertNotNil(browser.suggestions(for: "zoom").first?.completion, "The completion still leads")
+    }
+    @MainActor func testZoomPicksALevelAndTheSidebarButtonShowsWhileThePageIsZoomed() {
+        let browser = browser(); defer { clean(browser) }
+        let tab = browser.addTab(); tab.requestedURL = URL(string: "https://example.com/"); browser.select(tab.id); browser.update()
+        let zoom = try! XCTUnwrap(browser.paletteChoice(for: "Zoom"))
+        XCTAssertEqual(zoom.rows.first?.title, "25%"); XCTAssertEqual(zoom.rows.last?.title, "200%")
+        XCTAssertEqual(zoom.picked.map { zoom.rows[$0].title }, "100%", "Starting on the zoom in use")
+        XCTAssertFalse(browser.sidebar.showsZoom)
+        browser.runPaletteCommand("Zoom:1.5")
+        XCTAssertEqual(tab.page.zoom, 1.5, accuracy: 0.001)
+        XCTAssertTrue(browser.sidebar.showsZoom); XCTAssertTrue(browser.sidebar.zoomButton.allowsInteraction)
+        XCTAssertEqual(browser.sidebar.zoomButton.alphaValue, 1, "Shown without hovering")
+        browser.zoomIn(); XCTAssertEqual(tab.page.zoom, 1.75, accuracy: 0.001, "⌘+ steps through the same levels")
+        browser.actualSize()
+        XCTAssertFalse(browser.sidebar.showsZoom); XCTAssertFalse(browser.sidebar.zoomButton.allowsInteraction)
     }
     @MainActor private func browser() -> BrowserController {
         _ = NSApplication.shared
