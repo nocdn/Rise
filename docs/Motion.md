@@ -785,6 +785,32 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
   - The on-device Summarise log now records each press: "follow-up pressed" (warmed or not),
     "follow-up focused" (how long it held the main thread), "keyboard will show" and "field
     moving", each in milliseconds after the press.
+- **Follow-up keyboard on the physical iPhone (21 October 2026):** Time Profiler with waiting
+  threads and context-switch samples on the iPhone 14 Pro, iOS 27.2 (24B5084k), using the normal
+  signed Debug build and `keyboardTiming`. All four openings were in the foreground. The first
+  focus of the launch held the main thread 110 ms, will-show came at 214 ms, and the field moved
+  at 241 ms. Later focuses held it 68–74 ms, will-show came at 145–151 ms, and the field moved
+  at 159–162 ms. The first focus of a launch is not necessarily a cold keyboard process.
+  - Most sampled focus time was inside `UIKeyboardSceneDelegate` reloading input views and the
+    keyboard state manager configuring its delegate, layout, predictions and input traits.
+  - Unlike the Simulator measurement above, the interval after focus returned was largely more
+    main-thread UIKit work: its deferred `setInputViews:` and `UIInputWindowController` placement
+    and layout. It was not simply an idle wait for the keyboard process.
+  - A substantial recurring stack was `_UIKBHTVerifyFrameworkDepth` → `dladdr` → dyld symbol
+    lookup. Its sampling weight before will-show was approximately 50–61 ms on the three later
+    openings; sampling weights are estimates, not exact independently timed subintervals.
+  - Rise's editing callbacks and `BlurCrossfade` were absent from the later focus-to-will-show
+    samples; the 5 ms sampling interval cannot rule out smaller costs.
+  - The same Debug build with `noAccessories` (bypassing the plus/microphone transition and its
+    focus-time haptic preparation) still took 158–163 ms to start moving on later openings,
+    averaging 160 ms versus 161 ms normally. Focus averaged 72 ms versus 71 ms, and will-show
+    averaged 147 ms in both. Three later openings per condition show no material saving from
+    removing the accessory transition; this is not a claim that its cost is exactly zero.
+  - Captures and exported stacks are in `build/profiles/follow-up-iphone-20261021/`, with the
+    clean normal-build baseline in `debug-clean-baseline.trace`. Interrupted captures and
+    background-only openings were discarded. The debug replay now keeps the phone awake for
+    its measurement, restores the previous idle-timer setting afterwards, and creates its output
+    directory before writing `keyboard.txt`.
 - **Opening the panel's keyboard** still costs the main thread about 160 ms, and closing it
   (`resignFirstResponder`) about 47 ms. Only what runs on Core Animation stays smooth through
   that.

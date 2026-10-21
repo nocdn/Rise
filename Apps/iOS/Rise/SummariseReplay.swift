@@ -295,6 +295,12 @@ import UIKit
     /// screen, and the longest frame gap in the second after. `prewarm` warms the keyboard first.
     static func keyboardTiming(in controller: BrowserViewController, savingTo folder: URL?, prewarm: Bool,
                                accessories: Bool = true) async -> Result {
+        // A physical phone can otherwise lock halfway through the replay: focusing still
+        // succeeds in the background, but no onscreen keyboard appears to measure.
+        let application = UIApplication.shared, wasIdleTimerDisabled = application.isIdleTimerDisabled
+        application.isIdleTimerDisabled = true
+        defer { application.isIdleTimerDisabled = wasIdleTimerDisabled }
+        if let folder { try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
         var result = Result()
         SummariseView.replayWithoutAccessories = !accessories
         forceSoftwareKeyboard()

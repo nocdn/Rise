@@ -118,8 +118,17 @@ Sources: [Default-browser criteria](https://developer.apple.com/documentation/xc
 
 ## Release preparation still unverified
 
-- App Store Connect currently shows No Builds. The earlier upload was rejected
-  for unsupported SDK/Xcode; the installed Xcode 27 beta remains a blocker.
+- App Store Connect accepted and processed version 0.1.0 (build 2) on
+  2026-10-21. Its status is **Ready to Submit** after completing encryption
+  metadata for OS-provided encryption. Beta App Review has not been submitted
+  and no testers have been invited.
+- The upload was archived from commit `9ccda35adcd1878375232b55609bb1effa63e750`
+  with App Store Xcode 27.1 (`27A9275`) and the iOS 27.1 SDK (`24A94232`).
+  `CURRENT_PROJECT_VERSION=2` was supplied as a build override; no app features
+  were changed. Automatic App Store distribution signing succeeded, with
+  Production CloudKit/APNs entitlements for the app and matching build 2 for
+  the Downloads widget. This resolves the earlier unsupported-Xcode upload
+  blocker. The global Xcode selection was left unchanged.
 - TestFlight uses CloudKit Production, while local phone installs deliberately
   use Development. Deployment of the RiseTab/RiseSearches production schemas and
   production sync is not established by local success (see `docs/TabSync.md`).
@@ -142,9 +151,10 @@ The requested Downloads image is already preserved, byte-for-byte, as
 The shared `Rise.icon` document references its 1024 × 1024 derivative, both iOS
 configurations select it, and the built iPhone app contains the compiled Rise
 icons and CFBundlePrimaryIcon metadata. No duplicate source asset was needed.
-App Store Connect still shows No Builds; TestFlight gets the icon from an
-accepted upload, not a separate image field. The previous upload's unsupported
-Xcode/SDK rejection remains unresolved; only Xcode 27 beta is installed.
+TestFlight gets the icon from an accepted upload, not a separate image field.
+The processed 0.1.0 (2) upload contains the compiled Rise primary app icon and
+the bundled privacy manifest/policy. Its App Store Connect build is
+[available here](https://appstoreconnect.apple.com/teams/968654d4-7e80-435c-9b7b-3bf5158384d3/apps/6824847354/testflight/ios/a0b61a51-7667-42f6-b589-df2ba46a24a2).
 
 The public corner geometry resolves to 55 points on the paired iPhone 14 Pro.
 The existing scale, downward travel, continuous curves and spring timing are
