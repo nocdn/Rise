@@ -8,8 +8,8 @@ import AppKit
     static let inset = NSSize(width: 12, height: 10)
     static let rowHeight: CGFloat = 18, rowGap: CGFloat = 4, columnGap: CGFloat = 16, countGap: CGFloat = 10
     static let dividerGap: CGFloat = 6
-    /// Off the file count's bottom right corner, across and down.
-    static let gap: CGFloat = 4
+    /// Off the file count's bottom right corner, across and down; its row runs a little below the text.
+    static let gap = CGSize(width: 1, height: 0)
     static let labelFont = NSFont.systemFont(ofSize: 13)
     static let countFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
     static let loadingText = "Loading breakdown"
@@ -42,14 +42,17 @@ import AppKit
         guard breakdown != nil || loading else { hide(); return }
         rows.breakdown = breakdown; rows.total = total; rows.theme = theme; rows.text = text
         panel.fill = background; panel.layer?.borderColor = theme.border.cgColor
+        // The pull request card's shadow: a dark page swallows a light one, so it weighs more there.
+        panel.layer?.shadowOpacity = theme == .dark ? 0.45 : 0.12
         let size = rows.size
         let width = size.width+2*Self.inset.width, height = size.height+2*Self.inset.height
-        let x = max(area.minX+8, min(link.maxX+Self.gap, area.maxX-8-width))
-        let y = min(link.maxY+Self.gap, area.maxY-8-height)
+        let x = max(area.minX+8, min(link.maxX+Self.gap.width, area.maxX-8-width))
+        let y = min(link.maxY+Self.gap.height, area.maxY-8-height)
         let appearing = !isShown
         CATransaction.begin(); CATransaction.setDisableActions(true)
         frame = NSRect(x: x, y: y, width: width, height: height)
         panel.frame = bounds
+        panel.layer?.shadowPath = PageOutline.path(in: panel.bounds, radius: FindBar.radius, continuous: true)
         rows.frame = NSRect(x: Self.inset.width, y: Self.inset.height, width: size.width, height: size.height)
         CATransaction.commit()
         rows.needsDisplay = true

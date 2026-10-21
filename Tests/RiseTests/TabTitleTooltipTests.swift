@@ -55,6 +55,10 @@ final class TabTitleTooltipTests: XCTestCase {
         browser.tabHoverChanged(tab.id, hovering: true)
         try await Task.sleep(for: .milliseconds(Int(TabHoverCards.delay*1000)+150))
         XCTAssertEqual(hover.shownID, tab.id)
+        // Its safe triangle sees every pointer move through a tracking area, which the focused
+        // page isn't sent, so the page's cursor doesn't fight the card's links.
+        XCTAssertFalse(browser.window!.acceptsMouseMovedEvents)
+        XCTAssertTrue(root.trackingAreas.contains { $0.owner === PointerMovesSink.shared && $0.options.contains(.mouseMoved) })
         browser.tabHoverChanged(tab.id, hovering: false)
         // Where a Peek's card and controls go as it opens.
         let peek = Surface(); root.addSubview(peek, positioned: .below, relativeTo: browser.dismissArea)

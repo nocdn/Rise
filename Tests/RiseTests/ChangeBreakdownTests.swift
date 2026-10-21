@@ -86,8 +86,8 @@ final class ChangeBreakdownTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(Int(PullRequestTooltip.breakdownDelay*1000)+150))
         XCTAssertTrue(wanted); XCTAssertTrue(card.breakdownCard.isShown)
         let corner = host.convert(link, from: card.meta)
-        XCTAssertEqual(card.breakdownCard.frame.origin.x, corner.maxX+ChangeBreakdownCard.gap, accuracy: 0.5, "Off the count's bottom right corner")
-        XCTAssertEqual(card.breakdownCard.frame.origin.y, corner.maxY+ChangeBreakdownCard.gap, accuracy: 0.5)
+        XCTAssertEqual(card.breakdownCard.frame.origin.x, corner.maxX+ChangeBreakdownCard.gap.width, accuracy: 0.5, "Off the count's bottom right corner")
+        XCTAssertEqual(card.breakdownCard.frame.origin.y, corner.maxY+ChangeBreakdownCard.gap.height, accuracy: 0.5)
         move(to: NSPoint(x: link.maxX+40, y: link.midY))
         XCTAssertFalse(card.breakdownCard.isShown)
     }

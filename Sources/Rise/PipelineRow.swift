@@ -13,7 +13,7 @@ class CardLinkRow: FlippedView {
     private(set) var linkHovered = false { didSet { if linkHovered != oldValue { needsDisplay = true; onLinkHover?(linkHovered) } } }
     private var pressed = false
     override var mouseDownCanMoveWindow: Bool { false }
-    var linkColor: NSColor { linkHovered ? muted.blended(withFraction: 0.45, of: .white) ?? muted : muted }
+    var linkColor: NSColor { linkHovered ? muted.blended(withFraction: 0.25, of: .white) ?? muted : muted }
 
     func placeLink(_ rect: NSRect) {
         guard linkRect != rect else { return }

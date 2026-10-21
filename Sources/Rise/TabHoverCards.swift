@@ -35,7 +35,8 @@ import AppKit
     /// The Gmail tab asked to pop a conversation out, whose window becomes a Peek.
     /// The page, as its view, asked to pop an email out, whose popup goes in a Peek.
     weak var popoutSource: NSView?
-    fileprivate var tracksPointer = false
+    /// Over the whole window while a card shows, for its safe triangle (`trackPointer`).
+    fileprivate var pointerArea: NSTrackingArea?
     init(storageURL: URL) { summaries = PullRequestSummaries(storageURL: storageURL) }
     /// Tabs whose card is interactive, rather than their title.
     static func hasPreview(_ url: URL?) -> Bool {
@@ -113,7 +114,7 @@ import AppKit
         guard let pr = PullRequest(url: tab.url) else {
             hover.pullRequestCard.dismiss(); hover.gmailCard.dismiss(); hover.calendarCard.dismiss(); hover.kind = .title; hover.shownID = id
             raiseHoverCard(hover.titleCard)
-            if !hover.tracksPointer, let window { hover.tracksPointer = !window.acceptsMouseMovedEvents; window.acceptsMouseMovedEvents = true }
+            trackPointer(true)
             hover.titleCard.showsHint = !(row is PinnedTabTile)
             hover.titleCard.present(title: tab.title, beside: row.convert(row.bounds, to: root), left: sidebar.frame.maxX+6,
                                     pinned: row is PinnedTabTile, theme: theme)
@@ -142,7 +143,7 @@ import AppKit
         }
         raiseHoverCard(hover.pullRequestCard)
         // The safe triangle needs every pointer move, not only those over tracked views.
-        if !hover.tracksPointer, let window { hover.tracksPointer = !window.acceptsMouseMovedEvents; window.acceptsMouseMovedEvents = true }
+        trackPointer(true)
         let anchor = previewAnchor(row)
         hover.pullRequestCard.present(key: pr.key, content: tooltipContent(pr, title: title), left: sidebar.frame.maxX+6,
                               placement: .beside(top: anchor.top, maxBottom: root.bounds.height-8), theme: theme,
@@ -172,7 +173,7 @@ import AppKit
         guard hover.shownID != nil else { return }
         hover.shownID = nil; hover.hiddenAt = CACurrentMediaTime()
         updatePeekCovers()
-        if hover.tracksPointer { window?.acceptsMouseMovedEvents = false; hover.tracksPointer = false }
+        trackPointer(false)
         hover.pullRequestCard.dismiss()
         hover.gmailCard.dismiss()
         hover.calendarCard.dismiss()
@@ -288,6 +289,19 @@ import AppKit
     }
     /// Hover cards go over everything on the page, Peeks and their controls included, which
     /// are added later and would otherwise sit above a card added before them.
+    /// The safe triangle needs every pointer move, not only those over tracked views. A tracking
+    /// area over the window brings them through `sendEvent`; the window's own mouse-moved events
+    /// would go to the focused page too, which sets its cursor (a text cursor over its text)
+    /// over the card's links.
+    func trackPointer(_ tracks: Bool) {
+        let hover = tabHoverCards
+        if tracks, hover.pointerArea == nil {
+            let area = NSTrackingArea(rect: .zero, options: [.mouseMoved, .activeAlways, .inVisibleRect], owner: PointerMovesSink.shared, userInfo: nil)
+            root.addTrackingArea(area); hover.pointerArea = area
+        } else if !tracks, let area = hover.pointerArea {
+            root.removeTrackingArea(area); hover.pointerArea = nil
+        }
+    }
     func raiseHoverCard(_ card: NSView) {
         if let index = root.subviews.firstIndex(of: dismissArea), index > 0, root.subviews[index-1] === card { return }
         root.addSubview(card, positioned: .below, relativeTo: dismissArea)
@@ -318,7 +332,7 @@ import AppKit
             hover.gmailCard.onOpen = { [weak self] email in self?.openGmailEmail(email) }
         }
         raiseHoverCard(hover.gmailCard)
-        if !hover.tracksPointer, let window { hover.tracksPointer = !window.acceptsMouseMovedEvents; window.acceptsMouseMovedEvents = true }
+        trackPointer(true)
         gmailInbox.prepare(account: account, category: gmailCategory, source: tab.page, host: root)
         let anchor = previewAnchor(row)
         hover.gmailCard.present(key: account.baseURL.absoluteString+"|"+gmailCategory.rawValue, inbox: gmailInbox,
@@ -385,7 +399,7 @@ import AppKit
             hover.calendarCard.onOpen = { [weak self] event in self?.openCalendarEvent(event) }
         }
         raiseHoverCard(hover.calendarCard)
-        if !hover.tracksPointer, let window { hover.tracksPointer = !window.acceptsMouseMovedEvents; window.acceptsMouseMovedEvents = true }
+        trackPointer(true)
         calendarAgenda.prepare(account: account, source: tab.page, host: root)
         let anchor = previewAnchor(row)
         hover.calendarCard.present(key: account.baseURL.absoluteString, agenda: calendarAgenda,
@@ -436,4 +450,11 @@ import AppKit
         guard tabHoverCards.shownID == nil, root.window != nil else { return }
         calendarAgenda.prepare(account: account, source: tab.page, host: root, refreshAfter: TabHoverCards.calendarRefresh)
     }
+}
+
+/// Takes the moves a tracking area asks for and does nothing with them: the window's `sendEvent`
+/// has already seen them.
+final class PointerMovesSink: NSResponder {
+    static let shared = PointerMovesSink()
+    override func mouseMoved(with event: NSEvent) {}
 }
