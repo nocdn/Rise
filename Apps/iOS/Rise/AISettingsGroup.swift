@@ -140,7 +140,8 @@ final class AISettingsGroup: UIView, UITextFieldDelegate {
     }
 
     private func updateDetail() {
-        detail.text = saveError ?? "Use AI to ask questions about pages and summarise them. Your API key is stored securely on this device."
+        detail.text = saveError ?? "Ask and Summarise use your AI provider with permission. Keys stay in this device’s Keychain."
+        detail.numberOfLines = saveError == nil ? 3 : 0
         detail.textColor = saveError == nil ? .secondaryLabel : .systemRed
     }
 

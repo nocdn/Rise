@@ -7,6 +7,12 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let scene = scene as? UIWindowScene else { return }
         let window = RiseWindow(windowScene: scene)
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains(PrivateTabsAudit.argument) {
+            let controller = BrowserViewController(startURL: nil)
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            PrivateTabsAudit.run(in: controller)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains(TabSyncAudit.argument) {
             let controller = BrowserViewController(startURL: nil)
             window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
@@ -174,6 +180,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneWillResignActive(_ scene: UIScene) {
+        (window?.rootViewController as? BrowserViewController)?.cancelListening()
         if let window { (window.rootViewController as? BrowserViewController)?.quickActions.setActive(false, in: window) }
         (window?.rootViewController as? BrowserViewController)?.panelMotion.stop()
         (window?.rootViewController as? BrowserViewController)?.setTabPreviewsActive(false)

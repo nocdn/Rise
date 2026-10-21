@@ -83,7 +83,14 @@ extension BrowserViewController {
     }
 
     private func downloadMenu(for item: MobileDownloads.Item, from button: UIButton) -> [UIMenuElement] {
-        let remove = { [id = item.id] in MobileDownloads.shared.remove(id) }
+        let remove = { [weak self, id = item.id] in
+            do { try MobileDownloads.shared.deleteFile(id) }
+            catch {
+                let alert = UIAlertController(title: "Couldn’t delete file", message: error.localizedDescription, preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "OK", style: .default))
+                self?.topPresenter.present(alert, animated: true)
+            }
+        }
         guard item.state == .finished else {
             let title = item.state == .downloading ? "Cancel Download" : "Delete File"
             let symbol = item.state == .downloading ? "xmark" : "trash"

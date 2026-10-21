@@ -8,8 +8,9 @@ final class AppSettingsPanel: UIView {
     let syncRow = SettingsToggleRow("Sync tabs with iCloud", icon: MenuIcons.syncTabs, colour: .systemBlue, iconSide: 26)
     let autoplayRow = SettingsToggleRow("Autoplay videos", icon: MenuIcons.video, colour: .systemGreen, iconSide: 26)
     let ai = AISettingsGroup()
+    let privacyRow = SettingsNavigationRow("Privacy Policy")
     private let scroll = UIScrollView()
-    var buttons: [UIButton] { [closeButton, syncRow, autoplayRow]+ai.buttons }
+    var buttons: [UIButton] { [closeButton, syncRow, autoplayRow, privacyRow]+ai.buttons }
     var keyboardInset: CGFloat = 0 {
         didSet { setNeedsLayout(); layoutIfNeeded(); revealKey() }
     }
@@ -26,6 +27,7 @@ final class AppSettingsPanel: UIView {
         scroll.keyboardDismissMode = .interactive
         scroll.alwaysBounceVertical = false
         scroll.addSubview(ai)
+        scroll.addSubview(privacyRow)
         ai.onChanged = { [weak self] in self?.setNeedsLayout() }
         ai.onEditing = { [weak self] in self?.revealKey() }
         for row in [syncRow, autoplayRow] {
@@ -92,6 +94,8 @@ final class AppSettingsPanel: UIView {
         autoplayDetail.frame = CGRect(x: detail.frame.minX, y: autoplayRow.frame.maxY+12, width: textWidth, height: autoplaySize.height)
         ai.frame = CGRect(x: syncRow.frame.minX, y: autoplayDetail.frame.maxY+SiteSettingsPanel.groupGap,
                           width: width, height: ai.height(for: width))
-        scroll.contentSize = CGSize(width: bounds.width, height: ai.frame.maxY+12)
+        privacyRow.frame = CGRect(x: ai.frame.minX, y: ai.frame.maxY+SiteSettingsPanel.groupGap,
+                                  width: width, height: SiteSettingsPanel.rowHeight)
+        scroll.contentSize = CGSize(width: bounds.width, height: privacyRow.frame.maxY+12)
     }
 }

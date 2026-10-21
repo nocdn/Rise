@@ -47,14 +47,29 @@ offers Select All, Done and Delete Selected. Bulk deletion saves once and animat
 rows into the gaps. Opening History starts in its normal browsing mode; row-swipe deletion
 is suspended in selection mode, while the panel's X and edge-back still work normally.
 
-New Private Tab opens a separate full-screen private session with a visible label and a close
-button. Its tabs and Peeks share one nonpersistent `WKWebsiteDataStore`, separate from regular
-cookies and storage. Repeating the shortcut adds a blank private tab; closing private browsing
-ends that session. Private tabs do not restore after termination, enter history, learn site
-searches, sync through iCloud, save previews/favicons, or write Summarise performance logs.
-Typing does not send remote suggestions or speculative favicon requests. Protection preferences
-are in memory for that session. Private page content is covered before the app-switcher snapshot.
-Files explicitly downloaded in private browsing are still saved in the normal Downloads folder.
+New Private Tab opens the ordinary New Page panel already deep purple, on warm and cold
+launches. There is no separate private screen. The eye button to the left of X toggles the
+pending page between regular and private browsing without changing its draft or completion.
+Enabling it reveals purple from bottom to top over 0.28 seconds, then stretches the top edge
+6 points and settles with a small rubber band; the bottom edge stays anchored. The shortcut
+starts purple without playing that transition. Purple is identical in light and dark modes.
+
+Private tabs appear alongside regular tabs in the main switcher. Their tabs and Peeks share
+one nonpersistent `WKWebsiteDataStore`, separate from regular cookies and local storage.
+Closing the last private tab discards that store and its in-memory protection preferences.
+Private tabs never enter the closed-tab undo stack, including shake-to-restore; even the
+last private tab can be swiped away, returning to an empty regular New Page panel.
+They do not restore after termination, enter history, learn site searches, sync through
+iCloud, save previews/favicons, or write Summarise performance logs. The shared history and
+learned sites remain readable for suggestions. Remote suggestions use a separate ephemeral,
+cookie-free client whose cache is discarded when leaving the private search; speculative
+favicon requests and cache writes are suppressed. Private page, panel and deck content are
+covered before the app-switcher snapshot. Explicit downloads still save files normally.
+
+`PrivateTabsAudit` verifies real WebKit cookie/local-storage separation, background callbacks,
+disk/session/sync exclusions, learned suggestions, rapid mode changes, the gradient and anchored
+pulse, mixed-card swipes, no private undo, fresh cookies after the last close, and warm/cold
+shortcut routing. It saves light/dark and intermediate transition screenshots.
 
 `HomeScreenActionsAudit` exercises routing and isolation using temporary fixtures. Run it after
 building with `scripts/restart.sh --ios --simulator <UDID>`:

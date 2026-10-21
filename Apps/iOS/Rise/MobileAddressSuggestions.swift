@@ -11,6 +11,12 @@ import WebKit
     private struct Visit { weak var page: WKWebView?; let key: String }
     private var lastAddresses: [ObjectIdentifier: Visit] = [:]
     private var saveTask: Task<Void, Never>?
+    private let privatePages = NSHashTable<WKWebView>.weakObjects()
+
+    func register(_ page: WKWebView, privateBrowsing: Bool) {
+        if privateBrowsing { privatePages.add(page) }
+    }
+    func isPrivate(_ page: WKWebView) -> Bool { !recordsBrowsing || privatePages.contains(page) }
 
     init(directory: URL, recordsBrowsing: Bool = true) {
         self.recordsBrowsing = recordsBrowsing
@@ -22,7 +28,7 @@ import WebKit
         learner.onLearn = { [weak self] in self?.scheduleSave(); self?.onChange?() }
     }
     func changed(_ page: WKWebView) {
-        guard recordsBrowsing else { return }
+        guard !isPrivate(page) else { return }
         learner.addressChanged(page)
         if !page.isLoading, let url = page.url, let key = BrowsingHistory.key(url) {
             let id = ObjectIdentifier(page)
@@ -31,7 +37,7 @@ import WebKit
         }
     }
     func committed(_ page: WKWebView) {
-        guard recordsBrowsing else { return }
+        guard !isPrivate(page) else { return }
         guard let url = page.url, let key = BrowsingHistory.key(url) else { return }
         lastAddresses = lastAddresses.filter { $0.value.page != nil }
         lastAddresses[ObjectIdentifier(page)] = Visit(page: page, key: key)

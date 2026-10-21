@@ -45,6 +45,7 @@ import WebKit
     }
 
     func update(tabs: [BrowserTab], selected: BrowserTab, viewport: CGSize, stripHeight: CGFloat) {
+        let tabs = tabs.filter { !$0.isPrivateBrowsing }
         self.tabs = tabs; self.selected = selected; self.viewport = viewport; self.stripHeight = stripHeight
         reorderQueue()
         revision += 1
@@ -79,12 +80,14 @@ import WebKit
     }
 
     func save(_ tab: BrowserTab) {
+        guard !tab.isPrivateBrowsing else { return }
         guard let url = tab.sessionTab.url, tab.snapshot != nil || tab.favicon != nil else { return }
         cache.save(id: tab.id, url: url, picture: tab.snapshot, favicon: tab.favicon)
     }
 
     private func key(for tab: BrowserTab) -> Key? {
-        tab.sessionTab.url.map { Key(id: tab.id, url: $0) }
+        guard !tab.isPrivateBrowsing else { return nil }
+        return tab.sessionTab.url.map { Key(id: tab.id, url: $0) }
     }
     private func isCurrent(_ tab: BrowserTab, key: Key) -> Bool {
         tabs.contains { $0 === tab } && tab.sessionTab.url == key.url

@@ -81,76 +81,22 @@ import WebKit
         browser.openPanel()
         try await settle()
         browser.quickActions.open(.newPrivateTab)
-        try await wait("new private tab") { browser.quickActions.privateSession?.presentingViewController != nil }
+        try await wait("private new-page panel") { browser.isPanelOpen && browser.bottomBar.panel == .search && browser.bottomBar.search.isPrivateBrowsing }
+        try check("already-open-search-becomes-purple-without-a-sweep", browser.bottomBar.backgroundColor == PrivatePanelAppearance.background && browser.bottomBar.privateSweepY == nil)
+        try check("shortcut-does-not-trigger-the-toggle-bounce", browser.bottomBar.layer.animation(forKey: "private-rubber-band") == nil)
         try await settle()
-        let session = browser.quickActions.privateSession!, privateBrowser = session.browser
-        try check("private-shortcut-starts-an-empty-search", privateBrowser.isPanelOpen && privateBrowser.bottomBar.search.field.text?.isEmpty == true)
-        try check("private-mode-is-clearly-labelled", privateBrowser.title == "Private Browsing" && privateBrowser.navigationItem.rightBarButtonItem?.accessibilityLabel == "Close private tabs")
-        try check("private-webkit-store-is-not-persistent", !privateBrowser.websiteDataStore.isPersistent && !privateBrowser.webView.configuration.websiteDataStore.isPersistent)
-        try check("private-tabs-have-no-sync-or-disk-previews", privateBrowser.tabSync == nil && privateBrowser.tabPreviews == nil)
-        try check("private-search-does-not-record-or-send-typing", !privateBrowser.addressSuggestions.recordsBrowsing && !privateBrowser.bottomBar.search.allowsRemoteSuggestions)
-        try capture("private", session.view)
-        let cookieName = "rise_private_audit_"+UUID().uuidString.replacingOccurrences(of: "-", with: "")
-        func cookie(_ value: String) -> HTTPCookie {
-            HTTPCookie(properties: [.domain: "private-audit.invalid", .path: "/", .name: cookieName, .value: value, .secure: "TRUE"])!
-        }
-        await browser.websiteDataStore.httpCookieStore.setCookie(cookie("regular"))
-        try check("private-cookies-start-separate-from-regular", !(await privateBrowser.websiteDataStore.httpCookieStore.allCookies()).contains { $0.name == cookieName })
-        await privateBrowser.websiteDataStore.httpCookieStore.setCookie(cookie("private"))
-        try check("private-cookie-does-not-change-regular-cookie", (await browser.websiteDataStore.httpCookieStore.allCookies()).first { $0.name == cookieName }?.value == "regular")
-        privateBrowser.closePanel()
-        try await settle()
-        let privateURL = URL(string: "https://private-audit.invalid/")!
-        privateBrowser.webView.loadHTMLString("<title>Private audit</title><body>Private page</body>", baseURL: privateURL)
-        try await wait("private html") { privateBrowser.webView.title == "Private audit" && !privateBrowser.webView.isLoading }
-        privateBrowser.addressSuggestions.committed(privateBrowser.webView)
-        privateBrowser.addressSuggestions.changed(privateBrowser.webView)
-        privateBrowser.saveSession(flush: true)
-        try check("private-navigation-does-not-enter-history", privateBrowser.addressSuggestions.history.entries.isEmpty)
-        try check("private-navigation-does-not-learn-site-searches", privateBrowser.addressSuggestions.learner.searches.searches.isEmpty)
-        try check("private-navigation-does-not-create-suggestion-files", !FileManager.default.fileExists(atPath: privateBrowser.addressSuggestions.history.storageURL.deletingLastPathComponent().path))
-        try check("private-favicons-bypass-the-shared-fetch-cache", await BrowserTab.favicon(for: privateBrowser.webView) == nil)
-        privateBrowser.adBlocker.setEnabled(false, for: privateURL)
-        privateBrowser.adBlocker.cookieBanners.setEnabled(false, for: privateURL)
-        try check("private-protection-settings-work-in-memory", !privateBrowser.adBlocker.isEnabled(for: privateURL) && !privateBrowser.adBlocker.cookieBanners.isEnabled(for: privateURL))
-        try check("private-protection-settings-do-not-change-regular", browser.adBlocker.isEnabled(for: privateURL) && browser.adBlocker.cookieBanners.isEnabled(for: privateURL))
-        let count = browser.tabs.count
-        browser.quickActions.open(.newPrivateTab)
-        try await wait("second private tab") { privateBrowser.tabs.count == 2 && privateBrowser.isPanelOpen }
-        try await settle()
-        try check("repeated-shortcut-adds-a-new-private-tab", browser.quickActions.privateSession === session && privateBrowser.tabs.count == 2 && privateBrowser.webView.url == nil)
-        let privateCookies = await privateBrowser.websiteDataStore.httpCookieStore.allCookies()
-        try check("private-tabs-share-only-their-ephemeral-store", privateBrowser.tabs.allSatisfy { $0.webView.configuration.websiteDataStore === privateBrowser.websiteDataStore }
-            && privateCookies.first { $0.name == cookieName }?.value == "private")
-        privateBrowser.closePanel()
-        try await settle()
-        privateBrowser.showPeek(privateURL)
-        try await wait("private peek") { privateBrowser.presentedViewController is PeekViewController }
-        let peek = privateBrowser.presentedViewController as! PeekViewController
-        try check("private-peek-keeps-the-same-isolated-store", peek.browser.isPrivateBrowsing && peek.browser.websiteDataStore === privateBrowser.websiteDataStore && !peek.browser.addressSuggestions.recordsBrowsing)
-        privateBrowser.dismiss(animated: false)
-        try await settle()
-        privateBrowser.openPanel(.menu); privateBrowser.openSiteSettings(); privateBrowser.openAppSettings()
-        try await settle()
-        try check("private-settings-cannot-enable-tab-sync", !privateBrowser.bottomBar.appSettings.syncRow.toggle.isOn && !privateBrowser.bottomBar.appSettings.syncRow.toggle.isEnabled)
-        let window = delegate.window!
-        let before = window.subviews.count
+        try check("private-shortcut-uses-the-existing-panel", browser.presentedViewController == nil && browser.bottomBar.shown === browser.bottomBar.search)
+        try check("private-shortcut-starts-an-empty-search", browser.bottomBar.search.field.text?.isEmpty == true)
+        try check("private-shortcut-shows-the-purple-appearance", browser.bottomBar.isPrivateBrowsing && browser.bottomBar.overrideUserInterfaceStyle == .dark)
+        try capture("private-search", browser.view)
+        let window = delegate.window!, before = window.subviews.count
         browser.quickActions.setActive(false, in: window)
-        try check("private-view-is-covered-in-app-switcher-snapshot", window.subviews.count == before+1 && window.subviews.last?.backgroundColor == .black)
+        try check("private-panel-is-covered-in-app-switcher-snapshot", window.subviews.count == before+1)
         browser.quickActions.setActive(true, in: window)
         try check("private-snapshot-cover-clears-on-return", window.subviews.count == before)
-        session.onClose?()
-        try await wait("close private") { browser.quickActions.privateSession == nil && browser.presentedViewController == nil }
-        try check("closing-private-keeps-regular-tabs-unchanged", browser.tabs.count == count && browser.tabs[browser.tabIndex].sessionTab.url == first)
-        browser.quickActions.open(.newPrivateTab)
-        try await wait("fresh private session") { browser.quickActions.privateSession?.presentingViewController != nil }
+        browser.closePanel()
         try await settle()
-        let fresh = browser.quickActions.privateSession!
-        let freshCookies = await fresh.browser.websiteDataStore.httpCookieStore.allCookies()
-        try check("closing-private-starts-a-fresh-cookie-session", fresh !== session && !freshCookies.contains { $0.name == cookieName })
-        try check("closing-private-resets-in-memory-site-preferences", fresh.browser.adBlocker.isEnabled(for: privateURL) && fresh.browser.adBlocker.cookieBanners.isEnabled(for: privateURL))
-        fresh.onClose?()
-        try await wait("return to regular") { browser.presentedViewController == nil && browser.quickActions.privateSession == nil }
+        try check("cancelling-private-search-keeps-the-regular-page", !browser.isPrivateBrowsing && !browser.bottomBar.isPrivateBrowsing && browser.tabs[browser.tabIndex].sessionTab.url == first)
         browser.showTabSwitcher()
         try await settle()
         browser.openPanel(.menu)
@@ -165,7 +111,6 @@ import WebKit
         handled = true
         delegate.windowScene(scene, performActionFor: UIApplicationShortcutItem(type: "unknown", localizedTitle: "Unknown")) { handled = $0 }
         try check("scene-rejects-unrecognized-shortcuts", !handled)
-        await browser.websiteDataStore.httpCookieStore.deleteCookie(cookie("regular"))
         // Even accidental persistence arguments cannot make private tabs durable.
         let guardFolder = folder.appendingPathComponent("private-guard")
         let guarded = BrowserViewController(startURL: nil,

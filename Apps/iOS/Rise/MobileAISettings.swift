@@ -23,13 +23,39 @@ import Security
 
     var enabled: Bool {
         get { defaults.object(forKey: "Rise.AI.Enabled") as? Bool ?? true }
-        set { defaults.set(newValue, forKey: "Rise.AI.Enabled"); notify() }
+        set {
+            defaults.set(newValue, forKey: "Rise.AI.Enabled")
+            if !newValue { revokeSharingConsent() }
+            notify()
+        }
     }
     var provider: AIProvider {
         get { AIProvider(rawValue: defaults.string(forKey: AIProvider.preferenceKey) ?? "") ?? .openRouter }
-        set { defaults.set(newValue.rawValue, forKey: AIProvider.preferenceKey); notify() }
+        set {
+            if newValue != provider { consentRevision += 1 }
+            defaults.set(newValue.rawValue, forKey: AIProvider.preferenceKey)
+            notify()
+        }
     }
     func key(for provider: AIProvider) -> String { credentials.key(for: provider) }
+
+    // Versioned and provider-specific: an existing key or the default-on toggle never
+    // counts as permission to send page content. Disabling AI withdraws permission.
+    private static let sharingVersion = 1
+    private(set) var consentRevision = 0
+    func hasSharingConsent(for provider: AIProvider) -> Bool {
+        defaults.integer(forKey: consentKey(provider)) == Self.sharingVersion
+    }
+    func allowSharing(with provider: AIProvider) {
+        defaults.set(Self.sharingVersion, forKey: consentKey(provider))
+        notify()
+    }
+    func revokeSharingConsent() {
+        for provider in AIProvider.allCases { defaults.removeObject(forKey: consentKey(provider)) }
+        consentRevision += 1
+        notify()
+    }
+    private func consentKey(_ provider: AIProvider) -> String { "Rise.AI.SharingConsent.\(provider.rawValue)" }
     func setKey(_ value: String, for provider: AIProvider) throws {
         try credentials.set(value.trimmingCharacters(in: .whitespacesAndNewlines), for: provider)
         notify()

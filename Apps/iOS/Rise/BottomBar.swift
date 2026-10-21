@@ -7,7 +7,7 @@ import UIKit
 /// page's address and a few actions, whose Find turns it into a find field above the keyboard.
 /// Either way the bar's contents swap with a quick, blurred crossfade.
 final class BottomBar: UIView {
-    enum Panel { case search, menu, tabMenu, find, siteSettings, appSettings, downloads, history }
+    enum Panel { case search, menu, tabMenu, find, siteSettings, appSettings, privacyPolicy, downloads, history }
 
     /// The buttons' row, and the space above it.
     static let rowHeight: CGFloat = 42
@@ -37,6 +37,20 @@ final class BottomBar: UIView {
     let home = UIView()
     /// New Page's panel: a search.
     let search = SearchPanel()
+    private let privacyAppearance = PrivatePanelAppearance()
+    private(set) var isPrivateBrowsing = false
+    #if DEBUG
+    var privateSweepY: CGFloat? { privacyAppearance.shownSweepY }
+    #endif
+
+    func setPrivateBrowsing(_ enabled: Bool, animated: Bool) {
+        guard isPrivateBrowsing != enabled else {
+            if !animated { privacyAppearance.finish(on: self) }
+            return
+        }
+        isPrivateBrowsing = enabled
+        privacyAppearance.apply(enabled, to: self, animated: animated)
+    }
     /// More's panel: the page's address, with large buttons under it.
     let menu = MenuPanel()
     let tabMenu = TabMenuPanel()
@@ -45,6 +59,7 @@ final class BottomBar: UIView {
     /// Site protections, currently a visual preview.
     let siteSettings = SiteSettingsPanel()
     let appSettings = AppSettingsPanel()
+    let privacyPolicy = PrivacyPolicyPanel()
     /// More's Downloads: the list of downloads.
     let downloads = DownloadsPanel()
     let history = HistoryPanel()
@@ -65,7 +80,7 @@ final class BottomBar: UIView {
     private var copySuccessTask: Task<Void, Never>?
     /// Whichever of the row, the search and the menu is showing, if any.
     private(set) var shown: UIView?
-    private var contents: [UIView] { [home, search, menu, tabMenu, find, siteSettings, appSettings, downloads, history] }
+    private var contents: [UIView] { [home, search, menu, tabMenu, find, siteSettings, appSettings, privacyPolicy, downloads, history] }
     /// Collapsed, only the strip remains; set it inside an animation to animate.
     var isCollapsed = false {
         didSet {
@@ -110,6 +125,10 @@ final class BottomBar: UIView {
 
     static func appSettingsHeight(width: CGFloat, safeBottom: CGFloat) -> CGFloat {
         searchTop+AppSettingsPanel.height+max(safeBottom, 16)
+    }
+
+    static func privacyPolicyHeight(safeBottom: CGFloat) -> CGFloat {
+        searchTop+PrivacyPolicyPanel.height+max(safeBottom, 16)
     }
 
     static func historyHeight(screenHeight: CGFloat, safeTop: CGFloat) -> CGFloat {
@@ -167,7 +186,7 @@ final class BottomBar: UIView {
         for button in [tabsButton, newPageButton] { row.addSubview(button) }
         row.addSubview(moreLanding)
         moreLanding.addSubview(moreButton)
-        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton, tabMenu.historyButton, history.closeButton]+menu.buttons+siteSettings.buttons+appSettings.buttons+downloads.buttons+find.buttons+[find.modeButton, find.sendButton] {
+        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton, search.privateButton, tabMenu.historyButton, history.closeButton]+menu.buttons+siteSettings.buttons+appSettings.buttons+privacyPolicy.buttons+downloads.buttons+find.buttons+[find.modeButton, find.sendButton] {
             // A light, crisp tap as the finger lands, rather than a soft thud; actions wait for it to lift.
             button.addAction(UIAction { [weak self] _ in self?.tap.impactOccurred(intensity: 0.5) }, for: .touchDown)
         }
@@ -203,6 +222,7 @@ final class BottomBar: UIView {
         case .find: find
         case .siteSettings: siteSettings
         case .appSettings: appSettings
+        case .privacyPolicy: privacyPolicy
         case .downloads: downloads
         case .history: history
         case nil: home
@@ -314,6 +334,7 @@ final class BottomBar: UIView {
         place(siteSettings, Self.searchTop, SiteSettingsPanel.height)
         place(appSettings, Self.searchTop, AppSettingsPanel.height)
         let safeBottom = window?.safeAreaInsets.bottom ?? 0
+        place(privacyPolicy, Self.searchTop, max(0, bounds.height-Self.searchTop-max(safeBottom,16)))
         let historyHeight = Self.historyHeight(screenHeight: superview?.bounds.height ?? bounds.height,
                                                safeTop: window?.safeAreaInsets.top ?? 0)
         place(history, Self.searchTop, max(0, historyHeight-Self.searchTop-max(safeBottom,16)))

@@ -759,6 +759,26 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
   switcher's own rate link from `prepare` through dragging, catching and landing changes both
   of those tracking phases to 120 Hz on the iPhone. The replay polls the presentation layers
   without a display link so its measurement cannot make the screen faster itself.
+- **The follow-up field's keyboard (21 October 2026),** measured on the Simulator with the
+  `keyboardTiming` replay, which forces the software keyboard as WebDriverAgent does (a headless
+  Simulator otherwise acts as if a hardware keyboard is attached and shows none). From the press:
+  - Cold, the launch's first keyboard: `becomeFirstResponder` held the main thread 60–110 ms, the
+    keyboard's will-show came at 140–210 ms and the field (riding on the keyboard) moved at
+    160–230 ms, with a 90–120 ms frame.
+  - Warm, every later one: 15–30 ms held, will-show at 60–85 ms, moving at 75–115 ms, with a
+    45–50 ms frame right after focusing.
+  - Between focusing and will-show the main thread is idle (a `sample` showed it in the run
+    loop): it waits on the keyboard, which iOS hosts in another process. Nothing in Rise can
+    shorten that.
+  - The plus and microphone coming in make no difference (`noAccessories` measures without them).
+  - Warming at launch (`KeyboardWarmer`: an off-screen field with the follow-up field's traits,
+    focused and let go in one turn of the run loop, nothing shown) brought the cold case to
+    115–135 ms for will-show and 140–180 ms for moving. A warmer without the field's traits
+    (no suggestions, a plain return key) helped less. Rise now warms it a second after the browser
+    first shows, unless New Page opens at launch or anything else is under way.
+  - The on-device Summarise log now records each press: "follow-up pressed" (warmed or not),
+    "follow-up focused" (how long it held the main thread), "keyboard will show" and "field
+    moving", each in milliseconds after the press.
 - **Opening the panel's keyboard** still costs the main thread about 160 ms, and closing it
   (`resignFirstResponder`) about 47 ms. Only what runs on Core Animation stays smooth through
   that.
@@ -858,6 +878,9 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
     load fingerprint, so only the one taken as the pinch starts can find it.
   - `cacheProbe`: on the real Mercury 3 post, writes its text's fingerprint over five seconds and
     after Back and Forward, and the tab's, to `cache.txt`.
+  - `keyboardTiming [prewarm] [noAccessories]`: forces the software keyboard and focuses the
+    follow-up field four times, writing to `keyboard.txt` how long focusing held the main thread,
+    when will-show came, when the field moved and the long frames, each from the press.
   - `followUpKeyboard`: in real time, recalls a summary from More, focuses the follow-up field,
     and lets the keyboard go 1.5 s later, for a screen recording. It needs a software keyboard:
     a headless Simulator with a hardware keyboard shows none.

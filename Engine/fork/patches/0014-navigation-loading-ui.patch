@@ -1,0 +1,24 @@
+--- a/chrome/browser/rise/RiseChromium.h
++++ b/chrome/browser/rise/RiseChromium.h
+@@ -285,6 +285,8 @@
+ @property (nonatomic, weak, nullable) id<RCBrowserViewDelegate> delegate;
+ @property (nonatomic, readonly, nullable) NSURL *URL;
+ @property (nonatomic, readonly, nullable) NSString *title;
++/// Navigation loading state for browser UI. Late subframe loads on a finished page do not
++/// restart the tab's progress or turn Reload back into Stop.
+ @property (nonatomic, readonly) BOOL isLoading;
+ @property (nonatomic, readonly) BOOL canGoBack;
+ @property (nonatomic, readonly) BOOL canGoForward;
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -1963,7 +1963,9 @@
+   return _contents ? base::SysUTF16ToNSString(_contents->GetTitle()) : nil;
+ }
+ - (BOOL)isLoading {
+-  return _contents ? _contents->IsLoading() : _pendingURL != nil;
++  // IsLoading includes lazy frames started while scrolling an already loaded page.
++  // Use Chrome's loading-UI policy, which distinguishes those from navigation.
++  return _contents ? _contents->ShouldShowLoadingUI() : _pendingURL != nil;
+ }
+ - (BOOL)canGoBack {
+   return _contents && _contents->GetController().CanGoBack();

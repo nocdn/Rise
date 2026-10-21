@@ -60,15 +60,40 @@ enum ModelService {
         guard MobileAISettings.shared.enabled else {
             throw PageAssistant.Failure.service("AI features are disabled in App settings.")
         }
-        #endif
+        guard let key = provider.apiKey, !key.isEmpty else {
+            throw PageAssistant.Failure.service("Add an \(provider.provider.title) API key in App settings.")
+        }
+        // Every mobile AI path (Ask, Summarise and follow-ups) passes this gate before
+        // a client can create a network request. Key entry alone is not consent.
+        try await MobileAIConsent.shared.authorize(provider.provider)
+        try Task.checkCancellation()
+        switch provider.provider {
+        case .openRouter:
+            try await OpenRouterClient.run(messages, choice: provider, session: session) { event in
+                try await deliver(event, provider: provider.provider, handle: handle)
+            }
+        case .openAI:
+            try await OpenAIClient.run(messages, choice: provider, session: session) { event in
+                try await deliver(event, provider: provider.provider, handle: handle)
+            }
+        }
+        #else
         switch provider.provider {
         case .openRouter: try await OpenRouterClient.run(messages, choice: provider, session: session, handle: handle)
-        #if os(macOS)
         case .openCode: try await OpenCodeClient.run(messages, session: session, handle: handle)
-        #endif
         case .openAI: try await OpenAIClient.run(messages, choice: provider, session: session, handle: handle)
         }
+        #endif
     }
+
+    #if os(iOS)
+    @MainActor private static func deliver(_ event: ModelEvent, provider: AIProvider,
+                                           handle: (ModelEvent) async throws -> Void) async throws {
+        guard MobileAISettings.shared.enabled,
+              MobileAISettings.shared.hasSharingConsent(for: provider) else { throw CancellationError() }
+        try await handle(event)
+    }
+    #endif
 
     static func errorMessage(in data: Data) -> String? {
         let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]

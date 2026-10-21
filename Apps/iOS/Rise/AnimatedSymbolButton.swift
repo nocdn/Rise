@@ -33,9 +33,15 @@ final class AnimatedSymbolButton: UIButton {
     }
 
     func setSymbol(_ symbol: String) {
-        guard symbolName != symbol else { return }
-        symbolName = symbol
-        let previous = glyph, next = Self.imageView(symbol, configuration: symbolConfiguration)
+        setGlyph(UIImage(systemName: symbol, withConfiguration: symbolConfiguration), name: symbol)
+    }
+
+    func setGlyph(_ image: UIImage?, name: String) {
+        guard symbolName != name else { return }
+        symbolName = name
+        let previous = glyph, next = UIImageView(image: image)
+        next.contentMode = .center
+        next.isUserInteractionEnabled = false; next.isAccessibilityElement = false
         glyph = next
         next.alpha = 0
         addSubview(next)

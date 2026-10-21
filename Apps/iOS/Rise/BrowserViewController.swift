@@ -1,6 +1,7 @@
 import UIKit
 import WebKit
 import SwiftUI
+import SafariServices
 
 /// The iOS shell: a tab's page under a status bar strip and above a bottom bar, with the other
 /// tabs in a switcher. Pages that a Peek replaced in a tab are held for Back.
@@ -33,8 +34,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private var isSwipingToTabs = false
     private lazy var backSwipe = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(swipeBack))
     private lazy var panelBackSwipe = UIPanGestureRecognizer(target: self, action: #selector(swipePanelBack))
-    let isPrivateBrowsing: Bool
-    let websiteDataStore: WKWebsiteDataStore
+    private let privateBrowsingOnly: Bool
+    var isPrivateBrowsing: Bool { currentTab.isPrivateBrowsing }
+    var websiteDataStore: WKWebsiteDataStore { webView.configuration.websiteDataStore }
+    private let regularWebsiteDataStore: WKWebsiteDataStore
+    private var transientPrivateSession: MobilePrivateSession?
+    private var lastRegularTabID: UUID?
     lazy var quickActions = BrowserQuickActions(browser: self)
     private let sessionStore: MobileBrowserSessionStore?
     private var lastSavedSession: MobileBrowserSession?
@@ -45,6 +50,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private var hasPendingSharedTabs = false
     /// Links from other apps, waiting for the browser to be free to open them.
     private var pendingLinks: [URL] = []
+    private var pendingPrivacyPolicy = false
     private let allowsPeek: Bool
     private var opensSearchOnFirstAppearance: Bool
     /// Fills the area behind the status bar with the colour along the page's top edge, as Arc
@@ -67,7 +73,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private var scrollObservation: NSKeyValueObservation?
     /// Keeps More's address and its Back and Forward up to date with the page.
     private var addressObservations: [NSKeyValueObservation] = []
-    let adBlocker: MobileAdBlocker
+    private let regularAdBlocker: MobileAdBlocker
+    var adBlocker: MobileAdBlocker { blocker(for: webView) }
     let videoPlayback: VideoPlaybackPolicy
     var isVideoContextMenuOpen = false
     weak var adBlockingPage: WKWebView?
@@ -125,17 +132,17 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
          previewCacheURL: URL? = nil, suggestionsDirectory: URL? = nil,
          isPrivateBrowsing: Bool = false, websiteDataStore: WKWebsiteDataStore? = nil,
          videoPlayback: VideoPlaybackPolicy = .shared) {
-        self.isPrivateBrowsing = isPrivateBrowsing
+        privateBrowsingOnly = isPrivateBrowsing
         self.videoPlayback = videoPlayback
         let dataStore: WKWebsiteDataStore
         if isPrivateBrowsing { dataStore = websiteDataStore.flatMap { $0.isPersistent ? nil : $0 } ?? .nonPersistent() }
         else { dataStore = websiteDataStore ?? .default() }
-        self.websiteDataStore = dataStore
+        regularWebsiteDataStore = dataStore
         addressSuggestions = MobileAddressSuggestions(directory: suggestionsDirectory ??
             sessionStore?.fileURL.deletingLastPathComponent() ?? URL.temporaryDirectory.appendingPathComponent("RiseAddresses-\(UUID())"),
             recordsBrowsing: !isPrivateBrowsing)
         let blocker = adBlocker ?? (isPrivateBrowsing ? MobileAdBlocker(preferences: nil) : .shared)
-        self.adBlocker = blocker
+        regularAdBlocker = blocker
         self.sessionStore = allowsPeek && !isPrivateBrowsing ? sessionStore : nil
         self.tabSync = allowsPeek && !isPrivateBrowsing ? tabSync : nil
         tabPreviews = allowsPeek && !isPrivateBrowsing ? previewCacheURL.map { BackgroundTabPreviews(cacheURL: $0, adBlocker: blocker) } : nil
@@ -146,7 +153,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             tabs = restored.tabs.map { BrowserTab(webView: Self.makeWebView(dataStore: dataStore, videoPlayback: videoPlayback), restoring: $0) }
             tabIndex = restored.tabs.firstIndex { $0.id == restored.selectedTabID } ?? 0
         } else {
-            tabs = [BrowserTab(webView: Self.makeWebView(dataStore: dataStore, videoPlayback: videoPlayback), restoring: .init(url: startURL))]
+            tabs = [BrowserTab(webView: Self.makeWebView(dataStore: dataStore, videoPlayback: videoPlayback), restoring: .init(url: startURL), isPrivateBrowsing: isPrivateBrowsing)]
         }
         super.init(nibName: nil, bundle: nil)
         for tab in tabs { track(tab) }
@@ -161,7 +168,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
 
     private func track(_ tab: BrowserTab) {
-        adoptDelegates(of: tab.webView)
+        adoptDelegates(of: tab.webView, privateBrowsing: tab.isPrivateBrowsing)
         tab.onPageChange = { [weak self, weak tab] in
             guard let self, let tab else { return }
             self.addressSuggestions.changed(tab.webView)
@@ -178,7 +185,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     func saveSession(flush: Bool = false) {
         if flush { addressSuggestions.save() }
         guard let sessionStore else { return }
-        let session = MobileBrowserSession(tabs: tabs.map(\.sessionTab), selectedTabID: currentTab.id)
+        let regularTabs = tabs.filter { !$0.isPrivateBrowsing }
+        let selected = regularTabs.first { $0.id == currentTab.id }
+            ?? regularTabs.first { $0.id == lastRegularTabID } ?? regularTabs.first
+        let session = MobileBrowserSession(tabs: regularTabs.map(\.sessionTab), selectedTabID: selected?.id ?? lastRegularTabID ?? UUID())
         if flush || session != lastSavedSession {
             sessionStore.save(session)
             lastSavedSession = session
@@ -190,13 +200,16 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
 
     private var sharedTabsSnapshot: [SharedBrowserTab] {
-        tabs.filter { !$0.isSyncPlaceholder }.map {
+        tabs.filter { !$0.isSyncPlaceholder && !$0.isPrivateBrowsing }.map {
             let saved = $0.sessionTab
             return SharedBrowserTab(id: saved.id, url: saved.url?.absoluteString, title: saved.title, navigationHistory: saved.navigationHistory)
         }
     }
 
-    @objc private func aiSettingsChanged() { updateAIAvailability() }
+    @objc private func aiSettingsChanged() {
+        updateAIAvailability()
+        bottomBar.privacyPolicy.refresh()
+    }
 
     private func updateAIAvailability() {
         let enabled = MobileAISettings.shared.enabled
@@ -218,6 +231,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         }
         bottomBar.appSettings.showSync(enabled: tabSync?.isEnabled ?? true,
                                       message: tabSync?.status.message ?? SharedTabsSync.Status.ready.message)
+        bottomBar.appSettings.syncRow.isEnabled = true
+        bottomBar.appSettings.syncRow.toggle.isEnabled = true
     }
 
     private func applySharedTabs(_ incoming: [SharedBrowserTab]) {
@@ -236,13 +251,13 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
                 tab.rememberSharedTitle(saved.title)
                 return tab
             }
-            let tab = BrowserTab(webView: Self.makeWebView(dataStore: websiteDataStore, videoPlayback: videoPlayback), restoring: .init(
+            let tab = BrowserTab(webView: Self.makeWebView(dataStore: regularWebsiteDataStore, videoPlayback: videoPlayback), restoring: .init(
                 id: saved.id, url: saved.url.flatMap(URL.init(string:)), title: saved.title, navigationHistory: saved.navigationHistory))
             track(tab)
             return tab
-        }
+        } + tabs.filter(\.isPrivateBrowsing)
         if next.isEmpty {
-            let blank = BrowserTab(webView: Self.makeWebView(dataStore: websiteDataStore, videoPlayback: videoPlayback))
+            let blank = BrowserTab(webView: Self.makeWebView(dataStore: regularWebsiteDataStore, videoPlayback: videoPlayback))
             blank.isSyncPlaceholder = true
             track(blank); next = [blank]
         }
@@ -269,6 +284,11 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     /// Applies what arrived while the browser was busy, once it has settled.
     func applyPendingChanges() {
+        if pendingPrivacyPolicy, presentedViewController == nil, summarise == nil {
+            pendingPrivacyPolicy = false
+            showPrivacyPolicy()
+            return
+        }
         guard !quickActions.applyPending() else { return }
         openPendingLinks()
         applyPendingSharedTabs()
@@ -294,10 +314,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let links = pendingLinks
         pendingLinks = []
         for url in links {
-            let page = Self.makeWebView(dataStore: websiteDataStore, videoPlayback: videoPlayback)
-            adoptDelegates(of: page)
+            let page = Self.makeWebView(dataStore: regularWebsiteDataStore, videoPlayback: videoPlayback)
+            adoptDelegates(of: page, privateBrowsing: false)
             page.load(URLRequest(url: url))
-            openInNewTab(page, topColor: nil, initialURL: url)
+            openInNewTab(page, topColor: nil, initialURL: url, privateBrowsing: false)
         }
     }
 
@@ -332,10 +352,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         return webView
     }
 
-    private func adoptDelegates(of webView: WKWebView) {
+    private func adoptDelegates(of webView: WKWebView, privateBrowsing: Bool? = nil) {
+        let isPrivate = privateBrowsing ?? (addressSuggestions.isPrivate(webView) || isPrivateBrowsing)
+        addressSuggestions.register(webView, privateBrowsing: isPrivate)
         VideoContextMenus.install(on: webView, browser: self)
         downloadOrigins.install(on: webView)
-        if !isPrivateBrowsing { addressSuggestions.learner.install(on: webView) }
+        if !isPrivate { addressSuggestions.learner.install(on: webView) }
         webView.uiDelegate = self
         webView.navigationDelegate = self
         webView.allowsBackForwardNavigationGestures = true
@@ -343,6 +365,43 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         #if DEBUG
         webView.isInspectable = true
         #endif
+    }
+
+    private func privateSession() -> MobilePrivateSession {
+        if let transientPrivateSession { return transientPrivateSession }
+        let session = MobilePrivateSession()
+        transientPrivateSession = session
+        return session
+    }
+    private func dataStore(privateBrowsing: Bool) -> WKWebsiteDataStore {
+        privateBrowsing && !privateBrowsingOnly ? privateSession().dataStore : regularWebsiteDataStore
+    }
+    func blocker(for page: WKWebView) -> MobileAdBlocker {
+        addressSuggestions.isPrivate(page) && !privateBrowsingOnly ? privateSession().adBlocker : regularAdBlocker
+    }
+    private func updatePrivacyAppearance(animated: Bool) {
+        let pending = isPanelOpen && bottomBar.panel == .search
+        let enabled = pending ? bottomBar.search.isPrivateBrowsing : isPrivateBrowsing
+        bottomBar.setPrivateBrowsing(enabled, animated: animated)
+        bottomBarUnderfill.backgroundColor = bottomBar.backgroundColor
+        updateAppSettings()
+    }
+
+    var hasVisiblePrivateContent: Bool {
+        isPrivateBrowsing || (isPanelOpen && bottomBar.panel == .search && bottomBar.search.isPrivateBrowsing)
+            || (!tabSwitcher.isHidden && tabs.contains(where: \.isPrivateBrowsing))
+            || (bottomBar.search.isPrivateBrowsing && bottomBar.panelExpansion > 0 && bottomBar.panel == .search)
+    }
+
+    /// The Home Screen action uses the ordinary New Page surface, already in private mode.
+    func openPrivateSearch() {
+        if isPanelOpen, bottomBar.panel == .search, bottomBar.search.editingAddress == nil {
+            bottomBar.search.begin(privateBrowsing: true)
+            updatePrivacyAppearance(animated: false)
+            bottomBar.search.focus()
+        } else {
+            openPanel(privateBrowsing: true)
+        }
     }
 
     func webView(_ webView: WKWebView, contextMenuConfigurationForElement elementInfo: WKContextMenuElementInfo,
@@ -384,9 +443,25 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         refreshTabPreviews()
         // Only a freshly created scene opts in. Consume it once, so returning to the app or
         // dismissing a presented controller preserves whatever the person was doing.
-        guard opensSearchOnFirstAppearance else { return }
+        guard opensSearchOnFirstAppearance else { warmKeyboard(); return }
         opensSearchOnFirstAppearance = false
         openPanel()
+    }
+
+    /// A second after the browser first shows, with nothing else going on, the keyboard is
+    /// brought up once out of sight for Summarise's follow-up field, so its first one comes up
+    /// as quickly as later ones (`KeyboardWarmer`). Opening New Page at launch warms it anyway.
+    private func warmKeyboard() {
+        guard allowsPeek, !KeyboardWarmer.warmed else { return }
+        #if DEBUG
+        // Replays warm it themselves when they mean to, so their cold runs stay cold.
+        if ProcessInfo.processInfo.arguments.contains(SummariseReplay.argument) { return }
+        #endif
+        DispatchQueue.main.asyncAfter(deadline: .now()+1) { [weak self] in
+            guard let self, view.window != nil, !isPanelOpen, summarise == nil, presentedViewController == nil,
+                  !isTabSwitcherOpen else { return }
+            KeyboardWarmer.warm(in: view.window, like: SummariseView.followUpTraits)
+        }
     }
 
     override func viewDidDisappear(_ animated: Bool) {
@@ -530,6 +605,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// the pull to reload, and the bar collapsing as the page scrolls.
     private func pageChanged(from topColor: UIColor? = nil) {
         guard allowsPeek else { return }
+        if !isPrivateBrowsing { lastRegularTabID = currentTab.id }
+        updatePrivacyAppearance(animated: false)
         tint.track(webView, from: topColor)
         pullToReload.attach(to: webView)
         lastScrollOffset = webView.scrollView.contentOffset.y
@@ -612,6 +689,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
                 return bottomBar.appSettings.canPullToClose(at: panelPan.location(in: bottomBar.appSettings),
                                                           velocity: panelPan.velocity(in: view))
             }
+            if bottomBar.panel == .privacyPolicy {
+                return bottomBar.privacyPolicy.canPullToClose(at: panelPan.location(in: bottomBar.privacyPolicy),
+                                                            velocity: panelPan.velocity(in: view))
+            }
             return true
         }
         if gestureRecognizer === tabSwipe {
@@ -657,6 +738,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             if bottomBar.panel == .search, touched.isDescendant(of: bottomBar.search.field) { return false }
             if bottomBar.panel == .siteSettings,
                bottomBar.siteSettings.switches.contains(where: { touched.isDescendant(of: $0) }) { return false }
+            if bottomBar.panel == .privacyPolicy,
+               touched.isDescendant(of: bottomBar.privacyPolicy.sharingRow.toggle) { return false }
         }
         return true
     }
@@ -704,7 +787,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     var canReturnFromPanel: Bool {
         guard isPanelOpen else { return false }
         switch bottomBar.panel {
-        case .history, .downloads, .siteSettings, .appSettings: return true
+        case .history, .downloads, .siteSettings, .appSettings, .privacyPolicy: return true
         default: return false
         }
     }
@@ -717,6 +800,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         case .downloads: closeDownloads()
         case .siteSettings: closeSiteSettings()
         case .appSettings: closeAppSettings()
+        case .privacyPolicy: closePrivacyPolicy()
         default: closePanel()
         }
     }
@@ -779,6 +863,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.newPageButton.addGestureRecognizer(newPageHold)
         bottomBar.search.allowsRemoteSuggestions = !isPrivateBrowsing
         bottomBar.search.source = addressSuggestions
+        bottomBar.search.onPrivateBrowsingChanged = { [weak self] in self?.updatePrivacyAppearance(animated: true) }
         bottomBar.history.source = addressSuggestions
         addressSuggestions.icons.onLoad = { [weak self] in
             self?.bottomBar.search.refresh()
@@ -793,7 +878,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             self?.tabs.first { MobileSuggestionFavicons.origin($0.sessionTab.url) == MobileSuggestionFavicons.origin(url) && $0.favicon != nil }?.favicon
         }
         bottomBar.search.openTabs = { [weak self] in
-            self?.tabs.map { AddressSuggestionTab(id: $0.id, title: $0.title, url: $0.sessionTab.url) } ?? []
+            guard let self else { return [] }
+            let privateBrowsing = isPanelOpen && bottomBar.panel == .search ? bottomBar.search.isPrivateBrowsing : isPrivateBrowsing
+            return tabs.filter { $0.isPrivateBrowsing == privateBrowsing }.map { AddressSuggestionTab(id: $0.id, title: $0.title, url: $0.sessionTab.url) }
         }
         bottomBar.search.onSwitchToTab = { [weak self] id in
             guard let self, let index = tabs.firstIndex(where: { $0.id == id }) else { return }
@@ -875,6 +962,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             (menu.copyTile, { $0.copyLink() }),
             (menu.siteSettingsButton, { $0.openSiteSettings() }),
             (bottomBar.siteSettings.appSettingsRow, { $0.openAppSettings() }),
+            (bottomBar.appSettings.privacyRow, { $0.showPrivacyPolicy() }),
             (menu.downloadsButton, { $0.openDownloads() }),
             (bottomBar.tabMenu.historyButton, { $0.openHistory() }),
         ]
@@ -882,7 +970,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             control.addAction(UIAction { [weak self] _ in if let self { action(self) } }, for: .primaryActionTriggered)
         }
         for button in [bottomBar.history.closeButton, bottomBar.downloads.closeButton,
-                       bottomBar.siteSettings.closeButton, bottomBar.appSettings.closeButton] {
+                       bottomBar.siteSettings.closeButton, bottomBar.appSettings.closeButton,
+                       bottomBar.privacyPolicy.closeButton] {
             button.addAction(UIAction { [weak self] _ in self?.returnFromPanel() }, for: .primaryActionTriggered)
         }
         bottomBar.siteSettings.onAdBlockingChanged = { [weak self] enabled in self?.changeAdBlocking(enabled) }
@@ -893,6 +982,11 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         }
         bottomBar.appSettings.onAutoplayChanged = { [weak self] enabled in
             self?.videoPlayback.setAllowsAutoplay(enabled)
+        }
+        bottomBar.privacyPolicy.openLink = { [weak self] url in
+            guard let self else { return }
+            if url.scheme == "https" { present(SFSafariViewController(url: url), animated: true) }
+            else if url.scheme == "mailto" { UIApplication.shared.open(url) }
         }
         if allowsPeek { setUpDownloads() }
     }
@@ -917,6 +1011,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
 
     private func layoutBottomBarUnderfill() {
+        bottomBarUnderfill.backgroundColor = bottomBar.backgroundColor
         // A one-point overlap avoids a raster seam; the existing bar and spring stay untouched.
         let frame = bottomBar.frame, top = frame.maxY-1
         bottomBarUnderfill.frame = CGRect(x: frame.minX, y: top, width: frame.width,
@@ -983,6 +1078,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         case .find: BottomBar.findHeight(keyboard: keyboardHeight, safeBottom: safeBottom, answer: bottomBar.find.answerHeight)
         case .siteSettings: BottomBar.siteSettingsHeight(width: view.bounds.width, safeBottom: safeBottom)
         case .appSettings: min(view.bounds.height-view.safeAreaInsets.top-12, BottomBar.appSettingsHeight(width: view.bounds.width, safeBottom: safeBottom))
+        case .privacyPolicy: min(view.bounds.height-view.safeAreaInsets.top-12, BottomBar.privacyPolicyHeight(safeBottom: safeBottom))
         case .downloads: downloadsSheet.height(in: downloadsHeights)
         case .history: BottomBar.historyHeight(screenHeight: view.bounds.height, safeTop: view.safeAreaInsets.top)
         }
@@ -1014,13 +1110,16 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// New Page grows the bar into a panel, as quickly and springily as a Peek opens, with an empty
     /// search field focused so the keyboard comes up alongside it. More grows it a little, into the
     /// page's address and a few actions. The bar's buttons swap for the panel's contents as it grows.
-    func openPanel(_ requested: BottomBar.Panel = .search) {
+    func openPanel(_ requested: BottomBar.Panel = .search, privateBrowsing: Bool? = nil) {
         guard allowsPeek, !isPanelOpen, presentedViewController == nil else { return }
         let panel: BottomBar.Panel = requested == .menu && isTabSwitcherOpen ? .tabMenu : requested
         isPanelOpen = true
         bottomBar.restoreAddress()
         bottomBar.panel = panel
-        if panel == .search { bottomBar.search.begin() }
+        if panel == .search {
+            bottomBar.search.begin(privateBrowsing: privateBrowsing ?? isPrivateBrowsing)
+            updatePrivacyAppearance(animated: false)
+        }
         else if panel != .tabMenu { updateAddress() }
         dimming.isUserInteractionEnabled = true
         bottomBar.accessibilityViewIsModal = true
@@ -1049,6 +1148,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// Expand More into the New Page-sized editor, carrying its address on the same spring.
     func editAddress() {
         guard isPanelOpen, bottomBar.panel == .menu else { return }
+        bottomBar.search.setPrivateBrowsing(isPrivateBrowsing)
         bottomBar.expandAddress(currentTab.addressURL)
         settlePanelOpen(alongside: { self.bottomBar.menu.address.alignEditingContents() }) { [weak self] in
             guard let self, isPanelOpen, bottomBar.panel == .search else { return }
@@ -1068,6 +1168,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         guard !UIAccessibility.isReduceMotionEnabled else {
             setPanel(0); bottomBar.showContents(of: nil, animated: false); setNeedsStatusBarAppearanceUpdate()
             bottomBar.search.end(); bottomBar.find.end(); panelMotion.stop()
+            updatePrivacyAppearance(animated: false)
             applyPendingChanges(); return
         }
         // As with Peek, the bar returns without overshoot while the page's bounce shows its return.
@@ -1095,6 +1196,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.search.end()
         bottomBar.find.end()
         bottomBar.showContents(of: nil)
+        updatePrivacyAppearance(animated: true)
     }
 
     @objc private func closePanelOnTap() {
@@ -1142,6 +1244,25 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     func closeAppSettings() {
         guard isPanelOpen, bottomBar.panel == .appSettings else { return }
         swapMenuPanel(to: .siteSettings)
+    }
+
+    /// Privacy is the next settings surface in the same toolbar, never a presented sheet.
+    func showPrivacyPolicy() {
+        guard allowsPeek, presentedViewController == nil else { return }
+        if let summarise {
+            pendingPrivacyPolicy = true
+            summarise.finish()
+            return
+        }
+        bottomBar.privacyPolicy.prepare()
+        if isPanelOpen { swapMenuPanel(to: .privacyPolicy) }
+        else { openPanel(.privacyPolicy) }
+    }
+
+    func closePrivacyPolicy() {
+        guard isPanelOpen, bottomBar.panel == .privacyPolicy else { return }
+        updateAppSettings()
+        swapMenuPanel(to: .appSettings)
     }
 
     /// Downloads opens as Site settings does, showing what's under way and what's done.
@@ -1316,8 +1437,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.accessibilityViewIsModal = false
         view.isUserInteractionEnabled = false
 
-        let page = Self.makeWebView(dataStore: websiteDataStore, videoPlayback: videoPlayback)
-        adoptDelegates(of: page)
+        let privateBrowsing = bottomBar.panel == .search ? bottomBar.search.isPrivateBrowsing : isPrivateBrowsing
+        let page = Self.makeWebView(dataStore: dataStore(privateBrowsing: privateBrowsing), videoPlayback: videoPlayback)
+        adoptDelegates(of: page, privateBrowsing: privateBrowsing)
         page.load(URLRequest(url: url))
         // Until the page paints, the strip above it and the bar take its background's colour, or
         // in dark mode the dark surface it shows through to.
@@ -1349,7 +1471,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             guard let self else { return }
             PageRecede.apply(0, to: content)
             setPanel(0, recedingPage: false)
-            openInNewTab(page, topColor: color, initialURL: url)
+            openInNewTab(page, topColor: color, initialURL: url, privateBrowsing: privateBrowsing)
             arrival.removeFromSuperview()
             view.isUserInteractionEnabled = true
             bottomBar.showContents(of: nil)
@@ -1609,41 +1731,30 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             return false
         }
         if let summarise { summarise.finish(); return false }
+        if isPanelOpen, action == .newPrivateTab, bottomBar.panel == .search, bottomBar.search.editingAddress == nil { return true }
         if isPanelOpen, action == .history, bottomBar.panel != .search, bottomBar.panel != .find { return true }
         if isPanelOpen { closePanel(); return false }
         if isTabSwitcherOpen, action != .history { selectTab(tabIndex); return false }
         return isTabSwitcherOpen || tabSwitcher.isHidden
     }
 
-    func endPrivateSession() {
-        guard isPrivateBrowsing else { return }
-        summarise?.finish()
-        panelMotion.stop()
-        bottomBar.search.end()
-        bottomBar.find.end()
-        voice.cancel()
-        adBlockingTask?.cancel()
-        for tab in tabs {
-            for page in [tab.webView] + tab.previousPages + tab.forwardPages { page.stopLoading() }
-        }
-    }
-
     func suppressLaunchSearch() { opensSearchOnFirstAppearance = false }
 
-    func openNewBlankTab() {
-        let page = Self.makeWebView(dataStore: websiteDataStore, videoPlayback: videoPlayback)
-        openInNewTab(page, topColor: nil, initialURL: nil)
+    func openNewBlankTab(privateBrowsing: Bool? = nil) {
+        let privateBrowsing = privateBrowsing ?? isPrivateBrowsing
+        let page = Self.makeWebView(dataStore: dataStore(privateBrowsing: privateBrowsing), videoPlayback: videoPlayback)
+        openInNewTab(page, topColor: nil, initialURL: nil, privateBrowsing: privateBrowsing)
         openPanel()
     }
 
     // MARK: Tabs
 
     /// Opens a page chosen in New Page's panel in a new tab after this one.
-    private func openInNewTab(_ page: WKWebView, topColor: UIColor?, initialURL: URL?) {
+    private func openInNewTab(_ page: WKWebView, topColor: UIColor?, initialURL: URL?, privateBrowsing: Bool) {
         if !tabSwitcher.isHidden { closeTabSwitcherAtOnce() } else { currentTab.snapshot = snapshotPage() }
         tabPreviews?.save(currentTab)
         let previous = webView
-        let tab = BrowserTab(webView: page, initialURL: initialURL)
+        let tab = BrowserTab(webView: page, initialURL: initialURL, isPrivateBrowsing: privateBrowsing)
         track(tab)
         tabs.insert(tab, at: tabIndex+1)
         tabIndex += 1
@@ -1651,7 +1762,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         page.transform = .identity
         install(page)
         previous.removeFromSuperview()
-        adoptDelegates(of: page)
+        adoptDelegates(of: page, privateBrowsing: privateBrowsing)
         if let topColor { setTopColor(topColor, animated: false) }
         pageChanged(from: topColor)
     }
@@ -1756,13 +1867,36 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     /// Closes a tab from its card; the last one stays.
     private func closeTab(_ index: Int) {
-        guard isTabSwitcherOpen, tabs.count > 1, tabs.indices.contains(index) else { return }
+        guard isTabSwitcherOpen, tabs.indices.contains(index), tabs.count > 1 || tabs[index].isPrivateBrowsing else { return }
+        if tabs.count == 1 {
+            let closing = tabs[0]
+            pendingCard = nil
+            for page in [closing.webView]+closing.previousPages+closing.forwardPages { page.stopLoading(); page.navigationDelegate = nil; page.uiDelegate = nil }
+            closing.onPageChange = nil
+            let blank = BrowserTab(webView: Self.makeWebView(dataStore: regularWebsiteDataStore, videoPlayback: videoPlayback))
+            track(blank); tabs = [blank]; tabIndex = 0
+            transientPrivateSession = nil
+            closeTabSwitcherAtOnce()
+            install(webView); closing.webView.removeFromSuperview()
+            bottomBar.tabsButton.count = 1
+            pageChanged()
+            openPanel()
+            return
+        }
         let closesSelected = index == tabIndex
         let order = tabSwitcher.displayOrder
         let after = order.firstIndex(of: index).flatMap { order.indices.contains($0+1) ? tabs[order[$0+1]].id : nil }
         let closing = tabs.remove(at: index)
-        closedTabs.append(ClosedTab(saved: closing.sessionTab, index: index, snapshot: closing.snapshot,
-                                    favicon: closing.favicon, before: after))
+        if closing.isPrivateBrowsing {
+            closing.onPageChange = nil
+            for page in [closing.webView]+closing.previousPages+closing.forwardPages {
+                page.stopLoading(); page.navigationDelegate = nil; page.uiDelegate = nil
+            }
+        }
+        if !closing.isPrivateBrowsing {
+            closedTabs.append(ClosedTab(saved: closing.sessionTab, index: index, snapshot: closing.snapshot,
+                                        favicon: closing.favicon, before: after))
+        }
         if closedTabs.count > 50 { closedTabs.removeFirst() }
         if pendingCard === closing { pendingCard = nil }
         if index < tabIndex {
@@ -1779,6 +1913,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             pageChanged()
         }
         bottomBar.tabsButton.count = tabs.count
+        if !tabs.contains(where: \.isPrivateBrowsing) { transientPrivateSession = nil }
         saveSession()
     }
 
@@ -1791,7 +1926,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let inSwitcher = !tabSwitcher.isHidden
         if inSwitcher && (!isTabSwitcherOpen || tabSwitcher.isAnimatingOrTracking) { return false }
         closedTabs.removeLast()
-        let tab = BrowserTab(webView: Self.makeWebView(dataStore: websiteDataStore, videoPlayback: videoPlayback),
+        let tab = BrowserTab(webView: Self.makeWebView(dataStore: regularWebsiteDataStore, videoPlayback: videoPlayback),
                              restoring: closed.saved)
         tab.snapshot = closed.snapshot
         tab.restoreFavicon(closed.favicon)
@@ -1955,15 +2090,15 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         }
     }
 
-    private func cancelListening() {
-        guard voice.isRecording else { return }
+    func cancelListening() {
+        voice.cancel()
         bottomBar.setListening(false)
     }
 
     /// Half a second after a page loads, and again at three, as late text lands, its text is
     /// fingerprinted as Summarise would send it, to find a summary of it kept from before on disk.
     private func fingerprintPage(_ page: WKWebView) {
-        guard !isPrivateBrowsing, let tab = tabs.first(where: { $0.webView === page }) else { return }
+        guard let tab = tabs.first(where: { $0.webView === page }), !tab.isPrivateBrowsing else { return }
         let url = page.url, item = page.backForwardList.currentItem
         Task { [weak tab, weak page] in
             for wait in [500, 2500] {

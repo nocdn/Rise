@@ -35,7 +35,8 @@ import Speech
             return false
         }
         let session = VoiceSession(meter: meter)
-        do { try session.startRecording() } catch { return false }
+        do { try session.startRecording() }
+        catch { session.stopRecording(); return false }
         self.session = session
         transcription = Task { (try? await session.transcribe()) ?? "" }
         isRecording = true

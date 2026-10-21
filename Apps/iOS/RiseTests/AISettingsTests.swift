@@ -44,6 +44,9 @@ final class AISettingsTests: XCTestCase {
         group.frame = CGRect(x: 0, y: 0, width: 361, height: group.height(for: 361))
         group.layoutIfNeeded()
         XCTAssertEqual(group.rowsHeight, SiteSettingsPanel.rowHeight*3)
+        XCTAssertEqual(group.detail.numberOfLines, 3)
+        let subtitle = group.detail.sizeThatFits(CGSize(width: 329, height: CGFloat.greatestFiniteMagnitude))
+        XCTAssertLessThanOrEqual(subtitle.height, ceil(group.detail.font.lineHeight*3))
         XCTAssertTrue(group.keyField.isSecureTextEntry)
         let dots = try XCTUnwrap(group.keyField.superview?.subviews.compactMap { $0 as? UILabel }
             .first { $0.text == String(repeating: "•", count: 200) })
@@ -157,7 +160,9 @@ final class AISettingsTests: XCTestCase {
         for provider in AIProvider.allCases {
             let choice = ModelChoice(provider: provider, model: provider.defaultModel, effort: "low", apiKey: "fixture-\(provider.rawValue)")
             let page = PageAssistant.Page(title: "Test", url: "https://example.test", selection: "", text: "A page")
-            let summary = try await PageSummary.make(of: page, provider: choice, session: session)
+            let summary = try await AIConsentTestScope.allowing {
+                try await PageSummary.make(of: page, provider: choice, session: session)
+            }
             XCTAssertEqual(summary.paragraphs, ["First paragraph.", "Second paragraph."])
         }
     }

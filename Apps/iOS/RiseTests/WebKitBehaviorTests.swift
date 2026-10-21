@@ -1156,92 +1156,94 @@ final class WebKitBehaviorTests: XCTestCase {
     }
 
     @MainActor func testAskStreamsTheSharedAssistantIntoFindAndHighlightsItsSupportingPassage() async throws {
-        let browser = BrowserViewController(startURL: nil)
-        let window = try host(browser)
-        defer { window.isHidden = true }
-        let page = browser.webView, find = browser.bottomBar.find
-        let quote = "The release is planned for March 3, 2027."
-        try await load("<html><head><title>Release notes</title></head><body><p>\(quote)</p></body></html>",
-                       in: page, baseURL: URL(string: "https://example.test/release")!)
-        var sse = ""
-        for content in ["{\"snippet\":\"\(quote)\"}\n", "It ships ", "**March 3, 2027**."] {
-            let chunk: [String: Any] = ["choices": [["delta": ["content": content]]]]
-            sse += "data: "+String(decoding: try JSONSerialization.data(withJSONObject: chunk), as: UTF8.self)+"\n\n"
+        try await AIConsentTestScope.allowing {
+            let browser = BrowserViewController(startURL: nil)
+            let window = try host(browser)
+            defer { window.isHidden = true }
+            let page = browser.webView, find = browser.bottomBar.find
+            let quote = "The release is planned for March 3, 2027."
+            try await load("<html><head><title>Release notes</title></head><body><p>\(quote)</p></body></html>",
+                           in: page, baseURL: URL(string: "https://example.test/release")!)
+            var sse = ""
+            for content in ["{\"snippet\":\"\(quote)\"}\n", "It ships ", "**March 3, 2027**."] {
+                let chunk: [String: Any] = ["choices": [["delta": ["content": content]]]]
+                sse += "data: "+String(decoding: try JSONSerialization.data(withJSONObject: chunk), as: UTF8.self)+"\n\n"
+            }
+            sse += "data: [DONE]\n\n"
+            MobileAssistantProtocol.prepare(Data(sse.utf8))
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.protocolClasses = [MobileAssistantProtocol.self]
+            let session = URLSession(configuration: configuration)
+            defer { session.invalidateAndCancel() }
+            var histories: [[PageAssistant.Turn]] = []
+            find.answer = { question, history in
+                histories.append(history)
+                return PageAssistant.answer(question, history: history,
+                    page: { try await PageAssistant.snapshot(of: page) },
+                    highlight: { await PageFind.highlightPassage($0, in: page) },
+                    provider: ModelChoice(provider: .openRouter, model: PageAssistant.model, effort: PageAssistant.reasoningEffort, apiKey: "test-key"), session: session)
+            }
+            browser.openPanel(.find)
+            try await Task.sleep(for: .milliseconds(500))
+            XCTAssertTrue(find.field.rightView === find.askButton.superview)
+            let modeButton = find.modeButton
+            let askWidth = modeButton.bounds.width, askX = modeButton.center.x
+            find.askButton.sendActions(for: .primaryActionTriggered)
+            XCTAssertTrue(find.findButton === modeButton, "Ask and Find are the same moving button")
+            XCTAssertGreaterThan(modeButton.bounds.width, askWidth)
+            XCTAssertLessThan(modeButton.center.x, askX)
+            XCTAssertEqual(find.mode, .ask)
+            XCTAssertEqual(find.field.placeholder, "Ask about the Page")
+            XCTAssertTrue(find.field.isFirstResponder)
+            XCTAssertFalse(find.sendButton.isEnabled)
+            XCTAssertEqual(find.sendButton.tintColor, .tertiaryLabel, "An empty question greys out Send")
+            find.field.text = "When does it ship?"
+            find.field.sendActions(for: .editingChanged)
+            XCTAssertTrue(find.sendButton.isEnabled)
+            XCTAssertEqual(find.sendButton.tintColor, .label)
+            XCTAssertFalse(find.textFieldShouldReturn(find.field))
+            XCTAssertTrue(find.isAnswering)
+            if !UIAccessibility.isReduceMotionEnabled { XCTAssertTrue(find.shimmer.isRunning) }
+            XCTAssertFalse(find.field.isFirstResponder)
+            try await Task.sleep(for: .seconds(2))
+            XCTAssertFalse(find.isAnswering)
+            XCTAssertFalse(find.shimmer.isRunning)
+            XCTAssertEqual(find.answerView.answer, "It ships **March 3, 2027**.")
+            XCTAssertEqual(find.answerView.text, "It ships March 3, 2027.", "Markdown markers never flash in the answer")
+            XCTAssertEqual(find.field.text, "When does it ship?")
+            XCTAssertGreaterThan(find.bounds.height, SearchPanel.fieldHeight)
+            XCTAssertFalse(find.answerView.isHidden)
+            XCTAssertGreaterThan(find.answerView.bounds.height, 10)
+            XCTAssertLessThanOrEqual(find.answerView.frame.maxY, find.bounds.height+1)
+            let highlighted = try await page.callAsyncJavaScript(
+                "return CSS.highlights.get('rise-passage')?.size ?? 0", arguments: [:], in: nil, contentWorld: PageFind.world) as? Int
+            XCTAssertEqual(highlighted, 1)
+            let body = try XCTUnwrap(MobileAssistantProtocol.lastBody())
+            let request = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
+            XCTAssertEqual(request["model"] as? String, "openai/gpt-6-luna")
+            let messages = try XCTUnwrap(request["messages"] as? [[String: String]])
+            XCTAssertTrue(messages.first?["content"]?.contains(quote) == true, "The current page supplies the context")
+            XCTAssertFalse(find.answerView.text.contains("gpt-6-luna"))
+            XCTAssertTrue(histories[0].isEmpty)
+            find.field.text = "Which year?"
+            find.field.sendActions(for: .editingChanged)
+            find.sendButton.sendActions(for: .primaryActionTriggered)
+            try await Task.sleep(for: .seconds(1))
+            XCTAssertEqual(histories.last?.count, 1)
+            XCTAssertEqual(histories.last?.first?.question, "When does it ship?")
+            find.findButton.sendActions(for: .primaryActionTriggered)
+            XCTAssertEqual(find.mode, .find)
+            XCTAssertEqual(find.field.placeholder, "Find on Page")
+            XCTAssertTrue(find.answerView.answer.isEmpty)
+            XCTAssertTrue(find.field.rightView === find.askButton.superview)
+            XCTAssertEqual(modeButton.bounds.width, askWidth)
+            XCTAssertEqual(modeButton.center.x, askX)
+            try await Task.sleep(for: .milliseconds(300))
+            let cleared = try await page.callAsyncJavaScript(
+                "return CSS.highlights.get('rise-passage')?.size ?? 0", arguments: [:], in: nil, contentWorld: PageFind.world) as? Int
+            XCTAssertEqual(cleared, 0)
+            browser.closePanel()
         }
-        sse += "data: [DONE]\n\n"
-        MobileAssistantProtocol.prepare(Data(sse.utf8))
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [MobileAssistantProtocol.self]
-        let session = URLSession(configuration: configuration)
-        defer { session.invalidateAndCancel() }
-        var histories: [[PageAssistant.Turn]] = []
-        find.answer = { question, history in
-            histories.append(history)
-            return PageAssistant.answer(question, history: history,
-                page: { try await PageAssistant.snapshot(of: page) },
-                highlight: { await PageFind.highlightPassage($0, in: page) },
-                provider: ModelChoice(provider: .openRouter, model: PageAssistant.model, effort: PageAssistant.reasoningEffort, apiKey: "test-key"), session: session)
-        }
-        browser.openPanel(.find)
-        try await Task.sleep(for: .milliseconds(500))
-        XCTAssertTrue(find.field.rightView === find.askButton.superview)
-        let modeButton = find.modeButton
-        let askWidth = modeButton.bounds.width, askX = modeButton.center.x
-        find.askButton.sendActions(for: .primaryActionTriggered)
-        XCTAssertTrue(find.findButton === modeButton, "Ask and Find are the same moving button")
-        XCTAssertGreaterThan(modeButton.bounds.width, askWidth)
-        XCTAssertLessThan(modeButton.center.x, askX)
-        XCTAssertEqual(find.mode, .ask)
-        XCTAssertEqual(find.field.placeholder, "Ask about the Page")
-        XCTAssertTrue(find.field.isFirstResponder)
-        XCTAssertFalse(find.sendButton.isEnabled)
-        XCTAssertEqual(find.sendButton.tintColor, .tertiaryLabel, "An empty question greys out Send")
-        find.field.text = "When does it ship?"
-        find.field.sendActions(for: .editingChanged)
-        XCTAssertTrue(find.sendButton.isEnabled)
-        XCTAssertEqual(find.sendButton.tintColor, .label)
-        XCTAssertFalse(find.textFieldShouldReturn(find.field))
-        XCTAssertTrue(find.isAnswering)
-        if !UIAccessibility.isReduceMotionEnabled { XCTAssertTrue(find.shimmer.isRunning) }
-        XCTAssertFalse(find.field.isFirstResponder)
-        try await Task.sleep(for: .seconds(2))
-        XCTAssertFalse(find.isAnswering)
-        XCTAssertFalse(find.shimmer.isRunning)
-        XCTAssertEqual(find.answerView.answer, "It ships **March 3, 2027**.")
-        XCTAssertEqual(find.answerView.text, "It ships March 3, 2027.", "Markdown markers never flash in the answer")
-        XCTAssertEqual(find.field.text, "When does it ship?")
-        XCTAssertGreaterThan(find.bounds.height, SearchPanel.fieldHeight)
-        XCTAssertFalse(find.answerView.isHidden)
-        XCTAssertGreaterThan(find.answerView.bounds.height, 10)
-        XCTAssertLessThanOrEqual(find.answerView.frame.maxY, find.bounds.height+1)
-        let highlighted = try await page.callAsyncJavaScript(
-            "return CSS.highlights.get('rise-passage')?.size ?? 0", arguments: [:], in: nil, contentWorld: PageFind.world) as? Int
-        XCTAssertEqual(highlighted, 1)
-        let body = try XCTUnwrap(MobileAssistantProtocol.lastBody())
-        let request = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
-        XCTAssertEqual(request["model"] as? String, "openai/gpt-6-luna")
-        let messages = try XCTUnwrap(request["messages"] as? [[String: String]])
-        XCTAssertTrue(messages.first?["content"]?.contains(quote) == true, "The current page supplies the context")
-        XCTAssertFalse(find.answerView.text.contains("gpt-6-luna"))
-        XCTAssertTrue(histories[0].isEmpty)
-        find.field.text = "Which year?"
-        find.field.sendActions(for: .editingChanged)
-        find.sendButton.sendActions(for: .primaryActionTriggered)
-        try await Task.sleep(for: .seconds(1))
-        XCTAssertEqual(histories.last?.count, 1)
-        XCTAssertEqual(histories.last?.first?.question, "When does it ship?")
-        find.findButton.sendActions(for: .primaryActionTriggered)
-        XCTAssertEqual(find.mode, .find)
-        XCTAssertEqual(find.field.placeholder, "Find on Page")
-        XCTAssertTrue(find.answerView.answer.isEmpty)
-        XCTAssertTrue(find.field.rightView === find.askButton.superview)
-        XCTAssertEqual(modeButton.bounds.width, askWidth)
-        XCTAssertEqual(modeButton.center.x, askX)
-        try await Task.sleep(for: .milliseconds(300))
-        let cleared = try await page.callAsyncJavaScript(
-            "return CSS.highlights.get('rise-passage')?.size ?? 0", arguments: [:], in: nil, contentWorld: PageFind.world) as? Int
-        XCTAssertEqual(cleared, 0)
-        browser.closePanel()
     }
 
     @MainActor func testFindCounterStaysCenteredWithAndWithoutTheOnscreenKeyboard() async throws {

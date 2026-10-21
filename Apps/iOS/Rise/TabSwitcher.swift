@@ -5,6 +5,7 @@ import WebKit
 /// A tab: its page, the pages a Peek replaced in it (held for Back), how it last looked, and its icon.
 @MainActor final class BrowserTab {
     let id: UUID
+    let isPrivateBrowsing: Bool
     var webView: WKWebView {
         didSet {
             pendingURL = nil; restoreNavigation = nil; activeNavigation = nil
@@ -90,7 +91,10 @@ import WebKit
     private var faviconPage: URL?
     private static var icons: [URL: UIImage] = [:]
 
-    init(webView: WKWebView, restoring tab: MobileBrowserSession.Tab? = nil, initialURL: URL? = nil) {
+    init(webView: WKWebView, restoring tab: MobileBrowserSession.Tab? = nil, initialURL: URL? = nil,
+         isPrivateBrowsing: Bool = false) {
+        precondition(!isPrivateBrowsing || !webView.configuration.websiteDataStore.isPersistent)
+        self.isPrivateBrowsing = isPrivateBrowsing
         self.webView = webView
         hasCommittedDocument = webView.url != nil
         id = tab?.id ?? UUID()
@@ -482,6 +486,7 @@ final class TabCell: UIControl {
     private var closeBaseTransform = CGAffineTransform.identity
     /// The last tab can't be closed; it can still be pulled down against resistance.
     var canClose = true
+    var isPrivateBrowsing = false
     /// How far the caption moves right of its usual place, to keep a favicon on screen.
     var captionNudge: CGFloat = 0 { didSet { if captionNudge != oldValue { setNeedsLayout() } } }
 
@@ -888,7 +893,7 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
             cell.captionNudge = max(icon, min(4, 3*frame.minX+43))-icon
             cell.title.alpha = deck.titleOpacity(at: slot)
             cell.card.layer.cornerRadius = Self.cornerRadius*frame.width/max(1, cardSize.width)
-            cell.canClose = cells.count > 1
+            cell.canClose = cells.count > 1 || cell.isPrivateBrowsing
             cell.layoutIfNeeded()
             if entrance.isPrepared, index != current {
                 entrance.place(cell, depth: max(0, displayOrder.count-2-slot))
@@ -949,6 +954,7 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
         displayOrder = recentIDs.compactMap { tabIDs.firstIndex(of: $0) }
         cells = tabs.map { tab in
             let cell = TabCell()
+            cell.isPrivateBrowsing = tab.isPrivateBrowsing
             cell.card.image.image = tab.snapshot
             tab.onSnapshotChange = { [weak tab, weak cell] in cell?.card.image.image = tab?.snapshot }
             cell.card.pageSize = pageSize

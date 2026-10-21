@@ -87,7 +87,16 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     private(set) var query = ""
     private(set) var completionPrefix: String?
     var allowsRemoteSuggestions = true
-    private let remote = GoogleSearchSuggestions()
+    private let regularRemote = GoogleSearchSuggestions()
+    private var privateRemote: GoogleSearchSuggestions?
+    private var remote: GoogleSearchSuggestions {
+        guard isPrivateBrowsing else { return regularRemote }
+        if let privateRemote { return privateRemote }
+        let client = GoogleSearchSuggestions()
+        client.onLoad = regularRemote.onLoad
+        privateRemote = client
+        return client
+    }
     private var rows: [AddressSuggestionRow] = []
     let list = SuggestionList()
     var resultRows: [AddressSuggestionRow] { (offeredSite == nil ? [] : [siteRow])+rows }
@@ -119,6 +128,9 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     private let click = UIImpactFeedbackGenerator(style: .rigid)
     private let fillFeedback = UIImpactFeedbackGenerator(style: .soft)
     let clearButton = AnimatedSymbolButton(symbol: "xmark", pointSize: 14, weight: .bold)
+    let privateButton = AnimatedSymbolButton(symbol: "eye.slash", pointSize: 17, weight: .semibold)
+    private(set) var isPrivateBrowsing = false
+    var onPrivateBrowsingChanged: (() -> Void)?
     let transcribing = UIActivityIndicatorView(style: .medium)
     var onClose: @MainActor () -> Void = {}
     var onSiteSearchChanged: @MainActor () -> Void = {}
@@ -166,6 +178,13 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         clearButton.shrinksWhenPressed(to: AddressBar.pressedScale)
         clearButton.addAction(UIAction { [weak self] _ in self?.clearOrClose() }, for: .primaryActionTriggered)
         addSubview(clearButton)
+        privateButton.shrinksWhenPressed(to: AddressBar.pressedScale)
+        privateButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            self.setPrivateBrowsing(!self.isPrivateBrowsing)
+        }, for: .primaryActionTriggered)
+        addSubview(privateButton)
+        updatePrivateButton()
         transcribing.hidesWhenStopped = true; transcribing.transform = CGAffineTransform(scaleX: 0.8, y: 0.8)
         transcribing.accessibilityLabel = "Transcribing"; addSubview(transcribing)
         list.delaysContentTouches = false
@@ -190,7 +209,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
 
     private func useClearButton() {
         field.clearButtonMode = .never
-        field.rightView = UIView(frame: CGRect(x: 0, y: 0, width: 44, height: Self.fieldHeight))
+        field.rightView = UIView(frame: CGRect(x: 0, y: 0, width: 84, height: Self.fieldHeight))
         field.rightViewMode = .always
         clearButton.isHidden = transcribing.isAnimating
     }
@@ -209,6 +228,8 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         else { field.frame = frame }
         clearButton.bounds = CGRect(x: 0, y: 0, width: AddressBar.buttonWidth, height: Self.fieldHeight)
         clearButton.center = CGPoint(x: frame.maxX-AddressBar.outerCentre, y: frame.midY)
+        privateButton.bounds = clearButton.bounds
+        privateButton.center = CGPoint(x: clearButton.center.x-40, y: frame.midY)
         transcribing.center = clearButton.center
         let top = Self.fieldHeight+Self.rowsGap
         list.frame = CGRect(x: 0, y: top, width: bounds.width, height: max(0, visibleHeight-top))
@@ -228,8 +249,13 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         siteRow.isUserInteractionEnabled = offeredSite != nil && siteSearch == nil
         siteRow.accessibilityElementsHidden = offeredSite == nil || siteSearch != nil
     }
-    func begin() {
-        remote.cancel(); opening += 1; active = true; changingText = false; stopTranscribing()
+    func begin(privateBrowsing: Bool = false) {
+        remote.cancel()
+        isPrivateBrowsing = privateBrowsing
+        if !privateBrowsing { privateRemote = nil }
+        privateButton.isHidden = false
+        updatePrivateButton()
+        opening += 1; active = true; changingText = false; stopTranscribing()
         siteSearch = nil; previousSearch = nil; currentAddress = nil; completionPrefix = nil; field.inlineCompletion = nil; query = ""; field.text = ""
         showPlaceholder()
         list.setContentOffset(.zero, animated: false)
@@ -253,6 +279,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         transcribing.stopAnimating(); clearButton.isHidden = editingAddress != nil
     }
     func beginEditingAddress(_ address: AddressBar, url: URL?) {
+        privateButton.isHidden = true
         remote.cancel(); opening += 1; active = true; changingText = false; stopTranscribing()
         siteSearch = nil; previousSearch = nil; completionPrefix = nil; field.inlineCompletion = nil; currentAddress = url
         showPlaceholder()
@@ -281,6 +308,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     func end() {
         previousSearch = nil
         active = false; remote.cancel(); opening += 1; stopTranscribing(); _ = field.resignFirstResponder()
+        privateRemote = nil
     }
     /// Late icons, learned templates and remote results never replace the person's text/selection.
     func refresh() {
@@ -347,7 +375,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         let url = (candidates.first?.symbol == "globe" && candidates.first?.isTypedAction == true)
             ? candidates.first?.url : (fieldAddress == currentAddress?.absoluteString ? currentAddress : nil)
         let fetchIcon = candidates.first?.fetchFavicon != false
-        source.icons.previewCandidate(fetchIcon ? nil : url)
+        if !isPrivateBrowsing { source.icons.previewCandidate(fetchIcon ? nil : url) }
         // Go still uses the typed action; the list only shows actual suggestions and pages.
         let visible = candidates.filter { !$0.isAutofill && !($0.isTypedAction && $0.symbol == "magnifyingglass") }
         suggestions = visible.map(\.title)
@@ -355,8 +383,34 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     }
     private func image(for url: URL?, fetch: Bool = true) -> UIImage? {
         guard let url else { return nil }
-        if let image = tabIcon(url) { source?.icons.remember(image, for: url); return image }
-        return source?.icons.image(for: url, fetch: fetch)
+        if let image = tabIcon(url) {
+            if !isPrivateBrowsing { source?.icons.remember(image, for: url) }
+            return image
+        }
+        return source?.icons.image(for: url, fetch: fetch && !isPrivateBrowsing)
+    }
+
+    func setPrivateBrowsing(_ enabled: Bool) {
+        guard editingAddress == nil, isPrivateBrowsing != enabled else { return }
+        remote.cancel()
+        if !enabled { privateRemote = nil }
+        isPrivateBrowsing = enabled
+        if enabled { source?.icons.previewCandidate(nil) }
+        updatePrivateButton()
+        refresh()
+        onPrivateBrowsingChanged?()
+        // The colour sweep is already committed before UIKit refreshes its keyboard appearance.
+        if field.isFirstResponder { field.reloadInputViews() }
+    }
+
+    private func updatePrivateButton() {
+        privateButton.setGlyph(UIImage(named: isPrivateBrowsing ? "PrivateEye" : "PrivateEyeOff"),
+                               name: isPrivateBrowsing ? "private-eye" : "private-eye-off")
+        privateButton.accessibilityLabel = isPrivateBrowsing ? "Use regular browsing" : "Use private browsing"
+        privateButton.accessibilityValue = isPrivateBrowsing ? "Private browsing on" : "Private browsing off"
+        privateButton.accessibilityTraits = isPrivateBrowsing ? [.button, .selected] : [.button]
+        field.keyboardAppearance = isPrivateBrowsing ? .dark : .default
+        field.textContentType = isPrivateBrowsing ? nil : .URL
     }
     private func renderRows(_ values: [AddressCandidate]) {
         while rows.count > values.count { rows.removeLast().removeFromSuperview() }

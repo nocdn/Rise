@@ -285,6 +285,8 @@ RC_EXPORT @interface RCBrowserView : NSView
 @property (nonatomic, weak, nullable) id<RCBrowserViewDelegate> delegate;
 @property (nonatomic, readonly, nullable) NSURL *URL;
 @property (nonatomic, readonly, nullable) NSString *title;
+/// Navigation loading state for browser UI. Late subframe loads on a finished page do not
+/// restart the tab's progress or turn Reload back into Stop.
 @property (nonatomic, readonly) BOOL isLoading;
 @property (nonatomic, readonly) BOOL canGoBack;
 @property (nonatomic, readonly) BOOL canGoForward;

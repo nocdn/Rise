@@ -87,6 +87,16 @@ import WebKit
 
     func item(_ id: UUID) -> Item? { items.first { $0.id == id } }
 
+    /// Deletes the file before clearing its row. A failed deletion leaves the row available
+    /// to retry; a file already removed in Files can safely have its stale row cleared.
+    func deleteFile(_ id: UUID) throws {
+        guard let item = item(id) else { return }
+        if item.state == .downloading { remove(id); return }
+        do { try FileManager.default.removeItem(at: item.url) }
+        catch let error as CocoaError where error.code == .fileNoSuchFile { /* Already deleted outside Rise. */ }
+        remove(id)
+    }
+
     /// Takes a download off the list, cancelling it first if it's still going. A finished file
     /// stays in Downloads.
     func remove(_ id: UUID) { remove(Set([id])) }

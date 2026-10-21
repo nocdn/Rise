@@ -49,6 +49,8 @@ import UIKit
             case "diskRecallPinch": await diskRecall(in: controller, pinching: true)
             case "cacheProbe": await cacheProbe(in: controller, savingTo: folder)
             case "followUpKeyboard": await followUpKeyboard(in: controller)
+            case "keyboardTiming": await keyboardTiming(in: controller, savingTo: folder, prewarm: arguments.contains("prewarm"),
+                                                        accessories: !arguments.contains("noAccessories"))
             case "send": await send(in: controller, savingFramesTo: folder)
             case "fades": await fades(in: controller, savingFramesTo: folder)
             case "timing": await timeStart(in: controller)
@@ -272,6 +274,87 @@ import UIKit
         result.revealed = summarise.isRevealed
         result.finished = summarise.isRevealed && !asked
         return result
+    }
+
+    /// A headless Simulator acts as if a hardware keyboard is attached and shows none; this asks
+    /// UIKit for the software keyboard anyway, as WebDriverAgent does, for measuring it.
+    static func forceSoftwareKeyboard() {
+        #if targetEnvironment(simulator)
+        guard let type = NSClassFromString("UIKeyboardImpl") as? NSObject.Type,
+              let shared = type.perform(NSSelectorFromString("sharedInstance"))?.takeUnretainedValue() as? NSObject else { return }
+        let minimize = NSSelectorFromString("setAutomaticMinimizationEnabled:")
+        if shared.responds(to: minimize) { shared.setValue(false, forKey: "automaticMinimizationEnabled") }
+        let byTouch = NSSelectorFromString("setSoftwareKeyboardShownByTouch:")
+        if shared.responds(to: byTouch) { shared.setValue(true, forKey: "softwareKeyboardShownByTouch") }
+        #endif
+    }
+
+    /// In real time: shows the stand-in page's summary and focuses its follow-up field four times,
+    /// writing to `keyboard.txt` for each: how long focusing held the main thread, when the
+    /// keyboard's notification came, when the field (riding on the keyboard) first moved on
+    /// screen, and the longest frame gap in the second after. `prewarm` warms the keyboard first.
+    static func keyboardTiming(in controller: BrowserViewController, savingTo folder: URL?, prewarm: Bool,
+                               accessories: Bool = true) async -> Result {
+        var result = Result()
+        SummariseView.replayWithoutAccessories = !accessories
+        forceSoftwareKeyboard()
+        if prewarm { KeyboardWarmer.warm(in: controller.view.window, like: SummariseView.followUpTraits) }
+        controller.webView.loadHTMLString(page, baseURL: URL(string: "https://lalinsky.com/"))
+        for _ in 0..<250 where controller.webView.isLoading { try? await Task.sleep(for: .milliseconds(20)) }
+        try? await Task.sleep(for: .milliseconds(800))
+        let web = controller.webView
+        controller.tabs[controller.tabIndex].remember(summary, of: web, url: web.url, item: web.backForwardList.currentItem)
+        controller.openPanel(.menu)
+        try? await Task.sleep(for: .milliseconds(400))
+        controller.summariseFromMenu()
+        guard let summarise = controller.summarise else { return result }
+        try? await Task.sleep(for: .seconds(2.5))
+        result.revealed = summarise.isRevealed
+        var lines = ["prewarm: \(prewarm), accessories: \(accessories)"]
+        for round in 1...4 {
+            let rest = summarise.followUpShownTop
+            var willShow: Double?, moved: Double?, worstGap = 0.0, last = 0.0, long: [(Double, Double)] = []
+            let observer = NotificationCenter.default.addObserver(forName: UIResponder.keyboardWillShowNotification, object: nil, queue: .main) { _ in
+                willShow = CACurrentMediaTime()
+            }
+            let watcher = FrameWatcher { now in
+                if last > 0 { worstGap = max(worstGap, now-last); if now-last > 0.02 { long.append((last, now-last)) } }
+                last = now
+                if moved == nil, MainActor.assumeIsolated({ summarise.followUpShownTop }) < rest-0.5 { moved = now }
+            }
+            try? await Task.sleep(for: .milliseconds(100))
+            let pressed = CACurrentMediaTime()
+            summarise.focusFollowUpField()
+            let focused = CACurrentMediaTime()
+            try? await Task.sleep(for: .seconds(1))
+            watcher.stop()
+            NotificationCenter.default.removeObserver(observer)
+            func ms(_ time: Double?) -> String { time.map { String(format: "%.0f ms", ($0-pressed)*1000) } ?? "never" }
+            let gaps = long.map { String(format: "%.0f ms from %.0f", $0.1*1000, ($0.0-pressed)*1000) }.joined(separator: ", ")
+            lines.append(String(format: "round %d: focus held main %.0f ms, will show at %@, field moved at %@, worst frame gap %.0f ms",
+                                round, (focused-pressed)*1000, ms(willShow), ms(moved), worstGap*1000)+"; long frames: "+gaps)
+            controller.view.endEditing(true)
+            try? await Task.sleep(for: .seconds(1.2))
+        }
+        if let folder { try? lines.joined(separator: "\n").write(to: folder.appendingPathComponent("keyboard.txt"), atomically: true, encoding: .utf8) }
+        result.finished = true
+        return result
+    }
+
+    /// Calls back every frame, at the screen's fastest, until stopped.
+    final class FrameWatcher: NSObject {
+        private var link: CADisplayLink?
+        private let tick: (Double) -> Void
+        init(_ tick: @escaping (Double) -> Void) {
+            self.tick = tick
+            super.init()
+            let link = CADisplayLink(target: self, selector: #selector(step))
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
+            link.add(to: .main, forMode: .common)
+            self.link = link
+        }
+        @objc private func step(_ link: CADisplayLink) { tick(CACurrentMediaTime()) }
+        func stop() { link?.invalidate(); link = nil }
     }
 
     /// In real time: summarises the stand-in page from More, then focuses the follow-up field and,

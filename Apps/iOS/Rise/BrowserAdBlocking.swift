@@ -78,6 +78,7 @@ extension BrowserViewController {
 
     func webView(_ page: WKWebView, decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
+        let adBlocker = blocker(for: page)
         if let url = action.request.url, url.scheme == MobileTabHistory.scheme {
             decisionHandler(action.targetFrame?.isMainFrame == true && MobileTabHistory.permits(url, in: page) ? .allow : .cancel)
             return
@@ -96,6 +97,7 @@ extension BrowserViewController {
 
     func webView(_ page: WKWebView, decidePolicyFor response: WKNavigationResponse,
                  decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void) {
+        let adBlocker = blocker(for: page)
         if let url = response.response.url, url.scheme == MobileTabHistory.scheme {
             decisionHandler(response.isForMainFrame && MobileTabHistory.permits(url, in: page) ? .allow : .cancel)
             return

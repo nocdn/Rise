@@ -426,8 +426,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     /// The card, where it shows, for taps.
     private var cardArea = CGRect.null
     /// The follow-up field at the summary's end.
-    private let followUp = UITextField()
-    private lazy var followUpPress = UILongPressGestureRecognizer(target: self, action: #selector(pressedFollowUp))
+    private let followUp = FollowUpField()
     /// Resting at the end: from when, and after how many blocks of what was just revealed, which
     /// it fades in after, as one more; nil blocks when it comes forward with a recalled summary.
     private var followUpShown: (t0: Double, after: Int?)?
@@ -511,12 +510,10 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         followUp.layer.anchorPoint = CGPoint(x: 0, y: 0.5)
         setFollowUpPlaceholder(Self.askPlaceholder)
         // Focused as soon as a finger lands on it, rather than when it lifts.
-        followUpPress.minimumPressDuration = 0
-        followUpPress.allowableMovement = .greatestFiniteMagnitude
-        // The field's own taps and the summary's scrolling still see the touch.
-        followUpPress.cancelsTouchesInView = false
-        followUpPress.delegate = self
-        followUp.addGestureRecognizer(followUpPress)
+        followUp.touchedDown = { [weak self] in self?.pressedFollowUp() }
+        followUp.didFocus = { [weak self] held in
+            self?.log?.event("follow-up focus", String(format: "held the main thread %.0f ms", held*1000))
+        }
         dock.isHidden = true
         dock.translatesAutoresizingMaskIntoConstraints = false
         dock.addSubview(followUp)
@@ -984,33 +981,39 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     }
 
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        // Once focused, presses on the field are the text's, for the cursor and selection.
-        if gestureRecognizer === followUpPress { return mode == .card && followUp.isUserInteractionEnabled && !followUp.isFirstResponder }
-        return mode == .card
+        mode == .card
     }
 
     /// Taps on the follow-up field are its own, not the card's.
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        if gestureRecognizer === followUpPress || gestureRecognizer === micHold { return true }
+        if gestureRecognizer === micHold { return true }
         guard let view = touch.view else { return true }
         return ![followUp, plusSlot, micSlot].contains { view.isDescendant(of: $0) }
     }
 
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
-                           shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-        gestureRecognizer === followUpPress
-    }
-
     /// A finger landing on the field focuses it at once, without waiting for it to lift.
-    @objc private func pressedFollowUp(_ press: UILongPressGestureRecognizer) {
-        guard press.state == .began, !followUp.isFirstResponder else { return }
-        log?.event("follow-up pressed")
+    private func pressedFollowUp() {
+        // Once focused, presses on the field are the text's, for the cursor and selection.
+        guard mode == .card, followUp.isUserInteractionEnabled, !followUp.isFirstResponder else { return }
+        log?.event("follow-up pressed", KeyboardWarmer.warmed ? "keyboard warmed at launch" : "keyboard not warmed")
+        keyboardCalled = (CACurrentMediaTime(), followUpTop)
         followUp.becomeFirstResponder()
     }
+
+    /// From pressing the field until the keyboard has started moving it, for the log.
+    private var keyboardCalled: (at: Double, top: Double)?
 
     // MARK: The follow-up field
 
     private static let askPlaceholder = "Ask follow up about page"
+
+    /// A field with the follow-up field's keyboard traits, for warming the keyboard ahead of it.
+    static var followUpTraits: UITextField {
+        let field = UITextField()
+        field.returnKeyType = .send
+        field.enablesReturnKeyAutomatically = true
+        return field
+    }
 
     /// The field and, focused, the plus and microphone either side of it.
     private func layOutFollowUpRow() {
@@ -1033,7 +1036,17 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         for glyph in [micGlyph, micWave] as [UIView] { glyph.center = CGPoint(x: M.followUpAccessory/2, y: middle) }
     }
 
-    func textFieldDidBeginEditing(_ textField: UITextField) { setFollowUpEditing(true) }
+    func textFieldDidBeginEditing(_ textField: UITextField) {
+        // Focused other than by the press (the field's own tap, say): timed from here instead.
+        if keyboardCalled == nil {
+            log?.event("follow-up focused", "not by the press, "+(KeyboardWarmer.warmed ? "keyboard warmed at launch" : "keyboard not warmed"))
+            keyboardCalled = (CACurrentMediaTime(), followUpTop)
+        }
+        #if DEBUG
+        if Self.replayWithoutAccessories { return }
+        #endif
+        setFollowUpEditing(true)
+    }
 
     func textFieldDidEndEditing(_ textField: UITextField) { setFollowUpEditing(false) }
 
@@ -1193,7 +1206,11 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
 
     #if DEBUG
     /// For replays: focuses the field as a tap on it would.
+    /// For replays: leaves out the plus and microphone, to measure the keyboard without them.
+    static var replayWithoutAccessories = false
     func focusFollowUpField() { _ = followUp.becomeFirstResponder() }
+    /// For replays: the field's top as it shows on screen, riding on the keyboard.
+    var followUpShownTop: Double { followUpTop }
     /// For replays: tries a fade, drawn at once.
     func tryFade(_ shape: SummaryFade) { fadeShape = shape; render(tick()) }
     /// For replays: scrolls to the top.
@@ -1335,9 +1352,14 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     /// stay within its end. Both in the keyboard's own animation (its duration and curve). A
     /// question just sent scrolls on its own flight instead.
     @objc private func keyboardWillChange(_ note: Notification) {
-        guard mode == .card, let screen = window?.screen, let info = note.userInfo,
+        guard let screen = window?.screen, let info = note.userInfo,
               let end = (info[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue else { return }
         let frame = convert(end, from: screen.coordinateSpace)
+        if let keyboardCalled, frame.minY < bounds.maxY {
+            log?.event("keyboard will show", String(format: "%.0f ms after the press, over %.2f s, \(mode)", (CACurrentMediaTime()-keyboardCalled.at)*1000,
+                                                     info[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0))
+        }
+        guard mode == .card else { return }
         let current = Double(scroll.contentOffset.y), before = Double(scroll.contentInset.bottom)
         let atEnd = current >= maxScroll(inset: before)-1
         keyboardHeight = frame.minY < bounds.maxY ? Double(bounds.maxY-frame.minY) : 0
@@ -1367,6 +1389,10 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         guard revealT != nil, let shown = followUpShown, mode == .card || mode == .closing else { dock.isHidden = true; return }
         dock.isHidden = false
         layOutFollowUpRow()
+        if let called = keyboardCalled, followUpTop < called.top-0.5 {
+            log?.event("field moving", String(format: "%.0f ms after the press", (CACurrentMediaTime()-called.at)*1000))
+            keyboardCalled = nil
+        } else if let called = keyboardCalled, CACurrentMediaTime()-called.at > 2 { keyboardCalled = nil }
         let left = Double(followUp.center.x)
         // About the middle of the screen, as the summary does.
         let centerY = followUpTop+M.followUpHeight/2
@@ -1880,5 +1906,25 @@ private struct BlockReveal: ViewModifier {
         content
             .opacity(opacity)
             .blur(radius: blur > 0.05 ? blur : 0)
+    }
+}
+
+/// The follow-up field: it tells the summary as a finger lands on it, so it can focus then rather
+/// than as the finger lifts (a gesture on the field can't: unfocused, the field turns it down),
+/// and how long focusing held the main thread.
+private final class FollowUpField: UITextField {
+    var touchedDown: (() -> Void)?
+    var didFocus: ((Double) -> Void)?
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        touchedDown?()
+        super.touchesBegan(touches, with: event)
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let started = CACurrentMediaTime()
+        let became = super.becomeFirstResponder()
+        if became { didFocus?(CACurrentMediaTime()-started) }
+        return became
     }
 }

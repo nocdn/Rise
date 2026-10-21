@@ -14,7 +14,6 @@ enum HomeScreenAction: String, CaseIterable {
 @MainActor final class BrowserQuickActions {
     private weak var browser: BrowserViewController?
     private(set) var pending: HomeScreenAction?
-    private(set) var privateSession: PrivateBrowsingController?
     private var privacyCover: UIView?
 
     init(browser: BrowserViewController) { self.browser = browser }
@@ -37,19 +36,7 @@ enum HomeScreenAction: String, CaseIterable {
         case .history:
             browser.openHistory()
         case .newPrivateTab:
-            if browser.isPrivateBrowsing { browser.openNewBlankTab(); return true }
-            if let privateSession {
-                privateSession.browser.quickActions.open(.newPrivateTab)
-                browser.present(privateSession, animated: true) { [weak browser] in browser?.applyPendingChanges() }
-            } else {
-                let session = PrivateBrowsingController()
-                session.onClose = { [weak self, weak session] in
-                    session?.browser.endPrivateSession()
-                    session?.dismiss(animated: true) { self?.privateSession = nil }
-                }
-                privateSession = session
-                browser.present(session, animated: true) { [weak browser] in browser?.applyPendingChanges() }
-            }
+            browser.openPrivateSearch()
         }
         return true
     }
@@ -57,8 +44,8 @@ enum HomeScreenAction: String, CaseIterable {
     /// Keep private page content out of the system's app-switcher snapshot.
     func setActive(_ active: Bool, in window: UIWindow) {
         if active { privacyCover?.removeFromSuperview(); privacyCover = nil; return }
-        guard let session = privateSession, session.presentingViewController != nil, privacyCover == nil else { return }
-        session.browser.panelMotion.stop()
+        guard let browser, browser.hasVisiblePrivateContent, privacyCover == nil else { return }
+        browser.panelMotion.stop()
         let cover = UIView(frame: window.bounds)
         cover.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         cover.backgroundColor = .black
@@ -73,28 +60,4 @@ enum HomeScreenAction: String, CaseIterable {
         window.addSubview(cover)
         privacyCover = cover
     }
-}
-
-/// One in-memory browsing session, with its own cookies and storage shared only by its tabs.
-final class PrivateBrowsingController: UINavigationController {
-    let browser = BrowserViewController(startURL: nil, opensSearchOnFirstAppearance: true, isPrivateBrowsing: true)
-    var onClose: (() -> Void)?
-
-    init() {
-        super.init(rootViewController: browser)
-        modalPresentationStyle = .fullScreen
-        browser.title = "Private Browsing"
-        browser.navigationItem.leftBarButtonItem = UIBarButtonItem(image: UIImage(systemName: "eye.slash"), style: .plain, target: nil, action: nil)
-        browser.navigationItem.leftBarButtonItem?.isEnabled = false
-        browser.navigationItem.rightBarButtonItem = UIBarButtonItem(systemItem: .close, primaryAction: UIAction { [weak self] _ in self?.onClose?() })
-        browser.navigationItem.rightBarButtonItem?.accessibilityLabel = "Close private tabs"
-        let appearance = UINavigationBarAppearance()
-        appearance.configureWithOpaqueBackground()
-        appearance.backgroundColor = .black
-        appearance.titleTextAttributes = [.foregroundColor: UIColor.white]
-        navigationBar.standardAppearance = appearance
-        navigationBar.scrollEdgeAppearance = appearance
-        navigationBar.tintColor = .white
-    }
-    required init?(coder: NSCoder) { fatalError() }
 }

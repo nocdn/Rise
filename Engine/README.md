@@ -59,6 +59,7 @@ to change that limit. `./scripts/engine/build.sh -n` previews pending work.
 | `0011-rise-pip-top-bar.patch` | Rise's picture-in-picture controls and window appearance hooks |
 | `0012-portable-tab-history.patch` | Exports URL/title entries and the committed cursor, and restores a portable history without visiting its other destinations |
 | `0013-avoid-unchanged-generator-rebuilds.patch` | Uses Siso's content comparison for generated files on macOS, preserving timestamps when their contents are unchanged |
+| `0014-navigation-loading-ui.patch` | Uses Chromium's navigation loading-UI state so lazy frames loaded while scrolling do not restart the tab's progress sweep or Stop button |
 
 `0002` is exported from the fork's tree with `git diff HEAD` over `base` and `chrome`, less the
 paths the other patches and `brand.py` own (see `Engine/fork-plan.md`); new files are added
