@@ -45,6 +45,9 @@ import UIKit
             case "gentle": await run(in: controller, savingFramesTo: folder, pinch: .gentle)
             case "regrab": await run(in: controller, savingFramesTo: folder, regrab: true)
             case "recall": await recall(in: controller, savingFramesTo: folder)
+            case "diskRecall": await diskRecall(in: controller)
+            case "diskRecallPinch": await diskRecall(in: controller, pinching: true)
+            case "cacheProbe": await cacheProbe(in: controller, savingTo: folder)
             case "followUpKeyboard": await followUpKeyboard(in: controller)
             case "send": await send(in: controller, savingFramesTo: folder)
             case "fades": await fades(in: controller, savingFramesTo: folder)
@@ -187,6 +190,87 @@ import UIKit
         result.summaryHeight = summarise.summaryHeight
         result.finished = !asked
         summarise.finish()
+        return result
+    }
+
+    /// On a real page: its text's fingerprint over time, and whether the tab has one after going
+    /// Back and Forward again, written to `cache.txt`.
+    static func cacheProbe(in controller: BrowserViewController, savingTo folder: URL?) async -> Result {
+        var lines: [String] = []
+        func wait(_ ms: Int) async { try? await Task.sleep(for: .milliseconds(ms)) }
+        func loaded() async { for _ in 0..<500 where controller.webView.isLoading { await wait(20) } }
+        func key() async -> String {
+            guard let snapshot = try? await PageAssistant.snapshot(of: controller.webView) else { return "no snapshot" }
+            return String(SummaryCache.key(of: snapshot).prefix(12))+" (\(snapshot.text.count) chars)"
+        }
+        func tabKey() -> String { controller.tabs[controller.tabIndex].fingerprint(of: controller.webView).map { String($0.prefix(12)) } ?? "none" }
+        controller.webView.load(URLRequest(url: URL(string: "https://www.inceptionlabs.ai/blog")!))
+        await wait(500); await loaded(); await wait(1500)
+        controller.webView.load(URLRequest(url: URL(string: "https://www.inceptionlabs.ai/blog/introducing-mercury-3")!))
+        await wait(500); await loaded()
+        for ms in [600, 2000, 5000] {
+            await wait(ms == 600 ? 600 : ms == 2000 ? 1400 : 3000)
+            lines.append("at \(ms) ms: text \(await key()), tab \(tabKey())")
+        }
+        controller.webView.goBack()
+        await wait(500); await loaded(); await wait(1500)
+        lines.append("back on \(controller.webView.url?.absoluteString ?? "?")")
+        controller.webView.goForward()
+        await wait(500); await loaded(); await wait(1500)
+        lines.append("forward on \(controller.webView.url?.absoluteString ?? "?"): text \(await key()), tab \(tabKey())")
+        await wait(3000)
+        lines.append("3 s later: text \(await key()), tab \(tabKey())")
+        if let folder { try? lines.joined(separator: "\n").write(to: folder.appendingPathComponent("cache.txt"), atomically: true, encoding: .utf8) }
+        var result = Result(); result.finished = true
+        return result
+    }
+
+    /// Keeps a summary of the stand-in page on disk by its text's fingerprint, reloads the page
+    /// (which forgets the one in memory), and summarises it from More: `finished` reports that it
+    /// came back from disk without asking for a summary.
+    static func diskRecall(in controller: BrowserViewController, pinching: Bool = false) async -> Result {
+        var result = Result()
+        controller.webView.loadHTMLString(page, baseURL: URL(string: "https://lalinsky.com/"))
+        for _ in 0..<250 where controller.webView.isLoading { try? await Task.sleep(for: .milliseconds(20)) }
+        try? await Task.sleep(for: .milliseconds(800))
+        guard let snapshot = try? await PageAssistant.snapshot(of: controller.webView) else { return result }
+        SummaryCache.store(summary, for: SummaryCache.key(of: snapshot))
+        controller.webView.loadHTMLString(page, baseURL: URL(string: "https://lalinsky.com/"))
+        for _ in 0..<250 where controller.webView.isLoading { try? await Task.sleep(for: .milliseconds(20)) }
+        // Past the fingerprints taken after loading.
+        try? await Task.sleep(for: .milliseconds(3500))
+        if pinching {
+            // As if the text had still been landing when the page loaded: only the fingerprint
+            // taken as the pinch starts can find it.
+            let web = controller.webView
+            controller.tabs[controller.tabIndex].fingerprint("stale", of: web, url: web.url, item: web.backForwardList.currentItem)
+            let size = controller.view.bounds.size, pinch = Pinch.hard
+            let start = CGPoint(x: pinch.start.x*size.width, y: pinch.start.y*size.height)
+            controller.startSummarise(.pinch, at: start)
+            guard let summarise = controller.summarise else { return result }
+            var asked = false
+            summarise.makeSummary = { asked = true; return summary }
+            summarise.beginPinch(at: start)
+            for step in 1...30 {
+                try? await Task.sleep(for: .milliseconds(10))
+                let p = CGFloat(step)/30
+                summarise.updatePinch(scale: 1-p*(1-pinch.endScale), centroid: start)
+            }
+            summarise.endPinch(cancelled: false)
+            try? await Task.sleep(for: .seconds(2))
+            result.revealed = summarise.isRevealed
+            result.finished = summarise.isRevealed && !asked
+            return result
+        }
+        controller.openPanel(.menu)
+        try? await Task.sleep(for: .milliseconds(400))
+        controller.summariseFromMenu()
+        guard let summarise = controller.summarise else { return result }
+        var asked = false
+        summarise.makeSummary = { asked = true; return summary }
+        try? await Task.sleep(for: .seconds(2.5))
+        result.revealed = summarise.isRevealed
+        result.finished = summarise.isRevealed && !asked
         return result
     }
 

@@ -343,11 +343,22 @@ fades in `backDelay` 0.38 s after the card starts settling, over `backDuration` 
   summarised: the same web view, address and history entry, with no navigation or reload
   committed since. It's lost when the app is killed.
 - **Re-summarising** (a pinch, or Summarise in More) an unchanged page doesn't ask the model.
+  Unchanged means, in memory, the same web view, address and history entry with nothing
+  committed since; across launches (`SummaryCache`, on disk in Caches, the newest 300), the same
+  address and text, fingerprinted as Summarise would send it: half a second and three seconds
+  after a page loads, and again as a pinch starts, in time for letting go (the load's can be of
+  text still landing: on the iPhone the Mercury 3 post's differed from what was sent, so going
+  Back and Forward summarised it again). A summary is kept under the text sent and the load's
+  fingerprint; failing every lookup, the request itself looks on disk by the text as it is
+  before asking the model (a normal reveal, with no wait). The log's "summary cache" events say
+  which found it. Not in private browsing. Before 21 October it was memory only.
   The card flies straight to the revealed card's place (`revealScale`, `revealTop`) on the same
   release or More springs, with no swing, hum or thud, and the glows settle as after a reveal.
 - **The text** is there from the start and comes forward: the close's sinking back, the other
   way. It grows from 90% to full size about the middle of the screen on the `close` spring,
-  as it fades in over `recallFade` 0.15 s, already sharp. The follow-up field comes with it.
+  as it fades in over `recallFade` 0.15 s, sharpening very slightly as it comes: the whole
+  summary from a `recallBlur` 3 pt blur to none, on the same spring (tried on 21 October at 3 pt,
+  then 7, then back to 3; it was sharp throughout before). The follow-up field comes with it.
 - Laying out the recalled text happens at the release; its time is in the log's "summary
   recalled" event.
 
@@ -453,6 +464,9 @@ sends and fitting springs (under 0.5% RMS; the second send agreed):
   it there on the same upward spring, so on screen the text rises exactly on that curve. The
   content keeps a screen's room under the latest bubble, so the answer generates in empty space,
   as in ChatGPT, and the summary doesn't jump back when a short answer comes.
+- **Around the bubble:** 24 pt under the text before it (a paragraph's 18 and `questionLead` 6)
+  and `questionSpacing` 30 pt over its answer; 18 and 24 until 21 October, when a little more was
+  asked for.
 - **The bubble:** right-aligned 16 pt from the screen's edge, at most 72% of its width; 18 by
   14 pt padding (16 by 10 measured from ChatGPT; a little more was asked for on 20 and 21 October, to 18 by 14), 20 pt continuous corners; fill #E6F3FF and text #2D5B9F (sampled from the
   recording's blue bubble; its text measured #3B5576, with the colour the video's compression
@@ -838,6 +852,12 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
   - `recall`: summarises the stand-in page, closes it, and pinches the unchanged page again,
     saving `r-<t>.png` frames of the recalled card and text coming forward; `finished` reports
     that no summary was asked for.
+  - `diskRecall`: keeps a summary of the stand-in page on disk by its fingerprint, reloads the
+    page (forgetting the one in memory) and summarises it from More; `finished` reports it came
+    back from disk without asking for one. `diskRecallPinch` does it with a pinch and a stale
+    load fingerprint, so only the one taken as the pinch starts can find it.
+  - `cacheProbe`: on the real Mercury 3 post, writes its text's fingerprint over five seconds and
+    after Back and Forward, and the tab's, to `cache.txt`.
   - `followUpKeyboard`: in real time, recalls a summary from More, focuses the follow-up field,
     and lets the keyboard go 1.5 s later, for a screen recording. It needs a software keyboard:
     a headless Simulator with a hardware keyboard shows none.

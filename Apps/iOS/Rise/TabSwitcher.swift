@@ -15,7 +15,7 @@ import WebKit
             pendingHistory = nil; pendingInteractionState = nil; isRestoringHistory = false
             snapshot = nil
             favicon = nil
-            summary = nil
+            summary = nil; fingerprint = nil
             observePage()
         }
     }
@@ -31,6 +31,19 @@ import WebKit
     func remember(_ summary: PageSummary, of page: WKWebView, url: URL?, item: WKBackForwardListItem?) {
         guard page === webView, page.url == url, page.backForwardList.currentItem === item else { return }
         self.summary = (url, item, summary)
+    }
+    /// The page's text, fingerprinted as it was sent to the model or once it loaded
+    /// (`SummaryCache.key`), for finding its summary on disk after a relaunch. Kept as long as the
+    /// summary in memory is.
+    private var fingerprint: (url: URL?, item: WKBackForwardListItem?, key: String)?
+    func fingerprint(of page: WKWebView) -> String? {
+        guard page === webView, let fingerprint, fingerprint.url == page.url,
+              fingerprint.item === page.backForwardList.currentItem else { return nil }
+        return fingerprint.key
+    }
+    func fingerprint(_ key: String, of page: WKWebView, url: URL?, item: WKBackForwardListItem?) {
+        guard page === webView, page.url == url, page.backForwardList.currentItem === item else { return }
+        fingerprint = (url, item, key)
     }
     /// Restored tabs keep their address/title while their page waits to be selected and loaded.
     private var rememberedURL: URL?
@@ -141,7 +154,7 @@ import WebKit
     }
     func didCommit(_ navigation: WKNavigation) {
         // A new document, or the same one reloaded, may say something else.
-        summary = nil
+        summary = nil; fingerprint = nil
         if let active = activeNavigation, active !== navigation { return }
         if !isRestoringHistory, let restoring = restoreNavigation, restoring !== navigation { return }
         hasCommittedDocument = true

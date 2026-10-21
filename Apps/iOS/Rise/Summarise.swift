@@ -113,6 +113,8 @@ enum SummariseMotion {
     // summary, which comes forward as it fades in: the close's sinking back, the other way, on
     // its spring.
     static let recallFade = 0.15
+    /// It sharpens as it comes, very slightly, from this blur (points) to none on the same spring.
+    static let recallBlur = 3.0
 
     // The follow-up field is held at the bottom of the screen, just above the keyboard as it
     // opens, unfocused until touched, faded in after the summary's last paragraph. The summary
@@ -1181,7 +1183,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     /// they stay in sight above it, rather than at the very top with nothing above.
     private func sendTarget(_ asked: SummaryFollowUp) -> Double {
         let lines = Double(SendMotion.contextLines)*Double(SummaryBlocks.font.lineHeight+SummaryBlocks.lineSpacing)
-        return max(0, asked.bubbleTop-Double(SummaryBlocks.paragraphSpacing)-lines-sendTop)
+        return max(0, asked.bubbleTop-Double(SummaryBlocks.paragraphSpacing+SummaryBlocks.questionLead)-lines-sendTop)
     }
 
     /// A finger takes the summary from a question's flight, from where it's going.
@@ -1236,7 +1238,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         // Where the typed text sits in the field, on screen, and where the bubble's text will, in the content.
         let shown = Double(scroll.layer.presentation()?.bounds.minY ?? scroll.contentOffset.y)
         let field = followUpTop+M.followUpHeight/2-Double(SummaryBlocks.font.lineHeight)/2
-        asked.bubbleTop = summaryTop+Double(summaryHeight)-Double(SummaryBlocks.endSpacing)
+        asked.bubbleTop = summaryTop+Double(summaryHeight)-Double(SummaryBlocks.endSpacing)+Double(SummaryBlocks.questionLead)
         let bubble = SendBubble.size(text: drawn.size)
         let to = CGPoint(x: size.width-SendBubble.edgeInset-bubble.width+SendBubble.horizontalPadding,
                          y: asked.bubbleTop+Double(SendBubble.verticalPadding))
@@ -1620,10 +1622,14 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         view.center = CGPoint(x: size.width/2, y: summaryTop+summaryHeight/2)
         // A recalled summary comes forward, as closing sinks it back, about the middle of the screen.
         var forward: (scale: Double, alpha: Double)?
+        var blur = 0.0
         if let recallT, mode == .card {
             let k = clamp(M.close(t-recallT)), alpha = reducesMotion ? 1 : clamp((t-recallT)/M.recallFade)
             if k < 1 || alpha < 1 { forward = (reducesMotion ? 1 : 1-M.closeRecede*(1-k), alpha) }
+            // Under a twentieth of a point it's as good as sharp: dropped, so SwiftUI stops blurring.
+            if !reducesMotion { blur = M.recallBlur*(1-k); if blur < 0.05 { blur = 0 } }
         }
+        if reveal.recallBlur != blur { reveal.recallBlur = blur }
         if mode == .closing {
             let recede = closeRecede(t)
             // Scaled about the middle of the screen, from where it showed when the card was tapped.
@@ -1722,6 +1728,8 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     /// Seconds since the reveal; negative before it.
     var elapsed = -1.0
     var reducesMotion = false
+    /// The whole summary's blur as a recalled one comes forward, clearing as it arrives.
+    var recallBlur = 0.0
     /// Questions asked under the summary, in turn.
     var followUps: [SummaryFollowUp] = []
     var blockCount: Int { summary?.paragraphs.count ?? 0 }
@@ -1753,8 +1761,10 @@ struct SummaryBlocks: View {
     static let sideSpacing: CGFloat = 24
     static let paragraphSpacing: CGFloat = 18
     static let endSpacing: CGFloat = 64
-    /// Between a question's bubble, which sits a paragraph's spacing under the text before it, and its answer.
-    static let questionSpacing: CGFloat = 24
+    /// A question's bubble sits this much further under the text before it than a paragraph's
+    /// spacing, 24 pt in all, and `questionSpacing` over its answer (18 and 24 until 21 October).
+    static let questionLead: CGFloat = 6
+    static let questionSpacing: CGFloat = 30
 
     /// Below the last paragraph's text.
     static var trailingSpace: Double { Double(endSpacing+paragraphSpacing) }
@@ -1774,6 +1784,7 @@ struct SummaryBlocks: View {
             .padding(.horizontal, Self.sideSpacing)
             .padding(.bottom, Self.endSpacing)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .blur(radius: reveal.recallBlur)
         }
     }
 }
@@ -1810,6 +1821,7 @@ private struct FollowUpBlocks: View {
             }
             // Out past the paragraphs' edge, to `SendBubble.edgeInset` from the screen's.
             .padding(.trailing, SendBubble.edgeInset-SummaryBlocks.sideSpacing)
+            .padding(.top, SummaryBlocks.questionLead)
             .padding(.bottom, SummaryBlocks.questionSpacing)
             if let answer = followUp.answer {
                 ForEach(Array(answer.enumerated()), id: \.offset) { index, paragraph in

@@ -1503,10 +1503,45 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let summarise = SummariseView(page: { [content] in
             content.snapshotView(afterScreenUpdates: false) ?? UIView(frame: CGRect(origin: .zero, size: size))
         }, title: title, size: size, summaryHost: summaryHost)
-        summarise.makeSummary = { try await PageSummary.make(of: PageAssistant.snapshot(of: page), provider: MobileAISettings.shared.modelChoice) }
-        // Summarised before and unchanged since, the page flies straight to its summary.
+        // Summarised before and unchanged since, the page flies straight to its summary: from
+        // memory, or after a relaunch from disk by its text's fingerprint (`SummaryCache`). The
+        // one taken as the page loaded can be of text still landing, so the text is fingerprinted
+        // again as the pinch starts, in time for letting go; failing that, the request itself
+        // looks on disk before asking the model.
         let tab = currentTab, url = page.url, item = page.backForwardList.currentItem
-        summarise.memorised = tab.summary(of: page)
+        let keeps = !isPrivateBrowsing
+        let loaded = tab.fingerprint(of: page)
+        summarise.makeSummary = { [weak tab, weak summarise] in
+            let snapshot = try await PageAssistant.snapshot(of: page)
+            let key = SummaryCache.key(of: snapshot)
+            if keeps, let kept = SummaryCache.summary(for: key) {
+                summarise?.log?.event("summary cache", "on disk, by the text as it is now")
+                tab?.fingerprint(key, of: page, url: url, item: item)
+                return kept
+            }
+            let summary = try await PageSummary.make(of: snapshot, provider: MobileAISettings.shared.modelChoice)
+            if keeps {
+                // Under the text as sent, and as it was when the page loaded, so either finds it.
+                for key in Set([key, loaded].compactMap { $0 }) { SummaryCache.store(summary, for: key) }
+                tab?.fingerprint(key, of: page, url: url, item: item)
+            }
+            return summary
+        }
+        let inMemory = tab.summary(of: page)
+        let onDisk = inMemory == nil && keeps ? loaded.flatMap(SummaryCache.summary(for:)) : nil
+        summarise.memorised = inMemory ?? onDisk
+        if keeps, summarise.memorised == nil {
+            Task { [weak summarise, weak tab, weak page] in
+                guard let page, let snapshot = try? await PageAssistant.snapshot(of: page) else { return }
+                let key = SummaryCache.key(of: snapshot)
+                guard let summarise, let kept = SummaryCache.summary(for: key) else { return }
+                tab?.fingerprint(key, of: page, url: url, item: item)
+                if summarise.memorised == nil {
+                    summarise.memorised = kept
+                    summarise.log?.event("summary cache", "on disk, fingerprinted as the pinch started")
+                }
+            }
+        }
         summarise.onSummary = { [weak tab, weak page] summary in
             guard let page else { return }
             tab?.remember(summary, of: page, url: url, item: item)
@@ -1517,6 +1552,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         }
         let log = SummariseLog(path: path == .pinch ? "pinch" : "menu", page: isPrivateBrowsing ? "Private" : page.url?.host() ?? "no page", enabled: !isPrivateBrowsing)
         summarise.log = log
+        log.event("summary cache", inMemory != nil ? "in memory" : onDisk != nil ? "on disk, fingerprinted as the page loaded"
+                  : keeps ? "not found yet (fingerprint \(loaded.map { String($0.prefix(8)) } ?? "none"))" : "private")
         let describePage = { [weak page] in
             guard let page else { return "page gone" }
             return String(format: "page %@, zoom %.2f, scrolled %.0f of %.0f pt", page.isLoading ? "loading" : "loaded",
@@ -1923,6 +1960,21 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.setListening(false)
     }
 
+    /// Half a second after a page loads, and again at three, as late text lands, its text is
+    /// fingerprinted as Summarise would send it, to find a summary of it kept from before on disk.
+    private func fingerprintPage(_ page: WKWebView) {
+        guard !isPrivateBrowsing, let tab = tabs.first(where: { $0.webView === page }) else { return }
+        let url = page.url, item = page.backForwardList.currentItem
+        Task { [weak tab, weak page] in
+            for wait in [500, 2500] {
+                try? await Task.sleep(for: .milliseconds(wait))
+                guard let page, let tab, page.url == url, page.backForwardList.currentItem === item,
+                      let snapshot = try? await PageAssistant.snapshot(of: page) else { return }
+                tab.fingerprint(SummaryCache.key(of: snapshot), of: page, url: url, item: item)
+            }
+        }
+    }
+
     // With no tab UI yet, links requesting a new window navigate this page instead.
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
@@ -1947,6 +1999,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         PagePaintWatcher.shared.didFinish(webView)
         addressSuggestions.changed(webView)
         tabs.first { $0.webView === webView }?.loadFavicon()
+        fingerprintPage(webView)
         guard webView === self.webView else { return }
         updateTabsPreview()
         // Images and late layout land after the load finishes.
