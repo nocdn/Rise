@@ -123,6 +123,15 @@ enum SummariseMotion {
     static let followUpBottomGap = 12.0
     /// With the keyboard down, the field is held this much higher again over the screen's bottom.
     static let followUpRestLift = 12.0
+    /// Focused, the field moves over by this for a plus on its left, and leaves as much on its
+    /// right for a microphone, both fading in as it goes, on Find's Ask spring.
+    static let followUpAccessory = 36.0
+    static let followUpRowSpring = (duration: 0.3, bounce: 0.25)
+    /// Focusing, they wait this long before coming in, as the keyboard starts up; they go at once.
+    static let followUpRowDelay = 0.08
+    /// The plus's and microphone's size: ChatGPT's `plus-lg-light-20` and `microphone-light-20`,
+    /// a little larger for 17 pt text, their lines alike (1.33 of 20, about 1.46 pt).
+    static let accessoryIconSize = 22.0
     /// The summary fades out above the field over 140 pt, quickly and then a long faint tail,
     /// picked from fifteen side by side (`fades` in the replays). It ends `followUpFadeInto` into
     /// the field's empty top, just above its text.
@@ -323,6 +332,25 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     var onSummary: ((PageSummary) -> Void)?
     /// Answers a question asked under the summary, after the ones before it.
     var answerFollowUp: (@MainActor (_ question: String, _ summary: PageSummary, _ history: [PageAssistant.Turn]) async throws -> [String])?
+    /// New Page's voice input: holding the field's microphone dictates into it the same way.
+    var voice: VoiceInput?
+    /// Focused, the field has a plus on its left (it does nothing yet) and a microphone on its
+    /// right. Each sits in its own slot, so their swaps don't cut each other short.
+    private let plusSlot = UIView(), micSlot = UIView()
+    private let plusButton = UIButton(type: .custom)
+    /// ChatGPT's own plus, from the same icons as the microphone (`plus-lg-light-20`).
+    private let plusGlyph = UIImageView(image: UIImage(named: "Plus"))
+    private let micButton = UIButton(type: .custom)
+    /// ChatGPT's own microphone, from its web app's icons (`microphone-light-20`).
+    private let micGlyph = UIImageView(image: UIImage(named: "Microphone"))
+    private let micWave = VoiceWaveform()
+    private lazy var micHold = UILongPressGestureRecognizer(target: self, action: #selector(holdMicrophone))
+    private var followUpEditing = false
+    /// Whether the row shows the plus and microphone, a moment behind `followUpEditing` coming in.
+    private var followUpRowOpen = false
+    private var followUpRowOpening: DispatchWorkItem?
+    private let accessoryTap = UIImpactFeedbackGenerator(style: .rigid)
+    private var dictating: Task<Void, Never>?
     /// Where the bottom bar should be: 0 in place and 1 off the bottom of the screen.
     var onBar: ((CGFloat) -> Void)?
     /// The status bar is over the page, or over the backdrop.
@@ -490,6 +518,38 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         dock.isHidden = true
         dock.translatesAutoresizingMaskIntoConstraints = false
         dock.addSubview(followUp)
+        // Softer than the text, stronger than the placeholder.
+        let accessoryTint = UIColor(red: 28/255, green: 28/255, blue: 30/255, alpha: 0.55)
+        plusGlyph.tintColor = accessoryTint
+        plusGlyph.contentMode = .scaleAspectFit
+        plusGlyph.isUserInteractionEnabled = false
+        plusButton.addSubview(plusGlyph)
+        plusButton.accessibilityLabel = "Add"
+        micGlyph.tintColor = accessoryTint
+        micGlyph.contentMode = .scaleAspectFit
+        micButton.isAccessibilityElement = true
+        micButton.accessibilityLabel = "Dictate"
+        micButton.accessibilityHint = "Hold to dictate a question."
+        micWave.alpha = 0
+        for glyph in [micGlyph, micWave] as [UIView] { glyph.isUserInteractionEnabled = false; micButton.addSubview(glyph) }
+        micHold.minimumPressDuration = 0.15
+        // The button keeps the finger, staying pressed while it listens.
+        micHold.cancelsTouchesInView = false
+        micHold.delegate = self
+        for button in [plusButton, micButton] {
+            // As the bar's buttons in fields: pressed in, with the same light, crisp tap.
+            button.shrinksWhenPressed(to: AddressBar.pressedScale)
+            button.addAction(UIAction { [weak self] _ in self?.accessoryTap.impactOccurred(intensity: 0.5) }, for: .touchDown)
+        }
+        micButton.addGestureRecognizer(micHold)
+        plusSlot.addSubview(plusButton)
+        micSlot.addSubview(micButton)
+        for (slot, button) in [(plusSlot, plusButton as UIView), (micSlot, micButton)] {
+            button.alpha = 0
+            button.isUserInteractionEnabled = false
+            button.accessibilityElementsHidden = true
+            dock.addSubview(slot)
+        }
         addSubview(dock)
         // From the screen's bottom with the keyboard down, not the safe area's, which the browser
         // raises over its bar. The keyboard picks the field up once it reaches it, and sets it
@@ -869,9 +929,8 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         endSend()
         followUpTask?.cancel(); followUpTask = nil
         followUp.isUserInteractionEnabled = false
+        stopDictating(keep: false)
         followUp.resignFirstResponder()
-        // The card grows back over the whole screen, the summary under it fading as it goes.
-        summaryHost.view.layer.mask = nil
         closeScroll = Double(scroll.contentOffset.y)
         scroll.contentInset = .zero
         scroll.contentOffset = .zero
@@ -889,6 +948,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         let ending = phase(now)
         mode = .done
         endSend()
+        stopDictating(keep: false)
         followUp.resignFirstResponder()
         link?.invalidate(); link = nil
         task?.cancel()
@@ -929,7 +989,9 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
 
     /// Taps on the follow-up field are its own, not the card's.
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        gestureRecognizer === followUpPress || !(touch.view?.isDescendant(of: followUp) ?? false)
+        if gestureRecognizer === followUpPress || gestureRecognizer === micHold { return true }
+        guard let view = touch.view else { return true }
+        return ![followUp, plusSlot, micSlot].contains { view.isDescendant(of: $0) }
     }
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
@@ -947,6 +1009,149 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     // MARK: The follow-up field
 
     private static let askPlaceholder = "Ask follow up about page"
+
+    /// The field and, focused, the plus and microphone either side of it.
+    private func layOutFollowUpRow() {
+        let side = Double(SummaryBlocks.sideSpacing), space = followUpRowOpen ? M.followUpAccessory : 0
+        let height = M.followUpHeight, middle = height/2
+        followUp.bounds = CGRect(x: 0, y: 0, width: width-2*side-2*space, height: height)
+        followUp.center = CGPoint(x: side+space, y: middle)
+        // The plus's glyph starts where the text did; the microphone's ends at the text's right.
+        plusSlot.frame = CGRect(x: side-8, y: 0, width: M.followUpAccessory, height: height)
+        micSlot.frame = CGRect(x: width-side-M.followUpAccessory+8, y: 0, width: M.followUpAccessory, height: height)
+        for button in [plusButton, micButton] {
+            button.bounds = CGRect(x: 0, y: 0, width: M.followUpAccessory, height: height)
+            button.center = CGPoint(x: M.followUpAccessory/2, y: middle)
+        }
+        micWave.bounds = micButton.bounds
+        for glyph in [plusGlyph, micGlyph] {
+            glyph.bounds = CGRect(x: 0, y: 0, width: M.accessoryIconSize, height: M.accessoryIconSize)
+        }
+        plusGlyph.center = CGPoint(x: M.followUpAccessory/2, y: middle)
+        for glyph in [micGlyph, micWave] as [UIView] { glyph.center = CGPoint(x: M.followUpAccessory/2, y: middle) }
+    }
+
+    func textFieldDidBeginEditing(_ textField: UITextField) { setFollowUpEditing(true) }
+
+    func textFieldDidEndEditing(_ textField: UITextField) { setFollowUpEditing(false) }
+
+    /// Focused, the field moves over for the plus as it and the microphone fade in, as Find's Ask
+    /// button comes in; unfocused, all of it goes back.
+    private func setFollowUpEditing(_ editing: Bool) {
+        guard editing != followUpEditing else { return }
+        followUpEditing = editing
+        if !editing { stopDictating(keep: true) }
+        followUpRowOpening?.cancel()
+        followUpRowOpening = nil
+        if editing, window != nil, !reducesMotion {
+            let opening = DispatchWorkItem { [weak self] in
+                guard let self, followUpEditing else { return }
+                followUpRowOpening = nil
+                setFollowUpRow(open: true)
+            }
+            followUpRowOpening = opening
+            accessoryTap.prepare()
+            DispatchQueue.main.asyncAfter(deadline: .now()+M.followUpRowDelay, execute: opening)
+        } else {
+            setFollowUpRow(open: editing)
+        }
+    }
+
+    private func setFollowUpRow(open: Bool) {
+        guard open != followUpRowOpen else { return }
+        followUpRowOpen = open
+        let editing = open
+        for button in [plusButton, micButton] as [UIView] {
+            button.isUserInteractionEnabled = editing
+            button.accessibilityElementsHidden = !editing
+        }
+        guard window != nil, !reducesMotion else {
+            layOutFollowUpRow()
+            for (slot, button) in [(plusSlot, plusButton as UIView), (micSlot, micButton)] {
+                BlurCrossfade.stop(in: slot)
+                button.alpha = editing ? 1 : 0
+                button.transform = .identity
+            }
+            return
+        }
+        UIView.animate(springDuration: M.followUpRowSpring.duration, bounce: M.followUpRowSpring.bounce,
+                       initialSpringVelocity: 0, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+            self.layOutFollowUpRow()
+        }
+        BlurCrossfade.swap(from: editing ? nil : plusButton, to: editing ? plusButton : nil, style: .symbol)
+        BlurCrossfade.swap(from: editing ? nil : micButton, to: editing ? micButton : nil, style: .symbol)
+    }
+
+    // MARK: Dictating
+
+    /// Holding the microphone listens as holding New Page does, the microphone swapped for the
+    /// voice's red waveform, with the same hum; letting go transcribes on device into the field.
+    @objc private func holdMicrophone(_ hold: UILongPressGestureRecognizer) {
+        switch hold.state {
+        case .began:
+            guard followUpRowOpen, mode == .card, let voice, voice.begin() else { return }
+            log?.event("dictation started")
+            setMicListening(true)
+        case .ended:
+            guard let voice, voice.isRecording else { return }
+            let transcription = voice.finish()
+            setMicListening(false)
+            dictating?.cancel()
+            dictating = Task { [weak self] in
+                let text = await transcription.value.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !Task.isCancelled, let self, !text.isEmpty, mode == .card else { return }
+                insertDictation(text)
+            }
+        case .cancelled, .failed:
+            stopDictating(keep: false)
+        default: break
+        }
+    }
+
+    /// Into the field after what's typed, ready to send.
+    private func insertDictation(_ text: String) {
+        let typed = followUp.text ?? ""
+        let joined = typed.isEmpty ? text : typed.hasSuffix(" ") ? typed+text : typed+" "+text
+        followUp.text = joined
+        if followUp.isFirstResponder {
+            let end = followUp.endOfDocument
+            followUp.selectedTextRange = followUp.textRange(from: end, to: end)
+        }
+        log?.event("dictation inserted")
+    }
+
+    /// Stops listening; `keep` lets a transcription under way still land.
+    private func stopDictating(keep: Bool) {
+        if let voice, voice.isRecording {
+            if keep {
+                let transcription = voice.finish()
+                dictating = Task { [weak self] in
+                    let text = await transcription.value.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !Task.isCancelled, let self, !text.isEmpty, mode == .card else { return }
+                    insertDictation(text)
+                }
+            } else {
+                voice.cancel()
+            }
+            setMicListening(false)
+        }
+        if !keep { dictating?.cancel(); dictating = nil }
+    }
+
+    /// The microphone swapped for the waveform while it listens, and back, as New Page's plus.
+    private func setMicListening(_ listening: Bool) {
+        micWave.level = listening ? { [weak voice] in voice?.level ?? 0 } : nil
+        micWave.listen(listening)
+        micButton.accessibilityLabel = listening ? "Listening" : "Dictate"
+        let previous: UIView = listening ? micGlyph : micWave, next: UIView = listening ? micWave : micGlyph
+        guard window != nil, !reducesMotion else {
+            BlurCrossfade.stop(in: micButton)
+            previous.alpha = 0
+            next.alpha = 1
+            return
+        }
+        BlurCrossfade.swap(from: previous, to: next, style: .symbol)
+    }
 
     private func setFollowUpPlaceholder(_ text: String) {
         followUp.attributedPlaceholder = NSAttributedString(string: text, attributes: [
@@ -1158,10 +1363,9 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     /// forward with a recalled summary, and sinks back with the summary on closing.
     private func renderFollowUp(_ t: Double, fadingOut: Double, forward: (scale: Double, alpha: Double)?) {
         guard revealT != nil, let shown = followUpShown, mode == .card || mode == .closing else { dock.isHidden = true; return }
-        let left = Double(SummaryBlocks.sideSpacing)
         dock.isHidden = false
-        followUp.bounds = CGRect(x: 0, y: 0, width: width-2*left, height: M.followUpHeight)
-        followUp.center = CGPoint(x: left, y: M.followUpHeight/2)
+        layOutFollowUpRow()
+        let left = Double(followUp.center.x)
         // About the middle of the screen, as the summary does.
         let centerY = followUpTop+M.followUpHeight/2
         func scaled(_ scale: Double) -> CGAffineTransform {
@@ -1187,6 +1391,9 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
 
     /// The summary fades out over `followUpFade` just above the field, wherever it scrolls.
     private func fadeSummary(over view: UIView) {
+        // Closing, the fade stays where it was, on the summary as it sinks back with the field;
+        // dropped at once, the text under the field showed in full for the close.
+        if mode == .closing { return }
         guard mode == .card, revealT != nil, followUpShown != nil else { view.layer.mask = nil; return }
         let shownScroll = Double(scroll.layer.presentation()?.bounds.minY ?? scroll.contentOffset.y)
         let top = Double(view.frame.minY)-shownScroll, tall = max(1, Double(view.bounds.height))
@@ -1639,8 +1846,10 @@ private struct QuestionText: View {
                     }
                 }
                 .mask(text)
-                .opacity(asking && !reducesMotion ? 1 : 0)
-                .animation(.easeOut(duration: 0.15), value: asking)
+                // Only its opacity eases out as the answer comes. Animating the whole overlay also
+                // moved it with the answer's layout landing under the bubble: a clipped copy of
+                // the question, the band's, slid up from there as it faded.
+                .animation(.easeOut(duration: 0.15)) { $0.opacity(asking && !reducesMotion ? 1 : 0) }
                 .accessibilityHidden(true)
             }
     }

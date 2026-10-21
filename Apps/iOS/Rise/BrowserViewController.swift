@@ -1511,6 +1511,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             guard let page else { return }
             tab?.remember(summary, of: page, url: url, item: item)
         }
+        summarise.voice = voice
         summarise.answerFollowUp = { question, summary, history in
             try await PageSummary.answer(question, after: summary, history: history, of: PageAssistant.snapshot(of: page), provider: MobileAISettings.shared.modelChoice)
         }

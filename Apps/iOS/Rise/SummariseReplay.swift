@@ -309,6 +309,11 @@ import UIKit
             try? await Task.sleep(for: .milliseconds(150))
             if let folder { await save(window, to: folder.appendingPathComponent(String(format: "fade-%02d.png", i+1))) }
         }
+        // Back to the default, then closed, for a screen recording of the fade going with it.
+        summarise.tryFade(SummariseMotion.followUpFade)
+        try? await Task.sleep(for: .milliseconds(500))
+        summarise.close()
+        try? await Task.sleep(for: .seconds(1.5))
         result.finished = true
         return result
     }

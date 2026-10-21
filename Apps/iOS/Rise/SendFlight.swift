@@ -35,8 +35,8 @@ enum SendBubble {
     static let ink = UIColor(red: 45/255, green: 91/255, blue: 159/255, alpha: 1)
     /// The band sweeping the text while it's being answered.
     static let shimmer = UIColor(red: 20/255, green: 52/255, blue: 108/255, alpha: 1)
-    static let horizontalPadding: CGFloat = 16
-    static let verticalPadding: CGFloat = 12
+    static let horizontalPadding: CGFloat = 18
+    static let verticalPadding: CGFloat = 14
     static let radius: CGFloat = 20
     /// From the screen's right edge, a little further out than the paragraphs' 24.
     static let edgeInset: CGFloat = 16

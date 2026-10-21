@@ -365,6 +365,21 @@ fades in `backDelay` 0.38 s after the card starts settling, over `backDuration` 
   asked for that over telling taps from scrolls.
   The old pull-out ("Keep pulling to ask follow-up", rising and growing from the bottom of the
   screen) was replaced on 20 October on request, and so was pulling past the end to focus it.
+- **Focused,** the field moves right by `followUpAccessory` 36 pt for a plus on its left (it does
+  nothing yet) and leaves as much on its right for a microphone, both ChatGPT's own
+  (`plus-lg-light-20` and `microphone-light-20` from its web app's icon sprite, in the `Plus` and
+  `Microphone` assets, at 22 pt), so their lines match: 1.33 of 20, about 1.46 pt. SF Symbols'
+  regular plus was about 1.6 pt beside it.
+  Both are #1C1C1E at 55% (the placeholder is 35%). They come in `followUpRowDelay` 0.08 s after
+  the field is focused, as the keyboard starts up, and go at once unfocused, as Find's Ask button
+  does: the move on a spring of 0.3 s with bounce 0.25, the two fading, growing from 25% and
+  sharpening from a 4 pt blur (`BlurCrossfade` `.symbol`), together. Pressed, they shrink to
+  `AddressBar.pressedScale` with the bar's light rigid tap (intensity 0.5), as the bar's
+  buttons do. Asked for on 21 October.
+- **Dictating:** holding the microphone (0.15 s) listens exactly as holding New Page does, with
+  the same `VoiceInput`, hum and on-device transcription, the microphone swapped for the red
+  waveform following the voice (`BlurCrossfade` `.symbol`, as New Page's plus). Letting go swaps
+  it back and puts what was said in the field after anything typed, ready to send.
 - **The summary under it** scrolls behind the field and fades out over `followUpFade`: 140 pt, the
   text's opacity going as (1 − u)², so it's gone quickly and then a long faint tail. It was 24 pt
   linear at first, then 60; on 20 October it was picked from fifteen tried side by side over a
@@ -394,13 +409,17 @@ fades in `backDelay` 0.38 s after the card starts settling, over `backDuration` 
   with Find's Ask shimmer in a deeper blue (an 80 pt band sweeping its glyphs once a second)
   while the summary's hum plays and the model answers. `PageSummary.answer` sends the page, the
   summary as the model's first reply, and the earlier questions and answers.
-- **The answer:** the shimmer fades over 0.15 s. The answer's paragraphs reveal under the bubble
+- **The answer:** the shimmer fades over 0.15 s, its opacity alone (`animation(_:body:)`): an
+  `.animation(value:)` on the whole overlay also eased it along with the answer's layout landing
+  under the bubble, so a clipped copy of the question, the band's, slid up there as it faded
+  (reported 20 October). The answer's paragraphs reveal under the bubble
   as the summary's (same delay, stagger, blur and fade), plain text as the summary is, with the
   reveal's thud ending the hum. The bubble is already where it goes, so nothing scrolls (the old
   scroll on to keep the question 110 pt down went). The field stays at the bottom throughout,
   empty, and takes taps again once the answer has come.
 - **Closing:** the field fades and sinks back with the summary, and a pending question is
-  cancelled. Caught and revealed again, the summary starts without its questions.
+  cancelled. The fade over the text stays as it was, sinking back with them; it used to be
+  dropped at the close, so the text under the field showed in full at once (reported 21 October). Caught and revealed again, the summary starts without its questions.
 
 ### The send (20 October 2026)
 
@@ -434,8 +453,8 @@ sends and fitting springs (under 0.5% RMS; the second send agreed):
   it there on the same upward spring, so on screen the text rises exactly on that curve. The
   content keeps a screen's room under the latest bubble, so the answer generates in empty space,
   as in ChatGPT, and the summary doesn't jump back when a short answer comes.
-- **The bubble:** right-aligned 16 pt from the screen's edge, at most 72% of its width; 16 by
-  12 pt padding (10 measured from ChatGPT; a little more was asked for on 20 October), 20 pt continuous corners; fill #E6F3FF and text #2D5B9F (sampled from the
+- **The bubble:** right-aligned 16 pt from the screen's edge, at most 72% of its width; 18 by
+  14 pt padding (16 by 10 measured from ChatGPT; a little more was asked for on 20 and 21 October, to 18 by 14), 20 pt continuous corners; fill #E6F3FF and text #2D5B9F (sampled from the
   recording's blue bubble; its text measured #3B5576, with the colour the video's compression
   takes out of thin strokes put back at the same hue). Summary type, 17 pt on 22 pt lines.
 - **How it runs:** the copy (the text drawn once by `ImageRenderer` as a mask over a colour, and
@@ -823,7 +842,8 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
     and lets the keyboard go 1.5 s later, for a screen recording. It needs a software keyboard:
     a headless Simulator with a hardware keyboard shows none.
   - `fades`: recalls a long first summary from More and saves it under each of `fadeTrials`
-    (`fade-<n>.png`), its first paragraph running on behind the follow-up field.
+    (`fade-<n>.png`), its first paragraph running on behind the follow-up field, then closes it,
+    for a screen recording of the fade sinking back with it.
   - `send`: in real time, recalls a summary from More and sends two questions from the field with
     a stand-in answer, saving `s<round>-<t>.png` frames through each flight, then the summary
     scrolled as far as it goes (`end.png`) and 520 pt back from there (`under-field.png`, the
