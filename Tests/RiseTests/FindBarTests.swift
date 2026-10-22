@@ -264,7 +264,8 @@ import AppKit
         var stream = TokenStream()
         let answer = "He currently works at Cloudflare and previously interned at Objective."
         stream.receive(answer); stream.finish(); stream.place(in: answer as NSString, at: 0)
-        _ = stream.step(at: TokenMotion.lead+0.1)
+        // Halfway through the burst's cadence.
+        _ = stream.step(at: TokenMotion.initialLead+5/TokenMotion.wordsPerSecond)
         XCTAssertTrue(stream.isRevealing, "A short, completed response must not flash all its words at once")
         XCTAssertNotNil(stream.hiddenFrom)
         _ = stream.step(at: 1)
@@ -276,7 +277,7 @@ import AppKit
         let answer = "First word followed by the rest of the answer."
         stream.receive(answer); stream.finish(); stream.place(in: answer as NSString, at: 1)
         XCTAssertFalse(stream.step(at: 1.015))
-        XCTAssertTrue(stream.step(at: 1.05), "The first word should begin within 50 ms of receiving displayable text")
+        XCTAssertTrue(stream.step(at: 1+TokenMotion.initialLead+0.5/TokenMotion.wordsPerSecond), "The first word should begin within 50 ms of receiving displayable text")
         XCTAssertEqual(stream.newest, NSRange(location: 0, length: 5))
         XCTAssertNotNil(stream.hiddenFrom, "The remaining words retain their gradual cadence")
         XCTAssertTrue(stream.tints.contains { $0.color.alpha > 0 }, "The first word is visibly fading in")

@@ -173,12 +173,26 @@ enum GitHubAPI {
                                   changedFiles: object["changed_files"] as? Int ?? 0, additions: object["additions"] as? Int ?? 0,
                                   deletions: object["deletions"] as? Int ?? 0, body: object["body"] as? String ?? "")
     }
-    static func diff(_ pr: PullRequest, session: URLSession = .shared) async throws -> String {
-        let (bytes, response) = try await session.bytes(for: request(pr, accept: "application/vnd.github.diff"))
+    /// The pull request's diff, up to `limit` bytes, from github.com rather than the API, whose
+    /// 60 requests an hour without a token every card shares.
+    static func diff(_ pr: PullRequest, limit: Int = PullRequestAPI.diffLimit, session: URLSession = .shared) async throws -> String {
+        var call = URLRequest(url: URL(string: "https://github.com/\(pr.project)/pull/\(pr.number).diff")!)
+        call.setValue("Rise", forHTTPHeaderField: "User-Agent"); call.timeoutInterval = 15
+        let (bytes, response) = try await session.bytes(for: call)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
         var data = Data()
-        for try await byte in bytes { data.append(byte); if data.count >= PullRequestAPI.diffLimit { break } }
+        for try await byte in bytes { data.append(byte); if data.count >= limit { break } }
         return String(decoding: data, as: UTF8.self)
+    }
+    /// The split from the whole diff, when it adds up to the pull request's own count; otherwise
+    /// the API's file list.
+    static func breakdown(_ pr: PullRequest, details: PullRequestDetails, session: URLSession = .shared) async throws -> ChangeBreakdown? {
+        let limit = 8_000_000
+        if let diff = try? await Self.diff(pr, limit: limit, session: session), diff.utf8.count < limit {
+            let read = ChangeBreakdown.read(diff: diff)
+            if read.lines == ChangeBreakdown.Lines(additions: details.additions, deletions: details.deletions) { return read.breakdown }
+        }
+        return try await breakdown(pr, changedFiles: details.changedFiles, session: session)
     }
     /// The changed files' lines by kind, read 100 files at a time; nil when there are more files
     /// than that reads, so the split always adds up to the whole.
@@ -330,8 +344,10 @@ enum PullRequestSummarizer {
     private var saved: [String: Saved]
     private var tasks: [String: Task<Void, Never>] = [:]
     private var breakdownTasks: [String: Task<Void, Never>] = [:]
-    /// GitHub pull requests whose split couldn't be read, not asked for again this launch.
-    private var breakdownFailures: Set<String> = []
+    /// GitHub pull requests whose split couldn't be read, and when: asked for again a while after,
+    /// as GitHub's hourly limit comes back.
+    private var breakdownFailures: [String: Date] = [:]
+    static let breakdownRetry: TimeInterval = 5*60
     private var statusChecks: [String: Date] = [:]
     /// A pipeline and merge checks are checked again when the card shows, at most this often.
     static let statusRefresh: TimeInterval = 10
@@ -418,13 +434,15 @@ enum PullRequestSummarizer {
     /// count is hovered, so a card nobody looks into costs no more requests.
     func loadBreakdown(_ pr: PullRequest) {
         let key = pr.key
-        guard case .github = pr.forge, breakdownTasks[key] == nil, !breakdownFailures.contains(key),
+        guard case .github = pr.forge, breakdownTasks[key] == nil,
+              Date().timeIntervalSince(breakdownFailures[key] ?? .distantPast) > Self.breakdownRetry,
               let details = entries[key]?.details, details.breakdown == nil else { return }
         breakdownTasks[key] = Task { [weak self] in
-            let breakdown = try? await GitHubAPI.breakdown(pr, changedFiles: details.changedFiles)
+            let breakdown = try? await GitHubAPI.breakdown(pr, details: details)
             guard let self else { return }
             self.breakdownTasks[key] = nil
-            guard let breakdown else { self.breakdownFailures.insert(key); self.onChange?(key); return }
+            guard let breakdown else { self.breakdownFailures[key] = Date(); self.onChange?(key); return }
+            self.breakdownFailures[key] = nil
             self.update(key) { $0.details?.breakdown = breakdown }
             self.saved[key]?.details?.breakdown = breakdown; self.save()
         }

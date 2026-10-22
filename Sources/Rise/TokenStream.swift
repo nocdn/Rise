@@ -15,17 +15,17 @@ enum TokenMotion {
     static let colorTransition = 0.28
     static let blur = 1.0, travel = 1.5
     /// Words play out `lead` behind the model, at the pace they arrived, so bursts and short
-    /// stalls in the network come out as a steady stream. The first burst goes at the
-    /// initial word cadence; any burst stays between `slowest` and `fastest`.
-    /// These are whole words, not model tokens: fast network chunks must not flash
-    /// a short response into view in a single frame or two.
-    static let lead = 0.2, wordsPerSecond = 30.0, slowest = 20.0, fastest = 40.0
+    /// stalls in the network come out as a steady stream, close to the model's own speed. The
+    /// first burst goes at the initial word cadence; any burst stays between `slowest` and
+    /// `fastest`. These are whole words, not model tokens: at the fastest, about one a frame,
+    /// so even a burst comes in word by word rather than all at once.
+    static let lead = 0.1, wordsPerSecond = 60.0, slowest = 20.0, fastest = 120.0
     /// Start promptly, then build the normal buffer as later words arrive.
     static let initialLead = 0.03
     /// Buffer drift is corrected by playing up to this much slower or faster.
     static let drift = 0.25
     /// Target maximum buffer delay, without exceeding the fastest reveal cadence.
-    static let maxLag = 0.8
+    static let maxLag = 0.3
     /// A Markdown span held for its closing marker is given up on after this many characters.
     static let spanLimit = 300
     /// Tailwind's `ease-out`, for the fade and the color transition alike.

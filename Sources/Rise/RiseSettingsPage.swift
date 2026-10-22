@@ -24,6 +24,8 @@ import RiseChromium
                        [("automatic", "Automatic"), (RiseTheme.neutral.rawValue, "Light"), (RiseTheme.dark.rawValue, "Dark")]),
                 toggle("livePeekResize", "Live page while expanding Peek", "The page lays itself out at every size as a Peek grows into a tab", livePeekResize),
                 toggle("animateDevTools", "Animate developer tools", "DevTools slide in and out from the right", animatesDevTools),
+                toggle("highlightSummaryLinks", "Highlight links you summarise", "A soft grey breathes behind a link you hold ⌥ over while its summary comes", highlightsSummaryLinks),
+                toggle("highlightPullRequestLinks", "Highlight pull request links", "A soft grey breathes behind a pull or merge request link while its card opens", highlightsPullRequestLinks),
                 toggle("hideAddressScheme", "Hide https:// in addresses", "Leave http:// and https:// off addresses in the address panel and link previews", hidesAddressScheme),
                 toggle("hideAddressWWW", "Hide www. in addresses", "Show www.youtube.com as youtube.com. Pages still open at their own address", hidesAddressWWW),
             ]
@@ -89,6 +91,8 @@ import RiseChromium
         case "theme": chooseTheme(text == "automatic" ? nil : RiseTheme(rawValue: text) ?? .neutral)
         case "livePeekResize": setLivePeekResize(on)
         case "animateDevTools": setAnimatesDevTools(on)
+        case "highlightSummaryLinks": setHighlightsSummaryLinks(on)
+        case "highlightPullRequestLinks": setHighlightsPullRequestLinks(on)
         case "hideAddressScheme": setHidesAddressScheme(on)
         case "hideAddressWWW": setHidesAddressWWW(on)
         case "tabSwitcherLimit": if let limit = Int(text) { setTabSwitcherLimit(limit) }

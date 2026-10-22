@@ -85,6 +85,8 @@ extension BrowserController: NSMenuItemValidation {
              #selector(showSiteInformation): return hasPage
         case #selector(toggleCardMotionTester):
             item.state = CardMotionTester.shared.isOn ? .on : .off; return true
+        case #selector(toggleLinkPulseTester):
+            item.state = LinkPulseTester.shared.isOn ? .on : .off; return true
         default: return true
         }
     }

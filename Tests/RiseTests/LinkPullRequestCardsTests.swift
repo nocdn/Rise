@@ -24,7 +24,7 @@ final class LinkPullRequestCardsTests: XCTestCase {
         let pr = try XCTUnwrap(PullRequest(url: url))
         let pageFrame = web.convert(web.bounds, to: browser.root)
         browser.showHoveredLink(url, in: web)
-        browser.presentLinkCard(pr, title: "Fix the sidebar", link: NSRect(x: pageFrame.minX+80, y: pageFrame.minY+400, width: 420, height: 20), in: web, page: page)
+        browser.presentLinkCard(.pullRequest(pr), title: "Fix the sidebar", link: NSRect(x: pageFrame.minX+80, y: pageFrame.minY+400, width: 420, height: 20), in: web, page: page)
         browser.showHoveredLink(nil, in: web)
         XCTAssertEqual(browser.linkPullRequests.card.key, pr.key)
         XCTAssertNil(browser.linkPullRequests.card.layer?.animation(forKey: "card.exit.opacity"), "It isn't on its way out")
@@ -51,7 +51,7 @@ final class LinkPullRequestCardsTests: XCTestCase {
         XCTAssertTrue(root.isFlipped)
 
         let wide = NSRect(x: pageFrame.minX+80, y: pageFrame.minY+400, width: 420, height: 20)
-        browser.presentLinkCard(pr, title: "Fix the sidebar", link: wide, in: web, page: page)
+        browser.presentLinkCard(.pullRequest(pr), title: "Fix the sidebar", link: wide, in: web, page: page)
         XCTAssertFalse(card.isHidden)
         XCTAssertEqual(card.frame.width, 420)
         XCTAssertEqual(card.frame.minX, wide.minX)
@@ -68,12 +68,12 @@ final class LinkPullRequestCardsTests: XCTestCase {
         }
 
         let narrow = NSRect(x: pageFrame.minX+300, y: pageFrame.minY+400, width: 40, height: 18)
-        browser.presentLinkCard(pr, title: "Fix the sidebar", link: narrow, in: web, page: page)
+        browser.presentLinkCard(.pullRequest(pr), title: "Fix the sidebar", link: narrow, in: web, page: page)
         XCTAssertEqual(card.frame.width, LinkPullRequestCards.minimumWidth)
         XCTAssertEqual(card.frame.midX, narrow.midX, accuracy: 0.5)
 
         let high = NSRect(x: pageFrame.minX+80, y: pageFrame.minY+40, width: 420, height: 20)
-        browser.presentLinkCard(pr, title: "Fix the sidebar", link: high, in: web, page: page)
+        browser.presentLinkCard(.pullRequest(pr), title: "Fix the sidebar", link: high, in: web, page: page)
         XCTAssertEqual(card.frame.minY, high.maxY+LinkPullRequestCards.gap, accuracy: 0.5, "No room above, so under it")
 
         try await Task.sleep(for: .milliseconds(900))
@@ -92,5 +92,58 @@ final class LinkPullRequestCardsTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertTrue(card.isHidden)
         XCTAssertNil(card.layer?.animation(forKey: "card.exit.opacity"))
+    }
+
+    func testAPullRequestsLinkGetsItsCardAndOptionAsksAnyOtherPageForASummary() {
+        func subject(_ text: String, option: Bool) -> LinkPullRequestCards.Subject? { .init(url: URL(string: text), option: option) }
+        XCTAssertNotNil(subject("https://github.com/rise/app/pull/12", option: false)?.pullRequest)
+        XCTAssertNotNil(subject("https://github.com/rise/app/pull/12", option: true)?.pullRequest, "Its own card, which already describes it")
+        XCTAssertNil(subject("https://example.com/post", option: false))
+        XCTAssertEqual(subject("https://example.com/post#comments", option: true), .summary(URL(string: "https://example.com/post")!), "One page whatever its fragment")
+        XCTAssertNil(subject("mailto:someone@example.com", option: true))
+    }
+    /// While it's written, the summary's card is its skeleton line alone, as far from the top as
+    /// from the bottom.
+    @MainActor func testASummarysCardIsItsSkeletonLineAloneWhileItsWritten() throws {
+        _ = NSApplication.shared
+        let host = FlippedView(frame: NSRect(x: 0, y: 0, width: 800, height: 600)), card = PullRequestTooltip()
+        host.addSubview(card)
+        card.present(key: "link:https://example.com/", content: .init(title: "", reference: "", details: nil, summary: "", phase: .generating),
+                     left: 40, placement: .above(bottom: 400, minTop: 8), theme: .neutral, width: 360)
+        func skeletons(_ view: NSView) -> [SkeletonLine] { (view as? SkeletonLine).map { [$0] } ?? view.subviews.flatMap(skeletons) }
+        let line = try XCTUnwrap(skeletons(card).first { !$0.isHidden }), frame = line.convert(line.bounds, to: card)
+        XCTAssertEqual(frame.minY, card.bounds.height-frame.maxY, accuracy: 0.5)
+        XCTAssertEqual(frame.minY, PullRequestTooltip.inset.height+(card.bounds.height-2*PullRequestTooltip.inset.height-SkeletonLine.height)/2, accuracy: 0.5,
+                       "No title above it")
+        XCTAssertTrue(card.titleLabel.isHidden)
+    }
+
+    func testTwentyPulsesToPickFromEachKnownByItsOwnNameStartingWithTheFirst() {
+        XCTAssertEqual(LinkPulse.presets.count, 20)
+        XCTAssertEqual(Set(LinkPulse.presets.map(\.name)).count, 20, "A pick is saved by name")
+        XCTAssertEqual(LinkPulse.presets[0].name, "Breathe", "Where it started")
+    }
+
+    /// Settings ▸ Appearance turns each kind of link's highlight off on its own.
+    @MainActor func testSummaryAndPullRequestLinksHighlightsTurnOffSeparately() throws {
+        let suite = "link-highlight-tests-\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"),
+                                        restore: false, preferences: defaults)
+        defer { clean(browser); defaults.removePersistentDomain(forName: suite) }
+        browser.showWindow(nil); browser.window?.alphaValue = 0.01; browser.addTab()
+        let page = try XCTUnwrap(browser.selectedTab?.page), web = page.view, frame = web.convert(web.bounds, to: browser.root)
+        let summary = LinkPullRequestCards.Subject.summary(try XCTUnwrap(URL(string: "https://example.com/article")))
+        let pr = LinkPullRequestCards.Subject.pullRequest(try XCTUnwrap(PullRequest(url: try XCTUnwrap(URL(string: "https://github.com/rise-tests/none/pull/1")))))
+        XCTAssertTrue(browser.highlightsLink(for: summary) && browser.highlightsLink(for: pr), "Both on unless turned off")
+
+        browser.setRiseSetting("highlightPullRequestLinks", false)
+        XCTAssertTrue(browser.highlightsLink(for: summary))
+        browser.presentLinkCard(pr, title: "Fix the sidebar", link: NSRect(x: frame.minX+80, y: frame.minY+400, width: 420, height: 20), in: web, page: page)
+        XCTAssertNil(browser.linkPullRequests.highlightedWeb, "Its card opens with its link unlit")
+
+        browser.setRiseSetting("highlightPullRequestLinks", true); browser.setRiseSetting("highlightSummaryLinks", false)
+        XCTAssertFalse(browser.highlightsLink(for: summary))
+        browser.presentLinkCard(pr, title: "Fix the sidebar", link: NSRect(x: frame.minX+80, y: frame.minY+400, width: 420, height: 20), in: web, page: page)
+        XCTAssertTrue(browser.linkPullRequests.highlightedWeb === web)
     }
 }

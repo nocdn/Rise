@@ -227,6 +227,10 @@ final class PullRequestMetaRow: CardLinkRow {
     private var preferredWidth: CGFloat?
     private var exits = 0
     private(set) var key: String?
+    /// With no title, the card is its description alone, as a link's summary is: the space above
+    /// it is the space below, the skeleton line centred between them while it's written. It
+    /// isn't edited in place, and has no edits to show.
+    private var hasTitle: Bool { !(current?.title.isEmpty ?? false) || editing?.field == .title }
     /// The pointer went into the card, or left it.
     var onPointer: ((Bool) -> Void)?
     /// The file count was clicked.
@@ -333,7 +337,7 @@ final class PullRequestMetaRow: CardLinkRow {
         custom.state = source?.custom.shown == true ? .on : .off
         custom.isEnabled = source?.custom.exists == true
         menu.autoenablesItems = false
-        [regenerate, copy, custom].forEach { $0.target = self; menu.addItem($0) }
+        (hasTitle ? [regenerate, copy, custom] : [regenerate, copy]).forEach { $0.target = self; menu.addItem($0) }
         if current?.phase == .done, let count = current?.inputTokens {
             menu.addItem(.separator())
             let usage = NSMenuItem(title: count.formatted(.number.locale(Locale(identifier: "en_US"))) + " tok", action: nil, keyEquivalent: "")
@@ -358,7 +362,7 @@ final class PullRequestMetaRow: CardLinkRow {
     /// The title or description, double-clicked once it's written, edits in place with all of it
     /// selected, as a tab's title does: no border, just a caret.
     private func beginEditing(_ field: Field) {
-        guard key != nil, editing == nil, showsMore, let window else { return }
+        guard key != nil, editing == nil, showsMore, hasTitle, let window else { return }
         let before = field == .title ? (current?.title ?? "") : (hasSummaryText ? summaryView.string : "")
         editing = (field, before, field == .title ? titleHeight : (hasSummaryText ? summaryHeight : lineHeight), moreNeedsRow)
         responderBeforeEditing = window.firstResponder
@@ -737,6 +741,7 @@ final class PullRequestMetaRow: CardLinkRow {
     }
     private var showsSkeleton: Bool { !hasSummaryText && (current?.phase == .idle || current?.phase == .generating) }
     private var titleHeight: CGFloat {
+        guard hasTitle else { return 0 }
         let bounds = NSRect(x: 0, y: 0, width: textWidth+2*Self.labelPadding, height: 1000)
         if let editing, editing.field == .title, let typed = titleLabel.currentEditor()?.string, let cell = titleLabel.cell?.copy() as? NSCell {
             cell.stringValue = typed.isEmpty ? " " : typed
@@ -744,17 +749,25 @@ final class PullRequestMetaRow: CardLinkRow {
         }
         return ceil(titleLabel.cell?.cellSize(forBounds: bounds).height ?? 18)
     }
+    /// The description's height as far as its words show: while they play in, the card grows a
+    /// line at a time with them rather than ahead to all the text that has arrived, keeping half a
+    /// line of room under the newest so a new line has somewhere to start. Until the first word
+    /// shows, it holds the skeleton's one line; done, it fits the text.
     private var summaryHeight: CGFloat {
         guard let container = summaryView.textContainer, let manager = summaryView.layoutManager else { return 0 }
         manager.ensureLayout(for: container)
         let used = ceil(manager.usedRect(for: container).height)
         if let editing, editing.field == .summary { return max(editing.floor, used) }
-        return used
+        guard stream.isRevealing else { return used }
+        guard let newest = stream.newest, NSMaxRange(newest) <= (summaryView.textStorage?.length ?? 0) else { return min(used, lineHeight) }
+        let glyph = manager.glyphIndexForCharacter(at: NSMaxRange(newest)-1)
+        return min(used, ceil(manager.lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil).maxY+lineHeight/2))
     }
     private var contentHeight: CGFloat {
         var height = Self.inset.height+titleHeight
         if current?.details != nil { height += Self.titleGap+PullRequestMetaRow.height }
-        if hasSummaryText { height += Self.summaryGap+summaryHeight } else if showsSkeleton { height += Self.summaryGap+lineHeight }
+        let gap = hasTitle ? Self.summaryGap : 0
+        if hasSummaryText { height += gap+summaryHeight } else if showsSkeleton { height += gap+lineHeight }
         if showsPipeline {
             let rows = [current?.details?.pipeline != nil, current?.details?.mergeCheck != nil].filter { $0 }.count
             height += Self.pipelineGap+CGFloat(rows)*StatusLinkRow.height+CGFloat(rows-1)*Self.mergeGap
@@ -779,6 +792,7 @@ final class PullRequestMetaRow: CardLinkRow {
         panel.layer?.shadowPath = PageOutline.path(in: panel.bounds, radius: FindBar.radius, continuous: true)
         // Laid out at full height and revealed as the card grows, like the find bar's answer.
         var y = Self.inset.height
+        titleLabel.isHidden = !hasTitle
         titleLabel.frame = NSRect(x: Self.inset.width-Self.labelPadding, y: y, width: textWidth+2*Self.labelPadding, height: titleHeight); y += titleHeight
         meta.isHidden = current?.details == nil
         if !meta.isHidden {
@@ -786,7 +800,7 @@ final class PullRequestMetaRow: CardLinkRow {
             meta.frame = NSRect(x: Self.inset.width-Self.metaNudge, y: y, width: textWidth+Self.metaNudge, height: PullRequestMetaRow.height)
             y += PullRequestMetaRow.height
         }
-        y += Self.summaryGap
+        if hasTitle { y += Self.summaryGap }
         skeleton.isHidden = !showsSkeleton
         skeleton.frame = NSRect(x: Self.inset.width, y: y+(lineHeight-SkeletonLine.height)/2,
                                 width: round(textWidth*skeleton.widthFraction), height: SkeletonLine.height)
@@ -833,7 +847,9 @@ final class PullRequestMetaRow: CardLinkRow {
     @objc private func tick(_ link: CADisplayLink) {
         let now = CACurrentMediaTime(), dt = min(0.05, now-(lastTick ?? now)); lastTick = now
         height.step(dt); top.step(dt)
-        _ = stream.step(at: now); paint()
+        // A word on a new line makes room for it.
+        if stream.step(at: now) { retarget() }
+        paint()
         if showsPipeline != shownPipeline || showsMore != shownMore { retarget() }
         let resting = height.isResting(within: 0.05) && top.isResting(within: 0.05) && !stream.needsFrames
         if resting { link.invalidate(); self.link = nil; height.settle(); top.settle() }

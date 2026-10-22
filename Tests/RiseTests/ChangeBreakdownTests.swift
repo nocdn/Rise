@@ -51,6 +51,32 @@ final class ChangeBreakdownTests: XCTestCase {
         XCTAssertNil(partial, "A split that doesn't add up to the whole isn't shown")
     }
 
+    func testADiffIsReadFileByFileWithoutCountingItsHeaders() {
+        let diff = """
+        diff --git a/Sources/App.swift b/Sources/App.swift
+        index 1..2 100644
+        --- a/Sources/App.swift
+        +++ b/Sources/App.swift
+        @@ -1,3 +1,3 @@
+         unchanged
+        --- a removed line that looks like a header
+        +++ an added line that looks like one
+        +added
+        diff --git a/Tests/AppTests.swift b/Tests/AppTests.swift
+        new file mode 100644
+        --- /dev/null
+        +++ b/Tests/AppTests.swift
+        @@ -0,0 +1,2 @@
+        +test one
+        +test two
+        \\ No newline at end of file
+        """
+        let read = ChangeBreakdown.read(diff: diff)
+        XCTAssertEqual(read.breakdown.code, .init(additions: 2, deletions: 1))
+        XCTAssertEqual(read.breakdown.tests, .init(additions: 2, deletions: 0))
+        XCTAssertEqual(read.lines, .init(additions: 4, deletions: 1), "Matched against the pull request's own count before it's shown")
+    }
+
     @MainActor func testALoneKindIsItsOwnTotalAndMoreKindsAddOne() {
         let card = ChangeBreakdownCard(), row = ChangeBreakdownCard.rowHeight, inset = ChangeBreakdownCard.inset.height
         let total = ChangeBreakdown.Lines(additions: 38, deletions: 3)
