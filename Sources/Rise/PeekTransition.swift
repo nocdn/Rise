@@ -41,6 +41,8 @@ final class PeekGhost: Surface {
         layer?.shadowColor = NSColor.black.cgColor; layer?.shadowOpacity = 0.25
         layer?.shadowRadius = 8; layer?.shadowOffset = NSSize(width: 0, height: -2)
         clip.layer?.masksToBounds = true; clip.clipsToBounds = true
+        // Smoothed corners, as the Peek card it hands over to.
+        layer?.cornerCurve = .continuous; clip.layer?.cornerCurve = .continuous
         for view in [page, link] { view.wantsLayer = true; view.layer?.contentsGravity = .resize; clip.addSubview(view) }
         addSubview(clip)
     }

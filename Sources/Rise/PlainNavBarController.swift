@@ -1,28 +1,8 @@
 import AppKit
 
 @MainActor extension BrowserController {
-    /// In Plain, Rise's titlebar buttons are the page bar's, drawn as Dia's: chevrons, and a
-    /// smaller sidebar glyph. Otherwise they're back in the titlebar.
-    func carryNavigation() {
-        let carried = theme.isPlain
-        guard carried == navBar.navigation.isEmpty, toolbarButtons.count == 4 else { return }
-        toolbarButtons.compactMap { $0 as? HistoryArrowButton }.forEach { $0.chevron = carried }
-        toolbarButtons[0].image = NSImage(systemSymbolName: "sidebar.left", accessibilityDescription: "Toggle Sidebar")?
-            .withSymbolConfiguration(.init(pointSize: carried ? 13 : 16, weight: .regular))
-        if carried {
-            toolbarHost.buttons = []; navBar.navigation = toolbarButtons
-        } else {
-            navBar.navigation = []
-            toolbarButtons.forEach(toolbarHost.addSubview); toolbarHost.buttons = toolbarButtons; toolbarHost.needsLayout = true
-        }
-    }
-
     /// The page bar follows the selected page: its address and title, its zoom, and its colour.
     func updatePlainBar() {
-        guard theme.isPlain else {
-            plainBarTimer?.invalidate(); plainBarTimer = nil; plainBarTabID = nil
-            navBar.resetLoading(false, progress: 0); return
-        }
         let tab = selectedTab
         navBar.show(url: tab?.url, title: tab?.title ?? "")
         navBar.pageZoom = tab?.page.zoom ?? 1
@@ -77,11 +57,15 @@ import AppKit
         const best = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
         if (best) return best[0];
         const root = document.documentElement;
-        // A page with no colour of its own shows Rise's page colour under it.
-        return solid(getComputedStyle(root).backgroundColor) || (document.body && solid(getComputedStyle(document.body).backgroundColor)) || 'base';
+        const own = solid(getComputedStyle(root).backgroundColor) || (document.body && solid(getComputedStyle(document.body).backgroundColor));
+        if (own) return own;
+        // No colour of its own: Chromium's canvas, near-black for a page asking for dark, whose
+        // text is light unless it says otherwise, and white for any other.
+        const text = solid(getComputedStyle(root).color);
+        return text && text.split(',').reduce((sum, part) => sum + Number(part), 0) > 382 ? 'canvas-dark' : 'canvas';
         """
     func samplePlainBarColor() {
-        guard theme.isPlain, !plainBarSampling, let tab = selectedTab, window?.occlusionState.contains(.visible) == true else { return }
+        guard !plainBarSampling, let tab = selectedTab, window?.occlusionState.contains(.visible) == true else { return }
         guard tab.url != nil, tab.page is ChromiumPage else { navBar.setColor(theme.page, animated: true); return }
         plainBarSampling = true
         let id = tab.id, page = tab.page
@@ -89,12 +73,15 @@ import AppKit
             let value = await page.evaluate(Self.pageTopColorScript, arguments: [:], world: nil)
             guard let self else { return }
             self.plainBarSampling = false
-            guard let text = value as? String, let color = text == "base" ? self.theme.page : Self.color(rgb: text) else { return }
+            guard let text = value as? String, let color = Self.canvas[text] ?? Self.color(rgb: text) else { return }
             self.plainBarColors[id] = color
-            guard self.selectedID == id, self.theme.isPlain else { return }
+            guard self.selectedID == id else { return }
             self.navBar.setColor(color, animated: true)
         }
     }
+    /// Chromium's canvas under a page with no colour of its own: Blink's dark scheme background
+    /// for one asking for dark, and white for any other.
+    static let canvas = ["canvas-dark": NSColor(srgbRed: 18/255, green: 18/255, blue: 18/255, alpha: 1), "canvas": NSColor.white]
     static func color(rgb: String) -> NSColor? {
         let parts = rgb.split(separator: ",").compactMap { Double($0) }
         guard parts.count == 3 else { return nil }

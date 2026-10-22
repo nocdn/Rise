@@ -1,7 +1,7 @@
 import AppKit
 import RiseCore
 
-/// Dia's bar across the top of the page, in the Plain theme: the sidebar and navigation buttons
+/// Dia's bar across the top of the page: the sidebar and navigation buttons
 /// on the left, the page's site and title, and its pinned extensions on the right, on the page's
 /// own colour with a hairline under it. Over the address, a field shows the whole address with
 /// the page's controls. Measured from Dia at 1.4 px a point.
@@ -33,7 +33,7 @@ import RiseCore
             }
             // On a white page, a white field wouldn't show: a faint shade instead.
             let white = (color.usingColorSpace(.sRGB)?.brightnessComponent ?? 1) > 0.985 && (color.usingColorSpace(.sRGB)?.saturationComponent ?? 0) < 0.02
-            return Ink(strong: .black.withAlphaComponent(0.56), faint: .black.withAlphaComponent(0.21), hairline: .black.withAlphaComponent(0.042),
+            return Ink(strong: .black.withAlphaComponent(0.79), faint: .black.withAlphaComponent(0.3), hairline: .black.withAlphaComponent(0.042),
                        field: white ? .black.withAlphaComponent(0.045) : .white, hover: .black.withAlphaComponent(0.05))
         }
         static func isDark(_ color: NSColor) -> Bool {
@@ -59,15 +59,22 @@ import RiseCore
 
     // MARK: Following a load
 
-    /// Loading, the line's front follows the page's progress on a spring, frame by frame, as the
-    /// tabs' sweep does; done, it runs on to the end and fades.
+    /// Loading, the line's front follows the page's progress on a spring, frame by frame, keeping
+    /// its speed as each new report comes; done, it runs on to the end and fades.
     private(set) var isLoading = false
     private var loadTarget: CGFloat = 0, loadSpeed: CGFloat = 0, finishing = false
     private var loadLink: CADisplayLink?, lastTick: CFTimeInterval = 0
     static let loadFadeKey = "Rise.PlainLoadFade"
+    /// A hard reload's line is red-pink rather than the accent.
+    static let hardReloadColor = NSColor(hex: 0xF03C64)
+    /// How far past the end a finished load's front carries on, out of sight, so it doesn't
+    /// slow to a stop there; it fades from the moment it reaches it.
+    static let overrun: CGFloat = 48
+    /// The spring's angular frequency: critically damped, it settles in about half a second.
+    static let stiffness: CGFloat = 11
     func setLoading(_ loading: Bool, progress value: Double, hard: Bool = false) {
         if loading {
-            progressStyle.color = hard ? TabLoadingBackground.hardReloadColor : ProgressStyle().color
+            progressStyle.color = hard ? Self.hardReloadColor : ProgressStyle().color
             if !isLoading {
                 isLoading = true; finishing = false; loadTarget = 0; loadSpeed = 0
                 progressLine.removeAnimation(forKey: Self.loadFadeKey)
@@ -78,7 +85,7 @@ import RiseCore
             follow()
         } else if isLoading {
             // Aimed past the end, so it doesn't slow to a stop there; it fades on reaching it.
-            isLoading = false; finishing = true; loadTarget = 1+TabLoadingBackground.overrun/max(1, bounds.width)
+            isLoading = false; finishing = true; loadTarget = 1+Self.overrun/max(1, bounds.width)
             follow()
         }
     }
@@ -103,7 +110,7 @@ import RiseCore
     @objc private func tick(_ link: CADisplayLink) {
         let now = CACurrentMediaTime(), dt = CGFloat(min(1.0/30, max(0, now-lastTick))); lastTick = now
         // The exact step of a critically damped spring, never past where it's going.
-        let omega = TabLoadingBackground.stiffness, front = progress ?? 0, offset = front-loadTarget, decay = exp(-omega*dt)
+        let omega = Self.stiffness, front = progress ?? 0, offset = front-loadTarget, decay = exp(-omega*dt)
         let carried = loadSpeed+omega*offset
         var next = loadTarget+(offset+carried*dt)*decay
         loadSpeed = (loadSpeed-omega*carried*dt)*decay
@@ -323,7 +330,9 @@ import RiseCore
         super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self))
     }
-    override func mouseMoved(with event: NSEvent) { setHovered(fieldRect.contains(convert(event.locationInWindow, from: nil))) }
+    override func mouseMoved(with event: NSEvent) {
+        setHovered(fieldRect.contains(convert(event.locationInWindow, from: nil)) && isFrontmost(at: event.locationInWindow))
+    }
     override func mouseEntered(with event: NSEvent) { mouseMoved(with: event) }
     override func mouseExited(with event: NSEvent) { setHovered(false) }
     func setHovered(_ hovered: Bool) {

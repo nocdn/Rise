@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// The sidebar zoom button's popover: smaller and larger either side of the zoom, and Reset
+/// The page bar's zoom button's popover: smaller and larger either side of the zoom, and Reset
 /// across under them, in the site controls' buttons.
 @MainActor final class ZoomControlsController: NSViewController {
     weak var browser: BrowserController?
@@ -78,8 +78,6 @@ struct ZoomPercentLabel: View {
         zoomPopover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         zoomPopover.contentViewController = controller
         zoomPopover.contentSize = controller.view.frame.size
-        let button = theme.isPlain ? navBar.zoomButton : sidebar.zoomButton
-        if theme.isPlain { zoomPopover.show(relativeTo: button.bounds, of: button, preferredEdge: .maxY); return }
-        zoomPopover.show(relativeTo: sidebar.address.convert(button.bounds, from: button), of: sidebar.address, preferredEdge: .maxY)
+        zoomPopover.show(relativeTo: navBar.zoomButton.bounds, of: navBar.zoomButton, preferredEdge: .maxY)
     }
 }

@@ -55,10 +55,23 @@ final class PageSurface: Surface {
         }
         refreshOutline()
     }
+    /// Kero's shadows coming in, over `duration`.
+    func fadeInShadows(duration: TimeInterval) {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        for shadow in shadowLayers {
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 0; fade.toValue = 1; fade.duration = duration
+            fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            shadow.add(fade, forKey: "fadeIn")
+        }
+    }
     func setRestingOutline(_ path: CGPath?, clipContents: Bool = false) {
         restingOutline = path; restingClips = clipContents; refreshOutline()
     }
     func refreshOutline() {
+        // AppKit turns clipping back on with a corner radius, which would cut Kero's shadows off;
+        // the clipping surface inside rounds the page.
+        if !shadowLayers.isEmpty, clipsToBounds { clipsToBounds = false }
         CATransaction.begin(); CATransaction.setDisableActions(true)
         shapedFill.frame = bounds; shapedMask.frame = bounds
         let outline = outline, clips = restingClips

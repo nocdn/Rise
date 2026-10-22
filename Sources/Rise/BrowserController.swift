@@ -3,14 +3,14 @@ import RiseCore
 
 @MainActor final class BrowserController: NSWindowController, NSWindowDelegate, NSPopoverDelegate {
     let root = Surface()
-    /// The Plain theme's backdrop, as Kero's window: macOS's sidebar material, behind the window,
+    /// The window's backdrop, as Kero's: macOS's sidebar material, behind the window,
     /// under 82% of Kero's grey.
     let plainMaterial = NSVisualEffectView(), plainTint = Surface()
     /// Stars repositories as the person signed in to GitHub, from a link's menu.
     private(set) lazy var githubStarrer: GitHubStarrer = { let starrer = GitHubStarrer(); starrer.host = root; return starrer }()
-    /// The Plain theme's Dark puts Kero's lit edge around the page.
+    /// Dark puts Kero's lit edge around the page.
     let pageEdge = PageEdge()
-    /// The Plain theme's bar over the page, as Dia's.
+    /// The bar over the page, as Dia's.
     private(set) lazy var navBar = PlainNavBar(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() },
                                                zoom: { [weak self] in self?.showZoomControls() })
     var plainBarTimer: Timer?, plainBarColors: [UUID: NSColor] = [:], plainBarTabID: UUID?, plainBarSampling = false
@@ -153,7 +153,8 @@ import RiseCore
     var pageBody = NSRect.zero
     /// An animation is placing the pages itself, so layout leaves them where it put them.
     var pageLayoutHeld = false
-    /// A Shift- or Option-click that opened a Peek: the rest of it stays from the page.
+    /// A Shift-click that opened a Peek, or an Option-click that copied a link: the rest of it
+    /// stays from the page.
     var takesLinkClick = false
     var peekOrigin: PeekOrigin?
     var peekMotionToken: UUID?
@@ -336,8 +337,7 @@ import RiseCore
     }
     required init?(coder: NSCoder) { fatalError() }
     func buildChrome() {
-        sidebar = SidebarView(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() }, archive: { [weak self] in self?.showDownloads() }, cleanUp: { [weak self] in self?.cleanUpTabs() }, zoom: { [weak self] in self?.showZoomControls() })
-        sidebar.onAddress = { [weak self] in self?.focusAddress() }
+        sidebar = SidebarView(archive: { [weak self] in self?.showDownloads() }, cleanUp: { [weak self] in self?.cleanUpTabs() })
         // Recently closed tabs stay one right-click away on the downloads button.
         sidebar.archiveButton.secondaryAction = { [weak self] in self?.archiveMenu() }
         sidebar.onNewTab = { [weak self] in self?.newTab() }
@@ -358,11 +358,10 @@ import RiseCore
         }
         sidebar.onTabPress = { [weak self] in self?.tabPressed() }
         pageShadow.layer?.cornerCurve = .continuous; pageClip.layer?.cornerCurve = .continuous
-        pageShadow.shadow = chromeShadow(opacity: PageAppearance.shadowOpacity, blur: PageAppearance.shadowBlur, offset: PageAppearance.shadowOffset)
         pageClip.layer?.masksToBounds = true; pageClip.clipsToBounds = true
         root.addSubview(sidebar); root.addSubview(pageShadow); pageShadow.addSubview(pageClip); installSplitHandle()
         pageClip.addSubview(emptyPage); pageClip.addSubview(developerBar); pageClip.addSubview(navBar)
-        navBar.isHidden = true; navBar.onOpenAddress = { [weak self] in self?.focusAddress() }
+        navBar.onOpenAddress = { [weak self] in self?.focusAddress() }
         installSidebarEdge()
         installDevTools()
         root.addSubview(grip)
@@ -379,9 +378,11 @@ import RiseCore
                 button = HistoryArrowButton(direction: symbol == "arrow.left" ? .back : .forward, title: title, action: action)
             } else if symbol == "arrow.clockwise" {
                 button = ReloadButton(title: title, action: action)
-            } else { button = ChromeButton(symbol: symbol, size: 16, title: title, action: action) }
-            toolbarHost.addSubview(button); toolbarButtons.append(button)
+            } else { button = ChromeButton(symbol: symbol, size: 13, title: title, action: action) }
+            toolbarButtons.append(button)
         }
+        // The page bar's, drawn as Dia's: chevrons, and a smaller sidebar glyph.
+        navBar.navigation = toolbarButtons
         developerAddress.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
         developerAddress.textColor = NSColor(hex: 0x393134); developerBar.addSubview(developerAddress)
         developerAddress.onSubmit = { [weak self] text in self?.navigateDeveloperAddress(text) }
@@ -389,7 +390,6 @@ import RiseCore
         siteInfoPopover.behavior = .transient
         downloadsPopover.behavior = .transient
         siteControlsPopover.behavior = .transient
-        siteControlsPopover.delegate = self
         // The pages under the notice would take its button's pointer and cursor for their own links.
         infoPlaque.onPointer = { [weak self] over in
             guard let self else { return }
@@ -420,7 +420,6 @@ import RiseCore
         root.addSubview(linkStatus); root.addSubview(veil); root.addSubview(dismissArea); root.addSubview(palette)
         palette.dismiss = { [weak self] in self?.hidePalette() }
         loadAddressDisplay()
-        RiseTheme.plain = plainTheme
         palette.choices = { [weak self] command in self?.paletteChoice(for: command) }
         palette.queryChanged = { [weak self] text in self?.suggestions(for: text) ?? [] }
         palette.submit = { [weak self] text, suggestion in self?.submitAddress(text, suggestion: suggestion) }
@@ -443,7 +442,6 @@ import RiseCore
         window?.toolbarStyle = .unified
         window?.toolbar = toolbar
         window?.titlebarSeparatorStyle = .none
-        toolbarHost.buttons = toolbarButtons
         toolbarHost.frame = NSRect(x: 0, y: 0, width: 144, height: 48)
         toolbarAccessory.view = toolbarHost
         toolbarAccessory.layoutAttribute = .left
@@ -453,9 +451,8 @@ import RiseCore
         // AppKit can deliver a resize while restoring the window, before its
         // sidebar and titlebar controls have finished being constructed.
         guard let window, let sidebar else { return }; let b = root.bounds
-        root.fill = theme.isPlain ? .clear : theme.background; root.gradientColors = theme.backgroundGradient; window.backgroundColor = theme.background
+        window.backgroundColor = theme.background
         layoutPlainBackdrop()
-        root.glowColor = theme.backgroundGlow; sidebar.glowColor = theme.backgroundGlow
         let width = displayedSidebarWidth, shown = sidebarVisible || sidebarFloat.isVisible
         sidebar.isHidden = !shown
         let pageLeft = layoutFloatingSidebar(in: b, width: width)
@@ -470,28 +467,22 @@ import RiseCore
             window.standardWindowButton(kind)?.isHidden = !shown
         }
         toolbarHost.isHidden = !shown
-        carryNavigation()
-        toolbarButtons.forEach { $0.isHidden = !shown && !theme.isPlain }
-        // A floating sidebar carries the traffic lights and navigation with it, as one block.
+        // A floating sidebar carries the traffic lights with it.
         let carry = shown ? sidebar.frame.origin : .zero
         let toolbarX = toolbarHost.convert(toolbarHost.bounds, to: root).minX
-        // Room for the carried buttons, held steady while floating so the titlebar isn't resized every frame.
+        // Room for the traffic lights to be carried into, held steady while floating so the titlebar
+        // isn't resized every frame.
         let room = sidebarVisible && sidebarFloat.dockProgress == 1 ? 0 : SidebarFloatAppearance.inset
-        toolbarHost.shift = carry.x; toolbarHost.room = room
         toolbarHost.frame.size.width = shown ? max(112, sidebar.frame.width-toolbarX-8)+room : 28
         carryTitlebarControls(by: carry)
-        toolbarHost.layout()
         // The selected tab's DevTools take the window's right side.
         let devToolsRoom = layoutDevTools(in: b, pageLeft: pageLeft)
         pageShadow.frame = PageAppearance.frame(in: b, sidebarWidth: pageLeft, sidebarVisible: true)
         pageShadow.frame.size.width = max(0, pageShadow.frame.width-devToolsRoom)
-        // The Plain theme lifts the page as Kero does its cards: in Light, a soft pair of shadows
-        // for its edge; in Dark, a lit edge over three tight shadows.
-        let keroCard = theme.isPlain && theme == .dark
-        pageShadow.keroShadows = theme.isPlain ? (theme == .dark ? .dark : .light) : .none
-        if (pageShadow.shadow == nil) != theme.isPlain {
-            pageShadow.shadow = theme.isPlain ? nil : chromeShadow(opacity: PageAppearance.shadowOpacity, blur: PageAppearance.shadowBlur, offset: PageAppearance.shadowOffset)
-        }
+        // The page is lifted as Kero lifts its cards: in Light, a soft pair of shadows for its
+        // edge; in Dark, a lit edge over three tight shadows.
+        let keroCard = theme == .dark
+        pageShadow.keroShadows = theme == .dark ? .dark : .light
         pageShadow.refreshOutline()
         pageClip.frame = pageShadow.bounds
         pageEdge.isHidden = !keroCard
@@ -504,9 +495,8 @@ import RiseCore
         grip.isHidden = !sidebarVisible || sidebarPeek.progress > 0 || sidebarFloat.dockProgress < 1
         let cb = pageClip.bounds
         let devHeight = developerMotion.height(for: selectedID, enabled: selectedTab?.developer == true)
-        // Plain's bar is the page's top; developer mode's opens under it.
-        let barHeight: CGFloat = theme.isPlain ? PlainNavBar.Metrics.height : 0
-        navBar.isHidden = barHeight == 0
+        // The page bar is the page's top; developer mode's opens under it.
+        let barHeight = PlainNavBar.Metrics.height
         navBar.frame = NSRect(x: 0, y: 0, width: cb.width, height: PlainNavBar.Metrics.height)
         developerBar.frame = NSRect(x: 0, y: barHeight+devHeight-DeveloperModeMotion.headerHeight, width: cb.width, height: DeveloperModeMotion.headerHeight)
         developerBar.isHidden = devHeight == 0
@@ -532,8 +522,8 @@ import RiseCore
         errorTitle.frame = NSRect(x: 40, y: body.height/2-60, width: body.width-80, height: 34)
         errorMessage.frame = NSRect(x: 60, y: body.height/2-12, width: body.width-120, height: 56)
         retryButton.frame = NSRect(x: body.width/2-55, y: body.height/2+55, width: 110, height: 32)
-        // Under Plain's bar, the panels come down from beneath it and what's under it.
-        let tucked = barHeight > 0 ? barHeight+devHeight : 0
+        // The panels come down from beneath the page bar and what's under it.
+        let tucked = barHeight+devHeight
         selectedFindBar.frame = pageShadow.frame; selectedFindBar.topInset = barHeight+devHeight; selectedFindBar.tuckedInset = tucked
         infoPlaque.frame = pageShadow.frame; infoPlaque.topInset = barHeight+devHeight; infoPlaque.tuckedInset = tucked
         dismissArea.frame = b
@@ -547,15 +537,13 @@ import RiseCore
             let width = min(CenteredPaletteStyle.width, b.width-16)
             palette.place(at: NSPoint(x: round(b.midX-width/2), y: max(8, round(b.midY-CenteredPaletteStyle.maximumHeight/2))), width: width)
         } else if isSidebarShown {
-            let address = root.convert(sidebar.address.frame, from: sidebar)
+            let address = root.convert(sidebar.paletteAnchor, from: sidebar)
             let paletteOrigin = NSPoint(x: address.minX, y: address.minY-2)
             palette.place(at: paletteOrigin, width: min(paletteWidth, b.width-paletteOrigin.x-8))
         } else {
             let centeredWidth = paletteCreatesTab ? AddressAppearance.tuning.centeredNewTabWidth : paletteWidth
             palette.place(centeredAt: NSPoint(x: b.midX, y: b.midY), width: min(centeredWidth, b.width-16))
         }
-        // The sidebar's part of the window's glow, wherever it is.
-        sidebar.glowArea = sidebar.convert(b, from: root)
         layoutPeek()
         layoutLinkStatus()
         tabSwitchBackdrop.frame = b
@@ -935,11 +923,11 @@ import RiseCore
     @objc func zoomIn() { setPageZoom(PageZoom.next(after: selectedTab?.page.zoom ?? 1)) }
     @objc func zoomOut() { setPageZoom(PageZoom.previous(before: selectedTab?.page.zoom ?? 1)) }
     @objc func actualSize() { setPageZoom(1) }
-    /// The page's zoom, shown by the sidebar's zoom button while it isn't 100%.
+    /// The page's zoom, shown by the page bar's zoom button while it isn't 100%.
     func setPageZoom(_ zoom: CGFloat) {
         guard let tab = selectedTab else { return }
         tab.page.zoom = zoom
-        sidebar.pageZoom = zoom; zoomControls?.refresh()
+        navBar.pageZoom = zoom; zoomControls?.refresh()
     }
     func scheduleSave() {
         saveWork?.cancel(); let work = DispatchWorkItem { [weak self] in self?.saveNow() }; saveWork = work

@@ -207,17 +207,20 @@ import RiseCore
             finish()
         })
     }
-    /// Fades a card's shadow to the page's own, so nothing changes as it hands over.
-    private func matchPageShadow(_ card: Surface, duration: TimeInterval) {
-        guard let layer = card.layer, let page = pageShadow.layer else { return }
-        let alpha = page.shadowColor.flatMap { NSColor(cgColor: $0)?.alphaComponent } ?? 1
-        let targets: [(String, Any)] = [("shadowOpacity", page.shadowOpacity*Float(alpha)), ("shadowRadius", page.shadowRadius),
-                                        ("shadowOffset", NSValue(size: page.shadowOffset))]
-        for (key, value) in targets {
-            let fade = CABasicAnimation(keyPath: key)
-            fade.fromValue = (layer.presentation() ?? layer).value(forKey: key); fade.toValue = value; fade.duration = duration
-            layer.setValue(value, forKey: key); layer.add(fade, forKey: "peek.split.\(key)")
-        }
+    /// Fades a card's own shadow out and the page's in, Kero's, with Dark's lit edge, so nothing
+    /// changes as it hands over.
+    func matchPageShadow(_ card: Surface, duration: TimeInterval) {
+        guard let layer = card.layer else { return }
+        let fade = CABasicAnimation(keyPath: "shadowOpacity")
+        fade.fromValue = (layer.presentation() ?? layer).shadowOpacity; fade.toValue = 0; fade.duration = duration
+        layer.shadowOpacity = 0; layer.add(fade, forKey: "peek.split.shadowOpacity")
+        guard let card = card as? PageSurface else { return }
+        card.keroShadows = pageShadow.keroShadows
+        card.fadeInShadows(duration: duration)
+        guard !pageEdge.isHidden, let clip = card.subviews.first else { return }
+        let edge = PageEdge(frame: clip.bounds); edge.autoresizingMask = [.width, .height]
+        clip.addSubview(edge); edge.alphaValue = 0
+        NSAnimationContext.runAnimationGroup { $0.duration = duration; edge.animator().alphaValue = 1 }
     }
 }
 

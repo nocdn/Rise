@@ -1,7 +1,7 @@
 import AppKit
 
-/// A pinned extension's button in the sidebar's address row, beside the copy and site controls
-/// buttons, fading in and out with them: its icon, and its badge when it has one.
+/// A pinned extension's button in the page bar, beside the copy and site controls
+/// buttons: its icon, and its badge when it has one.
 final class SidebarExtensionButton: SidebarHoverButton {
     let extensionID: String
     private let icon = NSImageView()
@@ -38,29 +38,5 @@ final class SidebarExtensionButton: SidebarHoverButton {
         icon.frame = NSRect(x: (bounds.width-16)/2, y: (bounds.height-16)/2, width: 16, height: 16)
         let width = max(10, ceil(badge.intrinsicContentSize.width)+4)
         badge.frame = NSRect(x: min(bounds.width-width, icon.frame.maxX-width+5), y: bounds.height-11, width: width, height: 10)
-    }
-}
-
-@MainActor extension SidebarView {
-    /// Room for the pinned extensions' buttons left of the copy button, leaving the address some.
-    static let extensionButtonStride: CGFloat = 26
-    var visibleExtensionButtons: [SidebarExtensionButton] {
-        let room = fixedControlsMinX-address.frame.minX-60
-        let count = max(0, Int(room/Self.extensionButtonStride))
-        return Array(extensionButtons.prefix(count))
-    }
-    /// The left edge of the address row's buttons, as many as show.
-    var addressControlsMinX: CGFloat {
-        visibleExtensionButtons.last.map(\.frame.minX) ?? fixedControlsMinX
-    }
-    /// The copy button's left edge, or the zoom button's while it shows.
-    var fixedControlsMinX: CGFloat { showsZoom ? zoomButton.frame.minX : copyButton.frame.minX }
-    func layoutExtensionButtons() {
-        let visible = visibleExtensionButtons
-        for (index, button) in extensionButtons.enumerated() {
-            button.frame = NSRect(x: fixedControlsMinX-Self.extensionButtonStride*CGFloat(index+1), y: copyButton.frame.minY,
-                                  width: 25, height: copyButton.frame.height)
-            button.isHidden = !hasAddress || !visible.contains(button)
-        }
     }
 }

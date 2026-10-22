@@ -1,0 +1,56 @@
+--- a/ui/accelerated_widget_mac/display_ca_layer_tree.mm
++++ b/ui/accelerated_widget_mac/display_ca_layer_tree.mm
+@@ -22,6 +22,29 @@ @interface CALayer (PrivateAPI)
+ - (void)setContentsChanged;
+ @end
+ 
++#if BUILDFLAG(IS_MAC)
++// Rise: Core Animation's autoresizing applies only the last size change before
++// each layout pass, so a view resized faster than that, as Rise's pages are
++// while a header slides in, left the page's layer drifting from it, a little
++// more each time, and the page drawn off its place. Its root lays it out to
++// fill it exactly instead.
++@interface RiseFillLayout : NSObject <CALayoutManager>
++@property(nonatomic, weak) CALayer* fill;
++@end
++
++@implementation RiseFillLayout
++@synthesize fill = _fill;
++- (void)layoutSublayersOfLayer:(CALayer*)layer {
++  CALayer* fill = self.fill;
++  if (!fill || CGRectEqualToRect(fill.frame, layer.bounds)) {
++    return;
++  }
++  ScopedCAActionDisabler disabler;
++  fill.frame = layer.bounds;
++}
++@end
++#endif
++
+ namespace ui {
+ namespace {
+ 
+@@ -47,6 +70,11 @@ - (void)setContentsChanged;
+ #endif
+   maybe_flipped_layer_.anchorPoint = CGPointZero;
+   [root_layer_ addSublayer:maybe_flipped_layer_];
++#if BUILDFLAG(IS_MAC)
++  RiseFillLayout* layout = [[RiseFillLayout alloc] init];
++  layout.fill = maybe_flipped_layer_;
++  root_layer_.layoutManager = layout;
++#endif
+ 
+ #if BUILDFLAG(IS_IOS)
+   [root_layer_ setDrawsAsynchronously:YES];
+@@ -57,6 +85,11 @@ - (void)setContentsChanged;
+   // Disable the fade-out animation as the view is removed.
+   ScopedCAActionDisabler disabler;
+ 
++#if BUILDFLAG(IS_MAC)
++  if ([root_layer_.layoutManager isKindOfClass:[RiseFillLayout class]]) {
++    root_layer_.layoutManager = nil;
++  }
++#endif
+   [maybe_flipped_layer_ removeFromSuperlayer];
+   [remote_layer_ removeFromSuperlayer];
+   [io_surface_layer_ removeFromSuperlayer];

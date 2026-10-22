@@ -25,8 +25,7 @@ import RiseCore
     private var slideText = false
     private var toggleConfirmationDeadline: CFTimeInterval = 0
     let subtitleAccessory = NSImageView(frame: .zero)
-    let loadingBackground = TabLoadingBackground()
-    /// The Plain theme's: Kero's chosen row and hover, fading.
+    /// Kero's chosen row and hover, fading.
     let plainBackground = PlainTabBackground()
     /// The find bar's shimmer over the title, for Smart Rename.
     let titleShimmer = InputShimmer()
@@ -60,7 +59,7 @@ import RiseCore
     private(set) var isRenaming = false
     private var originalTitle = ""
     private var hover = false
-    /// AppKit turns a button's clipping back on; Plain's chosen row draws its ring and shadow
+    /// AppKit turns a button's clipping back on; the chosen row draws its ring and shadow
     /// just outside it.
     override var clipsToBounds: Bool { get { false } set {} }
     private var hasLaidOut = false
@@ -73,7 +72,7 @@ import RiseCore
         isBordered = false; title = ""; wantsLayer = true; clipsToBounds = false
         layer?.cornerRadius = TabAppearance.radius; layer?.cornerCurve = .continuous
         target = self; action = #selector(selectTab)
-        addSubview(plainBackground); addSubview(loadingBackground); addSubview(icon); addSubview(titleField); addSubview(subtitle); addSubview(subtitleAccessory); addSubview(close); addSubview(playback); addSubview(audio)
+        addSubview(plainBackground); addSubview(icon); addSubview(titleField); addSubview(subtitle); addSubview(subtitleAccessory); addSubview(close); addSubview(playback); addSubview(audio)
         addSubview(peekIndicator, positioned: .below, relativeTo: close)
         addSubview(badge); badge.isHidden = true
         peekIndicator.isHidden = true; peekIndicator.alphaValue = 0
@@ -120,7 +119,6 @@ import RiseCore
         var accessory: ObjectIdentifier?, peekIcon: ObjectIdentifier?, peekTitle: String?
         var favicon: ObjectIdentifier?, host: String?
         var playing: Bool, muted: Bool, loading: Bool, progress: Double, hardReloading: Bool
-        var plain = RiseTheme.plain
     }
     private var shown: Shown?
     func update(tab: BrowserTab, selected: Bool, theme: RiseTheme, configuration: TabRowConfiguration) {
@@ -171,9 +169,6 @@ import RiseCore
         setPeek(configuration.peek)
         setAccessibilityLabel(tab.title + (configuration.subtitle.map { ", \($0.text)" } ?? "") + (configuration.peek.map { ", Peek: \($0.title)" } ?? "") + (selected ? ", selected" : ""))
         close.toolTip = "Close \(tab.title)"
-        // Plain shows loading along its page bar instead.
-        loadingBackground.update(loading: tab.isLoading && !theme.isPlain, progress: tab.page.estimatedProgress,
-                                 theme: theme, hard: tab.isHardReloading)
         style(); needsLayout = true; needsDisplay = true
     }
     func setBadge(_ text: String?) {
@@ -239,18 +234,14 @@ import RiseCore
     }
     func style() {
         layer?.cornerRadius = isSplitMember ? 8 : TabAppearance.radius
-        loadingBackground.layer?.cornerRadius = isSplitMember ? 8 : TabAppearance.radius
-        loadingBackground.layer?.cornerCurve = .continuous
-        // Plain's chosen row and hover are its own layers, fading; a dragged row keeps its fill.
-        let plain = theme.isPlain && !isSplitMember
+        // The chosen row and hover are their own layers, fading; a dragged row keeps its fill.
+        // A split's halves are inside its row's, so theirs are plain fills.
+        let plain = !isSplitMember
         plainBackground.isHidden = !plain
         let background = (plain ? (selected ? nil : dragFill) ?? .clear
-            : selected ? (isSplitMember ? theme.pill : TabAppearance.selectedFill(theme)) : dragFill ?? (hover ? TabAppearance.hoverFill(theme) : .clear)).cgColor
+            : selected ? theme.pill : dragFill ?? (hover ? TabAppearance.hoverFill(theme) : .clear)).cgColor
         if layer?.backgroundColor != background { layer?.removeAnimation(forKey: TabDragMotion.backgroundKey) }
         layer?.backgroundColor = background
-        // The border follows the same continuous contour as the background.
-        layer?.borderColor = NSColor.white.withAlphaComponent(theme == .dark ? 0.08 : 0.7).cgColor
-        layer?.borderWidth = selected && !isSplitMember && !plain ? 0.5 : 0
         if plain {
             plainBackground.radius = layer?.cornerRadius ?? TabAppearance.radius; plainBackground.dark = theme == .dark
             plainBackground.show(chosen: selected, hovered: hover && !selected && dragFill == nil, animated: hasLaidOut && window != nil)
@@ -268,7 +259,7 @@ import RiseCore
         animateSubtitleLayout = false; hasLaidOut = bounds.width > 0 && bounds.height > 0
         let time = CACurrentMediaTime()
         let subtitleOpacity = subtitle.layer?.presentation()?.opacity ?? Float(subtitle.alphaValue)
-        loadingBackground.frame = bounds; plainBackground.frame = bounds
+        plainBackground.frame = bounds
         let titleHeight = ceil(titleField.intrinsicContentSize.height)
         let subtitleHeight = ceil(subtitle.intrinsicContentSize.height)
         let textHeight = showsSubtitle ? titleHeight + 1 + subtitleHeight : titleHeight

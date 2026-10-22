@@ -56,7 +56,7 @@ final class TabRowTests: XCTestCase {
 
     @MainActor func testGitLabRepositorySubtitleFitsAndMovesFollowingTabs() throws {
         _ = NSApplication.shared
-        let sidebar = SidebarView(copy: {}, settings: {}, archive: {}, cleanUp: {})
+        let sidebar = SidebarView(archive: {}, cleanUp: {})
         sidebar.frame = NSRect(x: 0, y: 0, width: 240, height: 600)
         let mr = BrowserTab(), next = BrowserTab()
         mr.requestedURL = URL(string: "https://code.example.com/group/subgroup/repository/-/merge_requests/42/diffs?view=parallel#note_1")
@@ -110,7 +110,7 @@ final class TabRowTests: XCTestCase {
 
     @MainActor func testSplitMergeRequestHasRoomForRepositorySubtitle() throws {
         _ = NSApplication.shared
-        let sidebar = SidebarView(copy: {}, settings: {}, archive: {}, cleanUp: {})
+        let sidebar = SidebarView(archive: {}, cleanUp: {})
         sidebar.frame = NSRect(x: 0, y: 0, width: 300, height: 600)
         let mr = BrowserTab(), other = BrowserTab()
         mr.requestedURL = URL(string: "https://gitlab.com/team/project/-/merge_requests/7/commits")

@@ -1,6 +1,6 @@
 import AppKit
 
-/// Kero's lit edge on the page in the Plain theme's Dark (github.com/egoist/kero, elevation.go):
+/// Kero's lit edge on the page in Dark (github.com/egoist/kero, elevation.go):
 /// a point of its text's colour around the page, brighter along the top than the bottom, as if
 /// lit from above. It lies over the page, inside the clip that shapes it, following its outline.
 final class PageEdge: FlippedView {

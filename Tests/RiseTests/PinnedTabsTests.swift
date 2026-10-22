@@ -42,7 +42,7 @@ final class PinnedTabsTests: XCTestCase {
         XCTAssertNil(browser.sidebar.rows[tabs[3].id]?.superview, "Its row leaves the list")
         XCTAssertFalse(browser.sidebar.orderedIDs.contains(tabs[3].id))
         browser.root.layoutSubtreeIfNeeded()
-        XCTAssertEqual(browser.sidebar.newTab.frame.minY, PinnedLayout.top+PinnedLayout.height(count: 1))
+        XCTAssertEqual(browser.sidebar.newTab.frame.minY, PinnedLayout.top+PinnedLayout.height(count: 1)-SidebarView.pinnedLift)
         browser.pinTab(tabs[5].id, at: 0)
         XCTAssertEqual(browser.tabs.prefix(2).map(\.id), [tabs[5].id, tabs[3].id])
         for tab in [tabs[0], tabs[1], tabs[2], tabs[4]] { browser.pinTab(tab.id) }

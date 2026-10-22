@@ -53,7 +53,6 @@ import AppKit
         if drag.isDetached {
             placeDraggedTab(drag, frame: NSRect(x: point.x-drag.grabOffset.x, y: point.y-drag.grabOffset.y,
                                                width: drag.view.bounds.width, height: drag.view.bounds.height), spring: springs)
-            positionSelectedTabShadow()
             return
         }
         var frame = NSRect(origin: .zero, size: drag.view.bounds.size)
@@ -92,7 +91,6 @@ import AppKit
             placeDraggedTab(drag, frame: NSRect(x: point.x-drag.grabOffset.x, y: desiredY,
                                                width: frame.width, height: frame.height), spring: true)
         }
-        positionSelectedTabShadow()
     }
     private func layoutDragSlots() { needsLayout = true; layoutSubtreeIfNeeded() }
     private func liftDraggedTab(_ drag: SidebarDrag) {
@@ -135,11 +133,8 @@ import AppKit
         if drag.overlay != nil, let target = targetFrames[drag.id], displayedRows.contains(where: { $0 === drag.view }) {
             placeDraggedTab(drag, frame: target, spring: true)
             clearDragFill(drag.view, at: location ?? drag.event.locationInWindow, animated: true)
-            if let shadow = drag.overlay?.shadowView {
-                let selected = selectedTabID.flatMap { displayedRow(for: $0) } === drag.view
-                let visible = scroll.frame.contains(drag.view.convert(drag.view.bounds, to: self))
-                TabDragMotion.returnShadow(shadow, matching: selected && visible ? selectedTabShadow : nil)
-            }
+            // The lifted row's shadow fades as it lands: Kero's chosen row draws its own.
+            if let shadow = drag.overlay?.shadowView { TabDragMotion.fadeShadow(shadow, to: 0, duration: TabDragMotion.shadowOutDuration) }
             let work = DispatchWorkItem { [weak self, weak drag] in
                 guard let self, let drag, self.returningDrag === drag else { return }
                 self.finishReturningTab()
@@ -164,7 +159,6 @@ import AppKit
         clearDragAppearance(drag.view)
         if let row = drag.view as? TabRow { row.refreshHover() }
         if let pair = drag.view as? SplitTabRow { pair.left.refreshHover(); pair.right.refreshHover() }
-        positionSelectedTabShadow()
     }
     private func clearDragAppearance(_ view: NSView) {
         clearDragFill(view)

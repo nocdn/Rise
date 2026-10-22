@@ -48,10 +48,10 @@ struct GitHubRepository: Equatable {
     }
 }
 
-/// Stars repositories as the person signed in to GitHub in Rise, as github.com's own Star button
-/// does: a github.com page, kept offscreen, reads the repository's page with their session, which
-/// says whether they're signed in, whether it's starred, and carries the form's token, and posts
-/// that form. One at a time, in order.
+/// Stars repositories as the person signed in to GitHub in Rise, with github.com's own Star button:
+/// the repository's page, kept offscreen with their session, says whether they're signed in and
+/// whether it's starred, and its button is pressed once GitHub's code has taken it over. One at a
+/// time, in order.
 @MainActor final class GitHubStarrer {
     enum Outcome: Equatable { case starred, alreadyStarred, signedOut, notFound, failed }
     private var page: WebPage?
@@ -87,29 +87,26 @@ struct GitHubRepository: Equatable {
         idle?.cancel()
         defer { scheduleTearDown() }
         Self.log("start \(repository.path)")
-        guard let page = await githubPage() else { Self.log("\(repository.path): github.com didn't load"); return .failed }
-        let arguments = ["owner": repository.owner, "name": repository.name]
-        let posted = Self.outcome(await withTimeout(seconds: 20) {
-            await page.evaluate(Self.starScript, arguments: arguments, world: Self.world)
-        })
-        Self.log("\(repository.path) form: \(posted.status)\(posted.detail.map { " (\($0))" } ?? "")")
-        if posted.outcome != .failed { return posted.outcome }
-        // Whatever the quick way tripped on, GitHub's own Star button, on the repository's page.
         let path = "/\(repository.owner)/\(repository.name)"
-        guard let url = URL(string: "https://github.com" + path) else { return .failed }
+        guard let page = hiddenPage(), let url = URL(string: "https://github.com" + path) else { return .failed }
+        // The repository's own page, with GitHub's Star button. A page left from an earlier star
+        // mustn't pass for it: done once this load has been seen to start, or it shows this one.
+        let before = page.url
         page.load(url)
-        let deadline = Date().addingTimeInterval(15)
+        var started = false
+        let deadline = Date().addingTimeInterval(20)
         while Date() < deadline {
-            try? await Task.sleep(for: .milliseconds(150))
-            if page.url?.host == "github.com", !page.isLoading, page.url?.path != "/robots.txt" { break }
+            try? await Task.sleep(for: .milliseconds(100))
+            if page.isLoading || page.url != before { started = true }
+            if !page.isLoading, page.url?.host == "github.com", started || page.url?.path.lowercased() == path.lowercased() { break }
         }
-        guard page.url?.host == "github.com", !page.isLoading else {
-            Self.log("\(repository.path) button: the page didn't load (\(page.url?.absoluteString ?? "nothing"))"); tearDown(); return .failed
+        guard !page.isLoading, page.url?.host == "github.com", started || page.url?.path.lowercased() == path.lowercased() else {
+            Self.log("\(repository.path): the page didn't load (\(page.url?.absoluteString ?? "nothing"))"); tearDown(); return .failed
         }
         let found = await withTimeout(seconds: 15) { await page.evaluate(Self.findScript, arguments: [:], world: Self.world) }
         guard let ready = found as? [String: Any], ready["status"] as? String == "ready" else {
             let found = Self.outcome(found)
-            Self.log("\(repository.path) button: \(found.status)\(found.detail.map { " (\($0))" } ?? "")")
+            Self.log("\(repository.path): \(found.status)\(found.detail.map { " (\($0))" } ?? "")")
             return found.outcome
         }
         // GitHub draws the button before its code takes it over: wait for that, or a press is lost.
@@ -121,10 +118,10 @@ struct GitHubRepository: Equatable {
                 wired = (try? await page.evaluate(Self.wiredScript, arguments: [:], in: nil, world: .page)) as? Bool == true
                 if !wired { try? await Task.sleep(for: .milliseconds(200)) }
             }
-            Self.log("\(repository.path) button: \(wired ? "wired" : "never seen wired") after \(String(format: "%.1f", Date().timeIntervalSince(start)))s")
+            Self.log("\(repository.path): \(wired ? "wired" : "never seen wired") after \(String(format: "%.1f", Date().timeIntervalSince(start)))s")
         }
         let pressed = Self.outcome(await withTimeout(seconds: 15) { await page.evaluate(Self.pressScript, arguments: [:], world: Self.world) })
-        Self.log("\(repository.path) button: \(pressed.status)\(pressed.detail.map { " (\($0))" } ?? "")")
+        Self.log("\(repository.path): \(pressed.status)\(pressed.detail.map { " (\($0))" } ?? "")")
         return pressed.outcome
     }
     private static func outcome(_ value: Any?) -> (outcome: Outcome, status: String, detail: String?) {
@@ -141,27 +138,18 @@ struct GitHubRepository: Equatable {
         }
     }
 
-    /// A small github.com page to work from, its requests carrying the person's session.
-    private func githubPage() async -> WebPage? {
+    /// A page kept offscreen, its requests carrying the person's session; a window keeps it running.
+    private func hiddenPage() -> WebPage? {
         let page = self.page ?? {
             let web = BrowserTab.makePage()
+            // Desktop-sized, so GitHub doesn't move the Star button into its narrow layout's menu.
             let container = HiddenAccessibilityView(frame: NSRect(x: -20000, y: 0, width: 1280, height: 900))
             web.view.frame = container.bounds; container.addSubview(web.view)
             host?.addSubview(container, positioned: .below, relativeTo: host?.subviews.first)
             self.page = web
             return web
         }()
-        guard page is ChromiumPage else { return nil }
-        if page.url?.host != "github.com" || page.isLoading {
-            if page.url?.host != "github.com" { page.load(URL(string: "https://github.com/robots.txt")!) }
-            let deadline = Date().addingTimeInterval(15)
-            while Date() < deadline {
-                if page.url?.host == "github.com", !page.isLoading { break }
-                try? await Task.sleep(for: .milliseconds(100))
-            }
-        }
-        guard page.url?.host == "github.com", !page.isLoading else { tearDown(); return nil }
-        return page
+        return page is ChromiumPage ? page : nil
     }
 
     private func withTimeout(seconds: Double, _ work: @escaping @MainActor () async -> Any?) async -> Any? {
@@ -238,46 +226,6 @@ struct GitHubRepository: Equatable {
           const until = Date.now() + 10000;
           while (state() !== 'on' && Date.now() < until) await sleep(200);
           return state() === 'on' ? { status: 'starred' } : { status: 'failed', detail: `still not starred after pressing "${label(star).slice(0, 60)}"` };
-        } catch (error) { return { status: 'failed', detail: `script: ${error}` }; } })();
-        """
-
-    /// In a github.com page, given `owner` and `name`: the repository's page as the person sees
-    /// it, then its Star form posted, then the page again to be sure.
-    static let starScript = """
-        return (async () => { try {
-          const read = async () => {
-            const response = await fetch(`/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`, { credentials: 'include', cache: 'no-store' });
-            if (response.status === 404) return { status: 'notFound' };
-            if (!response.ok) return { status: 'failed', detail: `page ${response.status}` };
-            const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
-            // Followed to its new name, if it was renamed.
-            const path = new URL(response.url).pathname.split('/').filter(Boolean).slice(0, 2).join('/').toLowerCase();
-            const forms = [...doc.querySelectorAll('form[action]')].map(form => ({ form, action: new URL(form.getAttribute('action'), location.origin) }));
-            const star = forms.find(f => f.action.pathname.toLowerCase() === `/${path}/star`) || forms.find(f => /\\/star$/.test(f.action.pathname));
-            const container = star?.form.closest('.starring-container, .js-toggler-container');
-            return {
-              signedIn: !!doc.querySelector('meta[name="user-login"]')?.content,
-              starred: !!container?.classList.contains('on'),
-              star
-            };
-          };
-          const before = await read();
-          if (before.status) return before;
-          if (!before.signedIn) return { status: 'signedOut' };
-          if (before.starred) return { status: 'already' };
-          if (!before.star) return { status: 'failed', detail: 'no star form' };
-          const body = new FormData(before.star.form);
-          if (!body.get('authenticity_token')) return { status: 'failed', detail: 'no token' };
-          const posted = await fetch(before.star.action.href, {
-            method: 'POST', body, credentials: 'include',
-            headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
-          });
-          if (posted.status === 401) return { status: 'signedOut' };
-          if (posted.status === 404) return { status: 'notFound' };
-          if (!posted.ok) return { status: 'failed', detail: `star ${posted.status}` };
-          const after = await read();
-          if (after.status) return after;
-          return after.starred ? { status: 'starred' } : { status: 'failed', detail: 'not starred afterwards' };
         } catch (error) { return { status: 'failed', detail: `script: ${error}` }; } })();
         """
 }

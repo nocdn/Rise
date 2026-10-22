@@ -9,16 +9,12 @@ final class HistoryArrowButton: ChromeButton {
     let direction: HistoryDirection
     private let arrow = CAShapeLayer()
     /// The 16 pt toolbar arrow's canvas, which the drawn arrow's ink matches.
-    private let glyphSize: NSSize
     private var returnTimer: Timer?
     private var isDragging = false
     private var crossedThreshold = false
     private(set) var pull = 0.0
     private(set) var armed = false
     var isReturning: Bool { returnTimer != nil }
-    /// Dia's chevron, as the Plain theme's page bar draws it: the arrow's head alone, 6.5 by
-    /// 11.5 pt of ink, its tip pulling in the same way.
-    var chevron = false { didSet { if chevron != oldValue { updatePath() } } }
     override var contentTintColor: NSColor? {
         didSet { if !armed { setStrokeColor(restingColor) } }
     }
@@ -35,8 +31,6 @@ final class HistoryArrowButton: ChromeButton {
     }
     init(direction: HistoryDirection, title: String, action: @escaping () -> Void) {
         self.direction = direction
-        glyphSize = NSImage(systemSymbolName: direction == .back ? "arrow.left" : "arrow.right", accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: 16, weight: .regular))?.size ?? NSSize(width: 16, height: 14)
         super.init(symbol: direction == .back ? "arrow.left" : "arrow.right", size: 16, title: title, action: action)
         image = nil
         arrow.fillColor = nil; arrow.lineCap = .round; arrow.lineJoin = .round
@@ -92,31 +86,13 @@ final class HistoryArrowButton: ChromeButton {
         let t = (low + high) / 2
         return 1 - (3 * (1-t) * t*t + t*t*t)
     }
+    /// Dia's chevron, as the page bar draws it: an arrow's head alone, 6.5 by 11.5 pt of ink,
+    /// its tip pulling in as a swipe goes back or forward.
     private func updatePath() {
-        if chevron { updateChevronPath(); return }
-        let size = glyphSize
-        let facing = direction == .back ? -1.0 : 1.0
-        // SF Symbols include optical whitespace. Keep the regular arrow's ink
-        // size rather than enlarging the replacement to its full image canvas.
-        let half = Double(size.width - 5 - arrow.lineWidth) / 2
-        let wing = Double(size.height - 3 - arrow.lineWidth) / 2
-        let tip = CGPoint(x: bounds.midX + facing * (half - pull * half * 32/36), y: bounds.midY)
-        let tail = CGPoint(x: bounds.midX - facing * half, y: bounds.midY)
-        // The head's two points shorten with the pull too, about a third at the threshold,
-        // visible at toolbar scale without changing the resting size or stroke weight.
-        let arm = wing * (1 - pull * 0.35)
-        let path = CGMutablePath()
-        path.move(to: tip); path.addLine(to: tail)
-        path.move(to: CGPoint(x: tip.x - facing * arm, y: tip.y - arm))
-        path.addLine(to: tip); path.addLine(to: CGPoint(x: tip.x - facing * arm, y: tip.y + arm))
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        arrow.frame = bounds; arrow.path = path
-        CATransaction.commit()
-    }
-    private func updateChevronPath() {
         let facing = direction == .back ? -1.0 : 1.0
         let width = 6.5-Double(arrow.lineWidth), height = 11.5-Double(arrow.lineWidth)
         let tip = CGPoint(x: bounds.midX + facing * (width/2 - pull * width * 0.8), y: bounds.midY)
+        // The head's two points shorten with the pull too, about a third at the threshold.
         let arm = height/2 * (1 - pull * 0.35)
         let path = CGMutablePath()
         path.move(to: CGPoint(x: tip.x - facing * width, y: tip.y - arm))

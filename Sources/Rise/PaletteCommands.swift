@@ -81,7 +81,7 @@ enum PageZoom {
         }
         switch command {
         case "Change Theme":
-            let themes: [(String, RiseTheme?)] = [("Light", .neutral), ("Dark", .dark), ("Automatic", nil), ("Rose", .rose), ("Rise", .rise)]
+            let themes: [(String, RiseTheme?)] = [("Light", .neutral), ("Dark", .dark), ("Automatic", nil)]
             return .init(placeholder: "Choose a theme…", symbol: "paintbrush",
                          rows: themes.map { row($0.0, "paintbrush", AddressPalette.themeCommandPrefix+($0.1?.rawValue ?? "automatic")) },
                          picked: themes.firstIndex { automaticTheme ? $0.1 == nil : $0.1 == theme })

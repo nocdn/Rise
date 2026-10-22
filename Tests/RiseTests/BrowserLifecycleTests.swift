@@ -22,7 +22,7 @@ final class BrowserLifecycleTests: XCTestCase {
         try flags([])
         XCTAssertFalse(browser.linkStatus.showsPeekHint)
         try flags(.option)
-        XCTAssertTrue(browser.linkStatus.showsPeekHint, "The existing Option Peek shortcut gets the same hint")
+        XCTAssertFalse(browser.linkStatus.showsPeekHint, "Option copies the link instead")
         try flags([])
         browser.showHoveredLink(nil, in: web)
         XCTAssertTrue(browser.linkStatus.isHidden)
@@ -82,13 +82,13 @@ final class BrowserLifecycleTests: XCTestCase {
         let browser = makeBrowser(); defer { clean(browser) }
         let first = browser.addTab(); first.pinned = true
         let second = browser.addTab(); second.developer = true
-        browser.theme = .rose; browser.sidebarWidth = 260; browser.saveNow()
+        browser.theme = .dark; browser.sidebarWidth = 260; browser.saveNow()
         let restored = BrowserController(sessionURL: browser.sessionURL)
         defer { clean(restored) }
         XCTAssertEqual(restored.tabs.map(\.saved), browser.tabs.map(\.saved))
         XCTAssertEqual(restored.selectedID, second.id)
         XCTAssertTrue(restored.selectedTab?.page.view.superview === restored.pageClip)
-        XCTAssertEqual(restored.theme, .rose)
+        XCTAssertEqual(restored.theme, .dark)
         XCTAssertEqual(restored.sidebarWidth, 260)
     }
     @MainActor func testAutomaticThemeFollowsMacOSAndIsRestored() {
@@ -103,52 +103,47 @@ final class BrowserLifecycleTests: XCTestCase {
         defer { clean(restored) }
         XCTAssertTrue(restored.automaticTheme)
         XCTAssertEqual(restored.theme, system)
-        restored.chooseTheme(.rose)
+        restored.chooseTheme(.neutral)
         XCTAssertFalse(restored.automaticTheme)
         XCTAssertEqual(NSApp.appearance?.name, .aqua, "A chosen theme sets the appearance again")
     }
-    @MainActor func testPlainLightThemeUsesKerosWashAndChosenTabOnlyInLight() throws {
-        let suite = "plain-light-\(UUID().uuidString)", preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
-        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"),
-                                        restore: false, preferences: preferences)
-        defer { RiseTheme.plain = false; clean(browser); preferences.removePersistentDomain(forName: suite) }
+    @MainActor func testLightAndDarkUseKerosLookAndARetiredThemeComesBackAsLight() throws {
+        let browser = makeBrowser(); defer { clean(browser) }
         let first = browser.addTab(), second = browser.addTab()
         browser.chooseTheme(.neutral); browser.select(first.id)
-        browser.setRiseSetting("plain", true)
-        XCTAssertEqual(browser.theme.background, RiseTheme.plainBackground); XCTAssertNil(browser.theme.backgroundGradient)
+        XCTAssertEqual(browser.theme.background, RiseTheme.plainBackground)
         XCTAssertFalse(browser.plainMaterial.isHidden); XCTAssertEqual(browser.plainMaterial.blendingMode, .behindWindow)
         let row = try XCTUnwrap(browser.sidebar.rows[first.id]), other = try XCTUnwrap(browser.sidebar.rows[second.id])
         XCTAssertTrue(row.plainBackground.isChosen); XCTAssertFalse(other.plainBackground.isChosen)
-        XCTAssertNil(browser.sidebar.selectedTabShadow.shadow, "Kero's ring and shadow in place of Rise's card")
         browser.sidebar.layoutSubtreeIfNeeded()
-        XCTAssertTrue(browser.sidebar.address.isHidden); XCTAssertEqual(browser.sidebar.newTab.frame.minY, SidebarView.addresslessTop, "New Tab takes its place")
+        XCTAssertEqual(browser.sidebar.newTab.frame.minY, SidebarView.addresslessTop, "New Tab under the traffic lights")
+        XCTAssertTrue(browser.pageEdge.isHidden); XCTAssertEqual(browser.pageShadow.keroShadows, .light, "Kero's soft pair for Light's edge")
+        XCTAssertNil(browser.pageShadow.shadow)
+        browser.showWindow(nil); browser.root.layoutSubtreeIfNeeded()
+        XCTAssertEqual(browser.pageShadow.layer?.masksToBounds, false, "Its shadows reach past its edge")
+        XCTAssertEqual(browser.pageClip.layer?.masksToBounds, true, "While the page inside keeps its rounded corners")
         browser.select(second.id)
         XCTAssertTrue(other.plainBackground.isChosen); XCTAssertFalse(row.plainBackground.isChosen)
         browser.chooseTheme(.dark)
-        XCTAssertEqual(browser.theme.background, RiseTheme.plainDarkBackground, "Dark is Plain too, in Kero's near-black")
-        XCTAssertFalse(browser.plainMaterial.isHidden); XCTAssertTrue(other.plainBackground.isChosen); XCTAssertTrue(other.plainBackground.dark)
-        XCTAssertTrue(browser.sidebar.address.isHidden)
+        XCTAssertEqual(browser.theme.background, RiseTheme.plainDarkBackground, "Kero's near-black")
+        XCTAssertTrue(other.plainBackground.dark)
         XCTAssertFalse(browser.pageEdge.isHidden, "Kero's lit edge round the page"); XCTAssertEqual(browser.pageShadow.keroShadows, .dark)
         XCTAssertTrue(browser.pageClip.subviews.last === browser.pageEdge, "Over the page")
-        browser.chooseTheme(.neutral)
-        XCTAssertTrue(browser.pageEdge.isHidden, "Dark's alone"); XCTAssertEqual(browser.pageShadow.keroShadows, .light, "Kero's soft pair for Light's edge")
-        XCTAssertNil(browser.pageShadow.shadow)
-        browser.chooseTheme(.rise)
-        XCTAssertEqual(browser.pageShadow.keroShadows, .none); XCTAssertNotNil(browser.pageShadow.shadow, "Rise's own shadow back")
-        XCTAssertTrue(browser.plainMaterial.isHidden); XCTAssertTrue(other.plainBackground.isHidden, "Only Light and Dark are Plain")
-        XCTAssertNotNil(browser.sidebar.selectedTabShadow.shadow); XCTAssertFalse(browser.sidebar.address.isHidden)
+        // A session saved with the Rise or Rose theme opens in Light.
+        browser.saveNow()
+        var session = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: browser.sessionURL)) as? [String: Any])
+        session["theme"] = "rose"
+        try JSONSerialization.data(withJSONObject: session).write(to: browser.sessionURL)
+        let restored = BrowserController(sessionURL: browser.sessionURL); defer { clean(restored) }
+        XCTAssertEqual(restored.theme, .neutral)
     }
-    @MainActor func testPlainThemePutsDiasBarOverThePageWithTheNavigationButtons() throws {
-        let suite = "plain-bar-\(UUID().uuidString)", preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
-        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"),
-                                        restore: false, preferences: preferences)
-        defer { RiseTheme.plain = false; clean(browser); preferences.removePersistentDomain(forName: suite) }
+    @MainActor func testDiasBarSitsOverThePageWithTheNavigationButtons() throws {
+        let browser = makeBrowser(); defer { clean(browser) }
         let tab = browser.addTab(); tab.requestedURL = URL(string: "https://www.apnews.com/article/oregon"); tab.rename("Oregon")
-        browser.chooseTheme(.neutral); browser.select(tab.id); browser.setPlainTheme(true)
+        browser.chooseTheme(.neutral); browser.select(tab.id); browser.layoutChrome()
         let bar = browser.navBar
         XCTAssertFalse(bar.isHidden)
-        XCTAssertTrue(browser.toolbarButtons.allSatisfy { $0.superview === bar }, "Rise's titlebar buttons move into it")
-        XCTAssertEqual((browser.toolbarButtons[1] as? HistoryArrowButton)?.chevron, true, "As Dia's chevrons")
+        XCTAssertTrue(browser.toolbarButtons.allSatisfy { $0.superview === bar }, "Rise's sidebar and navigation buttons are in it")
         XCTAssertEqual(tab.page.view.frame.minY, PlainNavBar.Metrics.height, "The page starts under it")
         XCTAssertEqual(bar.text.stringValue, "apnews.com / Oregon")
         let tuck = PlainNavBar.Metrics.height
@@ -162,9 +157,6 @@ final class BrowserLifecycleTests: XCTestCase {
         XCTAssertEqual(bar.text.stringValue, "apnews.com/article/oregon", "Hovered, the whole address"); XCTAssertTrue(bar.settingsButton.allowsInteraction)
         bar.setColor(.black, animated: false)
         XCTAssertEqual(bar.ink.strong, NSColor.white.withAlphaComponent(0.8), "Light on a dark page")
-        browser.setPlainTheme(false)
-        XCTAssertTrue(bar.isHidden); XCTAssertTrue(browser.toolbarButtons.allSatisfy { $0.superview === browser.toolbarHost })
-        XCTAssertEqual((browser.toolbarButtons[1] as? HistoryArrowButton)?.chevron, false)
     }
     @MainActor func testPlainBarLineFollowsALoadForwardOnlyAndGoesWhenItsDone() {
         let bar = PlainNavBar(copy: {}, settings: {}, zoom: {}); bar.frame = NSRect(x: 0, y: 0, width: 800, height: PlainNavBar.Metrics.height)
@@ -172,7 +164,7 @@ final class BrowserLifecycleTests: XCTestCase {
         bar.setLoading(true, progress: 0.3); XCTAssertEqual(bar.progress ?? 0, 0.3, accuracy: 0.001)
         bar.setLoading(true, progress: 0.2); XCTAssertEqual(bar.progress ?? 0, 0.3, accuracy: 0.001, "Never back")
         bar.setLoading(true, progress: 0.6, hard: true)
-        XCTAssertEqual(bar.progress ?? 0, 0.6, accuracy: 0.001); XCTAssertEqual(bar.progressStyle.color, TabLoadingBackground.hardReloadColor)
+        XCTAssertEqual(bar.progress ?? 0, 0.6, accuracy: 0.001); XCTAssertEqual(bar.progressStyle.color, PlainNavBar.hardReloadColor)
         bar.setLoading(false, progress: 0); XCTAssertNil(bar.progress, "Done, it goes")
         bar.resetLoading(true, progress: 0.45); XCTAssertEqual(bar.progress ?? 0, 0.45, accuracy: 0.001, "Another tab's load, where it's got")
     }
@@ -202,6 +194,8 @@ final class BrowserLifecycleTests: XCTestCase {
         XCTAssertEqual(browser.selectedID, source.id)
         XCTAssertEqual(browser.peekTab?.url, target)
         XCTAssertNotNil(browser.peekCard)
+        XCTAssertEqual(browser.peekCard?.layer?.cornerCurve, .continuous, "Smoothed corners, as the page's")
+        XCTAssertEqual(browser.peekCard?.subviews.first?.layer?.cornerCurve, .continuous)
         XCTAssertEqual(browser.peekControls.count, 3)
         browser.closePeek()
         XCTAssertNil(browser.peekTab)
@@ -233,19 +227,20 @@ final class BrowserLifecycleTests: XCTestCase {
         XCTAssertTrue(browser.sidebar.isHidden)
         XCTAssertTrue(browser.toolbarAccessory.isHidden)
         XCTAssertFalse(window.toolbar!.isVisible)
-        XCTAssertTrue(browser.toolbarButtons.allSatisfy(\.isHidden))
+        XCTAssertTrue(browser.toolbarButtons.allSatisfy { !$0.isHidden && $0.superview === browser.navBar }, "Still in the page bar")
         XCTAssertEqual(browser.pageShadow.frame, browser.root.bounds.insetBy(dx: PageAppearance.inset, dy: PageAppearance.inset))
-        XCTAssertEqual(tab.page.view.frame, browser.pageClip.bounds)
+        XCTAssertEqual(tab.page.view.frame, browser.pageClip.bounds.divided(atDistance: PlainNavBar.Metrics.height, from: .minYEdge).remainder)
         XCTAssertEqual(browser.selectedID, tab.id)
         XCTAssertTrue(browser.pageShadow.layer?.animationKeys()?.isEmpty ?? true)
         for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             XCTAssertTrue(window.standardWindowButton(kind)!.isHidden)
         }
-        // The invisible titlebar must not swallow clicks near the page's top.
+        // The invisible titlebar must not swallow clicks on the page bar, nor under it on the page.
         let frameView = browser.root.superview!
-        let point = browser.root.convert(NSPoint(x: 300, y: 18), to: frameView)
-        let hit = frameView.hitTest(point)
-        XCTAssertTrue(hit === tab.page.view || hit?.isDescendant(of: tab.page.view) == true)
+        let bar = frameView.hitTest(browser.root.convert(NSPoint(x: 300, y: 18), to: frameView))
+        XCTAssertTrue(bar === browser.navBar || bar?.isDescendant(of: browser.navBar) == true)
+        let page = frameView.hitTest(browser.root.convert(NSPoint(x: 300, y: PlainNavBar.Metrics.height+18), to: frameView))
+        XCTAssertTrue(page === tab.page.view || page?.isDescendant(of: tab.page.view) == true)
         browser.toggleSidebar()
         XCTAssertEqual(browser.pageShadow.frame, openFrame)
         XCTAssertFalse(browser.toolbarAccessory.isHidden)

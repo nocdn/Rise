@@ -253,7 +253,7 @@ class FindInputCell: NSTextFieldCell {
     private(set) var hasSubmittedQuestion = false
     /// Space at the top of the page taken by the developer header.
     var topInset: CGFloat = 0 { didSet { if topInset != oldValue { needsLayout = true } } }
-    /// The Plain theme's bar over the page, which the panel comes down from under.
+    /// The page bar, which the panel comes down from under.
     var tuckedInset: CGFloat = 0 { didSet { if tuckedInset != oldValue { needsLayout = true } } }
     /// Searches the page, steps through its matches, or clears them for an empty query.
     var find: ((String, PageFind.Direction) async -> PageFind.Matches)?

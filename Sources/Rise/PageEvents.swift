@@ -3,22 +3,25 @@ import RiseCore
 
 /// What happens as Rise's pages load, navigate and open links, as the engine reports it.
 @MainActor extension BrowserController {
-    func shouldPeek(modifiers: NSEvent.ModifierFlags) -> Bool {
-        modifiers.contains(.shift) || modifiers.contains(.option)
+    func shouldPeek(modifiers: NSEvent.ModifierFlags) -> Bool { modifiers.contains(.shift) }
+    /// Option alone, which copies the link.
+    func shouldCopyLink(modifiers: NSEvent.ModifierFlags) -> Bool {
+        modifiers.intersection([.shift, .option, .command, .control]) == .option
     }
-    /// A Shift- or Option-click on a link opens a Peek before Chromium sees the click, which would
-    /// otherwise open a window or download the link.
+    /// A Shift-click on a link opens a Peek, and an Option-click copies it, before Chromium sees
+    /// the click, which would otherwise open a window or download the link.
     func takeLinkClick(_ event: NSEvent) -> Bool {
         if event.type != .leftMouseDown {
             if event.type == .leftMouseUp, takesLinkClick { takesLinkClick = false; return true }
             return takesLinkClick
         }
         takesLinkClick = false
-        guard shouldPeek(modifiers: event.modifierFlags), let hovered = hoveredWebView, let url = linkStatus.url,
+        let copies = shouldCopyLink(modifiers: event.modifierFlags)
+        guard shouldPeek(modifiers: event.modifierFlags) || copies, let hovered = hoveredWebView, let url = linkStatus.url,
               page(showing: hovered) != nil,
               let hit = root.hitTest(root.convert(event.locationInWindow, from: nil)), hit === hovered || hit.isDescendant(of: hovered) else { return false }
         takesLinkClick = true
-        openModifiedLink(url, modifiers: event.modifierFlags, from: hovered)
+        if copies { copyLink(url) } else { openModifiedLink(url, modifiers: event.modifierFlags, from: hovered) }
         return true
     }
     @discardableResult func openModifiedLink(_ url: URL, modifiers: NSEvent.ModifierFlags, from source: NSView? = nil, opensNewTab: Bool = false) -> Bool {

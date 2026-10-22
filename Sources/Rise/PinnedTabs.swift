@@ -427,7 +427,7 @@ extension PinnedLayout {
     /// Whether `location` reaches above New Tab, where tabs are pinned.
     private func isOverGrid(_ location: NSPoint) -> Bool {
         let point = convert(location, from: nil)
-        return point.x >= 0 && point.x <= bounds.width && point.y > address.frame.minY && point.y < newTab.frame.midY
+        return point.x >= 0 && point.x <= bounds.width && point.y > paletteAnchor.minY && point.y < newTab.frame.midY
     }
 
     // MARK: Pinning a row
@@ -544,18 +544,12 @@ extension PinnedLayout {
     private func land(_ moving: PinnedTabTile?, on target: NSView?, overlay: NSView?) {
         guard let moving, let overlay, let target, let host = target.superview else { overlay?.removeFromSuperview(); return }
         target.alphaValue = 0
-        // A selected row's shadow waits for the row.
-        let shadowWaits = target === rows[selectedTabID ?? UUID()]
-        if shadowWaits { selectedTabShadow.alphaValue = 0 }
         let destination = host.convert(target.frame, to: overlay)
         moving.rowStyle = target is TabRow
         if let row = target as? TabRow { moving.settle(into: restingFill(for: row)) }
         moving.move(to: destination, bouncy: !(target is TabRow)) { [weak self] in
             overlay.removeFromSuperview(); target.alphaValue = 1
-            self?.refreshHovers(); self?.positionSelectedTabShadow()
-            if shadowWaits, let shadow = self?.selectedTabShadow {
-                NSAnimationContext.runAnimationGroup { $0.duration = TabDragMotion.shadowInDuration; shadow.animator().alphaValue = 1 }
-            }
+            self?.refreshHovers()
         }
     }
     /// What a row shows at rest: selected, under the pointer, or nothing.

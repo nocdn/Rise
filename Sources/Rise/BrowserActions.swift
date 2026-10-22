@@ -15,7 +15,7 @@ import RiseCore
     func makeThemeMenu() -> NSMenuItem {
         let item = NSMenuItem(title: "Theme", action: nil, keyEquivalent: "")
         let submenu = NSMenu(title: "Theme")
-        for (title, choice) in [("Light", RiseTheme.neutral), ("Rise", .rise), ("Rose", .rose), ("Dark", .dark)] {
+        for (title, choice) in [("Light", RiseTheme.neutral), ("Dark", .dark)] {
             submenu.addItem(menuItem(title, checked: !automaticTheme && theme == choice) { [weak self] in self?.chooseTheme(choice) })
         }
         submenu.addItem(.separator())
@@ -32,8 +32,7 @@ import RiseCore
         siteControlsPopover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         siteControlsPopover.contentViewController = controller
         siteControlsPopover.contentSize = controller.view.frame.size
-        if theme.isPlain { siteControlsPopover.show(relativeTo: navBar.settingsButton.bounds, of: navBar.settingsButton, preferredEdge: .maxY); return }
-        siteControlsPopover.show(relativeTo: sidebar.settingsAnchorRect, of: sidebar.address, preferredEdge: .maxY)
+        siteControlsPopover.show(relativeTo: navBar.settingsButton.bounds, of: navBar.settingsButton, preferredEdge: .maxY)
     }
     func makeSiteMenu() -> NSMenu {
         let menu = NSMenu()
@@ -108,10 +107,11 @@ import RiseCore
         backdrop.dismiss = { [weak self] in self?.closePeek(animated: true) }; backdrop.frame = pageClip.bounds
         // Dimming lives inside the page so it recedes with it and never covers the page's shadow.
         pageClip.addSubview(backdrop); peekBackdrop = backdrop
-        let card = PageSurface(color: theme.page, radius: 8); card.layer?.masksToBounds = false
+        // Smoothed corners, as the page's, so it's one shape as it becomes a tab or a split's half.
+        let card = PageSurface(color: theme.page, radius: 8); card.layer?.masksToBounds = false; card.layer?.cornerCurve = .continuous
         card.layer?.shadowColor = NSColor.black.cgColor; card.layer?.shadowOpacity = 0.25
         card.layer?.shadowRadius = 8; card.layer?.shadowOffset = NSSize(width: 0, height: -2)
-        let clip = PageSurface(color: theme.page, radius: 8); clip.layer?.masksToBounds = true; clip.clipsToBounds = true; clip.autoresizingMask = [.width, .height]
+        let clip = PageSurface(color: theme.page, radius: 8); clip.layer?.masksToBounds = true; clip.clipsToBounds = true; clip.layer?.cornerCurve = .continuous; clip.autoresizingMask = [.width, .height]
         card.addSubview(clip); clip.addSubview(tab.page.view)
         root.addSubview(card, positioned: .below, relativeTo: dismissArea); peekCard = card
         for (glyph, title, action) in [
@@ -203,8 +203,8 @@ import RiseCore
         content.view.appearance = theme.appearance
         siteInfoPopover.contentViewController = content
         siteInfoPopover.contentSize = content.view.fittingSize
-        let anchor: NSView = selectedTab?.developer == true ? devButtons[4] : isSidebarShown ? sidebar.address : pageClip
-        let rect = anchor === pageClip ? NSRect(x: 16, y: 8, width: 1, height: 1) : anchor === sidebar.address ? sidebar.settingsAnchorRect : anchor.bounds
+        let anchor: NSView = selectedTab?.developer == true ? devButtons[4] : navBar.settingsButton
+        let rect = anchor.bounds
         siteInfoPopover.show(relativeTo: rect, of: anchor, preferredEdge: .minY)
     }
     func navigateDeveloperAddress(_ text: String) {

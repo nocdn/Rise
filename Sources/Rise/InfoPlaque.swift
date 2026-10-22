@@ -68,7 +68,7 @@ import AppKit
     var onPointer: ((Bool) -> Void)?
     /// Space at the top of the page taken by the developer header.
     var topInset: CGFloat = 0 { didSet { if topInset != oldValue { needsLayout = true } } }
-    /// The Plain theme's bar over the page, which notices come down from under.
+    /// The page bar, which notices come down from under.
     var tuckedInset: CGFloat = 0 { didSet { if tuckedInset != oldValue { needsLayout = true } } }
 
     var isPresented: Bool { notices.contains(where: \.isPresented) }
@@ -101,7 +101,7 @@ import AppKit
         for notice in notices { notice.frame = bounds; notice.topInset = topInset; notice.tuckedInset = tuckedInset; notice.render() }
         tuck()
     }
-    /// Under Plain's bar: the notices' shadows fall on it once they're out.
+    /// Under the page bar: the notices' shadows fall on it once they're out.
     func tuck() { FindBar.tuck(self, under: tuckedInset, panels: notices.map(\.panel.frame)) }
 
     /// Blue, so a notice stands out from the gray panels: a pale fill and deep ink in light

@@ -2,50 +2,20 @@ import AppKit
 import RiseCore
 
 @MainActor final class SidebarView: Surface {
-    let address = SidebarAddressButton()
-    let addressText = FadingTextField(frame: .zero)
-    let copyButton: SidebarCopyButton
-    let settingsButton: SidebarHoverButton
-    /// Left of the copy button while the page isn't at 100%, hovered or not; it opens the zoom controls.
-    let zoomButton: SidebarHoverButton
-    /// The selected page's zoom.
-    var pageZoom: CGFloat = 1 {
-        didSet { guard pageZoom != oldValue else { return }; needsLayout = true; updateAddressControlVisibility() }
-    }
-    var showsZoom: Bool { hasAddress && !hidesAddress && !PageZoom.isActual(pageZoom) }
-    /// The Plain theme leaves the address out, with its buttons, and New Tab moves up into its place.
-    var hidesAddress = false {
-        didSet {
-            guard hidesAddress != oldValue else { return }
-            address.isHidden = hidesAddress; needsLayout = true
-            updateAddressControlVisibility(animated: false)
-        }
-    }
-    /// New Tab's top then: as far under the traffic lights as Kero's first row is under its own
+    /// New Tab's top: as far under the traffic lights as Kero's first row is under its own
     /// (view.go), 46 pt centre to centre, its 28 pt header 2 pt under a 60 pt title bar centred on
     /// them. Rise's are centred 26 pt down, and New Tab is 34 pt tall.
     static let addresslessTop: CGFloat = 55
-    var isSidebarHovered = false
-    var isSiteControlsOpen = false {
-        didSet { updateAddressControlVisibility() }
-    }
-    var hasAddress = false
-    /// Pinned extensions, in the address row (`SidebarExtensionButton`).
-    var extensionButtons: [SidebarExtensionButton] = [] {
-        didSet {
-            for button in oldValue where !extensionButtons.contains(button) { button.removeFromSuperview() }
-            for button in extensionButtons where button.superview !== self { addSubview(button) }
-            needsLayout = true; updateAddressControlVisibility(animated: false)
-        }
-    }
+    /// How far the pinned tiles sit above `PinnedLayout`'s places, which left room for an address.
+    static let pinnedLift: CGFloat = 98-addresslessTop
+    /// Where the address palette opens beside the page, at the sidebar's top.
+    var paletteAnchor: NSRect { NSRect(x: TabAppearance.inset, y: 50, width: bounds.width-2*TabAppearance.inset, height: 36) }
     let newTab = NewTabButton()
     let scroll = NSScrollView()
     let rowsHost = FlippedView()
     /// Holds closed tabs' rows while they fade, below the others.
     private let leavingRows = LeavingRowsView()
-    private var appliedTheme: RiseTheme?, appliedPlain = false
-    // The shadow is a sibling of the scroller, so NSClipView cannot crop it.
-    let selectedTabShadow = Surface(radius: TabAppearance.radius)
+    private var appliedTheme: RiseTheme?
     var selectedTabID: UUID?
     let archiveButton: DownloadsButton
     let cleanUpButton: HoverHintButton
@@ -65,10 +35,8 @@ import RiseCore
     var drag: SidebarDrag?
     var returningDrag: SidebarDrag?
     var dragScrollTimer: Timer?
-    var shadowRowID: UUID?
     var crossingClick: () -> Void = { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
     var detachmentClick: () -> Void = { NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now) }
-    var onAddress: (() -> Void)?
     var onNewTab: (() -> Void)?
     var onSelect: ((UUID) -> Void)?
     var onClose: ((UUID) -> Void)?
@@ -82,65 +50,30 @@ import RiseCore
     var onTogglePlayback: ((UUID) -> Void)?
     var onToggleMute: ((UUID) -> Void)?
     var onTabPress: (() -> Void)?
-    init(copy: @escaping () -> Void, settings: @escaping () -> Void, archive: @escaping () -> Void, cleanUp: @escaping () -> Void, zoom: @escaping () -> Void = {}) {
-        copyButton = SidebarCopyButton(action: copy)
-        zoomButton = SidebarHoverButton(symbol: "plus.magnifyingglass", size: 14, title: "Zoom", action: zoom)
-        zoomButton.image = TablerIcon.image(TablerIcon.zoomIn, size: 16, description: "Zoom")
-        settingsButton = SidebarHoverButton(symbol: "slider.horizontal.3", size: 14, title: "Site controls", action: settings)
-        settingsButton.image = TablerIcon.image(TablerIcon.adjustments, size: 16, description: "Site controls")
+    init(archive: @escaping () -> Void, cleanUp: @escaping () -> Void) {
         archiveButton = DownloadsButton(title: "Downloads", action: archive)
         cleanUpButton = HoverHintButton(image: TablerIcon.image(TablerIcon.tabCleanup, size: 20, description: "Sort tabs by domain"),
                                         text: "Sort tabs by domain", shortcut: "⇧⌘K", action: cleanUp)
         super.init()
-        address.isBordered = false; address.title = ""; address.wantsLayer = true
-        address.layer?.cornerRadius = AddressAppearance.cornerRadius; address.layer?.cornerCurve = .continuous
-        address.target = self; address.action = #selector(openAddress); address.setAccessibilityLabel("Search or Enter URL")
-        address.addSubview(addressText)
-        addressText.font = .systemFont(ofSize: 13)
         newTab.target = self; newTab.action = #selector(createTab)
         scroll.drawsBackground = false; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true; scroll.scrollerStyle = .overlay
         scroll.documentView = rowsHost
-        scroll.contentView.postsBoundsChangedNotifications = true
-        NotificationCenter.default.addObserver(self, selector: #selector(positionSelectedTabShadow), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
-        selectedTabShadow.layer?.cornerCurve = .continuous
-        selectedTabShadow.shadow = TabAppearance.shadow(.neutral)
-        selectedTabShadow.isHidden = true
-        addSubview(selectedTabShadow)
-        [address, copyButton, settingsButton, zoomButton, pinnedView, newTab, scroll, archiveButton, cleanUpButton].forEach(addSubview)
-        updateAddressControlVisibility(animated: false)
+        [pinnedView, newTab, scroll, archiveButton, cleanUpButton].forEach(addSubview)
     }
     required init?(coder: NSCoder) { fatalError() }
-    @objc func openAddress() { onAddress?() }
     @objc func createTab() { onNewTab?() }
     func update(tabs: [BrowserTab], selected: BrowserTab?, theme: RiseTheme, splits: [SplitTabGroup] = []) {
         // This runs on every change to any tab; only what changed is set, as each set is redrawn.
-        if appliedTheme != theme || appliedPlain != RiseTheme.plain {
-            appliedTheme = theme; appliedPlain = RiseTheme.plain
-            hidesAddress = theme.isPlain
-            fill = theme.background; gradientColors = theme.backgroundGradient; address.layer?.backgroundColor = theme.addressFill.cgColor
-            // Plain's chosen row draws Kero's ring and shadow itself, in place of this card.
-            selectedTabShadow.fill = theme.isPlain ? .clear : TabAppearance.selectedFill(theme)
-            selectedTabShadow.shadow = theme.isPlain ? nil : TabAppearance.shadow(theme)
+        if appliedTheme != theme {
+            appliedTheme = theme
+            fill = theme.background
             newTab.theme = theme
             cleanUpButton.hintAppearance = theme.appearance
+            for button in [archiveButton, cleanUpButton] as [ChromeButton] {
+                button.contentTintColor = theme.sidebarIcon; button.hoverColor = theme.text.withAlphaComponent(0.07)
+            }
         }
         selectedTabID = selected?.id
-        let host = AddressResolver.displayHost(selected?.url)
-        if addressText.stringValue != host { addressText.stringValue = host }
-        let blank = selected?.url == nil || selected?.url?.absoluteString == "about:blank"
-        let addressColor = blank ? theme.muted : theme.text.withAlphaComponent(theme == .dark ? 0.95 : 0.85)
-        if addressText.textColor != addressColor { addressText.textColor = addressColor }
-        hasAddress = !blank
-        pageZoom = selected?.page.zoom ?? 1
-        let addressFont = NSFont.systemFont(ofSize: 13, weight: blank ? AddressAppearance.placeholderWeight : .regular)
-        if addressText.font != addressFont { addressText.font = addressFont }
-        updateAddressControlVisibility()
-        // Extension buttons come and go, so theirs are set each time.
-        ([copyButton, settingsButton, zoomButton, archiveButton, cleanUpButton] + extensionButtons).forEach {
-            let tint = $0 === archiveButton || $0 === cleanUpButton ? theme.sidebarIcon : theme.muted
-            if $0.contentTintColor != tint { $0.contentTintColor = tint }
-            $0.hoverColor = theme.text.withAlphaComponent(0.07)
-        }
         for id in Array(rows.keys) where !tabs.contains(where: { $0.id == id }) { if let row = rows.removeValue(forKey: id) { fadeOut(row) } }
         tabsByID = Dictionary(tabs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         let splitIDs = Set(splits.flatMap { [$0.leftID, $0.rightID] })
@@ -217,17 +150,8 @@ import RiseCore
     }
     override func layout() {
         super.layout(); let w = bounds.width
-        address.frame = NSRect(x: TabAppearance.inset, y: 50, width: w-2*TabAppearance.inset, height: 36)
-        let textX: CGFloat = 13
-        addressText.frame = NSRect(x: textX, y: 10, width: max(0, address.bounds.width-textX-13), height: 18)
-        copyButton.frame = NSRect(x: address.frame.maxX-59, y: 56, width: 27, height: 24)
-        settingsButton.frame = NSRect(x: address.frame.maxX-31, y: 56, width: 27, height: 24)
-        zoomButton.frame = copyButton.frame.offsetBy(dx: copyButton.frame.minX-settingsButton.frame.minX, dy: 0)
-        layoutExtensionButtons()
-        updateAddressTextBoundary(animated: false)
         let pinnedHeight = PinnedLayout.height(count: pinnedView.count)
-        // Without the address, the pinned tiles and New Tab move up together.
-        let lift: CGFloat = hidesAddress ? 98-Self.addresslessTop : 0
+        let lift = Self.pinnedLift
         pinnedView.frame = NSRect(x: 0, y: PinnedLayout.top-lift, width: w, height: max(0, pinnedHeight-PinnedLayout.bottom))
         pinnedView.layoutTiles(animated: animatesRows && window != nil)
         let start: CGFloat = (pinnedHeight > 0 ? PinnedLayout.top+pinnedHeight : 98)-lift
@@ -237,7 +161,7 @@ import RiseCore
         scroll.frame = NSRect(x: 0, y: scrollY, width: w, height: max(0, bounds.height-scrollY-44))
         // The grid grows and shrinks as tabs are pinned; what's below it slides to make room.
         if shift != 0, animatesRows, window != nil, newTab.frame.width > 0 {
-            [newTab, scroll, selectedTabShadow].forEach { PinnedLayout.slideVertically($0, from: -shift) }
+            [newTab, scroll].forEach { PinnedLayout.slideVertically($0, from: -shift) }
         }
         var y: CGFloat = 0; targetFrames = [:]
         for (index, row) in displayedRows.enumerated() {
@@ -253,7 +177,6 @@ import RiseCore
         leavingRows.frame = rowsHost.bounds
         archiveButton.frame = NSRect(x: w-37, y: bounds.height-39, width: 28, height: 28)
         cleanUpButton.frame = NSRect(x: 10, y: bounds.height-39, width: 28, height: 28)
-        positionSelectedTabShadow()
     }
     /// A closed tab's row fades out quickly where it was, under the rows sliding into its place,
     /// and takes no clicks or hover meanwhile.
@@ -275,39 +198,6 @@ import RiseCore
             MainActor.assumeIsolated { row.removeFromSuperview() }
         }
     }
-    @objc func positionSelectedTabShadow() {
-        guard let id = selectedTabID, let row: NSView = splitRows.values.first(where: { $0.group.contains(id) }) ?? rows[id] else { selectedTabShadow.isHidden = true; return }
-        guard row.superview === rowsHost else { selectedTabShadow.isHidden = true; return }
-        let rect = row.convert(row.bounds, to: self)
-        // Avoid painting a full card behind a row clipped by vertical scrolling.
-        selectedTabShadow.isHidden = !scroll.frame.contains(rect)
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        selectedTabShadow.frame = rect
-        CATransaction.commit()
-        if shadowRowID != canonicalID(for: row) {
-            shadowRowID = canonicalID(for: row)
-        }
-        if let source = row.layer, let movement = source.animation(forKey: TabListMotion.movementKey) as? CABasicAnimation,
-           let from = movement.fromValue as? NSValue, let destination = selectedTabShadow.layer {
-            let copy = movement.copy() as! CABasicAnimation
-            let offset = NSPoint(x: from.pointValue.x-source.position.x, y: from.pointValue.y-source.position.y)
-            copy.fromValue = NSPoint(x: destination.position.x+offset.x, y: destination.position.y+offset.y)
-            copy.toValue = destination.position
-            // Unset, it starts with the row's, when the frame reaches the screen.
-            if movement.beginTime != 0 { copy.beginTime = destination.convertTime(source.convertTime(movement.beginTime, to: nil), from: nil) }
-            destination.add(copy, forKey: TabListMotion.movementKey)
-        } else { selectedTabShadow.layer?.removeAnimation(forKey: TabListMotion.movementKey) }
-        // Let the rounded layer outline supply the shadow shape as well.
-        selectedTabShadow.layer?.shadowPath = nil
-    }
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect, .enabledDuringMouseDrag], owner: self))
-        if let window, !isHidden { setSidebarHovered(bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))) }
-    }
-    override func mouseEntered(with event: NSEvent) { setSidebarHovered(true) }
-    override func mouseExited(with event: NSEvent) { setSidebarHovered(false) }
-    override func viewDidHide() { super.viewDidHide(); setSidebarHovered(false, animated: false) }
 }
 
 /// Rows fading out after their tabs closed: shown, but not there to click.

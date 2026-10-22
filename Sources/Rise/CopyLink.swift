@@ -1,17 +1,23 @@
 import AppKit
 
 @MainActor extension BrowserController {
-    /// ⇧⌘C, the sidebar's copy button and the Copy URL items put the page's address on the
+    /// ⇧⌘C, the page bar's copy button and the Copy URL items put the page's address on the
     /// pasteboard and say so in the blue notice, with the copy button's confirmation glyph and
     /// AirDrop for the copied link. Copying again while the notice is down holds it longer.
     @objc func copyURL() {
         guard let url = selectedTab?.url, url.absoluteString != "about:blank" else { return }
         linkPasteboard.clearContents()
         guard linkPasteboard.setString(url.absoluteString, forType: .string) else { return }
-        (theme.isPlain ? navBar.copyButton : sidebar.copyButton).showCopied()
+        navBar.copyButton.showCopied()
         siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); hidePalette()
-        showInfo("Link copied", image: InfoPlaque.linkCopiedIcon,
+        showInfo("Copied current URL", image: InfoPlaque.linkCopiedIcon,
                  action: .init(symbol: PopoverActionButton.shareSymbol, title: "Send Link via AirDrop") { [weak self] in self?.sendLinkViaAirDrop(url) }, kind: "link")
+    }
+    /// An Option-click on a link puts its address on the pasteboard, and says so in the same notice.
+    func copyLink(_ url: URL) {
+        linkPasteboard.clearContents()
+        guard linkPasteboard.setString(url.absoluteString, forType: .string) else { return }
+        showInfo("Link copied", image: InfoPlaque.linkCopiedIcon, kind: "link")
     }
     func sendLinkViaAirDrop(_ url: URL) {
         if let airDropHandler { airDropHandler(url); return }

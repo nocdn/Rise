@@ -58,7 +58,8 @@ import UserNotifications
         popover.appearance = browser.theme.appearance
         controller.view.appearance = browser.theme.appearance
         popover.contentViewController = controller; popover.contentSize = controller.view.frame.size
-        popover.show(relativeTo: browser.sidebar.settingsAnchorRect, of: browser.sidebar.address, preferredEdge: .maxY)
+        let anchor = browser.navBar.settingsButton
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
     }
     func resolve(_ allowed: Bool) {
         let completion = reply; reply = nil; requestingWebView = nil
