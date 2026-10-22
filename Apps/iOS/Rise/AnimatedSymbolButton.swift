@@ -72,11 +72,7 @@ final class AnimatedSymbolButton: UIButton {
             configure()
         }
         init(spinner: Bool) {
-            let indicator = UIActivityIndicatorView(style: .medium)
-            indicator.color = .label
-            indicator.transform = CGAffineTransform(scaleX: 0.77, y: 0.77)
-            indicator.startAnimating()
-            content = indicator
+            content = MiniSpinnerView()
             super.init(frame: .zero)
             configure()
         }
@@ -88,7 +84,7 @@ final class AnimatedSymbolButton: UIButton {
         }
         override func layoutSubviews() {
             super.layoutSubviews()
-            if content is UIImageView { content.bounds = bounds }
+            content.bounds = bounds
             content.center = CGPoint(x: bounds.midX, y: bounds.midY)
         }
     }

@@ -1718,7 +1718,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
 
     /// Drawn once, as blurring them takes a moment: early, so the first summary doesn't wait.
     static func prepareGlows() { _ = coolGlowImage; _ = warmGlowImage }
-    // Sampled from Assets/AppIcon/Rise.icon/Assets/Rise.png: mint/blue and cream/blush.
+    // Sampled from Assets/AppIcon/Rise.icon/Assets/Light.png: mint/blue and cream/blush.
     private static let coolGlowImage = glow(size: M.coolGlowSize, inner: (197, 242, 239), outer: (206, 231, 251))
     private static let warmGlowImage = glow(size: M.warmGlowSize, inner: (254, 234, 202), outer: (254, 208, 232))
 

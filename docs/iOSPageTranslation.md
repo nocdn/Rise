@@ -4,14 +4,25 @@ More's address row shows the supplied CodeX translation icon immediately before 
 with 34 pt centre spacing from Reload (Back/Forward use 30 pt) and a slightly lighter stroke
 than the compact toolbar's discovery glyph (SVG stroke 1.7 versus 1.8).
 It appears for a detected non-English document. Tap to translate in place to English;
-the icon swaps to a small native spinner using the standard symbol animation, then back
+the icon swaps to a native SwiftUI `ProgressView` with `.controlSize(.mini)` and the
+slightly enlarged 112% scale, using the standard symbol animation, then back
 to blue when translation finishes. Blue means enabled, and another tap
 cancels outstanding work and restores the original text without reloading.
 The blue-to-normal colour change is immediate.
+The initial successful translation plays one native success haptic for the active page,
+whether the menu is open or closed. Later dynamic batches, background tabs, cancellation,
+navigation and errors do not repeat it.
+
+Closing the menu during translation carries the same spinner into the compact toolbar,
+40 pt left of More, at the discovery glyph's starting position. It swaps to the blue
+translation glyph on success, then fades and shrinks from full size to 90% after 750 ms,
+reversing the discovery entrance's 140 ms easing. Reopening a panel, navigating, changing
+tabs, cancelling, or hiding the toolbar clears it; an already-finished translation does
+not replay the completion badge when a menu closes. Later pending batches can resume it.
 
 Once per document, the compact foreground toolbar announces availability: the glyph fades
 in over 140 ms with smooth easing, growing from 90% to full size, 40 pt left of More.
-It then accelerates into More over 360 ms while shrinking
+It holds at full size for 180 ms, then accelerates into More over 360 ms while shrinking
 to 68%. The glyph slips behind the circular button's edge, staying hidden beneath its
 surface even in dark mode. More receives the same small landing impulse as a download, directed right.
 This cue never enables translation or adds a haptic. Panels, collapsed bars and the tab

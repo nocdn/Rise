@@ -7,8 +7,28 @@
       "layers" : [
         {
           "glass" : false,
-          "image-name" : "Rise.png",
-          "name" : "Rise"
+          "image-name" : "Light.png",
+          "name" : "Light",
+          "opacity-specializations" : [
+            {
+              "appearance" : "dark",
+              "value" : 0
+            }
+          ]
+        },
+        {
+          "glass" : false,
+          "image-name" : "Dark.png",
+          "name" : "Dark",
+          "opacity-specializations" : [
+            {
+              "value" : 0
+            },
+            {
+              "appearance" : "dark",
+              "value" : 1
+            }
+          ]
         }
       ],
       "shadow" : {

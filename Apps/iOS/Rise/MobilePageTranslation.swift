@@ -17,11 +17,13 @@ import WebKit
     private let contexts = NSMapTable<WKWebView, Context>.weakToStrongObjects()
     private let presenter: () -> UIViewController?
     private let changed: () -> Void
+    private let completed: (WKWebView) -> Void
     /// Native audits replace only the model, while exercising real WebKit DOM and UI code.
     var translator: Translate?
 
-    init(presenter: @escaping () -> UIViewController?, changed: @escaping () -> Void) {
-        self.presenter = presenter; self.changed = changed
+    init(presenter: @escaping () -> UIViewController?, changed: @escaping () -> Void,
+         completed: @escaping (WKWebView) -> Void = { _ in }) {
+        self.presenter = presenter; self.changed = changed; self.completed = completed
     }
     func install(on page: WKWebView) {
         guard #available(iOS 18.0, *), contexts.object(forKey: page) == nil else { return }
@@ -70,11 +72,12 @@ import WebKit
         private var mainDocument: String?
         private var revision = 0
         private var needsWork = false
+        private var awaitsCompletion = false
         private var task: Task<Void, Never>?
 
         init(page: WKWebView, owner: MobilePageTranslation) { self.page = page; self.owner = owner }
         func reset(notify: Bool = true) {
-            revision += 1; task?.cancel(); task = nil; needsWork = false
+            revision += 1; task?.cancel(); task = nil; needsWork = false; awaitsCompletion = false
             frames.removeAll(); mainDocument = nil; state = State(); didAnnounce = false
             if notify { owner?.changed() }
         }
@@ -97,6 +100,7 @@ import WebKit
         func setEnabled(_ enabled: Bool) {
             guard state.available, state.enabled != enabled else { return }
             revision += 1; task?.cancel(); task = nil
+            awaitsCompletion = enabled
             state.enabled = enabled; state.busy = enabled; owner?.changed()
             if enabled { enqueue() }
             else {
@@ -118,6 +122,10 @@ import WebKit
                 }
                 guard current == revision else { return }
                 task = nil; state.busy = false; owner?.changed()
+                if awaitsCompletion, let page {
+                    awaitsCompletion = false
+                    owner?.completed(page)
+                }
             }
         }
         private func drain(revision current: Int) async throws {

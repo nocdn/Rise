@@ -7,6 +7,12 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let scene = scene as? UIWindowScene else { return }
         let window = RiseWindow(windowScene: scene)
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains(ImageContextMenuAudit.argument) {
+            let controller = BrowserViewController(startURL: nil, websiteDataStore: .nonPersistent())
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            ImageContextMenuAudit.run(in: controller)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains(PageTranslationAudit.argument) {
             let controller = BrowserViewController(startURL: nil)
             window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()

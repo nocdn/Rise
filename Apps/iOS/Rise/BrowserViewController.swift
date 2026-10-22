@@ -44,6 +44,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     lazy var pageTranslation: MobilePageTranslation = MobilePageTranslation(presenter: { [weak self] in self }, changed: { [weak self] in
         guard let self, isViewLoaded else { return }
         updatePageTranslation()
+    }, completed: { [weak self] page in
+        guard let self, page === webView, viewIfLoaded?.window?.windowScene?.activationState == .foregroundActive else { return }
+        bottomBar.showTranslationSuccess()
     })
     private let sessionStore: MobileBrowserSessionStore?
     private var lastSavedSession: MobileBrowserSession?
@@ -348,6 +351,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         MobileTabHistory.configure(configuration)
         videoPlayback.configure(configuration)
         configuration.userContentController.addUserScript(VideoContextMenuScript.userScript)
+        configuration.userContentController.addUserScript(ImageContextMenus.userScript)
         // Honor the focus-zoom cap in our viewport script while still allowing manual pinch zoom.
         configuration.ignoresViewportScaleLimits = true
         configuration.userContentController.addUserScript(InputZoomPolicy.userScript)
@@ -362,6 +366,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let isPrivate = privateBrowsing ?? (addressSuggestions.isPrivate(webView) || isPrivateBrowsing)
         addressSuggestions.register(webView, privateBrowsing: isPrivate)
         VideoContextMenus.install(on: webView, browser: self)
+        ImageContextMenus.install(on: webView)
         downloadOrigins.install(on: webView)
         pageTranslation.install(on: webView)
         if !isPrivate { addressSuggestions.learner.install(on: webView) }
@@ -413,10 +418,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     func webView(_ webView: WKWebView, contextMenuConfigurationForElement elementInfo: WKContextMenuElementInfo,
                  completionHandler: @escaping @MainActor @Sendable (UIContextMenuConfiguration?) -> Void) {
-        guard allowsPeek, let url = elementInfo.linkURL, Self.canPeek(url) else {
+        guard !ImageContextMenus.hasImage(in: webView), allowsPeek, let url = elementInfo.linkURL, Self.canPeek(url) else {
             // Keep WebKit's suggested actions for images, external schemes, and links inside Peek.
             completionHandler(UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { actions in
-                UIMenu(children: actions)
+                ImageContextMenus.menu(in: webView, actions: actions)
             })
             return
         }
@@ -429,6 +434,14 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     static func canPeek(_ url: URL) -> Bool {
         ["http", "https"].contains(url.scheme?.lowercased() ?? "") && url.host != nil
+    }
+
+    func webView(_ webView: WKWebView, contextMenuWillPresentForElement elementInfo: WKContextMenuElementInfo) {
+        ImageContextMenus.setPresented(true, in: webView)
+    }
+
+    func webView(_ webView: WKWebView, contextMenuDidEndForElement elementInfo: WKContextMenuElementInfo) {
+        ImageContextMenus.setPresented(false, in: webView)
     }
 
     func showPeek(_ url: URL) {
@@ -653,11 +666,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         if !state.available || state.enabled || bottomBar.translationHint?.documentID != state.documentID {
             bottomBar.cancelTranslationHint()
         }
-        guard let documentID = state.documentID, !isPanelOpen, panelExpansion == 0,
-              !isTabSwitcherOpen, tabSwitcher.isHidden, summarise == nil,
-              presentedViewController == nil, !bottomBar.isCollapsed, bottomBar.shown === bottomBar.home,
+        let compact = !isPanelOpen && panelExpansion == 0 && !isTabSwitcherOpen && tabSwitcher.isHidden
+            && summarise == nil && presentedViewController == nil && !bottomBar.isCollapsed
+            && bottomBar.shown === bottomBar.home && view.window?.windowScene?.activationState == .foregroundActive
+        bottomBar.updateTranslationStatus(state, visible: compact)
+        guard compact, let documentID = state.documentID,
               (bottomBar.home.layer.presentation()?.opacity ?? 1) > 0.99,
-              view.window?.windowScene?.activationState == .foregroundActive,
               pageTranslation.takeAvailableHint(for: webView) else { return }
         bottomBar.layoutIfNeeded()
         bottomBar.announceTranslation(documentID: documentID)
@@ -1222,6 +1236,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.find.end()
         bottomBar.showContents(of: nil)
         updatePrivacyAppearance(animated: true)
+        updatePageTranslation()
     }
 
     @objc private func closePanelOnTap() {
@@ -1812,6 +1827,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     private func prepareTabSwitcher() {
         bottomBar.cancelTranslationHint()
+        bottomBar.cancelTranslationStatus()
         if tabSwitcher.isHidden {
             setBottomBarCollapsed(false)
             // Drawing the page for its card holds up the main thread for a couple of frames: the

@@ -44,9 +44,10 @@ import WebKit
         let browser = BrowserViewController(startURL: nil, suggestionsDirectory: folder, websiteDataStore: .nonPersistent())
         window.rootViewController = browser; window.makeKeyAndVisible(); browser.view.layoutIfNeeded()
         let page = browser.webView, translation = browser.pageTranslation
-        var fail = false, delay = false, calls = 0
+        var fail = false, delay = false, holdModel = false, calls = 0
         translation.translator = { texts, language in
             calls += 1
+            while holdModel { try await Task.sleep(for: .milliseconds(40)) }
             if delay { try await Task.sleep(for: .milliseconds(450)) }
             if fail { throw Failure(name: "model-unavailable") }
             return texts.map { $0 == french ? english : ["Bonjour le monde": "Hello world", "Lire la suite": "Read more", "Compter": "Count", "Une image": "An image"][$0] ?? "English: "+$0 }
@@ -69,12 +70,12 @@ import WebKit
         try check("the-discovery-glyph-starts-close-to-the-menu", abs(hint.destination.x-hint.origin.x-40) < 0.1 && hint.origin.y == hint.destination.y)
         try check("the-discovery-glyph-fades-and-grows-in-before-flying", hint.pose(at: 0).opacity == 0 && hint.pose(at: 0.05).opacity > 0 && hint.pose(at: PageTranslationHint.revealDuration).opacity == 1
                   && hint.pose(at: 0).scale < hint.pose(at: 0.05).scale && hint.pose(at: PageTranslationHint.revealDuration).scale == 1)
-        let early = hint.pose(at: PageTranslationHint.revealDuration+0.09).position.x-hint.origin.x,
-            late = hint.destination.x-hint.pose(at: PageTranslationHint.revealDuration+0.27).position.x
+        let early = hint.pose(at: PageTranslationHint.flightStart+0.09).position.x-hint.origin.x,
+            late = hint.destination.x-hint.pose(at: PageTranslationHint.flightStart+0.27).position.x
         try check("the-discovery-flight-starts-slow-and-accelerates", late > early*2)
-        try check("the-discovery-glyph-shrinks-towards-the-menu", hint.pose(at: 0.3).scale < 1 && hint.pose(at: PageTranslationHint.arrival).scale < 0.7)
+        try check("the-discovery-glyph-shrinks-towards-the-menu", hint.pose(at: PageTranslationHint.flightStart+0.16).scale < 1 && hint.pose(at: PageTranslationHint.arrival).scale < 0.7)
         try check("discovery-never-translates-or-intercepts-taps", !translation.state(for: page).enabled && calls == 0 && !hint.isUserInteractionEnabled && hint.accessibilityElementsHidden)
-        let untilCapture = hint.startTime+PageTranslationHint.revealDuration+0.14-CACurrentMediaTime()
+        let untilCapture = hint.startTime+PageTranslationHint.flightStart+0.14-CACurrentMediaTime()
         if untilCapture > 0 { try await Task.sleep(for: .seconds(untilCapture)) }
         try capture("translation-available-hint")
         try check("the-hint-uses-render-server-animation-at-120-hz", hint.glyph.layer.animation(forKey: "translation.position")?.preferredFrameRateRange.preferred == 120)
@@ -94,12 +95,16 @@ import WebKit
         try check("translation-starts-off-with-the-normal-icon-colour", !address.translateButton.isSelected && address.translateButton.tintColor == .label)
         try capture("original-menu")
         let marker = try await page.evaluateJavaScript("window.marker") as! Double
+        let feedbackBeforeTranslation = browser.bottomBar.translationSuccessFeedbackCount
         delay = true
         address.translateButton.sendActions(for: .primaryActionTriggered)
         try check("tapping-immediately-swaps-to-a-spinner", address.translateButton.symbolName == "page-translation-loading" && address.translateButton.tintColor == .label)
         try await Task.sleep(for: .milliseconds(330))
         func spinners(in view: UIView) -> [UIActivityIndicatorView] { view.subviews.flatMap { ($0 as? UIActivityIndicatorView).map { [$0] } ?? spinners(in: $0) } }
-        try check("the-loading-glyph-is-a-small-running-native-spinner", spinners(in: address.translateButton).contains { $0.isAnimating && $0.transform.a < 0.8 })
+        try check("the-loading-glyph-is-a-small-running-native-spinner", spinners(in: address.translateButton).contains {
+            let shown = $0.convert($0.bounds, to: address.translateButton)
+            return $0.isAnimating && shown.width > 5 && shown.width < 16
+        })
         try capture("translating-menu")
         delay = false
         try await wait("the-article-is-translated-in-place") { try await page.evaluateJavaScript("document.querySelector('#article').textContent.trim()") as? String == english }
@@ -111,8 +116,65 @@ import WebKit
         try check("links-and-event-handlers-survive", try await page.evaluateJavaScript("document.querySelector('#counter').click(); document.querySelector('#link').getAttribute('href')==='/article' && window.count===1") as? Bool == true)
         try check("accessible-image-text-is-translated", try await page.evaluateJavaScript("document.querySelector('img').alt") as? String == "An image")
         try await wait("finishing-swaps-the-spinner-to-the-blue-icon") { !translation.state(for: page).busy && address.translateButton.symbolName == "page-translation" && address.translateButton.tintColor == .systemBlue }
+        try check("successful-translation-plays-one-native-success-haptic", browser.bottomBar.translationSuccessFeedbackCount == feedbackBeforeTranslation+1)
         try await Task.sleep(for: .milliseconds(320))
         try capture("translated-menu")
+        translation.toggle(page)
+        try await wait("original-text-is-ready-for-compact-progress") { try await page.evaluateJavaScript("document.querySelector('#article').textContent.trim()") as? String == french }
+        holdModel = true
+        translation.toggle(page)
+        browser.closePanel()
+        try await wait("closing-the-menu-keeps-a-visible-running-spinner") {
+            browser.bottomBar.translationStatus?.phase == .translating
+                && (browser.bottomBar.home.layer.presentation()?.opacity ?? 1) > 0.99
+                && (browser.bottomBar.translationStatus?.layer.presentation()?.opacity ?? 0) > 0.99
+        }
+        let status = browser.bottomBar.translationStatus!
+        let statusCentre = status.convert(CGPoint(x: status.bounds.midX, y: status.bounds.midY), to: browser.bottomBar.home)
+        try check("compact-progress-uses-the-discovery-glyphs-starting-position", hypot(statusCentre.x-hint.origin.x, statusCentre.y-hint.origin.y) < 0.1)
+        try check("compact-progress-uses-the-same-native-spinner", status.symbol.symbolName == "page-translation-loading" && spinners(in: status).contains { $0.isAnimating })
+        let spinnerGeometry = spinners(in: status).map { spinner -> [[String: String]] in
+            var chain: [[String: String]] = [], node: UIView? = spinner
+            while let view = node, view !== browser.bottomBar.home {
+                chain.append(["view": NSStringFromClass(type(of: view)), "bounds": String(describing: view.bounds),
+                              "frame": String(describing: view.frame), "inHome": String(describing: view.convert(view.bounds, to: browser.bottomBar.home))])
+                node = view.superview
+            }
+            return chain
+        }
+        try JSONSerialization.data(withJSONObject: spinnerGeometry, options: [.prettyPrinted]).write(to: folder.appendingPathComponent("compact-spinner-geometry.json"))
+        try check("the-native-spinner-itself-is-centred-beside-more", spinners(in: status).contains {
+            let centre = $0.convert(CGPoint(x: $0.bounds.midX, y: $0.bounds.midY), to: browser.bottomBar.home)
+            return hypot(centre.x-statusCentre.x, centre.y-statusCentre.y) < 0.5
+        })
+        try capture("translating-compact-bar")
+        browser.openPanel(.menu)
+        try check("reopening-the-menu-clears-the-compact-spinner", browser.bottomBar.translationStatus == nil)
+        try await Task.sleep(for: .milliseconds(450))
+        browser.closePanel()
+        try await wait("closing-again-resumes-the-running-spinner") {
+            browser.bottomBar.translationStatus?.phase == .translating && (browser.bottomBar.home.layer.presentation()?.opacity ?? 1) > 0.99
+        }
+        holdModel = false
+        try await wait("compact-progress-swaps-to-the-blue-translation-icon") {
+            browser.bottomBar.translationStatus?.phase == .translated
+                && browser.bottomBar.translationStatus?.symbol.symbolName == "page-translation"
+                && browser.bottomBar.translationStatus?.symbol.tintColor == .systemBlue
+        }
+        let completed = browser.bottomBar.translationStatus!
+        try check("translation-also-plays-success-when-the-menu-is-closed", browser.bottomBar.translationSuccessFeedbackCount == feedbackBeforeTranslation+2)
+        try await Task.sleep(for: .milliseconds(350))
+        try capture("translated-compact-bar")
+        try await Task.sleep(for: .milliseconds(200))
+        try check("the-blue-icon-remains-visible-before-750-ms", browser.bottomBar.translationStatus === completed && completed.phase == .translated && completed.alpha == 1)
+        try await wait("the-blue-icon-starts-its-soft-dismissal") { completed.phase == .leaving }
+        try await Task.sleep(for: .milliseconds(40))
+        let leaving = completed.layer.presentation()
+        try check("completion-fades-and-scales-down-smoothly", leaving.map { $0.opacity > 0 && $0.opacity < 1 && $0.transform.m11 > 0.89 && $0.transform.m11 < 1 } == true)
+        try await wait("compact-progress-cleans-up-after-completion") { browser.bottomBar.translationStatus == nil }
+        browser.openPanel(.menu)
+        try await Task.sleep(for: .milliseconds(450))
+        let feedbackBeforeDynamicContent = browser.bottomBar.translationSuccessFeedbackCount
         _ = try await page.evaluateJavaScript("const p=document.createElement('p');p.id='late';p.textContent='Bonjour le monde';document.body.append(p)")
         try await wait("late-arriving-content-also-translates") { try await page.evaluateJavaScript("document.querySelector('#late').textContent") as? String == "Hello world" }
         _ = try await page.evaluateJavaScript("document.querySelector('#link').textContent='Un nouveau lien'")
@@ -122,6 +184,7 @@ import WebKit
         try await wait("large-pages-drain-multiple-bounded-batches") { try await page.evaluateJavaScript("[...document.querySelectorAll('.bulk')].every(p=>p.textContent==='Hello world')") as? Bool == true }
         try check("large-page-translation-is-split-into-batches", calls >= beforeBulk+3)
         try await wait("bulk-translation-finishes-before-turning-off") { !translation.state(for: page).busy }
+        try check("later-content-does-not-repeat-the-success-haptic", browser.bottomBar.translationSuccessFeedbackCount == feedbackBeforeDynamicContent)
         address.translateButton.sendActions(for: .primaryActionTriggered)
         try check("blue-to-normal-is-immediate-without-an-icon-swap", address.translateButton.tintColor == .label && address.translateButton.symbolName == "page-translation")
         try await wait("turning-off-restores-original-whitespace") { try await page.evaluateJavaScript("document.querySelector('#article').textContent") as? String == "  "+french+"  " }
@@ -134,11 +197,19 @@ import WebKit
         translation.toggle(page)
         try await Task.sleep(for: .milliseconds(250))
         delay = true; translation.toggle(page)
-        try await Task.sleep(for: .milliseconds(100)); translation.toggle(page)
+        let feedbackBeforeCancellation = browser.bottomBar.translationSuccessFeedbackCount
+        browser.closePanel()
+        try await wait("pending-translation-shows-progress-before-cancellation") { browser.bottomBar.translationStatus?.phase == .translating }
+        translation.toggle(page)
+        try check("cancelling-translation-removes-compact-progress-immediately", browser.bottomBar.translationStatus == nil)
         try await Task.sleep(for: .milliseconds(600))
         try check("cancelled-model-results-cannot-rewrite-the-original", try await page.evaluateJavaScript("document.querySelector('#article').textContent.trim()") as? String == french)
+        try check("cancelled-translation-does-not-play-success", browser.bottomBar.translationSuccessFeedbackCount == feedbackBeforeCancellation)
+        browser.openPanel(.menu)
+        try await Task.sleep(for: .milliseconds(450))
         delay = false; fail = true; translation.toggle(page)
         try await wait("model-errors-reset-the-enabled-state") { !translation.state(for: page).enabled }
+        try check("failed-translation-does-not-play-success", browser.bottomBar.translationSuccessFeedbackCount == feedbackBeforeCancellation)
         browser.presentedViewController?.dismiss(animated: false)
         fail = false
         translation.toggle(page)
@@ -161,8 +232,10 @@ import WebKit
         try await wait("a-second-page-has-its-own-detected-language") { translation.state(for: other).language == "fr" }
         try check("background-detection-does-not-announce-in-the-current-toolbar", browser.bottomBar.translationHint == nil)
         translation.toggle(other)
+        let feedbackBeforeBackgroundTranslation = browser.bottomBar.translationSuccessFeedbackCount
         try await wait("a-second-page-can-translate-independently") { try await other.evaluateJavaScript("document.body.textContent") as? String == english }
         try check("background-translation-does-not-change-the-current-pages-icon", translation.state(for: other).enabled && !translation.state(for: page).enabled && address.translateButton.isHidden)
+        try check("background-tabs-do-not-play-the-current-pages-success-haptic", browser.bottomBar.translationSuccessFeedbackCount == feedbackBeforeBackgroundTranslation)
         translation.cancel(other)
         page.loadHTMLString(html, baseURL: URL(string: "https://translation.example/deferred")!)
         try await wait("a-new-document-is-detected-while-the-menu-is-open") { translation.state(for: page).language == "fr" && !page.isLoading }

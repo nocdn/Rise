@@ -46,6 +46,27 @@ final class BottomBar: UIView {
         }
     }
     func cancelTranslationHint() { translationHint?.cancel(); translationHint = nil }
+    private(set) var translationStatus: PageTranslationStatus?
+
+    func updateTranslationStatus(_ state: MobilePageTranslation.State, visible: Bool) {
+        guard visible, state.available, state.enabled, let documentID = state.documentID else {
+            cancelTranslationStatus(); return
+        }
+        if translationStatus?.documentID != documentID { cancelTranslationStatus() }
+        if state.busy {
+            cancelTranslationHint()
+            if let translationStatus { translationStatus.showLoading(); return }
+            let status = PageTranslationStatus(documentID: documentID)
+            translationStatus = status
+            row.insertSubview(status, belowSubview: moreLanding)
+            setNeedsLayout(); layoutIfNeeded()
+            status.start { [weak self, weak status] in
+                guard let self, translationStatus === status else { return }
+                translationStatus = nil
+            }
+        } else { translationStatus?.showTranslated() }
+    }
+    func cancelTranslationStatus() { translationStatus?.cancel(); translationStatus = nil }
     /// The bar's own contents: its row of buttons.
     let home = UIView()
     /// New Page's panel: a search.
@@ -89,7 +110,10 @@ final class BottomBar: UIView {
     private let separator = UIView()
     private let row = UIView()
     private let tap = UIImpactFeedbackGenerator(style: .rigid)
-    private let copyFeedback = UINotificationFeedbackGenerator()
+    private let successFeedback = UINotificationFeedbackGenerator()
+    #if DEBUG
+    private(set) var translationSuccessFeedbackCount = 0
+    #endif
     private var copySuccessTask: Task<Void, Never>?
     /// Whichever of the row, the search and the menu is showing, if any.
     private(set) var shown: UIView?
@@ -97,7 +121,7 @@ final class BottomBar: UIView {
     /// Collapsed, only the strip remains; set it inside an animation to animate.
     var isCollapsed = false {
         didSet {
-            if isCollapsed { cancelTranslationHint() }
+            if isCollapsed { cancelTranslationHint(); cancelTranslationStatus() }
             row.alpha = isCollapsed ? 0 : 1
             row.transform = isCollapsed ? CGAffineTransform(translationX: 0, y: 10).scaledBy(x: 0.92, y: 0.92) : .identity
             row.isUserInteractionEnabled = !isCollapsed
@@ -212,7 +236,7 @@ final class BottomBar: UIView {
 
     /// A successful copy briefly acknowledges the action in More, using Send/Stop's icon swap.
     func showCopySuccess() {
-        copyFeedback.notificationOccurred(.success)
+        successFeedback.notificationOccurred(.success)
         copySuccessTask?.cancel()
         moreButton.setSymbol("checkmark")
         moreButton.accessibilityValue = "Link copied"
@@ -224,6 +248,13 @@ final class BottomBar: UIView {
             moreButton.accessibilityValue = nil
             copySuccessTask = nil
         }
+    }
+
+    func showTranslationSuccess() {
+        successFeedback.notificationOccurred(.success)
+        #if DEBUG
+        translationSuccessFeedbackCount += 1
+        #endif
     }
 
     /// Shows the row of buttons, or a panel's contents, swapping them with a quick crossfade, each
@@ -284,7 +315,7 @@ final class BottomBar: UIView {
     }
 
     private func show(_ next: UIView?, animated: Bool) {
-        if next !== home { cancelTranslationHint() }
+        if next !== home { cancelTranslationHint(); cancelTranslationStatus() }
         guard next !== shown else { return }
         let previous = shown
         if previous === history { history.cancelSwipe() }
@@ -331,6 +362,8 @@ final class BottomBar: UIView {
         let menuSide = Self.menuSize
         moreLanding.bounds = CGRect(x: 0, y: 0, width: menuSide, height: menuSide)
         moreLanding.center = CGPoint(x: bounds.width-centre, y: midY)
+        translationStatus?.bounds = CGRect(x: 0, y: 0, width: 32, height: 32)
+        translationStatus?.center = CGPoint(x: moreLanding.center.x-PageTranslationHint.leadingDistance, y: midY)
         moreButton.bounds = CGRect(x: 0, y: 0, width: menuSide, height: menuSide)
         moreButton.center = CGPoint(x: menuSide/2, y: menuSide/2)
         // The panels' contents keep their place from the top as the bar grows beneath them. By

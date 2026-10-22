@@ -3,8 +3,16 @@ import UIKit
 /// A once-per-document discovery cue. It never translates, intercepts taps or plays a haptic.
 @MainActor final class PageTranslationHint: UIView {
     static let revealDuration = 0.14
+    static let holdDuration = 0.18
+    static let initialScale: CGFloat = 0.9
+    static let leadingDistance: CGFloat = 40
+    /// Linear time along X, smoothstep along Y, matching the sampled discovery entrance.
+    static var appearanceTiming: UICubicTimingParameters {
+        UICubicTimingParameters(controlPoint1: CGPoint(x: 1.0/3, y: 0), controlPoint2: CGPoint(x: 2.0/3, y: 1))
+    }
     static let flightDuration = 0.36
-    static let arrival = revealDuration+flightDuration
+    static let flightStart = revealDuration+holdDuration
+    static let arrival = flightStart+flightDuration
     static let duration = arrival+ToolbarLandingImpact.duration
     private static let acceleration = CubicEasing(0.42, 0, 0.72, 0.19)
     let documentID: String
@@ -19,19 +27,19 @@ import UIKit
 
     struct Pose { let position: CGPoint; let scale: CGFloat; let opacity: Float }
     func pose(at time: Double) -> Pose {
-        let p = Self.acceleration(min(1, max(0, (time-Self.revealDuration)/Self.flightDuration)))
+        let p = Self.acceleration(min(1, max(0, (time-Self.flightStart)/Self.flightDuration)))
         let u = min(1, max(0, time/Self.revealDuration))
         let reveal = u*u*(3-2*u)
         let alpha = reveal*(1-max(0, (p-0.72)/0.28))
         return Pose(position: CGPoint(x: origin.x+(destination.x-origin.x)*p, y: destination.y),
-                    scale: (0.9+0.1*reveal)*(1-0.32*p), opacity: Float(alpha))
+                    scale: (Self.initialScale+(1-Self.initialScale)*reveal)*(1-0.32*p), opacity: Float(alpha))
     }
 
     init(documentID: String, landing: UIView, in host: UIView) {
         self.documentID = documentID
         self.landing = landing
         destination = landing.convert(CGPoint(x: landing.bounds.midX, y: landing.bounds.midY), to: host)
-        origin = CGPoint(x: destination.x-40, y: destination.y)
+        origin = CGPoint(x: destination.x-Self.leadingDistance, y: destination.y)
         super.init(frame: host.bounds)
         isUserInteractionEnabled = false
         accessibilityElementsHidden = true

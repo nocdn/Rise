@@ -275,7 +275,7 @@ fades in `backDelay` 0.38 s after the card starts settling, over `backDuration` 
 ### The backdrop
 
 - **Palette:** Bartosz asked for Rise's app icon colours, with a subtler background while loading
-  and after the reveal. The palette is sampled from `Assets/AppIcon/Rise.icon/Assets/Rise.png`.
+  and after the reveal. The palette is sampled from `Assets/AppIcon/Rise.icon/Assets/Light.png`.
 - **Wash:** a 100° linear gradient #FFF8EC → #F1FCFB → #F9F4FE (cream, mint and lilac softened
   towards white), always light, even in dark mode. It lightens towards the bottom with #F9FAFD
   from 68% down.

@@ -182,7 +182,7 @@ Sources: [Complete review access](https://developer.apple.com/help/app-review/be
 ## App icon verification
 
 The requested Downloads image is already preserved, byte-for-byte, as
-`Assets/AppIcon/Original.png` (SHA-256
+`Assets/AppIcon/Light.png` (SHA-256
 `07c1ec0b9669675fac5789e92a3c4a54bfee5c54e261a62c99b862c1379439a1`).
 The shared `Rise.icon` document references its 1024 × 1024 derivative, both iOS
 configurations select it, and the built iPhone app contains the compiled Rise
