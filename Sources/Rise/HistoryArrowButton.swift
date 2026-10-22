@@ -16,6 +16,9 @@ final class HistoryArrowButton: ChromeButton {
     private(set) var pull = 0.0
     private(set) var armed = false
     var isReturning: Bool { returnTimer != nil }
+    /// Dia's chevron, as the Plain theme's page bar draws it: the arrow's head alone, 6.5 by
+    /// 11.5 pt of ink, its tip pulling in the same way.
+    var chevron = false { didSet { if chevron != oldValue { updatePath() } } }
     override var contentTintColor: NSColor? {
         didSet { if !armed { setStrokeColor(restingColor) } }
     }
@@ -90,6 +93,7 @@ final class HistoryArrowButton: ChromeButton {
         return 1 - (3 * (1-t) * t*t + t*t*t)
     }
     private func updatePath() {
+        if chevron { updateChevronPath(); return }
         let size = glyphSize
         let facing = direction == .back ? -1.0 : 1.0
         // SF Symbols include optical whitespace. Keep the regular arrow's ink
@@ -105,6 +109,18 @@ final class HistoryArrowButton: ChromeButton {
         path.move(to: tip); path.addLine(to: tail)
         path.move(to: CGPoint(x: tip.x - facing * arm, y: tip.y - arm))
         path.addLine(to: tip); path.addLine(to: CGPoint(x: tip.x - facing * arm, y: tip.y + arm))
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        arrow.frame = bounds; arrow.path = path
+        CATransaction.commit()
+    }
+    private func updateChevronPath() {
+        let facing = direction == .back ? -1.0 : 1.0
+        let width = 6.5-Double(arrow.lineWidth), height = 11.5-Double(arrow.lineWidth)
+        let tip = CGPoint(x: bounds.midX + facing * (width/2 - pull * width * 0.8), y: bounds.midY)
+        let arm = height/2 * (1 - pull * 0.35)
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: tip.x - facing * width, y: tip.y - arm))
+        path.addLine(to: tip); path.addLine(to: CGPoint(x: tip.x - facing * width, y: tip.y + arm))
         CATransaction.begin(); CATransaction.setDisableActions(true)
         arrow.frame = bounds; arrow.path = path
         CATransaction.commit()

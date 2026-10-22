@@ -117,6 +117,7 @@ import RiseCore
     func shapePage(around frames: [NSRect]) {
         let outline = pageOutline(around: frames)
         pageShadow.setRestingOutline(outline); pageClip.setRestingOutline(outline, clipContents: true)
+        pageEdge.outline = outline
     }
 
     // MARK: The handle between split pages

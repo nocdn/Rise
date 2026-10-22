@@ -3,6 +3,15 @@ import RiseCore
 
 @MainActor final class BrowserController: NSWindowController, NSWindowDelegate, NSPopoverDelegate {
     let root = Surface()
+    /// The Plain theme's backdrop, as Kero's window: macOS's sidebar material, behind the window,
+    /// under 82% of Kero's grey.
+    let plainMaterial = NSVisualEffectView(), plainTint = Surface()
+    /// The Plain theme's Dark puts Kero's lit edge around the page.
+    let pageEdge = PageEdge()
+    /// The Plain theme's bar over the page, as Dia's.
+    private(set) lazy var navBar = PlainNavBar(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() },
+                                               zoom: { [weak self] in self?.showZoomControls() })
+    var plainBarTimer: Timer?, plainBarColors: [UUID: NSColor] = [:], plainBarTabID: UUID?, plainBarSampling = false
     let pageShadow = PageSurface(color: NSColor(hex: 0xFDFCFC), radius: PageAppearance.radius)
     let pageClip = PageSurface(color: NSColor(hex: 0xFDFCFC), radius: PageAppearance.radius)
     let emptyPage = Surface(color: NSColor(hex: 0xFDFCFC))
@@ -350,7 +359,8 @@ import RiseCore
         pageShadow.shadow = chromeShadow(opacity: PageAppearance.shadowOpacity, blur: PageAppearance.shadowBlur, offset: PageAppearance.shadowOffset)
         pageClip.layer?.masksToBounds = true; pageClip.clipsToBounds = true
         root.addSubview(sidebar); root.addSubview(pageShadow); pageShadow.addSubview(pageClip); installSplitHandle()
-        pageClip.addSubview(emptyPage); pageClip.addSubview(developerBar)
+        pageClip.addSubview(emptyPage); pageClip.addSubview(developerBar); pageClip.addSubview(navBar)
+        navBar.isHidden = true; navBar.onOpenAddress = { [weak self] in self?.focusAddress() }
         installSidebarEdge()
         installDevTools()
         root.addSubview(grip)
@@ -408,6 +418,7 @@ import RiseCore
         root.addSubview(linkStatus); root.addSubview(veil); root.addSubview(dismissArea); root.addSubview(palette)
         palette.dismiss = { [weak self] in self?.hidePalette() }
         loadAddressDisplay()
+        RiseTheme.plain = plainTheme
         palette.choices = { [weak self] command in self?.paletteChoice(for: command) }
         palette.queryChanged = { [weak self] text in self?.suggestions(for: text) ?? [] }
         palette.submit = { [weak self] text, suggestion in self?.submitAddress(text, suggestion: suggestion) }
@@ -440,7 +451,8 @@ import RiseCore
         // AppKit can deliver a resize while restoring the window, before its
         // sidebar and titlebar controls have finished being constructed.
         guard let window, let sidebar else { return }; let b = root.bounds
-        root.fill = theme.background; root.gradientColors = theme.backgroundGradient; window.backgroundColor = theme.background
+        root.fill = theme.isPlain ? .clear : theme.background; root.gradientColors = theme.backgroundGradient; window.backgroundColor = theme.background
+        layoutPlainBackdrop()
         root.glowColor = theme.backgroundGlow; sidebar.glowColor = theme.backgroundGlow
         let width = displayedSidebarWidth, shown = sidebarVisible || sidebarFloat.isVisible
         sidebar.isHidden = !shown
@@ -456,7 +468,8 @@ import RiseCore
             window.standardWindowButton(kind)?.isHidden = !shown
         }
         toolbarHost.isHidden = !shown
-        toolbarButtons.forEach { $0.isHidden = !shown }
+        carryNavigation()
+        toolbarButtons.forEach { $0.isHidden = !shown && !theme.isPlain }
         // A floating sidebar carries the traffic lights and navigation with it, as one block.
         let carry = shown ? sidebar.frame.origin : .zero
         let toolbarX = toolbarHost.convert(toolbarHost.bounds, to: root).minX
@@ -470,19 +483,34 @@ import RiseCore
         let devToolsRoom = layoutDevTools(in: b, pageLeft: pageLeft)
         pageShadow.frame = PageAppearance.frame(in: b, sidebarWidth: pageLeft, sidebarVisible: true)
         pageShadow.frame.size.width = max(0, pageShadow.frame.width-devToolsRoom)
+        // The Plain theme's Dark lifts the page as Kero does its cards: a lit edge, and three tight shadows.
+        let keroCard = theme.isPlain && theme == .dark
+        pageShadow.darkShadows = keroCard
+        if (pageShadow.shadow == nil) != keroCard {
+            pageShadow.shadow = keroCard ? nil : chromeShadow(opacity: PageAppearance.shadowOpacity, blur: PageAppearance.shadowBlur, offset: PageAppearance.shadowOffset)
+        }
         pageShadow.refreshOutline()
         pageClip.frame = pageShadow.bounds
+        pageEdge.isHidden = !keroCard
+        if keroCard {
+            if pageClip.subviews.last !== pageEdge { pageClip.addSubview(pageEdge) }
+            pageEdge.frame = pageClip.bounds
+        }
         // The peek width is temporary, and a floating sidebar is never resized.
         grip.frame = NSRect(x: width-3, y: 44, width: 6, height: b.height-88)
         grip.isHidden = !sidebarVisible || sidebarPeek.progress > 0 || sidebarFloat.dockProgress < 1
         let cb = pageClip.bounds
         let devHeight = developerMotion.height(for: selectedID, enabled: selectedTab?.developer == true)
-        developerBar.frame = NSRect(x: 0, y: devHeight-DeveloperModeMotion.headerHeight, width: cb.width, height: DeveloperModeMotion.headerHeight)
+        // Plain's bar is the page's top; developer mode's opens under it.
+        let barHeight: CGFloat = theme.isPlain ? PlainNavBar.Metrics.height : 0
+        navBar.isHidden = barHeight == 0
+        navBar.frame = NSRect(x: 0, y: 0, width: cb.width, height: PlainNavBar.Metrics.height)
+        developerBar.frame = NSRect(x: 0, y: barHeight+devHeight-DeveloperModeMotion.headerHeight, width: cb.width, height: DeveloperModeMotion.headerHeight)
         developerBar.isHidden = devHeight == 0
         let addressHeight = developerAddress.intrinsicContentSize.height
         developerAddress.frame = NSRect(x: 18, y: (DeveloperModeMotion.headerHeight-addressHeight)/2, width: max(100, cb.width-270), height: addressHeight)
         devButtons.enumerated().forEach { i, button in button.frame = NSRect(x: cb.width-240+CGFloat(i)*38, y: 6, width: 30, height: 28) }
-        let body = NSRect(x: 0, y: devHeight, width: cb.width, height: cb.height-devHeight)
+        let body = NSRect(x: 0, y: barHeight+devHeight, width: cb.width, height: cb.height-barHeight-devHeight)
         emptyPage.frame = body; pageBody = body
         if pageLayoutHeld {
             // An animation is placing the pages.
@@ -501,8 +529,10 @@ import RiseCore
         errorTitle.frame = NSRect(x: 40, y: body.height/2-60, width: body.width-80, height: 34)
         errorMessage.frame = NSRect(x: 60, y: body.height/2-12, width: body.width-120, height: 56)
         retryButton.frame = NSRect(x: body.width/2-55, y: body.height/2+55, width: 110, height: 32)
-        selectedFindBar.frame = pageShadow.frame; selectedFindBar.topInset = devHeight
-        infoPlaque.frame = pageShadow.frame; infoPlaque.topInset = devHeight
+        // Under Plain's bar, the panels come down from beneath it and what's under it.
+        let tucked = barHeight > 0 ? barHeight+devHeight : 0
+        selectedFindBar.frame = pageShadow.frame; selectedFindBar.topInset = barHeight+devHeight; selectedFindBar.tuckedInset = tucked
+        infoPlaque.frame = pageShadow.frame; infoPlaque.topInset = barHeight+devHeight; infoPlaque.tuckedInset = tucked
         dismissArea.frame = b
         // The centred palette dims the window behind it.
         veil.frame = b
@@ -529,7 +559,7 @@ import RiseCore
         if !tabSwitcher.isHidden { tabSwitcher.place(in: b) }
     }
     func windowDidResize(_ notification: Notification) { layoutChrome() }
-    func windowWillClose(_ notification: Notification) { tabPressed(); gmailInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); saveNow() }
+    func windowWillClose(_ notification: Notification) { plainBarTimer?.invalidate(); plainBarTimer = nil; tabPressed(); gmailInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); saveNow() }
     func windowDidResignKey(_ notification: Notification) {
         pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch(); endSidebarPeek(); tabPressed()
         sidebar?.cancelTabInteractions()
@@ -716,6 +746,7 @@ import RiseCore
         (toolbarButtons[3] as? ReloadButton)?.setMode(selectedTab?.isLoading == true ? .stop : .reload)
         developerAddress.updateURL(selectedTab?.url?.absoluteString ?? "")
         errorSurface.isHidden = errorWebView == nil || errorWebView !== selectedTab?.page.view
+        updatePlainBar()
         layoutChrome(); refreshTabSwitcher(); scheduleSave(); scheduleSwitcherPictures(); openTabLinks.refresh(shownPages)
         if !isApplyingSharedTabs { tabSync?.capture(sharedTabsSnapshot) }
         if hasPendingSharedTabs, canApplySharedTabs { applyPendingSharedTabs() }

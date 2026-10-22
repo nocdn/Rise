@@ -25,8 +25,10 @@ import RiseChromium
         guard let tab = selectedChromiumView, let action = extensionActions.first(where: { $0.extensionID == id }) else { return }
         siteControlsPopover.close()
         guard let url = action.click(inTab: tab) else { return }
-        let anchorView = sidebar.address
-        let rect = anchor.map { anchorView.convert($0.bounds, from: $0) } ?? sidebar.settingsAnchorRect
+        // In Plain, under its button in the page bar.
+        let barAnchor = (anchor as? SidebarExtensionButton).flatMap { pinned in navBar.extensionButtons.first { $0.extensionID == pinned.extensionID } }
+        let anchorView: NSView = theme.isPlain ? barAnchor ?? navBar.settingsButton : sidebar.address
+        let rect = theme.isPlain ? anchorView.bounds : anchor.map { anchorView.convert($0.bounds, from: $0) } ?? sidebar.settingsAnchorRect
         extensionPopup?.close()
         let popup = ExtensionPopup(url: url, theme: theme)
         popup.onClose = { [weak self, weak popup] in if self?.extensionPopup === popup { self?.extensionPopup = nil } }

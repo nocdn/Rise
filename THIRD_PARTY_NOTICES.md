@@ -70,6 +70,10 @@ Inter 4.1, the variable font in Assets/Fonts (bundled as Contents/Resources/Font
 
 The address palette's search glyph (Sources/Rise/CenteredPaletteStyle.swift) is Framework7 Icons' `search`, as Kero (https://github.com/egoist/kero) uses it: Copyright (c) Vladimir Kharlampidi (https://framework7.io/icons/). Licensed under the MIT License: permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files, to deal in the Software without restriction, subject to including the copyright notice and this permission notice in all copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
 
+## Kero
+
+The Rise theme's Mist wash (Sources/Rise/Chrome.swift), the Plain light theme's wash and window material, and its tabs' ring, shadow, hover and fades (Sources/Rise/PlainTabBackground.swift) follow Kero's theme.go, elevation.go and view.go: Copyright (c) 2026 EGOIST (https://github.com/egoist/kero). Licensed under the MIT License: permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files, to deal in the Software without restriction, subject to including the copyright notice and this permission notice in all copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+
 ## Blocking filter data
 
 EasyList and EasyPrivacy: The EasyList authors (https://easylist.to/). HaGeZi Multi PRO mini: HaGeZi (https://github.com/hagezi/dns-blocklists). The filter data is distributed under GPL-3.0; its complete license is in Filters/LICENSES/GPL-3.0.txt. Original source snapshots are included in Filters/Sources/.

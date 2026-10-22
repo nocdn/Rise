@@ -17,10 +17,10 @@ import AppKit
         return theme.muted.blended(withFraction: 0.8, of: tint) ?? theme.muted
     }
     static func selectedFill(_ theme: RiseTheme) -> NSColor {
-        theme.isLight ? NSColor(hex: 0xFAFAFA) : theme.selectedTab
+        theme.isPlain ? PlainTabBackground.chosen(dark: theme == .dark) : theme.isLight ? NSColor(hex: 0xFAFAFA) : theme.selectedTab
     }
     static func hoverFill(_ theme: RiseTheme) -> NSColor {
-        theme == .rose ? theme.hoveredTab : .white.withAlphaComponent(theme == .dark ? 0.16 : 0.55)
+        theme.isPlain ? PlainTabBackground.hover(dark: theme == .dark) : theme == .rose ? theme.hoveredTab : .white.withAlphaComponent(theme == .dark ? 0.16 : 0.55)
     }
     /// Flatten the hover fill against the sidebar, so neighboring rows cannot show through a drag.
     static func dragFill(_ theme: RiseTheme, sidebarFraction: CGFloat) -> NSColor {

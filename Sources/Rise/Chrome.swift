@@ -9,12 +9,23 @@ enum RiseTheme: String, CaseIterable {
     case neutral, rose, dark, rise
     /// Light, and Rise, which is Light in all but its window's wash.
     var isLight: Bool { self == .neutral || self == .rise }
-    var background: NSColor { NSColor(hex: self == .dark ? 0x363636 : self == .rose ? 0xF3D4D8 : self == .rise ? 0xEBEFF6 : 0xE0E0E0) }
+    /// Light and Dark as Kero's Plain (github.com/egoist/kero, theme.go), turned on in
+    /// rise://settings: one colour over the window's material, and Kero's tabs.
+    nonisolated(unsafe) static var plain = false
+    /// Named for when it was Light's alone, so the setting carries over.
+    static let plainKey = "Rise.PlainLightTheme"
+    var isPlain: Bool { (self == .neutral || self == .dark) && Self.plain }
+    /// Kero's sidebar colours, which its Plain wash is: a cool grey, and near-black in the dark.
+    static let plainBackground = NSColor(hex: 0xECEEF4), plainDarkBackground = NSColor(hex: 0x141418)
+    var background: NSColor {
+        isPlain ? self == .dark ? Self.plainDarkBackground : Self.plainBackground
+            : NSColor(hex: self == .dark ? 0x363636 : self == .rose ? 0xF3D4D8 : self == .rise ? 0xEBEFF6 : 0xE0E0E0)
+    }
     /// Top to bottom.
     var backgroundGradient: [NSColor]? {
         switch self {
-        case .neutral: [NSColor(hex: 0xEDEDED), NSColor(hex: 0xFAFAFA)]
-        case .dark: [NSColor(hex: 0x363636), NSColor(hex: 0x2B2B2B)]
+        case .neutral: isPlain ? nil : [NSColor(hex: 0xEDEDED), NSColor(hex: 0xFAFAFA)]
+        case .dark: isPlain ? nil : [NSColor(hex: 0x363636), NSColor(hex: 0x2B2B2B)]
         case .rise: [NSColor(hex: 0xE3E9F4), NSColor(hex: 0xEBEFF6), NSColor(hex: 0xF1F2F3), NSColor(hex: 0xF2F1EC)]
         case .rose: nil
         }

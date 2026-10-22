@@ -29,6 +29,28 @@ import AppKit
         }
     }
 
+    var plainTheme: Bool { preferences.bool(forKey: RiseTheme.plainKey) }
+    func setPlainTheme(_ on: Bool) {
+        preferences.set(on, forKey: RiseTheme.plainKey); RiseTheme.plain = on
+        update(); layoutChrome()
+    }
+    /// Kero's Plain wash: its grey at 82% over the window's sidebar material, so a little of the
+    /// desktop shows through, under everything else.
+    func layoutPlainBackdrop() {
+        let shown = theme.isPlain
+        if shown, plainMaterial.superview == nil {
+            plainMaterial.material = .sidebar; plainMaterial.blendingMode = .behindWindow; plainMaterial.state = .active
+            for (index, view) in [plainMaterial, plainTint].enumerated() {
+                view.autoresizingMask = [.width, .height]
+                root.addSubview(view, positioned: .below, relativeTo: root.subviews.dropFirst(index).first)
+            }
+        }
+        plainMaterial.isHidden = !shown; plainTint.isHidden = !shown
+        // Light's grey or Dark's near-black; the material follows the window's appearance.
+        if shown { plainTint.fill = theme.background.withAlphaComponent(0.82) }
+        if shown { plainMaterial.frame = root.bounds; plainTint.frame = root.bounds }
+    }
+
     func applyTheme() {
         let appearance = theme.appearance
         // In Automatic, the app keeps macOS's appearance so it can see it change.
@@ -38,8 +60,9 @@ import AppKit
         [pageShadow, pageClip, emptyPage, errorSurface].forEach { $0.fill = theme.page }
         errorTitle.textColor = theme.text; errorMessage.textColor = theme.muted
         developerBar.fill = theme.developerSurface; developerAddress.textColor = theme.text
-        toolbarButtons.forEach {
-            $0.contentTintColor = theme.sidebarIcon; $0.hoverColor = theme.text.withAlphaComponent(0.07)
+        // In Plain, they're the page bar's, in its colours.
+        if !theme.isPlain {
+            toolbarButtons.forEach { $0.contentTintColor = theme.sidebarIcon; $0.hoverColor = theme.text.withAlphaComponent(0.07) }
         }
         let allTabs = tabs + allPeekTabs
         for tab in allTabs { tab.page.setTheme(appearance, background: theme.page) }

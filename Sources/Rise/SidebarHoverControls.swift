@@ -26,7 +26,7 @@ class SidebarHoverButton: ChromeButton {
         updateAddressControlVisibility(animated: animated)
     }
     func updateAddressControlVisibility(animated: Bool = true) {
-        let visible = hasAddress && (isSidebarHovered || isSiteControlsOpen) && !isHidden
+        let visible = hasAddress && !hidesAddress && (isSidebarHovered || isSiteControlsOpen) && !isHidden
         updateAddressTextBoundary(animated: animated)
         let pinned = visibleExtensionButtons
         for button in [copyButton, settingsButton, zoomButton] + extensionButtons {
@@ -34,7 +34,7 @@ class SidebarHoverButton: ChromeButton {
             // The zoom button stays while the page is zoomed, hovered or not.
             let on = button === zoomButton ? showsZoom : visible && shown
             button.allowsInteraction = on
-            button.isHidden = !hasAddress || !shown
+            button.isHidden = !hasAddress || hidesAddress || !shown
             let target: CGFloat = on ? 1 : 0
             guard button.alphaValue != target else {
                 if !animated { button.layer?.removeAnimation(forKey: Self.controlsFadeKey) }
