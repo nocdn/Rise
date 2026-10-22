@@ -6,6 +6,8 @@ import RiseCore
     /// The Plain theme's backdrop, as Kero's window: macOS's sidebar material, behind the window,
     /// under 82% of Kero's grey.
     let plainMaterial = NSVisualEffectView(), plainTint = Surface()
+    /// The Plain theme's Dark puts Kero's lit edge around the page.
+    let pageEdge = PageEdge()
     /// The Plain theme's bar over the page, as Dia's.
     private(set) lazy var navBar = PlainNavBar(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() },
                                                zoom: { [weak self] in self?.showZoomControls() })
@@ -416,7 +418,7 @@ import RiseCore
         root.addSubview(linkStatus); root.addSubview(veil); root.addSubview(dismissArea); root.addSubview(palette)
         palette.dismiss = { [weak self] in self?.hidePalette() }
         loadAddressDisplay()
-        RiseTheme.plainLight = plainLightTheme
+        RiseTheme.plain = plainTheme
         palette.choices = { [weak self] command in self?.paletteChoice(for: command) }
         palette.queryChanged = { [weak self] text in self?.suggestions(for: text) ?? [] }
         palette.submit = { [weak self] text, suggestion in self?.submitAddress(text, suggestion: suggestion) }
@@ -481,8 +483,19 @@ import RiseCore
         let devToolsRoom = layoutDevTools(in: b, pageLeft: pageLeft)
         pageShadow.frame = PageAppearance.frame(in: b, sidebarWidth: pageLeft, sidebarVisible: true)
         pageShadow.frame.size.width = max(0, pageShadow.frame.width-devToolsRoom)
+        // The Plain theme's Dark lifts the page as Kero does its cards: a lit edge, and three tight shadows.
+        let keroCard = theme.isPlain && theme == .dark
+        pageShadow.darkShadows = keroCard
+        if (pageShadow.shadow == nil) != keroCard {
+            pageShadow.shadow = keroCard ? nil : chromeShadow(opacity: PageAppearance.shadowOpacity, blur: PageAppearance.shadowBlur, offset: PageAppearance.shadowOffset)
+        }
         pageShadow.refreshOutline()
         pageClip.frame = pageShadow.bounds
+        pageEdge.isHidden = !keroCard
+        if keroCard {
+            if pageClip.subviews.last !== pageEdge { pageClip.addSubview(pageEdge) }
+            pageEdge.frame = pageClip.bounds
+        }
         // The peek width is temporary, and a floating sidebar is never resized.
         grip.frame = NSRect(x: width-3, y: 44, width: 6, height: b.height-88)
         grip.isHidden = !sidebarVisible || sidebarPeek.progress > 0 || sidebarFloat.dockProgress < 1

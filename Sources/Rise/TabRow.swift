@@ -120,7 +120,7 @@ import RiseCore
         var accessory: ObjectIdentifier?, peekIcon: ObjectIdentifier?, peekTitle: String?
         var favicon: ObjectIdentifier?, host: String?
         var playing: Bool, muted: Bool, loading: Bool, progress: Double, hardReloading: Bool
-        var plain = RiseTheme.plainLight
+        var plain = RiseTheme.plain
     }
     private var shown: Shown?
     func update(tab: BrowserTab, selected: Bool, theme: RiseTheme, configuration: TabRowConfiguration) {
@@ -252,7 +252,7 @@ import RiseCore
         layer?.borderColor = NSColor.white.withAlphaComponent(theme == .dark ? 0.08 : 0.7).cgColor
         layer?.borderWidth = selected && !isSplitMember && !plain ? 0.5 : 0
         if plain {
-            plainBackground.radius = layer?.cornerRadius ?? TabAppearance.radius
+            plainBackground.radius = layer?.cornerRadius ?? TabAppearance.radius; plainBackground.dark = theme == .dark
             plainBackground.show(chosen: selected, hovered: hover && !selected && dragFill == nil, animated: hasLaidOut && window != nil)
         }
         close.isHidden = !hover

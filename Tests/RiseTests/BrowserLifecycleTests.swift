@@ -111,10 +111,10 @@ final class BrowserLifecycleTests: XCTestCase {
         let suite = "plain-light-\(UUID().uuidString)", preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
         let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"),
                                         restore: false, preferences: preferences)
-        defer { RiseTheme.plainLight = false; clean(browser); preferences.removePersistentDomain(forName: suite) }
+        defer { RiseTheme.plain = false; clean(browser); preferences.removePersistentDomain(forName: suite) }
         let first = browser.addTab(), second = browser.addTab()
         browser.chooseTheme(.neutral); browser.select(first.id)
-        browser.setRiseSetting("plainLight", true)
+        browser.setRiseSetting("plain", true)
         XCTAssertEqual(browser.theme.background, RiseTheme.plainBackground); XCTAssertNil(browser.theme.backgroundGradient)
         XCTAssertFalse(browser.plainMaterial.isHidden); XCTAssertEqual(browser.plainMaterial.blendingMode, .behindWindow)
         let row = try XCTUnwrap(browser.sidebar.rows[first.id]), other = try XCTUnwrap(browser.sidebar.rows[second.id])
@@ -124,17 +124,25 @@ final class BrowserLifecycleTests: XCTestCase {
         XCTAssertTrue(browser.sidebar.address.isHidden); XCTAssertEqual(browser.sidebar.newTab.frame.minY, SidebarView.addresslessTop, "New Tab takes its place")
         browser.select(second.id)
         XCTAssertTrue(other.plainBackground.isChosen); XCTAssertFalse(row.plainBackground.isChosen)
+        browser.chooseTheme(.dark)
+        XCTAssertEqual(browser.theme.background, RiseTheme.plainDarkBackground, "Dark is Plain too, in Kero's near-black")
+        XCTAssertFalse(browser.plainMaterial.isHidden); XCTAssertTrue(other.plainBackground.isChosen); XCTAssertTrue(other.plainBackground.dark)
+        XCTAssertTrue(browser.sidebar.address.isHidden)
+        XCTAssertFalse(browser.pageEdge.isHidden, "Kero's lit edge round the page"); XCTAssertTrue(browser.pageShadow.darkShadows)
+        XCTAssertTrue(browser.pageClip.subviews.last === browser.pageEdge, "Over the page")
+        browser.chooseTheme(.neutral)
+        XCTAssertTrue(browser.pageEdge.isHidden, "Dark's alone"); XCTAssertFalse(browser.pageShadow.darkShadows); XCTAssertNotNil(browser.pageShadow.shadow)
         browser.chooseTheme(.rise)
-        XCTAssertTrue(browser.plainMaterial.isHidden); XCTAssertTrue(other.plainBackground.isHidden, "Only Light is Plain")
+        XCTAssertTrue(browser.plainMaterial.isHidden); XCTAssertTrue(other.plainBackground.isHidden, "Only Light and Dark are Plain")
         XCTAssertNotNil(browser.sidebar.selectedTabShadow.shadow); XCTAssertFalse(browser.sidebar.address.isHidden)
     }
     @MainActor func testPlainThemePutsDiasBarOverThePageWithTheNavigationButtons() throws {
         let suite = "plain-bar-\(UUID().uuidString)", preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
         let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"),
                                         restore: false, preferences: preferences)
-        defer { RiseTheme.plainLight = false; clean(browser); preferences.removePersistentDomain(forName: suite) }
+        defer { RiseTheme.plain = false; clean(browser); preferences.removePersistentDomain(forName: suite) }
         let tab = browser.addTab(); tab.requestedURL = URL(string: "https://www.apnews.com/article/oregon"); tab.rename("Oregon")
-        browser.chooseTheme(.neutral); browser.select(tab.id); browser.setPlainLightTheme(true)
+        browser.chooseTheme(.neutral); browser.select(tab.id); browser.setPlainTheme(true)
         let bar = browser.navBar
         XCTAssertFalse(bar.isHidden)
         XCTAssertTrue(browser.toolbarButtons.allSatisfy { $0.superview === bar }, "Rise's titlebar buttons move into it")
@@ -152,7 +160,7 @@ final class BrowserLifecycleTests: XCTestCase {
         XCTAssertEqual(bar.text.stringValue, "apnews.com/article/oregon", "Hovered, the whole address"); XCTAssertTrue(bar.settingsButton.allowsInteraction)
         bar.setColor(.black, animated: false)
         XCTAssertEqual(bar.ink.strong, NSColor.white.withAlphaComponent(0.8), "Light on a dark page")
-        browser.setPlainLightTheme(false)
+        browser.setPlainTheme(false)
         XCTAssertTrue(bar.isHidden); XCTAssertTrue(browser.toolbarButtons.allSatisfy { $0.superview === browser.toolbarHost })
         XCTAssertEqual((browser.toolbarButtons[1] as? HistoryArrowButton)?.chevron, false)
     }

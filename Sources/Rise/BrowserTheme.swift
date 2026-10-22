@@ -29,9 +29,9 @@ import AppKit
         }
     }
 
-    var plainLightTheme: Bool { preferences.bool(forKey: RiseTheme.plainLightKey) }
-    func setPlainLightTheme(_ on: Bool) {
-        preferences.set(on, forKey: RiseTheme.plainLightKey); RiseTheme.plainLight = on
+    var plainTheme: Bool { preferences.bool(forKey: RiseTheme.plainKey) }
+    func setPlainTheme(_ on: Bool) {
+        preferences.set(on, forKey: RiseTheme.plainKey); RiseTheme.plain = on
         update(); layoutChrome()
     }
     /// Kero's Plain wash: its grey at 82% over the window's sidebar material, so a little of the
@@ -40,13 +40,14 @@ import AppKit
         let shown = theme.isPlain
         if shown, plainMaterial.superview == nil {
             plainMaterial.material = .sidebar; plainMaterial.blendingMode = .behindWindow; plainMaterial.state = .active
-            plainTint.fill = RiseTheme.plainBackground.withAlphaComponent(0.82)
             for (index, view) in [plainMaterial, plainTint].enumerated() {
                 view.autoresizingMask = [.width, .height]
                 root.addSubview(view, positioned: .below, relativeTo: root.subviews.dropFirst(index).first)
             }
         }
         plainMaterial.isHidden = !shown; plainTint.isHidden = !shown
+        // Light's grey or Dark's near-black; the material follows the window's appearance.
+        if shown { plainTint.fill = theme.background.withAlphaComponent(0.82) }
         if shown { plainMaterial.frame = root.bounds; plainTint.frame = root.bounds }
     }
 

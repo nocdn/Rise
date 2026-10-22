@@ -77,8 +77,8 @@ import AppKit
         const best = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
         if (best) return best[0];
         const root = document.documentElement;
-        return solid(getComputedStyle(root).backgroundColor) || (document.body && solid(getComputedStyle(document.body).backgroundColor))
-          || (getComputedStyle(root).colorScheme.includes('dark') && matchMedia('(prefers-color-scheme: dark)').matches ? '18,18,18' : '255,255,255');
+        // A page with no colour of its own shows Rise's page colour under it.
+        return solid(getComputedStyle(root).backgroundColor) || (document.body && solid(getComputedStyle(document.body).backgroundColor)) || 'base';
         """
     func samplePlainBarColor() {
         guard theme.isPlain, !plainBarSampling, let tab = selectedTab, window?.occlusionState.contains(.visible) == true else { return }
@@ -89,7 +89,7 @@ import AppKit
             let value = await page.evaluate(Self.pageTopColorScript, arguments: [:], world: nil)
             guard let self else { return }
             self.plainBarSampling = false
-            guard let color = (value as? String).flatMap(Self.color(rgb:)) else { return }
+            guard let text = value as? String, let color = text == "base" ? self.theme.page : Self.color(rgb: text) else { return }
             self.plainBarColors[id] = color
             guard self.selectedID == id, self.theme.isPlain else { return }
             self.navBar.setColor(color, animated: true)

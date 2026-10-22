@@ -114,8 +114,8 @@ import RiseCore
     @objc func createTab() { onNewTab?() }
     func update(tabs: [BrowserTab], selected: BrowserTab?, theme: RiseTheme, splits: [SplitTabGroup] = []) {
         // This runs on every change to any tab; only what changed is set, as each set is redrawn.
-        if appliedTheme != theme || appliedPlain != RiseTheme.plainLight {
-            appliedTheme = theme; appliedPlain = RiseTheme.plainLight
+        if appliedTheme != theme || appliedPlain != RiseTheme.plain {
+            appliedTheme = theme; appliedPlain = RiseTheme.plain
             hidesAddress = theme.isPlain
             fill = theme.background; gradientColors = theme.backgroundGradient; address.layer?.backgroundColor = theme.addressFill.cgColor
             // Plain's chosen row draws Kero's ring and shadow itself, in place of this card.

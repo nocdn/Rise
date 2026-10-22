@@ -22,7 +22,7 @@ import RiseChromium
             return [
                 select("theme", "Theme", "The colours of Rise's window and its pages", automaticTheme ? "automatic" : theme.rawValue,
                        [("automatic", "Automatic"), (RiseTheme.neutral.rawValue, "Light"), (RiseTheme.rise.rawValue, "Rise"), (RiseTheme.rose.rawValue, "Rose"), (RiseTheme.dark.rawValue, "Dark")]),
-                toggle("plainLight", "Plain light theme", "Light uses Kero's plain grey and its tabs: white with a faint ring, fading as you switch", plainLightTheme),
+                toggle("plain", "Plain theme", "Light and Dark use Kero's plain colours, its tabs fading as you switch, and a page bar in place of the address", plainTheme),
                 toggle("livePeekResize", "Live page while expanding Peek", "The page lays itself out at every size as a Peek grows into a tab", livePeekResize),
                 toggle("animateDevTools", "Animate developer tools", "DevTools slide in and out from the right", animatesDevTools),
                 toggle("hideAddressScheme", "Hide https:// in addresses", "Leave http:// and https:// off addresses in the address panel and link previews", hidesAddressScheme),
@@ -92,7 +92,7 @@ import RiseChromium
         case "animateDevTools": setAnimatesDevTools(on)
         case "hideAddressScheme": setHidesAddressScheme(on)
         case "hideAddressWWW": setHidesAddressWWW(on)
-        case "plainLight": setPlainLightTheme(on)
+        case "plain": setPlainTheme(on)
         case "tabSwitcherLimit": if let limit = Int(text) { setTabSwitcherLimit(limit) }
         case "gmailCategory": if let category = GmailCategory(rawValue: text) { selectGmailCategory(category) }
         case "goToOpenTabs": openTabLinks.setEnabled(on); openTabLinks.refresh(shownPages)
