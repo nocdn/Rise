@@ -8,7 +8,7 @@ import AppKit
         guard let url = selectedTab?.url, url.absoluteString != "about:blank" else { return }
         linkPasteboard.clearContents()
         guard linkPasteboard.setString(url.absoluteString, forType: .string) else { return }
-        sidebar.copyButton.showCopied()
+        (theme.isPlain ? navBar.copyButton : sidebar.copyButton).showCopied()
         siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); hidePalette()
         showInfo("Link copied", image: InfoPlaque.linkCopiedIcon,
                  action: .init(symbol: PopoverActionButton.shareSymbol, title: "Send Link via AirDrop") { [weak self] in self?.sendLinkViaAirDrop(url) }, kind: "link")

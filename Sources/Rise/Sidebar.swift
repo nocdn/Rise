@@ -12,7 +12,19 @@ import RiseCore
     var pageZoom: CGFloat = 1 {
         didSet { guard pageZoom != oldValue else { return }; needsLayout = true; updateAddressControlVisibility() }
     }
-    var showsZoom: Bool { hasAddress && !PageZoom.isActual(pageZoom) }
+    var showsZoom: Bool { hasAddress && !hidesAddress && !PageZoom.isActual(pageZoom) }
+    /// The Plain theme leaves the address out, with its buttons, and New Tab moves up into its place.
+    var hidesAddress = false {
+        didSet {
+            guard hidesAddress != oldValue else { return }
+            address.isHidden = hidesAddress; needsLayout = true
+            updateAddressControlVisibility(animated: false)
+        }
+    }
+    /// New Tab's top then: as far under the traffic lights as Kero's first row is under its own
+    /// (view.go), 46 pt centre to centre, its 28 pt header 2 pt under a 60 pt title bar centred on
+    /// them. Rise's are centred 26 pt down, and New Tab is 34 pt tall.
+    static let addresslessTop: CGFloat = 55
     var isSidebarHovered = false
     var isSiteControlsOpen = false {
         didSet { updateAddressControlVisibility() }
@@ -31,7 +43,7 @@ import RiseCore
     let rowsHost = FlippedView()
     /// Holds closed tabs' rows while they fade, below the others.
     private let leavingRows = LeavingRowsView()
-    private var appliedTheme: RiseTheme?
+    private var appliedTheme: RiseTheme?, appliedPlain = false
     // The shadow is a sibling of the scroller, so NSClipView cannot crop it.
     let selectedTabShadow = Surface(radius: TabAppearance.radius)
     var selectedTabID: UUID?
@@ -102,11 +114,13 @@ import RiseCore
     @objc func createTab() { onNewTab?() }
     func update(tabs: [BrowserTab], selected: BrowserTab?, theme: RiseTheme, splits: [SplitTabGroup] = []) {
         // This runs on every change to any tab; only what changed is set, as each set is redrawn.
-        if appliedTheme != theme {
-            appliedTheme = theme
+        if appliedTheme != theme || appliedPlain != RiseTheme.plainLight {
+            appliedTheme = theme; appliedPlain = RiseTheme.plainLight
+            hidesAddress = theme.isPlain
             fill = theme.background; gradientColors = theme.backgroundGradient; address.layer?.backgroundColor = theme.addressFill.cgColor
-            selectedTabShadow.fill = TabAppearance.selectedFill(theme)
-            selectedTabShadow.shadow = TabAppearance.shadow(theme)
+            // Plain's chosen row draws Kero's ring and shadow itself, in place of this card.
+            selectedTabShadow.fill = theme.isPlain ? .clear : TabAppearance.selectedFill(theme)
+            selectedTabShadow.shadow = theme.isPlain ? nil : TabAppearance.shadow(theme)
             newTab.theme = theme
             cleanUpButton.hintAppearance = theme.appearance
         }
@@ -212,9 +226,11 @@ import RiseCore
         layoutExtensionButtons()
         updateAddressTextBoundary(animated: false)
         let pinnedHeight = PinnedLayout.height(count: pinnedView.count)
-        pinnedView.frame = NSRect(x: 0, y: PinnedLayout.top, width: w, height: max(0, pinnedHeight-PinnedLayout.bottom))
+        // Without the address, the pinned tiles and New Tab move up together.
+        let lift: CGFloat = hidesAddress ? 98-Self.addresslessTop : 0
+        pinnedView.frame = NSRect(x: 0, y: PinnedLayout.top-lift, width: w, height: max(0, pinnedHeight-PinnedLayout.bottom))
         pinnedView.layoutTiles(animated: animatesRows && window != nil)
-        let start: CGFloat = pinnedHeight > 0 ? PinnedLayout.top+pinnedHeight : 98
+        let start: CGFloat = (pinnedHeight > 0 ? PinnedLayout.top+pinnedHeight : 98)-lift
         let shift = start-newTab.frame.minY
         newTab.frame = NSRect(x: TabAppearance.inset, y: start, width: w-2*TabAppearance.inset, height: TabAppearance.height)
         let scrollY = newTab.frame.maxY+TabAppearance.spacing

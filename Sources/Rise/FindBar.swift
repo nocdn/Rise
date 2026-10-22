@@ -253,6 +253,8 @@ class FindInputCell: NSTextFieldCell {
     private(set) var hasSubmittedQuestion = false
     /// Space at the top of the page taken by the developer header.
     var topInset: CGFloat = 0 { didSet { if topInset != oldValue { needsLayout = true } } }
+    /// The Plain theme's bar over the page, which the panel comes down from under.
+    var tuckedInset: CGFloat = 0 { didSet { if tuckedInset != oldValue { needsLayout = true } } }
     /// Searches the page, steps through its matches, or clears them for an empty query.
     var find: ((String, PageFind.Direction) async -> PageFind.Matches)?
     private var findGeneration = 0
@@ -347,7 +349,18 @@ class FindInputCell: NSTextFieldCell {
         let hit = super.hitTest(point)
         return hit === self ? nil : hit
     }
-    override func layout() { super.layout(); retarget(); render() }
+    override func layout() { super.layout(); Self.tuck(self, under: tuckedInset); retarget(); render() }
+    /// Hides what's above `inset`, so a panel starting there comes out from under the bar over the
+    /// page rather than across it.
+    static func tuck(_ view: NSView, under inset: CGFloat) {
+        guard let layer = view.layer else { return }
+        guard inset > 0 else { if layer.mask != nil { layer.mask = nil }; return }
+        let mask = layer.mask ?? { let mask = CALayer(); mask.backgroundColor = NSColor.black.cgColor; layer.mask = mask; return mask }()
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        // Shadows reach past the sides and bottom; only the top is cut.
+        mask.frame = NSRect(x: -200, y: inset, width: view.bounds.width+400, height: max(0, view.bounds.height-inset)+200)
+        CATransaction.commit()
+    }
 
     /// The panel's border and shadow, shared with ``InfoPlaque``. `content` clips to its corners.
     static func stylePanel(_ panel: Surface, content: NSView) {
@@ -366,10 +379,10 @@ class FindInputCell: NSTextFieldCell {
         // A dark page swallows a light shadow; it needs more weight to read at all.
         panel.layer?.shadowOpacity = theme == .dark ? 0.45 : 0.12
     }
-    /// Where a panel `height` tall sits at `slide` (0 above the page's top edge, 1 in place):
-    /// it drops straight down into the page's top-right corner.
-    static func panelOrigin(in bounds: NSRect, width: CGFloat, height: CGFloat, slide: CGFloat, topInset: CGFloat) -> NSPoint {
-        let travel = (1-slide)*(topInset+top+height+12)
+    /// Where a panel `height` tall sits at `slide` (0 above the page's top edge, or tucked under
+    /// the bar over it, 1 in place): it drops straight down into the page's top-right corner.
+    static func panelOrigin(in bounds: NSRect, width: CGFloat, height: CGFloat, slide: CGFloat, topInset: CGFloat, tuckedInset: CGFloat = 0) -> NSPoint {
+        let travel = (1-slide)*(topInset-tuckedInset+top+height+12)
         return NSPoint(x: bounds.width-margin-width, y: topInset+top-travel)
     }
 
@@ -766,7 +779,7 @@ class FindInputCell: NSTextFieldCell {
         height.target = target; animate()
     }
     private var panelOrigin: NSPoint {
-        Self.panelOrigin(in: bounds, width: Self.width, height: height.value, slide: slide.value, topInset: topInset)
+        Self.panelOrigin(in: bounds, width: Self.width, height: height.value, slide: slide.value, topInset: topInset, tuckedInset: tuckedInset)
     }
     private func render() {
         renderInputColor()

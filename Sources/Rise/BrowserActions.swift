@@ -32,6 +32,7 @@ import RiseCore
         siteControlsPopover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         siteControlsPopover.contentViewController = controller
         siteControlsPopover.contentSize = controller.view.frame.size
+        if theme.isPlain { siteControlsPopover.show(relativeTo: navBar.settingsButton.bounds, of: navBar.settingsButton, preferredEdge: .maxY); return }
         siteControlsPopover.show(relativeTo: sidebar.settingsAnchorRect, of: sidebar.address, preferredEdge: .maxY)
     }
     func makeSiteMenu() -> NSMenu {

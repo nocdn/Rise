@@ -62,6 +62,8 @@ import AppKit
     var onPointer: ((Bool) -> Void)?
     /// Space at the top of the page taken by the developer header.
     var topInset: CGFloat = 0 { didSet { if topInset != oldValue { needsLayout = true } } }
+    /// The Plain theme's bar over the page, which notices come down from under.
+    var tuckedInset: CGFloat = 0 { didSet { if tuckedInset != oldValue { needsLayout = true } } }
 
     var isPresented: Bool { notices.contains(where: \.isPresented) }
     var panel: Surface { recent.panel }
@@ -90,7 +92,8 @@ import AppKit
     }
     override func layout() {
         super.layout()
-        for notice in notices { notice.frame = bounds; notice.topInset = topInset; notice.render() }
+        FindBar.tuck(self, under: tuckedInset)
+        for notice in notices { notice.frame = bounds; notice.topInset = topInset; notice.tuckedInset = tuckedInset; notice.render() }
     }
 
     /// Blue, so a notice stands out from the gray panels: a pale fill and deep ink in light
@@ -125,7 +128,7 @@ import AppKit
         if let showing = notices.last(where: { $0.kind == kind && $0.isPresented }) { notice = showing }
         else {
             notice = InfoNotice(kind: kind); notice.row = self
-            notice.applyTheme(theme); notice.frame = bounds; notice.topInset = topInset
+            notice.applyTheme(theme); notice.frame = bounds; notice.topInset = topInset; notice.tuckedInset = tuckedInset
             addSubview(notice); notices.append(notice)
         }
         recent = notice; isHidden = false
@@ -205,7 +208,7 @@ import AppKit
     var takesPointer: Bool { actionButton != nil || linkLabel != nil || previewButton != nil }
     private var theme = RiseTheme.neutral
     private(set) var isHovered = false
-    var topInset: CGFloat = 0
+    var topInset: CGFloat = 0, tuckedInset: CGFloat = 0
     /// The message showing, or last shown.
     var text: String { rest.isEmpty ? lead : lead + " " + rest }
     /// With its link's words.
@@ -376,7 +379,7 @@ import AppKit
     }
     func render() {
         let width = width(lead: leadWidth.value), height = FindBar.rowHeight
-        var origin = FindBar.panelOrigin(in: bounds, width: width, height: height, slide: slide.value, topInset: topInset)
+        var origin = FindBar.panelOrigin(in: bounds, width: width, height: height, slide: slide.value, topInset: topInset, tuckedInset: tuckedInset)
         origin.x -= shift.value
         panel.frame = NSRect(origin: origin, size: NSSize(width: width, height: height))
         panel.layer?.shadowPath = PageOutline.path(in: panel.bounds, radius: FindBar.radius, continuous: true)

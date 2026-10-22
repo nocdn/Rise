@@ -107,6 +107,65 @@ final class BrowserLifecycleTests: XCTestCase {
         XCTAssertFalse(restored.automaticTheme)
         XCTAssertEqual(NSApp.appearance?.name, .aqua, "A chosen theme sets the appearance again")
     }
+    @MainActor func testPlainLightThemeUsesKerosWashAndChosenTabOnlyInLight() throws {
+        let suite = "plain-light-\(UUID().uuidString)", preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"),
+                                        restore: false, preferences: preferences)
+        defer { RiseTheme.plainLight = false; clean(browser); preferences.removePersistentDomain(forName: suite) }
+        let first = browser.addTab(), second = browser.addTab()
+        browser.chooseTheme(.neutral); browser.select(first.id)
+        browser.setRiseSetting("plainLight", true)
+        XCTAssertEqual(browser.theme.background, RiseTheme.plainBackground); XCTAssertNil(browser.theme.backgroundGradient)
+        XCTAssertFalse(browser.plainMaterial.isHidden); XCTAssertEqual(browser.plainMaterial.blendingMode, .behindWindow)
+        let row = try XCTUnwrap(browser.sidebar.rows[first.id]), other = try XCTUnwrap(browser.sidebar.rows[second.id])
+        XCTAssertTrue(row.plainBackground.isChosen); XCTAssertFalse(other.plainBackground.isChosen)
+        XCTAssertNil(browser.sidebar.selectedTabShadow.shadow, "Kero's ring and shadow in place of Rise's card")
+        browser.sidebar.layoutSubtreeIfNeeded()
+        XCTAssertTrue(browser.sidebar.address.isHidden); XCTAssertEqual(browser.sidebar.newTab.frame.minY, SidebarView.addresslessTop, "New Tab takes its place")
+        browser.select(second.id)
+        XCTAssertTrue(other.plainBackground.isChosen); XCTAssertFalse(row.plainBackground.isChosen)
+        browser.chooseTheme(.rise)
+        XCTAssertTrue(browser.plainMaterial.isHidden); XCTAssertTrue(other.plainBackground.isHidden, "Only Light is Plain")
+        XCTAssertNotNil(browser.sidebar.selectedTabShadow.shadow); XCTAssertFalse(browser.sidebar.address.isHidden)
+    }
+    @MainActor func testPlainThemePutsDiasBarOverThePageWithTheNavigationButtons() throws {
+        let suite = "plain-bar-\(UUID().uuidString)", preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"),
+                                        restore: false, preferences: preferences)
+        defer { RiseTheme.plainLight = false; clean(browser); preferences.removePersistentDomain(forName: suite) }
+        let tab = browser.addTab(); tab.requestedURL = URL(string: "https://www.apnews.com/article/oregon"); tab.rename("Oregon")
+        browser.chooseTheme(.neutral); browser.select(tab.id); browser.setPlainLightTheme(true)
+        let bar = browser.navBar
+        XCTAssertFalse(bar.isHidden)
+        XCTAssertTrue(browser.toolbarButtons.allSatisfy { $0.superview === bar }, "Rise's titlebar buttons move into it")
+        XCTAssertEqual((browser.toolbarButtons[1] as? HistoryArrowButton)?.chevron, true, "As Dia's chevrons")
+        XCTAssertEqual(tab.page.view.frame.minY, PlainNavBar.Metrics.height, "The page starts under it")
+        XCTAssertEqual(bar.text.stringValue, "apnews.com / Oregon")
+        let tuck = PlainNavBar.Metrics.height
+        XCTAssertEqual(browser.selectedFindBar.tuckedInset, tuck); XCTAssertEqual(browser.infoPlaque.tuckedInset, tuck)
+        let height = FindBar.rowHeight, bounds = NSRect(x: 0, y: 0, width: 800, height: 600)
+        XCTAssertLessThanOrEqual(FindBar.panelOrigin(in: bounds, width: 300, height: height, slide: 0, topInset: tuck, tuckedInset: tuck).y+height, tuck,
+                                 "Panels start under the bar, not above the window")
+        XCTAssertEqual(FindBar.panelOrigin(in: bounds, width: 300, height: height, slide: 1, topInset: tuck, tuckedInset: tuck),
+                       FindBar.panelOrigin(in: bounds, width: 300, height: height, slide: 1, topInset: tuck), "And land where they always did")
+        bar.setHovered(true)
+        XCTAssertEqual(bar.text.stringValue, "apnews.com/article/oregon", "Hovered, the whole address"); XCTAssertTrue(bar.settingsButton.allowsInteraction)
+        bar.setColor(.black, animated: false)
+        XCTAssertEqual(bar.ink.strong, NSColor.white.withAlphaComponent(0.8), "Light on a dark page")
+        browser.setPlainLightTheme(false)
+        XCTAssertTrue(bar.isHidden); XCTAssertTrue(browser.toolbarButtons.allSatisfy { $0.superview === browser.toolbarHost })
+        XCTAssertEqual((browser.toolbarButtons[1] as? HistoryArrowButton)?.chevron, false)
+    }
+    @MainActor func testPlainBarLineFollowsALoadForwardOnlyAndGoesWhenItsDone() {
+        let bar = PlainNavBar(copy: {}, settings: {}, zoom: {}); bar.frame = NSRect(x: 0, y: 0, width: 800, height: PlainNavBar.Metrics.height)
+        XCTAssertNil(bar.progress)
+        bar.setLoading(true, progress: 0.3); XCTAssertEqual(bar.progress ?? 0, 0.3, accuracy: 0.001)
+        bar.setLoading(true, progress: 0.2); XCTAssertEqual(bar.progress ?? 0, 0.3, accuracy: 0.001, "Never back")
+        bar.setLoading(true, progress: 0.6, hard: true)
+        XCTAssertEqual(bar.progress ?? 0, 0.6, accuracy: 0.001); XCTAssertEqual(bar.progressStyle.color, TabLoadingBackground.hardReloadColor)
+        bar.setLoading(false, progress: 0); XCTAssertNil(bar.progress, "Done, it goes")
+        bar.resetLoading(true, progress: 0.45); XCTAssertEqual(bar.progress ?? 0, 0.45, accuracy: 0.001, "Another tab's load, where it's got")
+    }
     @MainActor func testSystemTrafficLightsRemainInTitlebarAndAlignWithNavigation() {
         let browser = makeBrowser(); defer { clean(browser) }
         let window = browser.window!
