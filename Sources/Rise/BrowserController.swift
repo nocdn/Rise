@@ -6,6 +6,8 @@ import RiseCore
     /// The Plain theme's backdrop, as Kero's window: macOS's sidebar material, behind the window,
     /// under 82% of Kero's grey.
     let plainMaterial = NSVisualEffectView(), plainTint = Surface()
+    /// Stars repositories as the person signed in to GitHub, from a link's menu.
+    private(set) lazy var githubStarrer: GitHubStarrer = { let starrer = GitHubStarrer(); starrer.host = root; return starrer }()
     /// The Plain theme's Dark puts Kero's lit edge around the page.
     let pageEdge = PageEdge()
     /// The Plain theme's bar over the page, as Dia's.
@@ -483,11 +485,12 @@ import RiseCore
         let devToolsRoom = layoutDevTools(in: b, pageLeft: pageLeft)
         pageShadow.frame = PageAppearance.frame(in: b, sidebarWidth: pageLeft, sidebarVisible: true)
         pageShadow.frame.size.width = max(0, pageShadow.frame.width-devToolsRoom)
-        // The Plain theme's Dark lifts the page as Kero does its cards: a lit edge, and three tight shadows.
+        // The Plain theme lifts the page as Kero does its cards: in Light, a soft pair of shadows
+        // for its edge; in Dark, a lit edge over three tight shadows.
         let keroCard = theme.isPlain && theme == .dark
-        pageShadow.darkShadows = keroCard
-        if (pageShadow.shadow == nil) != keroCard {
-            pageShadow.shadow = keroCard ? nil : chromeShadow(opacity: PageAppearance.shadowOpacity, blur: PageAppearance.shadowBlur, offset: PageAppearance.shadowOffset)
+        pageShadow.keroShadows = theme.isPlain ? (theme == .dark ? .dark : .light) : .none
+        if (pageShadow.shadow == nil) != theme.isPlain {
+            pageShadow.shadow = theme.isPlain ? nil : chromeShadow(opacity: PageAppearance.shadowOpacity, blur: PageAppearance.shadowBlur, offset: PageAppearance.shadowOffset)
         }
         pageShadow.refreshOutline()
         pageClip.frame = pageShadow.bounds
@@ -559,7 +562,7 @@ import RiseCore
         if !tabSwitcher.isHidden { tabSwitcher.place(in: b) }
     }
     func windowDidResize(_ notification: Notification) { layoutChrome() }
-    func windowWillClose(_ notification: Notification) { plainBarTimer?.invalidate(); plainBarTimer = nil; tabPressed(); gmailInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); saveNow() }
+    func windowWillClose(_ notification: Notification) { githubStarrer.tearDown(); plainBarTimer?.invalidate(); plainBarTimer = nil; tabPressed(); gmailInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); saveNow() }
     func windowDidResignKey(_ notification: Notification) {
         pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch(); endSidebarPeek(); tabPressed()
         sidebar?.cancelTabInteractions()

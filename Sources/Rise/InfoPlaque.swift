@@ -26,6 +26,12 @@ import AppKit
     static let fullScreenIconDrop: CGFloat = 0.5
     /// No icon before the text.
     static let noIcon = NSImage(size: .zero)
+    /// macOS's small spinner in the icon's place, in the notice's ink, for something under way.
+    static let spinnerIcon = NSImage(size: NSSize(width: iconSize, height: iconSize))
+    static let spinnerSize: CGFloat = 13
+    static let starIcon = TablerIcon.image(TablerIcon.star, size: iconSize)
+    /// Something that couldn't be done.
+    static let warningIcon = TablerIcon.image(TablerIcon.alertTriangle, size: iconSize)
     /// A small picture for a preview, such as a page capture's: its top, at most square,
     /// `height` points high.
     static func preview(of image: NSImage, height: CGFloat = 20) -> NSImage {
@@ -92,9 +98,11 @@ import AppKit
     }
     override func layout() {
         super.layout()
-        FindBar.tuck(self, under: tuckedInset)
         for notice in notices { notice.frame = bounds; notice.topInset = topInset; notice.tuckedInset = tuckedInset; notice.render() }
+        tuck()
     }
+    /// Under Plain's bar: the notices' shadows fall on it once they're out.
+    func tuck() { FindBar.tuck(self, under: tuckedInset, panels: notices.map(\.panel.frame)) }
 
     /// Blue, so a notice stands out from the gray panels: a pale fill and deep ink in light
     /// themes (Tailwind's blue-50 and blue-800), a navy fill and soft blue ink in dark.
@@ -168,6 +176,7 @@ import AppKit
         for notice in notices where !notice.isPresented && notice.isOut { notice.removeFromSuperview() }
         notices.removeAll { !$0.isPresented && $0.isOut }
         if notices.isEmpty { isHidden = true }
+        tuck()
     }
     @objc private func tick(_ link: CADisplayLink) {
         let now = CACurrentMediaTime(), dt = min(0.05, now-(lastTick ?? now)); lastTick = now
@@ -186,6 +195,9 @@ import AppKit
     private let content = FlippedView()
     private let icon = NSImageView(image: InfoPlaque.infoIcon)
     private var iconDrop: CGFloat = 0
+    /// macOS's small spinner, in the notice's ink, while something is under way.
+    private var spinner: InfoSpinnerView?
+    var showsSpinner: Bool { spinner != nil }
     /// The changing words, keyed by their text, so one coming back mid-exit springs from where it is.
     private var leads: [String: PresenceItem] = [:]
     /// The words both messages end with, which stay put.
@@ -218,7 +230,7 @@ import AppKit
         self.kind = kind
         super.init(frame: .zero)
         FindBar.stylePanel(panel, content: content)
-        icon.imageScaling = .scaleNone
+        icon.imageScaling = .scaleNone; icon.wantsLayer = true
         restLabel.lineBreakMode = .byClipping
         [icon, restLabel].forEach(content.addSubview)
         panel.addSubview(content); addSubview(panel)
@@ -267,6 +279,7 @@ import AppKit
         let colors = InfoPlaque.colors(for: theme)
         panel.fill = colors.fill; panel.layer?.borderColor = colors.border.cgColor
         icon.contentTintColor = colors.ink; textColor = colors.ink
+        spinner?.color = colors.ink
         linkLabel?.applyTheme(theme); previewButton?.applyTheme(theme)
         restLabel.textColor = textColor
         leads.values.forEach { ($0.view as? NSTextField)?.textColor = textColor }
@@ -316,7 +329,12 @@ import AppKit
             }
             content.addSubview(button); actionButton = button
         }
-        icon.image = image ?? InfoPlaque.infoIcon; iconDrop = image === InfoPlaque.fullScreenIcon ? InfoPlaque.fullScreenIconDrop : 0
+        let wasSpinning = spinner != nil
+        if image === InfoPlaque.spinnerIcon { showSpinner() } else { hideSpinner() }
+        let next = image === InfoPlaque.spinnerIcon ? nil : image ?? InfoPlaque.infoIcon
+        // What was under way and is done: its icon swaps in as Rise's icons do.
+        if wasSpinning, isPresented, next != nil { SymbolReplacement.setImage(next, in: icon) } else { icon.image = next }
+        iconDrop = image === InfoPlaque.fullScreenIcon ? InfoPlaque.fullScreenIconDrop : 0
         // A preview keeps its own size, in the icon's place; none leaves the text alone.
         iconSize = preview.map(\.image.size) ?? (image === InfoPlaque.noIcon ? .zero : NSSize(width: InfoPlaque.iconSize, height: InfoPlaque.iconSize))
         icon.isHidden = iconSize == .zero || preview != nil
@@ -351,6 +369,21 @@ import AppKit
         }
         if isHovered, takesPointer { holdTask?.cancel(); holdTask = nil } else { startHold() }
     }
+    private func showSpinner() {
+        guard spinner == nil else { return }
+        let view = InfoSpinnerView()
+        view.color = InfoPlaque.colors(for: theme).ink
+        content.addSubview(view)
+        spinner = view; render()
+    }
+    private func hideSpinner() {
+        guard let spinner else { return }
+        self.spinner = nil
+        guard window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { spinner.removeFromSuperview(); return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.16; spinner.animator().alphaValue = 0
+        } completionHandler: { MainActor.assumeIsolated { spinner.removeFromSuperview() } }
+    }
     func hide() {
         holdTask?.cancel(); holdTask = nil
         guard isPresented else { return }
@@ -383,8 +416,12 @@ import AppKit
         origin.x -= shift.value
         panel.frame = NSRect(origin: origin, size: NSSize(width: width, height: height))
         panel.layer?.shadowPath = PageOutline.path(in: panel.bounds, radius: FindBar.radius, continuous: true)
+        row?.tuck()
         content.frame = panel.bounds
         icon.frame = NSRect(x: InfoPlaque.inset, y: (height-iconSize.height)/2+iconDrop, width: iconSize.width, height: iconSize.height)
+        // A little smaller than the icon, centred where it is.
+        let side = InfoPlaque.spinnerSize
+        spinner?.frame = NSRect(x: icon.frame.midX-side/2, y: icon.frame.midY-side/2, width: side, height: side)
         previewButton?.frame = NSRect(x: InfoPlaque.inset, y: (height-iconSize.height)/2, width: iconSize.width, height: iconSize.height)
         let textHeight = ceil(restLabel.intrinsicContentSize.height)
         let y = (height-textHeight)/2
@@ -523,3 +560,4 @@ import AppKit
     }
     override func accessibilityPerformPress() -> Bool { perform(); return true }
 }
+
