@@ -45,6 +45,11 @@ import RiseChromium
             group()
             add("Download Linked File") { page.browserView.download(link) }
             add("Copy Link") { copy(link) }
+            // A repository's link: starred as the person signed in to GitHub, in a section of its own.
+            if let repository = GitHubRepository(url: link) {
+                group()
+                add("Star GitHub Repo") { [weak self] in self?.starGitHubRepository(repository) }
+            }
         }
         if let source = info.sourceURL, info.mediaKind != .none {
             group()

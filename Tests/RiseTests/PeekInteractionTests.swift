@@ -316,6 +316,17 @@ final class PeekInteractionTests: XCTestCase {
         XCTAssertFalse(takesCommandZ(browser), "The chance to undo runs out")
         XCTAssertEqual(browser.splitGroups.count, 1)
     }
+    @MainActor func testAPeekBecomingASplitHandsItsShadowOverToTheKeroPagesWithDarksLitEdge() throws {
+        let browser = browser(); defer { clean(browser) }
+        let source = browser.addTab(); browser.chooseTheme(.dark)
+        browser.showPeek(url: URL(string: "about:blank")!, from: source.page.view)
+        let card = try XCTUnwrap(browser.peekCard as? PageSurface)
+        XCTAssertGreaterThan(card.layer?.shadowOpacity ?? 0, 0, "A floating card's own shadow")
+        browser.matchPageShadow(card, duration: 0.3)
+        XCTAssertEqual(card.layer?.shadowOpacity, 0)
+        XCTAssertEqual(card.keroShadows, .dark, "The page's, as it becomes one")
+        XCTAssertTrue(card.subviews.first?.subviews.last is PageEdge, "With Dark's lit edge")
+    }
     @MainActor func testSplitHandleMenuReturnsTheSameLivePeekAfterKeyboardUndoExpires() async throws {
         let browser = browser(); defer { clean(browser); BrowserController.peekUndoDuration = 30 }
         let source = browser.addTab()

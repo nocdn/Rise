@@ -126,6 +126,7 @@ import AppKit
         item(develop, "Site Information", #selector(BrowserController.showSiteInformation), target: browser)
         develop.addItem(.separator())
         item(develop, "Card Motion Tester", #selector(BrowserController.toggleCardMotionTester), target: browser)
+        item(develop, "Link Pulse Tester", #selector(BrowserController.toggleLinkPulseTester), target: browser)
 
         let window = addMenu("Window"); NSApp.windowsMenu = window
         item(window, "Minimize", #selector(NSWindow.performMiniaturize(_:)), "m")

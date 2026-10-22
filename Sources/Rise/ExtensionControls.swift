@@ -20,15 +20,13 @@ import RiseChromium
     var selectedChromiumView: RCBrowserView? { (selectedTab?.page as? ChromiumPage)?.browserView }
 
     /// Clicks extension `id`'s button for the selected tab; its popup, if any, opens under
-    /// `anchor` (in the sidebar), or the site controls button.
+    /// `anchor` (in the page bar), or the site controls button.
     func runExtension(_ id: String, anchor: NSView? = nil) {
         guard let tab = selectedChromiumView, let action = extensionActions.first(where: { $0.extensionID == id }) else { return }
         siteControlsPopover.close()
         guard let url = action.click(inTab: tab) else { return }
-        // In Plain, under its button in the page bar.
-        let barAnchor = (anchor as? SidebarExtensionButton).flatMap { pinned in navBar.extensionButtons.first { $0.extensionID == pinned.extensionID } }
-        let anchorView: NSView = theme.isPlain ? barAnchor ?? navBar.settingsButton : sidebar.address
-        let rect = theme.isPlain ? anchorView.bounds : anchor.map { anchorView.convert($0.bounds, from: $0) } ?? sidebar.settingsAnchorRect
+        let anchorView: NSView = anchor ?? navBar.settingsButton
+        let rect = anchorView.bounds
         extensionPopup?.close()
         let popup = ExtensionPopup(url: url, theme: theme)
         popup.onClose = { [weak self, weak popup] in if self?.extensionPopup === popup { self?.extensionPopup = nil } }
@@ -44,12 +42,12 @@ import RiseChromium
         extensionPopup = popup
         popup.show(relativeTo: rect, of: anchorView)
     }
-    /// An extension's keyboard shortcut: its button's opens its popup, under its sidebar button if
+    /// An extension's keyboard shortcut: its button's opens its popup, under its page bar button if
     /// it's pinned, as a click does; others go to the extension. False if `event` isn't one.
     func runExtensionShortcut(_ event: NSEvent) -> Bool {
         guard let shortcut = RCExtensions.shortcut(for: event) else { return false }
         if shortcut.clicksButton {
-            runExtension(shortcut.extensionID, anchor: sidebar.extensionButtons.first { $0.extensionID == shortcut.extensionID })
+            runExtension(shortcut.extensionID, anchor: navBar.extensionButtons.first { $0.extensionID == shortcut.extensionID })
         } else {
             shortcut.run(inTab: selectedChromiumView)
         }

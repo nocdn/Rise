@@ -240,7 +240,7 @@ extension BrowserController {
         add(row([label(name), slider, value]))
     }
     private func themePicker() -> NSView {
-        let themes: [(RiseTheme, String)] = [(.neutral, "Light"), (.rise, "Rise"), (.rose, "Rose"), (.dark, "Dark")]
+        let themes: [(RiseTheme, String)] = [(.neutral, "Light"), (.dark, "Dark")]
         let picker = NSSegmentedControl(labels: themes.map(\.1), trackingMode: .selectOne, target: nil, action: nil)
         picker.controlSize = .small; picker.refusesFirstResponder = true
         let pick = action { [weak self] _ in self?.setTheme?(themes[picker.selectedSegment].0) }

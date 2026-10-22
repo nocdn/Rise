@@ -19,8 +19,10 @@ final class DeveloperChromeTests: XCTestCase {
         browser.showWindow(nil); browser.update(); browser.root.layoutSubtreeIfNeeded()
         browser.developerMotion.reduceMotion = { false }
         let row = try XCTUnwrap(browser.sidebar.rows[tab.id]), titleY = row.titleField.frame.minY
+        // The developer header opens under the page bar.
+        let bar = PlainNavBar.Metrics.height
         browser.toggleDeveloper()
-        XCTAssertEqual(tab.page.view.frame.minY, 0, "Opening starts from the current viewport")
+        XCTAssertEqual(tab.page.view.frame.minY, bar, "Opening starts from the current viewport")
         if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             XCTAssertNotNil(row.titleField.layer?.animation(forKey: TabListMotion.movementKey))
             XCTAssertNotNil(row.subtitle.layer?.animation(forKey: DeveloperModeMotion.subtitleFadeKey))
@@ -28,7 +30,7 @@ final class DeveloperChromeTests: XCTestCase {
         XCTAssertLessThan(row.titleField.frame.minY, titleY)
         try await Task.sleep(for: .milliseconds(65))
         let openingHeight = tab.page.view.frame.minY
-        XCTAssertGreaterThan(openingHeight, 0); XCTAssertLessThan(openingHeight, 40)
+        XCTAssertGreaterThan(openingHeight, bar); XCTAssertLessThan(openingHeight, bar+40)
         XCTAssertEqual(browser.developerBar.frame.maxY, openingHeight)
         XCTAssertEqual(tab.page.view.frame.maxY, browser.pageClip.bounds.maxY)
         browser.update()
@@ -38,13 +40,13 @@ final class DeveloperChromeTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(65))
         XCTAssertLessThan(tab.page.view.frame.minY, openingHeight)
         try await Task.sleep(for: .milliseconds(180))
-        XCTAssertEqual(tab.page.view.frame, browser.pageClip.bounds)
+        XCTAssertEqual(tab.page.view.frame, browser.pageClip.bounds.divided(atDistance: bar, from: .minYEdge).remainder)
         XCTAssertTrue(browser.developerBar.isHidden); XCTAssertTrue(row.subtitle.isHidden)
         XCTAssertEqual(row.titleField.frame.minY, titleY)
     }
     @MainActor func testTabSwitchCancelsDeveloperMotionAndReduceMotionShowsTheFinalLayoutImmediately() async throws {
         let browser = browser(); defer { clean(browser) }
-        let first = browser.addTab(), second = browser.addTab()
+        let first = browser.addTab(), second = browser.addTab(), bar = PlainNavBar.Metrics.height
         browser.select(first.id); browser.showWindow(nil); browser.update()
         browser.developerMotion.reduceMotion = { false }
         browser.toggleDeveloperMode(for: second)
@@ -57,13 +59,13 @@ final class DeveloperChromeTests: XCTestCase {
         XCTAssertNil(browser.developerMotion.currentHeight)
         XCTAssertTrue(browser.developerBar.isHidden)
         try await Task.sleep(for: .milliseconds(220))
-        XCTAssertTrue(browser.developerBar.isHidden); XCTAssertEqual(second.page.view.frame.minY, 0)
+        XCTAssertTrue(browser.developerBar.isHidden); XCTAssertEqual(second.page.view.frame.minY, bar)
         browser.developerMotion.reduceMotion = { true }
         browser.toggleDeveloper()
         XCTAssertNil(browser.developerMotion.currentHeight)
-        XCTAssertEqual(second.page.view.frame.minY, 40); XCTAssertEqual(browser.developerBar.frame.minY, 0)
+        XCTAssertEqual(second.page.view.frame.minY, bar+40); XCTAssertEqual(browser.developerBar.frame.minY, bar)
         browser.toggleDeveloper()
-        XCTAssertTrue(browser.developerBar.isHidden); XCTAssertEqual(second.page.view.frame.minY, 0)
+        XCTAssertTrue(browser.developerBar.isHidden); XCTAssertEqual(second.page.view.frame.minY, bar)
     }
     @MainActor func testDeveloperDraftSurvivesBrowserUpdatesAndEscapeCancels() throws {
         let browser = browser(); defer { clean(browser) }

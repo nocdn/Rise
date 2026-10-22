@@ -20,9 +20,8 @@ import RiseChromium
     private var observers: [NSObjectProtocol] = []
     /// Extensions' toolbar buttons, by name.
     private(set) var actions: [RCExtensionAction] = []
+    /// The pinned ones' buttons, in the page bar.
     private var buttons: [String: SidebarExtensionButton] = [:]
-    /// The same, in the Plain theme's page bar.
-    private var barButtons: [String: SidebarExtensionButton] = [:]
     private var actionsObservation: Any?
     private var listed: [String] = []
 
@@ -73,38 +72,27 @@ import RiseChromium
         refreshButtons()
     }
 
-    /// The pinned extensions' buttons in the sidebar, as they are for the selected tab; the site
+    /// The pinned extensions' buttons in the page bar, as they are for the selected tab; the site
     /// controls show the list again when extensions come or go.
     func refreshButtons() {
         guard let browser else { return }
         actions = RCExtensions.actions.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         let tab = browser.selectedChromiumView
-        var next: [SidebarExtensionButton] = [], nextBar: [SidebarExtensionButton] = []
+        var next: [SidebarExtensionButton] = []
         for id in browser.pinnedExtensions {
             guard let action = actions.first(where: { $0.extensionID == id }) else { continue }
             let button = buttons[id] ?? SidebarExtensionButton(extensionID: id) { [weak self] in
                 guard let browser = self?.browser else { return }
                 browser.runExtension(id, anchor: self?.buttons[id])
             }
-            let barButton = barButtons[id] ?? SidebarExtensionButton(extensionID: id) { [weak self] in
-                guard let browser = self?.browser else { return }
-                browser.runExtension(id, anchor: self?.barButtons[id])
-            }
             let title = action.title(forTab: tab)
-            for each in [button, barButton] {
-                each.show(icon: action.icon(forTab: tab), title: title.isEmpty ? action.name : title, badge: action.badgeText(forTab: tab),
-                          badgeColor: action.badgeColor(forTab: tab), enabled: action.isEnabled(forTab: tab))
-                each.menu = browser.extensionMenu(for: action)
-            }
-            next.append(button); nextBar.append(barButton)
+            button.show(icon: action.icon(forTab: tab), title: title.isEmpty ? action.name : title, badge: action.badgeText(forTab: tab),
+                        badgeColor: action.badgeColor(forTab: tab), enabled: action.isEnabled(forTab: tab))
+            button.menu = browser.extensionMenu(for: action)
+            next.append(button)
         }
         buttons = Dictionary(uniqueKeysWithValues: next.map { ($0.extensionID, $0) })
-        barButtons = Dictionary(uniqueKeysWithValues: nextBar.map { ($0.extensionID, $0) })
-        if browser.navBar.extensionButtons != nextBar { browser.navBar.extensionButtons = nextBar }
-        if browser.sidebar.extensionButtons != next {
-            browser.sidebar.extensionButtons = next
-            browser.update()
-        }
+        if browser.navBar.extensionButtons != next { browser.navBar.extensionButtons = next }
         let ids = actions.map(\.extensionID) + ["|"] + browser.pinnedExtensions
         if ids != listed { listed = ids; browser.refreshSiteControls() }
     }

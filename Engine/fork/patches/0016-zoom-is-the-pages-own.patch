@@ -1,0 +1,16 @@
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -2149,6 +2149,13 @@
+   return nil;
+ }
+ 
++// Chrome keeps zoom per site and puts it back on its own as a page loads, so the
++// page's zoom is the one it has, not the last one set here.
++- (double)zoom {
++  return _contents ? blink::ZoomLevelToZoomFactor(
++                         content::HostZoomMap::GetZoomLevel(_contents))
++                   : _zoom;
++}
+ - (void)setZoom:(double)zoom {
+   _zoom = zoom;
+   if (_contents) {

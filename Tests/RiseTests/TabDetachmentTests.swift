@@ -198,10 +198,7 @@ final class TabDetachmentTests: XCTestCase {
             XCTAssertFalse(browser.sidebar.drag!.isDetached)
             XCTAssertEqual(shadow.layer?.shadowOpacity, TabDragMotion.liftedShadowOpacity)
             send(.leftMouseUp, start, in: browser.sidebar.rowsHost, browser: browser)
-            if row.selected {
-                let normal = try XCTUnwrap(browser.sidebar.selectedTabShadow.layer)
-                XCTAssertEqual(shadow.layer?.shadowOpacity, normal.shadowOpacity * Float(normal.shadowColor?.alpha ?? 1))
-            } else { XCTAssertEqual(shadow.layer?.shadowOpacity, 0) }
+            XCTAssertEqual(shadow.layer?.shadowOpacity, 0, "The lifted shadow goes as the row lands: Kero's chosen row draws its own")
             XCTAssertEqual(browser.tabs.map(\.id), order)
             browser.sidebar.finishReturningTab()
             XCTAssertEqual(row.frame, slot)
@@ -252,33 +249,5 @@ final class TabDetachmentTests: XCTestCase {
         row.refreshHover(at: browser.sidebar.rowsHost.convert(NSPoint(x: 600, y: start.y), to: nil))
         XCTAssertEqual(row.layer?.backgroundColor?.alpha, 0)
         XCTAssertNil(row.layer?.animation(forKey: TabDragMotion.backgroundKey))
-    }
-    @MainActor func testSelectedReturnMatchesItsSidebarShadowInLightAndDarkThemes() throws {
-        let browser = browser(); defer { clean(browser) }
-        _ = browser.addTab(); let tab = browser.addTab()
-        for theme: RiseTheme in [.neutral, .dark] {
-            browser.theme = theme; browser.update(); browser.root.layoutSubtreeIfNeeded()
-            let row = browser.sidebar.rows[tab.id]!, normal = try XCTUnwrap(browser.sidebar.selectedTabShadow.layer)
-            let opacity = normal.shadowOpacity * Float(normal.shadowColor?.alpha ?? 1)
-            XCTAssertGreaterThan(opacity, 0, "A selected sidebar tab already casts a shadow")
-            let start = row.convert(NSPoint(x: 50, y: 18), to: browser.sidebar.rowsHost)
-            send(.leftMouseDown, NSPoint(x: 50, y: 18), in: row, browser: browser)
-            send(.leftMouseDragged, NSPoint(x: start.x+100, y: start.y), in: browser.sidebar.rowsHost, browser: browser)
-            let shadow = try XCTUnwrap(browser.sidebar.drag?.overlay?.shadowView.layer)
-            send(.leftMouseUp, NSPoint(x: 600, y: start.y), in: browser.sidebar.rowsHost, browser: browser)
-            XCTAssertTrue(browser.sidebar.selectedTabShadow.isHidden)
-            XCTAssertEqual(shadow.shadowOpacity * Float(shadow.shadowColor?.alpha ?? 1), opacity, accuracy: 0.0001)
-            XCTAssertEqual(shadow.shadowRadius, normal.shadowRadius)
-            XCTAssertEqual(shadow.shadowOffset, normal.shadowOffset)
-            XCTAssertEqual(shadow.shadowColor?.copy(alpha: 1), normal.shadowColor?.copy(alpha: 1))
-            let fade = try XCTUnwrap(shadow.animation(forKey: TabDragMotion.shadowKey) as? CAAnimationGroup)
-            let opacityFade = try XCTUnwrap(fade.animations?.compactMap { $0 as? CABasicAnimation }.first { $0.keyPath == "shadowOpacity" })
-            XCTAssertEqual(opacityFade.toValue as? Float, opacity)
-            XCTAssertEqual(row.layer?.backgroundColor, TabAppearance.selectedFill(theme).cgColor)
-            browser.sidebar.finishReturningTab()
-            XCTAssertFalse(browser.sidebar.selectedTabShadow.isHidden)
-            XCTAssertEqual(normal.shadowOpacity * Float(normal.shadowColor?.alpha ?? 1), opacity, accuracy: 0.0001,
-                           "Handing the row back must not introduce a different shadow")
-        }
     }
 }

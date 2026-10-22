@@ -17,7 +17,7 @@ import AppKit
 
     private func titlebarControls(_ browser: BrowserController) -> [NSRect] {
         let close = browser.window!.standardWindowButton(.closeButton)!
-        return [close.convert(close.bounds, to: nil), browser.toolbarButtons[0].convert(browser.toolbarButtons[0].bounds, to: nil)]
+        return [close.convert(close.bounds, to: nil)]
     }
 
     func testTheEdgeSlidesTheSidebarOutOverThePageWithoutMovingIt() {
@@ -38,7 +38,7 @@ import AppKit
         XCTAssertTrue(browser.grip.isHidden)
         // Window coordinates run upward, so the sidebar's drop by the inset is a negative y.
         XCTAssertEqual(titlebarControls(browser), docked.map { $0.offsetBy(dx: inset, dy: -inset) },
-                       "The traffic lights and navigation ride with the sidebar as one block")
+                       "The traffic lights ride with the sidebar")
         XCTAssertTrue(browser.window!.standardWindowButton(.closeButton)!.isEnabled)
 
         browser.tuckFloatingSidebar()

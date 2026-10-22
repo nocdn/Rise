@@ -11,10 +11,19 @@ final class PageSurface: Surface {
     private(set) var restingOutline: CGPath?
     private var restingClips = false
     private var outline: CGPath? { restingOutline }
-    /// Kero's dark surface shadow (elevation.go): three tight layers, as CSS writes them, down,
-    /// blur, spread and black's opacity, in place of the page's own. The page hides them under it.
-    var darkShadows = false { didSet { if darkShadows != oldValue { setDarkShadows() } } }
-    private static let darkShadowSpecs: [(y: CGFloat, blur: CGFloat, spread: CGFloat, opacity: Float)] = [(1, 1, 0, 0.2), (2, 2, -1, 0.2), (4, 6, -3, 0.24)]
+    /// Kero's raised surface (elevation.go), in place of the page's own shadow. The page hides them under it.
+    enum KeroShadows { case none, light, dark
+        /// As CSS writes them: down, blur, spread and black's opacity. Light's soft pair is its
+        /// edge, with no line; Dark's three tight layers go under its lit edge.
+        var specs: [(y: CGFloat, blur: CGFloat, spread: CGFloat, opacity: Float)] {
+            switch self {
+            case .none: []
+            case .light: [(1, 2, 0, 0.07), (1, 6, 0, 0.035)]
+            case .dark: [(1, 1, 0, 0.2), (2, 2, -1, 0.2), (4, 6, -3, 0.24)]
+            }
+        }
+    }
+    var keroShadows = KeroShadows.none { didSet { if keroShadows != oldValue { setKeroShadows() } } }
     private var shadowLayers: [CALayer] = []
 
     override var fill: NSColor {
@@ -35,21 +44,34 @@ final class PageSurface: Surface {
         layer?.insertSublayer(shapedFill, at: 0)
     }
     required init?(coder: NSCoder) { fatalError() }
-    private func setDarkShadows() {
+    private func setKeroShadows() {
         shadowLayers.forEach { $0.removeFromSuperlayer() }
-        shadowLayers = darkShadows ? Self.darkShadowSpecs.map { spec in
+        shadowLayers = keroShadows.specs.map { spec in
             let shadow = CALayer()
             shadow.shadowColor = NSColor.black.cgColor; shadow.shadowOpacity = spec.opacity
             shadow.shadowRadius = spec.blur/2; shadow.shadowOffset = CGSize(width: 0, height: spec.y)
             layer?.insertSublayer(shadow, at: 0)
             return shadow
-        } : []
+        }
         refreshOutline()
+    }
+    /// Kero's shadows coming in, over `duration`.
+    func fadeInShadows(duration: TimeInterval) {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        for shadow in shadowLayers {
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 0; fade.toValue = 1; fade.duration = duration
+            fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            shadow.add(fade, forKey: "fadeIn")
+        }
     }
     func setRestingOutline(_ path: CGPath?, clipContents: Bool = false) {
         restingOutline = path; restingClips = clipContents; refreshOutline()
     }
     func refreshOutline() {
+        // AppKit turns clipping back on with a corner radius, which would cut Kero's shadows off;
+        // the clipping surface inside rounds the page.
+        if !shadowLayers.isEmpty, clipsToBounds { clipsToBounds = false }
         CATransaction.begin(); CATransaction.setDisableActions(true)
         shapedFill.frame = bounds; shapedMask.frame = bounds
         let outline = outline, clips = restingClips
@@ -59,7 +81,7 @@ final class PageSurface: Surface {
         layer?.mask = clips && outline != nil ? shapedMask : nil
         let shape = outline ?? PageOutline.path(in: bounds, radius: radius, continuous: layer?.cornerCurve == .continuous)
         layer?.shadowPath = shape
-        for (shadow, spec) in zip(shadowLayers, Self.darkShadowSpecs) {
+        for (shadow, spec) in zip(shadowLayers, keroShadows.specs) {
             // A spread grows or shrinks the shape that casts it: drawn from the page's outline,
             // inset by as much as it shrinks.
             shadow.frame = bounds

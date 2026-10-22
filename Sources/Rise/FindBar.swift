@@ -253,7 +253,7 @@ class FindInputCell: NSTextFieldCell {
     private(set) var hasSubmittedQuestion = false
     /// Space at the top of the page taken by the developer header.
     var topInset: CGFloat = 0 { didSet { if topInset != oldValue { needsLayout = true } } }
-    /// The Plain theme's bar over the page, which the panel comes down from under.
+    /// The page bar, which the panel comes down from under.
     var tuckedInset: CGFloat = 0 { didSet { if tuckedInset != oldValue { needsLayout = true } } }
     /// Searches the page, steps through its matches, or clears them for an empty query.
     var find: ((String, PageFind.Direction) async -> PageFind.Matches)?
@@ -349,16 +349,32 @@ class FindInputCell: NSTextFieldCell {
         let hit = super.hitTest(point)
         return hit === self ? nil : hit
     }
-    override func layout() { super.layout(); Self.tuck(self, under: tuckedInset); retarget(); render() }
+    override func layout() { super.layout(); retarget(); render() }
     /// Hides what's above `inset`, so a panel starting there comes out from under the bar over the
-    /// page rather than across it.
-    static func tuck(_ view: NSView, under inset: CGFloat) {
+    /// page rather than across it. Once one of `panels` is all the way out, its shadow falls on
+    /// the bar too, fading in over the last of its way down, so it has no hard edge there.
+    static func tuck(_ view: NSView, under inset: CGFloat, panels: [NSRect] = []) {
         guard let layer = view.layer else { return }
         guard inset > 0 else { if layer.mask != nil { layer.mask = nil }; return }
-        let mask = layer.mask ?? { let mask = CALayer(); mask.backgroundColor = NSColor.black.cgColor; layer.mask = mask; return mask }()
+        let mask = layer.mask ?? { let mask = CALayer(); layer.mask = mask; return mask }()
         CATransaction.begin(); CATransaction.setDisableActions(true)
+        mask.frame = view.bounds
+        let below = mask.sublayers?.first ?? { let below = CALayer(); below.backgroundColor = NSColor.black.cgColor; mask.addSublayer(below); return below }()
         // Shadows reach past the sides and bottom; only the top is cut.
-        mask.frame = NSRect(x: -200, y: inset, width: view.bounds.width+400, height: max(0, view.bounds.height-inset)+200)
+        below.frame = NSRect(x: -200, y: inset, width: view.bounds.width+400, height: max(0, view.bounds.height-inset)+200)
+        let panels = panels.filter { !$0.isEmpty }.sorted { $0.minX < $1.minX }
+        var bands = Array((mask.sublayers ?? []).dropFirst())
+        while bands.count < panels.count { let band = CALayer(); band.backgroundColor = NSColor.black.cgColor; mask.addSublayer(band); bands.append(band) }
+        for (i, band) in bands.enumerated() {
+            guard i < panels.count else { band.isHidden = true; continue }
+            let panel = panels[i], reach: CGFloat = 40
+            // Side by side, each shows its own shadow, up to halfway to the next.
+            let left = i > 0 ? (panels[i-1].maxX+panel.minX)/2 : panel.minX-reach
+            let right = i+1 < panels.count ? (panel.maxX+panels[i+1].minX)/2 : panel.maxX+reach
+            band.isHidden = false
+            band.frame = NSRect(x: left, y: inset-reach, width: max(0, right-left), height: reach)
+            band.opacity = Float(min(1, max(0, (panel.minY-inset)/top)))
+        }
         CATransaction.commit()
     }
 
@@ -786,6 +802,7 @@ class FindInputCell: NSTextFieldCell {
         let width = Self.width
         panel.frame = NSRect(origin: panelOrigin, size: NSSize(width: width, height: height.value))
         panel.layer?.shadowPath = PageOutline.path(in: panel.bounds, radius: Self.radius, continuous: true)
+        Self.tuck(self, under: tuckedInset, panels: isHidden ? [] : [panel.frame])
         content.frame = panel.bounds
         row.frame = NSRect(x: 0, y: 0, width: width, height: Self.rowHeight)
         placeholders.frame = row.bounds

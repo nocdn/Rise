@@ -4,84 +4,44 @@ extension NSColor {
     convenience init(hex: UInt32) { self.init(srgbRed: CGFloat((hex >> 16) & 255)/255, green: CGFloat((hex >> 8) & 255)/255, blue: CGFloat(hex & 255)/255, alpha: 1) }
 }
 enum RiseTheme: String, CaseIterable {
-    /// Rise: Light on Kero's Mist wash (github.com/egoist/kero, theme.go), pale blue above and
-    /// cream below, with a blue glow from the top right.
-    case neutral, rose, dark, rise
-    /// Light, and Rise, which is Light in all but its window's wash.
-    var isLight: Bool { self == .neutral || self == .rise }
-    /// Light and Dark as Kero's Plain (github.com/egoist/kero, theme.go), turned on in
-    /// rise://settings: one colour over the window's material, and Kero's tabs.
-    nonisolated(unsafe) static var plain = false
-    /// Named for when it was Light's alone, so the setting carries over.
-    static let plainKey = "Rise.PlainLightTheme"
-    var isPlain: Bool { (self == .neutral || self == .dark) && Self.plain }
+    /// Light and Dark, as Kero's Plain (github.com/egoist/kero, theme.go): one colour over the
+    /// window's material, Kero's tabs, and a page bar over the page.
+    case neutral, dark
+    var isLight: Bool { self == .neutral }
     /// Kero's sidebar colours, which its Plain wash is: a cool grey, and near-black in the dark.
     static let plainBackground = NSColor(hex: 0xECEEF4), plainDarkBackground = NSColor(hex: 0x141418)
-    var background: NSColor {
-        isPlain ? self == .dark ? Self.plainDarkBackground : Self.plainBackground
-            : NSColor(hex: self == .dark ? 0x363636 : self == .rose ? 0xF3D4D8 : self == .rise ? 0xEBEFF6 : 0xE0E0E0)
-    }
-    /// Top to bottom.
-    var backgroundGradient: [NSColor]? {
-        switch self {
-        case .neutral: isPlain ? nil : [NSColor(hex: 0xEDEDED), NSColor(hex: 0xFAFAFA)]
-        case .dark: isPlain ? nil : [NSColor(hex: 0x363636), NSColor(hex: 0x2B2B2B)]
-        case .rise: [NSColor(hex: 0xE3E9F4), NSColor(hex: 0xEBEFF6), NSColor(hex: 0xF1F2F3), NSColor(hex: 0xF2F1EC)]
-        case .rose: nil
-        }
-    }
-    /// A glow over the wash from the window's top right corner, gone halfway across.
-    var backgroundGlow: NSColor? { self == .rise ? NSColor(srgbRed: 210/255, green: 225/255, blue: 248/255, alpha: 0.75) : nil }
-    var pill: NSColor { NSColor(hex: self == .dark ? 0x404040 : self == .rose ? 0xE9CACE : 0xDEDEDE) }
-    var addressFill: NSColor {
-        isLight ? NSColor(hex: 0xE1E1E1) : pill.blended(withFraction: self == .dark ? 0.03 : 0.15, of: .white)!
-    }
-    var text: NSColor { NSColor(hex: self == .dark ? 0xD1D1D1 : self == .rose ? 0x42121F : 0x343434) }
-    var selectedText: NSColor { self == .dark ? NSColor(hex: 0xFEFEFE) : isLight ? NSColor(hex: 0x111111) : text }
+    var background: NSColor { self == .dark ? Self.plainDarkBackground : Self.plainBackground }
+    var pill: NSColor { NSColor(hex: self == .dark ? 0x404040 : 0xDEDEDE) }
+    var addressFill: NSColor { isLight ? NSColor(hex: 0xE1E1E1) : pill.blended(withFraction: 0.03, of: .white)! }
+    var text: NSColor { NSColor(hex: self == .dark ? 0xD1D1D1 : 0x343434) }
+    var selectedText: NSColor { NSColor(hex: self == .dark ? 0xFEFEFE : 0x111111) }
     /// Sidebar chrome icons; the dark theme keeps its lighter muted tone for contrast.
     var sidebarIcon: NSColor { self == .dark ? muted : NSColor(hex: 0x717171) }
-    var muted: NSColor { NSColor(hex: self == .dark ? 0xA0A1A0 : self == .rose ? 0x90777C : 0x888787) }
-    var selectedTab: NSColor { NSColor(hex: self == .dark ? 0x1E1E1E : self == .rose ? 0xF8F6F6 : 0xF7F7F7) }
-    var hoveredTab: NSColor { self == .dark ? NSColor(hex: 0x3D3D3D) : self == .rose ? text.withAlphaComponent(0.055) : NSColor(hex: 0xD7D5D4) }
-    var accent: NSColor { NSColor(hex: self == .dark ? 0x8D9BAA : self == .rose ? 0xD96880 : 0xCA9D90) }
+    var muted: NSColor { NSColor(hex: self == .dark ? 0xA0A1A0 : 0x888787) }
+    var accent: NSColor { NSColor(hex: self == .dark ? 0x8D9BAA : 0xCA9D90) }
     var menuSelection: NSColor { self == .dark ? NSColor(hex: 0x515C68) : accent }
     var popup: NSColor { NSColor(hex: self == .dark ? 0x333333 : 0xF8F8F8) }
     var page: NSColor { NSColor(hex: self == .dark ? 0x1C1C1C : 0xFDFCFC) }
     // A contrasting glint is needed because the shimmer preserves glyph alpha.
-    // Using selectedText made the rose theme invisible (identical text RGB).
-    var linkShimmer: NSColor { NSColor(hex: self == .dark ? 0xFFFFFF : self == .rose ? 0xC6A0AB : 0xA4ACB6) }
-    var status: NSColor { NSColor(hex: self == .dark ? 0x393939 : self == .rose ? 0xF8E8EB : 0xF3F3F3) }
+    var linkShimmer: NSColor { NSColor(hex: self == .dark ? 0xFFFFFF : 0xA4ACB6) }
+    var status: NSColor { NSColor(hex: self == .dark ? 0x393939 : 0xF3F3F3) }
     var developerSurface: NSColor { NSColor(hex: self == .dark ? 0x30282B : 0xFCF6F7) }
     var border: NSColor { self == .dark ? NSColor.white.withAlphaComponent(0.13) : NSColor.black.withAlphaComponent(0.16) }
     var appearance: NSAppearance { NSAppearance(named: self == .dark ? .darkAqua : .aqua)! }
 }
 class FlippedView: NSView { override var isFlipped: Bool { true } }
+extension NSView {
+    /// Whether `point`, in the window, is on this view itself rather than on something in front of
+    /// it, such as Peek's buttons over the page bar: tracking areas report the pointer either way.
+    func isFrontmost(at point: NSPoint) -> Bool {
+        guard let frame = window?.contentView?.superview, let hit = frame.hitTest(frame.convert(point, from: nil)) else { return false }
+        return hit === self || hit.isDescendant(of: self)
+    }
+}
 class Surface: FlippedView {
-    private let gradient = CAGradientLayer(), glow = CAGradientLayer()
-    var gradientColors: [NSColor]? {
-        didSet {
-            guard gradientColors != oldValue else { return }
-            gradient.colors = gradientColors?.map(\.cgColor)
-            gradient.isHidden = gradientColors == nil
-        }
-    }
-    /// A glow from the top right corner of `glowArea` (the window's bounds, in this view's), as
-    /// CSS's 225° gradient: whole at that corner, gone halfway across. Surfaces drawing parts of
-    /// one window place theirs against the same area, so the glow runs on across them.
-    var glowColor: NSColor? {
-        didSet {
-            guard glowColor != oldValue else { return }
-            glow.colors = glowColor.map { [$0.cgColor, $0.withAlphaComponent(0).cgColor] }
-            glow.isHidden = glowColor == nil; needsLayout = true
-        }
-    }
-    var glowArea: NSRect? { didSet { if glowArea != oldValue { needsLayout = true } } }
     init(color: NSColor = .clear, radius: CGFloat = 0) {
         super.init(frame: .zero); wantsLayer = true; clipsToBounds = false
         layer?.backgroundColor = color.cgColor; layer?.cornerRadius = radius
-        gradient.startPoint = CGPoint(x: 0.5, y: 0); gradient.endPoint = CGPoint(x: 0.5, y: 1)
-        gradient.isHidden = true; layer?.insertSublayer(gradient, at: 0)
-        glow.locations = [0, 0.5]; glow.isHidden = true; layer?.insertSublayer(glow, above: gradient)
     }
     required init?(coder: NSCoder) { fatalError() }
     /// Only a different color is set: each set is a change Core Animation commits and redraws.
@@ -89,29 +49,14 @@ class Surface: FlippedView {
         get { .clear }
         set { let color = newValue.cgColor; if layer?.backgroundColor != color { layer?.backgroundColor = color } }
     }
-    /// Rounds the gradient along with the fill.
     var cornerRadius: CGFloat {
         get { layer?.cornerRadius ?? 0 }
         set {
             guard newValue != cornerRadius else { return }
             CATransaction.begin(); CATransaction.setDisableActions(true)
             layer?.cornerRadius = newValue
-            for wash in [gradient, glow] { wash.cornerRadius = newValue; wash.cornerCurve = layer?.cornerCurve ?? .circular }
             CATransaction.commit()
         }
-    }
-    override func layout() {
-        super.layout()
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        gradient.frame = bounds; glow.frame = bounds
-        if !glow.isHidden, bounds.width > 0, bounds.height > 0 {
-            // CSS's line for 225°: down and to the left, as long as the corners need.
-            let area = glowArea ?? bounds, length = (area.width+area.height)/2.squareRoot(), step = length/2/2.squareRoot()
-            let unit = { (point: CGPoint) in CGPoint(x: (point.x-self.bounds.minX)/self.bounds.width, y: (point.y-self.bounds.minY)/self.bounds.height) }
-            glow.startPoint = unit(CGPoint(x: area.midX+step, y: area.midY-step))
-            glow.endPoint = unit(CGPoint(x: area.midX-step, y: area.midY+step))
-        }
-        CATransaction.commit()
     }
 }
 func label(_ text: String, size: CGFloat = 14, weight: NSFont.Weight = .regular, color: NSColor = NSColor(hex: 0x343434)) -> NSTextField {
@@ -140,23 +85,28 @@ class ChromeButton: NSButton {
     @objc func runAction() { actionBlock?() }
     override func updateTrackingAreas() {
         super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+        // Moves too: off something in front of it and onto it is no entry of its own.
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self))
         refreshHoverState()
     }
     /// The visible part of the button. Without clipping, visibleRect alone
     /// can span its whole window, which would put every button under the pointer.
     var hoverRect: NSRect { visibleRect.intersection(bounds) }
     /// Moving or revealing a button can leave its tracking state at the previous geometry.
-    func refreshHoverState() {
+    func refreshHoverState(at point: NSPoint? = nil) {
         if let window, window.isVisible, !isHiddenOrHasHiddenAncestor, alphaValue > 0.01 {
-            hover = hoverRect.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
+            let point = point ?? window.mouseLocationOutsideOfEventStream
+            hover = hoverRect.contains(convert(point, from: nil)) && isFrontmost(at: point)
         } else { hover = false }
+        let color = (hover ? hoverColor : baseColor).cgColor
+        guard layer?.backgroundColor != color else { return }
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        layer?.backgroundColor = (hover ? hoverColor : baseColor).cgColor
+        layer?.backgroundColor = color
         CATransaction.commit()
     }
     override func mouseEntered(with event: NSEvent) { refreshHoverState() }
     override func mouseExited(with event: NSEvent) { refreshHoverState() }
+    override func mouseMoved(with event: NSEvent) { refreshHoverState() }
 }
 /// The ⋯ that opens a menu, as in the find bar's answers and the pull request card. The menu opens
 /// the moment the button is pressed: let go at once and it stays open, or drag onto an item and
@@ -270,30 +220,9 @@ final class DeveloperHeader: Surface {
     }
 }
 
-/// A native titlebar accessory adjacent to the system window-control group.
-/// Only navigation controls are custom; traffic lights stay owned by NSWindow.
-final class NativeTitlebarControls: NSView {
-    var buttons: [ChromeButton] = []
-    /// Moves the buttons sideways with a floating sidebar, leaving their spacing alone.
-    var shift: CGFloat = 0
-    /// Extra width beyond the buttons' span, for them to be carried into.
-    var room: CGFloat = 0
-    override func layout() {
-        super.layout()
-        let centerY: CGFloat
-        if let close = window?.standardWindowButton(.closeButton), close.window === window {
-            centerY = close.convert(close.bounds, to: self).midY
-        } else {
-            centerY = bounds.midY
-        }
-        let visible = buttons.filter { !$0.isHidden }
-        let span = bounds.width-room
-        let gap = visible.count > 1 ? max(0, (span-CGFloat(visible.count)*28)/CGFloat(visible.count-1)) : 0
-        for (index, button) in visible.enumerated() {
-            button.frame = NSRect(x: shift+CGFloat(index)*(28+gap), y: centerY-15, width: 28, height: 30)
-        }
-    }
-}
+/// A native titlebar accessory beside the window's traffic lights, which stay NSWindow's: it holds
+/// the titlebar's room over the sidebar.
+final class NativeTitlebarControls: NSView {}
 
 final class PeekBackdrop: Surface {
     var dismiss: (() -> Void)?

@@ -16,25 +16,15 @@ import AppKit
                            brightness: theme == .dark ? 0.8 : 0.58, alpha: 1)
         return theme.muted.blended(withFraction: 0.8, of: tint) ?? theme.muted
     }
-    static func selectedFill(_ theme: RiseTheme) -> NSColor {
-        theme.isPlain ? PlainTabBackground.chosen(dark: theme == .dark) : theme.isLight ? NSColor(hex: 0xFAFAFA) : theme.selectedTab
-    }
-    static func hoverFill(_ theme: RiseTheme) -> NSColor {
-        theme.isPlain ? PlainTabBackground.hover(dark: theme == .dark) : theme == .rose ? theme.hoveredTab : .white.withAlphaComponent(theme == .dark ? 0.16 : 0.55)
-    }
+    static func selectedFill(_ theme: RiseTheme) -> NSColor { PlainTabBackground.chosen(dark: theme == .dark) }
+    static func hoverFill(_ theme: RiseTheme) -> NSColor { PlainTabBackground.hover(dark: theme == .dark) }
     /// Flatten the hover fill against the sidebar, so neighboring rows cannot show through a drag.
     static func dragFill(_ theme: RiseTheme, sidebarFraction: CGFloat) -> NSColor {
-        let colors = theme.backgroundGradient ?? [theme.background]
-        let background = colors.first!.blended(withFraction: min(1, max(0, sidebarFraction)), of: colors.last!)!
         let hover = hoverFill(theme)
-        return background.blended(withFraction: hover.alphaComponent, of: hover.withAlphaComponent(1))!.withAlphaComponent(1)
+        return theme.background.blended(withFraction: hover.alphaComponent, of: hover.withAlphaComponent(1))!.withAlphaComponent(1)
     }
     static func text(_ theme: RiseTheme, selected: Bool) -> NSColor {
-        if theme == .rose { return selected ? theme.selectedText : theme.text }
         return (theme == .dark ? NSColor.white : .black).withAlphaComponent(selected ? 1 : theme == .dark ? 0.835 : 0.76)
-    }
-    static func shadow(_ theme: RiseTheme) -> NSShadow {
-        chromeShadow(opacity: theme == .dark ? 0.15 : 0.12, blur: 16, offset: 0, color: theme == .dark ? .white : .black)
     }
 }
 

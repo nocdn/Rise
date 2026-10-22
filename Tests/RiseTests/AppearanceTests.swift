@@ -36,11 +36,23 @@ final class AppearanceTests: XCTestCase {
         browser.theme = .dark; browser.update()
         XCTAssertEqual(browser.window?.appearance?.name, .darkAqua)
         XCTAssertEqual(browser.sidebar.newTab.theme, .dark)
-        XCTAssertEqual(browser.sidebar.address.frame.minY, 50)
         browser.saveNow()
         let restored = BrowserController(sessionURL: session)
         defer { restored.saveWork?.cancel(); restored.window?.orderOut(nil) }
         XCTAssertEqual(restored.theme, .dark)
         XCTAssertEqual(restored.window?.appearance?.name, .darkAqua)
+    }
+    @MainActor func testAButtonUnderSomethingInFrontOfItDoesNotLightUp() {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 200, height: 100), styleMask: [.borderless], backing: .buffered, defer: false)
+        defer { window.orderOut(nil) }
+        let button = ChromeButton(symbol: "link", title: "Copy", action: {}); button.frame = NSRect(x: 20, y: 20, width: 40, height: 40)
+        let cover = Surface(color: .red); cover.frame = NSRect(x: 0, y: 0, width: 100, height: 100)
+        window.contentView?.addSubview(button); window.contentView?.addSubview(cover); window.orderFront(nil)
+        let middle = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
+        button.refreshHoverState(at: middle)
+        XCTAssertFalse(button.hover, "Peek's buttons over the page bar keep its own from lighting up")
+        cover.removeFromSuperview(); button.refreshHoverState(at: middle)
+        XCTAssertTrue(button.hover)
     }
 }

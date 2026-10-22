@@ -264,7 +264,8 @@ import AppKit
         var stream = TokenStream()
         let answer = "He currently works at Cloudflare and previously interned at Objective."
         stream.receive(answer); stream.finish(); stream.place(in: answer as NSString, at: 0)
-        _ = stream.step(at: TokenMotion.lead+0.1)
+        // Halfway through the burst's cadence.
+        _ = stream.step(at: TokenMotion.initialLead+5/TokenMotion.wordsPerSecond)
         XCTAssertTrue(stream.isRevealing, "A short, completed response must not flash all its words at once")
         XCTAssertNotNil(stream.hiddenFrom)
         _ = stream.step(at: 1)
@@ -276,7 +277,7 @@ import AppKit
         let answer = "First word followed by the rest of the answer."
         stream.receive(answer); stream.finish(); stream.place(in: answer as NSString, at: 1)
         XCTAssertFalse(stream.step(at: 1.015))
-        XCTAssertTrue(stream.step(at: 1.05), "The first word should begin within 50 ms of receiving displayable text")
+        XCTAssertTrue(stream.step(at: 1+TokenMotion.initialLead+0.5/TokenMotion.wordsPerSecond), "The first word should begin within 50 ms of receiving displayable text")
         XCTAssertEqual(stream.newest, NSRange(location: 0, length: 5))
         XCTAssertNotNil(stream.hiddenFrom, "The remaining words retain their gradual cadence")
         XCTAssertTrue(stream.tints.contains { $0.color.alpha > 0 }, "The first word is visibly fading in")
@@ -359,5 +360,16 @@ import AppKit
             XCTAssertEqual(try inked(progress, x: 172...320), 0, "The band never draws past the field, over the badge: \(progress)")
         }
         XCTAssertGreaterThan(try inked(0.9, x: 10...170), 0, "The band still sweeps the visible text, ending at its right edge")
+    }
+
+    func testATuckedPanelsShadowFallsOnTheBarOnlyOnceItIsOutFromUnderIt() throws {
+        let view = FlippedView(frame: NSRect(x: 0, y: 0, width: 600, height: 400)); view.wantsLayer = true
+        func band(panelTop: CGFloat) throws -> Float {
+            FindBar.tuck(view, under: 44, panels: [NSRect(x: 300, y: panelTop, width: 200, height: 40)])
+            return try XCTUnwrap(view.layer?.mask?.sublayers?.last).opacity
+        }
+        XCTAssertEqual(try band(panelTop: 44+FindBar.top), 1, "At rest, its shadow shows on the bar")
+        XCTAssertEqual(try band(panelTop: 20), 0, "Still partly under the bar: none")
+        XCTAssertEqual(try band(panelTop: 44+FindBar.top/2), 0.5, accuracy: 0.01, "Fading in over the last of its way down")
     }
 }

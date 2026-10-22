@@ -53,7 +53,6 @@ final class DarkFaviconTests: XCTestCase {
         let encoded = try JSONEncoder().encode(tab.saved)
         let restored = BrowserTab(saved: try JSONDecoder().decode(SavedTab.self, from: encoded))
         XCTAssertLessThan(try color(XCTUnwrap(restored.favicon(for: .neutral))).redComponent, 0.2)
-        XCTAssertLessThan(try color(XCTUnwrap(restored.favicon(for: .rose))).redComponent, 0.2)
         XCTAssertGreaterThan(try color(XCTUnwrap(restored.favicon(for: .dark))).redComponent, 0.95)
         restored.requestedURL = URL(string: "about:blank"); restored.updateIcon()
         XCTAssertNil(restored.darkFavicon); XCTAssertNil(restored.saved.darkFaviconData)

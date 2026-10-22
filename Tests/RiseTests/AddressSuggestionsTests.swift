@@ -280,17 +280,6 @@ final class AddressSuggestionsTests: XCTestCase {
         back.doCommand(by: #selector(NSResponder.insertTab(_:)))
         XCTAssertEqual(palette.siteSearch?.name, "GitHub", "And Tab searches it again")
     }
-    @MainActor func testPressingTheSidebarAddressOpensThePaletteBeforeTheButtonComesUp() throws {
-        let browser = browser(); defer { browser.hidePalette(); clean(browser) }
-        browser.showWindow(nil)
-        if !browser.sidebarVisible { browser.toggleSidebar() }
-        let address = browser.sidebar.address
-        let down = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: address.convert(NSPoint(x: address.bounds.midX, y: address.bounds.midY), to: nil),
-            modifierFlags: [], timestamp: 0, windowNumber: browser.window!.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
-        // A plain button would track the press here until a release, which never comes.
-        address.mouseDown(with: down)
-        XCTAssertTrue(browser.palette.isPresented); XCTAssertTrue(browser.palette.isCentered)
-    }
     @MainActor func testAddressesShowWithoutHTTPSAndWWWUnlessTurnedOffInSettings() {
         let browser = browser(); defer { clean(browser) }
         let address = "https://www.youtube.com/watch?v=1"
@@ -311,18 +300,18 @@ final class AddressSuggestionsTests: XCTestCase {
         palette.selectResult(try XCTUnwrap(palette.suggestions.firstIndex { $0.command == "Change Theme" }))
         editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
         XCTAssertTrue(palette.isPresented, "Change Theme lists the themes rather than cycling them")
-        XCTAssertEqual(palette.suggestions.map(\.title), ["Light", "Dark", "Automatic", "Rose", "Rise"])
+        XCTAssertEqual(palette.suggestions.map(\.title), ["Light", "Dark", "Automatic"])
         XCTAssertEqual(palette.selectedIndex, 0, "Starting on the theme in use"); XCTAssertEqual(editor.string, "")
-        editor.insertText("ro", replacementRange: editor.selectedRange())
-        XCTAssertEqual(palette.suggestions.map(\.title), ["Rose"])
+        editor.insertText("da", replacementRange: editor.selectedRange())
+        XCTAssertEqual(palette.suggestions.map(\.title), ["Dark"])
         editor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
         XCTAssertFalse(palette.isChoosing); XCTAssertEqual(editor.string, "theme", "Escape goes back to what was typed")
         XCTAssertEqual(palette.suggestions.map(\.title), rows)
         palette.selectResult(try XCTUnwrap(palette.suggestions.firstIndex { $0.command == "Change Theme" }))
         editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
-        for _ in 0..<4 { editor.doCommand(by: #selector(NSResponder.moveDown(_:))) }
+        editor.doCommand(by: #selector(NSResponder.moveDown(_:)))
         editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
-        XCTAssertEqual(browser.theme, .rise); XCTAssertFalse(browser.automaticTheme); XCTAssertFalse(palette.isPresented)
+        XCTAssertEqual(browser.theme, .dark); XCTAssertFalse(browser.automaticTheme); XCTAssertFalse(palette.isPresented)
     }
     @MainActor func testALongListScrollsInsideThePanelToKeepThePickedRowInView() throws {
         let browser = browser(); defer { browser.hidePalette(); clean(browser) }
@@ -386,20 +375,19 @@ final class AddressSuggestionsTests: XCTestCase {
         }
         XCTAssertNotNil(browser.suggestions(for: "zoom").first?.completion, "The completion still leads")
     }
-    @MainActor func testZoomPicksALevelAndTheSidebarButtonShowsWhileThePageIsZoomed() {
+    @MainActor func testZoomPicksALevelAndThePageBarButtonShowsWhileThePageIsZoomed() {
         let browser = browser(); defer { clean(browser) }
         let tab = browser.addTab(); tab.requestedURL = URL(string: "https://example.com/"); browser.select(tab.id); browser.update()
         let zoom = try! XCTUnwrap(browser.paletteChoice(for: "Zoom"))
         XCTAssertEqual(zoom.rows.first?.title, "25%"); XCTAssertEqual(zoom.rows.last?.title, "200%")
         XCTAssertEqual(zoom.picked.map { zoom.rows[$0].title }, "100%", "Starting on the zoom in use")
-        XCTAssertFalse(browser.sidebar.showsZoom)
+        XCTAssertFalse(browser.navBar.showsZoom)
         browser.runPaletteCommand("Zoom:1.5")
         XCTAssertEqual(tab.page.zoom, 1.5, accuracy: 0.001)
-        XCTAssertTrue(browser.sidebar.showsZoom); XCTAssertTrue(browser.sidebar.zoomButton.allowsInteraction)
-        XCTAssertEqual(browser.sidebar.zoomButton.alphaValue, 1, "Shown without hovering")
+        XCTAssertTrue(browser.navBar.showsZoom); XCTAssertTrue(browser.navBar.zoomButton.allowsInteraction, "Shown without hovering")
         browser.zoomIn(); XCTAssertEqual(tab.page.zoom, 1.75, accuracy: 0.001, "⌘+ steps through the same levels")
         browser.actualSize()
-        XCTAssertFalse(browser.sidebar.showsZoom); XCTAssertFalse(browser.sidebar.zoomButton.allowsInteraction)
+        XCTAssertFalse(browser.navBar.showsZoom); XCTAssertFalse(browser.navBar.zoomButton.allowsInteraction)
     }
     @MainActor private func browser() -> BrowserController {
         _ = NSApplication.shared

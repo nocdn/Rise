@@ -46,48 +46,6 @@ final class ChromeFeedbackTests: XCTestCase {
         XCTAssertEqual(pill.text.stringValue, url.absoluteString.replacingOccurrences(of: "https://", with: ""))
         XCTAssertEqual(pill.frame.minX, page.minX+10); XCTAssertEqual(pill.frame.maxY, page.maxY-10)
     }
-    @MainActor func testRestartingLoadCancelsPreviousCompletionFade() async throws {
-        _ = NSApplication.shared
-        let background = TabLoadingBackground()
-        background.frame = NSRect(x: 0, y: 0, width: 210, height: 34)
-        background.update(loading: true, progress: 0.9, theme: .neutral)
-        background.layoutSubtreeIfNeeded()
-        background.update(loading: false, progress: 1, theme: .neutral)
-        background.update(loading: true, progress: 0.1, theme: .neutral)
-        try await Task.sleep(for: .milliseconds(250))
-        XCTAssertTrue(background.loading)
-        XCTAssertEqual(background.fraction, 0.1, accuracy: 0.001)
-        XCTAssertEqual(background.layer?.sublayers?.first?.opacity, 1)
-        background.update(loading: false, progress: 1, theme: .neutral)
-        try await Task.sleep(for: .milliseconds(250))
-        XCTAssertEqual(background.layer?.sublayers?.first?.opacity, 0)
-    }
-    @MainActor func testNewLoadStartsAtZeroWhilePreviousCompletionIsStillPresented() async throws {
-        _ = NSApplication.shared
-        let background = TabLoadingBackground()
-        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 210, height: 34),
-                              styleMask: [.borderless], backing: .buffered, defer: false)
-        window.contentView = background
-        window.orderFront(nil)
-        defer { window.orderOut(nil) }
-        background.update(loading: true, progress: 0.9, theme: .neutral)
-        background.layoutSubtreeIfNeeded()
-        try await Task.sleep(for: .milliseconds(450))
-        background.update(loading: false, progress: 1, theme: .neutral)
-        try await Task.sleep(for: .milliseconds(80))
-        let fill = try XCTUnwrap(background.layer?.sublayers?.first)
-        XCTAssertGreaterThan(background.shownWidth, 150)
-        background.update(loading: true, progress: 0.1, theme: .neutral)
-        XCTAssertLessThanOrEqual(background.shownWidth, 21.001,
-                                 "Do not move backwards from the previous page's full-width background")
-        XCTAssertEqual(background.fraction, 0.1, accuracy: 0.001)
-        try await Task.sleep(for: .milliseconds(80))
-        XCTAssertLessThan(background.shownWidth, 22)
-        try await Task.sleep(for: .milliseconds(700))
-        XCTAssertEqual(background.shownWidth, 21, accuracy: 0.5)
-        XCTAssertEqual(fill.position.x+fill.bounds.width, background.shownWidth, accuracy: 0.001)
-        XCTAssertEqual(fill.opacity, 1)
-    }
     @MainActor func testLateReadyEventDoesNotShimmerADifferentDestination() {
         _ = NSApplication.shared
         let pill = LinkStatusPill()

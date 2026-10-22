@@ -79,7 +79,7 @@ import AppKit
         var stream = TokenStream()
         stream.receive("One two three"); stream.finish()
         stream.place(in: stream.text as NSString, at: 0)
-        stream.step(at: TokenMotion.initialLead+0.02)
+        stream.step(at: TokenMotion.initialLead+0.5/TokenMotion.wordsPerSecond)
         XCTAssertEqual(stream.entrances.count, 1)
         XCTAssertGreaterThan(stream.entrances[0].progress, 0)
         XCTAssertLessThan(stream.entrances[0].progress, 1)

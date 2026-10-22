@@ -54,37 +54,6 @@ import AppKit
         fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         layer.add(fade, forKey: shadowKey)
     }
-    /// Match the normal sidebar shadow before handing the row back to its scroller.
-    static func returnShadow(_ view: NSView, matching target: NSView?) {
-        guard let target = target?.layer, let layer = view.layer else {
-            fadeShadow(view, to: 0, duration: shadowOutDuration); return
-        }
-        let shown = layer.presentation() ?? layer
-        // Factor color alpha into opacity so the blend cannot become darker halfway through.
-        let fromColor = shown.shadowColor ?? NSColor.black.cgColor
-        let toColor = target.shadowColor ?? NSColor.black.cgColor
-        let values: [(String, Any, Any)] = [
-            ("shadowOpacity", shown.shadowOpacity * Float(fromColor.alpha), target.shadowOpacity * Float(toColor.alpha)),
-            ("shadowColor", fromColor.copy(alpha: 1) ?? fromColor, toColor.copy(alpha: 1) ?? toColor),
-            ("shadowRadius", shown.shadowRadius, target.shadowRadius),
-            ("shadowOffset", NSValue(size: shown.shadowOffset), NSValue(size: target.shadowOffset)),
-        ]
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        for (key, _, value) in values { layer.setValue(value, forKey: key) }
-        CATransaction.commit()
-        layer.removeAnimation(forKey: shadowKey)
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
-        let fade = CAAnimationGroup()
-        fade.animations = values.map { key, from, to in
-            let animation = CABasicAnimation(keyPath: key)
-            animation.fromValue = from; animation.toValue = to
-            animation.duration = shadowOutDuration
-            return animation
-        }
-        fade.duration = shadowOutDuration
-        fade.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        layer.add(fade, forKey: shadowKey)
-    }
     static func fadeBackground(_ view: NSView, animated: Bool, change: () -> Void) {
         let layer = view.layer
         let from = (layer?.presentation() ?? layer)?.backgroundColor

@@ -33,6 +33,8 @@ import AppKit
         if let web = hoveredWebView, web.superview != nil, let url = linkStatus.url {
             linkStatus.show(url, theme: theme, peek: shouldPeek(modifiers: flags), blocked: hoversInsidePeek)
             linkStatus.place(in: web.convert(web.bounds, to: root))
+            // Option pressed on a link asks for its summary.
+            if flags.contains(.option) != hoveredWithOption { hoveredWithOption = flags.contains(.option); linkHoverChanged(url, in: web, modifiers: flags) }
         }
         updatePeekStandby(modifiers: flags)
     }

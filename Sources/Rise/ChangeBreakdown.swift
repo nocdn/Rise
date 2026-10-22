@@ -27,6 +27,31 @@ struct ChangeBreakdown: Equatable, Codable {
         let kind = Self.kind(ofPath: path)
         self[kind].additions += additions; self[kind].deletions += deletions
     }
+    /// A unified diff, as `git diff` writes it, read file by file: the lines added and removed in
+    /// each file's hunks, by its new path, and their sum. A file's header lines, such as `--- a/…`,
+    /// aren't lines of it, though a removed line can start the same way inside a hunk.
+    static func read(diff: String) -> (breakdown: ChangeBreakdown, lines: Lines) {
+        var breakdown = ChangeBreakdown(), total = Lines()
+        var path = "", lines = Lines(), inHunk = false, started = false
+        func finish() { if started { breakdown.add(path: path, additions: lines.additions, deletions: lines.deletions) } }
+        for line in diff.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line.hasPrefix("diff --git ") {
+                finish()
+                started = true; inHunk = false; lines = Lines()
+                path = line.range(of: " b/", options: .backwards).map { String(line[$0.upperBound...]) } ?? ""
+            } else if !inHunk, line.hasPrefix("+++ b/") {
+                path = String(line.dropFirst(6))
+            } else if line.hasPrefix("@@") {
+                inHunk = true
+            } else if inHunk, line.hasPrefix("+") {
+                lines.additions += 1; total.additions += 1
+            } else if inHunk, line.hasPrefix("-") {
+                lines.deletions += 1; total.deletions += 1
+            }
+        }
+        finish()
+        return (breakdown, total)
+    }
 
     // MARK: Sorting a file by its path, as T3 Code's changedFileKind.ts does
 

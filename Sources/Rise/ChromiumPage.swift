@@ -257,7 +257,7 @@ enum RisePages {
         let now = (url: url, title: title, loading: browserView.isLoading,
                    back: browserView.canGoBack, forward: browserView.canGoForward, progress: browserView.progress)
         let before = seen; seen = now
-        if now.url != before.url { onChange?(.url) }
+        if now.url != before.url { applyBaseBackground(); onChange?(.url) }
         if now.title != before.title { onChange?(.title) }
         if now.loading != before.loading { onChange?(.loading) }
         if now.back != before.back || now.forward != before.forward { onChange?(.navigation) }
@@ -302,7 +302,7 @@ enum RisePages {
         get { browserView.zoom }
         set { browserView.zoom = newValue }
     }
-    func load(_ url: URL) { hasLoaded = true; browserView.open(RisePages.page(for: url)) }
+    func load(_ url: URL) { hasLoaded = true; applyBaseBackground(for: url); browserView.open(RisePages.page(for: url)) }
     func goBack() { browserView.goBack() }
     func goForward() { browserView.goForward() }
     func reload() { browserView.reload() }
@@ -386,7 +386,16 @@ enum RisePages {
         // Each change reaches the page's renderer, so only a change is sent.
         let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
         if browserView.prefersDark?.boolValue != dark { browserView.prefersDark = NSNumber(value: dark) }
-        if browserView.pageBackgroundColor != background { browserView.pageBackgroundColor = background }
+        themeBackground = background; applyBaseBackground()
+    }
+    private var themeBackground = NSColor.white
+    /// What Chromium paints under a page that paints no background of its own: white, as Chrome
+    /// has it, in Dark too, as such a page's text is black. One asking for dark gets Chromium's
+    /// dark canvas instead. A blank page, with nothing on it, takes the theme's colour.
+    private func applyBaseBackground(for next: URL? = nil) {
+        let shown = next ?? url
+        let color = shown == nil || shown?.absoluteString == "about:blank" ? themeBackground : .white
+        if browserView.pageBackgroundColor != color { browserView.pageBackgroundColor = color }
     }
     func setMediaSuspended(_ suspended: Bool) {
         // Plays again only what was playing when it was held.

@@ -207,9 +207,14 @@ struct CardMotion: Equatable {
         return NSSize(width: ceil(width), height: 72)
     }
     func show(position: Int, of count: Int, motion: CardMotion, delay wait: Double, theme: RiseTheme) {
-        title.stringValue = "←  \(position) of \(count) · \(motion.name)  →"
-        detail.stringValue = motion.summary
-        delay.stringValue = "↑↓  Opens after \(wait.formatted(.number.precision(.fractionLength(2)).locale(Locale(identifier: "en_US")))) s"
+        show(title: "←  \(position) of \(count) · \(motion.name)  →", detail: motion.summary,
+             footer: "↑↓  Opens after \(wait.formatted(.number.precision(.fractionLength(2)).locale(Locale(identifier: "en_US")))) s", theme: theme)
+    }
+    /// Three lines, as another tester names what it's showing.
+    func show(title text: String, detail summary: String, footer: String, theme: RiseTheme) {
+        title.stringValue = text
+        detail.stringValue = summary
+        delay.stringValue = footer
         fill = theme == .dark ? theme.popup : TabAppearance.selectedFill(theme)
         layer?.borderColor = theme.border.cgColor
         title.textColor = theme.text; detail.textColor = theme.muted; delay.textColor = theme.text

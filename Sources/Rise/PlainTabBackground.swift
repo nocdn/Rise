@@ -1,6 +1,6 @@
 import AppKit
 
-/// A tab's background in the Plain theme, as Kero's sidebar rows (github.com/egoist/kero, view.go
+/// A tab's background, as Kero's sidebar rows (github.com/egoist/kero, view.go
 /// and elevation.go), and a shade under the pointer. In Light, the chosen one is white on an even
 /// ring a shade darker than the sidebar, with a faint shadow close under it; in Dark, a tenth of
 /// white with Kero's lit edge, its text's colour brighter along the top than the bottom, over

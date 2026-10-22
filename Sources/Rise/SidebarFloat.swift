@@ -102,8 +102,8 @@ final class SidebarShadowView: NSView {
                                    width: out.width+(docked.width-out.width)*dock, height: out.height+(docked.height-out.height)*dock)
         }
         let lift = float.slidesDocked ? 0 : 1-dock, radius = SidebarFloatAppearance.radius*lift
-        // Plain's docked sidebar is the window's wash; over the page, it's solid.
-        sidebar.fill = theme.isPlain && lift == 0 ? .clear : theme.background
+        // Docked, the sidebar is the window's wash; over the page, it's solid.
+        sidebar.fill = lift == 0 ? .clear : theme.background
         sidebar.layer?.cornerCurve = .continuous; sidebar.cornerRadius = radius
         let dark = theme == .dark
         sidebar.layer?.borderWidth = lift > 0 ? 0.5 : 0

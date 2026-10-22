@@ -2,14 +2,6 @@ import AppKit
 import Vision
 
 @MainActor extension BrowserController {
-    func popoverWillShow(_ notification: Notification) {
-        guard notification.object as? NSPopover === siteControlsPopover else { return }
-        sidebar.isSiteControlsOpen = true
-    }
-    func popoverDidClose(_ notification: Notification) {
-        guard notification.object as? NSPopover === siteControlsPopover else { return }
-        sidebar.isSiteControlsOpen = false
-    }
     func refreshSiteControls() {
         guard siteControlsPopover.isShown else { return }
         siteControlsPopover.appearance = theme.appearance
@@ -19,7 +11,7 @@ import Vision
     }
     @objc func shareCurrentPage() {
         guard let url = selectedTab?.url else { return }
-        let anchor = (siteControlsPopover.contentViewController as? SiteControlsController)?.quickActions.first ?? sidebar.settingsButton
+        let anchor = (siteControlsPopover.contentViewController as? SiteControlsController)?.quickActions.first ?? navBar.settingsButton
         sharingPicker = NSSharingServicePicker(items: [url])
         sharingPicker?.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
     }
