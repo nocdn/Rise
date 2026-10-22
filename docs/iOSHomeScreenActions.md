@@ -50,8 +50,9 @@ is suspended in selection mode, while the panel's X and edge-back still work nor
 New Private Tab opens the ordinary New Page panel already deep purple, on warm and cold
 launches. There is no separate private screen. The eye button to the left of X toggles the
 pending page between regular and private browsing without changing its draft or completion.
-Enabling it reveals purple from bottom to top over 0.28 seconds, then stretches the top edge
-6 points and settles with a small rubber band; the bottom edge stays anchored. The shortcut
+Enabling it reveals purple from bottom to top over 0.28 seconds with a soft arched front,
+its centre leading the sides by 15% of the panel width (up to 72 pt), without moving or bouncing
+the panel. The live eye button stays above the sweep and swaps immediately in both directions. The shortcut
 starts purple without playing that transition. Purple is identical in light and dark modes.
 
 Private tabs appear alongside regular tabs in the main switcher. Their tabs and Peeks share
@@ -67,8 +68,8 @@ favicon requests and cache writes are suppressed. Private page, panel and deck c
 covered before the app-switcher snapshot. Explicit downloads still save files normally.
 
 `PrivateTabsAudit` verifies real WebKit cookie/local-storage separation, background callbacks,
-disk/session/sync exclusions, learned suggestions, rapid mode changes, the gradient and anchored
-pulse, mixed-card swipes, no private undo, fresh cookies after the last close, and warm/cold
+disk/session/sync exclusions, learned suggestions, rapid mode changes, the gradient and immediate
+eye swaps without a panel bounce, mixed-card swipes, no private undo, fresh cookies after the last close, and warm/cold
 shortcut routing. It saves light/dark and intermediate transition screenshots.
 
 `HomeScreenActionsAudit` exercises routing and isolation using temporary fixtures. Run it after

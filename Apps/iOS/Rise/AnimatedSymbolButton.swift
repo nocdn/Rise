@@ -3,7 +3,7 @@ import UIKit
 /// The button stays in place and keeps its hit area as the outgoing and incoming icons overlap.
 final class AnimatedSymbolButton: UIButton {
     private(set) var symbolName: String
-    private var glyph: UIImageView
+    private var glyph: Content
     private let symbolConfiguration: UIImage.SymbolConfiguration
 
     override var isEnabled: Bool {
@@ -14,7 +14,7 @@ final class AnimatedSymbolButton: UIButton {
         symbolName = symbol
         let configuration = UIImage.SymbolConfiguration(pointSize: pointSize, weight: weight)
         symbolConfiguration = configuration
-        glyph = Self.imageView(symbol, configuration: configuration)
+        glyph = Content(image: UIImage(systemName: symbol, withConfiguration: configuration))
         super.init(frame: .zero)
         tintColor = .label
         addSubview(glyph)
@@ -26,7 +26,7 @@ final class AnimatedSymbolButton: UIButton {
     override func layoutSubviews() {
         super.layoutSubviews()
         // Include room for the blurred edges, laying out by bounds while an icon scales.
-        for image in subviews.compactMap({ $0 as? UIImageView }) {
+        for image in subviews.compactMap({ $0 as? Content }) {
             image.bounds = CGRect(x: 0, y: 0, width: 32, height: 32)
             image.center = CGPoint(x: bounds.midX, y: bounds.midY)
         }
@@ -38,10 +38,18 @@ final class AnimatedSymbolButton: UIButton {
 
     func setGlyph(_ image: UIImage?, name: String) {
         guard symbolName != name else { return }
+        setContent(Content(image: image), name: name)
+    }
+
+    /// Keep the native spinner's rotation separate from the swap's scale and blur.
+    func setLoading(name: String) {
+        guard symbolName != name else { return }
+        setContent(Content(spinner: true), name: name)
+    }
+
+    private func setContent(_ next: Content, name: String) {
         symbolName = name
-        let previous = glyph, next = UIImageView(image: image)
-        next.contentMode = .center
-        next.isUserInteractionEnabled = false; next.isAccessibilityElement = false
+        let previous = glyph
         glyph = next
         next.alpha = 0
         addSubview(next)
@@ -54,12 +62,34 @@ final class AnimatedSymbolButton: UIButton {
         BlurCrossfade.swap(from: previous, to: next, style: .symbol) { previous.removeFromSuperview() }
     }
 
-    private static func imageView(_ symbol: String, configuration: UIImage.SymbolConfiguration) -> UIImageView {
-        let image = UIImageView(image: UIImage(systemName: symbol,
-            withConfiguration: configuration))
-        image.contentMode = .center
-        image.isUserInteractionEnabled = false
-        image.isAccessibilityElement = false
-        return image
+    private final class Content: UIView {
+        private let content: UIView
+        init(image: UIImage?) {
+            let image = UIImageView(image: image)
+            image.contentMode = .center
+            content = image
+            super.init(frame: .zero)
+            configure()
+        }
+        init(spinner: Bool) {
+            let indicator = UIActivityIndicatorView(style: .medium)
+            indicator.color = .label
+            indicator.transform = CGAffineTransform(scaleX: 0.77, y: 0.77)
+            indicator.startAnimating()
+            content = indicator
+            super.init(frame: .zero)
+            configure()
+        }
+        required init?(coder: NSCoder) { fatalError() }
+        private func configure() {
+            isUserInteractionEnabled = false
+            accessibilityElementsHidden = true
+            addSubview(content)
+        }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            if content is UIImageView { content.bounds = bounds }
+            content.center = CGPoint(x: bounds.midX, y: bounds.midY)
+        }
     }
 }

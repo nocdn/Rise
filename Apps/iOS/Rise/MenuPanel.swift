@@ -8,16 +8,19 @@ final class AddressBar: UIControl {
     /// The centres of the outer buttons from the ends, and of the inner ones from the outer.
     static let outerCentre: CGFloat = 22
     static let pairSpacing: CGFloat = 30
+    static let translationSpacing: CGFloat = 34
     /// How small a button gets while pressed.
     static let pressedScale: CGFloat = 0.85
 
     let backButton = HistoryChevronButton(.back)
     let forwardButton = HistoryChevronButton(.forward)
+    let translateButton = AnimatedSymbolButton(symbol: "translate", pointSize: 14, weight: .bold)
     let reloadButton = AnimatedSymbolButton(symbol: "arrow.clockwise", pointSize: 14, weight: .bold)
     let lock = UIImageView(image: UIImage(systemName: "lock.fill", withConfiguration:
         UIImage.SymbolConfiguration(pointSize: 12, weight: .semibold)))
     let host = UILabel()
-    var buttons: [UIButton] { [backButton, forwardButton, reloadButton] }
+    var buttons: [UIButton] { [backButton, forwardButton, translateButton, reloadButton] }
+    private var offersTranslation = false
     private(set) var isEditingURL = false
     private var editor: SearchField?
     private var editingContentsAligned = false
@@ -43,6 +46,10 @@ final class AddressBar: UIControl {
         host.isUserInteractionEnabled = false
         reloadButton.accessibilityLabel = "Reload"
         reloadButton.shrinksWhenPressed(to: Self.pressedScale)
+        translateButton.setGlyph(UIImage(named: "MenuTranslate"), name: "page-translation")
+        translateButton.shrinksWhenPressed(to: Self.pressedScale)
+        translateButton.isHidden = true
+        translateButton.accessibilityLabel = "Translate to English"
         accessibilityLabel = "Edit Address"
         // Hidden until there's a page that way, as `shownHistory` starts out.
         backButton.isHidden = true
@@ -52,6 +59,18 @@ final class AddressBar: UIControl {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    func showTranslation(_ state: MobilePageTranslation.State) {
+        offersTranslation = state.available
+        translateButton.isHidden = !offersTranslation || isEditingURL
+        translateButton.isSelected = state.enabled
+        // Off is a synchronous colour change. Only the glyph ↔ spinner swaps animate.
+        translateButton.tintColor = state.enabled && !state.busy ? .systemBlue : .label
+        if state.busy { translateButton.setLoading(name: "page-translation-loading") }
+        else { translateButton.setGlyph(UIImage(named: "MenuTranslate"), name: "page-translation") }
+        translateButton.accessibilityLabel = state.enabled ? "Show Original" : "Translate to English"
+        translateButton.accessibilityValue = state.busy ? "Translating to English" : state.enabled ? "Translated to English" : nil
+    }
 
     /// Shows a page's host, without `www.` as Safari does, behind a padlock if it's HTTPS.
     func show(_ url: URL?, canGoBack: Bool, canGoForward: Bool) {
@@ -128,6 +147,7 @@ final class AddressBar: UIControl {
     /// Keep the bar intact: its label moves with the sheet while the editor already owns keyboard focus.
     func prepareEditing(_ field: SearchField, url: URL?) {
         isEditingURL = true
+        translateButton.isHidden = true
         editingContentsAligned = false
         editor = field
         field.frame = bounds
@@ -171,6 +191,7 @@ final class AddressBar: UIControl {
         editor = nil
         editingContentsAligned = false
         isEditingURL = false
+        translateButton.isHidden = !offersTranslation
         host.alpha = 1
         host.lineBreakMode = .byTruncatingHead
         host.adjustsFontSizeToFitWidth = true
@@ -188,7 +209,7 @@ final class AddressBar: UIControl {
         if !isEditingURL { updateHistoryButtons() }
         // By bounds and center, as pressed buttons are scaled.
         let width = Self.buttonWidth, height = bounds.height
-        for (button, x) in zip(buttons, [centres[0], forwardCentre, centres[2]]) {
+        for (button, x) in zip(buttons, [centres[0], forwardCentre, centres[2]-Self.translationSpacing, centres[2]]) {
             button.bounds = CGRect(x: 0, y: 0, width: width, height: height)
             button.center = CGPoint(x: x, y: bounds.midY)
         }

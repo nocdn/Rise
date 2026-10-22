@@ -229,7 +229,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         clearButton.bounds = CGRect(x: 0, y: 0, width: AddressBar.buttonWidth, height: Self.fieldHeight)
         clearButton.center = CGPoint(x: frame.maxX-AddressBar.outerCentre, y: frame.midY)
         privateButton.bounds = clearButton.bounds
-        privateButton.center = CGPoint(x: clearButton.center.x-40, y: frame.midY)
+        privateButton.center = convert(CGPoint(x: clearButton.center.x-40, y: frame.midY), to: privateButton.superview)
         transcribing.center = clearButton.center
         let top = Self.fieldHeight+Self.rowsGap
         list.frame = CGRect(x: 0, y: top, width: bounds.width, height: max(0, visibleHeight-top))
@@ -396,9 +396,9 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         if !enabled { privateRemote = nil }
         isPrivateBrowsing = enabled
         if enabled { source?.icons.previewCandidate(nil) }
-        updatePrivateButton()
         refresh()
         onPrivateBrowsingChanged?()
+        updatePrivateButton()
         // The colour sweep is already committed before UIKit refreshes its keyboard appearance.
         if field.isFirstResponder { field.reloadInputViews() }
     }

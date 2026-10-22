@@ -33,6 +33,19 @@ final class BottomBar: UIView {
     let moreButton = AnimatedSymbolButton(symbol: "ellipsis", pointSize: 14)
     /// The download's landing kick stays independent of the button's normal press scale.
     let moreLanding = UIView()
+    private(set) var translationHint: PageTranslationHint?
+
+    func announceTranslation(documentID: String) {
+        cancelTranslationHint()
+        let hint = PageTranslationHint(documentID: documentID, landing: moreLanding, in: home)
+        translationHint = hint
+        home.insertSubview(hint, belowSubview: row)
+        hint.start { [weak self, weak hint] in
+            guard let self, translationHint === hint else { return }
+            translationHint = nil
+        }
+    }
+    func cancelTranslationHint() { translationHint?.cancel(); translationHint = nil }
     /// The bar's own contents: its row of buttons.
     let home = UIView()
     /// New Page's panel: a search.
@@ -84,6 +97,7 @@ final class BottomBar: UIView {
     /// Collapsed, only the strip remains; set it inside an animation to animate.
     var isCollapsed = false {
         didSet {
+            if isCollapsed { cancelTranslationHint() }
             row.alpha = isCollapsed ? 0 : 1
             row.transform = isCollapsed ? CGAffineTransform(translationX: 0, y: 10).scaledBy(x: 0.92, y: 0.92) : .identity
             row.isUserInteractionEnabled = !isCollapsed
@@ -270,6 +284,7 @@ final class BottomBar: UIView {
     }
 
     private func show(_ next: UIView?, animated: Bool) {
+        if next !== home { cancelTranslationHint() }
         guard next !== shown else { return }
         let previous = shown
         if previous === history { history.cancelSwipe() }

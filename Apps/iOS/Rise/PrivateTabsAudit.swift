@@ -67,6 +67,7 @@ import WebKit
         let frame = bar.frame
         try capture("regular-light")
         panel.privateButton.sendActions(for: .primaryActionTriggered)
+        try check("eye-swap-starts-above-the-sweep-immediately", panel.privateButton.symbolName == "private-eye" && panel.privateButton.superview === bar)
         try await Task.sleep(for: .milliseconds(55))
         let first = bar.privateSweepY
         try capture("purple-rising-early")
@@ -75,11 +76,10 @@ import WebKit
         try capture("purple-rising-late")
         try check("purple-sweep-rises-from-the-bottom", first != nil && second != nil && second! < first!)
         try await Task.sleep(for: .milliseconds(185))
-        try check("arrival-gives-the-panel-a-rubber-band-pulse", bar.layer.animation(forKey: "private-rubber-band") != nil)
+        try check("sweep-finishes-without-a-panel-bounce", bar.layer.animation(forKey: "private-rubber-band") == nil)
         if let shown = bar.layer.presentation() {
             let transform = shown.transform
-            let bottom = bar.bounds.height/2*transform.m22+transform.m42
-            try check("rubber-band-keeps-the-bottom-anchored", abs(bottom-bar.bounds.height/2) < 0.5)
+            try check("sweep-keeps-the-panel-still", abs(transform.m22-1) < 0.001 && abs(transform.m42) < 0.1)
         }
         try await settle()
         try check("private-panel-has-the-requested-purple", bar.isPrivateBrowsing && bar.backgroundColor == PrivatePanelAppearance.background)
@@ -90,7 +90,11 @@ import WebKit
         try check("colour-transition-does-not-change-panel-geometry", bar.frame == frame)
         try capture("private-light")
         panel.privateButton.sendActions(for: .primaryActionTriggered)
+        try check("eye-off-swap-also-starts-immediately", panel.privateButton.symbolName == "private-eye-off" && panel.privateButton.superview === bar)
+        try await Task.sleep(for: .milliseconds(55))
+        try capture("regular-returning-arc")
         try await settle()
+        try check("eye-returns-to-the-search-panel-after-the-sweep", panel.privateButton.superview === panel)
         try check("toggle-restores-regular-light-appearance", !bar.isPrivateBrowsing && bar.overrideUserInterfaceStyle == .unspecified)
         browser.overrideUserInterfaceStyle = .dark
         browser.view.layoutIfNeeded()

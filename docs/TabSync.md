@@ -144,6 +144,12 @@ for Production. Local Release Mac builds deliberately use Development, and
 `scripts/ios.py` installs both iOS configurations with Development, so a Release
 build on the phone still syncs with the Mac. CloudKit environments have separate data.
 
+The two schemas were deployed to Production on 22 October 2026. CloudKit Console
+confirmed the deployment and the Production `RiseTab.payload` Bytes field. A
+Release test build signed for the Production container passed the live two-client
+iPhone test for inserts, navigation, closure and offline reconnection. This does
+not move Development data or switch local Mac builds to Production.
+
 If a new app ID reports “Invalid bundle ID for container”, verify the container
 assignment and refresh automatic signing in Xcode. Apple's registration can take
 time to propagate; local tabs and pending changes remain saved meanwhile.

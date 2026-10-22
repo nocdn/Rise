@@ -3,6 +3,9 @@ import WebKit
 
 /// One native context-menu interaction follows a page even when a Peek hands it to a tab.
 @MainActor final class VideoContextMenus: NSObject, WKScriptMessageHandler, UIContextMenuInteractionDelegate {
+    // Keep the implementation available, but hide embedded-media downloads until
+    // an authorized-source policy is in place for App Review guideline 5.2.3.
+    private static let videoDownloadsEnabled = false
     private static let installed = NSMapTable<WKWebView, VideoContextMenus>.weakToStrongObjects()
     private static let symbols: [String: UIImage] = Dictionary(uniqueKeysWithValues:
         ["play", "pause", "speaker.wave.2", "speaker.slash", "arrow.up.left.and.arrow.down.right",
@@ -127,7 +130,7 @@ import WebKit
             }, UIAction(title: "Share Video", image: Self.symbols["square.and.arrow.up"]) { [weak self] _ in
                 self?.afterMenu { [weak self] in self?.share(url, from: selection.rect) }
             }]
-            if state["downloadable"] as? Bool == true {
+            if Self.videoDownloadsEnabled, state["downloadable"] as? Bool == true {
                 links.append(UIAction(title: "Download Video", image: Self.symbols["arrow.down.circle"]) { [weak self] _ in
                     self?.afterMenu { [weak self] in self?.download(url, from: selection.rect) }
                 })

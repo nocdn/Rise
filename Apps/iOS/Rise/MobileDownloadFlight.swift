@@ -5,10 +5,9 @@ import UIKit
 /// shrink and direction-aware spring kick; the mobile flight carries a real list row.
 @MainActor struct MobileDownloadFlightPath {
     static let cardSize = CGSize(width: 232, height: DownloadsPanel.rowHeight)
-    static let reactionDuration = 0.55
+    static let reactionDuration = ToolbarLandingImpact.duration
     private static let ease = CubicEasing(0.42, 0, 0.72, 0.19)
     private static let pop = SummariseSpring(2 * .pi/0.24, 0.78)
-    private static let reaction = SummariseSpring(2 * .pi/0.34, 0.6)
     let origin: CGPoint, destination: CGPoint, control: CGPoint
     let duration: Double
     var totalDuration: Double { duration+Self.reactionDuration }
@@ -43,12 +42,8 @@ import UIKit
     /// A velocity impulse, as in the desktop archive: about 2 points along the incoming
     /// tangent, a small tilt and squeeze, then a damped return through rest.
     func impact(at time: Double) -> CATransform3D {
-        guard time > 0, time < Self.reactionDuration else { return CATransform3DIdentity }
-        let dx = destination.x-control.x, dy = destination.y-control.y, length = max(1, hypot(dx, dy))
-        let k = Self.reaction.value(from: 0, to: 0, velocity: 46, at: time)
-        var result = CATransform3DMakeTranslation(dx/length*2.2*k, dy/length*2.2*k, 0)
-        result = CATransform3DRotate(result, dx/length*0.035*k, 0, 0, 1)
-        return CATransform3DScale(result, 1+0.025*k, 1-0.04*k, 1)
+        ToolbarLandingImpact.transform(at: time, direction:
+            CGVector(dx: destination.x-control.x, dy: destination.y-control.y))
     }
 }
 

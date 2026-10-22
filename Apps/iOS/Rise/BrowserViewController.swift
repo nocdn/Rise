@@ -41,6 +41,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private var transientPrivateSession: MobilePrivateSession?
     private var lastRegularTabID: UUID?
     lazy var quickActions = BrowserQuickActions(browser: self)
+    lazy var pageTranslation: MobilePageTranslation = MobilePageTranslation(presenter: { [weak self] in self }, changed: { [weak self] in
+        guard let self, isViewLoaded else { return }
+        updatePageTranslation()
+    })
     private let sessionStore: MobileBrowserSessionStore?
     private var lastSavedSession: MobileBrowserSession?
     let addressSuggestions: MobileAddressSuggestions
@@ -264,6 +268,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         for old in tabs where !next.contains(where: { $0 === old }) {
             old.onPageChange = nil
             for page in [old.webView] + old.previousPages + old.forwardPages {
+                pageTranslation.cancel(page)
                 page.stopLoading(); page.navigationDelegate = nil; page.uiDelegate = nil
             }
         }
@@ -292,6 +297,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         guard !quickActions.applyPending() else { return }
         openPendingLinks()
         applyPendingSharedTabs()
+        updatePageTranslation()
     }
 
     /// Opens links from other apps, each in a new tab after the current one, as Safari does.
@@ -357,6 +363,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         addressSuggestions.register(webView, privateBrowsing: isPrivate)
         VideoContextMenus.install(on: webView, browser: self)
         downloadOrigins.install(on: webView)
+        pageTranslation.install(on: webView)
         if !isPrivate { addressSuggestions.learner.install(on: webView) }
         webView.uiDelegate = self
         webView.navigationDelegate = self
@@ -631,12 +638,29 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// Back in More's panel also returns past the start of the page's history to the page it replaced.
     func updateAddress() {
         updateAdBlockingSettings()
+        updatePageTranslation()
         let url = shareableURL
         bottomBar.menu.address.show(url, canGoBack: webView.canGoBack || !previousPages.isEmpty,
                                canGoForward: webView.canGoForward || !currentTab.forwardPages.isEmpty)
         for tile in [bottomBar.menu.shareTile, bottomBar.menu.copyTile] { tile.isEnabled = url != nil }
         bottomBar.menu.summariseTile.isEnabled = currentTab.hasCommittedDocument && webView.url.map(Self.canPeek) == true
         bottomBar.menu.findTile.isEnabled = currentTab.hasCommittedDocument
+    }
+
+    private func updatePageTranslation() {
+        let state = pageTranslation.state(for: webView)
+        bottomBar.menu.address.showTranslation(state)
+        if !state.available || state.enabled || bottomBar.translationHint?.documentID != state.documentID {
+            bottomBar.cancelTranslationHint()
+        }
+        guard let documentID = state.documentID, !isPanelOpen, panelExpansion == 0,
+              !isTabSwitcherOpen, tabSwitcher.isHidden, summarise == nil,
+              presentedViewController == nil, !bottomBar.isCollapsed, bottomBar.shown === bottomBar.home,
+              (bottomBar.home.layer.presentation()?.opacity ?? 1) > 0.99,
+              view.window?.windowScene?.activationState == .foregroundActive,
+              pageTranslation.takeAvailableHint(for: webView) else { return }
+        bottomBar.layoutIfNeeded()
+        bottomBar.announceTranslation(documentID: documentID)
     }
 
     /// Back past the start of an adopted page's history returns to the page it replaced.
@@ -950,6 +974,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let actions: [(UIControl, @MainActor (BrowserViewController) -> Void)] = [
             (address.backButton, { $0.goBack() }),
             (address.forwardButton, { $0.goForward() }),
+            (address.translateButton, { $0.pageTranslation.toggle($0.webView) }),
             // While editing the address, X clears it, or closes the dialog once it's empty.
             (address.reloadButton, {
                 if !$0.bottomBar.menu.address.isEditingURL { $0.closePanel(); $0.reloadPage() }
@@ -1048,10 +1073,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             self.layoutBottomBar()
             self.bottomBar.layoutIfNeeded()
         }
-        guard animated, !UIAccessibility.isReduceMotionEnabled else { change(); return }
+        guard animated, !UIAccessibility.isReduceMotionEnabled else { change(); updatePageTranslation(); return }
         UIView.animate(springDuration: BottomBar.springDuration, bounce: 0, initialSpringVelocity: 0, delay: 0,
                        options: [.allowUserInteraction, .beginFromCurrentState], animations: change) { _ in
-            if !collapsed { self.updateTabsPreview() }
+            if !collapsed { self.updateTabsPreview(); self.updatePageTranslation() }
         }
     }
 
@@ -1786,6 +1811,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
 
     private func prepareTabSwitcher() {
+        bottomBar.cancelTranslationHint()
         if tabSwitcher.isHidden {
             setBottomBarCollapsed(false)
             // Drawing the page for its card holds up the main thread for a couple of frames: the
@@ -1871,7 +1897,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         if tabs.count == 1 {
             let closing = tabs[0]
             pendingCard = nil
-            for page in [closing.webView]+closing.previousPages+closing.forwardPages { page.stopLoading(); page.navigationDelegate = nil; page.uiDelegate = nil }
+            for page in [closing.webView]+closing.previousPages+closing.forwardPages {
+                pageTranslation.cancel(page)
+                page.stopLoading(); page.navigationDelegate = nil; page.uiDelegate = nil
+            }
             closing.onPageChange = nil
             let blank = BrowserTab(webView: Self.makeWebView(dataStore: regularWebsiteDataStore, videoPlayback: videoPlayback))
             track(blank); tabs = [blank]; tabIndex = 0
@@ -1887,6 +1916,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let order = tabSwitcher.displayOrder
         let after = order.firstIndex(of: index).flatMap { order.indices.contains($0+1) ? tabs[order[$0+1]].id : nil }
         let closing = tabs.remove(at: index)
+        for page in [closing.webView]+closing.previousPages+closing.forwardPages { pageTranslation.cancel(page) }
         if closing.isPrivateBrowsing {
             closing.onPageChange = nil
             for page in [closing.webView]+closing.previousPages+closing.forwardPages {
@@ -2119,6 +2149,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         if webView.url?.scheme == MobileTabHistory.scheme { return }
+        pageTranslation.didCommit(webView)
         tabs.first { $0.webView === webView }?.didCommit(navigation)
         addressSuggestions.committed(webView)
         if webView === self.webView { updateNavigationStatus(); updateAddress() }
@@ -2130,6 +2161,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             return
         }
         tabs.first { $0.webView === webView }?.didFinish()
+        pageTranslation.didFinish(webView)
         finishAdBlockingReload(on: webView, navigation: navigation)
         PagePaintWatcher.shared.didFinish(webView)
         addressSuggestions.changed(webView)
