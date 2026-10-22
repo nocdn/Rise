@@ -491,6 +491,31 @@ final class AddressSuggestionsTests: XCTestCase {
         palette.hide(); palette.mouseMoved(with: event)
         XCTAssertEqual(palette.selectedIndex, 1, "Hidden results ignore pointer events")
     }
+    @MainActor func testASingleLearnedLetterFillsTheNativeFieldAndEnterOpensItsAddress() throws {
+        let browser = browser(); defer { browser.hidePalette(); clean(browser) }
+        let home = URL(string: "https://x.com/")!
+        for _ in 0..<12 { browser.browsingHistory.record(home, title: "X") }
+        browser.showWindow(nil)
+        for newTab in [true, false] {
+            if newTab { browser.newTab() } else { browser.focusAddress() }
+            let palette = browser.palette, editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
+            editor.insertText("x", replacementRange: editor.selectedRange())
+            XCTAssertEqual(editor.string, "x.com")
+            XCTAssertEqual(editor.selectedRange(), NSRange(location: 1, length: 4))
+            XCTAssertEqual(palette.chosenSuggestion?.url, home)
+            editor.doCommand(by: #selector(NSResponder.deleteBackward(_:)))
+            XCTAssertEqual(editor.string, "x", "Backspace removes the completion without immediately filling it again")
+            XCTAssertEqual(palette.chosenSuggestion?.url, browser.searchProvider.searchURL("x"))
+            editor.selectAll(nil); editor.insertText("x", replacementRange: editor.selectedRange())
+            var destination: URL?
+            let submit = palette.submit
+            palette.submit = { _, suggestion in destination = suggestion?.url }
+            editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+            XCTAssertEqual(destination, home)
+            palette.submit = submit
+            browser.hidePalette()
+        }
+    }
     @MainActor func testAFrequentlyVisitedPathFillsTheNativeFieldAndKeepsTheSitesSearchAvailable() throws {
         let browser = browser(); defer { browser.hidePalette(); clean(browser) }
         let account = URL(string: "https://amazon.co.uk/account")!

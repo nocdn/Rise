@@ -66,7 +66,8 @@ final class BrowsingHistoryTests: XCTestCase {
         XCTAssertEqual(BrowsingHistory.site(of: url), URL(string: "https://www.example.com:8443/"))
         XCTAssertNil(BrowsingHistory.completion(for: "docs", url: url))
         XCTAssertNil(BrowsingHistory.completion(for: "example swift", url: url))
-        XCTAssertNil(BrowsingHistory.completion(for: "e", url: url))
+        XCTAssertEqual(BrowsingHistory.completion(for: "e", url: url), "example.com:8443")
+        XCTAssertNil(BrowsingHistory.completion(for: "", url: url))
         XCTAssertEqual(BrowsingHistory.completion(for: "exam", url: URL(string: "https://example.com/")!), "example.com")
     }
     func testBoundedHistoryTitleUpdatesDoNotCountAsVisitsAndInvalidStorageIsIgnored() throws {

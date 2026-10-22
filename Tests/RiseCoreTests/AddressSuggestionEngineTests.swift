@@ -2,6 +2,45 @@ import XCTest
 @testable import RiseCore
 
 final class AddressSuggestionEngineTests: XCTestCase {
+    func testASingleLetterCompletesTheLearnedDestinationAfterRelaunch() throws {
+        let file = URL.temporaryDirectory.appendingPathComponent("RiseAddress-\(UUID())/history.json")
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let history = BrowsingHistory(storageURL: file)
+        let home = URL(string: "https://x.com/")!, article = URL(string: "https://x.com/person/status/123")!
+        for _ in 0..<12 { history.record(home, title: "X") }
+        for _ in 0..<10 { history.record(article, title: "A post on X") }
+        for _ in 0..<100 { history.record(URL(string: "https://example.com/")!, title: "X notes") }
+        try history.save()
+        let restored = BrowsingHistory(storageURL: file)
+        let tab = AddressSuggestionTab(id: UUID(), title: "X", url: home)
+        for query in ["x", "X"] {
+            let values = AddressSuggestionEngine.suggestions(for: query, history: restored, tabs: [tab])
+            XCTAssertEqual(values.first?.completion, query+".com")
+            XCTAssertEqual(values.first?.url, home)
+            XCTAssertEqual(values.first?.tabID, tab.id)
+            let mixed = AddressSuggestionEngine.merging(["x", "x news"], into: values)
+            XCTAssertEqual(mixed.first?.completion, query+".com", "Remote search terms cannot replace the learned completion")
+        }
+        let fresh = BrowsingHistory(storageURL: file.deletingLastPathComponent().appendingPathComponent("fresh.json"))
+        XCTAssertNil(AddressSuggestionEngine.suggestions(for: "x", history: fresh, tabs: []).first?.completion,
+                     "One letter alone must not pick an unvisited site from the catalog")
+        fresh.record(URL(string: "https://example.com/")!, title: "X notes")
+        XCTAssertNil(AddressSuggestionEngine.suggestions(for: "x", history: fresh, tabs: []).first?.completion,
+                     "A title or URL substring cannot become an inline completion")
+    }
+    func testASingleLetterMatchesTheSiteInsteadOfItsSchemeOrWWWPrefix() {
+        let history = BrowsingHistory(storageURL: URL.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        for _ in 0..<20 { history.record(URL(string: "https://www.example.com/")!, title: "Frequent page") }
+        for (query, domain) in [("h", "hello.example"), ("w", "www.wikipedia.org"), ("e", "www.example.com")] {
+            let url = URL(string: "https://\(domain)/")!
+            history.record(url, title: "Another page")
+            let first = AddressSuggestionEngine.suggestions(for: query, history: history, tabs: []).first
+            XCTAssertEqual(first?.url, url)
+            XCTAssertEqual(first?.completion, domain.hasPrefix("www.") ? String(domain.dropFirst(4)) : domain)
+        }
+        XCTAssertNil(BrowsingHistory.completion(for: "h", url: URL(string: "https://example.com/")!))
+        XCTAssertNil(BrowsingHistory.completion(for: "w", url: URL(string: "https://www.example.com/")!))
+    }
     func testLearnedPrefixesBeatPopularSitesAndCompleteOnlyTheHostUntilAPathIsTyped() throws {
         let history = BrowsingHistory(storageURL: URL.temporaryDirectory.appendingPathComponent(UUID().uuidString))
         history.record(URL(string: "https://github.enterprise.example/docs/swift")!, title: "Internal docs")

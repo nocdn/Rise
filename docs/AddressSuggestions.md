@@ -17,6 +17,9 @@ The most frequent/recent literal URL match can complete a stable page path after
 visits, so a regularly used `voxi.co.uk/account` can outrank `voxi.co.uk`. One-off deep
 links and query-bearing URLs still complete only the site until a path is typed.
 This uses saved visit counts on both platforms without resetting existing learning.
+Learned literal addresses can complete from the first character, so repeated visits to
+`x.com` let `x` immediately fill `.com`. Literal prefixes outrank title/substring matches
+even for one character. Unvisited sites in the built-in catalog still require two characters.
 Those counts, page addresses, titles and recency also sync through the existing iCloud
 switch. Per-installation counters prevent repeated syncs from inflating frequency;
 clear and deletion generations prevent stale offline clients from restoring removed visits.

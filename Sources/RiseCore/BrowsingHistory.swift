@@ -111,7 +111,7 @@ public final class BrowsingHistory {
             let title = entry.title.lowercased(), address = entry.url.lowercased()
             let searchable = title + " " + address
             guard words.allSatisfy({ searchable.contains($0) }) else { return nil }
-            let prefix = query.count >= 2 && !query.contains(where: { $0.isWhitespace }) && Self.forms(address).contains { $0.hasPrefix(query) && $0 != query }
+            let prefix = !query.isEmpty && !query.contains(where: { $0.isWhitespace }) && Self.forms(address, for: query).contains { $0.hasPrefix(query) && $0 != query }
             let match: Double = prefix ? 1000 : !query.isEmpty && title.hasPrefix(query) ? 500 : 0
             let age = max(0, date.timeIntervalSince(entry.lastVisited)/86400)
             let frecency = 12*log2(Double(entry.visits)+1) + 30/(1+age/7)
@@ -125,13 +125,14 @@ public final class BrowsingHistory {
     }
 
     /// Only complete a literal URL prefix, never a title/search substring.
+    /// A single character can complete an address already learned from history.
     /// Keep the user's prefix/casing and select only the appended suffix in UI.
     /// A one-off page fills only its site until a path is typed. The ranking engine
     /// can include a repeatedly visited page's path when it is the preferred destination.
     public static func completion(for query: String, url: URL, includePath: Bool = false) -> String? {
-        guard query.count >= 2, !query.contains(where: { $0.isWhitespace }),
+        guard !query.isEmpty, !query.contains(where: { $0.isWhitespace }),
               let key = key(url) else { return nil }
-        for var candidate in forms(key) where candidate.lowercased().hasPrefix(query.lowercased()) {
+        for var candidate in forms(key, for: query) where candidate.lowercased().hasPrefix(query.lowercased()) {
             let site = siteEnd(candidate)
             if !includePath && query.utf16.count <= site { candidate = (candidate as NSString).substring(to: site) }
             guard candidate.utf16.count > query.utf16.count else { return nil }
@@ -153,13 +154,15 @@ public final class BrowsingHistory {
         let slash = text.range(of: "/", range: NSRange(location: start, length: text.length-start))
         return slash.location == NSNotFound ? text.length : slash.location
     }
-    private static func forms(_ address: String) -> [String] {
+    private static func forms(_ address: String, for query: String) -> [String] {
         guard let separator = address.range(of: "://") else { return [address] }
         var withoutScheme = String(address[separator.upperBound...]), full = address
         if withoutScheme.hasSuffix("/"), !withoutScheme.dropLast().contains("/"), !withoutScheme.contains("?") {
             withoutScheme.removeLast(); full.removeLast()
         }
         let withoutWWW = withoutScheme.hasPrefix("www.") ? String(withoutScheme.dropFirst(4)) : withoutScheme
+        // One letter matches the site's name, not the "h" in HTTPS or "w" in www.
+        if query.count == 1 { return [withoutWWW] }
         return [full, withoutScheme, withoutWWW]
     }
 
