@@ -641,4 +641,16 @@ final class AddressSuggestionsTests: XCTestCase {
         XCTAssertNil(browser.suggestions(for: "ex").first?.completion)
         XCTAssertNotNil(browser.makeMoreSiteMenu().items.first { $0.title == "Clear Browsing History…" })
     }
+
+    /// A reload, or the tab coming back at launch, isn't going anywhere new.
+    @MainActor func testReloadingOrRestoringATabDoesNotCountAsAnotherVisit() async throws {
+        let browser = browser(); defer { clean(browser) }
+        let url = try XCTUnwrap(URL(string: "https://example.com/docs")), tab = browser.addTab()
+        tab.open(url, title: "Docs")
+        let deadline = Date().addingTimeInterval(8)
+        while browser.browsingHistory.entries.first?.visits != 1 && Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        browser.pageFinishedLoading(tab.page.view)
+        XCTAssertEqual(browser.browsingHistory.entries.first?.visits, 1, "Reloaded")
+        XCTAssertEqual(BrowserTab(saved: tab.saved).visitedAddress, BrowsingHistory.key(url), "Back at launch, its page has been counted")
+    }
 }

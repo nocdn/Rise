@@ -133,4 +133,21 @@ final class AddressSuggestionEngineTests: XCTestCase {
         XCTAssertEqual(values.first?.symbol, "magnifyingglass")
         XCTAssertEqual(AddressSuggestionEngine.merging(["https://example.com", "https://EXAMPLE.com:443/"], into: []).count, 1)
     }
+
+    /// Many pages of one site outweigh one page of another, and what's typed weighs most of all.
+    func testTheSiteVisitedAndTypedMostFillsInNotTheBusiestSinglePage() {
+        let history = BrowsingHistory(storageURL: URL.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        for _ in 0..<7 { history.record(URL(string: "https://gitlab.com/gitlab-org/gitlab/-/merge_requests")!, title: "Merge requests") }
+        for number in 46970...46976 { for _ in 0..<2 { history.record(URL(string: "https://gitlab.cfdata.org/fe/stratus/-/merge_requests/\(number)")!, title: "MR") } }
+        XCTAssertEqual(AddressSuggestionEngine.suggestions(for: "gitl", history: history, tabs: []).first?.completion, "gitlab.cfdata.org",
+                       "Fourteen visits across a site's pages beat seven to one page, and fill in the site, not one of its pages")
+
+        let typed = BrowsingHistory(storageURL: URL.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        for _ in 0..<12 { typed.record(URL(string: "https://gitlab.com/gitlab-org/gitlab/-/merge_requests")!, title: "Merge requests") }
+        // Typing the address sent the browser to sign in, so only that page was kept as a visit.
+        for _ in 0..<3 { typed.recordTyped(URL(string: "https://gitlab.cfdata.org/")!); typed.record(URL(string: "https://gitlab.cfdata.org/users/sign_in")!, title: "Sign in") }
+        let first = AddressSuggestionEngine.suggestions(for: "gitl", history: typed, tabs: []).first
+        XCTAssertEqual(first?.completion, "gitlab.cfdata.org")
+        XCTAssertEqual(first?.url, URL(string: "https://gitlab.cfdata.org/"))
+    }
 }

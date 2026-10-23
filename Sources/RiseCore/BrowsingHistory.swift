@@ -19,7 +19,12 @@ public final class BrowsingHistory {
         var deviceID = UUID()
         var clock: Int64 = 0
         var snapshot = SharedHistorySnapshot()
+        /// Addresses typed or picked in the address field, by history key: kept on this device only.
+        var typed: [String: Typed]?
     }
+    struct Typed: Codable, Equatable { var count: Int; var last: Date }
+    /// A typed visit is a stronger wish to go somewhere than following a link: it counts as this many.
+    static let typedWeight = 4
     private var storage = Storage()
     var snapshot: SharedHistorySnapshot { storage.snapshot }
     private var dirty = false
@@ -113,15 +118,58 @@ public final class BrowsingHistory {
             guard words.allSatisfy({ searchable.contains($0) }) else { return nil }
             let prefix = !query.isEmpty && !query.contains(where: { $0.isWhitespace }) && Self.forms(address, for: query).contains { $0.hasPrefix(query) && $0 != query }
             let match: Double = prefix ? 1000 : !query.isEmpty && title.hasPrefix(query) ? 500 : 0
-            let age = max(0, date.timeIntervalSince(entry.lastVisited)/86400)
-            let frecency = 12*log2(Double(entry.visits)+1) + 30/(1+age/7)
-            return (entry, match+frecency)
+            return (entry, match+Self.frecency(visits: entry.visits, lastVisited: entry.lastVisited, at: date))
         }
         return scored.sorted {
             if $0.1 != $1.1 { return $0.1 > $1.1 }
             if $0.0.lastVisited != $1.0.lastVisited { return $0.0.lastVisited > $1.0.lastVisited }
             return $0.0.url < $1.0.url
         }.prefix(max(0, limit)).map(\.0)
+    }
+
+    /// How often and how lately: more visits count for less each, and a visit's weight halves over about a week.
+    static func frecency(visits: Int, lastVisited: Date, at date: Date) -> Double {
+        let age = max(0, date.timeIntervalSince(lastVisited)/86400)
+        return 12*log2(Double(visits)+1) + 30/(1+age/7)
+    }
+
+    /// Where typing `query` leads: of the sites whose address it starts, the one visited most across
+    /// all its pages, so many pages of one site outweigh one page of another; and one of its pages
+    /// only as the site's usual destination (more than one visit, at least half the site's, and no
+    /// query), or once the address typed reaches past the site.
+    public func destination(for query: String, at date: Date = Date()) -> (site: URL, page: HistoryEntry?)? {
+        // Each page's weight: its visits, and each time its address was typed counting for more. An
+        // address typed but never kept, as one that sent the browser elsewhere, still counts.
+        var weighed: [String: (entry: HistoryEntry, weight: Int)] = [:]
+        for entry in entries { weighed[entry.url] = (entry, entry.visits) }
+        for (key, typed) in storage.typed ?? [:] {
+            let extra = Self.typedWeight*typed.count
+            if var page = weighed[key] {
+                page.weight += extra; page.entry.lastVisited = max(page.entry.lastVisited, typed.last); weighed[key] = page
+            } else {
+                weighed[key] = (HistoryEntry(url: key, title: URL(string: key)?.host ?? key, visits: 0, lastVisited: typed.last), extra)
+            }
+        }
+        var sites: [String: (site: URL, pages: [(entry: HistoryEntry, weight: Int)])] = [:]
+        for page in weighed.values {
+            guard let url = URL(string: page.entry.url), Self.completion(for: query, url: url, includePath: true) != nil,
+                  let site = Self.site(of: url) else { continue }
+            sites[site.absoluteString, default: (site, [])].pages.append(page)
+        }
+        func score(_ page: (entry: HistoryEntry, weight: Int)) -> Double { Self.frecency(visits: page.weight, lastVisited: page.entry.lastVisited, at: date) }
+        func score(_ pages: [(entry: HistoryEntry, weight: Int)]) -> Double {
+            Self.frecency(visits: pages.reduce(0) { $0+$1.weight }, lastVisited: pages.map(\.entry.lastVisited).max() ?? .distantPast, at: date)
+        }
+        guard let best = sites.values.max(by: { a, b in
+            let (x, y) = (score(a.pages), score(b.pages))
+            return x != y ? x < y : a.site.absoluteString > b.site.absoluteString
+        }) else { return nil }
+        let pages = best.pages.sorted { score($0) != score($1) ? score($0) > score($1) : $0.entry.url < $1.entry.url }
+        guard let top = pages.first, let url = URL(string: top.entry.url) else { return (best.site, nil) }
+        if Self.completion(for: query, url: best.site) == nil { return (best.site, top.entry) }
+        let weight = pages.reduce(0) { $0+$1.weight }
+        let usual = top.weight > 1 && top.weight*2 >= weight && url.query == nil && Self.site(of: url) != url
+        return (best.site, usual ? top.entry : nil)
     }
 
     /// Only complete a literal URL prefix, never a title/search substring.
@@ -166,9 +214,19 @@ public final class BrowsingHistory {
         return [full, withoutScheme, withoutWWW]
     }
 
+    /// `url` was typed or picked in the address field, to go to.
+    public func recordTyped(_ url: URL, at date: Date = Date()) {
+        guard let key = Self.key(url), key.utf8.count <= 16_384 else { return }
+        var typed = storage.typed ?? [:]
+        let old = typed[key]
+        typed[key] = Typed(count: min(1_000_000, (old?.count ?? 0)+1), last: max(date, old?.last ?? date))
+        if typed.count > Self.maximumEntries, let oldest = typed.min(by: { $0.value.last < $1.value.last })?.key { typed[oldest] = nil }
+        storage.typed = typed; dirty = true
+    }
+
     public func clear() throws {
         let previous = storage
-        storage.snapshot = SharedHistorySnapshot(clearedAt: nextVersion())
+        storage.snapshot = SharedHistorySnapshot(clearedAt: nextVersion()); storage.typed = nil
         entries = []; dirty = true
         do { try save() }
         catch { storage = previous; entries = previous.snapshot.entries; dirty = true; throw error }

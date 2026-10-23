@@ -109,6 +109,12 @@ import RiseCore
         let hover = TabHoverCards(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("pr-summaries.json"))
         hover.summaries.onChange = { [weak self] key in self?.pullRequestSummaryChanged(key) }
         hover.summaries.provider = { [weak self] in self?.modelChoice ?? .openRouter }
+        // A private GitLab answers through a page signed in to it: the one showing, else any open.
+        hover.summaries.signedInPage = { [weak self] host in
+            guard let self else { return nil }
+            let pages = ([self.selectedTab].compactMap { $0 } + self.tabs + self.allPeekTabs).map(\.page)
+            return pages.first { $0 is ChromiumPage && $0.url?.host?.lowercased() == host.lowercased() }
+        }
         return hover
     }()
     let linkPullRequests = LinkPullRequestCards()
@@ -796,6 +802,8 @@ import RiseCore
         hidePalette()
         if let command = suggestion?.command { runPaletteCommand(command); return }
         guard let url = suggestion?.url ?? AddressResolver.resolve(text, search: searchProvider.searchURL) else { return }
+        // Typed or picked to go to, not searched for: what the address field learns most from.
+        if url.host != searchProvider.searchURL(text)?.host { browsingHistory.recordTyped(url) }
         // Resolve again at activation time: an open tab may have navigated or
         // closed since the result was built. Never create an exact duplicate.
         if let existing = openTab(for: url) { select(existing.id); return }

@@ -13,11 +13,16 @@ import AppKit
         }
         var pullRequest: PullRequest? { if case .pullRequest(let pr) = self { return pr }; return nil }
         static func == (a: Subject, b: Subject) -> Bool { a.key == b.key }
-        /// A pull request's link, or with Option held any page's.
-        init?(url: URL?, option: Bool) {
-            if let pr = PullRequest(url: url) { self = .pullRequest(pr) }
-            else if option, let url, LinkSummaries.summarizes(url) { self = .summary(url) }
-            else { return nil }
+        /// A pull request's link, or with Option held any page's, unless it leads back to the
+        /// `page` it's on: a merge request's own tabs and heading anchors, or a page's own sections.
+        init?(url: URL?, option: Bool, on page: URL? = nil) {
+            if let pr = PullRequest(url: url) {
+                guard pr != PullRequest(url: page) else { return nil }
+                self = .pullRequest(pr)
+            } else if option, let url, LinkSummaries.summarizes(url) {
+                guard page.map(LinkSummaries.key) != LinkSummaries.key(url) else { return nil }
+                self = .summary(url)
+            } else { return nil }
         }
         /// The link's address, as the page reports it under the pointer, still points at it.
         func matches(_ url: URL?) -> Bool {
@@ -66,7 +71,7 @@ import AppKit
         // Letting Option go leaves a summary where it is.
         if !modifiers.contains(.option), case .summary = links.shown, links.shown?.matches(url) == true, links.shownWeb === web { return }
         links.timer?.invalidate(); links.timer = nil
-        let pr = LinkPullRequestCards.Subject(url: url, option: modifiers.contains(.option))
+        let pr = LinkPullRequestCards.Subject(url: url, option: modifiers.contains(.option), on: page(showing: web)?.url)
         // Heading up from the link into its card crosses the page under the card, whose
         // links (on a list, other pull requests) report hovers of their own. They don't count.
         if let shown = links.shown, let point = pointerInRoot, linkCardZone.contains(point) {

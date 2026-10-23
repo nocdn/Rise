@@ -279,20 +279,53 @@ enum GitHubAPI {
 enum GitLabAPI {
     /// Changed files are read 100 at a time; past this many, the line counts stop growing.
     static let maximumFilePages = 5
+    /// How a request gets to the server, its body and status back: by itself, or through a page
+    /// signed in to it, as a private server answers only someone signed in.
+    typealias Fetch = @MainActor (URL) async throws -> (data: Data, status: Int)
+    static func fetch(_ session: URLSession) -> Fetch {
+        { url in
+            var request = URLRequest(url: url)
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.setValue("Rise", forHTTPHeaderField: "User-Agent")
+            request.timeoutInterval = 15
+            let (data, response) = try await session.data(for: request)
+            return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
+        }
+    }
+    /// Through `page`, with its sign-in, as the server's own pages ask it.
+    @MainActor static func fetch(through page: WebPage) -> Fetch {
+        { [weak page] url in
+            guard let page else { throw URLError(.cancelled) }
+            let answer = await page.evaluate("""
+                const response = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+                return [response.status, await response.text()];
+                """, arguments: ["url": url.absoluteString], world: nil) as? [Any]
+            guard let answer, answer.count == 2, let status = (answer[0] as? NSNumber)?.intValue, let body = answer[1] as? String else {
+                throw URLError(.badServerResponse)
+            }
+            return (Data(body.utf8), status)
+        }
+    }
 
     /// The pipeline and merge checks, which move on by the minute, unlike the rest.
     static func status(_ pr: PullRequest, session: URLSession = .shared) async throws -> (pipeline: Pipeline?, mergeCheck: MergeCheck?) {
-        guard let object = try await json(pr, path: "", session: session) as? [String: Any] else { throw URLError(.badServerResponse) }
-        return await status(pr, object: object, session: session)
+        try await status(pr, fetch: fetch(session))
     }
-    private static func status(_ pr: PullRequest, object: [String: Any], session: URLSession) async -> (pipeline: Pipeline?, mergeCheck: MergeCheck?) {
-        let approvals = object["state"] as? String == "opened" ? try? await json(pr, path: "/approvals", session: session) as? [String: Any] : nil
+    static func status(_ pr: PullRequest, fetch: Fetch) async throws -> (pipeline: Pipeline?, mergeCheck: MergeCheck?) {
+        guard let object = try await json(pr, path: "", fetch: fetch) as? [String: Any] else { throw URLError(.badServerResponse) }
+        return await status(pr, object: object, fetch: fetch)
+    }
+    private static func status(_ pr: PullRequest, object: [String: Any], fetch: Fetch) async -> (pipeline: Pipeline?, mergeCheck: MergeCheck?) {
+        let approvals = object["state"] as? String == "opened" ? try? await json(pr, path: "/approvals", fetch: fetch) as? [String: Any] : nil
         return (Pipeline(gitLab: object["head_pipeline"] as? [String: Any]), MergeCheck(gitLab: object, approvals: approvals))
     }
     static func details(_ pr: PullRequest, session: URLSession = .shared) async throws -> PullRequestDetails {
-        let object = try await json(pr, path: "", session: session) as? [String: Any]
+        try await details(pr, fetch: fetch(session))
+    }
+    static func details(_ pr: PullRequest, fetch: Fetch) async throws -> PullRequestDetails {
+        let object = try await json(pr, path: "", fetch: fetch) as? [String: Any]
         guard let object, let title = object["title"] as? String else { throw URLError(.badServerResponse) }
-        let status = await status(pr, object: object, session: session)
+        let status = await status(pr, object: object, fetch: fetch)
         let state: PullRequestDetails.State = switch object["state"] as? String {
             case "merged": .merged
             case "closed", "locked": .closed
@@ -301,7 +334,7 @@ enum GitLabAPI {
         // The merge request itself has no line counts; they come from its changed files.
         var files = 0, additions = 0, deletions = 0, diff = "", breakdown = ChangeBreakdown()
         for page in 1...maximumFilePages {
-            guard let changes = try? await json(pr, path: "/diffs?per_page=100&page=\(page)", session: session) as? [[String: Any]] else { break }
+            guard let changes = try? await json(pr, path: "/diffs?per_page=100&page=\(page)", fetch: fetch) as? [[String: Any]] else { break }
             for change in changes {
                 files += 1
                 let text = change["diff"] as? String ?? ""
@@ -324,16 +357,12 @@ enum GitLabAPI {
                                   // Only when every file was read, so the split adds up to the whole.
                                   breakdown: files >= changed ? breakdown : nil)
     }
-    private static func json(_ pr: PullRequest, path: String, session: URLSession) async throws -> Any {
+    private static func json(_ pr: PullRequest, path: String, fetch: Fetch) async throws -> Any {
         guard case .gitlab(let host) = pr.forge,
               let project = pr.project.addingPercentEncoding(withAllowedCharacters: .alphanumerics.union(CharacterSet(charactersIn: "-._~"))),
               let url = URL(string: "https://\(host)/api/v4/projects/\(project)/merge_requests/\(pr.number)\(path)") else { throw URLError(.badURL) }
-        var request = URLRequest(url: url)
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("Rise", forHTTPHeaderField: "User-Agent")
-        request.timeoutInterval = 15
-        let (data, response) = try await session.data(for: request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+        let (data, status) = try await fetch(url)
+        guard status == 200 else { throw URLError(.badServerResponse) }
         return try JSONSerialization.jsonObject(with: data)
     }
 }
@@ -405,8 +434,15 @@ enum PullRequestSummarizer {
     /// When GitHub's API turned Rise away for its hourly limit, it's back then; until then
     /// details come from GitHub's pages.
     private var gitHubLimitedUntil = Date.distantPast
-    /// What a card says when nothing could describe its pull request.
-    static let failure = "Couldn’t load this pull request."
+    /// What a card says when nothing could describe its pull or merge request.
+    static func failure(_ pr: PullRequest) -> String {
+        if case .gitlab = pr.forge { return "Couldn’t load this merge request." }
+        return "Couldn’t load this pull request."
+    }
+    /// An open page signed in to a server (by its host), to ask a private one through.
+    var signedInPage: (String) -> WebPage? = { _ in nil }
+    /// GitLab servers that only answered through a signed-in page: asked that way from then on.
+    private var signedInHosts: Set<String> = []
     /// A pipeline and merge checks are checked again when the card shows, at most this often.
     static let statusRefresh: TimeInterval = 10
     private let storageURL: URL
@@ -490,7 +526,13 @@ enum PullRequestSummarizer {
     }
     /// GitHub's API while its hourly limit lasts, and GitHub's pages when it's gone or the API fails.
     private func fetchDetails(_ pr: PullRequest) async -> PullRequestDetails? {
-        guard case .github = pr.forge else { return try? await PullRequestAPI.details(pr) }
+        if case .gitlab(let host) = pr.forge {
+            if !signedInHosts.contains(host), let details = try? await GitLabAPI.details(pr) { return details }
+            // A private server: through a page signed in to it, as its own pages ask.
+            guard let page = signedInPage(host), let details = try? await GitLabAPI.details(pr, fetch: GitLabAPI.fetch(through: page)) else { return nil }
+            signedInHosts.insert(host)
+            return details
+        }
         if Date() >= gitHubLimitedUntil {
             do { return try await GitHubAPI.details(pr) }
             catch let limited as GitHubAPI.Limited { gitHubLimitedUntil = limited.until }
@@ -536,12 +578,17 @@ enum PullRequestSummarizer {
               Date().timeIntervalSince(statusChecks[key] ?? .distantPast) > Self.statusRefresh else { return }
         statusChecks[key] = Date()
         Task { [weak self] in
-            guard let status = try? await GitLabAPI.status(pr), let self, var details = self.entries[key]?.details,
+            guard let self, let status = try? await GitLabAPI.status(pr, fetch: self.gitLabFetch(pr)), var details = self.entries[key]?.details,
                   details.pipeline != status.pipeline || details.mergeCheck != status.mergeCheck else { return }
             details.pipeline = status.pipeline; details.mergeCheck = status.mergeCheck
             self.update(key) { $0.details = details }
             self.saved[key, default: Saved()].details = details; self.save()
         }
+    }
+    /// Through a signed-in page for a server that needs one, if one's open; otherwise by itself.
+    private func gitLabFetch(_ pr: PullRequest) -> GitLabAPI.Fetch {
+        guard case .gitlab(let host) = pr.forge, signedInHosts.contains(host), let page = signedInPage(host) else { return GitLabAPI.fetch(.shared) }
+        return GitLabAPI.fetch(through: page)
     }
     private func update(_ key: String, _ change: (inout Entry) -> Void) {
         var entry = entries[key] ?? Entry(); change(&entry); entries[key] = entry

@@ -146,4 +146,18 @@ final class LinkPullRequestCardsTests: XCTestCase {
         browser.presentLinkCard(pr, title: "Fix the sidebar", link: NSRect(x: frame.minX+80, y: frame.minY+400, width: 420, height: 20), in: web, page: page)
         XCTAssertTrue(browser.linkPullRequests.highlightedWeb === web)
     }
+
+    /// A merge request's own tabs and heading anchors lead back to the page they're on: no card.
+    func testLinksBackToThePageTheyreOnGetNoCard() throws {
+        let mr = "https://gitlab.example.com/cloudflare/fe/stratus/-/merge_requests/46980"
+        let page = try XCTUnwrap(URL(string: mr))
+        for own in [mr, mr + "/commits", mr + "#how-to-test-the-code"] {
+            XCTAssertNil(LinkPullRequestCards.Subject(url: URL(string: own), option: false, on: page), own)
+        }
+        XCTAssertNotNil(LinkPullRequestCards.Subject(url: URL(string: mr.replacingOccurrences(of: "46980", with: "46978")), option: false, on: page))
+        XCTAssertNotNil(LinkPullRequestCards.Subject(url: page, option: false, on: URL(string: "https://gitlab.example.com/cloudflare/fe/stratus/-/merge_requests")))
+        let article = try XCTUnwrap(URL(string: "https://example.com/article"))
+        XCTAssertNil(LinkPullRequestCards.Subject(url: URL(string: "https://example.com/article#part-2"), option: true, on: article))
+        XCTAssertNotNil(LinkPullRequestCards.Subject(url: URL(string: "https://example.com/other"), option: true, on: article))
+    }
 }

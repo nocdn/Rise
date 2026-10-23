@@ -20,6 +20,9 @@ import RiseCore
     var pinned: Bool
     var developer: Bool
     var requestedURL: URL?
+    /// The address last counted as a visit (as history keys it), so the tab coming back at launch
+    /// or a reload doesn't count it again.
+    var visitedAddress: String?
     /// The tab whose page opened this one in a new tab and brought the user here. Back, once
     /// this tab's own history runs out, closes it and returns there.
     var returnsTo: UUID?
@@ -62,6 +65,7 @@ import RiseCore
         id = saved?.id ?? UUID(); customTitle = saved?.customTitle; title = saved?.customTitle ?? saved?.title ?? "New Tab"
         pinned = saved?.pinned ?? false; developer = saved?.developer ?? false
         requestedURL = saved.flatMap { URL(string: $0.url) }
+        visitedAddress = BrowsingHistory.key(requestedURL)
         if let saved, let data = saved.sessionState { restoredState = (saved.url, data) }
         if let saved, let history = saved.navigationHistory?.validated(for: saved.url) { restoredHistory = (saved.url, history) }
         self.page = page ?? Self.makePage()
@@ -95,7 +99,7 @@ import RiseCore
     /// icon, and nothing loads. The tab itself keeps its id, place, pin and name.
     func exchangePages(with other: BrowserTab) {
         swap(&page, &other.page)
-        swap(&title, &other.title); swap(&requestedURL, &other.requestedURL)
+        swap(&title, &other.title); swap(&requestedURL, &other.requestedURL); swap(&visitedAddress, &other.visitedAddress)
         swap(&favicon, &other.favicon); swap(&darkFavicon, &other.darkFavicon); swap(&iconOrigin, &other.iconOrigin)
         swap(&thumbnail, &other.thumbnail); swap(&hasAttemptedNavigation, &other.hasAttemptedNavigation)
         swap(&isAudioMuted, &other.isAudioMuted)

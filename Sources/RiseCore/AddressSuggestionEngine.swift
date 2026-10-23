@@ -60,14 +60,15 @@ public enum AddressSuggestionEngine {
             appendSite(title: openTab(for: url, in: tabs)?.title ?? entry.title, url: url, learned: true, typed: typed, completePath: completePath)
         }
         if editingCurrentAddress, let key = BrowsingHistory.key(currentURL) { seen.insert(key) }
-        if !query.isEmpty, let first = ranked.first, let url = URL(string: first.url),
-           let completion = BrowsingHistory.completion(for: query, url: url, includePath: first.visits > 1 && url.query == nil) {
-            if let site = BrowsingHistory.site(of: url), BrowsingHistory.completion(for: query, url: site) == completion {
-                let saved = history.entries.first { $0.url == BrowsingHistory.key(site) }
+        // The site visited most across its pages, or its usual page (`BrowsingHistory.destination`).
+        if !query.isEmpty, let destination = history.destination(for: query) {
+            if let page = destination.page { appendHistory(page, typed: true, completePath: true) }
+            else {
+                let site = destination.site, saved = history.entries.first { $0.url == BrowsingHistory.key(site) }
                 let domain = PopularSites.domain(ofAddress: site.absoluteString)
                 appendSite(title: PopularSites.site(forAddress: domain)?.name ?? openTab(for: site, in: tabs)?.title ?? saved?.title ?? domain,
                            url: site, learned: true, typed: true)
-            } else { appendHistory(first, typed: true, completePath: true) }
+            }
         }
         if result.first?.completion == nil, let popular = PopularSites.completion(for: query),
            let key = BrowsingHistory.key(popular.site.homeURL), seen.insert(key).inserted {

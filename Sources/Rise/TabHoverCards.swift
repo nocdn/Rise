@@ -316,7 +316,7 @@ import AppKit
     func tooltipContent(_ pr: PullRequest, title: String) -> PullRequestTooltip.Content {
         let entry = tabHoverCards.summaries.entry(for: pr)
         // A card that couldn't be described says so rather than standing empty.
-        let summary = entry.phase == .failed && entry.summary.isEmpty ? PullRequestSummaries.failure : entry.summary
+        let summary = entry.phase == .failed && entry.summary.isEmpty ? PullRequestSummaries.failure(pr) : entry.summary
         return PullRequestTooltip.Content(title: entry.details?.title ?? title, reference: pr.reference, details: entry.details,
                                           summary: summary, phase: entry.phase, inputTokens: entry.inputTokens, custom: entry.custom,
                                           breakdownPending: tabHoverCards.summaries.isLoadingBreakdown(pr))
