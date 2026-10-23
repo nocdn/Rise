@@ -1,0 +1,149 @@
+--- a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h
++++ b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h
+@@ -7,6 +7,7 @@
+ 
+ #include <memory>
+ #include <optional>
++#include <string>
+ 
+ #include "base/files/file_path.h"
+ #include "base/functional/callback.h"
+@@ -109,6 +110,11 @@
+   // Whether the embedder took a key press the page didn't use, as its menu
+   // bar's shortcuts: Chrome's own windows send these to theirs.
+   virtual bool HandleKeyboardEvent(const input::NativeWebKeyboardEvent& event);
++  // An extension's action.openPopup(), after Chrome checks its action and the active window.
++  // True takes the request; `done` reports whether the embedder actually showed the popup.
++  virtual bool ShowExtensionPopup(const std::string& extension_id,
++                                  const GURL& url,
++                                  base::OnceCallback<void(bool)> done);
+ };
+ 
+ // An embedder's own filter in front of the URL loader factories Chrome makes
+--- a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc
++++ b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc
+@@ -91,6 +91,13 @@
+   return false;
+ }
+ 
++bool EmbedderTabHooks::ShowExtensionPopup(
++    const std::string& extension_id,
++    const GURL& url,
++    base::OnceCallback<void(bool)> done) {
++  return false;
++}
++
+ bool EmbedderTabHooks::ChooseDownloadPath(download::DownloadItem* download,
+                                           const base::FilePath& suggested,
+                                           DownloadPathCallback done) {
+--- a/chrome/browser/extensions/api/extension_action/extension_action_api.h
++++ b/chrome/browser/extensions/api/extension_action/extension_action_api.h
+@@ -315,6 +315,7 @@
+   ResponseAction Run() override;
+ 
+   void OnShowPopupComplete(ExtensionHost* popup_host);
++  void OnEmbedderPopupComplete(bool shown);
+ };
+ 
+ //
+--- a/chrome/browser/extensions/api/extension_action/extension_action_api.cc
++++ b/chrome/browser/extensions/api/extension_action/extension_action_api.cc
+@@ -53,6 +53,7 @@
+ #include "url/origin.h"
+ 
+ #if !BUILDFLAG(IS_ANDROID)
++#include "chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h"
+ #include "chrome/browser/ui/browser_window.h"
+ #include "chrome/browser/ui/window_feature_controller/window_feature_controller.h"
+ #endif  // !BUILDFLAG(IS_ANDROID)
+@@ -565,6 +566,24 @@
+     return RespondNow(Error(kNoActivePopup));
+   }
+ 
++#if !BUILDFLAG(IS_ANDROID)
++  // Rise has its own toolbar and popup host. Keep Chrome's active-window and action checks,
++  // then ask that host rather than requiring a Chrome ExtensionsContainer.
++  content::WebContents* contents =
++      TabListInterface::From(browser)->GetActiveTab()->GetContents();
++  if (auto* hooks = EmbedderTabHooks::FromWebContents(contents)) {
++    ExtensionAction* action = ExtensionActionManager::Get(browser_context())
++                                  ->GetExtensionAction(*extension());
++    if (hooks->ShowExtensionPopup(
++            extension()->id(),
++            action->GetPopupUrl(ExtensionTabUtil::GetTabId(contents)),
++            base::BindOnce(&ActionOpenPopupFunction::OnEmbedderPopupComplete,
++                           this))) {
++      return RespondLater();
++    }
++  }
++#endif
++
+   if (!OpenPopupInBrowser(
+           *browser, *extension(), &error,
+           base::BindOnce(&ActionOpenPopupFunction::OnShowPopupComplete,
+@@ -596,6 +615,15 @@
+   }
+ }
+ 
++void ActionOpenPopupFunction::OnEmbedderPopupComplete(bool shown) {
++  DCHECK(!did_respond());
++  if (shown) {
++    Respond(NoArguments());
++  } else {
++    Respond(Error(kFailedToOpenPopupGenericError));
++  }
++}
++
+ BrowserActionOpenPopupFunction::BrowserActionOpenPopupFunction() = default;
+ BrowserActionOpenPopupFunction::~BrowserActionOpenPopupFunction() = default;
+ 
+--- a/chrome/browser/rise/RiseChromium.h
++++ b/chrome/browser/rise/RiseChromium.h
+@@ -256,6 +256,12 @@
+ /// An extension popup's page has a new size, as Chrome sizes popups to what they show (see
+ /// `sizesExtensionPopups`), in points.
+ - (void)browserView:(RCBrowserView *)browserView didChangePreferredSize:(NSSize)size;
++/// An installed extension asks to show its action popup for this active tab. Call `completion`
++/// once after showing it, or NO if the window cannot show it. Chrome validates the request first.
++- (void)browserView:(RCBrowserView *)browserView
++    showExtensionPopup:(NSURL *)url
++           extensionID:(NSString *)extensionID
++            completion:(void (^)(BOOL shown))completion;
+ /// The page, at `origin`, asks for a dialog; call `completion` once, with whether it was accepted
+ /// and, for a prompt, the text.
+ - (void)browserView:(RCBrowserView *)browserView
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -889,6 +889,32 @@
+     return [NSApp.mainMenu performKeyEquivalent:key];
+   }
+ 
++  // An extension can request its popup without clicking Rise's toolbar button.
++  bool ShowExtensionPopup(const std::string& extension_id,
++                          const GURL& url,
++                          base::OnceCallback<void(bool)> done) override {
++    RCBrowserView* view = view_;
++    id<RCBrowserViewDelegate> delegate = view.delegate;
++    if (![delegate respondsToSelector:
++                      @selector(browserView:showExtensionPopup:extensionID:completion:)]) {
++      return false;
++    }
++    auto answer = std::make_shared<base::OnceCallback<void(bool)>>(std::move(done));
++    [delegate browserView:view
++        showExtensionPopup:ToNSURL(url)
++               extensionID:base::SysUTF8ToNSString(extension_id)
++                completion:^(BOOL shown) {
++                  // Even an immediate refusal answers after the extension function's Run()
++                  // has returned RespondLater(). A closing popup must not answer twice.
++                  dispatch_async(dispatch_get_main_queue(), ^{
++                    if (*answer) {
++                      std::move(*answer).Run(shown);
++                    }
++                  });
++                }];
++    return true;
++  }
++
+   // A right-click shows Rise's menu.
+   bool HandleContextMenu(content::RenderFrameHost& frame,
+                          const content::ContextMenuParams& params) override {

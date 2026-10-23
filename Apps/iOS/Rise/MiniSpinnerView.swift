@@ -5,11 +5,12 @@ import UIKit
 /// A cell content configuration can misplace its center inside the compact toolbar.
 @MainActor final class MiniSpinnerView: UIView {
     private struct Indicator: View {
+        var ink: UIColor = .label
         var body: some View {
             ProgressView()
                 .progressViewStyle(.circular)
                 .controlSize(.mini)
-                .tint(Color(uiColor: .label))
+                .tint(Color(uiColor: ink))
                 .scaleEffect(1.12)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
@@ -25,6 +26,11 @@ import UIKit
         addSubview(host.view)
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    override func tintColorDidChange() {
+        super.tintColorDidChange()
+        host.rootView = Indicator(ink: tintColor)
+    }
 
     override func layoutSubviews() {
         super.layoutSubviews()

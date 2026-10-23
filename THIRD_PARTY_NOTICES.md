@@ -79,3 +79,14 @@ The Rise theme's Mist wash (Sources/Rise/Chrome.swift), the Plain light theme's 
 EasyList and EasyPrivacy: The EasyList authors (https://easylist.to/). HaGeZi Multi PRO mini: HaGeZi (https://github.com/hagezi/dns-blocklists). The filter data is distributed under GPL-3.0; its complete license is in Filters/LICENSES/GPL-3.0.txt. Original source snapshots are included in Filters/Sources/.
 
 AdGuard SafariConverterLib 4.3.0 is used as a build-time conversion tool for the iPhone app's rules (GPL-3.0, https://github.com/AdguardTeam/SafariConverterLib); its binary is not bundled or linked into Rise.
+
+## Torph text morphing
+
+RiseCore/TorphText.swift and the iOS TorphTextView/TorphAnimation port the text-only
+segmentation, word/character diff, FLIP, fades, grouped replacements and interrupted
+size transitions of Torph (numbers:false). Source: https://github.com/lochie/torph
+at d79a5aa63226acf97d49c3e34fafb2e85c07b026. MIT © 2025 Lochie Axon.
+The complete MIT license ships in the iOS app as Torph-LICENSE.txt. Native word
+segmentation uses ICU; changed words retain Swift grapheme clusters, and punctuation
+fragments are flattened before character matching. Numeric rolling and web framework
+adapters are outside this text-label port.

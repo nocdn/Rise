@@ -1,4 +1,5 @@
 import AppKit
+import RiseCore
 import RiseChromium
 
 /// The menu a right-click in a Chromium page opens: WebKit's page menu, with Rise's "Open Link in

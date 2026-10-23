@@ -1,0 +1,365 @@
+[
+  {
+    "label": "Word reorder + exit",
+    "values": [
+      "Transaction Safe",
+      "Processing Transaction"
+    ]
+  },
+  {
+    "label": "Same word, reversed order",
+    "values": [
+      "hello world",
+      "world hello"
+    ]
+  },
+  {
+    "label": "Add word",
+    "values": [
+      "hello",
+      "hello world"
+    ]
+  },
+  {
+    "label": "Remove word",
+    "values": [
+      "hello world",
+      "hello"
+    ]
+  },
+  {
+    "label": "Dissimilar word replacement",
+    "values": [
+      "cat and dog",
+      "fish and bird"
+    ]
+  },
+  {
+    "label": "Resemblance across a surviving word",
+    "values": [
+      "Copy Address",
+      "Address Copied"
+    ]
+  },
+  {
+    "label": "Multi-word persist",
+    "values": [
+      "the quick brown fox",
+      "the slow brown dog",
+      "a quick brown fox jumps"
+    ]
+  },
+  {
+    "label": "Duplicate words",
+    "values": [
+      "the cat and the dog",
+      "the big and the small"
+    ]
+  },
+  {
+    "label": "Character morph (add prefix)",
+    "values": [
+      "npm i torph",
+      "pnpm i torph"
+    ]
+  },
+  {
+    "label": "Character morph + word swap",
+    "values": [
+      "npm i torph",
+      "pnpm add torph"
+    ]
+  },
+  {
+    "label": "Reverse character morph",
+    "values": [
+      "pnpm i torph",
+      "npm i torph"
+    ]
+  },
+  {
+    "label": "Single character change",
+    "values": [
+      "cart",
+      "card"
+    ]
+  },
+  {
+    "label": "Case change",
+    "values": [
+      "Hello World",
+      "hello world"
+    ]
+  },
+  {
+    "label": "Punctuation",
+    "values": [
+      "Hello, world!",
+      "Hello world"
+    ]
+  },
+  {
+    "label": "Numbers morph by place",
+    "values": [
+      "$1,234",
+      "$12,345,678",
+      "$99"
+    ]
+  },
+  {
+    "label": "Number inside a sentence",
+    "values": [
+      "3 unread messages",
+      "13 unread messages",
+      "9 unread messages"
+    ]
+  },
+  {
+    "label": "Digits and symbols are told apart",
+    "values": [
+      "$1,234",
+      "$5,678"
+    ]
+  },
+  {
+    "label": "Version strings stay text",
+    "values": [
+      "v1.2.3",
+      "v1.3.0",
+      "v2.0.0"
+    ]
+  },
+  {
+    "label": "Two numbers, one sentence",
+    "values": [
+      "2 of 10 done",
+      "2 of 15 done",
+      "7 of 15 done"
+    ]
+  },
+  {
+    "label": "Emptying a number to its affix",
+    "values": [
+      "$4",
+      "$",
+      "$4",
+      "$420"
+    ]
+  },
+  {
+    "label": "A number never claims a word",
+    "values": [
+      "5 items",
+      "five items"
+    ]
+  },
+  {
+    "label": "Affixes hold while digits churn",
+    "values": [
+      "(1,234)",
+      "(5,678)",
+      "12%",
+      "97%"
+    ]
+  },
+  {
+    "label": "A digit pushed into the middle",
+    "values": [
+      "123,456",
+      "1,234,576"
+    ]
+  },
+  {
+    "label": "A number holds across a new line",
+    "values": [
+      "1,234",
+      "Total\n1,234"
+    ]
+  },
+  {
+    "label": "A number changes as a line arrives",
+    "values": [
+      "1,234",
+      "Total\n5,678"
+    ]
+  },
+  {
+    "label": "A number on a middle line updates",
+    "values": [
+      "a\n1,234\nb",
+      "a\n5,678\nb"
+    ]
+  },
+  {
+    "label": "A number swaps lines with its label",
+    "values": [
+      "text\n1,234",
+      "1,234\ntext"
+    ]
+  },
+  {
+    "label": "Dates stay text",
+    "values": [
+      "2024-01-01",
+      "2024-02-01"
+    ]
+  },
+  {
+    "label": "Long word char morph",
+    "values": [
+      "abcdefghijklmnop",
+      "abcmnopqrstuvwx"
+    ]
+  },
+  {
+    "label": "Multiline basic",
+    "values": [
+      "hello\nworld",
+      "hello\nuniverse"
+    ]
+  },
+  {
+    "label": "Multiline add line",
+    "values": [
+      "hello world\ngoodbye",
+      "hello world\ngoodbye\nfarewell"
+    ]
+  },
+  {
+    "label": "Multiline remove line",
+    "values": [
+      "hello world\nfoo bar\ngoodbye moon",
+      "hello world\ngoodbye moon"
+    ]
+  },
+  {
+    "label": "Multiline reorder",
+    "values": [
+      "alpha bravo\ncharlie delta",
+      "charlie delta\nalpha bravo"
+    ]
+  },
+  {
+    "label": "Multiline with edits",
+    "values": [
+      "the quick brown fox\njumps over the lazy dog",
+      "the slow red fox\nleaps over the happy cat"
+    ]
+  },
+  {
+    "label": "Multiline ↔ single line",
+    "values": [
+      "hello\nworld",
+      "hello world"
+    ]
+  },
+  {
+    "label": "Empty lines",
+    "values": [
+      "hello\n\nworld",
+      "hello\nworld"
+    ]
+  },
+  {
+    "label": "Multiline empty transition",
+    "values": [
+      "hello\nworld",
+      "",
+      "foo\nbar"
+    ]
+  },
+  {
+    "label": "Empty to text",
+    "values": [
+      "",
+      "hello world",
+      ""
+    ]
+  },
+  {
+    "label": "Single character",
+    "values": [
+      "a",
+      "b",
+      "c"
+    ]
+  },
+  {
+    "label": "Complete replacement",
+    "values": [
+      "abcdef",
+      "xyz"
+    ]
+  },
+  {
+    "label": "Whitespace normalization",
+    "values": [
+      "hello world",
+      "hello  world",
+      "hello world"
+    ]
+  },
+  {
+    "label": "Emoji",
+    "values": [
+      "Hello 👋",
+      "Goodbye 👋"
+    ]
+  },
+  {
+    "label": "Compound emoji",
+    "values": [
+      "Hello 👨‍👩‍👧‍👦",
+      "Goodbye 👨‍👩‍👧‍👦"
+    ]
+  },
+  {
+    "label": "Unicode accents",
+    "values": [
+      "café",
+      "cafe"
+    ]
+  },
+  {
+    "label": "RTL text (Arabic)",
+    "values": [
+      "مرحبا بالعالم",
+      "مرحبا يا صديقي"
+    ]
+  },
+  {
+    "label": "RTL text (Hebrew)",
+    "values": [
+      "שלום עולם",
+      "שלום חברים"
+    ]
+  },
+  {
+    "label": "Long sentence overlap",
+    "values": [
+      "the quick brown fox jumps over the lazy dog",
+      "the quick red fox leaps over the happy cat"
+    ]
+  },
+  {
+    "label": "Long paragraph",
+    "values": [
+      "The quick brown fox jumps over the lazy dog while the sun sets behind the distant mountains",
+      "The slow gray wolf runs under the bright moon while the rain falls across the nearby valleys"
+    ]
+  },
+  {
+    "label": "Multi-cycle stability",
+    "values": [
+      "Transaction Safe",
+      "Processing Transaction"
+    ]
+  },
+  {
+    "label": "Rapid spam (auto-cycle)",
+    "values": [
+      "Transaction Safe",
+      "Processing Transaction"
+    ]
+  }
+]

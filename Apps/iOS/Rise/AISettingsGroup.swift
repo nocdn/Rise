@@ -24,7 +24,7 @@ final class AISettingsGroup: UIView, UITextFieldDelegate {
     private var validation = AIKeyValidation.unchecked
     private var validationTask: Task<Void, Never>?
     private var validationID = UUID()
-    private var loadingCompletions: [([UIMenuElement]) -> Void] = []
+    private let loadingMenu = NativeMenuLoading()
     var onChanged: (() -> Void)?
     var onEditing: (() -> Void)?
     private(set) var saveError: String?
@@ -159,9 +159,7 @@ final class AISettingsGroup: UIView, UITextFieldDelegate {
         validationTask?.cancel()
         validationTask = nil
         validation = .unchecked
-        let callbacks = loadingCompletions
-        loadingCompletions.removeAll()
-        withoutMenuAnimation { callbacks.forEach { $0([checkAction()]) } }
+        loadingMenu.resolve([checkAction()])
     }
 
     private func checkAction() -> UIAction {
@@ -184,24 +182,14 @@ final class AISettingsGroup: UIView, UITextFieldDelegate {
         guard validation == .checking else { return UIMenu(children: [checkAction()]) }
         // UIKit supplies its own animated loading indicator for unresolved deferred elements.
         // Keep it untitled so checking doesn't add a heading or increase the menu's height.
-        return UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] completion in
-            guard let self else { completion([]); return }
-            if validation == .checking { loadingCompletions.append(completion) }
-            else { completion([checkAction()]) }
+        return UIMenu(children: [loadingMenu.element { [weak self] in
+            guard let self else { return [] }
+            return validation == .checking ? nil : [checkAction()]
         }])
     }
 
-    private func withoutMenuAnimation(_ update: () -> Void) {
-        UIView.performWithoutAnimation {
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            update()
-            CATransaction.commit()
-        }
-    }
-
     private func refreshKeyMenu(updatingVisible: Bool = true) {
-        withoutMenuAnimation {
+        NativeMenuLoading.withoutAnimation {
             keyMenuButton.menu = makeKeyMenu()
             if updatingVisible {
                 keyMenuButton.contextMenuInteraction?.updateVisibleMenu { [weak self] _ in self?.makeKeyMenu() ?? UIMenu() }
@@ -224,13 +212,11 @@ final class AISettingsGroup: UIView, UITextFieldDelegate {
             guard !Task.isCancelled, let self, validationID == id else { return }
             validation = result
             validationTask = nil
-            let callbacks = loadingCompletions
-            loadingCompletions.removeAll()
-            withoutMenuAnimation {
-                callbacks.forEach { $0([checkAction()]) }
+            NativeMenuLoading.withoutAnimation {
+                let resolved = loadingMenu.resolve([checkAction()])
                 // Resolving a deferred element already replaces the visible loading row.
                 // Replacing the entire visible menu again caused a second transition.
-                refreshKeyMenu(updatingVisible: callbacks.isEmpty)
+                refreshKeyMenu(updatingVisible: !resolved)
             }
         }
     }

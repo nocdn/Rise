@@ -1,0 +1,206 @@
+--- a/chrome/browser/webauthn/chrome_authenticator_request_delegate.cc
++++ b/chrome/browser/webauthn/chrome_authenticator_request_delegate.cc
+@@ -105,6 +105,7 @@
+ #include "ui/gfx/native_ui_types.h"
+ 
+ #if BUILDFLAG(IS_MAC)
++#include <os/log.h>
+ #include "chrome/browser/webauthn/chrome_authenticator_request_delegate_mac.h"
+ #include "device/fido/mac/credential_metadata.h"
+ #include "ui/views/widget/widget.h"
+@@ -126,6 +127,14 @@
+     device::FidoRequestHandlerBase::TransportAvailabilityInfo;
+ 
+ namespace {
++
++#if BUILDFLAG(IS_MAC)
++// Local lifecycle diagnostics only: no relying parties, accounts or credential data.
++os_log_t RisePasskeyLog() {
++  static os_log_t log = os_log_create("dev.bartosz.Rise", "Passkeys");
++  return log;
++}
++#endif
+ 
+ ChromeAuthenticatorRequestDelegate::TestObserver* g_observer = nullptr;
+ 
+@@ -282,6 +291,9 @@
+           GetRenderFrameHost())),
+       barrier_(
+           std::make_unique<UiReadinessBarrier>(this, dialog_model_.get())) {
++#if BUILDFLAG(IS_MAC)
++  os_log_with_type(RisePasskeyLog(), OS_LOG_TYPE_DEFAULT, "WebAuthn request started");
++#endif
+   dialog_model_->observers.AddObserver(this);
+   if (g_observer) {
+     g_observer->Created(this);
+@@ -291,6 +303,10 @@
+ ChromeAuthenticatorRequestDelegate::~ChromeAuthenticatorRequestDelegate() {
+   // Currently, completion of the request is indicated by //content destroying
+   // this delegate.
++#if BUILDFLAG(IS_MAC)
++  // Destruction also follows cancellation: it is not evidence of successful authentication.
++  os_log_with_type(RisePasskeyLog(), OS_LOG_TYPE_DEFAULT, "WebAuthn request ended");
++#endif
+   dialog_model_->OnRequestComplete();
+   dialog_model_->observers.RemoveObserver(this);
+ 
+@@ -350,6 +366,10 @@
+ 
+ bool ChromeAuthenticatorRequestDelegate::DoesBlockRequestOnFailure(
+     InterestingFailureReason reason) {
++#if BUILDFLAG(IS_MAC)
++  os_log_with_type(RisePasskeyLog(), OS_LOG_TYPE_DEFAULT,
++                   "WebAuthn failure reason=%{public}d", static_cast<int>(reason));
++#endif
+   if (!webauthn_ui_enabled()) {
+     return false;
+   }
+@@ -422,6 +442,11 @@
+   if (request_source != RequestSource::kWebAuthentication) {
+     return;
+   }
++#if BUILDFLAG(IS_MAC)
++  os_log_with_type(RisePasskeyLog(), OS_LOG_TYPE_DEFAULT,
++                   "WebAuthn success requestType=%{public}d authenticatorType=%{public}d",
++                   static_cast<int>(request_type), static_cast<int>(authenticator_type));
++#endif
+ #if BUILDFLAG(ENABLE_DICE_SUPPORT)
+   MaybeRecordHybridPasskeyOutcome(
+       authenticator_type == device::AuthenticatorType::kPhone
+@@ -886,6 +911,9 @@
+ }
+ 
+ void ChromeAuthenticatorRequestDelegate::OnCancelRequest() {
++#if BUILDFLAG(IS_MAC)
++  os_log_with_type(RisePasskeyLog(), OS_LOG_TYPE_DEFAULT, "WebAuthn UI cancelled");
++#endif
+ #if BUILDFLAG(ENABLE_DICE_SUPPORT)
+   MaybeRecordHybridPasskeyOutcome(
+       HybridPasskeyTerminationReason::kUserCancelled);
+--- a/chrome/browser/webauthn/chrome_web_authentication_delegate.cc
++++ b/chrome/browser/webauthn/chrome_web_authentication_delegate.cc
+@@ -81,6 +81,7 @@
+ #endif
+ 
+ #if BUILDFLAG(IS_MAC)
++#include <os/log.h>
+ #include "base/no_destructor.h"
+ #include "crypto/apple/keychain_util.h"
+ #include "device/fido/mac/credential_metadata.h"
+@@ -399,10 +400,15 @@
+   static const base::NoDestructor<std::string> kKeychainAccessGroup([] {
+     const std::string application =
+         crypto::apple::ExecutableApplicationIdentifier();
+-    return application.empty() ? std::string(MAC_TEAM_IDENTIFIER_STRING
+-                                             "." MAC_BUNDLE_IDENTIFIER_STRING
+-                                             ".webauthn")
+-                               : application + ".webauthn";
++    const std::string group = application.empty()
++        ? std::string(MAC_TEAM_IDENTIFIER_STRING "." MAC_BUNDLE_IDENTIFIER_STRING ".webauthn")
++        : application + ".webauthn";
++    os_log_t log = os_log_create("dev.bartosz.Rise", "Passkeys");
++    os_log_with_type(log, OS_LOG_TYPE_DEFAULT,
++                     "Touch ID configuration applicationIdentity=%{public}d keychainGroupGranted=%{public}d",
++                     !application.empty(),
++                     crypto::apple::ExecutableHasKeychainAccessGroupEntitlement(group));
++    return group;
+   }());
+ 
+   std::string metadata_secret = profile->GetPrefs()->GetString(
+--- a/chrome/browser/extensions/api/messaging/native_message_process_host.cc
++++ b/chrome/browser/extensions/api/messaging/native_message_process_host.cc
+@@ -37,7 +37,19 @@
+ #include "net/base/net_errors.h"
+ #include "url/gurl.h"
+ 
++#if BUILDFLAG(IS_MAC)
++#include <os/log.h>
++#endif
++
+ namespace {
++
++#if BUILDFLAG(IS_MAC)
++os_log_t RiseNativeMessagingLog() {
++  static os_log_t log = os_log_create("dev.bartosz.Rise", "NativeMessaging");
++  return log;
++}
++// Host paths, extension IDs and message bodies can contain private information.
++#endif
+ 
+ // Maximum message size in bytes for messages received from Native Messaging
+ // hosts. Message size is limited mainly to prevent Chrome from crashing when
+@@ -150,6 +162,12 @@
+     std::unique_ptr<net::FileStream> write_stream) {
+   DCHECK(task_runner_->BelongsToCurrentThread());
+ 
++#if BUILDFLAG(IS_MAC)
++  os_log_with_type(RiseNativeMessagingLog(),
++                   result == NativeProcessLauncher::RESULT_SUCCESS ? OS_LOG_TYPE_DEFAULT : OS_LOG_TYPE_ERROR,
++                   "Native host launch onePassword=%{public}d result=%{public}d",
++                   native_host_name_ == "com.1password.1password", static_cast<int>(result));
++#endif
+   switch (result) {
+     case NativeProcessLauncher::RESULT_INVALID_NAME:
+       Close(kInvalidNameError);
+@@ -406,6 +424,17 @@
+   DCHECK(task_runner_->BelongsToCurrentThread());
+ 
+   if (!closed_) {
++#if BUILDFLAG(IS_MAC)
++    // Close receives Chromium's fixed transport errors, never host message content.
++    const int reason = error_message == kNativeHostExited ? 0
++        : error_message == kInvalidNameError ? 1
++        : error_message == kNotFoundError ? 2
++        : error_message == kForbiddenError ? 3
++        : error_message == kFailedToStartError ? 4 : 5;
++    os_log_with_type(RiseNativeMessagingLog(), OS_LOG_TYPE_DEFAULT,
++                     "Native host channel closed onePassword=%{public}d reason=%{public}d",
++                     native_host_name_ == "com.1password.1password", reason);
++#endif
+     closed_ = true;
+ #if BUILDFLAG(IS_POSIX)
+     read_controller_.reset();
+--- a/device/fido/mac/touch_id_context.mm
++++ b/device/fido/mac/touch_id_context.mm
+@@ -7,6 +7,7 @@
+ #include <CoreFoundation/CoreFoundation.h>
+ #import <Foundation/Foundation.h>
+ #include <Security/Security.h>
++#include <os/log.h>
+ 
+ #include "base/apple/bridging.h"
+ #include "base/apple/foundation_util.h"
+@@ -80,12 +81,14 @@
+ 
+ // static
+ bool TouchIdContext::TouchIdAvailableImpl(AuthenticatorConfig config) {
++  static os_log_t log = os_log_create("dev.bartosz.Rise", "Passkeys");
+   // Ensure that the main executable is signed with the keychain-access-group
+   // entitlement that is configured by the embedder; that user authentication
+   // with biometry, watch, or device passcode possible; and that the device has
+   // a secure enclave.
+   if (!crypto::apple::ExecutableHasKeychainAccessGroupEntitlement(
+           config.keychain_access_group)) {
++    os_log_with_type(log, OS_LOG_TYPE_ERROR, "Touch ID unavailable: missing keychain-group entitlement");
+     FIDO_LOG(ERROR)
+         << "Touch ID authenticator unavailable because keychain-access-group "
+            "entitlement is missing or incorrect. Expected value: "
+@@ -97,6 +100,8 @@
+   NSError* nserr;
+   if (![context canEvaluatePolicy:LAPolicyDeviceOwnerAuthentication
+                             error:&nserr]) {
++    os_log_with_type(log, OS_LOG_TYPE_DEFAULT,
++                     "Touch ID unavailable: owner authentication error=%{public}ld", (long)nserr.code);
+     FIDO_LOG(DEBUG) << "canEvaluatePolicy failed: " << nserr;
+     return false;
+   }
+@@ -105,6 +110,9 @@
+   // bindings exist. Instead, test whether we can create a key pair in the
+   // secure enclave. This takes hundreds of milliseconds, so only do it once.
+   static const bool kHasSecureEnclave = CanCreateSecureEnclaveKeyPairBlocking();
++  if (!kHasSecureEnclave) {
++    os_log_with_type(log, OS_LOG_TYPE_ERROR, "Touch ID unavailable: Secure Enclave key creation failed");
++  }
+   return kHasSecureEnclave;
+ }
+ 

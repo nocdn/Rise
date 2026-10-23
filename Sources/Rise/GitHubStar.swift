@@ -1,4 +1,5 @@
 import AppKit
+import RiseCore
 
 @MainActor extension BrowserController {
     /// Stars `repository` as the person signed in to GitHub in Rise, saying so in the blue notice:
@@ -20,31 +21,6 @@ import AppKit
             case .failed: self.showInfo("Couldn’t star repository", image: InfoPlaque.warningIcon, hold: .seconds(3), kind: kind)
             }
         }
-    }
-}
-
-/// A repository on github.com, from a link to it or to any of its pages.
-struct GitHubRepository: Equatable {
-    let owner: String, name: String
-    var path: String { "\(owner)/\(name)" }
-    /// GitHub's own pages where a repository's owner would be, which aren't repositories.
-    static let reserved: Set<String> = [
-        "about", "account", "apps", "blog", "codespaces", "collections", "contact", "customer-stories", "dashboard",
-        "enterprise", "events", "explore", "features", "issues", "join", "login", "logout", "marketplace", "new",
-        "notifications", "orgs", "organizations", "pricing", "pulls", "readme", "search", "security", "sessions",
-        "settings", "site", "sponsors", "stars", "team", "topics", "trending", "users", "watching", "signup"]
-    init?(url: URL?) {
-        guard let url, ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
-              let host = url.host?.lowercased(), host == "github.com" || host == "www.github.com" else { return nil }
-        let parts = url.path.split(separator: "/").map(String.init)
-        guard parts.count >= 2 else { return nil }
-        var name = parts[1]
-        if name.lowercased().hasSuffix(".git") { name.removeLast(4) }
-        // GitHub's names: letters, digits, hyphens; repositories also take dots and underscores.
-        let owner = parts[0], allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
-        guard !Self.reserved.contains(owner.lowercased()), owner.rangeOfCharacter(from: allowed.inverted) == nil,
-              !name.isEmpty, name != ".", name != "..", name.rangeOfCharacter(from: allowed.inverted) == nil else { return nil }
-        self.owner = owner; self.name = name
     }
 }
 
@@ -176,56 +152,7 @@ struct GitHubRepository: Equatable {
         page = nil
     }
 
-    /// On the repository's own page, what both button scripts share: GitHub's Star button, and
-    /// whether the page shows the repository starred.
-    private static let buttonHelpers = """
-          const sleep = ms => new Promise(done => setTimeout(done, ms));
-          const shown = el => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
-          const label = el => `${el.getAttribute('aria-label') || ''} ${el.textContent || ''}`.replace(/\\s+/g, ' ').trim();
-          const controls = () => [...document.querySelectorAll('button, input[type=submit], a[role=button], summary')].filter(shown);
-          const action = el => el.closest('form')?.getAttribute('action')?.toLowerCase() || '';
-          const isStar = el => /\\/star$/.test(action(el)) || /^star( this repository)?\\b/i.test(label(el));
-          const isUnstar = el => /\\/unstar$/.test(action(el)) || /^(unstar|starred)\\b/i.test(label(el));
-          const state = () => {
-            const container = [...document.querySelectorAll('.starring-container, .js-toggler-container')].find(c => c.querySelector('form[action$="/star"]'));
-            if (container) return container.classList.contains('on') ? 'on' : 'off';
-            if (controls().some(isUnstar)) return 'on';
-            return controls().some(isStar) ? 'off' : null;
-          };
-        """
-    /// Finds the Star button, once the page has drawn it, and marks it for the other two.
-    static let findScript = """
-        return (async () => { try {
-        \(buttonHelpers)
-          if (/^page not found/i.test(document.title)) return { status: 'notFound' };
-          if (!document.querySelector('meta[name="user-login"]')?.content) return { status: 'signedOut' };
-          const until = Date.now() + 8000;
-          while (!state() && Date.now() < until) await sleep(200);
-          if (state() === 'on') return { status: 'already' };
-          const star = controls().find(isStar);
-          if (!star) return { status: 'failed', detail: `no Star button on ${location.pathname}: ${controls().map(label).filter(Boolean).slice(0, 12).join(' | ').slice(0, 300)}` };
-          document.querySelectorAll('[data-rise-star]').forEach(el => el.removeAttribute('data-rise-star'));
-          star.setAttribute('data-rise-star', '');
-          return { status: 'ready', form: !!star.closest('form') };
-        } catch (error) { return { status: 'failed', detail: `script: ${error}` }; } })();
-        """
-    /// In the page's own world, where React keeps its props on the elements it drew: whether
-    /// GitHub's code has taken over the marked button. A press before that does nothing.
-    static let wiredScript = """
-        const button = document.querySelector('[data-rise-star]');
-        return !!button && [button, button.parentElement].some(el => el && Object.keys(el).some(key => key.startsWith('__reactProps')));
-        """
-    /// Presses the marked button and reads the page until it shows the repository starred.
-    static let pressScript = """
-        return (async () => { try {
-        \(buttonHelpers)
-          const star = document.querySelector('[data-rise-star]');
-          if (!star) return { status: 'failed', detail: 'the Star button went away' };
-          if (state() === 'on') return { status: 'already' };
-          star.click();
-          const until = Date.now() + 10000;
-          while (state() !== 'on' && Date.now() < until) await sleep(200);
-          return state() === 'on' ? { status: 'starred' } : { status: 'failed', detail: `still not starred after pressing "${label(star).slice(0, 60)}"` };
-        } catch (error) { return { status: 'failed', detail: `script: ${error}` }; } })();
-        """
+    static let findScript = GitHubStarScripts.find
+    static let wiredScript = GitHubStarScripts.wired
+    static let pressScript = GitHubStarScripts.press
 }

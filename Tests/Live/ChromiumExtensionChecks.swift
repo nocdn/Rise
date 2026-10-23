@@ -91,6 +91,39 @@ import RiseChromium
         check(windows.count == 1 && windows.first?[2] as? Int == browser.tabs.count, "windows.getAll lists Rise's window with its tabs: \(windows)")
         check(seen["index"] as? Int == all.firstIndex { $0[0] as? Int == secondID }, "A tab's index is its place in the sidebar")
 
+        // A password manager's transport: Chromium finds a linked native host, starts it, and
+        // exchanges framed JSON. The host's extension allowlist must still be enforced.
+        let registrations = folder.appendingPathComponent("native-host-registrations")
+        try FileManager.default.createDirectory(at: registrations, withIntermediateDirectories: true)
+        let host = folder.appendingPathComponent("native-echo.py")
+        try """
+        #!/usr/bin/env python3
+        import struct, sys
+        header = sys.stdin.buffer.read(4)
+        if len(header) == 4:
+            body = sys.stdin.buffer.read(struct.unpack('=I', header)[0])
+            sys.stdout.buffer.write(struct.pack('=I', len(body)) + body)
+            sys.stdout.buffer.flush()
+        """.write(to: host, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: host.path)
+        let registration = registrations.appendingPathComponent("dev.bartosz.rise.test.echo.json")
+        func registerHost(allowed: String) throws {
+            let manifest: [String: Any] = ["name": "dev.bartosz.rise.test.echo", "description": "Rise native messaging test",
+                                         "path": host.path, "type": "stdio", "allowed_origins": ["chrome-extension://\(allowed)/"]]
+            try JSONSerialization.data(withJSONObject: manifest).write(to: registration)
+        }
+        try registerHost(allowed: id)
+        NativeMessagingHosts.link(into: folder.appendingPathComponent("chromium/NativeMessagingHosts"), from: [registrations])
+        let echo = await ask(["cmd": "native", "payload": ["text": "Rise native messaging", "number": 42]], in: second.page)
+        check(echo?["text"] as? String == "Rise native messaging" && echo?["number"] as? Int == 42,
+              "The extension reaches a linked desktop host and receives its JSON response: \(echo ?? [:])")
+        try registerHost(allowed: String(repeating: "a", count: 32))
+        let refused = await ask(["cmd": "native", "payload": ["text": "must not reach the host"]], in: second.page)
+        check((refused?["error"] as? String)?.localizedCaseInsensitiveContains("forbidden") == true,
+              "The native host's extension allowlist is enforced: \(refused ?? [:])")
+        try FileManager.default.removeItem(at: registration)
+        NativeMessagingHosts.link(into: folder.appendingPathComponent("chromium/NativeMessagingHosts"), from: [registrations])
+
         // Switching tabs in Rise tells the extension.
         browser.select(first.id)
         let firstID = (await ask([:], in: first.page))?["tab"] as? Int ?? -1
@@ -157,12 +190,12 @@ import RiseChromium
             check(action.icon(forTab: view) != nil, "Its icon loads")
         }
 
-        // Rise's own buttons: pinned in the sidebar, and listed in the site controls.
+        // Rise's own buttons: pinned in the page bar, and listed in the site controls.
         browser.select(second.id)
         browser.setExtension(id, pinned: true)
-        _ = await waitUntil("Pinning it puts its button in the sidebar") { self.browser.sidebar.extensionButtons.map(\.extensionID) == [id] }
-        if let button = browser.sidebar.extensionButtons.first {
-            check(button.toolTip == "Rise Test", "The sidebar button has its title: \(button.toolTip ?? "none")")
+        _ = await waitUntil("Pinning it puts its button in the page bar") { self.browser.navBar.extensionButtons.map(\.extensionID) == [id] }
+        if let button = browser.navBar.extensionButtons.first {
+            check(button.toolTip == "Rise Test", "The page bar button has its title: \(button.toolTip ?? "none")")
             button.performClick(nil)
             _ = await waitUntil("Clicking it opens its popup", 5) { self.browser.extensionPopup?.popover.isShown == true }
             if let popup = browser.extensionPopup {
@@ -206,6 +239,20 @@ import RiseChromium
         check(listed.contains("Rise Test Extension"), "The site controls list it: \(listed)")
         browser.siteControlsPopover.close()
         browser.setExtension(id, pinned: false)
-        _ = await waitUntil("Unpinning takes its button away") { self.browser.sidebar.extensionButtons.isEmpty }
+        _ = await waitUntil("Unpinning takes its button away") { self.browser.navBar.extensionButtons.isEmpty }
+        // Password managers use this API to return to their popup after their desktop app
+        // unlocks. It must reach Rise's popup host even when the extension isn't pinned.
+        let requested = await ask(["cmd": "popup"], in: second.page)
+        check(requested?["opened"] as? Bool == true, "chrome.action.openPopup resolves successfully: \(requested ?? [:])")
+        _ = await waitUntil("The extension's openPopup request opens its popup", 3) { self.browser.extensionPopup?.popover.isShown == true }
+        if let popup = browser.extensionPopup {
+            let duplicate = await ask(["cmd": "popup"], in: second.page)
+            check(duplicate?["error"] as? String != nil && browser.extensionPopup === popup,
+                  "A duplicate popup request fails without replacing the existing popup: \(duplicate ?? [:])")
+            _ = await waitUntil("The API-opened popup sees the selected tab") {
+                (await self.value("return document.body?.dataset.report ?? ''", in: popup.page) as? String ?? "").contains("second.html")
+            }
+            popup.close()
+        }
     }
 }

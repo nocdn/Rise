@@ -43,10 +43,24 @@ mv ~/Downloads/Rise_Developer_ID.provisionprofile ~/Library/Application\ Support
 ./scripts/restart.sh
 ```
 
-The build should print `Touch ID passkeys: True`. On a Mac whose builds sign with an **Apple Development**
-certificate instead, a Developer ID profile is passed over; build there with
-`RISE_SIGNING_IDENTITY='Developer ID Application: Bartosz Bak (7CAU3XFRLQ)'` to use it, or make a macOS
-development profile the same way (it covers the same keychain group).
+The build should print `Touch ID passkeys: True`. A profile deliberately installed in Rise's
+`Signing` folder selects its matching installed certificate automatically, so this setup survives
+rebuilds without shell environment variables. `RISE_SIGNING_IDENTITY` and `RISE_PROVISIONING_PROFILE`
+still override automatic selection. Without a dedicated profile, the existing Apple Development
+identity remains the default; a matching macOS development profile can enable Touch ID too.
+
+**1Password's desktop connection needs Developer ID signing in the tested setup.** The Apple
+Development build was rejected as `UnknownBrowser` even after it was added to trusted browsers.
+The same app signed with the Developer ID certificate connected immediately. Put the actual app in
+`/Applications` and launch that copy before adding it in 1Password's Browser settings. On the
+Mac configured on 23 October 2026, `build/Rise.app` is a local symlink to `/Applications/Rise.app`,
+so normal rebuilds update and relaunch that same trusted app. The symlink is in the ignored build
+folder, not a repository setting for other developers.
+
+Developer ID profiles authorize **Production** CloudKit and push notifications. Development profiles
+continue using **Development**. These are separate iCloud databases: changing signing modes does not
+migrate data, and a locally installed iOS development build remains on Development. The build prints
+its selected environment; both modes retain iCloud sync and the same Touch ID keychain group.
 
 ## 5. Try it
 

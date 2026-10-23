@@ -26,18 +26,24 @@ import UIKit
     private var phase = "drag"
     var isHoldingRate: Bool { link != nil }
     var preferredFPS: Float { link?.preferredFrameRateRange.preferred ?? 0 }
+    var minimumFPS: Float { link?.preferredFrameRateRange.minimum ?? 0 }
 
     func begin(_ panel: BottomBar.Panel, screen: UIScreen?) {
+        begin(String(describing: panel), screen: screen)
+    }
+
+    func begin(_ name: String, screen: UIScreen?, minimumFPS: Int = 80) {
         until = nil
-        guard link == nil else { phase = "drag"; return }
         let maximum = min(120, screen?.maximumFramesPerSecond ?? 120)
+        let range = CAFrameRateRange(minimum: Float(min(minimumFPS, maximum)), maximum: Float(maximum), preferred: Float(maximum))
+        if let link { link.preferredFrameRateRange = range; phase = "drag"; return }
         start = CACurrentMediaTime(); previousVsync = nil; phase = "drag"
-        record = Record(panel: String(describing: panel), maximumFPS: maximum,
+        record = Record(panel: name, maximumFPS: maximum,
                         lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled,
                         thermalState: ProcessInfo.processInfo.thermalState.rawValue)
         record?.frames.reserveCapacity(240); record?.work.reserveCapacity(160)
         let link = CADisplayLink(target: FrameTicker { [weak self] in self?.tick() }, selector: #selector(FrameTicker.tick))
-        link.preferredFrameRateRange = CAFrameRateRange(minimum: Float(min(80, maximum)), maximum: Float(maximum), preferred: Float(maximum))
+        link.preferredFrameRateRange = range
         link.add(to: .main, forMode: .common)
         self.link = link
     }

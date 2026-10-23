@@ -47,14 +47,17 @@ enum RisePages {
             .appendingPathComponent("Chromium")
         try? FileManager.default.createDirectory(at: profile, withIntermediateDirectories: true)
         let packaged = FileManager.default.fileExists(atPath: framework.path)
+        AuthenticationDiagnostics.startup(isolated: RiseProfile.directory != nil, packaged: packaged)
         // Extensions reach the desktop apps they unlock with, as they do in Chrome.
         if RiseProfile.directory == nil { NativeMessagingHosts.link(into: profile.appendingPathComponent("NativeMessagingHosts")) }
         // A test profile is thrown away, so its key needn't outlive it in the Keychain.
         guard packaged, RCEngine.start(withCachePath: profile.path, keychain: RiseProfile.directory == nil) else {
+            AuthenticationDiagnostics.engine.error("Chromium startup failed framework=\(packaged)")
             let alert = NSAlert(); alert.messageText = "Rise couldn’t start its engine"
             alert.informativeText = packaged ? "Chromium didn’t start." : "This copy of Rise has no Chromium framework."
             alert.runModal(); exit(1)
         }
+        AuthenticationDiagnostics.engine.notice("Chromium ready")
     }
     static var isRunning: Bool { RCEngine.isRunning }
     static func shutdown() { RCEngine.shutdown() }
@@ -125,6 +128,14 @@ enum RisePages {
     var onPreferredSize: ((NSSize) -> Void)?
     nonisolated func browserView(_ browserView: RCBrowserView, didChangePreferredSize size: NSSize) {
         MainActor.assumeIsolated { onPreferredSize?(size) }
+    }
+    nonisolated func browserView(_ view: RCBrowserView, showExtensionPopup url: URL, extensionID: String,
+                                 completion: @escaping (Bool) -> Void) {
+        MainActor.assumeIsolated {
+            guard let browser = view.window?.windowController as? BrowserController,
+                  browser.selectedChromiumView === view else { completion(false); return }
+            browser.showExtensionPopup(url, extensionID: extensionID, completion: completion)
+        }
     }
     /// A right-click, for Rise's menu.
     var onContextMenu: ((RCContextMenu) -> Void)?

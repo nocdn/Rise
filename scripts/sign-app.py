@@ -67,15 +67,21 @@ def cloudkit_entitlements(profile, bundle_id, certificate_hash, now=None):
     if services != "*" and "CloudKit" not in services:
         raise ValueError("The profile does not authorize CloudKit.")
     environments = granted.get("com.apple.developer.icloud-container-environment", [])
-    if "Development" not in environments:
-        raise ValueError("Local builds require the Development CloudKit environment.")
+    if isinstance(environments, str):
+        environments = [environments]
+    # Development profiles keep local Mac/iOS installs on their existing data. Developer ID
+    # profiles authorize Production only; do not silently turn off sync when signing with one.
+    environment = next((value for value in ("Development", "Production") if value in environments), None)
+    if environment is None:
+        raise ValueError("The profile does not authorize a CloudKit environment.")
     result.update({
         "com.apple.developer.icloud-container-identifiers": [CLOUD_CONTAINER],
         "com.apple.developer.icloud-services": ["CloudKit"],
-        "com.apple.developer.icloud-container-environment": "Development",
+        "com.apple.developer.icloud-container-environment": environment,
     })
-    if granted.get("com.apple.developer.aps-environment") == "development":
-        result["com.apple.developer.aps-environment"] = "development"
+    push_environment = granted.get("com.apple.developer.aps-environment")
+    if push_environment == environment.lower():
+        result["com.apple.developer.aps-environment"] = push_environment
     return result
 
 
@@ -143,9 +149,22 @@ def local_identity(listing):
 
 def configuration(info):
     identity = os.environ.get("RISE_SIGNING_IDENTITY")
-    if not identity:
-        identity = local_identity(subprocess.check_output(["security", "find-identity", "-v", "-p", "codesigning"], text=True))
     profile_path = os.environ.get("RISE_PROVISIONING_PROFILE")
+    if not identity:
+        listing = subprocess.check_output(["security", "find-identity", "-v", "-p", "codesigning"], text=True)
+        # A profile deliberately installed in Rise's signing folder chooses its matching
+        # certificate. In particular, 1Password accepts Developer ID signed custom browsers,
+        # while an Apple Development build can be rejected as UnknownBrowser even when trusted.
+        # Explicit environment overrides still win. Macs without a dedicated profile retain
+        # their existing stable development identity and Development iCloud environment.
+        if profile_path:
+            return configuration_for_profile(Path(profile_path).expanduser(), info["CFBundleIdentifier"], listing)
+        for path in sorted(PROFILE_FOLDERS[0].glob("*.provisionprofile")) + sorted(PROFILE_FOLDERS[0].glob("*.mobileprovision")):
+            try:
+                return configuration_for_profile(path, info["CFBundleIdentifier"], listing)
+            except (ValueError, subprocess.CalledProcessError, plistlib.InvalidFileException):
+                continue
+        identity = local_identity(listing)
     if profile_path:
         if identity == "-":
             raise ValueError("A provisioning profile needs an Apple signing identity, not ad-hoc signing.")
@@ -155,6 +174,18 @@ def configuration(info):
         profile_file, entitlements = found_profile(info["CFBundleIdentifier"], signing_certificate(identity))
         return identity, profile_file, entitlements
     return identity, None, None
+
+
+def configuration_for_profile(path, bundle_id, listing):
+    """Select an installed private-key identity actually authorized by this profile."""
+    profile = read_profile(path)
+    identities = re.findall(r'([A-Fa-f0-9]{40})\s+"([^"]+)"', listing)
+    for certificate_hash, _ in identities:
+        try:
+            return certificate_hash, path, profile_entitlements(profile, bundle_id, certificate_hash)
+        except ValueError:
+            continue
+    raise ValueError("The profile must be valid for " + bundle_id + " and authorize an installed signing identity: " + str(path))
 
 
 def main():
@@ -182,7 +213,8 @@ def main():
             timestamp = "--timestamp=none" if os.environ.get("RISE_SIGNING_TIMESTAMP") == "none" else "--timestamp"
             subprocess.run([*command, "--options", "runtime", timestamp, "--entitlements", temporary.name, str(app)], check=True)
         print("Signed with the provisioning profile " + profile_file.name + ". Touch ID passkeys: " + str("keychain-access-groups" in entitlements)
-              + "; iCloud Keychain passkeys: " + str(PASSKEY in entitlements) + "; CloudKit: " + str(info["RiseCloudKitEnabled"]))
+              + "; iCloud Keychain passkeys: " + str(PASSKEY in entitlements) + "; CloudKit: " + str(info["RiseCloudKitEnabled"])
+              + " (" + entitlements.get("com.apple.developer.icloud-container-environment", "none") + ")")
     else:
         # An ad-hoc app claiming this restricted entitlement can fail to launch.
         # Also remove a profile left by a previous approved build of this bundle.

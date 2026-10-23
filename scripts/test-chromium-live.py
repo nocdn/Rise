@@ -1,12 +1,14 @@
 """Rise's features on Chromium pages in an actual Rise window.
 
-    python3 scripts/test-chromium-live.py [peek|features|extensions|scripts|app|float|capture|tools|youtube|media|path/to/Check.swift]
+    python3 scripts/test-chromium-live.py [peek|features|extensions|passkeys|scripts|app|float|capture|tools|youtube|media|path/to/Check.swift]
 
 peek: Peek's motion, frame by frame (Tests/Live/ChromiumPeekBenchmarks.swift).
 features: history after a relaunch, downloads, find, permissions, picture in picture and the
 tab's media and sound (Tests/Live/ChromiumFeatureChecks.swift), with pages served from two local
 sites so one can hold a frame of the other.
 scripts: Rise's page scripts and messages, in frames of both sites (Tests/Live/ChromiumScriptChecks.swift).
+passkeys: Real provisioned-platform availability, relying-party isolation and cancellation, without
+creating a passkey or completing biometric authentication (Tests/Live/ChromiumPasskeyChecks.swift).
 app: Rise's menus, Dock, links from other apps and quitting (Tests/Live/ChromiumAppChecks.swift).
 tools: Page Assistant, hover cards, Copy Text from Page Image, Share Page, the tab switcher and Smart
 Rename (Tests/Live/ChromiumToolChecks.swift).
@@ -29,7 +31,7 @@ import socket
 import tempfile
 import time
 
-checks = {"peek": "ChromiumPeekBenchmarks.swift", "features": "ChromiumFeatureChecks.swift", "extensions": "ChromiumExtensionChecks.swift",
+checks = {"peek": "ChromiumPeekBenchmarks.swift", "features": "ChromiumFeatureChecks.swift", "extensions": "ChromiumExtensionChecks.swift", "passkeys": "ChromiumPasskeyChecks.swift",
           "float": "ChromiumFloatingVideoChecks.swift", "capture": "ChromiumCaptureChecks.swift", "tools": "ChromiumToolChecks.swift",
           "youtube": "ChromiumYouTubeChecks.swift", "media": "ChromiumMediaChecks.swift",
           "scripts": "ChromiumScriptChecks.swift", "app": "ChromiumAppChecks.swift"}
@@ -82,8 +84,13 @@ subprocess.run(["swiftc", "-target", f"{platform.machine()}-apple-macos14.0", "-
                 "-Xcc", f"-fmodule-map-file={debug / 'RiseChromium.build/module.modulemap'}",
                 "-I", str(root / "Sources/RiseChromium/include"), *objects, *engine_linking,
                 *linker, "-o", str(executable)], cwd=root, check=True)
-subprocess.run(["codesign", "--force", "--sign", "-", str(executable)], check=True, capture_output=True)
-subprocess.run(["codesign", "--force", "--sign", "-", str(probe)], check=True, capture_output=True)
+if check == "passkeys":
+    # An ad-hoc probe cannot exercise macOS's real keychain entitlement checks. Use Rise's
+    # normal certificate and provisioning profile, including RISE_SIGNING_* overrides.
+    subprocess.run([sys.executable, str(root / "scripts/sign-app.py"), str(probe)], check=True)
+else:
+    subprocess.run(["codesign", "--force", "--sign", "-", str(executable)], check=True, capture_output=True)
+    subprocess.run(["codesign", "--force", "--sign", "-", str(probe)], check=True, capture_output=True)
 environment = dict(os.environ, RISE_PEEK_OUT=str(folder), PACKAGE_RESOURCE_BUNDLE_PATH=str(debug))
 arguments, servers = [], []
 if check in ("features", "float") or check.endswith(".swift"):
@@ -91,7 +98,7 @@ if check in ("features", "float") or check.endswith(".swift"):
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=30", "-f", "lavfi",
                     "-i", "sine=frequency=440", "-t", "30", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
                     "-shortest", str(folder / "clip.mp4")], check=True)
-if check in ("features", "scripts", "float", "capture", "tools") or check.endswith(".swift"):
+if check in ("features", "scripts", "float", "capture", "tools", "passkeys") or check.endswith(".swift"):
     # Two sites: localhost and 127.0.0.1 are different sites.
     ports = []
     for _ in range(2):
@@ -127,7 +134,7 @@ if check == "extensions":
     extension.mkdir(exist_ok=True)
     (extension / "manifest.json").write_text("""{
       "manifest_version": 3, "name": "Rise Test Extension", "version": "1.0",
-      "permissions": ["tabs", "storage", "activeTab", "contextMenus"], "host_permissions": ["<all_urls>"],
+      "permissions": ["tabs", "storage", "activeTab", "contextMenus", "nativeMessaging"], "host_permissions": ["<all_urls>"],
       "background": {"service_worker": "background.js"},
       "content_scripts": [{"matches": ["<all_urls>"], "js": ["content.js"], "run_at": "document_idle"}],
       "action": {"default_popup": "popup.html", "default_title": "Rise Test", "default_icon": "icon.png"},
@@ -148,6 +155,8 @@ if check == "extensions":
         if (message.cmd === 'activated') return {activated};
         if (message.cmd === 'clicked') return {clicked};
         if (message.cmd === 'commanded') return {commanded};
+        if (message.cmd === 'native') return chrome.runtime.sendNativeMessage('dev.bartosz.rise.test.echo', message.payload);
+        if (message.cmd === 'popup') { await chrome.action.openPopup(); return {opened: true}; }
         const all = await chrome.tabs.query({});
         const active = await chrome.tabs.query({active: true, currentWindow: true});
         const windows = await chrome.windows.getAll({populate: true});

@@ -1,4 +1,5 @@
 import XCTest
+import RiseCore
 @testable import Rise
 
 final class GitHubStarTests: XCTestCase {

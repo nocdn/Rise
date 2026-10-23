@@ -60,6 +60,11 @@ to change that limit. `./scripts/engine/build.sh -n` previews pending work.
 | `0012-portable-tab-history.patch` | Exports URL/title entries and the committed cursor, and restores a portable history without visiting its other destinations |
 | `0013-avoid-unchanged-generator-rebuilds.patch` | Uses Siso's content comparison for generated files on macOS, preserving timestamps when their contents are unchanged |
 | `0014-navigation-loading-ui.patch` | Uses Chromium's navigation loading-UI state so lazy frames loaded while scrolling do not restart the tab's progress sweep or Stop button |
+| `0015-page-layer-follows-its-view.patch` | Keeps Chromium's page layer aligned with its view during animated resizing |
+| `0016-zoom-is-the-pages-own.patch` | Reads the page's actual Chromium zoom after per-site restoration |
+| `0017-touch-id-passkeys-follow-the-app.patch` | Derives the local passkey keychain group from the signed embedding app's identity |
+| `0018-snapshot-a-strip-of-the-page.patch` | Copies a small rendered page strip for the page bar's colour |
+| `0019-extension-requested-popups.patch` | Routes `chrome.action.openPopup()` through Rise's popup host, retaining Chrome's active-window and action checks |
 
 `0002` is exported from the fork's tree with `git diff HEAD` over `base` and `chrome`, less the
 paths the other patches and `brand.py` own (see `Engine/fork-plan.md`); new files are added
@@ -74,7 +79,9 @@ without touching the everyday profile:
     open -n build/Rise.app --env RISE_PROFILE_DIR=/tmp/rise-chromium
 
 `RISE_PROFILE_DIR` keeps that session, history and website data apart from the everyday
-ones; its Chromium never uses the Keychain, and it doesn't sync tabs through iCloud. The
+ones; Chromium's Safe Storage key is kept out of the Keychain, and it doesn't sync tabs through iCloud.
+This does not disable WebAuthn's platform authenticator: a passkey explicitly registered in a test
+profile can still be stored in the Mac's keychain, bound to that profile's metadata secret. The
 everyday profile keeps Chromium's key in Rise's own Keychain item, "Rise Safe Storage".
 
 What Rise does on Chromium pages, also for frames of other sites:
@@ -115,6 +122,7 @@ Live checks, in a real Rise window (see `scripts/test-chromium-live.py`):
     python3 scripts/test-chromium-live.py peek       # Peek's motion, frame by frame
     python3 scripts/test-chromium-live.py features   # the features above
     python3 scripts/test-chromium-live.py extensions # a test extension: tabs, buttons, popups
+    python3 scripts/test-chromium-live.py passkeys   # signed platform availability, RP isolation, cancellation
 
 and `scripts`, `app`, `float`, `capture`, `tools`, `youtube` and `media`. Some need Rise's
 window in front, and say so when it wasn't.

@@ -256,6 +256,12 @@ RC_EXPORT @interface RCContextMenu : NSObject
 /// An extension popup's page has a new size, as Chrome sizes popups to what they show (see
 /// `sizesExtensionPopups`), in points.
 - (void)browserView:(RCBrowserView *)browserView didChangePreferredSize:(NSSize)size;
+/// An installed extension asks to show its action popup for this active tab. Call `completion`
+/// once after showing it, or NO if the window cannot show it. Chrome validates the request first.
+- (void)browserView:(RCBrowserView *)browserView
+    showExtensionPopup:(NSURL *)url
+           extensionID:(NSString *)extensionID
+            completion:(void (^)(BOOL shown))completion;
 /// The page, at `origin`, asks for a dialog; call `completion` once, with whether it was accepted
 /// and, for a prompt, the text.
 - (void)browserView:(RCBrowserView *)browserView

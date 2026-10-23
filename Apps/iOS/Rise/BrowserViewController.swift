@@ -7,6 +7,12 @@ import SafariServices
 /// tabs in a switcher. Pages that a Peek replaced in a tab are held for Back.
 final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, UIGestureRecognizerDelegate {
     static let homeURL = URL(string: "https://news.ycombinator.com/")!
+    // Temporarily hard-disabled: long-press links use WebKit's native action menu.
+    // Keep the complete Peek implementation below for when link previews return.
+    static let longPressPeekEnabled = false
+    let githubStarrer = MobileGitHubStarrer()
+    var githubStarToast: GitHubStarToast?
+    var githubRepositoryMenu: GitHubRepositoryMenu?
     /// The open tabs, in the switcher's order.
     private(set) var tabs: [BrowserTab]
     private(set) var tabIndex = 0
@@ -373,6 +379,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         webView.uiDelegate = self
         webView.navigationDelegate = self
         webView.allowsBackForwardNavigationGestures = true
+        // WebKit also gates its native link actions on this property. The delegate
+        // below hard-disables our Peek preview provider while retaining those actions.
         webView.allowsLinkPreview = true
         #if DEBUG
         webView.isInspectable = true
@@ -418,10 +426,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     func webView(_ webView: WKWebView, contextMenuConfigurationForElement elementInfo: WKContextMenuElementInfo,
                  completionHandler: @escaping @MainActor @Sendable (UIContextMenuConfiguration?) -> Void) {
-        guard !ImageContextMenus.hasImage(in: webView), allowsPeek, let url = elementInfo.linkURL, Self.canPeek(url) else {
+        guard Self.longPressPeekEnabled, !ImageContextMenus.hasImage(in: webView), allowsPeek, let url = elementInfo.linkURL, Self.canPeek(url) else {
             // Keep WebKit's suggested actions for images, external schemes, and links inside Peek.
             completionHandler(UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { actions in
-                ImageContextMenus.menu(in: webView, actions: actions)
+                self.nativeLinkMenu(in: webView, url: elementInfo.linkURL, actions: actions)
             })
             return
         }
@@ -438,10 +446,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     func webView(_ webView: WKWebView, contextMenuWillPresentForElement elementInfo: WKContextMenuElementInfo) {
         ImageContextMenus.setPresented(true, in: webView)
+        githubRepositoryMenu?.willPresent(in: webView)
     }
 
     func webView(_ webView: WKWebView, contextMenuDidEndForElement elementInfo: WKContextMenuElementInfo) {
         ImageContextMenus.setPresented(false, in: webView)
+        githubRepositoryMenu?.cancel(); githubRepositoryMenu = nil
     }
 
     func showPeek(_ url: URL) {
@@ -562,6 +572,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         pullToReload.layoutGap()
         bottomBar.find.maximumAnswerHeight = max(80, min(300, view.bounds.height-keyboardHeight-160))
         layoutBottomBar()
+        githubStarToast?.place(above: bottomBar.frame.minY, in: view.bounds, safeTop: view.safeAreaInsets.top)
         // Summarise is laid out for the window it started in.
         if let summarise, summarise.bounds.size != view.bounds.size { summarise.finish() }
         if tabSwitcher.superview === content {

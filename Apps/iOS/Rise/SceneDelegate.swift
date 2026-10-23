@@ -1,4 +1,5 @@
 import UIKit
+import WebKit
 
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
@@ -7,6 +8,20 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let scene = scene as? UIWindowScene else { return }
         let window = RiseWindow(windowScene: scene)
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains(TorphTextAudit.argument) {
+            let controller = BrowserViewController(startURL: nil,websiteDataStore: .nonPersistent())
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            TorphTextAudit.run(in: controller)
+            return
+        }
+        if ProcessInfo.processInfo.arguments.contains(GitHubStarAudit.argument)
+            || ProcessInfo.processInfo.arguments.contains(GitHubStarAudit.deviceArgument) {
+            let store: WKWebsiteDataStore = ProcessInfo.processInfo.arguments.contains(GitHubStarAudit.deviceArgument) ? .default() : .nonPersistent()
+            let controller = BrowserViewController(startURL: nil, websiteDataStore: store)
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            GitHubStarAudit.run(in: controller)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains(ImageContextMenuAudit.argument) {
             let controller = BrowserViewController(startURL: nil, websiteDataStore: .nonPersistent())
             window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()

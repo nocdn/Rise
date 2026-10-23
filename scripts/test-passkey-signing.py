@@ -5,6 +5,8 @@ import hashlib
 import importlib.util
 from pathlib import Path
 import unittest
+from unittest import mock
+import tempfile
 
 spec = importlib.util.spec_from_file_location("rise_signing", Path(__file__).with_name("sign-app.py"))
 signing = importlib.util.module_from_spec(spec)
@@ -92,13 +94,56 @@ class CloudKitSigningTests(PasskeySigningTests):
         for key, value in [
             ("com.apple.developer.icloud-container-identifiers", ["iCloud.other"]),
             ("com.apple.developer.icloud-services", ["CloudDocuments"]),
-            ("com.apple.developer.icloud-container-environment", ["Production"]),
+            ("com.apple.developer.icloud-container-environment", []),
             ("com.apple.application-identifier", "TESTTEAM.*"),
         ]:
             with self.subTest(key=key):
                 profile = copy.deepcopy(self.profile); profile["Entitlements"][key] = value
                 with self.assertRaises(ValueError):
                     signing.cloudkit_entitlements(profile, "dev.bartosz.Rise", self.sha, self.now)
+
+    def testDeveloperIDProfilesKeepProductionCloudKitAndPushAlongsideTouchID(self):
+        self.profile["Entitlements"].update({
+            "com.apple.developer.icloud-container-environment": "Production",
+            "com.apple.developer.aps-environment": "production",
+            "keychain-access-groups": ["TESTTEAM.*"],
+        })
+        result = signing.profile_entitlements(self.profile, "dev.bartosz.Rise", self.sha, self.now)
+        self.assertEqual(result["com.apple.developer.icloud-container-environment"], "Production")
+        self.assertEqual(result["com.apple.developer.aps-environment"], "production")
+        self.assertEqual(result["keychain-access-groups"], ["TESTTEAM.dev.bartosz.Rise.webauthn"])
+        self.profile["Entitlements"]["com.apple.developer.icloud-container-environment"] = ["Production"]
+        self.assertEqual(signing.cloudkit_entitlements(self.profile, "dev.bartosz.Rise", self.sha, self.now)
+                         ["com.apple.developer.icloud-container-environment"], "Production")
+
+
+class ProfileConfigurationTests(PasskeySigningTests):
+    def testDedicatedProfileChoosesItsOwnCertificateWithoutAnEnvironmentOverride(self):
+        development_sha = "A" * 40
+        listing = (f'1) {development_sha} "Apple Development: Test (TEAM)"\n'
+                   f'2) {self.sha.upper()} "Developer ID Application: Test (TEAM)"\n')
+        with tempfile.TemporaryDirectory() as folder, mock.patch.dict(signing.os.environ, {}, clear=True):
+            path = Path(folder) / "Rise.provisionprofile"
+            path.touch()
+            with mock.patch.object(signing, "PROFILE_FOLDERS", [Path(folder)]), \
+                 mock.patch.object(signing, "read_profile", return_value=self.profile), \
+                 mock.patch.object(signing.subprocess, "check_output", return_value=listing):
+                identity, chosen, entitlements = signing.configuration({"CFBundleIdentifier": "dev.bartosz.Rise"})
+                self.assertEqual(identity, self.sha.upper())
+                self.assertEqual(chosen, path)
+                self.assertEqual(entitlements["com.apple.application-identifier"], "TESTTEAM.dev.bartosz.Rise")
+
+    def testExplicitProfileAlsoChoosesItsAuthorizedCertificateAndRejectsMissingPrivateKeys(self):
+        listing = f'1) {self.sha.upper()} "Developer ID Application: Test (TEAM)"\n'
+        with mock.patch.dict(signing.os.environ, {"RISE_PROVISIONING_PROFILE": "/test/Rise.provisionprofile"}, clear=True), \
+             mock.patch.object(signing, "read_profile", return_value=self.profile), \
+             mock.patch.object(signing.subprocess, "check_output", return_value=listing):
+            self.assertEqual(signing.configuration({"CFBundleIdentifier": "dev.bartosz.Rise"})[0], self.sha.upper())
+            with self.assertRaises(ValueError):
+                signing.configuration({"CFBundleIdentifier": "dev.bartosz.OtherApp"})
+        with mock.patch.object(signing, "read_profile", return_value=self.profile):
+            with self.assertRaises(ValueError):
+                signing.configuration_for_profile(Path("/test/Rise.provisionprofile"), "dev.bartosz.Rise", "0 valid identities found")
 
 
 if __name__ == "__main__":

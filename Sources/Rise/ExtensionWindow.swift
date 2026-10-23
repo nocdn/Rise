@@ -36,7 +36,10 @@ import RiseChromium
                 })
             }
             observers.append(NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.strip.close() }
+                MainActor.assumeIsolated {
+                    self?.browser?.extensionPopup?.close()
+                    self?.strip.close()
+                }
             })
         }
         observers.append(NotificationCenter.default.addObserver(forName: BrowserController.pinnedExtensionsChanged, object: nil, queue: .main) { [weak self] _ in

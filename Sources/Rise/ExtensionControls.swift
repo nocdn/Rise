@@ -25,10 +25,29 @@ import RiseChromium
         guard let tab = selectedChromiumView, let action = extensionActions.first(where: { $0.extensionID == id }) else { return }
         siteControlsPopover.close()
         guard let url = action.click(inTab: tab) else { return }
+        showExtensionPopup(url, extensionID: id, anchor: anchor)
+    }
+
+    /// Also used by chrome.action.openPopup(), without granting any additional tab access.
+    /// API requests fail if a popup already owns the slot, as they do in Chrome.
+    func showExtensionPopup(_ url: URL, extensionID: String, anchor: NSView? = nil, completion: ((Bool) -> Void)? = nil) {
+        AuthenticationDiagnostics.popups.notice("Popup requested byAPI=\(completion != nil)")
+        guard url.scheme == "chrome-extension", url.host == extensionID,
+              extensionActions.contains(where: { $0.extensionID == extensionID }),
+              completion == nil || extensionPopup == nil else {
+            AuthenticationDiagnostics.popups.notice("Popup refused invalidActionOrExistingPopup=1")
+            completion?(false); return
+        }
+        siteControlsPopover.close()
         let anchorView: NSView = anchor ?? navBar.settingsButton
+        guard anchorView.window != nil else {
+            AuthenticationDiagnostics.popups.notice("Popup refused missingWindow=1")
+            completion?(false); return
+        }
         let rect = anchorView.bounds
         extensionPopup?.close()
         let popup = ExtensionPopup(url: url, theme: theme)
+        popup.onShown = completion
         popup.onClose = { [weak self, weak popup] in if self?.extensionPopup === popup { self?.extensionPopup = nil } }
         // What the popup opens goes in tabs, as from Chrome's.
         popup.page.onPopup = { [weak self, weak popup] page, _ in
@@ -211,6 +230,7 @@ import RiseChromium
     let page = ChromiumPage()
     let popover = NSPopover()
     var onClose: (() -> Void)?
+    var onShown: ((Bool) -> Void)?
     private var anchor: (rect: NSRect, view: NSView)?
     private var closed = false
     static let minimum = NSSize(width: 25, height: 25), maximum = NSSize(width: 800, height: 600)
@@ -256,10 +276,14 @@ import RiseChromium
         } else { open(size: size) }
     }
     private func open(size: NSSize?) {
-        guard !closed, !popover.isShown, let anchor, anchor.view.window != nil else { return }
+        guard !closed, !popover.isShown else { return }
+        guard let anchor else { return }
+        guard anchor.view.window != nil else { finish(); return }
         popover.contentSize = size ?? NSSize(width: 320, height: 400)
         popover.show(relativeTo: anchor.rect, of: anchor.view, preferredEdge: .maxY)
         popover.contentViewController?.view.window?.makeFirstResponder(page.view)
+        AuthenticationDiagnostics.popups.notice("Popup presentation shown=\(self.popover.isShown)")
+        reportShown(popover.isShown)
     }
     func close() {
         guard !closed else { return }
@@ -269,8 +293,15 @@ import RiseChromium
     private func finish() {
         guard !closed else { return }
         closed = true
+        AuthenticationDiagnostics.popups.notice("Popup closed pendingResponse=\(self.onShown != nil)")
         page.browserView.close()
         onClose?()
+        reportShown(false)
+    }
+    private func reportShown(_ shown: Bool) {
+        let callback = onShown
+        onShown = nil
+        callback?(shown)
     }
 
     /// Measures the page's own size: its width as wide as its content wants, then its height.

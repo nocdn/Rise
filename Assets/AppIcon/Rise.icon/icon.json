@@ -11,6 +11,9 @@
           "name" : "Light",
           "opacity-specializations" : [
             {
+              "value" : 1
+            },
+            {
               "appearance" : "dark",
               "value" : 0
             }
