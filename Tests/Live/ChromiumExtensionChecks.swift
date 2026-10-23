@@ -254,5 +254,15 @@ import RiseChromium
             }
             popup.close()
         }
+        // A window/popup may close before its first size report. The API callback must finish
+        // once, and the delayed fallback must not resurrect the dismissed popup.
+        let dismissed = ExtensionPopup(url: URL(string: "chrome-extension://\(id)/popup.html")!, theme: browser.theme)
+        var answers: [Bool] = []
+        dismissed.onShown = { answers.append($0) }
+        dismissed.show(relativeTo: browser.navBar.settingsButton.bounds, of: browser.navBar.settingsButton)
+        dismissed.close()
+        try? await Task.sleep(for: .milliseconds(1100))
+        check(answers == [false] && !dismissed.popover.isShown,
+              "Closing a pending popup answers once and cannot reopen after the fallback")
     }
 }

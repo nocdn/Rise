@@ -79,6 +79,40 @@ Developer ID signing uses the profile's **Production** CloudKit database and pus
 development signing keeps **Development**. The databases are separate and signing does not migrate
 their data. See [TouchIDPasskeyProfile.md](TouchIDPasskeyProfile.md).
 
+## Diagnostics
+
+Rise records local macOS unified logs under subsystem `dev.bartosz.Rise`:
+
+- `AuthenticationSetup`: framework/profile presence, isolated-profile status and engine startup.
+- `NativeMessaging`: registration counts and filesystem error domain/code; native-host launch results
+  and channel closure. `onePassword=1` identifies the 1Password helper; other host names are omitted.
+- `ExtensionPopup`: requests, presentation, refusals and closure before a pending response.
+- `Passkeys`: signed keychain-group availability, platform-availability failure reasons, WebAuthn
+  request start/end, UI cancellation, failure codes and successful authenticator type.
+
+In Console.app, select this Mac and filter by the subsystem, or use:
+
+```sh
+/usr/bin/log show --last 1h --style compact --predicate 'subsystem == "dev.bartosz.Rise"'
+/usr/bin/log stream --style compact --predicate 'subsystem == "dev.bartosz.Rise"'
+```
+
+These diagnostics deliberately omit URLs/relying-party IDs, usernames, credential IDs, keys,
+challenges, native message contents and host paths. They are not uploaded by Rise. macOS manages
+their retention; collect them soon after a failure. A request ending is not proof of success:
+look for the separate success event. Extension-intercepted passkeys may stay entirely inside
+1Password and therefore do not produce Chromium passkey lifecycle events.
+
+Native launch result codes: `0` success, `1` invalid host name, `2` registration not found,
+`3` extension not allowed, `4` helper failed to start. Channel-close reason codes: `0` host exited
+(normal for one-shot native messages too), `1` invalid name, `2` not found, `3` forbidden,
+`4` failed to start, `5` transport/input-output error. Other passkey enum codes follow the pinned
+Chromium revision's `InterestingFailureReason`, `FidoRequestType` and `AuthenticatorType` definitions.
+
+Rise can log that the helper connected, but it cannot read 1Password's internal browser-trust
+decision. For `UnknownBrowser` or vault-unlock problems, inspect 1Password's own BrowserSupport
+logs as well, and confirm the running copy is Developer ID signed in `/Applications`.
+
 ## iCloud Keychain passkeys
 
 These go through Apple's `ASAuthorization` browser API, which needs the restricted
