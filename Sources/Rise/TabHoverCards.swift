@@ -1,7 +1,7 @@
 import AppKit
 
-/// Hovering a tab shows its title and rename hint, or a pull request, merge request, Gmail or
-/// Google Calendar preview. Each appears and disappears at once, without a fade. Moving to a neighboring
+/// Hovering a tab shows its title and rename hint, or a pull request, merge request, Gmail, Proton Mail
+/// or Google Calendar preview. Each appears and disappears at once, without a fade. Moving to a neighboring
 /// tab keeps the hover session warm. Interactive previews glide over and allow crossing
 /// into the card through a safe triangle to select text.
 @MainActor final class TabHoverCards {
@@ -14,10 +14,10 @@ import AppKit
     let gmailCard = GmailTooltip()
     let calendarCard = CalendarTooltip()
     let titleCard = TabTitleTooltip(frame: .zero)
-    fileprivate enum Kind { case title, pullRequest, gmail, calendar }
+    fileprivate enum Kind { case title, pullRequest, gmail, protonMail, calendar }
     fileprivate var kind = Kind.title
     fileprivate var card: NSView {
-        switch kind { case .title: titleCard; case .pullRequest: pullRequestCard; case .gmail: gmailCard; case .calendar: calendarCard }
+        switch kind { case .title: titleCard; case .pullRequest: pullRequestCard; case .gmail, .protonMail: gmailCard; case .calendar: calendarCard }
     }
     let summaries: PullRequestSummaries
     fileprivate var hoveredID: UUID?
@@ -40,7 +40,8 @@ import AppKit
     init(storageURL: URL) { summaries = PullRequestSummaries(storageURL: storageURL) }
     /// Tabs whose card is interactive, rather than their title.
     static func hasPreview(_ url: URL?) -> Bool {
-        PullRequest(url: url) != nil || GmailAccount(url: url) != nil || CalendarAccount(url: url) != nil
+        PullRequest(url: url) != nil || GmailAccount(url: url) != nil || ProtonMailAccount(url: url) != nil
+            || CalendarAccount(url: url) != nil
     }
 }
 
@@ -60,13 +61,19 @@ import AppKit
                 // Preserve the route through neighboring tabs into an interactive preview.
                 hover.hoveredID = nil; return
             }
+            if let shown = hover.shownID, shown != id, hover.kind != .title, TabHoverCards.hasPreview(url), hover.safeOrigin != nil,
+               pointerIsHeadingForCard() {
+                // Another preview's tab, crossed on the way into the open card: it waits to see
+                // whether the pointer stays.
+                hover.hoveredID = id; awaitAim(id, from: pointerInRoot); return
+            }
             hover.hoveredID = id; hover.safeOrigin = nil; hover.safeTarget = nil; hover.leftRow = nil
             // Only previews hand over to the next preview at once; a title waits its full delay
             // every time, and whatever was showing goes first.
             let warm = hover.shownID != nil || CACurrentMediaTime()-hover.hiddenAt < TabHoverCards.grace
             if warm, hover.kind != .title, TabHoverCards.hasPreview(url) { showTabHoverCard(id); return }
             if hover.shownID != nil { hideTabHoverCard(); hover.hoveredID = id }
-            // Previews (pull requests, Gmail, Calendar) wait as long as the motion tester has them set to.
+            // Previews (pull requests, mail, Calendar) wait as long as the motion tester has them set to.
             let delay = TabHoverCards.hasPreview(url) ? CardMotion.hoverDelay : TabHoverCards.delay
             hover.timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
                 MainActor.assumeIsolated { self?.showTabHoverCard(id) }
@@ -93,7 +100,28 @@ import AppKit
             return
         }
         guard hover.shownID != nil, hover.safeOrigin != nil else { return }
+        // Turning away from the card over another preview's tab hands the card to it at once.
+        if let id = hover.hoveredID, id != hover.shownID, !pointerIsHeadingForCard() { handCardOver(id); return }
         closeCardIfAbandoned()
+    }
+    /// The card stays while the pointer crosses another preview's tab toward it. Pausing there,
+    /// or heading anywhere but the card, gives that tab its own card.
+    private func awaitAim(_ id: UUID, from last: NSPoint?) {
+        let hover = tabHoverCards
+        hover.timer?.invalidate()
+        hover.timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.tabHoverCards.hoveredID == id, self.tabHoverCards.shownID != id else { return }
+                let point = self.pointerInRoot
+                let resting = point.flatMap { point in last.map { hypot(point.x-$0.x, point.y-$0.y) < 3 } } ?? true
+                if resting || !self.pointerIsHeadingForCard() { self.handCardOver(id) } else { self.awaitAim(id, from: point) }
+            }
+        }
+    }
+    private func handCardOver(_ id: UUID) {
+        let hover = tabHoverCards
+        hover.timer?.invalidate(); hover.safeOrigin = nil; hover.safeTarget = nil; hover.leftRow = nil
+        showTabHoverCard(id)
     }
     /// A click or drag on a tab dismisses the card, and the next one waits for the delay again.
     func tabPressed() {
@@ -107,6 +135,9 @@ import AppKit
               let tab = tabs.first(where: { $0.id == id }), let row = sidebar.anchor(for: id), row.window != nil, !sidebar.isRenaming(id) else { return }
         if GmailAccount(url: tab.url) != nil {
             showGmailTooltip(id); return
+        }
+        if ProtonMailAccount(url: tab.url) != nil {
+            showProtonMailTooltip(id); return
         }
         if CalendarAccount(url: tab.url) != nil {
             showCalendarTooltip(id); return
@@ -159,6 +190,10 @@ import AppKit
         }
         if tabHoverCards.kind == .gmail {
             if GmailAccount(url: tabs.first(where: { $0.id == id })?.url) != gmailInbox.request?.account { hideTabHoverCard() }
+            return
+        }
+        if tabHoverCards.kind == .protonMail {
+            if ProtonMailAccount(url: tabs.first(where: { $0.id == id })?.url) != protonMailInbox.request?.account { hideTabHoverCard() }
             return
         }
         if tabHoverCards.kind == .calendar {
@@ -328,11 +363,10 @@ import AppKit
               let tab = tabs.first(where: { $0.id == id }), let account = GmailAccount(url: tab.url),
               let row = sidebar.anchor(for: id), row.window != nil else { return }
         hover.pullRequestCard.dismiss(); hover.calendarCard.dismiss(); hover.titleCard.dismiss(); hover.kind = .gmail; hover.shownID = id
-        if hover.gmailCard.superview !== root {
-            hover.gmailCard.onPointer = { [weak self] in self?.cardPointerChanged($0) }
-            hover.gmailCard.onLoadMore = { [weak self] in self?.gmailInbox.loadMore() }
-            hover.gmailCard.onOpen = { [weak self] email in self?.openGmailEmail(email) }
-        }
+        // Proton Mail shares the card, so each sets its own actions as it shows.
+        hover.gmailCard.onPointer = { [weak self] in self?.cardPointerChanged($0) }
+        hover.gmailCard.onLoadMore = { [weak self] in self?.gmailInbox.loadMore() }
+        hover.gmailCard.onOpen = { [weak self] email in self?.openGmailEmail(email) }
         raiseHoverCard(hover.gmailCard)
         trackPointer(true)
         gmailInbox.prepare(account: account, category: gmailCategory, source: tab.page, host: root)
@@ -344,6 +378,59 @@ import AppKit
     func gmailInboxChanged() {
         guard tabHoverCards.kind == .gmail, tabHoverCards.shownID != nil else { return }
         tabHoverCards.gmailCard.update(gmailInbox)
+    }
+
+    /// Gmail's card, with the Proton Mail inbox.
+    func showProtonMailTooltip(_ id: UUID) {
+        let hover = tabHoverCards
+        guard hover.hoveredID == id, isSidebarShown, window?.isVisible == true,
+              let tab = tabs.first(where: { $0.id == id }), let account = ProtonMailAccount(url: tab.url),
+              let row = sidebar.anchor(for: id), row.window != nil else { return }
+        hover.pullRequestCard.dismiss(); hover.calendarCard.dismiss(); hover.titleCard.dismiss(); hover.kind = .protonMail; hover.shownID = id
+        hover.gmailCard.onPointer = { [weak self] in self?.cardPointerChanged($0) }
+        hover.gmailCard.onLoadMore = { [weak self] in self?.protonMailInbox.loadMore() }
+        hover.gmailCard.onOpen = { [weak self] email in self?.openProtonMailEmail(email) }
+        raiseHoverCard(hover.gmailCard)
+        trackPointer(true)
+        protonMailInbox.prepare(.init(account: account), source: tab.page, host: root)
+        let anchor = previewAnchor(row)
+        hover.gmailCard.present(key: account.baseURL.absoluteString, inbox: protonMailInbox,
+                                left: sidebar.frame.maxX+6, anchorTop: anchor.top, maxBottom: root.bounds.height-8,
+                                theme: theme, glides: CACurrentMediaTime()-hover.hiddenAt < TabHoverCards.grace, growsFrom: anchor.growsFrom)
+    }
+    func protonMailInboxChanged() {
+        guard tabHoverCards.kind == .protonMail, tabHoverCards.shownID != nil else { return }
+        tabHoverCards.gmailCard.update(protonMailInbox)
+    }
+    /// The tab opens the email beside its inbox, as Proton's own list does: a change of route when
+    /// Proton is open there, or Proton opening at the email.
+    private func openProtonMailEmail(_ email: GmailEmail) {
+        guard let id = tabHoverCards.shownID, let request = protonMailInbox.request,
+              let message = request.account.messageURL(id: email.id, page: protonMailInbox.page(of: email.id)),
+              let tab = tabs.first(where: { $0.id == id }) else { return }
+        tabPressed()
+        if selectedID != id { select(id) }
+        let web = tab.page
+        guard ProtonMailAccount(url: web.url) == request.account, !web.isLoading else { tab.load(message); return }
+        let route = message.path + (message.fragment.map { "#" + $0 } ?? "")
+        Task { [weak tab, weak web] in
+            guard let web, (try? await web.evaluate(ProtonMailPageReader.open, arguments: ["route": route], in: nil,
+                                                    world: .named(ProtonMailPageReader.world))) as? Bool != true
+            else { return }
+            tab?.load(message)
+        }
+    }
+    /// As Gmail's: the selected Proton Mail tab's account wins, then the one already loaded.
+    func preloadProtonMailInbox() {
+        let proton = tabs.filter { ProtonMailAccount(url: $0.url) != nil }
+        guard let tab = proton.first(where: { $0.id == selectedID })
+                ?? proton.first(where: { ProtonMailAccount(url: $0.url) == protonMailInbox.request?.account }) ?? proton.first,
+              let account = ProtonMailAccount(url: tab.url) else {
+            if protonMailInbox.request != nil, tabHoverCards.shownID == nil { protonMailInbox.tearDown() }
+            return
+        }
+        guard tabHoverCards.shownID == nil, root.window != nil else { return }
+        protonMailInbox.prepare(.init(account: account), source: tab.page, host: root, refreshAfter: TabHoverCards.backgroundRefresh)
     }
     /// The tab goes to the card's category, with the email popped out in a Peek over it: Gmail's
     /// light "Open in new window" conversation, not a second Gmail. Without its row, the email

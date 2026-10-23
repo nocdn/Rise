@@ -6,8 +6,8 @@ final class GmailTooltipTests: XCTestCase {
     private func account(_ number: Int = 0) -> GmailAccount {
         GmailAccount(url: URL(string: "https://mail.google.com/mail/u/\(number)/#inbox"))!
     }
-    private func email(_ id: String, preview: String = "The beginning of the email.") -> GmailEmail {
-        GmailEmail(id: id, sender: "Google", subject: "Account notification", preview: preview)
+    private func email(_ id: String, preview: String = "The beginning of the email.", unread: Bool = true) -> GmailEmail {
+        GmailEmail(id: id, sender: "Google", subject: "Account notification", preview: preview, unread: unread)
     }
     @MainActor private func wait(until predicate: () -> Bool) async throws {
         let deadline = Date().addingTimeInterval(5)
@@ -110,6 +110,12 @@ final class GmailTooltipTests: XCTestCase {
         XCTAssertEqual(row.subject.font, .systemFont(ofSize: 13, weight: .medium))
         XCTAssertEqual(row.subject.maximumNumberOfLines, 1)
         XCTAssertEqual(row.subject.lineBreakMode, .byTruncatingTail)
+        XCTAssertEqual(row.sender.textColor?.alphaComponent ?? 0, 1, accuracy: 0.01)
+        let read = GmailEmailRow(email("read", unread: false)); read.applyTheme(.neutral, last: false)
+        XCTAssertEqual(read.sender.font, .systemFont(ofSize: 14, weight: .regular), "Read emails step down a weight")
+        XCTAssertEqual(read.subject.font, .systemFont(ofSize: 13, weight: .regular))
+        XCTAssertLessThan(read.subject.textColor!.alphaComponent, 1, "and are dimmer")
+        XCTAssertGreaterThan(read.subject.textColor!.alphaComponent, read.preview.textColor!.alphaComponent, "but brighter than the preview")
         let long = GmailEmailRow(GmailEmail(id: "1", sender: "S", subject: String(repeating: "A long subject ", count: 20), preview: ""))
         long.frame.size = NSSize(width: GmailTooltip.width, height: long.fittingHeight(width: GmailTooltip.width)); long.layout()
         XCTAssertLessThan(long.subject.frame.height, 20, "A long subject stays on one line")

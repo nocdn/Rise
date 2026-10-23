@@ -56,6 +56,7 @@ struct GmailEmail: Equatable, Decodable {
     let sender: String
     let subject: String
     let preview: String
+    var unread = false
 }
 
 struct GmailPage: Decodable {
@@ -63,9 +64,41 @@ struct GmailPage: Decodable {
     let hasMore: Bool
 }
 
+/// Reads a mailbox's list a page at a time, from a companion page of the mail site.
+@MainActor protocol MailPageReader: AnyObject {
+    associatedtype Request: Equatable
+    init()
+    func prepare(source: WebPage, host: NSView)
+    func load(_ request: Request, _ page: Int) async throws -> GmailPage
+    func cancel()
+    func tearDown()
+}
+
+/// A reader's failure, with what the card says about it.
+protocol MailReaderFailure: Error { var message: String { get } }
+
+extension MailPageReader {
+    /// A window keeps the mail site's list rendering normally; the companion stays offscreen,
+    /// and its container keeps the page out of the window's accessibility tree.
+    static func makeCompanion(in host: NSView) -> WebPage {
+        let web = BrowserTab.makePage()
+        let container = HiddenAccessibilityView(frame: NSRect(x: -20000, y: 0, width: 1100, height: 800))
+        web.view.frame = container.bounds
+        container.addSubview(web.view)
+        host.addSubview(container, positioned: .below, relativeTo: host.subviews.first)
+        return web
+    }
+    static func close(_ companion: WebPage?) {
+        companion?.view.superview?.removeFromSuperview()
+        (companion as? ChromiumPage)?.browserView.close()
+    }
+}
+
+typealias GmailInbox = MailInbox<GmailPageReader>
+
 /// Only one account/category is held in memory. Nothing from the mailbox is saved to disk.
-@MainActor final class GmailInbox {
-    struct Request: Equatable { let account: GmailAccount; let category: GmailCategory }
+@MainActor final class MailInbox<Reader: MailPageReader> {
+    typealias Request = Reader.Request
     typealias PageLoader = (Request, Int) async throws -> GmailPage
     private(set) var request: Request?
     private(set) var emails: [GmailEmail] = []
@@ -81,12 +114,12 @@ struct GmailPage: Decodable {
     private var task: Task<Void, Never>?
     private var generation = 0
     var onChange: (() -> Void)?
-    private let reader = GmailPageReader()
+    private let reader = Reader()
     var loadPage: PageLoader?
 
-    func prepare(account: GmailAccount, category: GmailCategory, source: WebPage, host: NSView, refreshAfter: TimeInterval = 60) {
+    func prepare(_ request: Request, source: WebPage, host: NSView, refreshAfter: TimeInterval = 60) {
         reader.prepare(source: source, host: host)
-        show(Request(account: account, category: category), refreshAfter: refreshAfter)
+        show(request, refreshAfter: refreshAfter)
     }
     /// A new account or category starts empty. The same one keeps its emails on screen and,
     /// once they're older than `refreshAfter`, replaces them with a fresh first page.
@@ -132,7 +165,7 @@ struct GmailPage: Decodable {
                 guard !Task.isCancelled, token == generation else { return }
                 // A failed refresh keeps the emails already shown.
                 if page > 1 || emails.isEmpty {
-                    self.error = (error as? GmailPageReader.Failure)?.message ?? "Couldn’t load emails. Try again."
+                    self.error = (error as? any MailReaderFailure)?.message ?? "Couldn’t load emails. Try again."
                 }
                 reader.cancel()
             }
@@ -146,10 +179,17 @@ struct GmailPage: Decodable {
     deinit { task?.cancel() }
 }
 
+extension MailInbox where Reader == GmailPageReader {
+    func prepare(account: GmailAccount, category: GmailCategory, source: WebPage, host: NSView, refreshAfter: TimeInterval = 60) {
+        prepare(Request(account: account, category: category), source: source, host: host, refreshAfter: refreshAfter)
+    }
+}
+
 /// A companion Gmail page, of the tab's own engine, shares the tab's session. It reads Gmail's
 /// text-only list previews, never opening a message or changing its read state.
-@MainActor final class GmailPageReader {
-    enum Failure: Error {
+@MainActor final class GmailPageReader: MailPageReader {
+    struct Request: Equatable { let account: GmailAccount; let category: GmailCategory }
+    enum Failure: MailReaderFailure {
         case signedOut, unavailable
         var message: String {
             switch self {
@@ -159,27 +199,19 @@ struct GmailPage: Decodable {
         }
     }
     private(set) var companion: WebPage?
-    private var request: GmailInbox.Request?
+    private var request: Request?
     private var page = 0
     private var firstID: String?
+    init() {}
     func prepare(source: WebPage, host: NSView) {
-        if companion == nil {
-            let web = BrowserTab.makePage()
-            // A window keeps Gmail's list rendering normally; the companion stays offscreen,
-            // and its container keeps the page out of the window's accessibility tree.
-            let container = HiddenAccessibilityView(frame: NSRect(x: -20000, y: 0, width: 1100, height: 800))
-            web.view.frame = container.bounds
-            container.addSubview(web.view)
-            host.addSubview(container, positioned: .below, relativeTo: host.subviews.first)
-            companion = web
-        }
+        if companion == nil { companion = Self.makeCompanion(in: host) }
     }
     /// Runs one of the scripts below, in Rise's own world.
     private func run(_ script: String, in web: WebPage) async throws -> Any? {
         try await web.evaluate("return " + script, arguments: [:], in: nil, world: .named(Self.world))
     }
     static let world = "Rise.Gmail"
-    func load(_ request: GmailInbox.Request, _ page: Int) async throws -> GmailPage {
+    func load(_ request: Request, _ page: Int) async throws -> GmailPage {
         guard let web = companion else { throw Failure.unavailable }
         let previous = firstID
         if self.request == request, self.page == page-1, page > 1 {
@@ -217,9 +249,7 @@ struct GmailPage: Decodable {
         return (parts?.string ?? "")+"#"+(fragment.replacingOccurrences(of: "+", with: " ").removingPercentEncoding ?? fragment)
     }
     func tearDown() {
-        cancel(); companion?.view.superview?.removeFromSuperview()
-        (companion as? ChromiumPage)?.browserView.close()
-        companion = nil
+        cancel(); Self.close(companion); companion = nil
     }
 
     /// Shift-clicking a conversation's row is how Gmail opens it in a new window. Only the
@@ -259,7 +289,8 @@ struct GmailPage: Decodable {
         const id = thread?.getAttribute('data-legacy-thread-id') || '';
         const senders = [...row.querySelectorAll('.yW [email]')];
         const sender = clean(senders.map(e => e.getAttribute('name') || e.textContent).join(', ')) || plain(row.querySelector('.yW'));
-        return {id, sender, subject: plain(row.querySelector('.bog')) || '(No subject)', preview: plain(row.querySelector('.y2'))};
+        return {id, sender, subject: plain(row.querySelector('.bog')) || '(No subject)', preview: plain(row.querySelector('.y2')),
+                unread: row.classList.contains('zE')};
       }).filter(email => /^[0-9a-f]+$/i.test(email.id));
       const next = document.querySelector('.amJ')?.closest('[role="button"]');
       const hasMore = !!next && next.getAttribute('aria-disabled') !== 'true' && !next.classList.contains('T-I-JE');

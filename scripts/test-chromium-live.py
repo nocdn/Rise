@@ -14,7 +14,7 @@ tools: Page Assistant, hover cards, Copy Text from Page Image, Share Page, the t
 Rename (Tests/Live/ChromiumToolChecks.swift).
 youtube: Rise's floating YouTube player (Tests/Live/ChromiumYouTubeChecks.swift), on a YouTube page
 served locally. media: any site's floating video, the tab's media and sound buttons, page full
-screen, Gmail's inbox reader, pausing downloads, what Page Assistant reads, site search learning,
+screen, Gmail's and Proton Mail's inbox readers, pausing downloads, what Page Assistant reads, site search learning,
 the swipe's page probe and hard reloads (Tests/Live/ChromiumMediaChecks.swift). Both are tests written for XCTest
 (Tests/Live/LiveXCTest.swift), with pages at the addresses they name (scripts/live-fixture-server.py).
 
@@ -39,7 +39,7 @@ check = sys.argv[1] if len(sys.argv) > 1 else "peek"
 # Checks written as XCTest cases, with pages at the HTTPS addresses they name.
 fixtures = check in ("youtube", "media")
 fixture_hosts = ["www.youtube.com", "youtube.com", "videos.example", "other.example", "media.example",
-                 "fullscreen.example", "example.com", "vimeo.com", "mail.google.com", "calendar.google.com", "github.com", "lamps.example"]
+                 "fullscreen.example", "example.com", "vimeo.com", "mail.google.com", "mail.proton.me", "calendar.google.com", "github.com", "lamps.example"]
 if check not in checks and not check.endswith(".swift"):
     raise SystemExit(f"Unknown check {check}; choose from {', '.join(checks)}.")
 

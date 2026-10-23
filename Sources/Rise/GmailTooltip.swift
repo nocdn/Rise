@@ -54,20 +54,24 @@ final class GmailEmailRow: NSButton {
         self.email = email
         super.init(frame: .zero)
         title = ""; isBordered = false; target = self; action = #selector(openEmail)
-        sender.stringValue = email.sender; sender.font = .systemFont(ofSize: 14, weight: .medium)
+        // Read emails step down a weight, so unread ones stand out as they do in the inbox.
+        let weight: NSFont.Weight = email.unread ? .medium : .regular
+        sender.stringValue = email.sender; sender.font = .systemFont(ofSize: 14, weight: weight)
         sender.lineBreakMode = .byTruncatingTail
-        subject.stringValue = email.subject; subject.font = .systemFont(ofSize: 13, weight: .medium)
+        subject.stringValue = email.subject; subject.font = .systemFont(ofSize: 13, weight: weight)
         subject.lineBreakMode = .byTruncatingTail; subject.maximumNumberOfLines = 1
         preview.stringValue = email.preview; preview.font = .systemFont(ofSize: 12, weight: .regular)
         preview.maximumNumberOfLines = 3; preview.cell?.truncatesLastVisibleLine = true
         [sender, subject, preview, divider].forEach(addSubview)
-        setAccessibilityLabel(email.sender+", "+email.subject)
+        setAccessibilityLabel((email.unread ? "Unread, " : "")+email.sender+", "+email.subject)
         setAccessibilityValue(email.preview)
     }
     required init?(coder: NSCoder) { fatalError() }
     func applyTheme(_ theme: RiseTheme, last: Bool) {
         self.theme = theme
-        sender.textColor = theme.text; subject.textColor = theme.text
+        // Read emails are a little dimmer too, though brighter than the preview.
+        let text = email.unread ? theme.text : theme.text.withAlphaComponent(0.82)
+        sender.textColor = text; subject.textColor = text
         preview.textColor = theme.text.withAlphaComponent(0.65)
         divider.fill = theme.text.withAlphaComponent(0.12); divider.isHidden = last
         needsDisplay = true
@@ -100,6 +104,7 @@ final class GmailEmailRow: NSButton {
 }
 
 /// The same surface and positioning springs as the PR card, with a bounded, native list.
+/// Gmail and Proton Mail tabs share it.
 @MainActor final class GmailTooltip: FlippedView {
     static let width = PullRequestTooltip.width
     static let maximumHeight: CGFloat = 400
@@ -162,7 +167,7 @@ final class GmailEmailRow: NSButton {
     }
 
     /// Comes and goes with the hover cards' motion, out of its tab or out of `growsFrom` when given.
-    func present(key: String, inbox: GmailInbox, left: CGFloat, anchorTop: CGFloat, maxBottom: CGFloat, theme: RiseTheme,
+    func present<Reader>(key: String, inbox: MailInbox<Reader>, left: CGFloat, anchorTop: CGFloat, maxBottom: CGFloat, theme: RiseTheme,
                  glides: Bool = false, growsFrom: NSPoint? = nil) {
         let appearing = self.key == nil, switching = self.key != key
         if appearing { CardMotionAnimator.cancelOut(self) }
@@ -183,7 +188,7 @@ final class GmailEmailRow: NSButton {
         let point = tabPoint ?? NSPoint(x: frame.minX, y: anchorTop+TabAppearance.height/2)
         return CGPoint(x: point.x-frame.minX, y: point.y-frame.minY)
     }
-    func update(_ inbox: GmailInbox) {
+    func update<Reader>(_ inbox: MailInbox<Reader>) {
         guard key != nil else { return }
         loading = inbox.showsLoading; hasMore = inbox.hasMore; error = inbox.error
         if rows.map(\.email) != inbox.emails {

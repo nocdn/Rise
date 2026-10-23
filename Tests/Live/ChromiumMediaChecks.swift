@@ -30,6 +30,7 @@ import RiseChromium
             await TabMediaCases().runAll()
             await TabAudioCases().runAll()
             await GmailReaderCases().runAll()
+            await ProtonMailReaderCases().runAll()
             await CalendarReaderCases().runAll()
             await DownloadCases().runAll()
             await PageAssistantCases().runAll()
@@ -438,7 +439,7 @@ private final class HeaderRecordingServer {
         defer { browser.saveWork?.cancel(); browser.tabs.forEach { $0.cancelLoad() }; browser.window?.orderOut(nil) }
         let tab = browser.addTab(), web = tab.web
         web.loadHTMLString("""
-        <table><tr class="zA"><td class="yW"><span email="a@example.com" name="Alice">Ali…</span></td>
+        <table><tr class="zA zE"><td class="yW"><span email="a@example.com" name="Alice">Ali…</span></td>
         <td><span class="bog"><span data-legacy-thread-id="abcdef">Subject &amp; details</span><img alt="image"></span>
         <span class="y2"><span class="Zt"> - </span>Hello <b>there</b><img alt="ignored"><span aria-hidden="true">hidden</span>!\u{200b} More text.</span></td></tr></table>
         <div role="button" id="older"><img class="amJ"></div>
@@ -452,7 +453,7 @@ private final class HeaderRecordingServer {
         let snapshot = try await reader(GmailPageReader.snapshot)
         let raw = try XCTUnwrap(snapshot as? [String: Any])
         let page = try JSONDecoder().decode(GmailPage.self, from: JSONSerialization.data(withJSONObject: raw))
-        XCTAssertEqual(page.emails, [GmailEmail(id: "abcdef", sender: "Alice", subject: "Subject & details", preview: "Hello there! More text.")])
+        XCTAssertEqual(page.emails, [GmailEmail(id: "abcdef", sender: "Alice", subject: "Subject & details", preview: "Hello there! More text.", unread: true)])
         XCTAssertTrue(page.hasMore); XCTAssertEqual(raw["ready"] as? Bool, true)
         XCTAssertEqual(raw["query"] as? String, "in:inbox category:updates")
         _ = try await web.evaluateJavaScript("window.shifted = []; document.querySelector('tr.zA').addEventListener('click', e => shifted.push(e.shiftKey)); 0")
@@ -470,6 +471,66 @@ private final class HeaderRecordingServer {
         let empty = try await reader(GmailPageReader.snapshot) as? [String: Any]
         XCTAssertEqual(empty?["ready"] as? Bool, true, "An empty category finishes loading")
         XCTAssertEqual(empty?["hasMore"] as? Bool, false)
+    }
+}
+
+/// The scripts Proton Mail's card reads the inbox and opens an email with, on a page made like Proton's.
+@MainActor final class ProtonMailReaderCases {
+    func runAll() async {
+        let only = ProcessInfo.processInfo.environment["RISE_CASES"]?.split(separator: ",").map(String.init)
+        if only?.contains("ProtonListReadsSendersSubjectsAndPages") ?? true {
+            await liveCase("ProtonListReadsSendersSubjectsAndPages") { try await testProtonListReadsSendersSubjectsAndPages() }
+        }
+    }
+    func testProtonListReadsSendersSubjectsAndPages() async throws {
+        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"),
+                                        restore: false, preferences: UserDefaults(suiteName: "Rise.ProtonMailChecks.\(UUID().uuidString)")!)
+        browser.window?.setFrameAutosaveName(""); browser.window?.center(); browser.showWindow(nil)
+        defer { browser.saveWork?.cancel(); browser.tabs.forEach { $0.cancelLoad() }; browser.window?.orderOut(nil) }
+        let tab = browser.addTab(), web = tab.web
+        web.loadHTMLString("""
+        <div data-shortcut-target="item-container" data-element-id="Ab_c-1==" class="item-container unread"><div class="item-senders">
+        <span data-testid="message-column:sender-address"><span title="a@example.com" data-testid="message-column:sender-address">Alice\u{200b}</span></span>,
+        <span data-testid="message-column:sender-address"><span title="b@example.com" data-testid="message-column:sender-address">Bob</span></span></div>
+        <time>7:05 PM</time><span data-testid="message-column:subject" title="Subject &amp; details">Subject &amp; details</span></div>
+        <div data-shortcut-target="item-container" data-element-id="bad/id"><span data-testid="message-column:subject">Skipped</span></div>
+        <button data-testid="toolbar:next-page" id="next">Next page</button>
+        <script>
+        next.onclick = () => { history.pushState({}, '', location.pathname + '#category=primary&page=2'); next.disabled = true };
+        addEventListener('popstate', () => document.body.dataset.opened = location.pathname);
+        </script>
+        """, baseURL: URL(string: "https://mail.proton.me/u/1/inbox#category=primary"))
+        for _ in 0..<200 where web.isLoading || web.url?.host != "mail.proton.me" { try await Task.sleep(for: .milliseconds(25)) }
+        func reader(_ script: String) async throws -> Any? {
+            try await tab.page.evaluate("return " + script, arguments: [:], in: nil, world: .named(ProtonMailPageReader.world))
+        }
+        let snapshot = try await reader(ProtonMailPageReader.snapshot)
+        let raw = try XCTUnwrap(snapshot as? [String: Any])
+        let page = try JSONDecoder().decode(GmailPage.self, from: JSONSerialization.data(withJSONObject: raw))
+        XCTAssertEqual(page.emails, [GmailEmail(id: "Ab_c-1==", sender: "Alice, Bob", subject: "Subject & details", preview: "", unread: true)])
+        XCTAssertTrue(page.hasMore); XCTAssertEqual(raw["ready"] as? Bool, true); XCTAssertEqual(raw["page"] as? Int, 1)
+        let advanced = try await reader(ProtonMailPageReader.nextPage) as? Bool
+        XCTAssertEqual(advanced, true)
+        let second = try await reader(ProtonMailPageReader.snapshot) as? [String: Any]
+        XCTAssertEqual(second?["page"] as? Int, 2); XCTAssertEqual(second?["hasMore"] as? Bool, false)
+        let stopped = try await reader(ProtonMailPageReader.nextPage) as? Bool
+        XCTAssertEqual(stopped, false)
+        // Opening goes through Proton's own router, from Rise's world, without a reload.
+        let opened = try await tab.page.evaluate(ProtonMailPageReader.open, arguments: ["route": "/u/1/inbox/Ab_c-1=="], in: nil,
+                                                 world: .named(ProtonMailPageReader.world)) as? Bool
+        XCTAssertEqual(opened, true)
+        let route = try await web.evaluateJavaScript("document.body.dataset.opened") as? String
+        XCTAssertEqual(route, "/u/1/inbox/Ab_c-1==", "Proton hears the change of route")
+        let loading = try await reader(ProtonMailPageReader.snapshot) as? [String: Any]
+        XCTAssertEqual(loading?["ready"] as? Bool, false, "An open conversation isn't the inbox's list")
+        _ = try await web.evaluateJavaScript("history.pushState({}, '', '/u/1/inbox'); document.body.innerHTML = '<h3 data-testid=\"empty-view-placeholder--empty-title\">No messages found</h3>'; 0")
+        let empty = try await reader(ProtonMailPageReader.snapshot) as? [String: Any]
+        XCTAssertEqual(empty?["ready"] as? Bool, true, "An empty inbox finishes loading")
+        XCTAssertEqual(empty?["hasMore"] as? Bool, false)
+        _ = try await web.evaluateJavaScript("document.body.innerHTML = '<div class=item-is-loading></div>'; 0")
+        let app = try await tab.page.evaluate(ProtonMailPageReader.open, arguments: ["route": "/u/1/inbox/x"], in: nil,
+                                              world: .named(ProtonMailPageReader.world)) as? Bool
+        XCTAssertEqual(app, false, "Until Proton shows its mailbox, the tab loads the email instead")
     }
 }
 

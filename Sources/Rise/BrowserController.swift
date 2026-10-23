@@ -134,6 +134,11 @@ import RiseCore
         inbox.onChange = { [weak self] in self?.gmailInboxChanged() }
         return inbox
     }()
+    lazy var protonMailInbox: ProtonMailInbox = {
+        let inbox = ProtonMailInbox()
+        inbox.onChange = { [weak self] in self?.protonMailInboxChanged() }
+        return inbox
+    }()
     var paletteCreatesTab = false
     var splitGroups: [SplitTabGroup] = []
     var peekSourceTabID: UUID?
@@ -570,7 +575,7 @@ import RiseCore
         if !tabSwitcher.isHidden { tabSwitcher.place(in: b) }
     }
     func windowDidResize(_ notification: Notification) { layoutChrome() }
-    func windowWillClose(_ notification: Notification) { githubStarrer.tearDown(); linkPullRequests.summaries.tearDown(); plainBarTimer?.invalidate(); plainBarTimer = nil; tabPressed(); gmailInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); saveNow() }
+    func windowWillClose(_ notification: Notification) { githubStarrer.tearDown(); linkPullRequests.summaries.tearDown(); plainBarTimer?.invalidate(); plainBarTimer = nil; tabPressed(); gmailInbox.tearDown(); protonMailInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); saveNow() }
     func windowDidResignKey(_ notification: Notification) {
         pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch(); endSidebarPeek(); tabPressed()
         sidebar?.cancelTabInteractions()
@@ -750,7 +755,7 @@ import RiseCore
             tabs = tabs.filter(\.pinned) + tabs.filter { !$0.pinned }
         }
         sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: splitGroups)
-        refreshTabHoverCard(); preloadGmailInbox(); preloadCalendarAgenda()
+        refreshTabHoverCard(); preloadGmailInbox(); preloadProtonMailInbox(); preloadCalendarAgenda()
         window?.title = (selectedTab?.title).map { "\($0) — Rise" } ?? "Rise"
         updateNavigationButtons()
         developerAddress.updateURL(selectedTab?.url?.absoluteString ?? "")
