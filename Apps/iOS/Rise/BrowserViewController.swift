@@ -662,12 +662,16 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     private func updatePageTranslation() {
         let state = pageTranslation.state(for: webView)
+        if let popover = presentedViewController as? PageTranslationPopover,
+           popover.page !== webView || popover.documentID != state.documentID || !state.busy {
+            popover.finish()
+        }
         bottomBar.menu.address.showTranslation(state)
         if !state.available || state.enabled || bottomBar.translationHint?.documentID != state.documentID {
             bottomBar.cancelTranslationHint()
         }
         let compact = !isPanelOpen && panelExpansion == 0 && !isTabSwitcherOpen && tabSwitcher.isHidden
-            && summarise == nil && presentedViewController == nil && !bottomBar.isCollapsed
+            && summarise == nil && (presentedViewController == nil || presentedViewController is PageTranslationPopover) && !bottomBar.isCollapsed
             && bottomBar.shown === bottomBar.home && view.window?.windowScene?.activationState == .foregroundActive
         bottomBar.updateTranslationStatus(state, visible: compact)
         guard compact, let documentID = state.documentID,
@@ -988,7 +992,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let actions: [(UIControl, @MainActor (BrowserViewController) -> Void)] = [
             (address.backButton, { $0.goBack() }),
             (address.forwardButton, { $0.goForward() }),
-            (address.translateButton, { $0.pageTranslation.toggle($0.webView) }),
+            (address.translateButton, { $0.pressTranslation() }),
             // While editing the address, X clears it, or closes the dialog once it's empty.
             (address.reloadButton, {
                 if !$0.bottomBar.menu.address.isEditingURL { $0.closePanel(); $0.reloadPage() }
@@ -1008,6 +1012,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         for (control, action) in actions {
             control.addAction(UIAction { [weak self] _ in if let self { action(self) } }, for: .primaryActionTriggered)
         }
+        bottomBar.showTranslationProgress = { [weak self] source in self?.showTranslationProgress(from: source) }
+        bottomBar.configureTranslationSpinner = { [weak self] source in self?.addTranslationCancelHold(to: source) }
+        addTranslationCancelHold(to: address.translateButton)
         for button in [bottomBar.history.closeButton, bottomBar.downloads.closeButton,
                        bottomBar.siteSettings.closeButton, bottomBar.appSettings.closeButton,
                        bottomBar.privacyPolicy.closeButton] {

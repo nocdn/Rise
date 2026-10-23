@@ -6,8 +6,25 @@ than the compact toolbar's discovery glyph (SVG stroke 1.7 versus 1.8).
 It appears for a detected non-English document. Tap to translate in place to English;
 the icon swaps to a native SwiftUI `ProgressView` with `.controlSize(.mini)` and the
 slightly enlarged 112% scale, using the standard symbol animation, then back
-to blue when translation finishes. Blue means enabled, and another tap
-cancels outstanding work and restores the original text without reloading.
+to blue when translation finishes. Tapping the running spinner opens a native
+`UIPopoverPresentationController` anchored to it, with “Translating page”, the source language
+and “Hold the spinner to cancel” on a separate subtitle line with 3 pt of extra paragraph
+spacing. The popover is 280 pt wide at most and
+has no cancel button. Holding a running spinner for 400 ms cancels immediately with one
+full-intensity rigid haptic. The same recognizer serves the URL row, compact toolbar and
+popover's heading spinner, consumes release and captures the document at touch-down.
+The normal touch-down haptic is suppressed on a running translation. The popover allows
+touches through to its anchor spinner, and VoiceOver offers a Cancel translation action.
+Dismissing outside leaves translation running; cancellation restores the original text
+and completion closes the popover. The compact toolbar spinner
+opens the same popover with a 44 pt hit area. A whole-page percentage is omitted because
+model preparation and dynamic page batches have no stable total. The popover uses the
+app’s OpenRunde fonts and normal button press feedback. UIKit draws its Liquid Glass
+backdrop and downward arrow; the content stays clear and no backdrop color overrides
+the system material. Glass and text inherit the app’s light/dark theme, including changes
+while the popover is open. The subtitle names the detected language, such as
+“Translating from Polish to English.” Blue means
+enabled, and another tap restores the original text without reloading.
 The blue-to-normal colour change is immediate.
 The initial successful translation plays one native success haptic for the active page,
 whether the menu is open or closed. Later dynamic batches, background tabs, cancellation,
@@ -54,7 +71,11 @@ attributes are temporarily changed to English/LTR and restored with the original
 Run `-RisePageTranslationAudit` for real WebKit detection, icon placement and toggling,
 restoration, links/forms, editable/code exclusions, shadow DOM, subframes, live updates,
 large batches, cancellation, model errors, navigation and per-page isolation. Simulator
-tests replace only the translation model with deterministic results; Apple's actual
+tests replace only the translation model with deterministic results. Add
+`-RiseTranslationPopoverPreview` (light) or `-RiseTranslationPopoverDarkPreview` (dark)
+to hold the first popover for 45 seconds for native screen captures of its glass and arrow.
+`-RiseTranslationHoldPreview` instead waits for a real native hold and checks one cancellation
+haptic and no translation restart after release. Apple's actual
 language downloads and model output require an iOS device.
 
 Apple API: https://developer.apple.com/documentation/translation/translating-text-within-your-app

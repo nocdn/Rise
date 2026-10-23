@@ -68,7 +68,8 @@ final class AddressBar: UIControl {
         translateButton.tintColor = state.enabled && !state.busy ? .systemBlue : .label
         if state.busy { translateButton.setLoading(name: "page-translation-loading") }
         else { translateButton.setGlyph(UIImage(named: "MenuTranslate"), name: "page-translation") }
-        translateButton.accessibilityLabel = state.enabled ? "Show Original" : "Translate to English"
+        translateButton.accessibilityLabel = state.busy ? "Translation progress" : state.enabled ? "Show Original" : "Translate to English"
+        translateButton.accessibilityHint = state.busy ? "Tap for status. Hold to cancel translation." : nil
         translateButton.accessibilityValue = state.busy ? "Translating to English" : state.enabled ? "Translated to English" : nil
     }
 

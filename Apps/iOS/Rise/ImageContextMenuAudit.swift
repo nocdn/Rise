@@ -54,7 +54,7 @@ import WebKit
         load("<img id='image' style='width:100px;height:75px' src='\(imageURL())'><a id='link' href='https://example.com'>Link</a>")
         try await wait("ordinary-image-loaded") { try await page.evaluateJavaScript("document.querySelector('#image')?.naturalWidth === 800") as? Bool == true }
         try await touch("document.querySelector('#image')")
-        try await wait("menu-shows-file-pixels-instead-of-css-size") { ImageContextMenus.menu(in: page, actions: []).title == "800 × 600 pixels" }
+        try await wait("menu-shows-file-pixels-instead-of-css-size") { ImageContextMenus.menu(in: page, actions: []).title == "800 × 600 px" }
         let nativeSave = UIAction(title: "Save to Photos") { _ in }
         try check("webkits-native-actions-are-preserved", ImageContextMenus.menu(in: page, actions: [nativeSave]).children.first === nativeSave)
         try await touch("document.querySelector('#link')")
@@ -63,18 +63,18 @@ import WebKit
         load("<a href='https://example.com'><img id='image' srcset='\(imageURL()) 2x' style='width:100px'></a>")
         try await wait("retina-srcset-has-density-corrected-natural-size") { try await page.evaluateJavaScript("document.querySelector('#image')?.naturalWidth === 400") as? Bool == true }
         try await touch("document.querySelector('#image')")
-        try await wait("retina-menu-shows-the-full-resource-size") { ImageContextMenus.menu(in: page, actions: []).title == "800 × 600 pixels" }
+        try await wait("retina-menu-shows-the-full-resource-size") { ImageContextMenus.menu(in: page, actions: []).title == "800 × 600 px" }
         _ = try await page.evaluateJavaScript("document.querySelector('#image').title = 'A website update'; void 0")
         try await touch("document.body")
         try await wait("later-website-title-changes-are-preserved") { try await page.evaluateJavaScript("document.querySelector('#image').title === 'A website update'") as? Bool == true }
         load("<img id='image' title='Original caption' src='\(imageURL())'>")
         try await wait("captioned-image-loaded") { try await page.evaluateJavaScript("document.querySelector('#image')?.complete === true") as? Bool == true }
         try await touch("document.querySelector('#image')")
-        try await wait("dimensions-are-added-to-existing-captions") { ImageContextMenus.menu(in: page, actions: []).title == "Original caption\n800 × 600 pixels" }
+        try await wait("dimensions-are-added-to-existing-captions") { ImageContextMenus.menu(in: page, actions: []).title == "Original caption\n800 × 600 px" }
         ImageContextMenus.setPresented(true, in: page)
         try await Task.sleep(for: .milliseconds(2700))
-        let captionVisible = try await page.evaluateJavaScript("document.querySelector('#image').title.includes('800 × 600 pixels')") as? Bool == true
-        try check("heading-stays-present-through-native-menu-refreshes", ImageContextMenus.menu(in: page, actions: []).title == "Original caption\n800 × 600 pixels"
+        let captionVisible = try await page.evaluateJavaScript("document.querySelector('#image').title.includes('800 × 600 px')") as? Bool == true
+        try check("heading-stays-present-through-native-menu-refreshes", ImageContextMenus.menu(in: page, actions: []).title == "Original caption\n800 × 600 px"
                   && captionVisible)
         ImageContextMenus.setPresented(false, in: page)
         try await wait("original-caption-is-restored-when-the-menu-closes") { try await page.evaluateJavaScript("document.querySelector('#image').title === 'Original caption'") as? Bool == true }
@@ -86,7 +86,7 @@ import WebKit
         await new Promise(resolve => { image.onload = resolve; image.src = URL.createObjectURL(blob); });
         """, arguments: [:], in: nil, contentWorld: ImageContextMenus.world)
         try await touch("document.querySelector('#host').shadowRoot.querySelector('img')")
-        try await wait("blob-images-and-shadow-dom-retain-file-dimensions") { ImageContextMenus.menu(in: page, actions: []).title == "360 × 240 pixels" }
+        try await wait("blob-images-and-shadow-dom-retain-file-dimensions") { ImageContextMenus.menu(in: page, actions: []).title == "360 × 240 px" }
         load("<img id='image' src='data:image/png,broken'>")
         try await wait("broken-image-finished-loading") { try await page.evaluateJavaScript("document.querySelector('#image')?.complete === true") as? Bool == true }
         try await touch("document.querySelector('#image')")

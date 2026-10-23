@@ -12,7 +12,8 @@ or copying browser cookies to another networking stack.
 
 Linked images use `UIMenu(title:children:)` with WebKit's supplied actions. WebKit's public
 menu delegate only runs for links; unlinked image menus read the image element's title.
-The script temporarily appends the dimensions there, then restores the original value
+The dimensions use a compact `800 × 600 px` label. The script temporarily appends
+them there, then restores the original value
 when the menu closes. Ordinary taps restore it after a short timeout instead. The public
 menu presentation callbacks keep the heading stable during image-analysis updates.
 A website's subsequent title changes are preserved.

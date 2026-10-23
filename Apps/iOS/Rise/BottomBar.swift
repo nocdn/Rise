@@ -47,6 +47,8 @@ final class BottomBar: UIView {
     }
     func cancelTranslationHint() { translationHint?.cancel(); translationHint = nil }
     private(set) var translationStatus: PageTranslationStatus?
+    var showTranslationProgress: ((UIView) -> Void)?
+    var configureTranslationSpinner: ((UIView) -> Void)?
 
     func updateTranslationStatus(_ state: MobilePageTranslation.State, visible: Bool) {
         guard visible, state.available, state.enabled, let documentID = state.documentID else {
@@ -57,6 +59,11 @@ final class BottomBar: UIView {
             cancelTranslationHint()
             if let translationStatus { translationStatus.showLoading(); return }
             let status = PageTranslationStatus(documentID: documentID)
+            configureTranslationSpinner?(status)
+            status.addAction(UIAction { [weak self, weak status] _ in
+                guard let status, status.phase == .translating else { return }
+                self?.showTranslationProgress?(status)
+            }, for: .primaryActionTriggered)
             translationStatus = status
             row.insertSubview(status, belowSubview: moreLanding)
             setNeedsLayout(); layoutIfNeeded()
@@ -113,6 +120,7 @@ final class BottomBar: UIView {
     private let successFeedback = UINotificationFeedbackGenerator()
     #if DEBUG
     private(set) var translationSuccessFeedbackCount = 0
+    private(set) var translationCancellationFeedbackCount = 0
     #endif
     private var copySuccessTask: Task<Void, Never>?
     /// Whichever of the row, the search and the menu is showing, if any.
@@ -226,7 +234,12 @@ final class BottomBar: UIView {
         moreLanding.addSubview(moreButton)
         for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton, search.privateButton, tabMenu.historyButton, history.closeButton]+menu.buttons+siteSettings.buttons+appSettings.buttons+privacyPolicy.buttons+downloads.buttons+find.buttons+[find.modeButton, find.sendButton] {
             // A light, crisp tap as the finger lands, rather than a soft thud; actions wait for it to lift.
-            button.addAction(UIAction { [weak self] _ in self?.tap.impactOccurred(intensity: 0.5) }, for: .touchDown)
+            button.addAction(UIAction { [weak self, weak button] _ in
+                guard let self else { return }
+                // A running translation reserves its one click for the recognised hold.
+                if button === menu.address.translateButton, menu.address.translateButton.symbolName == "page-translation-loading" { return }
+                tap.impactOccurred(intensity: 0.5)
+            }, for: .touchDown)
         }
         downloads.onTouchDown = { [weak self] in self?.tap.impactOccurred(intensity: 0.5) }
         tap.prepare()
@@ -254,6 +267,13 @@ final class BottomBar: UIView {
         successFeedback.notificationOccurred(.success)
         #if DEBUG
         translationSuccessFeedbackCount += 1
+        #endif
+    }
+
+    func showTranslationCancellation() {
+        tap.impactOccurred(intensity: 1)
+        #if DEBUG
+        translationCancellationFeedbackCount += 1
         #endif
     }
 
@@ -362,7 +382,7 @@ final class BottomBar: UIView {
         let menuSide = Self.menuSize
         moreLanding.bounds = CGRect(x: 0, y: 0, width: menuSide, height: menuSide)
         moreLanding.center = CGPoint(x: bounds.width-centre, y: midY)
-        translationStatus?.bounds = CGRect(x: 0, y: 0, width: 32, height: 32)
+        translationStatus?.bounds = CGRect(x: 0, y: 0, width: 44, height: 44)
         translationStatus?.center = CGPoint(x: moreLanding.center.x-PageTranslationHint.leadingDistance, y: midY)
         moreButton.bounds = CGRect(x: 0, y: 0, width: menuSide, height: menuSide)
         moreButton.center = CGPoint(x: menuSide/2, y: menuSide/2)

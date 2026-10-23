@@ -56,10 +56,15 @@ import WebKit
         return try await ApplePageTranslator.translate(texts, from: language, in: presenter)
     }
     private func failed(_ error: Error) {
-        guard !(error is CancellationError), let presenter = presenter(), presenter.presentedViewController == nil else { return }
+        guard !(error is CancellationError), let presenter = presenter() else { return }
         let alert = UIAlertController(title: "Couldn't translate this page", message: error.localizedDescription, preferredStyle: .alert)
         alert.addAction(UIAlertAction(title: "OK", style: .default))
-        presenter.present(alert, animated: true)
+        if let popover = presenter.presentedViewController as? PageTranslationPopover {
+            popover.finish { [weak presenter] in
+                guard let presenter, presenter.presentedViewController == nil else { return }
+                presenter.present(alert, animated: true)
+            }
+        } else if presenter.presentedViewController == nil { presenter.present(alert, animated: true) }
     }
 
     private final class Context: NSObject, WKScriptMessageHandler {

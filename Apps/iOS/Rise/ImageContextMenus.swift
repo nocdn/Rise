@@ -45,7 +45,7 @@ import WebKit
                   let width = body["width"] as? Int, let height = body["height"] as? Int,
                   width > 0, height > 0 {
             let caption = (body["caption"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            heading = [caption, "\(width) × \(height) pixels"].filter { !$0.isEmpty }.joined(separator: "\n")
+            heading = [caption, "\(width) × \(height) px"].filter { !$0.isEmpty }.joined(separator: "\n")
         }
     }
 
@@ -85,7 +85,7 @@ import WebKit
           if (token === selected && image.isConnected && (image.currentSrc || image.src) === source && original.naturalWidth > 0) {
             const previous = image.getAttribute('title');
             const label = (previous || '').trim().slice(0, 500);
-            const size = `${original.naturalWidth} × ${original.naturalHeight} pixels`;
+            const size = `${original.naturalWidth} × ${original.naturalHeight} px`;
             const value = [label, size].filter(Boolean).join('\n');
             // WebKit's public menu delegate only handles links. Unlinked images use
             // the element's own title for their native menu heading instead.

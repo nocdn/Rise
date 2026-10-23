@@ -42,6 +42,7 @@ import WebKit
         try check("english-variants-are-english", PageTranslationLanguage.isEnglish("en-GB"))
         try check("unknown-and-invalid-language-tags-are-ignored", PageTranslationLanguage.identify(sample: "123", declared: "not a language") == nil)
         let browser = BrowserViewController(startURL: nil, suggestionsDirectory: folder, websiteDataStore: .nonPersistent())
+        browser.overrideUserInterfaceStyle = .light
         window.rootViewController = browser; window.makeKeyAndVisible(); browser.view.layoutIfNeeded()
         let page = browser.webView, translation = browser.pageTranslation
         var fail = false, delay = false, holdModel = false, calls = 0
@@ -96,7 +97,7 @@ import WebKit
         try capture("original-menu")
         let marker = try await page.evaluateJavaScript("window.marker") as! Double
         let feedbackBeforeTranslation = browser.bottomBar.translationSuccessFeedbackCount
-        delay = true
+        delay = true; holdModel = true
         address.translateButton.sendActions(for: .primaryActionTriggered)
         try check("tapping-immediately-swaps-to-a-spinner", address.translateButton.symbolName == "page-translation-loading" && address.translateButton.tintColor == .label)
         try await Task.sleep(for: .milliseconds(330))
@@ -106,7 +107,67 @@ import WebKit
             return $0.isAnimating && shown.width > 5 && shown.width < 16
         })
         try capture("translating-menu")
-        delay = false
+        address.translateButton.sendActions(for: .primaryActionTriggered)
+        try await wait("tapping-the-running-spinner-opens-a-popover-without-cancelling") {
+            browser.presentedViewController is PageTranslationPopover && translation.state(for: page).busy && translation.state(for: page).enabled
+        }
+        let progress = browser.presentedViewController as! PageTranslationPopover
+        try check("the-progress-popover-is-native-and-anchored-to-the-spinner", progress.modalPresentationStyle == .popover
+                  && progress.popoverPresentationController?.sourceView === address.translateButton
+                  && progress.adaptivePresentationStyle(for: progress.presentationController!, traitCollection: browser.traitCollection) == .none)
+        try await Task.sleep(for: .milliseconds(350))
+        try check("the-popover-keeps-uikits-system-glass-backdrop", progress.view.backgroundColor == .clear
+                  && progress.popoverPresentationController?.backgroundColor == nil
+                  && progress.popoverPresentationController?.popoverBackgroundViewClass == nil)
+        try check("the-native-popover-arrow-points-down-to-the-spinner", progress.popoverPresentationController?.arrowDirection == .down)
+        try check("the-popover-names-the-source-language-and-explains-hold-to-cancel", progress.detailLabel.text == "Translating from French to English.\nHold the spinner to cancel")
+        try check("the-popover-is-narrower-and-has-no-cancel-button", progress.preferredContentSize.width <= 280
+                  && progress.view.subviews.flatMap(\.subviews).allSatisfy { ($0 as? UIButton)?.title(for: .normal) != "Cancel translation" })
+        try check("all-visible-spinners-share-the-same-hold-gesture", [address.translateButton, progress.spinner].allSatisfy {
+            $0.gestureRecognizers?.contains { ($0 as? PageTranslationCancelHold)?.minimumPressDuration == 0.4 && $0.cancelsTouchesInView } == true
+        })
+        try check("the-anchor-remains-holdable-through-the-popover", progress.popoverPresentationController?.passthroughViews?.first === address.translateButton)
+        try check("polish-and-regional-language-tags-have-readable-names", PageTranslationPopover.subtitle(for: "pl") == "Translating from Polish to English."
+                  && PageTranslationPopover.subtitle(for: "pt-BR") == "Translating from Portuguese to English.")
+        try check("the-popover-inherits-the-apps-light-theme", progress.traitCollection.userInterfaceStyle == .light
+                  && progress.popoverPresentationController?.containerView?.traitCollection.userInterfaceStyle == .light)
+        if ProcessInfo.processInfo.arguments.contains("-RiseTranslationHoldPreview") {
+            let clicks = browser.bottomBar.translationCancellationFeedbackCount
+            try "Ready".write(to: folder.appendingPathComponent("hold-ready.txt"), atomically: true, encoding: .utf8)
+            let deadline = Date().addingTimeInterval(45)
+            while translation.state(for: page).enabled && Date() < deadline { try await Task.sleep(for: .milliseconds(40)) }
+            try check("native-long-press-cancels-translation", !translation.state(for: page).enabled)
+            try check("native-long-press-plays-exactly-one-firm-click", browser.bottomBar.translationCancellationFeedbackCount == clicks+1)
+            try await wait("native-long-press-dismisses-the-popover") { browser.presentedViewController == nil }
+            holdModel = false
+            try await Task.sleep(for: .milliseconds(600))
+            try check("releasing-a-native-hold-cannot-restart-translation", !translation.state(for: page).enabled && browser.presentedViewController == nil)
+            return
+        }
+        // Leave the native presentation on screen briefly for compositor-level visual checks.
+        if ProcessInfo.processInfo.arguments.contains("-RiseTranslationPopoverPreview") {
+            try await Task.sleep(for: .seconds(45))
+        }
+        try capture("translation-popover-light")
+        browser.overrideUserInterfaceStyle = .dark
+        try await Task.sleep(for: .milliseconds(350))
+        try check("the-open-popover-follows-the-apps-dark-theme", progress.traitCollection.userInterfaceStyle == .dark
+                  && progress.popoverPresentationController?.containerView?.traitCollection.userInterfaceStyle == .dark)
+        if ProcessInfo.processInfo.arguments.contains("-RiseTranslationPopoverDarkPreview") {
+            try await Task.sleep(for: .seconds(45))
+        }
+        try capture("translation-popover-dark")
+        progress.dismiss(animated: false)
+        browser.overrideUserInterfaceStyle = .light
+        try await wait("dismissing-only-the-popover-keeps-translating") {
+            browser.presentedViewController == nil && translation.state(for: page).enabled && translation.state(for: page).busy
+        }
+        address.translateButton.sendActions(for: .primaryActionTriggered)
+        address.translateButton.sendActions(for: .primaryActionTriggered)
+        try check("repeated-progress-taps-keep-a-single-popover", browser.presentedViewController is PageTranslationPopover
+                  && browser.presentedViewController?.presentedViewController == nil)
+        try await Task.sleep(for: .milliseconds(350))
+        delay = false; holdModel = false
         try await wait("the-article-is-translated-in-place") { try await page.evaluateJavaScript("document.querySelector('#article').textContent.trim()") as? String == english }
         try await wait("embedded-frame-is-translated") { try await page.evaluateJavaScript("document.querySelector('#child').contentDocument.body.textContent.trim()") as? String == "Hello world" }
         try check("open-shadow-content-is-translated", try await page.evaluateJavaScript("document.querySelector('#shadow').shadowRoot.textContent") as? String == "Hello world")
@@ -116,6 +177,7 @@ import WebKit
         try check("links-and-event-handlers-survive", try await page.evaluateJavaScript("document.querySelector('#counter').click(); document.querySelector('#link').getAttribute('href')==='/article' && window.count===1") as? Bool == true)
         try check("accessible-image-text-is-translated", try await page.evaluateJavaScript("document.querySelector('img').alt") as? String == "An image")
         try await wait("finishing-swaps-the-spinner-to-the-blue-icon") { !translation.state(for: page).busy && address.translateButton.symbolName == "page-translation" && address.translateButton.tintColor == .systemBlue }
+        try await wait("finishing-translation-dismisses-the-status-popover") { browser.presentedViewController == nil }
         try check("successful-translation-plays-one-native-success-haptic", browser.bottomBar.translationSuccessFeedbackCount == feedbackBeforeTranslation+1)
         try await Task.sleep(for: .milliseconds(320))
         try capture("translated-menu")
@@ -148,6 +210,18 @@ import WebKit
             return hypot(centre.x-statusCentre.x, centre.y-statusCentre.y) < 0.5
         })
         try capture("translating-compact-bar")
+        status.sendActions(for: .primaryActionTriggered)
+        try await wait("compact-spinner-also-opens-progress-without-cancelling") {
+            browser.presentedViewController is PageTranslationPopover && translation.state(for: page).busy
+        }
+        let compactProgress = browser.presentedViewController as! PageTranslationPopover
+        browser.updateAddress()
+        try check("compact-progress-keeps-its-anchor-during-state-refreshes", browser.bottomBar.translationStatus === status
+                  && compactProgress.popoverPresentationController?.sourceView === status && status.bounds.width >= 44)
+        try await Task.sleep(for: .milliseconds(350))
+        try capture("translation-popover-compact")
+        compactProgress.dismiss(animated: false)
+        try await wait("compact-popover-dismisses-without-interrupting-work") { browser.presentedViewController == nil && translation.state(for: page).busy }
         browser.openPanel(.menu)
         try check("reopening-the-menu-clears-the-compact-spinner", browser.bottomBar.translationStatus == nil)
         try await Task.sleep(for: .milliseconds(450))
@@ -196,21 +270,38 @@ import WebKit
         try await wait("translation-can-be-enabled-again") { try await page.evaluateJavaScript("document.querySelector('#article').textContent.trim()") as? String == english }
         translation.toggle(page)
         try await Task.sleep(for: .milliseconds(250))
-        delay = true; translation.toggle(page)
+        delay = true; holdModel = true; translation.toggle(page)
         let feedbackBeforeCancellation = browser.bottomBar.translationSuccessFeedbackCount
         browser.closePanel()
         try await wait("pending-translation-shows-progress-before-cancellation") { browser.bottomBar.translationStatus?.phase == .translating }
-        translation.toggle(page)
+        browser.bottomBar.translationStatus?.sendActions(for: .primaryActionTriggered)
+        try await wait("compact-spinner-opens-hold-to-cancel-status") { browser.presentedViewController is PageTranslationPopover }
+        try await Task.sleep(for: .milliseconds(350))
+        try check("the-compact-spinner-also-uses-the-shared-hold-gesture", browser.bottomBar.translationStatus?.gestureRecognizers?.contains { $0 is PageTranslationCancelHold } == true)
+        let cancellationFeedback = browser.bottomBar.translationCancellationFeedbackCount
+        guard let cancel = browser.prepareTranslationCancellation() else { throw Failure(name: "no-pending-translation-to-cancel") }
+        cancel(); cancel()
+        try check("holding-cancellation-plays-only-one-firm-click", browser.bottomBar.translationCancellationFeedbackCount == cancellationFeedback+1)
         try check("cancelling-translation-removes-compact-progress-immediately", browser.bottomBar.translationStatus == nil)
+        try await wait("hold-cancellation-closes-the-popover-and-restores-the-original") {
+            browser.presentedViewController == nil && !translation.state(for: page).enabled
+        }
+        holdModel = false
         try await Task.sleep(for: .milliseconds(600))
         try check("cancelled-model-results-cannot-rewrite-the-original", try await page.evaluateJavaScript("document.querySelector('#article').textContent.trim()") as? String == french)
         try check("cancelled-translation-does-not-play-success", browser.bottomBar.translationSuccessFeedbackCount == feedbackBeforeCancellation)
         browser.openPanel(.menu)
         try await Task.sleep(for: .milliseconds(450))
-        delay = false; fail = true; translation.toggle(page)
+        delay = false; fail = true; holdModel = true; translation.toggle(page)
+        address.translateButton.sendActions(for: .primaryActionTriggered)
+        try await wait("model-error-fixture-opens-its-progress-popover") { browser.presentedViewController is PageTranslationPopover }
+        try await Task.sleep(for: .milliseconds(350))
+        holdModel = false
         try await wait("model-errors-reset-the-enabled-state") { !translation.state(for: page).enabled }
+        try await wait("model-errors-show-an-alert-after-the-progress-popover-closes") { browser.presentedViewController is UIAlertController }
         try check("failed-translation-does-not-play-success", browser.bottomBar.translationSuccessFeedbackCount == feedbackBeforeCancellation)
         browser.presentedViewController?.dismiss(animated: false)
+        try await wait("model-error-alert-dismisses") { browser.presentedViewController == nil }
         fail = false
         translation.toggle(page)
         try await wait("translation-recovers-after-a-model-error") { try await page.evaluateJavaScript("document.querySelector('#article').textContent.trim()") as? String == english }

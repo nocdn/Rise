@@ -1,7 +1,7 @@
 import UIKit
 
 /// Continues the current document's progress beside More once its panel is closed.
-@MainActor final class PageTranslationStatus: UIView {
+@MainActor final class PageTranslationStatus: UIButton {
     enum Phase { case translating, translated, leaving }
     static let completedHoldDuration = 0.75
     let documentID: String
@@ -15,11 +15,13 @@ import UIKit
     init(documentID: String) {
         self.documentID = documentID
         super.init(frame: .zero)
-        isUserInteractionEnabled = false
         isAccessibilityElement = true
-        accessibilityTraits = .staticText
-        accessibilityLabel = "Translating to English"
+        accessibilityTraits = .button
+        accessibilityLabel = "Translation progress"
+        accessibilityValue = "Translating to English"
+        accessibilityHint = "Tap for status. Hold to cancel translation."
         symbol.accessibilityElementsHidden = true
+        symbol.isUserInteractionEnabled = false
         symbol.tintColor = .label
         symbol.setLoading(name: "page-translation-loading")
         addSubview(symbol)
@@ -39,18 +41,26 @@ import UIKit
     func showLoading() {
         guard phase != .translating else { return }
         phase = .translating
+        isUserInteractionEnabled = true
+        accessibilityTraits = .button
         dismissal?.cancel(); dismissal = nil
         symbol.tintColor = .label
         symbol.setLoading(name: "page-translation-loading")
-        accessibilityLabel = "Translating to English"
+        accessibilityLabel = "Translation progress"
+        accessibilityValue = "Translating to English"
+        accessibilityHint = "Tap for status. Hold to cancel translation."
         animateVisibility(true)
     }
     func showTranslated() {
         guard phase == .translating else { return }
         phase = .translated
+        isUserInteractionEnabled = false
+        accessibilityTraits = .staticText
         symbol.tintColor = .systemBlue
         symbol.setGlyph(UIImage(named: "ToolbarTranslate"), name: "page-translation")
         accessibilityLabel = "Page translated to English"
+        accessibilityValue = nil
+        accessibilityHint = nil
         dismissal = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(Self.completedHoldDuration)) }
             catch { return }
