@@ -30,11 +30,13 @@ import RiseChromium
 
         // A time selected in another zone heads the menu in the person's own (`SelectionTimes`).
         let times = SelectionTimes.find(in: info.selectionText)
+        // A note about the selection, lighter than a section heading's semibold: weight 450 on the
+        // system font's own scale, between regular (400) and medium (510), which named weights snap to.
+        let small = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+        let note = NSFont(descriptor: small.fontDescriptor.addingAttributes([.variation: [NSNumber(value: 0x77676874 /* wght */): 450]]), size: 0) ?? small
         for time in times {
             let title = SelectionTimes.label(time, of: times.count), header = NSMenuItem.sectionHeader(title: title)
-            // A note about the selection, lighter than a section heading's semibold.
-            header.attributedTitle = NSAttributedString(string: title, attributes: [
-                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor])
+            header.attributedTitle = NSAttributedString(string: title, attributes: [.font: note, .foregroundColor: NSColor.secondaryLabelColor])
             menu.addItem(header)
         }
         if !times.isEmpty { menu.addItem(.separator()) }

@@ -8,7 +8,8 @@ import AppKit
         displayedRows.first { ($0 as? TabRow)?.tabID == id || ($0 as? SplitTabRow)?.group.contains(id) == true }
     }
     func beginTabDrag(_ id: UUID, event: NSEvent) {
-        guard drag == nil, let row = displayedRow(for: id), let canonical = canonicalID(for: row) else { return }
+        // A filtered list is no order to drag in.
+        guard drag == nil, !isSearchingTabs, let row = displayedRow(for: id), let canonical = canonicalID(for: row) else { return }
         finishReturningTab()
         // Continue from a row's visible position if it was still settling.
         if let layer = row.layer, let position = layer.presentation()?.position {

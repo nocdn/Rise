@@ -59,6 +59,8 @@ import RiseCore
     private(set) var isRenaming = false
     private var originalTitle = ""
     private var hover = false
+    /// Chosen with the arrow keys while searching tabs: lit as a hovered row is, close button aside.
+    var isKeyboardFocused = false { didSet { if isKeyboardFocused != oldValue { style() } } }
     /// AppKit turns a button's clipping back on; the chosen row draws its ring and shadow
     /// just outside it.
     override var clipsToBounds: Bool { get { false } set {} }
@@ -239,12 +241,12 @@ import RiseCore
         let plain = !isSplitMember
         plainBackground.isHidden = !plain
         let background = (plain ? (selected ? nil : dragFill) ?? .clear
-            : selected ? theme.pill : dragFill ?? (hover ? TabAppearance.hoverFill(theme) : .clear)).cgColor
+            : selected ? theme.pill : dragFill ?? (hover || isKeyboardFocused ? TabAppearance.hoverFill(theme) : .clear)).cgColor
         if layer?.backgroundColor != background { layer?.removeAnimation(forKey: TabDragMotion.backgroundKey) }
         layer?.backgroundColor = background
         if plain {
             plainBackground.radius = layer?.cornerRadius ?? TabAppearance.radius; plainBackground.dark = theme == .dark
-            plainBackground.show(chosen: selected, hovered: hover && !selected && dragFill == nil, animated: hasLaidOut && window != nil)
+            plainBackground.show(chosen: selected, hovered: (hover || isKeyboardFocused) && !selected && dragFill == nil, animated: hasLaidOut && window != nil)
         }
         close.isHidden = !hover
         // A split half has room for its close button only.

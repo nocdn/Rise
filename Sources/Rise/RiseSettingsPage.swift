@@ -31,6 +31,7 @@ import RiseChromium
             ]
         case "tabs":
             return [
+                toggle("minimalNewTab", "Minimal New Tab button", "A plus beside the window buttons opens a new tab, in place of the New Tab row above your tabs", minimalNewTab),
                 select("tabSwitcherLimit", "Tabs in the Control-Tab switcher", "The most it shows, the current tab first, five to a row",
                        "\(tabSwitcherLimit)", Self.tabSwitcherLimits.map { ("\($0)", "\($0)") }),
                 select("gmailCategory", "Gmail preview category", "Which emails the Gmail tab's hover card shows", gmailCategory.rawValue,
@@ -95,6 +96,7 @@ import RiseChromium
         case "highlightPullRequestLinks": setHighlightsPullRequestLinks(on)
         case "hideAddressScheme": setHidesAddressScheme(on)
         case "hideAddressWWW": setHidesAddressWWW(on)
+        case "minimalNewTab": setMinimalNewTab(on)
         case "tabSwitcherLimit": if let limit = Int(text) { setTabSwitcherLimit(limit) }
         case "gmailCategory": if let category = GmailCategory(rawValue: text) { selectGmailCategory(category) }
         case "goToOpenTabs": openTabLinks.setEnabled(on); openTabLinks.refresh(shownPages)

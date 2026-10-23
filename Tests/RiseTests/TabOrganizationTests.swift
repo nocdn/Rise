@@ -18,6 +18,66 @@ final class TabOrganizationTests: XCTestCase {
         NSEvent.mouseEvent(with: type, location: view.convert(point, to: nil), modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
             windowNumber: view.window!.windowNumber, context: nil, eventNumber: 1, clickCount: clicks, pressure: type == .leftMouseUp ? 0 : 1)!
     }
+    @MainActor func testTheMinimalNewTabPlusSitsByTheTrafficLightsInPlaceOfTheRow() throws {
+        let suite = "minimal-new-tab-\(UUID())", preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"),
+                                        restore: false, preferences: preferences)
+        browser.showWindow(nil); defer { clean(browser) }
+        let tab = browser.addTab(); browser.root.layoutSubtreeIfNeeded()
+        let sidebar: SidebarView = browser.sidebar, plus = sidebar.titlebarNewTab, row = try XCTUnwrap(sidebar.rows[tab.id])
+        func inWindow(_ view: NSView) -> NSRect { view.convert(view.bounds, to: nil) }
+        let lights = inWindow(try XCTUnwrap(browser.window?.standardWindowButton(.closeButton)))
+        XCTAssertTrue(sidebar.newTab.isHidden)
+        XCTAssertEqual(inWindow(plus).midX, inWindow(sidebar.archiveButton).midX)
+        XCTAssertEqual(inWindow(plus).midY, lights.midY)
+        XCTAssertEqual(row.convert(row.bounds, to: sidebar).minY, SidebarView.addresslessTop, "The tabs start where the row was")
+        // The titlebar is over the sidebar there; the plus is in it, so a click reaches it.
+        let middle = NSPoint(x: inWindow(plus).midX, y: inWindow(plus).midY)
+        XCTAssertTrue(browser.window?.contentView?.superview?.hitTest(middle) === plus)
+        plus.performClick(nil)
+        XCTAssertTrue(browser.palette.isPresented, "It does what New Tab does")
+        browser.hidePalette()
+
+        browser.setRiseSetting("minimalNewTab", false)
+        XCTAssertFalse(sidebar.newTab.isHidden); XCTAssertTrue(plus.isHidden)
+        XCTAssertEqual(row.convert(row.bounds, to: sidebar).minY, sidebar.newTab.frame.maxY+TabAppearance.spacing)
+        XCTAssertEqual(preferences.object(forKey: BrowserController.minimalNewTabKey) as? Bool, false)
+    }
+    @MainActor func testSearchingTabsLeavesTheMatchesAndChoosingOneShowsThemAllWithItSelected() throws {
+        let browser = browser(); defer { clean(browser) }
+        let titles = ["GitLab merge request", "Calendar", "GitHub pull request", "Mail"]
+        let tabs = titles.map { title in let tab = browser.addTab(); tab.title = title; return tab }
+        browser.reorderTabs(tabs.map(\.id)); browser.select(tabs[1].id); browser.update(); browser.root.layoutSubtreeIfNeeded()
+        let sidebar: SidebarView = browser.sidebar, search = sidebar.searchRow
+        let listTop = sidebar.scroll.frame.minY
+        func shown() -> [UUID] { tabs.map(\.id).filter { sidebar.rows[$0]?.isHidden == false } }
+        func press(_ command: Selector) { _ = search.control(search.field, textView: NSTextView(), doCommandBy: command) }
+
+        browser.searchTabs()
+        XCTAssertFalse(search.isHidden)
+        XCTAssertEqual(search.frame, NSRect(x: TabAppearance.inset, y: listTop, width: sidebar.bounds.width-2*TabAppearance.inset, height: TabAppearance.height))
+        XCTAssertEqual(sidebar.scroll.frame.minY, listTop+TabAppearance.height+TabSearchRow.gap, "The tabs make room, a little apart from it")
+        XCTAssertTrue(browser.window?.firstResponder === search.field.currentEditor())
+
+        search.field.stringValue = "git"; search.onChange?("git")
+        XCTAssertEqual(shown(), [tabs[0].id, tabs[2].id])
+        XCTAssertEqual(sidebar.rows[tabs[2].id]?.frame.minY, TabAppearance.height+TabAppearance.spacing, "The matches close up")
+        press(#selector(NSResponder.moveDown(_:))); press(#selector(NSResponder.moveDown(_:)))
+        XCTAssertEqual(sidebar.rows[tabs[2].id]?.isKeyboardFocused, true)
+        XCTAssertEqual(sidebar.rows[tabs[0].id]?.isKeyboardFocused, false)
+        press(#selector(NSResponder.insertNewline(_:)))
+        XCTAssertEqual(browser.selectedTab?.id, tabs[2].id)
+        XCTAssertFalse(sidebar.isSearchingTabs); XCTAssertTrue(search.isHidden)
+        XCTAssertEqual(shown(), tabs.map(\.id), "Every tab is back")
+        XCTAssertEqual(sidebar.rows[tabs[2].id]?.isKeyboardFocused, false)
+        XCTAssertEqual(sidebar.scroll.frame.minY, listTop)
+
+        browser.searchTabs(); search.field.stringValue = "mail"; search.onChange?("mail")
+        XCTAssertEqual(shown(), [tabs[3].id])
+        press(#selector(NSResponder.cancelOperation(_:)))
+        XCTAssertEqual(shown(), tabs.map(\.id)); XCTAssertEqual(browser.selectedTab?.id, tabs[2].id, "Escape keeps the tab that was selected")
+    }
     @MainActor func testCleanUpBringsEachSitesTabsTogetherAndUndoes() throws {
         let browser = browser(); defer { clean(browser) }
         let urls = ["https://gitlab.com/a", "https://jira.example.com/1", "", "https://www.gitlab.com/b", "https://jira.example.com/2", "https://gitlab.com/c"]
@@ -49,9 +109,8 @@ final class TabOrganizationTests: XCTestCase {
         XCTAssertEqual(browser.tabs.map(\.id), [c.id,b.id,a.id])
         XCTAssertEqual(cRow.frame.minY,0); XCTAssertEqual(cRow.frame.height,34)
         let firstFrame = cRow.convert(cRow.bounds, to: browser.sidebar)
-        XCTAssertEqual(firstFrame.minY-browser.sidebar.newTab.frame.maxY, TabAppearance.spacing)
+        XCTAssertEqual(firstFrame.minY, browser.sidebar.newTab.frame.minY, "The list starts where the New Tab row would be")
         XCTAssertEqual(firstFrame.width, browser.sidebar.newTab.frame.width)
-        XCTAssertEqual(firstFrame.height, browser.sidebar.newTab.frame.height)
         XCTAssertNil(cRow.layer?.animation(forKey:TabListMotion.movementKey), "The new row is immediately visible in its final position")
         XCTAssertEqual(aRow.frame.minY,aFrame.minY+37); XCTAssertEqual(bRow.frame.minY,bFrame.minY+37)
         let aMove = try XCTUnwrap(aRow.layer?.animation(forKey:TabListMotion.movementKey) as? CABasicAnimation)

@@ -349,7 +349,10 @@ import RiseCore
         // Recently closed tabs stay one right-click away on the downloads button.
         sidebar.archiveButton.secondaryAction = { [weak self] in self?.archiveMenu() }
         sidebar.onNewTab = { [weak self] in self?.newTab() }
-        sidebar.onSelect = { [weak self] id in self?.select(id) }
+        sidebar.minimalNewTab = minimalNewTab
+        // Choosing a tab, from a search too, shows them all again with it selected.
+        sidebar.onSelect = { [weak self] id in self?.sidebar.endTabSearch(); self?.select(id) }
+        sidebar.onTabSearchEnded = { [weak self] in self?.window?.makeFirstResponder(self?.selectedTab?.page.view) }
         sidebar.onClose = { [weak self] id in self?.closeTab(id) }
         sidebar.onTabMenu = { [weak self] id, event in self?.tabMenu(id, event: event) }
         sidebar.onReorder = { [weak self] in self?.reorderTabs($0) }
@@ -454,6 +457,7 @@ import RiseCore
         toolbarAccessory.view = toolbarHost
         toolbarAccessory.layoutAttribute = .left
         window?.addTitlebarAccessoryViewController(toolbarAccessory)
+        toolbarHost.onMove = { [weak self] in self?.placeTitlebarNewTab() }
     }
     func layoutChrome() {
         // AppKit can deliver a resize while restoring the window, before its
@@ -483,6 +487,7 @@ import RiseCore
         let room = sidebarVisible && sidebarFloat.dockProgress == 1 ? 0 : SidebarFloatAppearance.inset
         toolbarHost.frame.size.width = shown ? max(112, sidebar.frame.width-toolbarX-8)+room : 28
         carryTitlebarControls(by: carry)
+        placeTitlebarNewTab()
         // The selected tab's DevTools take the window's right side.
         let devToolsRoom = layoutDevTools(in: b, pageLeft: pageLeft)
         pageShadow.frame = PageAppearance.frame(in: b, sidebarWidth: pageLeft, sidebarVisible: true)
@@ -751,8 +756,14 @@ import RiseCore
         if hasPendingSharedTabs, canApplySharedTabs { applyPendingSharedTabs() }
     }
     @objc func newTab() { paletteCreatesTab = true; showPalette(text: "") }
+    /// Searches the sidebar's tabs (`TabSearch.swift`), bringing a hidden sidebar out to do it.
+    @objc func searchTabs() {
+        hidePalette()
+        if !sidebarVisible { revealFloatingSidebar() }
+        sidebar.beginTabSearch()
+    }
     @objc func focusAddress() { paletteCreatesTab = false; showPalette(text: selectedTab?.url?.absoluteString == "about:blank" ? "" : selectedTab?.url?.absoluteString ?? "") }
-    func showPalette(text: String) { if searchProvider.isGoogle { googleSearchSuggestions.warmUp() }; historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); permissionCoordinator.cancel(); let veilWasHidden = dismissArea.isHidden; dismissArea.isHidden = false; palette.currentPage = selectedTab.flatMap { tab in tab.url.map { ($0.absoluteString, tab.favicon(for: theme)) } }; palette.show(text: text, theme: theme, createsTab: paletteCreatesTab, centered: paletteLab == nil); layoutChrome(); if veilWasHidden { fadeInVeil() } }
+    func showPalette(text: String) { sidebar.endTabSearch(); if searchProvider.isGoogle { googleSearchSuggestions.warmUp() }; historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); permissionCoordinator.cancel(); let veilWasHidden = dismissArea.isHidden; dismissArea.isHidden = false; palette.currentPage = selectedTab.flatMap { tab in tab.url.map { ($0.absoluteString, tab.favicon(for: theme)) } }; palette.show(text: text, theme: theme, createsTab: paletteCreatesTab, centered: paletteLab == nil); layoutChrome(); if veilWasHidden { fadeInVeil() } }
     /// The centred palette's veil comes in quickly but not at once: Material's fast effects
     /// (150 ms, decelerating), so it starts at the keypress and settles softly. The palette itself
     /// shows at once. Coming back while it fades out, it turns from where it got to.
@@ -769,7 +780,7 @@ import RiseCore
         fade.timingFunction = CAMediaTimingFunction(controlPoints: 0.31, 0.94, 0.34, 1)
         layer.add(fade, forKey: "veil.fade")
     }
-    /// Out a little quicker than in (100 ms), speeding up as it goes, as exits do.
+    /// Out much quicker than in (60 ms), lightening from the first frame, so it never lingers.
     private func fadeOutVeil() {
         veilExits += 1
         guard !veil.isHidden, let layer = veil.layer, window?.isVisible == true,
@@ -782,12 +793,12 @@ import RiseCore
         }
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = layer.presentation()?.opacity ?? 1; fade.toValue = 0; fade.duration = Self.veilFadeOutDuration
-        fade.timingFunction = CAMediaTimingFunction(controlPoints: 0.3, 0, 1, 1)
+        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
         fade.fillMode = .forwards; fade.isRemovedOnCompletion = false
         layer.add(fade, forKey: "veil.fade")
         CATransaction.commit()
     }
-    static let veilFadeDuration: CFTimeInterval = 0.15, veilFadeOutDuration: CFTimeInterval = 0.1
+    static let veilFadeDuration: CFTimeInterval = 0.15, veilFadeOutDuration: CFTimeInterval = 0.06
     func hidePalette() {
         // The palette lab's palette stays open, whatever's clicked.
         guard paletteLab == nil else { return }

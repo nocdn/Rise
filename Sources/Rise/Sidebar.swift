@@ -15,10 +15,31 @@ import RiseCore
     let rowsHost = FlippedView()
     /// Holds closed tabs' rows while they fade, below the others.
     private let leavingRows = LeavingRowsView()
-    private var appliedTheme: RiseTheme?
+    private(set) var appliedTheme: RiseTheme?
+    /// Searching tabs (`TabSearch.swift`): what's typed, or nil when not searching; the row lit
+    /// with the arrow keys; and the list before it was filtered.
+    let searchRow = TabSearchRow()
+    var tabSearch: String?
+    var searchFocusID: UUID?
+    var unfilteredRows: [NSView] = []
+    var unfilteredIDs: [UUID] = []
+    var onTabSearchEnded: (() -> Void)?
     var selectedTabID: UUID?
     let archiveButton: DownloadsButton
     let cleanUpButton: HoverHintButton
+    /// The minimal New Tab: a plus in the titlebar, level with the traffic lights and over the
+    /// downloads button, in place of the New Tab row. The titlebar holds it, as it takes clicks
+    /// there (`BrowserController.placeTitlebarNewTab`).
+    let titlebarNewTab: HoverHintButton
+    /// The middle of the downloads button, which the titlebar's plus is centred over.
+    var downloadsCentreX: CGFloat { bounds.width-23 }
+    var minimalNewTab = true {
+        didSet {
+            guard minimalNewTab != oldValue else { return }
+            newTab.isHidden = minimalNewTab; titlebarNewTab.isHidden = !minimalNewTab
+            needsLayout = true
+        }
+    }
     var rows: [UUID: TabRow] = [:]
     /// Pinned tabs, as tiles between the address and New Tab (`PinnedTabs.swift`).
     let pinnedView = PinnedTabsView()
@@ -54,8 +75,11 @@ import RiseCore
         archiveButton = DownloadsButton(title: "Downloads", action: archive)
         cleanUpButton = HoverHintButton(image: TablerIcon.image(TablerIcon.tabCleanup, size: 20, description: "Sort tabs by domain"),
                                         text: "Sort tabs by domain", shortcut: "⇧⌘K", action: cleanUp)
+        titlebarNewTab = HoverHintButton(image: TablerIcon.image(TablerIcon.plus, size: 20, description: "New Tab"),
+                                         text: "New Tab", shortcut: "⌘T", action: {})
         super.init()
-        newTab.target = self; newTab.action = #selector(createTab)
+        newTab.target = self; newTab.action = #selector(createTab); newTab.isHidden = minimalNewTab
+        titlebarNewTab.actionBlock = { [weak self] in self?.createTab() }
         scroll.drawsBackground = false; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true; scroll.scrollerStyle = .overlay
         scroll.documentView = rowsHost
         [pinnedView, newTab, scroll, archiveButton, cleanUpButton].forEach(addSubview)
@@ -67,9 +91,9 @@ import RiseCore
         if appliedTheme != theme {
             appliedTheme = theme
             fill = theme.background
-            newTab.theme = theme
-            cleanUpButton.hintAppearance = theme.appearance
-            for button in [archiveButton, cleanUpButton] as [ChromeButton] {
+            newTab.theme = theme; searchRow.apply(theme)
+            cleanUpButton.hintAppearance = theme.appearance; titlebarNewTab.hintAppearance = theme.appearance
+            for button in [archiveButton, cleanUpButton, titlebarNewTab] as [ChromeButton] {
                 button.contentTintColor = theme.sidebarIcon; button.hoverColor = theme.text.withAlphaComponent(0.07)
             }
         }
@@ -122,6 +146,8 @@ import RiseCore
                 displayedRows.append(row); orderedIDs.append(tab.id); seen.insert(tab.id)
             }
         }
+        unfilteredRows = displayedRows; unfilteredIDs = orderedIDs
+        filterForSearch()
         if let drag, drag.pinSlot == nil, !displayedRows.contains(where: { $0 === drag.view }) { endTabDrag() }
         applyDragToList()
         needsLayout = true
@@ -134,6 +160,11 @@ import RiseCore
         animatesRows = animated; defer { animatesRows = true }
         update(tabs: tabs, selected: selected, theme: theme, splits: splits)
         layoutSubtreeIfNeeded()
+    }
+    /// Lays the list out again, its rows gliding to their places or landing there at once.
+    func relayout(animated: Bool) {
+        animatesRows = animated; defer { animatesRows = true }
+        needsLayout = true; layoutSubtreeIfNeeded()
     }
     func tabID(at point: NSPoint) -> UUID? {
         if let tile = pinnedView.tiles.values.first(where: { $0.superview === pinnedView && $0.convert($0.bounds, to: self).contains(point) }) {
@@ -156,12 +187,18 @@ import RiseCore
         pinnedView.layoutTiles(animated: animatesRows && window != nil)
         let start: CGFloat = (pinnedHeight > 0 ? PinnedLayout.top+pinnedHeight : 98)-lift
         let shift = start-newTab.frame.minY
-        newTab.frame = NSRect(x: TabAppearance.inset, y: start, width: w-2*TabAppearance.inset, height: TabAppearance.height)
-        let scrollY = newTab.frame.maxY+TabAppearance.spacing
+        // Without its row, New Tab is a line where the list starts, which pinning measures from.
+        newTab.frame = NSRect(x: TabAppearance.inset, y: start, width: w-2*TabAppearance.inset, height: minimalNewTab ? 0 : TabAppearance.height)
+        var scrollY = minimalNewTab ? start : newTab.frame.maxY+TabAppearance.spacing
+        // Searching tabs, the search row heads the list, a little apart from the first tab.
+        if isSearchingTabs {
+            searchRow.frame = NSRect(x: TabAppearance.inset, y: scrollY, width: w-2*TabAppearance.inset, height: TabAppearance.height)
+            scrollY = searchRow.frame.maxY+TabSearchRow.gap
+        }
         scroll.frame = NSRect(x: 0, y: scrollY, width: w, height: max(0, bounds.height-scrollY-44))
         // The grid grows and shrinks as tabs are pinned; what's below it slides to make room.
         if shift != 0, animatesRows, window != nil, newTab.frame.width > 0 {
-            [newTab, scroll].forEach { PinnedLayout.slideVertically($0, from: -shift) }
+            [newTab, searchRow, scroll].forEach { PinnedLayout.slideVertically($0, from: -shift) }
         }
         var y: CGFloat = 0; targetFrames = [:]
         for (index, row) in displayedRows.enumerated() {
@@ -175,7 +212,7 @@ import RiseCore
         }
         rowsHost.frame = NSRect(x: 0, y: 0, width: w, height: max(y+8, scroll.bounds.height))
         leavingRows.frame = rowsHost.bounds
-        archiveButton.frame = NSRect(x: w-37, y: bounds.height-39, width: 28, height: 28)
+        archiveButton.frame = NSRect(x: downloadsCentreX-14, y: bounds.height-39, width: 28, height: 28)
         cleanUpButton.frame = NSRect(x: 10, y: bounds.height-39, width: 28, height: 28)
     }
     /// A closed tab's row fades out quickly where it was, under the rows sliding into its place,

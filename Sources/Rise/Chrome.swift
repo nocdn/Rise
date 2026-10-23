@@ -222,8 +222,6 @@ final class DeveloperHeader: Surface {
 
 /// A native titlebar accessory beside the window's traffic lights, which stay NSWindow's: it holds
 /// the titlebar's room over the sidebar.
-final class NativeTitlebarControls: NSView {}
-
 final class PeekBackdrop: Surface {
     var dismiss: (() -> Void)?
     override func mouseDown(with event: NSEvent) { dismiss?() }

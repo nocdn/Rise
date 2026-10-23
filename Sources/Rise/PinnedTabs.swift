@@ -424,10 +424,11 @@ extension PinnedLayout {
         return PinnedLayout.slot(nearest: NSPoint(x: point.x-TabAppearance.inset, y: point.y), count: count,
                                  width: pinnedView.bounds.width-2*TabAppearance.inset)
     }
-    /// Whether `location` reaches above New Tab, where tabs are pinned.
+    /// Whether `location` reaches above New Tab, where tabs are pinned; without its row, anywhere
+    /// above the list.
     private func isOverGrid(_ location: NSPoint) -> Bool {
         let point = convert(location, from: nil)
-        return point.x >= 0 && point.x <= bounds.width && point.y > paletteAnchor.minY && point.y < newTab.frame.midY
+        return point.x >= 0 && point.x <= bounds.width && point.y > (minimalNewTab ? 0 : paletteAnchor.minY) && point.y < newTab.frame.midY
     }
 
     // MARK: Pinning a row
@@ -585,7 +586,7 @@ extension PinnedLayout {
     // MARK: Dragging a tile
 
     func beginPinnedDrag(_ id: UUID, event: NSEvent) {
-        guard drag == nil, pinnedDrag == nil, let tile = pinnedView.tiles[id], let host = window?.contentView else { return }
+        guard drag == nil, pinnedDrag == nil, !isSearchingTabs, let tile = pinnedView.tiles[id], let host = window?.contentView else { return }
         finishReturningTab()
         // Picked up again on its way into its slot, it goes on from where it's shown.
         let shown = tile.convert(tile.bounds, to: nil)

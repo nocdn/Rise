@@ -101,6 +101,7 @@ import AppKit
         let tabs = addMenu("Tabs")
         item(tabs, "Next Tab", #selector(BrowserController.nextTab), "]", modifiers: [.command, .shift], target: browser)
         item(tabs, "Previous Tab", #selector(BrowserController.previousTab), "[", modifiers: [.command, .shift], target: browser)
+        item(tabs, "Search Tabs", #selector(BrowserController.searchTabs), "a", modifiers: [.command, .shift], target: browser)
         tabs.addItem(.separator())
         item(tabs, "Duplicate Tab", #selector(BrowserController.duplicateCurrentTab), target: browser)
         item(tabs, "Pin Tab", #selector(BrowserController.pinCurrentTab), target: browser)
