@@ -14,12 +14,13 @@ A native macOS browser written in **AppKit + WKWebView**, with Arc-inspired chro
 
 The signed local app is `build/Rise.app`. Double-click it in Finder, or run `./scripts/restart.sh` to rebuild and relaunch a running copy. Local builds are signed with your Apple Development certificate when one is installed (ad-hoc otherwise), so macOS remembers folder permissions such as Downloads access across rebuilds. Rise runs on its own Chromium fork, built beside the repo first (see [Engine/README.md](Engine/README.md)). For development, open `Package.swift` in Xcode or use `swift build`. Run unit tests with `scripts/test.sh`, and checks on real pages in a Rise window with `python3 scripts/test-chromium-live.py`.
 
-Website passkeys use the system's WebAuthn flow, but enabling it for arbitrary
-sites requires Apple's approved browser entitlement and a matching provisioning
-profile. The standard local build does not enable that restricted capability.
-See [Passkey approval and signing setup](docs/Passkeys.md) for Rise's request details
-and the `RISE_SIGNING_IDENTITY` / `RISE_PROVISIONING_PROFILE` build options.
-Run `python3 scripts/test-passkey-signing.py` to verify the profile eligibility checks.
+Passkeys go through the engine's own WebAuthn, as in Chrome: security keys such as YubiKeys,
+password manager extensions such as 1Password, and a phone's passkeys by QR code need nothing
+from Apple. The engine's Touch ID passkeys need a provisioning profile for Rise, which any
+developer account can make; only iCloud Keychain passkeys need Apple's approval. See
+[Passkeys](docs/Passkeys.md) for the profile and the `RISE_SIGNING_IDENTITY` /
+`RISE_PROVISIONING_PROFILE` build options, and run `python3 scripts/test-passkey-signing.py`
+to check the signing rules.
 
 ## Implemented
 

@@ -1,5 +1,7 @@
-"""Sign local builds normally; enable WebKit passkeys only with Apple's profile."""
+"""Sign local builds normally; with a provisioning profile for Rise, also claim what it allows:
+the keychain group for the engine's Touch ID passkeys, CloudKit, and Apple-approved passkeys."""
 import datetime
+import fnmatch
 import hashlib
 import os
 from pathlib import Path
@@ -12,13 +14,25 @@ import tempfile
 
 PASSKEY = "com.apple.developer.web-browser.public-key-credential"
 CLOUD_CONTAINER = "iCloud.dev.bartosz.Rise"
-
-
-def passkey_entitlements(profile, bundle_id, certificate_hash, now=None):
-    entitlements = profile.get("Entitlements", {})
-    if entitlements.get(PASSKEY) is not True:
-        raise ValueError("The provisioning profile does not authorize browser passkeys. Apple approval is required.")
-    return {PASSKEY: True, **profile_identity(profile, bundle_id, certificate_hash, now)}
+# The keychain group the engine keeps Touch ID passkeys in, after the app's own identifier.
+WEBAUTHN_GROUP = ".webauthn"
+# What Chrome's own app claims under the hardened runtime, so websites keep the camera, microphone,
+# location and photos, and security keys and phones keep USB and Bluetooth, once a profile signs Rise.
+CHROME_DEVICES = {
+    "com.apple.security.device.audio-input": True,
+    "com.apple.security.device.bluetooth": True,
+    "com.apple.security.device.camera": True,
+    "com.apple.security.device.print": True,
+    "com.apple.security.device.usb": True,
+    "com.apple.security.personal-information.location": True,
+    "com.apple.security.personal-information.photos-library": True,
+}
+# Where profiles are looked for, Rise's own folder first.
+PROFILE_FOLDERS = [
+    Path.home() / "Library/Application Support/Rise/Signing",
+    Path.home() / "Library/Developer/Xcode/UserData/Provisioning Profiles",
+    Path.home() / "Library/MobileDevice/Provisioning Profiles",
+]
 
 
 def profile_identity(profile, bundle_id, certificate_hash, now=None):
@@ -65,14 +79,38 @@ def cloudkit_entitlements(profile, bundle_id, certificate_hash, now=None):
     return result
 
 
-def cloudkit_profile(bundle_id, certificate_hash):
-    directory = Path.home() / "Library/Developer/Xcode/UserData/Provisioning Profiles"
-    for path in sorted(directory.glob("*.provisionprofile")) + sorted(directory.glob("*.mobileprovision")):
-        try:
-            profile = plistlib.loads(subprocess.check_output(["security", "cms", "-D", "-i", str(path)], stderr=subprocess.PIPE))
-            return path, cloudkit_entitlements(profile, bundle_id, certificate_hash)
-        except (ValueError, subprocess.CalledProcessError, plistlib.InvalidFileException):
-            continue
+def profile_entitlements(profile, bundle_id, certificate_hash, now=None):
+    """Everything a profile for this app and certificate allows Rise: its identity, the engine's Touch
+    ID passkey group where the profile's keychain groups cover it, Apple-approved passkeys and CloudKit
+    where granted, and Chrome's device access for the hardened runtime that profile signing uses."""
+    result = profile_identity(profile, bundle_id, certificate_hash, now)
+    granted = profile.get("Entitlements", {})
+    app_id = result.get("com.apple.application-identifier") or result.get("application-identifier")
+    group = app_id + WEBAUTHN_GROUP
+    if any(fnmatch.fnmatchcase(group, pattern) for pattern in granted.get("keychain-access-groups", [])):
+        result["keychain-access-groups"] = [group]
+    if granted.get(PASSKEY) is True:
+        result[PASSKEY] = True
+    try:
+        result.update(cloudkit_entitlements(profile, bundle_id, certificate_hash, now))
+    except ValueError:
+        pass
+    result.update(CHROME_DEVICES)
+    return result
+
+
+def read_profile(path):
+    return plistlib.loads(subprocess.check_output(["security", "cms", "-D", "-i", str(path)], stderr=subprocess.PIPE))
+
+
+def found_profile(bundle_id, certificate_hash):
+    """The first profile in `PROFILE_FOLDERS` made for this app and certificate."""
+    for folder in PROFILE_FOLDERS:
+        for path in sorted(folder.glob("*.provisionprofile")) + sorted(folder.glob("*.mobileprovision")):
+            try:
+                return path, profile_entitlements(read_profile(path), bundle_id, certificate_hash)
+            except (ValueError, subprocess.CalledProcessError, plistlib.InvalidFileException):
+                continue
     return None, None
 
 
@@ -110,20 +148,11 @@ def configuration(info):
     profile_path = os.environ.get("RISE_PROVISIONING_PROFILE")
     if profile_path:
         if identity == "-":
-            raise ValueError("Browser passkeys require an Apple signing identity, not ad-hoc signing.")
+            raise ValueError("A provisioning profile needs an Apple signing identity, not ad-hoc signing.")
         profile_file = Path(profile_path).expanduser()
-        profile = plistlib.loads(subprocess.check_output(["security", "cms", "-D", "-i", str(profile_file)], stderr=subprocess.PIPE))
-        entitlements = passkey_entitlements(profile, info["CFBundleIdentifier"], signing_certificate(identity))
-        declared = plistlib.loads(Path(__file__).with_name("Rise-passkeys.entitlements").read_bytes())
-        if declared.get(PASSKEY) is not True:
-            raise ValueError("The passkey entitlements template is missing the browser capability.")
-        try:
-            entitlements.update(cloudkit_entitlements(profile, info["CFBundleIdentifier"], signing_certificate(identity)))
-        except ValueError:
-            pass
-        return identity, profile_file, entitlements
+        return identity, profile_file, profile_entitlements(read_profile(profile_file), info["CFBundleIdentifier"], signing_certificate(identity))
     if identity != "-":
-        profile_file, entitlements = cloudkit_profile(info["CFBundleIdentifier"], signing_certificate(identity))
+        profile_file, entitlements = found_profile(info["CFBundleIdentifier"], signing_certificate(identity))
         return identity, profile_file, entitlements
     return identity, None, None
 
@@ -152,13 +181,14 @@ def main():
             # Local development can stay certificate-signed when Apple's timestamp service is offline.
             timestamp = "--timestamp=none" if os.environ.get("RISE_SIGNING_TIMESTAMP") == "none" else "--timestamp"
             subprocess.run([*command, "--options", "runtime", timestamp, "--entitlements", temporary.name, str(app)], check=True)
-        print("Signed with Apple's provisioning profile. CloudKit: " + str(info["RiseCloudKitEnabled"]) + "; browser passkeys: " + str(PASSKEY in entitlements))
+        print("Signed with the provisioning profile " + profile_file.name + ". Touch ID passkeys: " + str("keychain-access-groups" in entitlements)
+              + "; iCloud Keychain passkeys: " + str(PASSKEY in entitlements) + "; CloudKit: " + str(info["RiseCloudKitEnabled"]))
     else:
         # An ad-hoc app claiming this restricted entitlement can fail to launch.
         # Also remove a profile left by a previous approved build of this bundle.
         embedded.unlink(missing_ok=True)
         subprocess.run([*command, str(app)], check=True)
-        print("Local build" + (" (ad-hoc)" if identity == "-" else "") + ": browser passkeys need an Apple-approved provisioning profile.")
+        print("Local build" + (" (ad-hoc)" if identity == "-" else "") + ": Touch ID passkeys need a provisioning profile for Rise (docs/Passkeys.md).")
     subprocess.run(["codesign", "--verify", "--deep", "--strict", str(app)], check=True)
 
 

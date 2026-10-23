@@ -1,0 +1,74 @@
+--- a/crypto/apple/keychain_util.h
++++ b/crypto/apple/keychain_util.h
+@@ -23,6 +23,10 @@
+ // The API used to query this information is not available on iOS.
+ CRYPTO_EXPORT bool ExecutableHasKeychainAccessGroupEntitlement(
+     const std::string& keychain_access_group);
++
++// Rise: the main executable's com.apple.application-identifier entitlement,
++// such as "TEAMID.com.example.app", or an empty string when it has none.
++CRYPTO_EXPORT std::string ExecutableApplicationIdentifier();
+ #endif  // !BUILDFLAG(IS_IOS)
+ 
+ // Returns the accessibility attribute to use for new keychain items.
+--- a/crypto/apple/keychain_util.mm
++++ b/crypto/apple/keychain_util.mm
+@@ -58,6 +58,18 @@
+   return [entitlement_value_nsarray
+       containsObject:base::SysUTF8ToNSString(keychain_access_group)];
+ }
++
++std::string ExecutableApplicationIdentifier() {
++  base::apple::ScopedCFTypeRef<SecTaskRef> task(SecTaskCreateFromSelf(nullptr));
++  if (!task) {
++    return std::string();
++  }
++  base::apple::ScopedCFTypeRef<CFTypeRef> value(
++      KeychainV2::GetInstance().TaskCopyValueForEntitlement(
++          task.get(), CFSTR("com.apple.application-identifier"), nullptr));
++  CFStringRef identifier = base::apple::CFCast<CFStringRef>(value.get());
++  return identifier ? base::SysCFStringRefToUTF8(identifier) : std::string();
++}
+ #endif  // !BUILDFLAG(IS_IOS)
+ 
+ #if BUILDFLAG(IS_IOS)
+--- a/chrome/browser/webauthn/chrome_web_authentication_delegate.cc
++++ b/chrome/browser/webauthn/chrome_web_authentication_delegate.cc
+@@ -81,6 +81,8 @@
+ #endif
+ 
+ #if BUILDFLAG(IS_MAC)
++#include "base/no_destructor.h"
++#include "crypto/apple/keychain_util.h"
+ #include "device/fido/mac/credential_metadata.h"
+ #endif
+ 
+@@ -391,8 +393,17 @@
+ ChromeWebAuthenticationDelegate::TouchIdAuthenticatorConfig
+ ChromeWebAuthenticationDelegate::TouchIdAuthenticatorConfigForProfile(
+     Profile* profile) {
+-  constexpr char kKeychainAccessGroup[] =
+-      MAC_TEAM_IDENTIFIER_STRING "." MAC_BUNDLE_IDENTIFIER_STRING ".webauthn";
++  // Rise: the group belongs to the app as it's signed, its team and bundle
++  // from its application identifier, so Touch ID passkeys work in any app
++  // that embeds the engine and is signed for that group.
++  static const base::NoDestructor<std::string> kKeychainAccessGroup([] {
++    const std::string application =
++        crypto::apple::ExecutableApplicationIdentifier();
++    return application.empty() ? std::string(MAC_TEAM_IDENTIFIER_STRING
++                                             "." MAC_BUNDLE_IDENTIFIER_STRING
++                                             ".webauthn")
++                               : application + ".webauthn";
++  }());
+ 
+   std::string metadata_secret = profile->GetPrefs()->GetString(
+       webauthn::pref_names::kWebAuthnTouchIdMetadataSecretPrefName);
+@@ -405,7 +416,7 @@
+   }
+ 
+   return TouchIdAuthenticatorConfig{
+-      .keychain_access_group = kKeychainAccessGroup,
++      .keychain_access_group = *kKeychainAccessGroup,
+       .metadata_secret = std::move(metadata_secret)};
+ }
+ 

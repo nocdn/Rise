@@ -29,17 +29,23 @@ class PasskeySigningTests(unittest.TestCase):
             },
         }
 
-    def testApprovedProfileKeepsOnlyRequiredEntitlements(self):
-        result = signing.passkey_entitlements(self.profile, "dev.bartosz.Rise", self.sha, self.now)
-        self.assertEqual(result, {
-            signing.PASSKEY: True,
-            "com.apple.application-identifier": "TESTTEAM.dev.bartosz.Rise",
-            "com.apple.developer.team-identifier": "TESTTEAM",
-        })
+    def testAProfileForRiseGivesTheTouchIdGroupAndChromesDevicesButApprovalOnlyWhenGranted(self):
+        self.profile["Entitlements"][signing.PASSKEY] = False
+        self.profile["Entitlements"]["keychain-access-groups"] = ["TESTTEAM.*"]
+        result = signing.profile_entitlements(self.profile, "dev.bartosz.Rise", self.sha, self.now)
+        self.assertEqual(result["keychain-access-groups"], ["TESTTEAM.dev.bartosz.Rise.webauthn"])
+        self.assertEqual(result["com.apple.application-identifier"], "TESTTEAM.dev.bartosz.Rise")
+        self.assertTrue(result["com.apple.security.device.camera"] and result["com.apple.security.device.usb"])
+        self.assertNotIn(signing.PASSKEY, result, "iCloud Keychain passkeys only with Apple's approval")
+        self.assertNotIn("com.apple.security.get-task-allow", result)
+        self.profile["Entitlements"][signing.PASSKEY] = True
+        self.assertTrue(signing.profile_entitlements(self.profile, "dev.bartosz.Rise", self.sha, self.now)[signing.PASSKEY])
+        # A profile whose keychain groups don't cover it claims none.
+        self.profile["Entitlements"]["keychain-access-groups"] = ["OTHERTEAM.*"]
+        self.assertNotIn("keychain-access-groups", signing.profile_entitlements(self.profile, "dev.bartosz.Rise", self.sha, self.now))
 
-    def testRejectsMissingApprovalOtherAppsExpiredProfilesAndOtherCertificates(self):
+    def testRejectsOtherAppsExpiredProfilesOtherCertificatesAndOtherPlatforms(self):
         changes = [
-            ("Entitlements", {signing.PASSKEY: False}),
             ("Entitlements", {**self.profile["Entitlements"], "com.apple.application-identifier": "TESTTEAM.other.app"}),
             ("Entitlements", {**self.profile["Entitlements"], "com.apple.application-identifier": "TESTTEAM.*"}),
             ("ExpirationDate", datetime.datetime(2020, 1, 1)),
@@ -50,7 +56,7 @@ class PasskeySigningTests(unittest.TestCase):
             with self.subTest(key=key, value=value):
                 profile = copy.deepcopy(self.profile); profile[key] = value
                 with self.assertRaises(ValueError):
-                    signing.passkey_entitlements(profile, "dev.bartosz.Rise", self.sha, self.now)
+                    signing.profile_entitlements(profile, "dev.bartosz.Rise", self.sha, self.now)
 
 
 class LocalIdentityTests(unittest.TestCase):

@@ -1,70 +1,66 @@
 # Passkeys in Rise
 
-WebKit handles website WebAuthn registration and authentication, including native
-passkey selection. Rise keeps this flow in WebKit: it does not override
-`navigator.credentials`, access private key material, or inject a credential bridge.
+Rise's pages are Chromium's, and so is their WebAuthn: the engine finds security keys, asks
+password manager extensions, shows a phone's QR code and keeps its own Touch ID passkeys, with
+Chrome's own dialog. Rise doesn't override `navigator.credentials` or touch key material.
 
-Arbitrary website passkeys require Apple's restricted
-`com.apple.developer.web-browser.public-key-credential` entitlement, a matching
-provisioning profile, and the person's macOS consent. The standard local build
-does **not** enable the restricted capability. Adding it without a valid profile
-can prevent the app from launching.
+| Where the passkey is | What Rise needs |
+|---|---|
+| A security key, such as a YubiKey, over USB | Nothing. The engine talks to the key itself (`device/fido/hid`), not through Apple's passkey API. |
+| A password manager extension, such as 1Password or Bitwarden | The extension, from the Chrome Web Store. Its desktop app connects as below. |
+| A phone, by QR code | Bluetooth, which macOS asks for the first time; the engine handles the rest (`device/fido/cable`). |
+| This Mac, with Touch ID | A provisioning profile for Rise, which any developer account makes without review (below). |
+| iCloud Keychain / Apple Passwords | Apple's approval of the browser entitlement (below). Without it the engine leaves that option out. |
 
-## Request Apple's approval
+## Touch ID passkeys
 
-1. Sign in as the Account Holder of your **organization** Apple Developer account.
-   Apple's current documentation specifies an organization account. If yours is
-   an individual account or the form is unavailable, ask Apple Developer Support
-   about eligibility before changing account enrollment.
-2. Submit the [macOS Browsers Passkeys request](https://developer.apple.com/contact/request/macos-browsers-passkeys/).
-   Use Rise's details below. The account holder submits this request; approval is
-   Apple's decision.
-3. Once approved, enable the managed browser passkey capability for Rise's explicit
-   macOS App ID, `dev.bartosz.Rise`, in Certificates, Identifiers & Profiles.
-4. Generate and download a macOS provisioning profile that includes the capability
-   and the signing certificate you will use. Do not use another app's profile.
-5. Build using that profile and certificate. Then verify on an HTTPS website that
-   supports passkeys, approving the native macOS prompt yourself. Apple or the
-   chosen credential provider handles subsequent user verification.
+The engine keeps these in the Secure Enclave, in the keychain group `<team>.dev.bartosz.Rise.webauthn`
+(patch `0017` makes the group follow the identity Rise is signed with). Claiming a keychain group is a
+restricted entitlement on macOS, so it has to come with a provisioning profile, but the profile is
+self-serve: no request, no review. Passkeys made this way stay on this Mac. Step by step, for doing it
+on another Mac: [TouchIDPasskeyProfile.md](TouchIDPasskeyProfile.md).
 
-### Rise details for the request
+1. At [developer.apple.com/account/resources](https://developer.apple.com/account/resources/identifiers/list),
+   under **Identifiers**, add an **App ID** for macOS with the explicit bundle ID `dev.bartosz.Rise`
+   if there isn't one. It needs no capabilities ticked.
+2. Under **Profiles**, add a **Developer ID** profile (in Distribution) for that App ID, with the
+   **Developer ID Application** certificate Rise is signed with, and download it.
+3. Put it in `~/Library/Application Support/Rise/Signing/`. `./scripts/build.sh` finds it there (or in
+   Xcode's profile folders, or at `RISE_PROVISIONING_PROFILE`) and signs Rise with the passkey keychain
+   group, under the hardened runtime with Chrome's own device entitlements (camera, microphone,
+   location, photos, printing, USB and Bluetooth).
 
-- **Application:** Rise
-- **Bundle identifier:** `dev.bartosz.Rise`
-- **Platform:** macOS 14 and later
-- **Browser engine:** WKWebView / WebKit
-- **Purpose:** A general-purpose desktop web browser with arbitrary website navigation,
-  multiple tabs, an address/search field, browsing history, and normal back/forward navigation.
-- **HTTP/HTTPS:** Both schemes are declared in the app's Info.plist. Entered URLs
-  render their expected destination directly in WebKit.
-- **Requested functionality:** Website passkey registration and sign-in through
-  native WebKit WebAuthn, with the operating system and supported credential
-  providers handling credential selection and verification.
-- **Distribution:** Currently a local macOS build. Provide your intended release
-  distribution and any app/site links that the form requests; Rise is not yet a
-  released Mac App Store application.
+The build says `Touch ID passkeys: True` when it worked. The signing script only uses a profile made for
+`dev.bartosz.Rise`, with the certificate it's signing with and not yet expired, and claims only what that
+profile allows, so a wrong profile is passed over rather than stopping Rise from launching. Keep profiles
+out of the repository.
 
-## Build after approval
+## Password manager extensions
 
-```sh
-security find-identity -v -p codesigning
-RISE_SIGNING_IDENTITY='YOUR_CERTIFICATE_SHA1' \
-RISE_PROVISIONING_PROFILE='/absolute/path/to/Rise.provisionprofile' \
-./scripts/build.sh
-```
+Extensions offer their passkeys through the page or Chromium's `webAuthenticationProxy` API, both of which
+work in Rise once they're installed from the Chrome Web Store and signed in.
 
-The signing script rejects profiles without the capability, expired profiles,
-profiles for another app, and certificates not included in the profile. It embeds
-the approved profile and signs with the matching entitlement. Certificate hashes
-and downloaded profiles stay local; do not commit profiles or signing credentials.
+Their desktop apps register *native messaging hosts* with the browsers they know, never Rise. At launch
+Rise links the hosts registered for Chrome and Chromium into its own `NativeMessagingHosts` folder
+(`NativeMessagingHosts.swift`), so an extension reaches its app as it does in Chrome. 1Password's app
+also checks which browser is asking: add Rise in 1Password ▸ Settings ▸ Browser ▸ **Add Browser**. It
+only lists code-signed apps in the Applications folder.
 
-Without these environment variables, the standard build signs with a local Apple
-Development identity (or ad-hoc when none is installed) and without the restricted
-passkey entitlement. Approval cannot be replaced
-by a WebKit preference or a JavaScript polyfill.
+## iCloud Keychain passkeys
+
+These go through Apple's `ASAuthorization` browser API, which needs the restricted
+`com.apple.developer.web-browser.public-key-credential` entitlement. The Account Holder of an organization
+developer account requests it with the
+[macOS Browsers Passkeys form](https://developer.apple.com/contact/request/macos-browsers-passkeys/);
+once Apple approves, the capability shows on Rise's App ID, and a profile made after that carries it,
+which `sign-app.py` then claims too. Until then, the same passkeys work from an iPhone by QR code.
+
+For the form: Rise is a general-purpose macOS 14+ browser (`dev.bartosz.Rise`) on its own Chromium fork,
+declaring HTTP and HTTPS, with an address and search field, tabs, history and back and forward, opening
+each URL at its own address.
 
 ## References
 
-- [Apple: Passkey use in web browsers](https://developer.apple.com/documentation/authenticationservices/passkey-use-in-web-browsers)
-- [Apple: Browser public-key-credential entitlement and eligibility](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.web-browser.public-key-credential)
-- [Apple: Authenticating people by using passkeys in browser apps](https://developer.apple.com/documentation/authenticationservices/authenticating-people-by-using-passkeys-in-browser-apps)
+- [Apple: The browser public-key-credential entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.web-browser.public-key-credential)
+- [Apple: TN3125, provisioning profiles and restricted entitlements](https://developer.apple.com/documentation/technotes/tn3125-inside-code-signing-provisioning-profiles)
+- [1Password: Connect additional browsers](https://support.1password.com/additional-browsers/)

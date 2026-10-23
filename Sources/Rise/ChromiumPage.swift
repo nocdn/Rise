@@ -47,6 +47,8 @@ enum RisePages {
             .appendingPathComponent("Chromium")
         try? FileManager.default.createDirectory(at: profile, withIntermediateDirectories: true)
         let packaged = FileManager.default.fileExists(atPath: framework.path)
+        // Extensions reach the desktop apps they unlock with, as they do in Chrome.
+        if RiseProfile.directory == nil { NativeMessagingHosts.link(into: profile.appendingPathComponent("NativeMessagingHosts")) }
         // A test profile is thrown away, so its key needn't outlive it in the Keychain.
         guard packaged, RCEngine.start(withCachePath: profile.path, keychain: RiseProfile.directory == nil) else {
             let alert = NSAlert(); alert.messageText = "Rise couldn’t start its engine"
