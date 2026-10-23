@@ -70,7 +70,8 @@ import AppKit
             cancelTabInteractions()
             if let appliedTheme { searchRow.apply(appliedTheme) }
             searchRow.field.stringValue = ""; searchRow.isHidden = false
-            tabSearch = ""; searchFocusID = nil
+            tabSearch = ""; searchFocusID = nil; searchFocusByPointer = false
+            rows.values.forEach { $0.hoverFocuses = true }
             relayoutForSearch(sliding: true)
         }
         window?.makeFirstResponder(searchRow.field)
@@ -79,7 +80,8 @@ import AppKit
     /// Shows every tab again and closes the row, the list sliding back up under it.
     func endTabSearch() {
         guard isSearchingTabs else { return }
-        tabSearch = nil; searchFocusID = nil; searchRow.isHidden = true
+        tabSearch = nil; searchFocusID = nil; searchFocusByPointer = false; searchRow.isHidden = true
+        rows.values.forEach { $0.hoverFocuses = false }
         if window?.firstResponder === searchRow.field.currentEditor() { window?.makeFirstResponder(nil) }
         relayoutForSearch(sliding: true)
     }
@@ -112,7 +114,7 @@ import AppKit
     func moveSearchFocus(by step: Int) {
         guard !orderedIDs.isEmpty else { return }
         let index = searchFocusID.flatMap { orderedIDs.firstIndex(of: $0) }.map { $0+step } ?? (step > 0 ? 0 : orderedIDs.count-1)
-        searchFocusID = orderedIDs[min(max(index, 0), orderedIDs.count-1)]
+        searchFocusID = orderedIDs[min(max(index, 0), orderedIDs.count-1)]; searchFocusByPointer = false
         showSearchFocus()
         if let id = searchFocusID, let row = displayedRow(for: id) { row.scrollToVisible(row.bounds) }
     }
@@ -120,6 +122,18 @@ import AppKit
     func chooseSearchedTab() {
         guard let id = searchFocusID ?? (tabSearch?.isEmpty == false ? orderedIDs.first : nil) else { return }
         onSelect?(id)
+    }
+    /// The pointer moving on a tab, or a split's half, focuses it, taking over from the keys.
+    func pointerMovedOverSearchedTab(_ id: UUID) {
+        guard isSearchingTabs, let row = displayedRow(for: id), !row.isHidden, let focus = canonicalID(for: row) else { return }
+        searchFocusByPointer = true
+        guard searchFocusID != focus else { return }
+        searchFocusID = focus; showSearchFocus()
+    }
+    /// Off the tab it focused, the pointer focuses nothing, until it or the keys move again.
+    func pointerLeftSearchedTab(_ id: UUID) {
+        guard isSearchingTabs, searchFocusByPointer, let row = displayedRow(for: id), canonicalID(for: row) == searchFocusID else { return }
+        searchFocusID = nil; showSearchFocus()
     }
     private func showSearchFocus() {
         for row in rows.values { row.isKeyboardFocused = false }

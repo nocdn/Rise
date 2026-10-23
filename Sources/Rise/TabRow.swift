@@ -61,6 +61,10 @@ import RiseCore
     private var hover = false
     /// Chosen with the arrow keys while searching tabs: lit as a hovered row is, close button aside.
     var isKeyboardFocused = false { didSet { if isKeyboardFocused != oldValue { style() } } }
+    /// While searching tabs, the pointer lights a row by focusing it, as the arrow keys do, so
+    /// only one row is ever lit: the one the pointer or the keys moved to last.
+    var hoverFocuses = false { didSet { if hoverFocuses != oldValue { style() } } }
+    var onPointerMove: (() -> Void)?
     /// AppKit turns a button's clipping back on; the chosen row draws its ring and shadow
     /// just outside it.
     override var clipsToBounds: Bool { get { false } set {} }
@@ -238,15 +242,15 @@ import RiseCore
         layer?.cornerRadius = isSplitMember ? 8 : TabAppearance.radius
         // The chosen row and hover are their own layers, fading; a dragged row keeps its fill.
         // A split's halves are inside its row's, so theirs are plain fills.
-        let plain = !isSplitMember
+        let plain = !isSplitMember, lit = hover && !hoverFocuses || isKeyboardFocused
         plainBackground.isHidden = !plain
         let background = (plain ? (selected ? nil : dragFill) ?? .clear
-            : selected ? theme.pill : dragFill ?? (hover || isKeyboardFocused ? TabAppearance.hoverFill(theme) : .clear)).cgColor
+            : selected ? theme.pill : dragFill ?? (lit ? TabAppearance.hoverFill(theme) : .clear)).cgColor
         if layer?.backgroundColor != background { layer?.removeAnimation(forKey: TabDragMotion.backgroundKey) }
         layer?.backgroundColor = background
         if plain {
             plainBackground.radius = layer?.cornerRadius ?? TabAppearance.radius; plainBackground.dark = theme == .dark
-            plainBackground.show(chosen: selected, hovered: (hover || isKeyboardFocused) && !selected && dragFill == nil, animated: hasLaidOut && window != nil)
+            plainBackground.show(chosen: selected, hovered: lit && !selected && dragFill == nil, animated: hasLaidOut && window != nil)
         }
         close.isHidden = !hover
         // A split half has room for its close button only.
@@ -342,7 +346,7 @@ import RiseCore
     }
     override func updateTrackingAreas() {
         super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self))
         refreshHover()
     }
     private func setHovered(_ hovered: Bool) {
@@ -356,7 +360,8 @@ import RiseCore
         let point = convert(location ?? window.mouseLocationOutsideOfEventStream, from: nil)
         setHovered(visibleRect.intersection(bounds).contains(point))
     }
-    override func mouseEntered(with event: NSEvent) { setHovered(true) }
+    override func mouseEntered(with event: NSEvent) { setHovered(true); onPointerMove?() }
+    override func mouseMoved(with event: NSEvent) { if hover { onPointerMove?() } }
     override func mouseExited(with event: NSEvent) { if pressEvent == nil { setHovered(false) } else { onHover?(false) } }
     override func rightMouseDown(with event: NSEvent) { onPress?(); onMenu?(event) }
     override func hitTest(_ point: NSPoint) -> NSView? {

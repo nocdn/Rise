@@ -21,6 +21,8 @@ import RiseCore
     let searchRow = TabSearchRow()
     var tabSearch: String?
     var searchFocusID: UUID?
+    /// Whether the pointer, rather than the arrow keys, last moved the search's focus.
+    var searchFocusByPointer = false
     var unfilteredRows: [NSView] = []
     var unfilteredIDs: [UUID] = []
     var onTabSearchEnded: (() -> Void)?
@@ -80,7 +82,8 @@ import RiseCore
         super.init()
         newTab.target = self; newTab.action = #selector(createTab); newTab.isHidden = minimalNewTab
         titlebarNewTab.actionBlock = { [weak self] in self?.createTab() }
-        scroll.drawsBackground = false; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true; scroll.scrollerStyle = .overlay
+        scroll.drawsBackground = false; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
+        scroll.verticalScroller = ThinScroller(); scroll.scrollerStyle = .overlay
         scroll.documentView = rowsHost
         [pinnedView, newTab, scroll, archiveButton, cleanUpButton].forEach(addSubview)
     }
@@ -92,6 +95,7 @@ import RiseCore
             appliedTheme = theme
             fill = theme.background
             newTab.theme = theme; searchRow.apply(theme)
+            (scroll.verticalScroller as? ThinScroller)?.dark = theme == .dark
             cleanUpButton.hintAppearance = theme.appearance; titlebarNewTab.hintAppearance = theme.appearance
             for button in [archiveButton, cleanUpButton, titlebarNewTab] as [ChromeButton] {
                 button.contentTintColor = theme.sidebarIcon; button.hoverColor = theme.text.withAlphaComponent(0.07)
@@ -115,7 +119,11 @@ import RiseCore
                 row.onDragStart = { [weak self] event in self?.beginTabDrag(id, event: event) }
                 row.onDragMove = { [weak self] event in self?.moveTabDrag(event) }
                 row.onDragEnd = { [weak self] event in self?.endTabDrag(at: event.locationInWindow) }
-                row.onHover = { [weak self] hovering in self?.onTabHover?(id, hovering) }
+                row.onHover = { [weak self] hovering in
+                    self?.onTabHover?(id, hovering)
+                    if !hovering { self?.pointerLeftSearchedTab(id) }
+                }
+                row.onPointerMove = { [weak self] in self?.pointerMovedOverSearchedTab(id) }
                 row.onPress = { [weak self] in self?.onTabPress?() }
                 row.onTogglePlayback = { [weak self] in self?.onTogglePlayback?(id) }
                 row.onToggleMute = { [weak self] in self?.onToggleMute?(id) }
@@ -123,6 +131,7 @@ import RiseCore
             }
             let group = splits.first { $0.contains(tab.id) }
             row.isSplitMember = group != nil
+            row.hoverFocuses = isSearchingTabs
             let isSelected = group.map { group in selected.map { group.contains($0.id) } ?? false } ?? (tab.id == selected?.id)
             row.update(tab: tab, selected: isSelected, theme: theme, configuration: .forTab(tab, theme: theme, peek: peekState?(tab.id)))
             row.setPlayback(paused: playbackState?(tab.id))

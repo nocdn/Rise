@@ -66,17 +66,47 @@ final class TabOrganizationTests: XCTestCase {
         press(#selector(NSResponder.moveDown(_:))); press(#selector(NSResponder.moveDown(_:)))
         XCTAssertEqual(sidebar.rows[tabs[2].id]?.isKeyboardFocused, true)
         XCTAssertEqual(sidebar.rows[tabs[0].id]?.isKeyboardFocused, false)
+        // One row is lit at a time: the one the pointer or the keys moved to last.
+        let first = try XCTUnwrap(sidebar.rows[tabs[0].id]), second = try XCTUnwrap(sidebar.rows[tabs[2].id])
+        let pointer = try XCTUnwrap(NSEvent.mouseEvent(with: .mouseMoved, location: first.convert(NSPoint(x: 40, y: 17), to: nil), modifierFlags: [],
+            timestamp: 0, windowNumber: browser.window!.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0))
+        XCTAssertTrue(first.hoverFocuses, "Hovering alone doesn't light a row while searching")
+        first.mouseEntered(with: pointer)
+        XCTAssertEqual([first.isKeyboardFocused, second.isKeyboardFocused], [true, false], "The pointer takes over")
+        press(#selector(NSResponder.moveDown(_:)))
+        XCTAssertEqual([first.isKeyboardFocused, second.isKeyboardFocused], [false, true], "The keys go on from it")
+        first.mouseMoved(with: pointer)
+        XCTAssertEqual([first.isKeyboardFocused, second.isKeyboardFocused], [true, false], "Moving again, the pointer takes back over")
+        first.mouseExited(with: pointer)
+        XCTAssertEqual([first.isKeyboardFocused, second.isKeyboardFocused], [false, false], "Off the tabs, nothing is lit")
+        press(#selector(NSResponder.moveDown(_:))); press(#selector(NSResponder.moveDown(_:)))
         press(#selector(NSResponder.insertNewline(_:)))
         XCTAssertEqual(browser.selectedTab?.id, tabs[2].id)
         XCTAssertFalse(sidebar.isSearchingTabs); XCTAssertTrue(search.isHidden)
         XCTAssertEqual(shown(), tabs.map(\.id), "Every tab is back")
         XCTAssertEqual(sidebar.rows[tabs[2].id]?.isKeyboardFocused, false)
+        XCTAssertFalse(first.hoverFocuses, "Hovering lights rows again")
         XCTAssertEqual(sidebar.scroll.frame.minY, listTop)
 
         browser.searchTabs(); search.field.stringValue = "mail"; search.onChange?("mail")
         XCTAssertEqual(shown(), [tabs[3].id])
         press(#selector(NSResponder.cancelOperation(_:)))
         XCTAssertEqual(shown(), tabs.map(\.id)); XCTAssertEqual(browser.selectedTab?.id, tabs[2].id, "Escape keeps the tab that was selected")
+    }
+    @MainActor func testTheSidebarsScrollBarIsAThinBarThatCanStillBeGrabbedAndDarkensOnHover() throws {
+        let browser = browser(); defer { clean(browser) }
+        for _ in 0..<40 { _ = browser.addTab() }
+        browser.root.layoutSubtreeIfNeeded(); browser.sidebar.scroll.flashScrollers()
+        let scroller = try XCTUnwrap(browser.sidebar.scroll.verticalScroller as? ThinScroller)
+        XCTAssertEqual(scroller.bar.width, ThinScroller.thickness)
+        XCTAssertTrue(scroller.rect(for: .knob).contains(scroller.bar), "Drawn inside the knob's place, nothing cut off")
+        let middle = scroller.convert(NSPoint(x: scroller.bar.midX, y: scroller.bar.midY), to: nil)
+        XCTAssertTrue(browser.window?.contentView?.superview?.hitTest(middle) === scroller, "Grabbing it reaches the scroller")
+        let move = try XCTUnwrap(NSEvent.mouseEvent(with: .mouseMoved, location: middle, modifierFlags: [], timestamp: 0,
+            windowNumber: browser.window!.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0))
+        scroller.mouseMoved(with: move)
+        XCTAssertTrue(scroller.hovered)
+        XCTAssertGreaterThan(ThinScroller.color(dark: false, hovered: true).alphaComponent, ThinScroller.color(dark: false, hovered: false).alphaComponent)
     }
     @MainActor func testCleanUpBringsEachSitesTabsTogetherAndUndoes() throws {
         let browser = browser(); defer { clean(browser) }
