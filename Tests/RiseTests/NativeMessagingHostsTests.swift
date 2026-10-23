@@ -2,6 +2,17 @@ import XCTest
 @testable import Rise
 
 final class NativeMessagingHostsTests: XCTestCase {
+    func testUnavailableDestinationLeavesExistingFileUntouched() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let destination = root.appendingPathComponent("not-a-directory")
+        try "keep this file".write(to: destination, atomically: true, encoding: .utf8)
+        // A bad destination must be diagnosed without replacing it or stopping app startup.
+        NativeMessagingHosts.link(into: destination, from: [])
+        XCTAssertEqual(try String(contentsOf: destination, encoding: .utf8), "keep this file")
+    }
+
     func testDesktopAppsHostsAreLinkedInKeptInStepAndOwnFilesAreLeftAlone() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
