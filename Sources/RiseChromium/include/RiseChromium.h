@@ -399,6 +399,10 @@ RC_EXPORT @interface RCBrowserView : NSView
 - (nullable CALayer *)liveLayerShowing:(NSRect)rect;
 /// A picture of what the page shows now, the size of this view.
 - (void)snapshotWithCompletion:(void (^)(NSImage *_Nullable image))completion;
+/// What the page shows now in `rect` (points from its top left), scaled to `size` pixels as it's
+/// copied: cheap enough to look at a strip of the page several times a second. Nil while it isn't
+/// drawing, as when hidden. `completion` may come on any thread.
+- (void)snapshotRect:(NSRect)rect size:(NSSize)size completion:(void (^)(NSImage *_Nullable image))completion;
 /// Closes the page for good; the view shows nothing after.
 - (void)close;
 @end

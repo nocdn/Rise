@@ -25,66 +25,48 @@ import AppKit
         }
     }
 
-    /// The page's colour under its top edge: the first solid background under a few points along
-    /// it, the most common one, or the canvas's.
-    static let pageTopColorScript = """
-        // A hidden page isn't laid out to hit: no answer, so the bar keeps the colour it has.
-        if (document.visibilityState !== 'visible') return null;
-        const context = new OffscreenCanvas(1, 1).getContext('2d', { willReadFrequently: true });
-        const solid = (css) => {
-          if (!css) return null;
-          context.clearRect(0, 0, 1, 1); context.fillStyle = 'rgba(0, 0, 0, 0)'; context.fillStyle = css; context.fillRect(0, 0, 1, 1);
-          const [r, g, b, a] = context.getImageData(0, 0, 1, 1).data;
-          return a > 128 ? `${r},${g},${b}` : null;
-        };
-        // Everything stacked there, front to back: an empty overlay in front, such as a loading
-        // strip, doesn't hide the header behind it. A gradient counts by its first colour.
-        const under = (x) => {
-          for (const element of document.elementsFromPoint(x, 1)) {
-            const style = getComputedStyle(element);
-            const color = solid(style.backgroundColor)
-              || (style.backgroundImage.includes('gradient') && solid((style.backgroundImage.match(/rgba?\\([^)]*\\)|#[0-9a-fA-F]{3,8}\\b/) || [])[0]));
-            if (color) return color;
-          }
-          return null;
-        };
-        if (!document.elementsFromPoint(innerWidth / 2, 1).length) return null;
-        const counts = {};
-        for (const part of [0.1, 0.3, 0.5, 0.7, 0.9]) {
-          const color = under(Math.round(innerWidth * part));
-          if (color) counts[color] = (counts[color] || 0) + 1;
-        }
-        const best = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
-        if (best) return best[0];
-        const root = document.documentElement;
-        const own = solid(getComputedStyle(root).backgroundColor) || (document.body && solid(getComputedStyle(document.body).backgroundColor));
-        if (own) return own;
-        // No colour of its own: Chromium's canvas, near-black for a page asking for dark, whose
-        // text is light unless it says otherwise, and white for any other.
-        const text = solid(getComputedStyle(root).color);
-        return text && text.split(',').reduce((sum, part) => sum + Number(part), 0) > 382 ? 'canvas-dark' : 'canvas';
-        """
     func samplePlainBarColor() {
         guard !plainBarSampling, let tab = selectedTab, window?.occlusionState.contains(.visible) == true else { return }
         guard tab.url != nil, tab.page is ChromiumPage else { navBar.setColor(theme.page, animated: true); return }
         plainBarSampling = true
         let id = tab.id, page = tab.page
         Task { [weak self] in
-            let value = await page.evaluate(Self.pageTopColorScript, arguments: [:], world: nil)
+            let color = await (page as? ChromiumPage)?.topColor()
             guard let self else { return }
             self.plainBarSampling = false
-            guard let text = value as? String, let color = Self.canvas[text] ?? Self.color(rgb: text) else { return }
+            // Nothing drawn to look at, as a hidden page: the bar keeps the colour it has.
+            guard let color else { return }
             self.plainBarColors[id] = color
             guard self.selectedID == id else { return }
             self.navBar.setColor(color, animated: true)
         }
     }
-    /// Chromium's canvas under a page with no colour of its own: Blink's dark scheme background
-    /// for one asking for dark, and white for any other.
-    static let canvas = ["canvas-dark": NSColor(srgbRed: 18/255, green: 18/255, blue: 18/255, alpha: 1), "canvas": NSColor.white]
-    static func color(rgb: String) -> NSColor? {
-        let parts = rgb.split(separator: ",").compactMap { Double($0) }
-        guard parts.count == 3 else { return nil }
-        return NSColor(srgbRed: parts[0]/255, green: parts[1]/255, blue: parts[2]/255, alpha: 1)
+}
+
+/// The colour along a page's top edge, from what the page really draws there rather than its CSS,
+/// which a canvas, a see-through tint or a picture can hide: the most common one in a strip of it.
+enum PageTopColor {
+    /// The strip looked at, in points from the page's top, and the pixels it's shrunk to as it's
+    /// copied: enough to tell a background from the text and icons on it.
+    static let strip = (top: 1.0, height: 2.0), pixels = (width: 240.0, height: 2.0)
+
+    /// The most common colour in `image`, near shades counted together and averaged, in sRGB.
+    static func dominant(in image: CGImage) -> NSColor? {
+        let width = image.width, height = image.height
+        guard width > 0, height > 0, let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width*4, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue), let data = context.data else { return nil }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        let bytes = data.bindMemory(to: UInt8.self, capacity: width*height*4)
+        var groups: [Int: (count: Int, red: Int, green: Int, blue: Int)] = [:]
+        for index in stride(from: 0, to: width*height*4, by: 4) where bytes[index+3] > 250 {
+            let red = Int(bytes[index]), green = Int(bytes[index+1]), blue = Int(bytes[index+2])
+            let key = (red >> 2) << 12 | (green >> 2) << 6 | blue >> 2
+            let group = groups[key] ?? (0, 0, 0, 0)
+            groups[key] = (group.count+1, group.red+red, group.green+green, group.blue+blue)
+        }
+        guard let best = groups.values.max(by: { $0.count < $1.count }) else { return nil }
+        let count = CGFloat(best.count)
+        return NSColor(srgbRed: CGFloat(best.red)/count/255, green: CGFloat(best.green)/count/255, blue: CGFloat(best.blue)/count/255, alpha: 1)
     }
 }

@@ -338,6 +338,16 @@ enum RisePages {
         if let width, image.size.width > 0 { image.size = NSSize(width: width, height: image.size.height*width/image.size.width) }
         return image
     }
+    /// The colour along the page's top edge as it's drawn (`PageTopColor`), nil while it isn't drawing.
+    func topColor() async -> NSColor? {
+        let width = browserView.bounds.width
+        guard width >= 1 else { return nil }
+        let image: NSImage? = await withCheckedContinuation { continuation in
+            browserView.snapshotRect(NSRect(x: 0, y: PageTopColor.strip.top, width: width, height: PageTopColor.strip.height),
+                                 size: NSSize(width: min(PageTopColor.pixels.width, ceil(width)), height: PageTopColor.pixels.height)) { continuation.resume(returning: $0) }
+        }
+        return image?.cgImage(forProposedRect: nil, context: nil, hints: nil).flatMap(PageTopColor.dominant)
+    }
     var showsLiveLayers: Bool { true }
     func liveLayer(showing rect: NSRect?) -> CALayer? { browserView.liveLayerShowing(rect ?? browserView.bounds) }
     func snapshot(rect: NSRect) async -> NSImage? {
