@@ -182,6 +182,10 @@ import RiseCore
     let copyButton: SidebarCopyButton
     let settingsButton: SidebarHoverButton, zoomButton: SidebarHoverButton
     var onOpenAddress: (() -> Void)?
+    /// Where its buttons sit, and how much sooner its address starts for fewer of them: a split's
+    /// right page has no sidebar button, so its back, forward and reload move up a place.
+    var navigationCentres = Metrics.navigationCentres
+    var leadingRoom: CGFloat = 0 { didSet { needsLayout = true } }
     /// Rise's titlebar buttons, carried here while the bar shows.
     var navigation: [ChromeButton] = [] {
         didSet {
@@ -293,7 +297,7 @@ import RiseCore
         bounds.width-Metrics.extensionInset-Metrics.extensionStride*CGFloat(extensionButtons.count-1-index)
     }
     var fieldRect: NSRect {
-        NSRect(x: Metrics.fieldX, y: Metrics.midY-Metrics.fieldHeight/2, width: max(0, fieldMaxX-Metrics.fieldX), height: Metrics.fieldHeight)
+        NSRect(x: Metrics.fieldX-leadingRoom, y: Metrics.midY-Metrics.fieldHeight/2, width: max(0, fieldMaxX-Metrics.fieldX+leadingRoom), height: Metrics.fieldHeight)
     }
     private var fieldButtons: [SidebarHoverButton] { (showsZoom ? [zoomButton] : []) + [copyButton, settingsButton] }
 
@@ -305,7 +309,7 @@ import RiseCore
         field.frame = fieldRect
         CATransaction.commit()
         layoutProgress()
-        for (button, centre) in zip(navigation, Metrics.navigationCentres) {
+        for (button, centre) in zip(navigation, navigationCentres) {
             button.frame = NSRect(x: centre-14, y: mid-14, width: 28, height: 28)
         }
         for (index, button) in extensionButtons.enumerated() {
@@ -320,14 +324,14 @@ import RiseCore
         // The text runs to the field's buttons while they show, and to its end otherwise.
         let textEnd = isHovered || showsZoom ? (buttons.first?.frame.minX ?? fieldRect.maxX)-4 : fieldRect.maxX-8
         let line = ceil(text.intrinsicContentSize.height)
-        let textX = Metrics.textX-Metrics.textInset
+        let textX = Metrics.textX-Metrics.textInset-leadingRoom
         text.frame = NSRect(x: textX, y: round((mid-line/2)*2)/2, width: max(0, textEnd-textX), height: line)
     }
 
     // MARK: Hovering the address
 
     override func updateTrackingAreas() {
-        super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
+        super.updateTrackingAreas(); removeOwnTrackingAreas()
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self))
     }
     override func mouseMoved(with event: NSEvent) {

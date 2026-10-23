@@ -78,6 +78,6 @@ struct ZoomPercentLabel: View {
         zoomPopover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         zoomPopover.contentViewController = controller
         zoomPopover.contentSize = controller.view.frame.size
-        zoomPopover.show(relativeTo: navBar.zoomButton.bounds, of: navBar.zoomButton, preferredEdge: .maxY)
+        zoomPopover.show(relativeTo: selectedBar.zoomButton.bounds, of: selectedBar.zoomButton, preferredEdge: .maxY)
     }
 }

@@ -44,7 +44,7 @@ import RiseCore
         }
         if let group = activeSplitGroup, splitGroups != previous { registerSplitUndo(group: group.id, previous: previous, selectedID: current.id, addedTabID: added) }
     }
-    private func registerSplitUndo(group: UUID, previous: [SplitTabGroup], selectedID: UUID, addedTabID: UUID?) {
+    func registerSplitUndo(group: UUID, previous: [SplitTabGroup], selectedID: UUID, addedTabID: UUID?) {
         splitUndo?.expiry.cancel()
         let expiry = DispatchWorkItem { [weak self] in self?.splitUndo = nil }
         splitUndo = SplitUndo(groupID: group, previous: previous, selectedID: selectedID, addedTabID: addedTabID, expiry: expiry)
@@ -87,7 +87,10 @@ import RiseCore
     func focusSplitPage(at event: NSEvent) {
         guard activeSplitGroup != nil, peekTab == nil, palette.isHidden, !isSwitchingTabs else { return }
         let point = root.convert(event.locationInWindow, from: nil)
-        guard let hit = root.hitTest(point) else { return }
+        guard let hit = root.hitTest(point), let group = activeSplitGroup else { return }
+        // Each page's own bar too, so its buttons act on its page.
+        if hit.isDescendant(of: splitBar) { if selectedID != group.rightID { select(group.rightID) }; return }
+        if hit.isDescendant(of: navBar) { if selectedID != group.leftID { select(group.leftID) }; return }
         for tab in tabs where visibleTabIDs.contains(tab.id) && tab.id != selectedID {
             if hit === tab.page.view || hit.isDescendant(of: tab.page.view) { select(tab.id); return }
         }
@@ -167,17 +170,32 @@ import RiseCore
     // MARK: A Peek becoming the right half
 
     /// The Peek card springs into the right half while the page behind narrows into the left,
-    /// both live, laying out at every size; then the Peek's page joins the tab list as the split.
+    /// both live, laying out at every size, the left page's bar narrowing with it and the Peek's
+    /// own bar sliding in along its top; then the Peek's page joins the tab list as the split.
     func splitPeekLive(_ tab: BrowserTab, card: Surface, finish: @escaping () -> Void) {
         guard let source = tabs.first(where: { $0.id == (peekSourceTabID ?? selectedID) }), source.id == selectedID,
               source.page.view.superview === pageClip, activeSplitGroup == nil else { finish(); return }
         finishPeekLiveMotion()
         isPromotingPeek = true; pageLayoutHeld = true
         let spring = Self.peekSplitSpring
-        let frames = splitFrames(in: pageBody, fraction: 0.5)
+        let frames = splitFrames(in: pageBody, fraction: 0.5), barHeight = PlainNavBar.Metrics.height
         let pageFrom = source.page.view.frame, cardFrom = card.frame
-        // View geometry leaves out the page's recede, so this is where the right half settles.
-        let cardTo = pageClip.convert(frames.right, to: root)
+        // View geometry leaves out the page's recede, so this is where the right half settles,
+        // with room above it for its bar.
+        let cardTo = pageClip.convert(NSRect(x: frames.right.minX, y: frames.right.minY-barHeight, width: frames.right.width,
+                                             height: frames.right.height+barHeight), to: root)
+        let bar = splitBar
+        showPageBar(bar, tab: tab, shown: &splitBarTabID)
+        splitBarButtons[0].isEnabled = canNavigate(tab.page, .back); splitBarButtons[1].isEnabled = canNavigate(tab.page, .forward)
+        (splitBarButtons[2] as? ReloadButton)?.setMode(tab.isLoading ? .stop : .reload)
+        if let clip = card.subviews.first { bar.isHidden = false; clip.addSubview(bar) }
+        if let page = tab.page as? ChromiumPage {
+            Task { [weak self, weak tab] in
+                guard let color = await page.topColor(), let self, let tab else { return }
+                self.plainBarColors[tab.id] = color
+                if self.splitBarTabID == tab.id { bar.setColor(color, animated: true) }
+            }
+        }
         (peekBackdrop as? PeekBackdrop)?.dismiss = nil
         if let backdrop = peekBackdrop {
             NSAnimationContext.runAnimationGroup { $0.duration = spring.perceptualDuration*0.7; backdrop.animator().alphaValue = 0 }
@@ -198,11 +216,22 @@ import RiseCore
             card.layer?.cornerRadius = radius; clip?.layer?.cornerRadius = radius
             CATransaction.commit()
             self.placeLivePeek(card, web: tab.page.view, at: cardFrom.interpolated(to: cardTo, by: progress).limited(to: page, edges: edges))
+            // The bar comes down into the card's top as the page makes room under it.
+            let inset = barHeight*min(1, max(0, progress))
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            if bar.superview === card.subviews.first {
+                bar.frame = NSRect(x: 0, y: inset-barHeight, width: card.bounds.width, height: barHeight)
+                tab.page.view.frame = NSRect(x: 0, y: inset, width: card.bounds.width, height: card.bounds.height-inset)
+            }
             let page = pageFrom.interpolated(to: frames.left, by: progress)
-            source.page.view.frame = page; self.shapePage(around: [page])
+            source.page.view.frame = page; self.navBar.frame.size.width = page.width
+            CATransaction.commit()
+            self.shapePage(around: [page])
         }, completion: { [weak self, weak tab] in
             guard let self else { return }
             self.peekLiveMotion = nil; self.isPromotingPeek = false; self.pageLayoutHeld = false
+            // Where it settled is where the split lays it out, so it hands over without a move.
+            self.pageClip.addSubview(bar, positioned: .above, relativeTo: self.navBar)
             guard let tab, tab === self.peekTab else { self.layoutChrome(); return }
             finish()
         })

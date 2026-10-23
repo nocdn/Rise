@@ -37,6 +37,12 @@ extension NSView {
         guard let frame = window?.contentView?.superview, let hit = frame.hitTest(frame.convert(point, from: nil)) else { return false }
         return hit === self || hit.isDescendant(of: self)
     }
+    /// Removes the tracking areas the view added for itself, leaving AppKit's own. A tooltip's
+    /// area belongs to AppKit's tooltip manager: removed with the rest, the manager loses track of
+    /// the view and can message it after it's freed, which crashed Rise splitting a Peek.
+    func removeOwnTrackingAreas() {
+        for area in trackingAreas where area.owner === self { removeTrackingArea(area) }
+    }
 }
 class Surface: FlippedView {
     init(color: NSColor = .clear, radius: CGFloat = 0) {
@@ -84,7 +90,7 @@ class ChromeButton: NSButton {
     required init?(coder: NSCoder) { fatalError() }
     @objc func runAction() { actionBlock?() }
     override func updateTrackingAreas() {
-        super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
+        super.updateTrackingAreas(); removeOwnTrackingAreas()
         // Moves too: off something in front of it and onto it is no entry of its own.
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self))
         refreshHoverState()

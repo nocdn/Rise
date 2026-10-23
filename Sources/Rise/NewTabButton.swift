@@ -32,7 +32,7 @@ final class NewTabButton: NSButton {
         caption.frame = NSRect(x: 30, y: (bounds.height - height)/2, width: max(0, bounds.width - 38), height: height)
     }
     override func updateTrackingAreas() {
-        super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
+        super.updateTrackingAreas(); removeOwnTrackingAreas()
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
     }
     override func mouseEntered(with event: NSEvent) { hovered = true; updateBackground() }

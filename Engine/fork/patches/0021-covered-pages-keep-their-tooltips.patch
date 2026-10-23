@@ -1,0 +1,22 @@
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -1734,9 +1734,18 @@
+   }
+   [self.window invalidateCursorRectsForView:self];
+ }
++// AppKit's own tooltip areas stay: taken away and put back, they'd point the
++// tooltip manager at a tooltip it has since freed, which crashed Rise as a
++// Peek over a page with a tooltip became a split.
+ - (void)parkTrackingAreasIn:(NSView*)view {
++  static Class toolTipManager = NSClassFromString(@"NSToolTipManager");
+   for (NSView* child in view.subviews) {
+-    NSArray<NSTrackingArea*>* areas = child.trackingAreas;
++    NSMutableArray<NSTrackingArea*>* areas = [NSMutableArray array];
++    for (NSTrackingArea* area in child.trackingAreas) {
++      if (![area.owner isKindOfClass:toolTipManager]) {
++        [areas addObject:area];
++      }
++    }
+     if (areas.count) {
+       [_parkedAreas setObject:areas forKey:child];
+       for (NSTrackingArea* area in areas) {

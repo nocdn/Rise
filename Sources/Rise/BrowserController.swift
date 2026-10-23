@@ -14,6 +14,10 @@ import RiseCore
     private(set) lazy var navBar = PlainNavBar(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() },
                                                zoom: { [weak self] in self?.showZoomControls() })
     var plainBarTimer: Timer?, plainBarColors: [UUID: NSColor] = [:], plainBarTabID: UUID?, plainBarSampling = false
+    /// A split's right page's own bar (`SplitNavBar.swift`), its buttons, and the page it shows.
+    private(set) lazy var splitBar = PlainNavBar(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() },
+                                                 zoom: { [weak self] in self?.showZoomControls() })
+    var splitBarButtons: [ChromeButton] = [], splitBarTabID: UUID?
     let pageShadow = PageSurface(color: NSColor(hex: 0xFDFCFC), radius: PageAppearance.radius)
     let pageClip = PageSurface(color: NSColor(hex: 0xFDFCFC), radius: PageAppearance.radius)
     let emptyPage = Surface(color: NSColor(hex: 0xFDFCFC))
@@ -67,7 +71,7 @@ import RiseCore
         let controller = HistorySwipeController(window: window as! BrowserWindow, pageAt: { [weak self] event in
             self?.historyPage(at: event)
         }, feedback: { [weak self] direction, pull, armed, release in
-            guard let self, let direction, let arrow = self.toolbarButtons[direction == .back ? 1 : 2] as? HistoryArrowButton else { return }
+            guard let self, let direction, let arrow = self.selectedHistoryArrow(direction) else { return }
             if let committed = release { arrow.release(committed: committed) }
             else { arrow.drag(pull: pull, armed: armed) }
         })
@@ -153,6 +157,8 @@ import RiseCore
     var peekPromotion: PeekPromotion?
     /// The Peek card moving frame by frame with its live page inside, when Live Peek Resize is on.
     var peekLiveMotion: PeekLiveMotion?
+    /// ⇧⌘D's copy lifting off the page into the right half (`SplitDuplicate.swift`).
+    var duplicateMotion: PeekLiveMotion?
     /// The pill between split pages, which drags the split.
     let splitHandle = SplitHandle()
     /// The split springing back to the middle after a double click on its handle.
@@ -394,6 +400,7 @@ import RiseCore
         }
         // The page bar's, drawn as Dia's: chevrons, and a smaller sidebar glyph.
         navBar.navigation = toolbarButtons
+        installSplitBar()
         developerAddress.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
         developerAddress.textColor = NSColor(hex: 0x393134); developerBar.addSubview(developerAddress)
         developerAddress.onSubmit = { [weak self] text in self?.navigateDeveloperAddress(text) }
@@ -510,7 +517,7 @@ import RiseCore
         let devHeight = developerMotion.height(for: selectedID, enabled: selectedTab?.developer == true)
         // The page bar is the page's top; developer mode's opens under it.
         let barHeight = PlainNavBar.Metrics.height
-        navBar.frame = NSRect(x: 0, y: 0, width: cb.width, height: PlainNavBar.Metrics.height)
+        layoutPageBars(width: cb.width)
         developerBar.frame = NSRect(x: 0, y: barHeight+devHeight-DeveloperModeMotion.headerHeight, width: cb.width, height: DeveloperModeMotion.headerHeight)
         developerBar.isHidden = devHeight == 0
         let addressHeight = developerAddress.intrinsicContentSize.height
@@ -745,9 +752,7 @@ import RiseCore
         sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: splitGroups)
         refreshTabHoverCard(); preloadGmailInbox(); preloadCalendarAgenda()
         window?.title = (selectedTab?.title).map { "\($0) — Rise" } ?? "Rise"
-        toolbarButtons[1].isEnabled = historyPage.map { canNavigate($0, .back) } ?? false
-        toolbarButtons[2].isEnabled = historyPage.map { canNavigate($0, .forward) } ?? false
-        (toolbarButtons[3] as? ReloadButton)?.setMode(selectedTab?.isLoading == true ? .stop : .reload)
+        updateNavigationButtons()
         developerAddress.updateURL(selectedTab?.url?.absoluteString ?? "")
         errorSurface.isHidden = errorWebView == nil || errorWebView !== selectedTab?.page.view
         updatePlainBar()
@@ -872,7 +877,7 @@ import RiseCore
         // swipe surface and arrow spring before navigation starts.
         historySwipe.cancel()
         developerMotion.cancel()
-        toolbarButtons.compactMap { $0 as? HistoryArrowButton }.forEach { $0.restore() }
+        (toolbarButtons+splitBarButtons).compactMap { $0 as? HistoryArrowButton }.forEach { $0.restore() }
         errorWebView = nil
         if let peek = peekTab {
             // Pages visited inside a Peek have their own history.
@@ -895,7 +900,7 @@ import RiseCore
         if let tab = selectedTab, tab.page.url == nil, let url = tab.requestedURL { tab.load(url) } else { selectedTab?.page.reloadIgnoringCache() }
         update()
     }
-    @objc func reload() { historySwipe.cancel(); errorWebView = nil; (toolbarButtons[3] as? ReloadButton)?.armAnimation(); if selectedTab?.isLoading == true { selectedTab?.cancelLoad() } else if let tab = selectedTab, tab.page.url == nil, let url = tab.requestedURL { tab.load(url) } else { selectedTab?.page.reload() }; update() }
+    @objc func reload() { historySwipe.cancel(); errorWebView = nil; selectedReloadButton?.armAnimation(); if selectedTab?.isLoading == true { selectedTab?.cancelLoad() } else if let tab = selectedTab, tab.page.url == nil, let url = tab.requestedURL { tab.load(url) } else { selectedTab?.page.reload() }; update() }
     @objc func retry() { errorWebView = nil; if let url = selectedTab?.url { selectedTab?.load(url) }; update() }
     @objc func toggleSidebar() {
         if keepPeekedSidebar() { return }
@@ -948,7 +953,7 @@ import RiseCore
     func setPageZoom(_ zoom: CGFloat) {
         guard let tab = selectedTab else { return }
         tab.page.zoom = zoom
-        navBar.pageZoom = zoom; zoomControls?.refresh()
+        selectedBar.pageZoom = zoom; zoomControls?.refresh()
     }
     func scheduleSave() {
         saveWork?.cancel(); let work = DispatchWorkItem { [weak self] in self?.saveNow() }; saveWork = work

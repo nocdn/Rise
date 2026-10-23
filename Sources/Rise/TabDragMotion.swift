@@ -107,7 +107,7 @@ final class TabDragOverlay: FlippedView {
     }
     required init?(coder: NSCoder) { fatalError() }
     override func updateTrackingAreas() {
-        super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
+        super.updateTrackingAreas(); removeOwnTrackingAreas()
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .activeAlways, .inVisibleRect], owner: self))
     }
     override func mouseMoved(with event: NSEvent) { onPointerMove?(event) }

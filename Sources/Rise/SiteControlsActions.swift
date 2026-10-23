@@ -11,7 +11,7 @@ import Vision
     }
     @objc func shareCurrentPage() {
         guard let url = selectedTab?.url else { return }
-        let anchor = (siteControlsPopover.contentViewController as? SiteControlsController)?.quickActions.first ?? navBar.settingsButton
+        let anchor = (siteControlsPopover.contentViewController as? SiteControlsController)?.quickActions.first ?? selectedBar.settingsButton
         sharingPicker = NSSharingServicePicker(items: [url])
         sharingPicker?.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
     }

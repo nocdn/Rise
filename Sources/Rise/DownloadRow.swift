@@ -125,7 +125,7 @@ final class DownloadRow: NSView {
         detail.frame = NSRect(x: x, y: 23, width: width, height: 14)
     }
     override func updateTrackingAreas() {
-        super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
+        super.updateTrackingAreas(); removeOwnTrackingAreas()
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
     }
     override func mouseEntered(with event: NSEvent) { pointer?(self, .entered) }

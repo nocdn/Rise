@@ -20,7 +20,7 @@ class CardLinkRow: FlippedView {
         linkRect = rect; window?.invalidateCursorRects(for: self)
     }
     override func updateTrackingAreas() {
-        super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
+        super.updateTrackingAreas(); removeOwnTrackingAreas()
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
     }
     override func resetCursorRects() { if !linkRect.isEmpty { addCursorRect(linkRect, cursor: .pointingHand) } }

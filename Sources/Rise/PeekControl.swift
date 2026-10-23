@@ -174,7 +174,7 @@ import AppKit
     // MARK: Hover and press
 
     override func updateTrackingAreas() {
-        super.updateTrackingAreas(); trackingAreas.forEach(removeTrackingArea)
+        super.updateTrackingAreas(); removeOwnTrackingAreas()
         addTrackingArea(NSTrackingArea(rect: buttonRect, options: [.mouseEnteredAndExited, .activeAlways], owner: self))
         refreshHover()
     }

@@ -28,7 +28,7 @@ final class ThinScroller: NSScroller {
     }
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
-        trackingAreas.forEach(removeTrackingArea)
+        removeOwnTrackingAreas()
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self))
     }
     private func refreshHover(_ event: NSEvent) { hovered = rect(for: .knob).contains(convert(event.locationInWindow, from: nil)) }

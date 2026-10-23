@@ -51,6 +51,46 @@ final class SplitTabsTests: XCTestCase {
         XCTAssertTrue(left.page.view.superview === browser.pageClip && right.page.view.superview === browser.pageClip)
         XCTAssertEqual(browser.activeSplitGroup?.rightID, right.id)
     }
+    @MainActor func testEachSplitPageHasItsOwnBarAndAClickOnItActsOnItsPage() throws {
+        let browser = browser(); defer { clean(browser) }
+        let left = browser.addTab(), right = browser.addTab()
+        left.requestedURL = URL(string: "https://left.example/"); right.requestedURL = URL(string: "https://right.example/")
+        browser.select(left.id); browser.showSplit(right); browser.root.layoutSubtreeIfNeeded()
+        let bar = browser.splitBar, navBar = browser.navBar
+        XCTAssertFalse(bar.isHidden)
+        XCTAssertEqual(bar.frame.minX, right.page.view.frame.minX); XCTAssertEqual(bar.frame.width, right.page.view.frame.width)
+        XCTAssertEqual(bar.frame.maxY, right.page.view.frame.minY, "Over its own page")
+        XCTAssertEqual(navBar.frame.width, left.page.view.frame.width, "The window's bar keeps to the left page")
+        XCTAssertTrue(bar.text.stringValue.hasPrefix("right.example")); XCTAssertTrue(navBar.text.stringValue.hasPrefix("left.example"))
+        XCTAssertEqual(bar.navigation.count, 3, "Back, forward and reload, without the sidebar's button")
+
+        let field = bar.convert(NSPoint(x: bar.fieldRect.midX, y: bar.fieldRect.midY), to: nil)
+        browser.window?.sendEvent(NSEvent.mouseEvent(with: .leftMouseDown, location: field, modifierFlags: [], timestamp: 0,
+            windowNumber: browser.window!.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!)
+        XCTAssertEqual(browser.selectedID, right.id, "Its page is the one its buttons act on")
+        XCTAssertTrue(browser.selectedBar === bar)
+
+        browser.separateSplit(containing: left.id); browser.root.layoutSubtreeIfNeeded()
+        XCTAssertTrue(bar.isHidden); XCTAssertEqual(navBar.frame.width, browser.pageClip.bounds.width)
+    }
+    @MainActor func testShiftCommandDDuplicatesThePageIntoASplitThatCommandZTakesBack() throws {
+        let browser = browser(); defer { clean(browser) }
+        let other = browser.addTab(), tab = browser.addTab()
+        tab.requestedURL = URL(string: "https://example.com/page")
+        browser.select(tab.id)
+        let old = NSApp.mainMenu; defer { NSApp.mainMenu = old }
+        let delegate = AppDelegate(); delegate.browser = browser; delegate.buildMenu()
+        let key = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command, .shift], timestamp: 0,
+            windowNumber: browser.window!.windowNumber, context: nil, characters: "D", charactersIgnoringModifiers: "d", isARepeat: false, keyCode: 2))
+        XCTAssertTrue(NSApp.mainMenu!.performKeyEquivalent(with: key))
+        let group = try XCTUnwrap(browser.activeSplitGroup)
+        XCTAssertEqual(group.leftID, tab.id)
+        let copy = try XCTUnwrap(browser.tabs.first { $0.id == group.rightID })
+        XCTAssertEqual(copy.url, tab.url); XCTAssertEqual(browser.tabs.count, 3)
+        XCTAssertEqual(browser.selectedID, tab.id)
+        XCTAssertTrue(browser.undoSplit())
+        XCTAssertNil(browser.activeSplitGroup); XCTAssertEqual(browser.tabs.map(\.id), [tab.id, other.id], "The copy is gone")
+    }
     @MainActor func testClosingOrSeparatingPairLeavesUsableStandaloneTabs() {
         let browser = browser(); defer { clean(browser) }
         let left = browser.addTab(), right = browser.addTab(), other = browser.addTab()

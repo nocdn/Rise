@@ -1,22 +1,18 @@
 import AppKit
 
 @MainActor extension BrowserController {
-    /// The page bar follows the selected page: its address and title, its zoom, and its colour.
+    /// The page bar follows the selected page, or each of a split's its own (`SplitNavBar.swift`):
+    /// its address and title, its zoom, its load and its colour.
     func updatePlainBar() {
-        let tab = selectedTab
-        navBar.show(url: tab?.url, title: tab?.title ?? "")
-        navBar.pageZoom = tab?.page.zoom ?? 1
-        if plainBarTabID != tab?.id {
-            // Another page's colour at once, as last seen, then as it is now; its load where it's got.
-            plainBarTabID = tab?.id
-            navBar.resetLoading(tab?.isLoading == true, progress: tab?.page.estimatedProgress ?? 0, hard: tab?.isHardReloading == true)
-            navBar.setColor(tab.flatMap { plainBarColors[$0.id] } ?? theme.page, animated: false)
+        let bars = pageBarTabs
+        let before = (plainBarTabID, splitBarTabID)
+        showPageBar(navBar, tab: bars.first?.tab, shown: &plainBarTabID)
+        if bars.count == 2 { showPageBar(splitBar, tab: bars[1].tab, shown: &splitBarTabID) } else if splitBar.superview === pageClip { splitBarTabID = nil }
+        if before != (plainBarTabID, splitBarTabID) {
             if plainBarColors.count > tabs.count+8 {
                 let ids = Set(tabs.map(\.id)); plainBarColors = plainBarColors.filter { ids.contains($0.key) }
             }
             samplePlainBarColor()
-        } else {
-            navBar.setLoading(tab?.isLoading == true, progress: tab?.page.estimatedProgress ?? 0, hard: tab?.isHardReloading == true)
         }
         if plainBarTimer == nil {
             // Pages scroll and restyle their tops as they're used; a cheap look 3.5 times a second keeps up.
@@ -26,19 +22,23 @@ import AppKit
     }
 
     func samplePlainBarColor() {
-        guard !plainBarSampling, let tab = selectedTab, window?.occlusionState.contains(.visible) == true else { return }
-        guard tab.url != nil, tab.page is ChromiumPage else { navBar.setColor(theme.page, animated: true); return }
+        guard !plainBarSampling, window?.occlusionState.contains(.visible) == true else { return }
+        var pages: [(bar: PlainNavBar, tab: BrowserTab)] = []
+        for (bar, tab) in pageBarTabs {
+            if tab.url != nil, tab.page is ChromiumPage { pages.append((bar, tab)) } else { bar.setColor(theme.page, animated: true) }
+        }
+        guard !pages.isEmpty else { return }
         plainBarSampling = true
-        let id = tab.id, page = tab.page
         Task { [weak self] in
-            let color = await (page as? ChromiumPage)?.topColor()
-            guard let self else { return }
-            self.plainBarSampling = false
-            // Nothing drawn to look at, as a hidden page: the bar keeps the colour it has.
-            guard let color else { return }
-            self.plainBarColors[id] = color
-            guard self.selectedID == id else { return }
-            self.navBar.setColor(color, animated: true)
+            for (bar, tab) in pages {
+                let color = await (tab.page as? ChromiumPage)?.topColor()
+                guard let self else { return }
+                // Nothing drawn to look at, as a hidden page: the bar keeps the colour it has.
+                guard let color else { continue }
+                self.plainBarColors[tab.id] = color
+                if (bar === self.navBar ? self.plainBarTabID : self.splitBarTabID) == tab.id { bar.setColor(color, animated: true) }
+            }
+            self?.plainBarSampling = false
         }
     }
 }

@@ -72,7 +72,9 @@ struct PeekUndo {
             guard let self, tab === self.peekTab else { return }
             self.suspendFindBar(for: tab)
             tab.page.view.removeFromSuperview()
-            self.peekTab = nil; self.closePeek(); self.tabs.insert(tab, at: 0); self.showSplit(tab)
+            // It joins the split before the Peek closes: closing first lays the page behind out at
+            // the full width for a moment, which the engine draws, a flash before the halves.
+            self.peekTab = nil; self.tabs.insert(tab, at: 0); self.showSplit(tab); self.closePeek()
             self.registerPeekUndo(.split(previous: previous), tab: tab, sourceID: sourceID, opensNewTab: opensNewTab, origin: origin)
         }
         if livePeekResize, peekMotionAllowed, let card = peekCard { splitPeekLive(tab, card: card, finish: finish) } else { finish() }
@@ -268,7 +270,11 @@ struct PeekUndo {
             undo.tab.page.setMediaSuspended(false)
             settle(source, recordsVisit: false)
         case .newTab, .split:
-            if case .split = undo.kind, let source, source.page.view.superview === pageClip { widening = source.page.view.frame }
+            if case .split = undo.kind, let source, source.page.view.superview === pageClip {
+                // Held where it is until it widens on its spring below: laid out at the full width
+                // meanwhile, the engine would draw it there for a frame.
+                widening = source.page.view.frame; pageLayoutHeld = true
+            }
             detachTab(undo.tab)
             if case .split(let previous) = undo.kind {
                 splitGroups = previous.filter { group in
@@ -294,6 +300,8 @@ struct PeekUndo {
                 source.page.view.frame = page; self.shapePage(around: [page])
             }
             motion.afterwards = { [weak self] in self?.pageLayoutHeld = false; self?.layoutChrome() }
+        } else if widening != nil {
+            pageLayoutHeld = false; layoutChrome()
         }
         // It closes back into the link it first grew out of, which is on the page again.
         peekOrigin = undo.origin

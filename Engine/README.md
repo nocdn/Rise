@@ -66,6 +66,7 @@ to change that limit. `./scripts/engine/build.sh -n` previews pending work.
 | `0018-snapshot-a-strip-of-the-page.patch` | Copies a small rendered page strip for the page bar's colour |
 | `0019-extension-requested-popups.patch` | Routes `chrome.action.openPopup()` through Rise's popup host, retaining Chrome's active-window and action checks |
 | `0020-authentication-diagnostics.patch` | Local macOS unified logs for passkey lifecycle/availability and native-host launch/disconnect outcomes, without credential or page data |
+| `0021-covered-pages-keep-their-tooltips.patch` | A page covered by a Peek sets aside only Chromium's mouse tracking, not AppKit's tooltip areas, which otherwise come back pointing at freed tooltips |
 
 `0002` is exported from the fork's tree with `git diff HEAD` over `base` and `chrome`, less the
 paths the other patches and `brand.py` own (see `Engine/fork-plan.md`); new files are added

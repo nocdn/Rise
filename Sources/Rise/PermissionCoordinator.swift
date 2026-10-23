@@ -58,7 +58,7 @@ import UserNotifications
         popover.appearance = browser.theme.appearance
         controller.view.appearance = browser.theme.appearance
         popover.contentViewController = controller; popover.contentSize = controller.view.frame.size
-        let anchor = browser.navBar.settingsButton
+        let anchor = browser.selectedBar.settingsButton
         popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
     }
     func resolve(_ allowed: Bool) {

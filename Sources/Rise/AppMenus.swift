@@ -106,6 +106,7 @@ import AppKit
         item(tabs, "Duplicate Tab", #selector(BrowserController.duplicateCurrentTab), target: browser)
         item(tabs, "Pin Tab", #selector(BrowserController.pinCurrentTab), target: browser)
         item(tabs, "Split View", #selector(BrowserController.toggleSplit), target: browser)
+        item(tabs, "Duplicate into Split View", #selector(BrowserController.duplicateIntoSplit), "d", modifiers: [.command, .shift], target: browser)
         item(tabs, "Peek Current Page", #selector(BrowserController.peekCurrentPage), "p", modifiers: [.command, .shift], target: browser)
         item(tabs, "Sort Tabs by Domain", #selector(BrowserController.cleanUpTabs), "k", modifiers: [.command, .shift], target: browser)
         tabs.addItem(.separator())

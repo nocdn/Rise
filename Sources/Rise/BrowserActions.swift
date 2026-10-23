@@ -32,7 +32,7 @@ import RiseCore
         siteControlsPopover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         siteControlsPopover.contentViewController = controller
         siteControlsPopover.contentSize = controller.view.frame.size
-        siteControlsPopover.show(relativeTo: navBar.settingsButton.bounds, of: navBar.settingsButton, preferredEdge: .maxY)
+        siteControlsPopover.show(relativeTo: selectedBar.settingsButton.bounds, of: selectedBar.settingsButton, preferredEdge: .maxY)
     }
     func makeSiteMenu() -> NSMenu {
         let menu = NSMenu()
@@ -157,7 +157,10 @@ import RiseCore
         if let page = peekTab?.page { historySwipe.cancel(for: page) }
         // An interrupted live resize leaves the pages for layout to put back.
         let interrupted = peekLiveMotion?.isRunning == true
-        peekLiveMotion?.stop(); peekLiveMotion = nil; isPromotingPeek = false; pageLayoutHeld = false
+        // A hold of the pages' layout is a motion's, let go with it; ⌘Z's for a split holds the
+        // page behind on through the Peek it reopens (`restorePeek`).
+        if interrupted || isPromotingPeek { pageLayoutHeld = false }
+        peekLiveMotion?.stop(); peekLiveMotion = nil; isPromotingPeek = false
         let card = peekCard, backdrop = peekBackdrop, web = peekTab?.page, origin = peekOrigin
         peekSourceTabID = nil; peekOpensNewTab = false; peekSwipePull = 0
         let motion = animated && peekMotionAllowed, growing = peekGhosts.first { $0.phase == .opening }
@@ -203,7 +206,7 @@ import RiseCore
         content.view.appearance = theme.appearance
         siteInfoPopover.contentViewController = content
         siteInfoPopover.contentSize = content.view.fittingSize
-        let anchor: NSView = selectedTab?.developer == true ? devButtons[4] : navBar.settingsButton
+        let anchor: NSView = selectedTab?.developer == true ? devButtons[4] : selectedBar.settingsButton
         let rect = anchor.bounds
         siteInfoPopover.show(relativeTo: rect, of: anchor, preferredEdge: .minY)
     }
