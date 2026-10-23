@@ -71,7 +71,7 @@ import AppKit
         hint.isHidden = !showsHint
         panel.frame = bounds
         panel.fill = theme == .dark ? theme.popup : TabAppearance.selectedFill(theme)
-        panel.layer?.borderColor = theme.border.cgColor
+        KeroLitEdge.apply(to: panel, theme: theme)
         // A dark page swallows a light shadow; it needs more weight to read at all.
         panel.layer?.shadowOpacity = theme == .dark ? 0.45 : 0.12
         panel.layer?.shadowPath = PageOutline.path(in: panel.bounds, radius: FindBar.radius, continuous: true)

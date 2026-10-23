@@ -650,7 +650,7 @@ final class PullRequestMetaRow: CardLinkRow {
         return result
     }
     func applyTheme() {
-        panel.fill = background; panel.layer?.borderColor = theme.border.cgColor
+        panel.fill = background; KeroLitEdge.apply(to: panel, theme: theme)
         // A dark page swallows a light shadow; it needs more weight to read at all.
         panel.layer?.shadowOpacity = theme == .dark ? 0.45 : 0.12
         titleLabel.textColor = theme.text

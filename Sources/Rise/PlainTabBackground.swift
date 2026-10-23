@@ -14,8 +14,6 @@ final class PlainTabBackground: FlippedView {
     /// Kero's shadows, as CSS writes them: down, blur, spread, black's opacity.
     private static let lightShadows: [(y: CGFloat, blur: CGFloat, spread: CGFloat, opacity: Float)] = [(0.5, 2, 0, 0.05)]
     private static let darkShadows: [(y: CGFloat, blur: CGFloat, spread: CGFloat, opacity: Float)] = [(1, 1, 0, 0.2), (2, 2, -1, 0.2), (4, 6, -3, 0.24)]
-    /// Kero's dark text, which its lit edge is drawn in.
-    private static let darkText = NSColor(hex: 0xECECF0)
 
     private let hoverLayer = CALayer()
     /// The chosen look, fading as one: its shadows, fill and edge.
@@ -39,9 +37,9 @@ final class PlainTabBackground: FlippedView {
         litEdge.mask = litEdgeShape; litEdgeShape.fillRule = .evenOdd
         // Lit from above: the edge's top brighter than its bottom.
         litEdge.startPoint = CGPoint(x: 0.5, y: 0); litEdge.endPoint = CGPoint(x: 0.5, y: 1)
-        litEdge.colors = [Self.darkText.withAlphaComponent(0.18), Self.darkText.withAlphaComponent(0.06)].map(\.cgColor)
+        litEdge.colors = KeroLitEdge.colors
         // Light's ring: 0.5 pt of 6% black just outside.
-        ring.borderWidth = 0.5; ring.borderColor = NSColor.black.withAlphaComponent(0.06).cgColor
+        ring.borderWidth = KeroLitEdge.ringWidth; ring.borderColor = KeroLitEdge.ringColor
         hoverLayer.opacity = 0; chosenLayer.opacity = 0
         [shadowHost, fill, ring, litEdge].forEach(chosenLayer.addSublayer)
         layer?.addSublayer(hoverLayer); layer?.addSublayer(chosenLayer)
@@ -81,9 +79,7 @@ final class PlainTabBackground: FlippedView {
         let cut = CGMutablePath(); cut.addRect(bounds.insetBy(dx: -40, dy: -40)); cut.addPath(outline)
         shadowCut.path = cut
         litEdge.frame = bounds; litEdgeShape.frame = bounds
-        let edge = CGMutablePath(); edge.addPath(outline)
-        edge.addPath(PageOutline.path(in: bounds.insetBy(dx: 1, dy: 1), radius: max(0, radius-1), continuous: true))
-        litEdgeShape.path = edge
+        litEdgeShape.path = KeroLitEdge.path(in: bounds, radius: radius)
         CATransaction.commit()
     }
 

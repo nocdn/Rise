@@ -178,7 +178,7 @@ final class CalendarTimeline: FlippedView {
         frame.origin.x = left; self.anchorTop = anchorTop; self.maxBottom = maxBottom; tabPoint = growsFrom
         appearance = theme.appearance
         panel.fill = background
-        panel.layer?.borderColor = theme.border.cgColor
+        KeroLitEdge.apply(to: panel, theme: theme)
         timeline.theme = theme
         divider.fill = theme.text.withAlphaComponent(theme == .dark ? 0.14 : 0.1)
         if switching { events = []; (chips+allDayChips).forEach { $0.removeFromSuperview() }; chips = []; allDayChips = [] }

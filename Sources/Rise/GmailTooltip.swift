@@ -175,7 +175,7 @@ final class GmailEmailRow: NSButton {
         frame.origin.x = left; self.anchorTop = anchorTop; self.maxBottom = maxBottom; tabPoint = growsFrom
         appearance = theme.appearance
         panel.fill = theme == .dark ? theme.popup : TabAppearance.selectedFill(theme)
-        panel.layer?.borderColor = theme.border.cgColor
+        KeroLitEdge.apply(to: panel, theme: theme)
         if switching { rows.forEach { $0.removeFromSuperview() }; rows = []; scroll.contentView.scroll(to: .zero); scroll.hideScrollerUntilScrolled() }
         update(inbox)
         if appearing { height.settle(); if !glides { top.settle() }; render() }

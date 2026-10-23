@@ -41,7 +41,7 @@ import AppKit
               theme: RiseTheme, background: NSColor, text: NSColor) {
         guard breakdown != nil || loading else { hide(); return }
         rows.breakdown = breakdown; rows.total = total; rows.theme = theme; rows.text = text
-        panel.fill = background; panel.layer?.borderColor = theme.border.cgColor
+        panel.fill = background; KeroLitEdge.apply(to: panel, theme: theme)
         // The pull request card's shadow: a dark page swallows a light one, so it weighs more there.
         panel.layer?.shadowOpacity = theme == .dark ? 0.45 : 0.12
         let size = rows.size
