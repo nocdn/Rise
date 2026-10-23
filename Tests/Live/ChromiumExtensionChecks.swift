@@ -181,7 +181,9 @@ import RiseChromium
                 browser.window?.contentView?.addSubview(popup.view)
                 popup.load(popupURL)
                 _ = await waitUntil("The popup loads in a page of Rise's", 15) {
-                    await self.value("return document.body?.dataset.report ?? null", in: popup) != nil
+                    // A JavaScript null can arrive as NSNull, which is a non-nil Any.
+                    // Require the async tabs.query report itself before inspecting its tab.
+                    (await self.value("return document.body?.dataset.report ?? null", in: popup) as? String)?.isEmpty == false
                 }
                 let report = await value("return document.body?.dataset.report ?? null", in: popup) as? String ?? ""
                 check(report.contains("\(secondID)") && report.contains("second.html"), "The popup's active tab is the one it opened over: \(report)")
