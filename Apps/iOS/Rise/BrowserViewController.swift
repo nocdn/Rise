@@ -445,6 +445,14 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         ["http", "https"].contains(url.scheme?.lowercased() ?? "") && url.host != nil
     }
 
+    func webView(_ webView: WKWebView, willPresentEditMenuWithAnimator animator: any UIEditMenuInteractionAnimating) {
+        SelectionTimeMenu.willPresent(in: webView)
+    }
+
+    func webView(_ webView: WKWebView, willDismissEditMenuWithAnimator animator: any UIEditMenuInteractionAnimating) {
+        SelectionTimeMenu.willDismiss(in: webView)
+    }
+
     func webView(_ webView: WKWebView, contextMenuWillPresentForElement elementInfo: WKContextMenuElementInfo) {
         ImageContextMenus.setPresented(true, in: webView)
         githubRepositoryMenu?.willPresent(in: webView)

@@ -28,7 +28,7 @@ final class SelectionTimeMenuTests: XCTestCase {
         let now = Date(), menus = SelectionTimeMenu.elements(for: SelectionTimeMenu.selection(in: page), in: page, now: now).compactMap { $0 as? UIMenu }
         let time = try XCTUnwrap(SelectionTimes.find(in: "11pm PST", now: now).first)
         XCTAssertEqual(menus.map(\.title), [SelectionTimes.label(time, now: now)])
-        XCTAssertEqual(menus.first?.children.map(\.title), ["Copy “\(SelectionTimes.copied(time, now: now))”", "Add to Calendar"])
+        XCTAssertEqual(menus.first?.children.map(\.title), ["Copy “\(SelectionTimes.copied(time, now: now))”", "Add to Calendar", "Add to Reminders", "Show in Calendar"])
 
         // The page clearing its own selection leaves the frame's, the one selected last.
         try await select("getSelection().removeAllRanges()")
@@ -39,5 +39,12 @@ final class SelectionTimeMenuTests: XCTestCase {
         try await select("const f = document.getElementById('f'); f.setSelectionRange(0, 0); f.blur()")
         try await selection(in: page, becomes: "")
         XCTAssertTrue(SelectionTimeMenu.elements(for: "5pm", in: page).isEmpty)
+    }
+
+    @MainActor func testCalendarLinkUsesTheAbsoluteInstantRatherThanLocalClockComponents() throws {
+        let date = Date(timeIntervalSinceReferenceDate: 123456789)
+        let url = SelectionTimeMenu.calendarURL(for: date)
+        XCTAssertEqual(url.scheme, "calshow")
+        XCTAssertEqual(Double(url.absoluteString.dropFirst("calshow:".count)), date.timeIntervalSinceReferenceDate)
     }
 }
