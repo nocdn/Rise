@@ -28,6 +28,17 @@ import RiseChromium
         let opener = tabs.first { $0.page === page }
         func openInNewTab(_ url: URL) { addTab(url: url).returnsTo = opener?.id }
 
+        // A time selected in another zone heads the menu in the person's own (`SelectionTimes`).
+        let times = SelectionTimes.find(in: info.selectionText)
+        for time in times {
+            let title = SelectionTimes.label(time, of: times.count), header = NSMenuItem.sectionHeader(title: title)
+            // A note about the selection, lighter than a section heading's semibold.
+            header.attributedTitle = NSAttributedString(string: title, attributes: [
+                .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor])
+            menu.addItem(header)
+        }
+        if !times.isEmpty { menu.addItem(.separator()) }
+
         // A misspelling: the spellchecker's suggestions, first.
         if info.editable, !info.misspelledWord.isEmpty {
             if info.suggestions.isEmpty { add("No Guesses Found", enabled: false) {} }

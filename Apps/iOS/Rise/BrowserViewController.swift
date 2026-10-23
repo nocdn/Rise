@@ -361,7 +361,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         // Honor the focus-zoom cap in our viewport script while still allowing manual pinch zoom.
         configuration.ignoresViewportScaleLimits = true
         configuration.userContentController.addUserScript(InputZoomPolicy.userScript)
-        let webView = WKWebView(frame: .zero, configuration: configuration)
+        let webView = RiseWebView(frame: .zero, configuration: configuration)
+        SelectionTimeMenu.install(on: webView)
         videoPlayback.track(webView)
         // In dark mode, see-through until it paints, rather than flashing WebKit's white.
         PagePaintWatcher.shared.install(on: webView)
