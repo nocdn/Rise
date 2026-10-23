@@ -243,7 +243,8 @@ import AppKit
     if (!node) return null;
     let r = node.getBoundingClientRect();
     if (r.width < 1 || r.height < 1) return null;
-    if (window.__riseLinkHighlight?.el === node) r = new DOMRect(r.left - ring, r.top - ring, r.width + ring * 2, r.height + ring * 2);
+    const lit = window.__riseLinkHighlight;
+    if (lit?.el === node) r = new DOMRect(r.left - lit.side - ring, r.top - ring, r.width + (lit.side + ring) * 2, r.height + ring * 2);
     return [r.left, r.top, r.width, r.height, node.href, (node.innerText || node.textContent || '').trim().slice(0, 300)];
     """
     private func hoveredLink(in page: WebPage) async -> (rect: NSRect, url: URL?, text: String)? {

@@ -71,8 +71,8 @@ struct LinkPulse: Equatable {
     }
 }
 
-/// The link a card is for, lit in the page: a rounded light grey behind it, line by line as it
-/// wraps, pulsing while its card is on the way and steady once it shows.
+/// The link a card is for, lit in the page: a rounded light grey over it, one block across the
+/// lines it wraps onto, pulsing while its card is on the way and steady once it shows.
 @MainActor extension BrowserController {
     enum LinkHighlight: String { case pulsing = "pulse", steady, off }
 
@@ -99,7 +99,7 @@ struct LinkPulse: Equatable {
     }
     static let linkHighlightWorld = "Rise.LinkHighlight"
 
-    /// Settings ▸ Appearance: whether a link breathes behind while its card comes, for a summary
+    /// Settings ▸ Appearance: whether a link's grey breathes while its card comes, for a summary
     /// (⌥) and for a pull or merge request, each on its own.
     static let highlightsSummaryLinksKey = "Rise.HighlightSummaryLinks", highlightsPullRequestLinksKey = "Rise.HighlightPullRequestLinks"
     var highlightsSummaryLinks: Bool { preferences.object(forKey: Self.highlightsSummaryLinksKey) as? Bool ?? true }
@@ -115,27 +115,22 @@ struct LinkPulse: Equatable {
         setLinkHighlight(state, in: web)
     }
 
-    /// A shadow inside the link's own box fills it, under its text and over any background of its
-    /// own; a ring outside gives the text room, and more at its sides, from padding its margin
-    /// gives back; each line of a wrapped link gets its own rounded box. Nothing on the page
-    /// moves, and the link's own styles come back when it goes.
+    /// Drawn over the page in a layer of Rise's own, which follows the link every frame: a rounded
+    /// grey around each line, reaching further at its sides with the size of its text, and a ring
+    /// round that. Lines that share some width meet halfway across the space between them, one
+    /// block with rounded outer corners. The page itself is never changed.
     static let linkHighlightScript = """
-    const key = '__riseLinkHighlight', current = window[key];
-    const shadow = (h, fill, ring, width) => `inset 0 0 0 9999px ${h.color(fill)}, 0 0 0 ${width}px ${h.color(ring)}`;
-    const shown = (h) => getComputedStyle(h.el).boxShadow;
-    const stop = (h) => { for (const anim of h.anims || []) anim.cancel(); h.anims = []; };
+    const key = '__riseLinkHighlight', current = window[key], svg = 'http://www.w3.org/2000/svg', radius = 5;
+    const shown = (h) => { const fill = getComputedStyle(h.fill), ring = getComputedStyle(h.ring);
+      return { fill: fill.fill, stroke: ring.stroke, strokeWidth: ring.strokeWidth }; };
+    const stop = (h) => { for (const anim of h.anims) anim.cancel(); h.anims = []; };
     const end = (h) => {
       const from = shown(h);
-      h.closing = true; stop(h);
-      const out = h.el.animate([{ boxShadow: from }, { boxShadow: shadow(h, 0, 0, 3) }], { duration: 180, easing: 'ease-out', fill: 'forwards' });
-      h.anims = [out];
-      out.onfinish = () => {
-        if (!h.closing) return;
-        out.cancel();
-        for (const [name, value, priority] of h.saved) {
-          if (value) h.el.style.setProperty(name, value, priority); else h.el.style.removeProperty(name);
-        }
-      };
+      stop(h);
+      const timing = { duration: 180, easing: 'ease-out', fill: 'forwards' };
+      const out = h.fill.animate([{ fill: from.fill }, { fill: h.color(0) }], timing);
+      h.anims = [out, h.ring.animate([{ stroke: from.stroke }, { stroke: h.color(0) }], timing)];
+      out.onfinish = () => { cancelAnimationFrame(h.frame); h.host.remove(); };
     };
     if (state === 'off') { if (current) { end(current); window[key] = null; } return true; }
     let node = null;
@@ -150,9 +145,71 @@ struct LinkPulse: Equatable {
     } else node = current?.el ?? null;
     if (!node) { if (current) { end(current); window[key] = null; } return false; }
     if (current && current.el !== node) { end(current); window[key] = null; }
+
+    // The link's lines, each line's pieces as one, wider at the sides, top to bottom, grouped
+    // where they share some width and lie close, a group's lines meeting halfway between.
+    const groups = (h) => {
+      const lines = [];
+      for (const r of h.el.getClientRects()) {
+        if (r.width < 0.5 || r.height < 0.5) continue;
+        const line = lines.find(l => r.top < l.bottom - 1 && r.bottom > l.top + 1);
+        if (line) Object.assign(line, { left: Math.min(line.left, r.left), right: Math.max(line.right, r.right),
+                                        top: Math.min(line.top, r.top), bottom: Math.max(line.bottom, r.bottom) });
+        else lines.push({ left: r.left, right: r.right, top: r.top, bottom: r.bottom });
+      }
+      lines.sort((a, b) => a.top - b.top);
+      const found = [];
+      for (const line of lines) {
+        line.left -= h.side; line.right += h.side;
+        const group = found.at(-1), last = group?.at(-1);
+        if (last && line.left < last.right && line.right > last.left && line.top - last.bottom < h.join) {
+          last.bottom = line.top = (last.bottom + line.top) / 2; group.push(line);
+        } else found.push([line]);
+      }
+      return found;
+    };
+    // Round a group: down its right side, back up its left, without repeated points or ones
+    // along a straight edge.
+    const corners = (group) => {
+      let points = [];
+      for (const l of group) points.push([l.right, l.top], [l.right, l.bottom]);
+      for (const l of [...group].reverse()) points.push([l.left, l.bottom], [l.left, l.top]);
+      const same = (a, b) => Math.abs(a - b) < 0.01;
+      for (let changed = true; changed && points.length > 3;) {
+        changed = false;
+        for (let i = 0; i < points.length; i++) {
+          const a = points[(i + points.length - 1) % points.length], b = points[i], c = points[(i + 1) % points.length];
+          if ((same(a[0], b[0]) && same(a[1], b[1])) || (same(a[0], b[0]) && same(b[0], c[0])) || (same(a[1], b[1]) && same(b[1], c[1]))) {
+            points.splice(i, 1); changed = true; break;
+          }
+        }
+      }
+      return points;
+    };
+    // Its outline with each corner rounded, an inner one too, as far as its edges allow.
+    const outline = (points, ox, oy) => {
+      let d = '';
+      points.forEach((v, i) => {
+        const p = points[(i + points.length - 1) % points.length], q = points[(i + 1) % points.length];
+        const d1 = Math.hypot(p[0] - v[0], p[1] - v[1]), d2 = Math.hypot(q[0] - v[0], q[1] - v[1]);
+        const r = Math.min(radius, d1 / 2, d2 / 2), k = 0.5523;
+        const a = [v[0] + (p[0] - v[0]) / d1 * r, v[1] + (p[1] - v[1]) / d1 * r], b = [v[0] + (q[0] - v[0]) / d2 * r, v[1] + (q[1] - v[1]) / d2 * r];
+        const at = (point) => `${(point[0] - ox).toFixed(2)} ${(point[1] - oy).toFixed(2)}`;
+        d += `${i ? 'L' : 'M'}${at(a)}C${at([a[0] + (v[0] - a[0]) * k, a[1] + (v[1] - a[1]) * k])} ${at([b[0] + (v[0] - b[0]) * k, b[1] + (v[1] - b[1]) * k])} ${at(b)}`;
+      });
+      return d + 'Z';
+    };
+    // Each frame, where the link is now, as it scrolls or the page moves it.
+    const place = (h) => {
+      if (!h.el.isConnected) { if (window[key] === h) window[key] = null; end(h); return; }
+      const origin = h.host.getBoundingClientRect();
+      const d = groups(h).map(group => outline(corners(group), origin.left, origin.top)).join('');
+      if (d !== h.d) { h.d = d; for (const path of [h.fill, h.ring, h.hole]) path.setAttribute('d', d); }
+      h.frame = requestAnimationFrame(() => place(h));
+    };
+
     let h = window[key];
-    if (!h || h.closing) {
-      if (h) { h.closing = false; stop(h); }
+    if (!h) {
       // The colour behind the link, from the nearest box that paints one, or the page's canvas.
       let behind = null;
       for (let at = node; at && !behind; at = at.parentElement ?? at.getRootNode?.()?.host ?? null) {
@@ -161,56 +218,52 @@ struct LinkPulse: Equatable {
       }
       if (!behind) behind = matchMedia('(prefers-color-scheme: dark)').matches && /dark/.test(getComputedStyle(document.documentElement).colorScheme) ? [18, 18, 18] : [255, 255, 255];
       const dark = (0.2126 * behind[0] + 0.7152 * behind[1] + 0.0722 * behind[2]) / 255 < 0.45;
-      const names = ['box-shadow', 'border-radius', 'box-decoration-break', '-webkit-box-decoration-break',
-                     'padding-left', 'padding-right', 'margin-left', 'margin-right'];
-      h = h || { el: node, saved: names.map(n => [n, node.style.getPropertyValue(n), node.style.getPropertyPriority(n)]) };
-      // A light tint on a dark page, a little stronger; a grey one elsewhere.
-      h.color = (alpha) => dark ? `rgba(255, 255, 255, ${Math.min(1, alpha * 1.4)})` : `rgba(0, 0, 0, ${alpha})`;
-      node.style.setProperty('border-radius', '5px', 'important');
-      node.style.setProperty('box-decoration-break', 'clone', 'important');
-      node.style.setProperty('-webkit-box-decoration-break', 'clone', 'important');
-      // Its sides reach further with the size of its text, the largest in it, as a heading's in its
-      // link, its margin pulling it back so its text, its lines' breaks and what's around it stay
-      // where they were. Where they'd move anyway, as a block sized with its padding would, it
-      // goes without.
-      const style = getComputedStyle(node), px = (value) => parseFloat(value) || 0;
-      if (!h.padded) {
-        let size = 0;
-        const texts = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
-        for (let text, count = 0; (text = texts.nextNode()) && count < 60; count++) {
-          if (text.data.trim() && text.parentElement) size = Math.max(size, px(getComputedStyle(text.parentElement).fontSize));
-        }
-        const side = Math.round((size || px(style.fontSize)) * sidePerSize * 10) / 10;
-        const range = document.createRange(); range.selectNodeContents(node);
-        const box = (r) => [r.left, r.top, r.width, r.height].join(',');
-        // Where its text and its parent are, and its own middle, which padding on both sides keeps.
-        const layout = () => { const own = node.getBoundingClientRect(); return [...range.getClientRects()].map(box).join(' ') + '|' +
-          (node.parentElement ? box(node.parentElement.getBoundingClientRect()) : '') + '|' + Math.round((own.left + own.width / 2) * 100); };
-        const before = layout();
-        for (const edge of ['left', 'right']) {
-          const padding = px(style.getPropertyValue(`padding-${edge}`)), margin = px(style.getPropertyValue(`margin-${edge}`));
-          node.style.setProperty(`padding-${edge}`, `${padding+side}px`, 'important');
-          node.style.setProperty(`margin-${edge}`, `${margin-side}px`, 'important');
-        }
-        if (layout() === before) h.padded = true;
-        else for (const [name, value, priority] of h.saved.filter(([name]) => /^(padding|margin)-/.test(name))) {
-          if (value) node.style.setProperty(name, value, priority); else node.style.removeProperty(name);
-        }
+      // Its sides reach further with the size of its text, the largest in it, as a heading's in its link.
+      const px = (value) => parseFloat(value) || 0;
+      let size = 0;
+      const texts = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+      for (let text, count = 0; (text = texts.nextNode()) && count < 60; count++) {
+        if (text.data.trim() && text.parentElement) size = Math.max(size, px(getComputedStyle(text.parentElement).fontSize));
       }
+      size = size || px(getComputedStyle(node).fontSize) || 16;
+      // A layer of its own over the page, which the page's styles and pointer never reach.
+      const host = document.createElement('rise-link-highlight');
+      host.style.cssText = 'all: initial !important; display: block !important; position: fixed !important; inset: 0 !important; z-index: 2147483647 !important; pointer-events: none !important; contain: strict !important';
+      const draw = document.createElementNS(svg, 'svg');
+      draw.setAttribute('style', 'position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none');
+      const make = (name, attributes) => { const element = document.createElementNS(svg, name); for (const [n, v] of Object.entries(attributes)) element.setAttribute(n, v); return element; };
+      // The ring shows only outside the fill, so where they meet isn't doubled.
+      const id = `rise-link-highlight-${Math.random().toString(36).slice(2)}`;
+      const mask = make('mask', { id, maskUnits: 'userSpaceOnUse', x: -20000, y: -20000, width: 40000, height: 40000 });
+      const hole = make('path', { fill: 'black' });
+      mask.append(make('rect', { x: -20000, y: -20000, width: 40000, height: 40000, fill: 'white' }), hole);
+      const ring = make('path', { mask: `url(#${id})`, style: 'fill: none; stroke: rgba(0, 0, 0, 0); stroke-width: 6px; stroke-linejoin: round' });
+      const fill = make('path', { style: 'fill: rgba(0, 0, 0, 0); stroke: none' });
+      draw.append(mask, ring, fill);
+      host.attachShadow({ mode: 'closed' }).append(draw);
+      document.documentElement.append(host);
+      h = { el: node, host, fill, ring, hole, anims: [], side: Math.round(size * sidePerSize * 10) / 10, join: Math.max(8, size * 0.6),
+            // A light tint on a dark page, a little stronger; a grey one elsewhere.
+            color: (alpha) => dark ? `rgba(255, 255, 255, ${Math.min(1, alpha * 1.4)})` : `rgba(0, 0, 0, ${alpha})` };
       window[key] = h;
+      place(h);
     }
     // From wherever it shows now: in to the loop's start, then round it, or settling.
-    const from = h.anims?.length ? shown(h) : shadow(h, 0, 0, 3);
+    const now = shown(h);
     stop(h);
+    const into = (fill, ring, width, duration) => {
+      const timing = { duration, easing: 'ease-out', fill: 'forwards' };
+      h.anims.push(h.fill.animate([{ fill: now.fill }, { fill: h.color(fill) }], timing),
+                   h.ring.animate([{ stroke: now.stroke, strokeWidth: now.strokeWidth }, { stroke: h.color(ring), strokeWidth: `${width * 2}px` }], timing));
+    };
     if (state === 'pulse') {
-      const frames = pulse.keys.map(([offset, fill, ring, width]) => ({ offset, boxShadow: shadow(h, fill, ring, width) }));
-      const first = pulse.keys[0];
-      h.anims = [
-        node.animate([{ boxShadow: from }, { boxShadow: shadow(h, first[1], first[2], first[3]) }], { duration: 200, easing: 'ease-out', fill: 'forwards' }),
-        node.animate(frames, { duration: pulse.duration, delay: 200, easing: pulse.easing, iterations: Infinity, direction: pulse.alternates ? 'alternate' : 'normal' }),
-      ];
+      const [, fill, ring, width] = pulse.keys[0];
+      into(fill, ring, width, 200);
+      const timing = { duration: pulse.duration, delay: 200, easing: pulse.easing, iterations: Infinity, direction: pulse.alternates ? 'alternate' : 'normal' };
+      h.anims.push(h.fill.animate(pulse.keys.map(([offset, fill]) => ({ offset, fill: h.color(fill) })), timing),
+                   h.ring.animate(pulse.keys.map(([offset, , ring, width]) => ({ offset, stroke: h.color(ring), strokeWidth: `${width * 2}px` })), timing));
     } else {
-      h.anims = [node.animate([{ boxShadow: from }, { boxShadow: shadow(h, steady[0], steady[0], steady[1]) }], { duration: 220, easing: 'ease-out', fill: 'forwards' })];
+      into(steady[0], steady[0], steady[1], 220);
     }
     return true;
     """

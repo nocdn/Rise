@@ -160,10 +160,20 @@ enum PullRequestAPI {
     }
 }
 
-/// GitHub's REST API.
+/// GitHub's REST API, and its pages where the API's limit has run out.
 enum GitHubAPI {
+    /// The API turned a request away for its hourly limit, which comes back at `until`.
+    struct Limited: Error { let until: Date }
+    /// A whole diff is read up to this, to count its lines.
+    static let wholeDiffLimit = 8_000_000
+
     static func details(_ pr: PullRequest, session: URLSession = .shared) async throws -> PullRequestDetails {
         let (data, response) = try await session.data(for: request(pr, accept: "application/vnd.github+json"))
+        if let response = response as? HTTPURLResponse, [403, 429].contains(response.statusCode),
+           response.value(forHTTPHeaderField: "X-RateLimit-Remaining") == "0" {
+            let reset = response.value(forHTTPHeaderField: "X-RateLimit-Reset").flatMap(TimeInterval.init)
+            throw Limited(until: reset.map(Date.init(timeIntervalSince1970:)) ?? Date().addingTimeInterval(60*60))
+        }
         guard (response as? HTTPURLResponse)?.statusCode == 200,
               let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let title = object["title"] as? String else { throw URLError(.badServerResponse) }
@@ -184,10 +194,53 @@ enum GitHubAPI {
         for try await byte in bytes { data.append(byte); if data.count >= limit { break } }
         return String(decoding: data, as: UTF8.self)
     }
+    /// The details from what GitHub shows on its own pages, none of which counts against the API's
+    /// limit: its hover card for the title, the state and the start of the description, and the
+    /// whole diff for the lines and their split, and to describe it from.
+    static func pageDetails(_ pr: PullRequest, session: URLSession = .shared) async throws -> PullRequestDetails {
+        var call = URLRequest(url: URL(string: "https://github.com/\(pr.project)/pull/\(pr.number)/hovercard")!)
+        call.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
+        call.setValue("text/html", forHTTPHeaderField: "Accept"); call.timeoutInterval = 15
+        let request = call
+        async let card = session.data(for: request)
+        async let whole = diff(pr, limit: wholeDiffLimit, session: session)
+        let ((data, response), diff) = try await (card, whole)
+        guard (response as? HTTPURLResponse)?.statusCode == 200, diff.utf8.count < wholeDiffLimit,
+              let shown = hovercard(String(decoding: data, as: UTF8.self)) else { throw URLError(.badServerResponse) }
+        let read = ChangeBreakdown.read(diff: diff)
+        let files = diff.split(separator: "\n").reduce(0) { $0 + ($1.hasPrefix("diff --git ") ? 1 : 0) }
+        return PullRequestDetails(title: shown.title, state: shown.state, commits: 0, changedFiles: files,
+                                  additions: read.lines.additions, deletions: read.lines.deletions,
+                                  body: shown.body, diff: String(diff.prefix(PullRequestAPI.diffLimit)), breakdown: read.breakdown)
+    }
+    /// The title, state and start of the description in GitHub's hover card for a pull request.
+    static func hovercard(_ html: String) -> (title: String, state: PullRequestDetails.State, body: String)? {
+        func first(_ pattern: String) -> String? {
+            guard let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators, .caseInsensitive]),
+                  let match = regex.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)), match.numberOfRanges > 1,
+                  let range = Range(match.range(at: 1), in: html) else { return nil }
+            return String(html[range])
+        }
+        func plain(_ fragment: String) -> String {
+            var text = fragment.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+            for (entity, character) in [("&lt;", "<"), ("&gt;", ">"), ("&quot;", "\""), ("&#39;", "'"), ("&#x27;", "'"), ("&nbsp;", " "), ("&amp;", "&")] {
+                text = text.replacingOccurrences(of: entity, with: character)
+            }
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard let title = first(#"<h4[^>]*markdown-title[^>]*>(.*?)</h4>"#).map(plain), !title.isEmpty else { return nil }
+        let state: PullRequestDetails.State = switch first(#"title="Status: ([a-z ]+)""#)?.lowercased() {
+            case "merged": .merged
+            case "closed": .closed
+            case "draft": .draft
+            default: .open
+        }
+        return (title, state, first(#"class="[^"]*markdown-body-short[^"]*"[^>]*>(.*?)</div>"#).map(plain) ?? "")
+    }
     /// The split from the whole diff, when it adds up to the pull request's own count; otherwise
     /// the API's file list.
     static func breakdown(_ pr: PullRequest, details: PullRequestDetails, session: URLSession = .shared) async throws -> ChangeBreakdown? {
-        let limit = 8_000_000
+        let limit = wholeDiffLimit
         if let diff = try? await Self.diff(pr, limit: limit, session: session), diff.utf8.count < limit {
             let read = ChangeBreakdown.read(diff: diff)
             if read.lines == ChangeBreakdown.Lines(additions: details.additions, deletions: details.deletions) { return read.breakdown }
@@ -349,6 +402,11 @@ enum PullRequestSummarizer {
     private var breakdownFailures: [String: Date] = [:]
     static let breakdownRetry: TimeInterval = 5*60
     private var statusChecks: [String: Date] = [:]
+    /// When GitHub's API turned Rise away for its hourly limit, it's back then; until then
+    /// details come from GitHub's pages.
+    private var gitHubLimitedUntil = Date.distantPast
+    /// What a card says when nothing could describe its pull request.
+    static let failure = "Couldn’t load this pull request."
     /// A pipeline and merge checks are checked again when the card shows, at most this often.
     static let statusRefresh: TimeInterval = 10
     private let storageURL: URL
@@ -390,8 +448,8 @@ enum PullRequestSummarizer {
         entries[pr.key] = entries[pr.key].map { Entry(details: $0.details) } ?? entry(for: pr)
         let key = pr.key
         tasks[key] = Task { [weak self] in
-            let fetched = try? await PullRequestAPI.details(pr)
             guard let self else { return }
+            let fetched = await self.fetchDetails(pr)
             if var fetched {
                 self.statusChecks[key] = Date()
                 // GitHub's split is read on its own; it holds while the diff's size does.
@@ -429,6 +487,16 @@ enum PullRequestSummarizer {
             }
             self.tasks[key] = nil
         }
+    }
+    /// GitHub's API while its hourly limit lasts, and GitHub's pages when it's gone or the API fails.
+    private func fetchDetails(_ pr: PullRequest) async -> PullRequestDetails? {
+        guard case .github = pr.forge else { return try? await PullRequestAPI.details(pr) }
+        if Date() >= gitHubLimitedUntil {
+            do { return try await GitHubAPI.details(pr) }
+            catch let limited as GitHubAPI.Limited { gitHubLimitedUntil = limited.until }
+            catch {}
+        }
+        return try? await GitHubAPI.pageDetails(pr)
     }
     /// The split of a GitHub pull request's lines by kind of file, read the first time its file
     /// count is hovered, so a card nobody looks into costs no more requests.

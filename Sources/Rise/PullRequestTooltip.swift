@@ -750,8 +750,8 @@ final class PullRequestMetaRow: CardLinkRow {
         return ceil(titleLabel.cell?.cellSize(forBounds: bounds).height ?? 18)
     }
     /// The description's height as far as its words show: while they play in, the card grows a
-    /// line at a time with them rather than ahead to all the text that has arrived, keeping half a
-    /// line of room under the newest so a new line has somewhere to start. Until the first word
+    /// line at a time with them rather than ahead to all the text that has arrived, keeping three
+    /// quarters of a line of room under the newest so a new line has somewhere to start. Until the first word
     /// shows, it holds the skeleton's one line; done, it fits the text.
     private var summaryHeight: CGFloat {
         guard let container = summaryView.textContainer, let manager = summaryView.layoutManager else { return 0 }
@@ -761,7 +761,7 @@ final class PullRequestMetaRow: CardLinkRow {
         guard stream.isRevealing else { return used }
         guard let newest = stream.newest, NSMaxRange(newest) <= (summaryView.textStorage?.length ?? 0) else { return min(used, lineHeight) }
         let glyph = manager.glyphIndexForCharacter(at: NSMaxRange(newest)-1)
-        return min(used, ceil(manager.lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil).maxY+lineHeight/2))
+        return min(used, ceil(manager.lineFragmentUsedRect(forGlyphAt: glyph, effectiveRange: nil).maxY+lineHeight*0.75))
     }
     private var contentHeight: CGFloat {
         var height = Self.inset.height+titleHeight

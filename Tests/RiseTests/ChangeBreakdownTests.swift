@@ -117,4 +117,25 @@ final class ChangeBreakdownTests: XCTestCase {
         move(to: NSPoint(x: link.maxX+40, y: link.midY))
         XCTAssertFalse(card.breakdownCard.isShown)
     }
+
+    /// With the API's hourly limit gone, a card's title, state and opening lines come from GitHub's own hover card.
+    func testGitHubsHoverCardGivesTheTitleStateAndStartOfTheDescription() throws {
+        let html = """
+        <style>.markdown-body-short ul, .markdown-body-short ol { margin-left: 12px; }</style>
+        <div class="d-flex flex-column f4 lh-condensed mt-2">
+          <a href="/pingdotgg/t3code/pull/23766" class="no-underline Link--primary d-block">
+            <h4 class="d-inline dashboard-break-word markdown-title"><bdi>fix(codex): warn when <code>notify</code> &amp; decode fail</bdi></h4>
+            <span class="color-fg-muted">#23766</span>
+          </a>
+          <div class="mt-2 d-flex flex-wrap gap-2"><span title="Status: Merged" class="State State--merged State--small"></span></div>
+        </div>
+        <div class="lh-condensed color-fg-muted tmp-mt-3 mb-0 dashboard-break-word markdown-body-short"><p>Problem
+        When Codex sends a notification the schema rejects, the app-se…</p></div>
+        """
+        let card = try XCTUnwrap(GitHubAPI.hovercard(html))
+        XCTAssertEqual(card.title, "fix(codex): warn when notify & decode fail")
+        XCTAssertEqual(card.state, .merged)
+        XCTAssertTrue(card.body.hasPrefix("Problem\nWhen Codex sends"))
+        XCTAssertNil(GitHubAPI.hovercard("<html>Sign in to GitHub</html>"), "Not a hover card")
+    }
 }
