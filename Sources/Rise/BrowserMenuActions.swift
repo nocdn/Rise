@@ -53,6 +53,9 @@ extension BrowserController: NSMenuItemValidation {
         case #selector(reopenTab): return !closedTabs.isEmpty
         case #selector(closeCurrentTab): return tab != nil || peekTab != nil
         case #selector(nextTab), #selector(previousTab), #selector(cleanUpTabs): return tabs.count > 1
+        case #selector(moveCurrentTabToTop): return canMoveCurrentTabToTop
+        case #selector(moveCurrentTabUp): return canMoveCurrentTab(by: -1)
+        case #selector(moveCurrentTabDown): return canMoveCurrentTab(by: 1)
         case #selector(duplicateCurrentTab), #selector(duplicateIntoSplit): return hasPage
         case #selector(pinCurrentTab):
             item.title = tab?.pinned == true ? "Unpin Tab" : "Pin Tab"

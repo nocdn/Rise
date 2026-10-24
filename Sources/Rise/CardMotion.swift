@@ -94,6 +94,15 @@ struct CardMotion: Equatable {
         spring.keyPath = "transform"
         spring.fromValue = NSValue(caTransform3D: transform(motion.scaleIn, about: point(motion, in: view, tab: tab), in: layer, slide: motion.slide))
         spring.toValue = NSValue(caTransform3D: CATransform3DIdentity); spring.duration = spring.settlingDuration
+        // Set rather than left to the commit, so a copy of it (`movePivotIn`) carries on from here.
+        spring.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil)
+        layer.add(spring, forKey: inKeys[0])
+    }
+    /// For a card whose size changed on its way in: the way in carries on from where it had got
+    /// to, about `tab` in the card's new coordinates, rather than about the old point.
+    static func movePivotIn(_ view: NSView, _ motion: CardMotion, tab: CGPoint) {
+        guard let layer = view.layer, let spring = layer.animation(forKey: inKeys[0])?.copy() as? CASpringAnimation else { return }
+        spring.fromValue = NSValue(caTransform3D: transform(motion.scaleIn, about: point(motion, in: view, tab: tab), in: layer, slide: motion.slide))
         layer.add(spring, forKey: inKeys[0])
     }
     /// Plays the way out, then calls `done` unless the card came back first.

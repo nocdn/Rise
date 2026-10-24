@@ -135,6 +135,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     var onClose: @MainActor () -> Void = {}
     var onSiteSearchChanged: @MainActor () -> Void = {}
     private var opening = 0
+    private var backgroundSelection: (text: String, range: NSRange)?
     var onOpen: @MainActor (URL) -> Void = { _ in }
 
     override init(frame: CGRect) {
@@ -250,6 +251,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         siteRow.accessibilityElementsHidden = offeredSite == nil || siteSearch != nil
     }
     func begin(privateBrowsing: Bool = false) {
+        backgroundSelection = nil
         remote.cancel()
         isPrivateBrowsing = privateBrowsing
         if !privateBrowsing { privateRemote = nil }
@@ -263,6 +265,26 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         if allowsRemoteSuggestions { remote.warmUp() }; click.prepare()
     }
     func focus() { _ = field.becomeFirstResponder() }
+
+    /// UIKit can collapse the selection while dismissing/reopening the keyboard. Capture it
+    /// before the scene resigns active, and only restore it if the draft still matches.
+    func rememberSelectionForBackground() {
+        backgroundSelection = field.selectedTextRange.map {
+            (field.text ?? "", NSRange(location: field.offset(from: field.beginningOfDocument, to: $0.start),
+                                     length: field.offset(from: $0.start, to: $0.end)))
+        }
+    }
+
+    func resumeFocus() {
+        let selection = backgroundSelection
+        backgroundSelection = nil
+        focus()
+        if let selection, selection.text == field.text,
+           let start = field.position(from: field.beginningOfDocument, offset: selection.range.location),
+           let end = field.position(from: start, offset: selection.range.length) {
+            field.selectedTextRange = field.textRange(from: start, to: end)
+        }
+    }
     func beginTranscribing() -> Int {
         clearButton.isHidden = true; transcribing.startAnimating(); return opening
     }
@@ -279,6 +301,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         transcribing.stopAnimating(); clearButton.isHidden = editingAddress != nil
     }
     func beginEditingAddress(_ address: AddressBar, url: URL?) {
+        backgroundSelection = nil
         privateButton.isHidden = true
         remote.cancel(); opening += 1; active = true; changingText = false; stopTranscribing()
         siteSearch = nil; previousSearch = nil; completionPrefix = nil; field.inlineCompletion = nil; currentAddress = url
@@ -306,6 +329,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         clearOrClose(); _ = field.becomeFirstResponder()
     }
     func end() {
+        backgroundSelection = nil
         previousSearch = nil
         active = false; remote.cancel(); opening += 1; stopTranscribing(); _ = field.resignFirstResponder()
         privateRemote = nil

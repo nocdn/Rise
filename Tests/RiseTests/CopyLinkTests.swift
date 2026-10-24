@@ -13,46 +13,31 @@ final class CopyLinkTests: XCTestCase {
         return browser
     }
     @MainActor private func clean(_ browser: BrowserController) {
-        browser.siteControlsPopover.animates = false; browser.siteControlsPopover.close(); browser.infoPlaque.hide()
+        browser.siteControlsPopover.animates = false; browser.siteControlsPopover.close()
         browser.saveWork?.cancel(); browser.tabs.forEach { $0.cancelLoad() }; browser.window?.orderOut(nil)
         browser.linkPasteboard.releaseGlobally()
         try? FileManager.default.removeItem(at: browser.sessionURL.deletingLastPathComponent())
     }
-    @MainActor func testCopyWritesFullURLAndAirDropButtonKeepsTheCopiedDestination() async throws {
+    @MainActor func testCopyWritesFullURLAndSaysSoInTheAddressesPlace() async throws {
         let browser = browser(); defer { clean(browser) }
-        let url = browser.selectedTab!.url!
+        let url = browser.selectedTab!.url!, bar = browser.navBar
         browser.copyURL()
         XCTAssertEqual(browser.linkPasteboard.string(forType: .string), url.absoluteString)
-        XCTAssertTrue(browser.navBar.copyButton.isShowingConfirmation)
-        let notice = browser.infoPlaque
-        XCTAssertTrue(notice.isPresented); XCTAssertEqual(notice.text, "Copied current URL")
-        let share = try XCTUnwrap(notice.actionButton)
-        XCTAssertEqual(share.accessibilityLabel(), "Send Link via AirDrop")
-        notice.layoutSubtreeIfNeeded()
-        XCTAssertGreaterThanOrEqual(share.frame.minX, InfoPlaque.inset+InfoPlaque.iconSize+InfoPlaque.iconGap+InfoPlaque.width(of: "Copied current URL"),
-                                    "The share button comes after the text")
-        let center = notice.convert(NSPoint(x: share.bounds.midX, y: share.bounds.midY), from: share)
-        XCTAssertTrue(notice.hitTest(notice.convert(center, to: notice.superview)) === share, "The share button takes clicks")
-        XCTAssertNil(notice.hitTest(notice.convert(NSPoint(x: notice.panel.frame.minX+4, y: notice.panel.frame.midY), to: notice.superview)),
-                     "The rest of the notice leaves clicks to the page")
-        var shared: URL?
-        browser.airDropHandler = { shared = $0 }
-        browser.selectedTab?.requestedURL = URL(string: "https://different.example")
-        share.performClick(nil)
-        XCTAssertEqual(shared, url); XCTAssertFalse(notice.isPresented, "Sharing puts the notice away")
-        try await Task.sleep(for: .milliseconds(1100))
-        XCTAssertFalse(browser.navBar.copyButton.isShowingConfirmation, "Restore the link glyph after one second")
-        // The pointer over a notice with a button holds it until it leaves.
-        browser.selectedTab?.requestedURL = url; browser.copyURL()
-        notice.setHovered(true)
-        try await Task.sleep(for: .milliseconds(1300))
-        XCTAssertTrue(notice.isPresented)
-        notice.setHovered(false)
-        try await Task.sleep(for: .milliseconds(1200))
-        XCTAssertFalse(notice.isPresented)
-        // Other notices have no button and never wait for the pointer.
-        browser.showInfo("Simulated full screen enabled", image: InfoPlaque.fullScreenIcon)
-        XCTAssertNil(notice.actionButton)
+        XCTAssertTrue(bar.copyButton.isShowingConfirmation)
+        let notice = try XCTUnwrap(bar.notice)
+        XCTAssertTrue(bar.isShowingCopied); XCTAssertEqual(notice.text, "Copied Current URL")
+        XCTAssertEqual(notice.alphaValue, 1); XCTAssertEqual(bar.text.alphaValue, 0, "The words take the address's place")
+        bar.layoutSubtreeIfNeeded()
+        let link = bar.convert(NSPoint(x: BarNotice.inkStart, y: 0), from: notice).x
+        XCTAssertEqual(link, PlainNavBar.Metrics.textX-1, accuracy: 0.01, "The link's ink a point before the address's")
+        try await Task.sleep(for: .milliseconds(1600))
+        XCTAssertNil(bar.notice); XCTAssertEqual(bar.text.alphaValue, 1)
+        XCTAssertNil(notice.superview, "Words that have gone are done with")
+        XCTAssertFalse(bar.copyButton.isShowingConfirmation, "Restore the link glyph after one second")
+        // Another page puts them away at once.
+        browser.copyURL(); XCTAssertTrue(bar.isShowingCopied)
+        bar.show(url: URL(string: "https://different.example"), title: "")
+        XCTAssertFalse(bar.isShowingCopied)
     }
     @MainActor func testShortcutAndHiddenSidebarCopy() async throws {
         let browser = browser(); defer { clean(browser) }
@@ -63,20 +48,20 @@ final class CopyLinkTests: XCTestCase {
         browser.toggleSidebar(); XCTAssertFalse(browser.sidebarVisible)
         let key = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command,.shift], timestamp: 0, windowNumber: browser.window!.windowNumber, context: nil, characters: "C", charactersIgnoringModifiers: "C", isARepeat: false, keyCode: 8)!
         XCTAssertTrue(NSApp.mainMenu!.performKeyEquivalent(with: key))
-        XCTAssertFalse(browser.sidebarVisible, "The notice needs no sidebar to point from")
+        XCTAssertFalse(browser.sidebarVisible, "Copying needs no sidebar")
         XCTAssertEqual(browser.linkPasteboard.string(forType: .string), browser.selectedTab!.url!.absoluteString)
-        XCTAssertTrue(browser.infoPlaque.isPresented); XCTAssertEqual(browser.infoPlaque.text, "Copied current URL")
-        // Each press holds the notice for another full second.
-        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertTrue(browser.navBar.isShowingCopied)
+        // Each press holds the words for longer.
+        try await Task.sleep(for: .milliseconds(900))
         XCTAssertTrue(NSApp.mainMenu!.performKeyEquivalent(with: key))
-        try await Task.sleep(for: .milliseconds(700))
-        XCTAssertTrue(browser.infoPlaque.isPresented, "Pressing again restarts the dismiss timer")
+        try await Task.sleep(for: .milliseconds(900))
+        XCTAssertTrue(browser.navBar.isShowingCopied, "Pressing again restarts the timer")
         try await Task.sleep(for: .milliseconds(600))
-        XCTAssertFalse(browser.infoPlaque.isPresented)
+        XCTAssertFalse(browser.navBar.isShowingCopied)
         browser.addTab()
         browser.linkPasteboard.clearContents(); browser.copyURL()
         XCTAssertNil(browser.linkPasteboard.string(forType: .string), "Blank tabs have no link to copy")
-        XCTAssertFalse(browser.infoPlaque.isPresented)
+        XCTAssertFalse(browser.navBar.isShowingCopied)
     }
     @MainActor func testOptionClickCopiesTheLinkWithoutAShareButtonAndShiftStillPeeks() {
         let browser = browser(); defer { clean(browser) }
@@ -85,7 +70,7 @@ final class CopyLinkTests: XCTestCase {
         let link = URL(string: "https://example.com/linked")!
         browser.copyLink(link)
         XCTAssertEqual(browser.linkPasteboard.string(forType: .string), link.absoluteString)
-        XCTAssertEqual(browser.infoPlaque.text, "Link copied"); XCTAssertNil(browser.infoPlaque.actionButton)
+        XCTAssertEqual(browser.navBar.notice?.text, "Copied Link")
         XCTAssertFalse(browser.navBar.copyButton.isShowingConfirmation, "That's for the page's own address")
     }
 }

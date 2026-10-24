@@ -565,3 +565,14 @@ import os
     })();
     """#
 }
+
+@MainActor extension BrowserController {
+    /// ⇧⌘F switches page fullscreen between the engine's own and simulated, for pages
+    /// already open too, and says which one is now on.
+    @objc func toggleSimulatedFullscreen() {
+        let simulated = !pageFullscreen.isSimulated
+        let pages = tabs.map(\.page) + (peekTab.map { [$0.page] } ?? [])
+        pageFullscreen.setSimulated(simulated, in: pages)
+        selectedBar.showNotice(simulated ? "Simulated Full Screen Enabled" : "Native Full Screen Enabled", image: BarNotice.fullScreenImage)
+    }
+}

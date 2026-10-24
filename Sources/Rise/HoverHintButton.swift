@@ -4,13 +4,16 @@ import AppKit
 /// native popover: what it does, then its shortcut in the secondary text color.
 final class HoverHintButton: ChromeButton {
     static let delay = 0.6
-    private let text: String, shortcut: String
+    private let text: String
+    private var shortcut: String
+    private var hintField: NSTextField?
     private var timer: Timer?
     private(set) lazy var popover: NSPopover = {
         let popover = NSPopover()
         popover.behavior = .applicationDefined
         popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let hint = NSTextField(labelWithAttributedString: hintText)
+        hintField = hint
         hint.sizeToFit()
         let content = NSView(frame: NSRect(x: 0, y: 0, width: ceil(hint.frame.width)+24, height: ceil(hint.frame.height)+16))
         hint.frame.origin = NSPoint(x: 12, y: 8); content.addSubview(hint)
@@ -26,6 +29,13 @@ final class HoverHintButton: ChromeButton {
     }
     /// Matches the browser's theme rather than the window's fixed light appearance.
     var hintAppearance: NSAppearance? { didSet { popover.appearance = hintAppearance } }
+    func setShortcut(_ shortcut: String) {
+        self.shortcut = shortcut
+        guard let hint = hintField, let content = hint.superview else { return }
+        hint.attributedStringValue = hintText; hint.sizeToFit()
+        content.setFrameSize(NSSize(width: ceil(hint.frame.width)+24, height: ceil(hint.frame.height)+16))
+        popover.contentSize = content.frame.size
+    }
 
     init(image: NSImage, text: String, shortcut: String, action: @escaping () -> Void) {
         self.text = text; self.shortcut = shortcut

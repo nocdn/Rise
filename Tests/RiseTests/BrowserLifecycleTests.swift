@@ -147,7 +147,7 @@ final class BrowserLifecycleTests: XCTestCase {
         XCTAssertEqual(tab.page.view.frame.minY, PlainNavBar.Metrics.height, "The page starts under it")
         XCTAssertEqual(bar.text.stringValue, "apnews.com / Oregon")
         let tuck = PlainNavBar.Metrics.height
-        XCTAssertEqual(browser.selectedFindBar.tuckedInset, tuck); XCTAssertEqual(browser.infoPlaque.tuckedInset, tuck)
+        XCTAssertEqual(browser.selectedFindBar.tuckedInset, tuck)
         let height = FindBar.rowHeight, bounds = NSRect(x: 0, y: 0, width: 800, height: 600)
         XCTAssertLessThanOrEqual(FindBar.panelOrigin(in: bounds, width: 300, height: height, slide: 0, topInset: tuck, tuckedInset: tuck).y+height, tuck,
                                  "Panels start under the bar, not above the window")

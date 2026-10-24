@@ -2,15 +2,18 @@ import AppKit
 
 @MainActor extension AppDelegate: NSMenuDelegate {
     func buildMenu() {
+        browser.keyboardShortcuts.clearMenuItems()
         let bar = NSMenu(); NSApp.mainMenu = bar
         func addMenu(_ title: String) -> NSMenu {
             let item = NSMenuItem(); item.title = title
             let menu = NSMenu(title: title); item.submenu = menu; bar.addItem(item); return menu
         }
-        @discardableResult func item(_ menu: NSMenu, _ title: String, _ action: Selector, _ key: String = "", modifiers: NSEvent.ModifierFlags = .command, target: AnyObject? = nil) -> NSMenuItem {
+        @discardableResult func item(_ menu: NSMenu, _ title: String, _ action: Selector, _ key: String = "", modifiers: NSEvent.ModifierFlags = .command, target: AnyObject? = nil, id: String? = nil) -> NSMenuItem {
             let entry = NSMenuItem(title: title, action: action, keyEquivalent: key)
             entry.keyEquivalentModifierMask = modifiers
-            entry.target = target; menu.addItem(entry); return entry
+            entry.target = target; menu.addItem(entry)
+            browser.keyboardShortcuts.register(entry, group: menu.title, id: id)
+            return entry
         }
         func alternate(_ menu: NSMenu, _ title: String, _ action: Selector, _ key: String) {
             let entry = item(menu, title, action, key, target: browser)
@@ -49,8 +52,8 @@ import AppKit
         item(file, "Capture Full Page as PDF", #selector(BrowserController.capturePagePDF), target: browser)
 
         let edit = addMenu("Edit")
-        item(edit, "Undo", Selector(("undo:")), "z")
-        item(edit, "Redo", Selector(("redo:")), "z", modifiers: [.command, .shift])
+        item(edit, "Undo", Selector(("undo:")))
+        item(edit, "Redo", Selector(("redo:")))
         edit.addItem(.separator())
         item(edit, "Cut", #selector(NSText.cut(_:)), "x")
         item(edit, "Copy", #selector(NSText.copy(_:)), "c")
@@ -105,6 +108,9 @@ import AppKit
         tabs.addItem(.separator())
         item(tabs, "Duplicate Tab", #selector(BrowserController.duplicateCurrentTab), target: browser)
         item(tabs, "Pin Tab", #selector(BrowserController.pinCurrentTab), target: browser)
+        item(tabs, "Move Tab Up", #selector(BrowserController.moveCurrentTabUp), target: browser)
+        item(tabs, "Move Tab Down", #selector(BrowserController.moveCurrentTabDown), target: browser)
+        item(tabs, "Move Tab to Top", #selector(BrowserController.moveCurrentTabToTop), target: browser)
         item(tabs, "Split View", #selector(BrowserController.toggleSplit), target: browser)
         item(tabs, "Duplicate into Split View", #selector(BrowserController.duplicateIntoSplit), "d", modifiers: [.command, .shift], target: browser)
         item(tabs, "Peek Current Page", #selector(BrowserController.peekCurrentPage), "p", modifiers: [.command, .shift], target: browser)
@@ -114,7 +120,7 @@ import AppKit
         item(tabs, "Close Tabs Below", #selector(BrowserController.closeTabsBelow), target: browser)
         tabs.addItem(.separator())
         for index in 0..<9 {
-            let entry = item(tabs, "Tab \(index+1)", #selector(BrowserController.selectNumberedTab(_:)), String(index+1), target: browser)
+            let entry = item(tabs, "Tab \(index+1)", #selector(BrowserController.selectNumberedTab(_:)), target: browser, id: "selectTab\(index+1)")
             entry.tag = index
         }
 
@@ -139,6 +145,8 @@ import AppKit
         let help = addMenu("Help"); NSApp.helpMenu = help
         item(help, "Rise on GitHub", #selector(BrowserController.showProject), target: browser)
         item(help, "Report an Issue…", #selector(BrowserController.reportIssue), target: browser)
+        browser.keyboardShortcuts.applyToMenus()
+        browser.keyboardShortcutsChanged()
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {

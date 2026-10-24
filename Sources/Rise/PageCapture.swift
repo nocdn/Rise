@@ -46,7 +46,7 @@ import UniformTypeIdentifiers
                     try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                     let url = Self.downloadDestination(for: name, in: folder) { FileManager.default.fileExists(atPath: $0.path) }
                     try data.write(to: url)
-                    self.announceCapture(data, format: format, file: url)
+                    self.announceCapture(format: format, file: url)
                 } catch {
                     self.showMessage("Couldn’t save the capture", error.localizedDescription)
                 }
@@ -59,7 +59,7 @@ import UniformTypeIdentifiers
             panel.directoryURL = self.capturesFolder
             panel.beginSheetModal(for: window) { [weak self] result in
                 guard let self, result == .OK, let url = panel.url else { return }
-                do { try data.write(to: url); self.announceCapture(data, format: format, file: url) }
+                do { try data.write(to: url); self.announceCapture(format: format, file: url) }
                 catch { self.showMessage("Couldn’t save the capture", error.localizedDescription) }
             }
         }
@@ -79,18 +79,13 @@ import UniformTypeIdentifiers
         }
     }
 
-    /// Where it went, for two seconds: the folder's name shows the file in Finder.
-    private func announceCapture(_ data: Data, format: PageCaptureFormat, file: URL) {
+    /// Where it went, for two seconds, in the page bar: the folder's name shows the file in Finder.
+    private func announceCapture(format: PageCaptureFormat, file: URL) {
         let place = FileManager.default.displayName(atPath: file.deletingLastPathComponent().path)
-        let folder = InfoPlaque.Link(text: place) { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+        let folder = BarNotice.Link(text: place) { NSWorkspace.shared.activateFileViewerSelecting([file]) }
         switch format {
-        case .jpeg:
-            let preview = NSImage(data: data).map {
-                InfoPlaque.Preview(image: InfoPlaque.preview(of: $0), title: "Open \(file.lastPathComponent)") { NSWorkspace.shared.open(file) }
-            }
-            showInfo("Saved to", image: preview == nil ? InfoPlaque.noIcon : nil, preview: preview, link: folder, hold: .seconds(2), kind: "capture")
-        case .pdf:
-            showInfo("Saved as PDF to", image: InfoPlaque.noIcon, link: folder, hold: .seconds(2), kind: "capture")
+        case .jpeg: selectedBar.showNotice("Saved to", image: BarNotice.photoImage, link: folder, hold: 2)
+        case .pdf: selectedBar.showNotice("Saved as PDF to", image: BarNotice.documentImage, link: folder, hold: 2)
         }
     }
 

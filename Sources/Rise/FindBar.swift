@@ -378,7 +378,7 @@ class FindInputCell: NSTextFieldCell {
         CATransaction.commit()
     }
 
-    /// The panel's border and shadow, shared with ``InfoPlaque``. `content` clips to its corners.
+    /// The panel's border and shadow. `content` clips to its corners.
     static func stylePanel(_ panel: Surface, content: NSView) {
         panel.layer?.cornerCurve = .continuous; panel.layer?.borderWidth = 0.5
         // The same shadow as the pull request card.

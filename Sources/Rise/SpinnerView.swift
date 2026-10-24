@@ -1,9 +1,9 @@
 import AppKit
 
-/// macOS's small spinner, drawn by Rise so it takes the notice's ink in Light and Dark alike:
+/// macOS's small spinner, drawn by Rise so it takes the page bar's ink on any page:
 /// eight rounded blades around the centre, the leading one strongest and the ones behind it
 /// fading, stepping round once every 0.8 s as the system's does.
-final class InfoSpinnerView: NSView {
+final class SpinnerView: NSView {
     private let replicator = CAReplicatorLayer(), blade = CALayer()
     static let blades = 8, period: CFTimeInterval = 0.8
     var color: NSColor = .labelColor { didSet { CATransaction.begin(); CATransaction.setDisableActions(true); blade.backgroundColor = color.cgColor; CATransaction.commit() } }

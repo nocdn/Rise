@@ -1,0 +1,218 @@
+diff --git a/chrome/browser/resources/settings/BUILD.gn b/chrome/browser/resources/settings/BUILD.gn
+--- a/chrome/browser/resources/settings/BUILD.gn
++++ b/chrome/browser/resources/settings/BUILD.gn
+@@ -392,6 +392,8 @@ build_webui("build") {
+     "reset_page/reset_profile_banner.ts",
+     "reset_page/reset_profile_dialog.html.ts",
+     "reset_page/reset_profile_dialog.ts",
++    "rise_page/rise_default_browser_banner.html.ts",
++    "rise_page/rise_default_browser_banner.ts",
+     "rise_page/rise_page.html.ts",
+     "rise_page/rise_page.ts",
+     "rise_page/rise_settings_rows.html.ts",
+diff --git a/chrome/browser/resources/settings/settings_main/settings_main.html b/chrome/browser/resources/settings/settings_main/settings_main.html
+--- a/chrome/browser/resources/settings/settings_main/settings_main.html
++++ b/chrome/browser/resources/settings/settings_main/settings_main.html
+@@ -48,6 +48,10 @@
+   </settings-reset-profile-banner>
+ </template>
+ 
++<template is="dom-if" if="[[!inSearchMode_]]">
++  <rise-default-browser-banner></rise-default-browser-banner>
++</template>
++
+ <cr-view-manager id="switcher"
+     show-all$="[[shouldShowAll_(inSearchMode_, lastRoute_)]]">
+   <template is="dom-if" if="[[showPage_(pageVisibility_.people)]]">
+diff --git a/chrome/browser/resources/settings/settings_main/settings_main.ts b/chrome/browser/resources/settings/settings_main/settings_main.ts
+--- a/chrome/browser/resources/settings/settings_main/settings_main.ts
++++ b/chrome/browser/resources/settings/settings_main/settings_main.ts
+@@ -18,6 +18,7 @@ import '../on_startup_page/on_startup_page.js';
+ import '../people_page/people_page_index.js';
+ import '../performance_page/performance_page_index.js';
+ import '../privacy_page/privacy_page_index.js';
++import '../rise_page/rise_default_browser_banner.js';
+ import '../rise_page/rise_page.js';
+ import '../reset_page/reset_profile_banner.js';
+ import '../search_page/search_page_index.js';
+diff --git a/chrome/browser/resources/settings/rise_page/rise_default_browser_banner.html.ts b/chrome/browser/resources/settings/rise_page/rise_default_browser_banner.html.ts
+new file mode 100644
+--- /dev/null
++++ b/chrome/browser/resources/settings/rise_page/rise_default_browser_banner.html.ts
+@@ -0,0 +1,31 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++import {html} from 'chrome://resources/lit/v3_0/lit.rollup.js';
++
++import type {RiseDefaultBrowserBannerElement} from './rise_default_browser_banner.js';
++
++export function getHtml(this: RiseDefaultBrowserBannerElement) {
++  // clang-format off
++  return html`<!--_html_template_start_-->
++<div id="card" class="cr-centered-card-container" ?hidden="${!this.shown_}">
++  <div id="controlsColumn">
++    <h2 id="title">Make Rise your default browser</h2>
++    <div id="bodyText" class="cr-secondary-text">
++      Links you open from other apps, such as Mail and Messages, open in Rise.
++    </div>
++    <cr-button class="action-button" id="setDefault"
++        aria-describedby="title bodyText" ?disabled="${this.busy_}"
++        @click="${this.onSetDefaultClick_}">
++      Set as default
++    </cr-button>
++    <cr-button id="dismiss" ?disabled="${this.busy_}"
++        @click="${this.onDismissClick_}">
++      Dismiss
++    </cr-button>
++  </div>
++</div>
++<!--_html_template_end_-->`;
++  // clang-format on
++}
+diff --git a/chrome/browser/resources/settings/rise_page/rise_default_browser_banner.ts b/chrome/browser/resources/settings/rise_page/rise_default_browser_banner.ts
+new file mode 100644
+--- /dev/null
++++ b/chrome/browser/resources/settings/rise_page/rise_default_browser_banner.ts
+@@ -0,0 +1,140 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++/**
++ * @fileoverview Above every settings page while Rise isn't the default
++ * browser: making it the default, which macOS confirms, or dismissing the
++ * banner for good. It's laid out as Chrome's Privacy Guide promo was. Rise
++ * answers through `riseSettings.request('defaultBrowser', ...)`.
++ */
++import 'chrome://resources/cr_elements/cr_button/cr_button.js';
++
++import {getCss as getCrSharedStyle} from 'chrome://resources/cr_elements/cr_shared_style_lit.css.js';
++import {CrLitElement, css} from 'chrome://resources/lit/v3_0/lit.rollup.js';
++
++import {getHtml} from './rise_default_browser_banner.html.js';
++
++interface RiseRequests {
++  request(kind: string, body: object): Promise<unknown>;
++}
++
++function bridge(): RiseRequests|undefined {
++  return window.riseSettings as unknown as RiseRequests | undefined;
++}
++
++export class RiseDefaultBrowserBannerElement extends CrLitElement {
++  static get is() {
++    return 'rise-default-browser-banner';
++  }
++
++  static override get styles() {
++    return [
++      getCrSharedStyle(),
++      css`
++        :host {
++          display: block;
++        }
++        #card[hidden] {
++          display: none;
++        }
++        #card {
++          background-color: var(--cr-card-background-color);
++          border-radius: var(--cr-card-border-radius);
++          box-shadow: var(--cr-card-shadow);
++          overflow: hidden;
++        }
++        #controlsColumn {
++          padding: 20px;
++        }
++        h2 {
++          color: var(--cr-primary-text-color);
++          font-size: 22px;
++          font-weight: 400;
++          margin: 0;
++          padding: 0 0 8px;
++        }
++        #bodyText {
++          padding-block-end: 16px;
++        }
++        #setDefault {
++          margin-inline-end: 16px;
++        }
++      `,
++    ];
++  }
++
++  override render() {
++    return getHtml.bind(this)();
++  }
++
++  static override get properties() {
++    return {
++      shown_: {type: Boolean},
++      busy_: {type: Boolean},
++    };
++  }
++
++  protected accessor shown_: boolean = false;
++  protected accessor busy_: boolean = false;
++
++  private onRefresh_ = () => {
++    this.refresh_();
++  };
++
++  override connectedCallback() {
++    super.connectedCallback();
++    window.addEventListener('rise-settings-ready', this.onRefresh_);
++    // Rise may have become the default in System Settings meanwhile.
++    window.addEventListener('focus', this.onRefresh_);
++    document.addEventListener('visibilitychange', this.onRefresh_);
++    this.refresh_();
++  }
++
++  override disconnectedCallback() {
++    super.disconnectedCallback();
++    window.removeEventListener('rise-settings-ready', this.onRefresh_);
++    window.removeEventListener('focus', this.onRefresh_);
++    document.removeEventListener('visibilitychange', this.onRefresh_);
++  }
++
++  private async ask_(action: string) {
++    const riseSettings = bridge();
++    if (!riseSettings) {
++      return;
++    }
++    const state = await riseSettings.request('defaultBrowser', {action}) as
++        {shown?: boolean} | null;
++    this.shown_ = !!state?.shown;
++  }
++
++  private refresh_() {
++    if (!this.busy_) {
++      this.ask_('state');
++    }
++  }
++
++  // macOS asks whether to use Rise; the banner stays if the answer is no.
++  protected async onSetDefaultClick_() {
++    this.busy_ = true;
++    try {
++      await this.ask_('set');
++    } finally {
++      this.busy_ = false;
++    }
++  }
++
++  protected onDismissClick_() {
++    this.shown_ = false;
++    this.ask_('dismiss');
++  }
++}
++
++declare global {
++  interface HTMLElementTagNameMap {
++    'rise-default-browser-banner': RiseDefaultBrowserBannerElement;
++  }
++}
++
++customElements.define(
++    RiseDefaultBrowserBannerElement.is, RiseDefaultBrowserBannerElement);

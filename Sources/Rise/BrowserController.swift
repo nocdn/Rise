@@ -34,8 +34,6 @@ import RiseCore
     /// The camera button's JPEG and PDF.
     let capturePopover = NSPopover()
     var linkPasteboard: NSPasteboard = .general
-    var airDropService: NSSharingService?
-    var airDropHandler: ((URL) -> Void)?
     let sitePermissions: SitePermissions
     let cookieConsent: CookieConsent
     lazy var permissionCoordinator = PermissionCoordinator(browser: self)
@@ -61,7 +59,6 @@ import RiseCore
     var findBars: [UUID: FindBar] = [:]
     /// Stands in while no tab is selected.
     let tablessFindBar = FindBar()
-    let infoPlaque = InfoPlaque()
     var sidebar: SidebarView!
     let toolbarHost = NativeTitlebarControls()
     let toolbarAccessory = NSTitlebarAccessoryViewController()
@@ -91,6 +88,9 @@ import RiseCore
     var extensionWindow: AnyObject?
     /// The extension popup that's open, if any.
     var extensionPopup: ExtensionPopup?
+    var spareExtensionPopup: ExtensionPopup?
+    /// Keeps an extension's process running while the pointer is on its button (ExtensionControls).
+    var extensionWarmer: (id: String, page: ChromiumPage, ends: DispatchWorkItem?)?
     var selectedTab: BrowserTab? { tabs.first { $0.id == selectedID } }
     var closedTabs: [SavedTab] = []
     let browsingHistory: BrowsingHistory
@@ -141,6 +141,21 @@ import RiseCore
     }()
     var paletteCreatesTab = false
     var splitGroups: [SplitTabGroup] = []
+    lazy var keyboardShortcuts: KeyboardShortcuts = {
+        let shortcuts = KeyboardShortcuts(preferences: preferences)
+        shortcuts.onChange = { [weak self] in self?.keyboardShortcutsChanged() }
+        return shortcuts
+    }()
+    weak var shortcutRecordingPage: WebPage?
+    var shortcutRecordingID: String?
+    var shortcutRecordingIndex = 0
+    var shortcutRecordedKeyCode: UInt16?
+    var tabMoveHeldModifiers: NSEvent.ModifierFlags = [.command, .option]
+    var tabSwitchHeldModifiers: NSEvent.ModifierFlags = .control
+    /// Arrow presses while ⌥⌘ stays held share one tab-order undo step.
+    var tabMoveSequence: (tabID: UUID, order: [UUID])?
+    /// Route undo to the sidebar until the next editing key goes to the page or a text field.
+    var tabOrderUndoPending = false
     var peekSourceTabID: UUID?
     var peekOpensNewTab = false
     var peekSwipePull: Double = 0
@@ -272,10 +287,13 @@ import RiseCore
             self.update()
         }
         window.tabSwitchEvent = { [weak self] event in self?.handleTabSwitchEvent(event) ?? false }
-        window.addressPaletteEvent = { [weak self] event in self?.palette.handleKeyEquivalent(event) ?? false }
+        window.shortcutEvent = { [weak self] event in self?.handleKeyboardShortcut(event) ?? false }
+        window.addressPaletteEvent = { [weak self] event in
+            guard let self else { return false }; return self.palette.handleKeyEquivalent(event, shortcuts: self.keyboardShortcuts)
+        }
         window.undoEvent = { [weak self] event in
             guard let self else { return false }
-            return self.palette.handleUndoKey(event) || self.handleSplitUndoKey(event) || self.handlePeekUndoKey(event)
+            return self.handleTabOrderUndoKey(event) || self.palette.handleUndoKey(event, shortcuts: self.keyboardShortcuts) || self.handleSplitUndoKey(event) || self.handlePeekUndoKey(event)
         }
         window.smartRenameEvent = { [weak self] event in self?.handleSmartRenameKey(event) ?? false }
         window.extensionShortcutEvent = { [weak self] event in self?.runExtensionShortcut(event) ?? false }
@@ -413,12 +431,6 @@ import RiseCore
         siteInfoPopover.behavior = .transient
         downloadsPopover.behavior = .transient
         siteControlsPopover.behavior = .transient
-        // The pages under the notice would take its button's pointer and cursor for their own links.
-        infoPlaque.onPointer = { [weak self] over in
-            guard let self else { return }
-            if over { for tab in tabs + [peekTab].compactMap({ $0 }) { setCovered(true, tab) } }
-            else { updatePeekCovers() }
-        }
         let devActions: [(String, String, () -> Void)] = [
             ("link", "Copy URL", { [weak self] in self?.copyURL() }),
             ("camera", "Capture whole page", { [weak self] in if let self { self.showCaptureChoices(from: self.devButtons[1]) } }),
@@ -550,7 +562,6 @@ import RiseCore
         // The panels come down from beneath the page bar and what's under it.
         let tucked = barHeight+devHeight
         selectedFindBar.frame = pageShadow.frame; selectedFindBar.topInset = barHeight+devHeight; selectedFindBar.tuckedInset = tucked
-        infoPlaque.frame = pageShadow.frame; infoPlaque.topInset = barHeight+devHeight; infoPlaque.tuckedInset = tucked
         dismissArea.frame = b
         // The centred palette dims the window behind it.
         veil.frame = b
@@ -773,7 +784,7 @@ import RiseCore
         sidebar.beginTabSearch()
     }
     @objc func focusAddress() { paletteCreatesTab = false; showPalette(text: selectedTab?.url?.absoluteString == "about:blank" ? "" : selectedTab?.url?.absoluteString ?? "") }
-    func showPalette(text: String) { sidebar.endTabSearch(); if searchProvider.isGoogle { googleSearchSuggestions.warmUp() }; historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); permissionCoordinator.cancel(); let veilWasHidden = dismissArea.isHidden; dismissArea.isHidden = false; palette.currentPage = selectedTab.flatMap { tab in tab.url.map { ($0.absoluteString, tab.favicon(for: theme)) } }; palette.show(text: text, theme: theme, createsTab: paletteCreatesTab, centered: paletteLab == nil); layoutChrome(); if veilWasHidden { fadeInVeil() } }
+    func showPalette(text: String) { sidebar.endTabSearch(); if searchProvider.isGoogle { googleSearchSuggestions.warmUp() }; historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); extensionPopup?.close(); permissionCoordinator.cancel(); let veilWasHidden = dismissArea.isHidden; dismissArea.isHidden = false; palette.currentPage = selectedTab.flatMap { tab in tab.url.map { ($0.absoluteString, tab.favicon(for: theme)) } }; palette.show(text: text, theme: theme, createsTab: paletteCreatesTab, centered: paletteLab == nil); layoutChrome(); if veilWasHidden { fadeInVeil() } }
     /// The centred palette's veil comes in quickly but not at once: Material's fast effects
     /// (150 ms, decelerating), so it starts at the keypress and settles softly. The palette itself
     /// shows at once. Coming back while it fades out, it turns from where it got to.

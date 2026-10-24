@@ -37,6 +37,11 @@ import RiseChromium
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: browser.window!.windowNumber, context: nil,
             characters: String(number), charactersIgnoringModifiers: String(number), isARepeat: false, keyCode: codes[number-1])!
     }
+    func event(_ characters: String, code: UInt16, modifiers: NSEvent.ModifierFlags, repeatKey: Bool = false) -> NSEvent {
+        NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: browser.window!.windowNumber, context: nil,
+            characters: characters, charactersIgnoringModifiers: characters, isARepeat: repeatKey, keyCode: code)!
+    }
     func menu(_ title: String) -> NSMenu { NSApp.mainMenu!.items.first { $0.title == title }!.submenu! }
     func applicationDidFinishLaunching(_ notification: Notification) {
         Task {
@@ -75,6 +80,51 @@ import RiseChromium
         let numbered = menu("Tabs").items.filter { $0.action == #selector(BrowserController.selectNumberedTab(_:)) }
         menu("Tabs").update()
         check(numbered[1].state == .on && numbered[1].title.contains("Menu test"), "Tabs menu shows the page title and selected tab")
+
+        browser.select(browser.tabs[5].id)
+        let beforeMove = browser.tabs.map(\.id), current = browser.selectedTab!
+        let page = current.page
+        _ = await page.evaluate("document.getElementById('editor').focus(); return null", arguments: [:], world: nil)
+        browser.window?.makeFirstResponder(page.view)
+        let up = String(UnicodeScalar(NSUpArrowFunctionKey)!)
+        let down = String(UnicodeScalar(NSDownArrowFunctionKey)!)
+        NSApp.sendEvent(event(up, code: 126, modifiers: [.command, .option]))
+        var moved = beforeMove; moved.swapAt(5, 4)
+        check(browser.tabs.map(\.id) == moved, "⌥⌘↑ moves the current tab up one row from Chromium's focused input")
+        try await Task.sleep(for: .milliseconds(40))
+        NSApp.sendEvent(event(up, code: 126, modifiers: [.command, .option], repeatKey: true))
+        moved.swapAt(4, 3)
+        check(browser.tabs.map(\.id) == moved, "Holding the arrow repeats tab movement")
+        try await Task.sleep(for: .milliseconds(40))
+        NSApp.sendEvent(event(down, code: 125, modifiers: [.command, .option]))
+        moved.swapAt(3, 4)
+        check(browser.tabs.map(\.id) == moved, "⌥⌘↓ moves the same tab back down")
+        let release = NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: .command, timestamp: 0,
+            windowNumber: browser.window!.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 58)!
+        NSApp.sendEvent(release)
+        NSApp.sendEvent(event("z", code: 6, modifiers: .command))
+        check(browser.tabs.map(\.id) == beforeMove, "⌘Z restores the position before the whole held-arrow sequence")
+        NSApp.sendEvent(event("z", code: 6, modifiers: [.command, .shift]))
+        check(browser.tabs.map(\.id) == moved, "⇧⌘Z redoes the held-arrow sequence")
+        NSApp.sendEvent(event(up, code: 126, modifiers: [.command, .option, .control]))
+        let atTop = [current.id] + beforeMove.filter { $0 != current.id }
+        check(browser.tabs.map(\.id) == atTop, "⌃⌥⌘↑ sends the tab straight to the top")
+        NSApp.sendEvent(event("z", code: 6, modifiers: .command))
+        check(browser.tabs.map(\.id) == moved, "⌘Z puts a tab sent to the top back where it was")
+        NSApp.sendEvent(event("z", code: 6, modifiers: [.command, .shift]))
+        check(browser.tabs.map(\.id) == atTop, "⇧⌘Z redoes the jump to the top")
+        check(browser.selectedID == current.id && browser.selectedTab?.page.view === page.view, "Moving keeps the same tab and page selected")
+        let text = await page.evaluate("return document.getElementById('editor').value", arguments: [:], world: nil)
+        check(text as? String == "unchanged", "Moving the tab preserves the page's input")
+        _ = await page.evaluate("const input = document.getElementById('editor'); input.focus(); input.setSelectionRange(input.value.length, input.value.length); return null", arguments: [:], world: nil)
+        NSApp.sendEvent(event("a", code: 0, modifiers: []))
+        try await Task.sleep(for: .milliseconds(100))
+        let edited = await page.evaluate("return document.getElementById('editor').value", arguments: [:], world: nil)
+        check(edited as? String == "unchangeda", "The page still accepts text after moving its tab")
+        NSApp.sendEvent(event("z", code: 6, modifiers: .command))
+        try await Task.sleep(for: .milliseconds(100))
+        let undoneText = await page.evaluate("return document.getElementById('editor').value", arguments: [:], world: nil)
+        check(undoneText as? String == "unchanged" && browser.tabs.map(\.id) == atTop, "After editing, ⌘Z undoes page text without moving the tab")
 
         let active = browser.selectedTab!
         let previous = active.url

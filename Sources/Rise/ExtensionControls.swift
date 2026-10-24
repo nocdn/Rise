@@ -3,7 +3,7 @@ import RiseChromium
 
 /// Chrome extensions in Rise's chrome, as Arc has them: pinned ones in the sidebar's address row,
 /// every one in the site controls popover (where they're pinned and unpinned), and their popups in
-/// popovers under the button that opened them.
+/// the hover cards' card, under the button that opened them.
 @MainActor extension BrowserController {
     static let pinnedExtensionsKey = "Rise.PinnedExtensions"
     static let pinnedExtensionsChanged = Notification.Name("Rise.PinnedExtensionsChanged")
@@ -44,11 +44,24 @@ import RiseChromium
             AuthenticationDiagnostics.popups.notice("Popup refused missingWindow=1")
             completion?(false); return
         }
-        let rect = anchorView.bounds
         extensionPopup?.close()
-        let popup = ExtensionPopup(url: url, theme: theme)
+        let popup = spareExtensionPopup ?? ExtensionPopup()
+        spareExtensionPopup = nil
+        popup.apply(theme)
         popup.onShown = completion
-        popup.onClose = { [weak self, weak popup] in if self?.extensionPopup === popup { self?.extensionPopup = nil } }
+        popup.onClose = { [weak self, weak popup] in
+            guard let self, self.extensionPopup === popup else { return }
+            self.extensionPopup = nil
+            self.updatePeekCovers()
+            if let page = popup?.page.view, let responder = self.window?.firstResponder as? NSView, responder.isDescendant(of: page) {
+                self.window?.makeFirstResponder(self.selectedTab?.page.view)
+            }
+        }
+        // The pages under the card would otherwise take its pointer for their own hover.
+        popup.card.onPointer = { [weak self] inside in
+            guard let self else { return }
+            if inside { self.tabs.forEach { self.setCovered(true, $0) } } else { self.updatePeekCovers() }
+        }
         // What the popup opens goes in tabs, as from Chrome's.
         popup.page.onPopup = { [weak self, weak popup] page, _ in
             guard let self else { return false }
@@ -59,7 +72,41 @@ import RiseChromium
             self?.addTab(url: url, background: background); return true
         }
         extensionPopup = popup
-        popup.show(relativeTo: rect, of: anchorView)
+        raiseHoverCard(popup.card)
+        popup.show(under: anchorView)
+        popup.load(url)
+        // The next one's page, once this one has opened.
+        DispatchQueue.main.asyncAfter(deadline: .now()+1) { [weak self] in self?.prepareSpareExtensionPopup() }
+    }
+    /// A popup's page made ahead, for any extension, with nothing loaded: making one takes 15 ms
+    /// or so, on the main thread, between a press and its popup starting to load.
+    func prepareSpareExtensionPopup() {
+        guard spareExtensionPopup == nil, window != nil else { return }
+        spareExtensionPopup = ExtensionPopup()
+    }
+    /// The pointer on an extension's button starts the extension's process, which its popup
+    /// shares, so a press opens it without waiting for one to start (100 ms or more). The page is
+    /// its manifest, loaded out of sight with scripts off, so nothing of the extension runs; it
+    /// goes ten seconds after the pointer leaves.
+    /// A spare popup page is made then too, if there isn't one.
+    func warmExtension(_ id: String, _ hovering: Bool) {
+        if hovering {
+            prepareSpareExtensionPopup()
+            extensionWarmer?.ends?.cancel(); extensionWarmer?.ends = nil
+            guard extensionWarmer?.id != id, let url = URL(string: "chrome-extension://\(id)/manifest.json") else { return }
+            extensionWarmer.map { $0.page.browserView.close() }
+            let page = ChromiumPage()
+            page.browserView.scriptsDisabled = true
+            page.load(url)
+            extensionWarmer = (id, page, nil)
+        } else if extensionWarmer?.id == id {
+            let ends = DispatchWorkItem { [weak self] in
+                guard let self, self.extensionWarmer?.id == id else { return }
+                self.extensionWarmer?.page.browserView.close(); self.extensionWarmer = nil
+            }
+            extensionWarmer?.ends = ends
+            DispatchQueue.main.asyncAfter(deadline: .now()+10, execute: ends)
+        }
     }
     /// An extension's keyboard shortcut: its button's opens its popup, under its page bar button if
     /// it's pinned, as a click does; others go to the extension. False if `event` isn't one.
@@ -225,29 +272,34 @@ import RiseChromium
 }
 
 /// An extension's popup: its page, sized to what it shows (as Chrome does, from 25 by 25 to 800
-/// by 600 points), in a popover that opens once the page knows its size.
-@MainActor final class ExtensionPopup: NSObject, NSPopoverDelegate {
+/// by 600 points), in the tabs' hover card. Its right edge lines up with its button's, under it,
+/// and it grows out of the button with the cards' motion once the page has loaded, as Chrome
+/// shows its popups, and has drawn at its size.
+@MainActor final class ExtensionPopup: NSObject {
     let page = ChromiumPage()
-    let popover = NSPopover()
+    let card = ExtensionPopupCard()
     var onClose: (() -> Void)?
     var onShown: ((Bool) -> Void)?
-    private var anchor: (rect: NSRect, view: NSView)?
-    private var closed = false
+    private(set) var isShown = false
+    /// The page's size, which the card takes as far as the window allows.
+    private(set) var contentSize = NSSize.zero
+    private weak var anchor: NSView?
+    /// `leaving` from the moment it's asked to close, so nothing opens it again on its way out.
+    private var closed = false, leaving = false, loaded = false, sized = false, revealing = false
+    private var monitor: Any?
+    private var observers: [NSObjectProtocol] = []
     static let minimum = NSSize(width: 25, height: 25), maximum = NSSize(width: 800, height: 600)
+    /// Below its button, and clear of the window's edges.
+    static let gap: CGFloat = 6, margin: CGFloat = 8
     private static let handler = "riseExtensionPopupSize"
 
-    init(url: URL, theme: RiseTheme) {
+    /// Its page is made on the next turn, to load an extension's popup with `load`.
+    override init() {
         super.init()
         page.browserView.extensionPopup = true
-        popover.behavior = .transient
-        popover.appearance = theme.appearance
-        popover.delegate = self
-        let content = PopoverContentView(frame: NSRect(origin: .zero, size: Self.maximum))
-        page.view.frame = content.bounds
+        page.view.frame = card.content.bounds
         page.view.autoresizingMask = [.width, .height]
-        content.addSubview(page.view)
-        let controller = NSViewController(); controller.view = content
-        popover.contentViewController = controller
+        card.content.addSubview(page.view)
         // Sized as Chrome sizes popups, where the engine does; measured by the page, where not.
         if RCBrowserView.sizesExtensionPopups {
             page.onPreferredSize = { [weak self] size in self?.fit(size) }
@@ -259,43 +311,142 @@ import RiseChromium
             page.addUserScript(Self.sizeScript, world: .named("Rise.ExtensionPopup"), mainFrameOnly: true, handlers: [Self.handler])
         }
         // `window.close()` from the popup, as many do when they're done.
-        page.onEvent = { [weak self] event in if case .closed = event { self?.close() } }
-        page.load(url)
+        page.onEvent = { [weak self] event in
+            guard let self else { return }
+            switch event {
+            case .closed: close()
+            case .finished: loaded = true; prepare()
+            default: break
+            }
+        }
     }
+    func apply(_ theme: RiseTheme) { card.apply(theme) }
+    func load(_ url: URL) { page.load(url) }
 
-    /// Opens under `rect` of `view` once the page has measured itself, or after a second regardless.
-    func show(relativeTo rect: NSRect, of view: NSView) {
-        anchor = (rect, view)
-        DispatchQueue.main.asyncAfter(deadline: .now()+1) { [weak self] in self?.open(size: nil) }
+    /// The card waits in its window out of sight, as big as a popup can be, where the page
+    /// measures itself, and takes the page's size as soon as it has one. It opens under `anchor`
+    /// once the page has loaded and drawn at that size, or after a second and a half regardless.
+    func show(under anchor: NSView) {
+        self.anchor = anchor
+        card.frame = NSRect(origin: Self.outOfSight, size: Self.maximum)
+        resized = CFAbsoluteTimeGetCurrent()
+        DispatchQueue.main.asyncAfter(deadline: .now()+1.5) { [weak self] in self?.open() }
+    }
+    private static let outOfSight = NSPoint(x: -20000, y: 0)
+    /// Where the engine sizes popups, the page has drawn at its size before the card hears it, so
+    /// the card can open at once. Where the page measures itself, Chromium needs a frame or two to
+    /// draw it again at the card's size, and shows only its background until then.
+    private static let redraw = RCBrowserView.sizesExtensionPopups ? 0 : 0.035
+    /// Where the card goes for the page's size: right-aligned under its button, as big as fits.
+    private func frame(for size: NSSize) -> NSRect? {
+        guard let anchor, let host = card.superview, anchor.window != nil, anchor.window === host.window else { return nil }
+        let button = anchor.convert(anchor.bounds, to: host)
+        let top = button.maxY+Self.gap
+        let width = min(size.width, max(Self.minimum.width, button.maxX-Self.margin))
+        let height = min(size.height, max(Self.minimum.height, host.bounds.height-top-Self.margin))
+        return NSRect(x: button.maxX-width, y: top, width: width, height: height)
+    }
+    /// The middle of the button's bottom edge, in the card's coordinates: where it grows from.
+    private var growsFrom: CGPoint {
+        guard let anchor, let host = card.superview else { return CGPoint(x: card.bounds.maxX, y: 0) }
+        let button = anchor.convert(anchor.bounds, to: host)
+        return CGPoint(x: button.midX-card.frame.minX, y: button.maxY-card.frame.minY)
     }
     private func fit(_ wanted: NSSize) {
-        let size = NSSize(width: min(Self.maximum.width, max(Self.minimum.width, ceil(wanted.width))),
-                          height: min(Self.maximum.height, max(Self.minimum.height, ceil(wanted.height))))
-        if popover.isShown {
-            if popover.contentSize != size { popover.contentSize = size }
-        } else { open(size: size) }
+        contentSize = NSSize(width: min(Self.maximum.width, max(Self.minimum.width, ceil(wanted.width))),
+                             height: min(Self.maximum.height, max(Self.minimum.height, ceil(wanted.height))))
+        sized = true
+        if isShown { place() } else { resizeOutOfSight(); prepare() }
     }
-    private func open(size: NSSize?) {
-        guard !closed, !popover.isShown else { return }
-        guard let anchor else { return }
-        guard anchor.view.window != nil else { finish(); return }
-        popover.contentSize = size ?? NSSize(width: 320, height: 400)
-        popover.show(relativeTo: anchor.rect, of: anchor.view, preferredEdge: .maxY)
-        popover.contentViewController?.view.window?.makeFirstResponder(page.view)
-        AuthenticationDiagnostics.popups.notice("Popup presentation shown=\(self.popover.isShown)")
-        reportShown(popover.isShown)
+    /// The page draws at the card's size while the card is still out of sight, and while it loads.
+    private var resized = CFAbsoluteTimeGetCurrent()
+    private func resizeOutOfSight() {
+        guard !isShown, let frame = frame(for: contentSize), card.frame.size != frame.size else { return }
+        card.frame = NSRect(origin: Self.outOfSight, size: frame.size)
+        resized = CFAbsoluteTimeGetCurrent()
     }
+    /// Once it has loaded and been measured, it opens as soon as it has had time to draw at its size.
+    private func prepare() {
+        guard !closed, !leaving, !isShown, !revealing, loaded, sized, frame(for: contentSize) != nil else { return }
+        resizeOutOfSight()
+        revealing = true
+        let wait = Self.redraw-(CFAbsoluteTimeGetCurrent()-resized)
+        if wait <= 0 { open(); return }
+        DispatchQueue.main.asyncAfter(deadline: .now()+wait) { [weak self] in self?.open() }
+    }
+    private func place() {
+        guard isShown, let frame = frame(for: contentSize), card.frame != frame else { return }
+        card.frame = frame
+        // A page that takes its size a moment after it loads, as many do: right-aligned, the card
+        // grows to the left, and still comes out of its button.
+        CardMotionAnimator.movePivotIn(card, CardMotion.selected, tab: growsFrom)
+    }
+    private func open() {
+        guard !closed, !leaving, !isShown else { return }
+        guard anchor?.window != nil, card.superview != nil else { finish(); return }
+        if contentSize == .zero { contentSize = NSSize(width: 320, height: 400) }
+        isShown = true
+        place()
+        card.isInteractive = true
+        CardMotionAnimator.animateIn(card, CardMotion.selected, tab: growsFrom)
+        card.window?.makeFirstResponder(page.view)
+        watchForDismissal()
+        AuthenticationDiagnostics.popups.notice("Popup presentation shown=true")
+        reportShown(true)
+    }
+    /// As a transient popover: a click anywhere else, Escape, or leaving Rise closes it. A click on
+    /// its own button only closes it, rather than opening it again.
+    private func watchForDismissal() {
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown]) { [weak self] event in
+            guard let self, self.isShown else { return event }
+            if event.type == .keyDown {
+                guard event.keyCode == 53, event.window === self.card.window else { return event }
+                self.close(); return nil
+            }
+            if event.window === self.card.window {
+                if self.card.bounds.contains(self.card.convert(event.locationInWindow, from: nil)) { return event }
+                if let anchor = self.anchor, anchor.bounds.contains(anchor.convert(event.locationInWindow, from: nil)) {
+                    self.close(); return nil
+                }
+            }
+            self.close(); return event
+        }
+        observers.append(NotificationCenter.default.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.close() }
+        })
+        if let window = card.window {
+            observers.append(NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification, object: window, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.place() }
+            })
+        }
+    }
+    private func stopWatching() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
+        observers.forEach(NotificationCenter.default.removeObserver); observers = []
+    }
+    /// Goes with the cards' motion, back into its button.
     func close() {
-        guard !closed else { return }
-        if popover.isShown { popover.performClose(nil) } else { finish() }
+        guard !closed, !leaving else { return }
+        leaving = true
+        guard isShown else { finish(); return }
+        isShown = false; card.isInteractive = false
+        stopWatching()
+        // Rise has the keyboard back as the card goes, and lets go of the popup; the popup holds
+        // itself until the card has gone, and goes even if the motion is cut short.
+        onClose?(); onClose = nil
+        let motion = CardMotion.selected
+        CardMotionAnimator.animateOut(card, motion, tab: growsFrom) { self.finish() }
+        DispatchQueue.main.asyncAfter(deadline: .now()+max(motion.outDuration, motion.fadeOut)+0.25) { self.finish() }
     }
-    func popoverDidClose(_ notification: Notification) { finish() }
     private func finish() {
         guard !closed else { return }
-        closed = true
+        closed = true; isShown = false; card.isInteractive = false
+        stopWatching()
         AuthenticationDiagnostics.popups.notice("Popup closed pendingResponse=\(self.onShown != nil)")
+        card.removeFromSuperview()
         page.browserView.close()
-        onClose?()
+        onClose?(); onClose = nil
         reportShown(false)
     }
     private func reportShown(_ shown: Bool) {
@@ -333,4 +484,46 @@ import RiseChromium
       document.fonts?.ready.then(soon);
     })();
     """
+}
+
+/// The hover cards' surface around an extension's page: their fill, edge, shadow and corners.
+@MainActor final class ExtensionPopupCard: FlippedView {
+    private let panel = Surface(radius: FindBar.radius)
+    /// The page's place, rounded as the card is.
+    let content = FlippedView()
+    var onPointer: ((Bool) -> Void)?
+    /// Only once it has opened, and not while it goes.
+    var isInteractive = false
+
+    init() {
+        super.init(frame: .zero)
+        wantsLayer = true; clipsToBounds = false; layer?.masksToBounds = false
+        panel.layer?.cornerCurve = .continuous; panel.layer?.borderWidth = 0.5
+        panel.layer?.shadowColor = NSColor.black.cgColor; panel.layer?.shadowOpacity = 0.12
+        panel.layer?.shadowRadius = 10; panel.layer?.shadowOffset = NSSize(width: 0, height: -3)
+        panel.clipsToBounds = false
+        content.wantsLayer = true; content.layer?.cornerRadius = FindBar.radius
+        content.layer?.cornerCurve = .continuous; content.layer?.masksToBounds = true
+        panel.addSubview(content); addSubview(panel)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    private(set) var fill = NSColor.clear
+    func apply(_ theme: RiseTheme) {
+        appearance = theme.appearance
+        fill = theme == .dark ? theme.popup : TabAppearance.selectedFill(theme)
+        panel.fill = fill
+        KeroLitEdge.apply(to: panel, theme: theme)
+    }
+    override func layout() {
+        super.layout()
+        panel.frame = bounds; content.frame = bounds
+        panel.layer?.shadowPath = PageOutline.path(in: bounds, radius: FindBar.radius, continuous: true)
+    }
+    override func hitTest(_ point: NSPoint) -> NSView? { isInteractive ? super.hitTest(point) : nil }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas(); removeOwnTrackingAreas()
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+    }
+    override func mouseEntered(with event: NSEvent) { if isInteractive { onPointer?(true) } }
+    override func mouseExited(with event: NSEvent) { onPointer?(false) }
 }

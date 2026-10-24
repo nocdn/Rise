@@ -573,9 +573,9 @@ struct AddressSuggestion {
         }
     }
     @objc func choose(_ sender: NSButton) { selectResult(sender.tag); chooseSelected() }
-    func handleKeyEquivalent(_ event: NSEvent) -> Bool {
-        guard isPresented, event.type == .keyDown, [36, 76].contains(event.keyCode),
-              event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command,
+    func handleKeyEquivalent(_ event: NSEvent, shortcuts: KeyboardShortcuts? = nil) -> Bool {
+        guard isPresented, event.type == .keyDown,
+              shortcuts?.matches("activateSuggestedTab", event) ?? (KeyboardShortcut(event: event) == KeyboardShortcut("Command+Enter")),
               let chosen = chosenSuggestion, let id = chosen.tabID else { return false }
         switchToTab?(id)
         return true
@@ -732,10 +732,9 @@ struct AddressSuggestion {
         } else { refresh() }
     }
     /// ⌘Z in a site's search steps back: what's typed first, back to the empty search, then out.
-    func handleUndoKey(_ event: NSEvent) -> Bool {
+    func handleUndoKey(_ event: NSEvent, shortcuts: KeyboardShortcuts? = nil) -> Bool {
         guard isPresented, let before = addressBeforeSiteSearch, siteSearch != nil, event.type == .keyDown,
-              event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
-              event.charactersIgnoringModifiers?.lowercased() == "z" else { return false }
+              shortcuts?.matches("undo:", event) ?? (KeyboardShortcut(event: event) == KeyboardShortcut("Command+Z")) else { return false }
         if input.stringValue.isEmpty { leaveSiteSearch() } else { setText("") }
         return true
     }

@@ -154,6 +154,8 @@ import RiseChromium
                 if let key = body["key"] as? String { self.runRiseSetting(key) }
                 reply(true, nil)
             case "siteSearch": self.handleSiteSearchRequest(body, from: message.page, reply: reply)
+            case "shortcuts": self.handleKeyboardShortcutsRequest(body, from: message.page, reply: reply)
+            case "defaultBrowser": self.handleDefaultBrowserRequest(body, reply: reply)
             default: reply(nil, "Unknown request")
             }
         }

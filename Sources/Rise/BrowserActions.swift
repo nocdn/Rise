@@ -55,8 +55,7 @@ import RiseCore
     /// ⌃R over a tab in the sidebar, an easy reach for the left hand. With no tab under the
     /// pointer, the keys go on to the page.
     func handleSmartRenameKey(_ event: NSEvent) -> Bool {
-        guard event.type == .keyDown, event.modifierFlags.intersection([.command, .shift, .option, .control]) == .control,
-              event.charactersIgnoringModifiers?.lowercased() == "r", let id = hoveredSidebarTabID else { return false }
+        guard event.type == .keyDown, keyboardShortcuts.matches("smartRename", event), let id = hoveredSidebarTabID else { return false }
         smartRename(id); return true
     }
     var hoveredSidebarTabID: UUID? {

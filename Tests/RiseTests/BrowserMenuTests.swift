@@ -67,6 +67,83 @@ final class BrowserMenuTests: XCTestCase {
         }
     }
 
+    @MainActor func testControlOptionCommandUpMovesCurrentTabToTopFromAddressEditor() throws {
+        let browser = makeBrowser(); defer { clean(browser) }
+        let old = NSApp.mainMenu; defer { NSApp.mainMenu = old }
+        let delegate = AppDelegate(); delegate.browser = browser; delegate.buildMenu()
+        let move = entry(#selector(BrowserController.moveCurrentTabToTop), in: "Tabs")
+        XCTAssertFalse(browser.validateMenuItem(move))
+        let current = browser.addTab(), other = browser.addTab()
+        browser.select(current.id); browser.focusAddress()
+        XCTAssertNotNil(browser.palette.input.currentEditor())
+        XCTAssertTrue(browser.validateMenuItem(move))
+        let up = String(UnicodeScalar(NSUpArrowFunctionKey)!)
+        let event = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command, .option, .control], timestamp: 0,
+            windowNumber: browser.window!.windowNumber, context: nil, characters: up, charactersIgnoringModifiers: up, isARepeat: false, keyCode: 126))
+        XCTAssertEqual(move.keyEquivalent, up)
+        XCTAssertEqual(move.keyEquivalentModifierMask, [.command, .option, .control])
+        XCTAssertTrue(NSApp.mainMenu!.performKeyEquivalent(with: event))
+        XCTAssertEqual(browser.tabs.map(\.id), [current.id, other.id])
+        XCTAssertEqual(browser.selectedID, current.id)
+        XCTAssertFalse(browser.validateMenuItem(move))
+        browser.window?.undoManager?.undo()
+        XCTAssertEqual(browser.tabs.map(\.id), [other.id, current.id])
+        XCTAssertTrue(browser.window!.performKeyEquivalent(with: event), "The window takes it before an editable view does")
+        XCTAssertEqual(browser.tabs.map(\.id), [current.id, other.id])
+        XCTAssertTrue(browser.window!.performKeyEquivalent(with: event), "Repeating at the top stays a no-op for the page")
+    }
+
+    @MainActor private func moveKey(_ direction: Int, in browser: BrowserController, repeatKey: Bool = false) -> NSEvent {
+        let arrow = String(UnicodeScalar(direction < 0 ? NSUpArrowFunctionKey : NSDownArrowFunctionKey)!)
+        return NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command, .option], timestamp: 0,
+            windowNumber: browser.window!.windowNumber, context: nil, characters: arrow, charactersIgnoringModifiers: arrow,
+            isARepeat: repeatKey, keyCode: direction < 0 ? 126 : 125)!
+    }
+    @MainActor private func undoKey(in browser: BrowserController, redo: Bool = false) -> NSEvent {
+        NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: redo ? [.command, .shift] : .command, timestamp: 0,
+            windowNumber: browser.window!.windowNumber, context: nil, characters: "z", charactersIgnoringModifiers: "z", isARepeat: false, keyCode: 6)!
+    }
+    @MainActor func testHeldArrowMovesShareOneUndoStepAndModifierReleaseStartsAnother() async throws {
+        let browser = makeBrowser(); defer { clean(browser) }
+        let tabs = (0..<6).map { _ in browser.addTab() }
+        let original = tabs.map(\.id)
+        browser.reorderTabs(original, animated: false); browser.select(tabs[4].id)
+        let up = moveKey(-1, in: browser), down = moveKey(1, in: browser)
+        XCTAssertTrue(browser.window!.performKeyEquivalent(with: up))
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertTrue(browser.window!.performKeyEquivalent(with: moveKey(-1, in: browser, repeatKey: true)))
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertTrue(browser.window!.performKeyEquivalent(with: up))
+        XCTAssertTrue(browser.window!.performKeyEquivalent(with: down))
+        let firstMove = [0, 1, 4, 2, 3, 5].map { tabs[$0].id }
+        XCTAssertEqual(browser.tabs.map(\.id), firstMove)
+        XCTAssertEqual(browser.selectedID, tabs[4].id)
+        let release = NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: .command, timestamp: 0,
+            windowNumber: browser.window!.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 58)!
+        browser.window!.sendEvent(release)
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertTrue(browser.window!.performKeyEquivalent(with: up))
+        try await Task.sleep(for: .milliseconds(20))
+        let secondMove = browser.tabs.map(\.id)
+        XCTAssertTrue(browser.window!.performKeyEquivalent(with: undoKey(in: browser)))
+        XCTAssertEqual(browser.tabs.map(\.id), firstMove)
+        XCTAssertTrue(browser.window!.performKeyEquivalent(with: undoKey(in: browser)))
+        XCTAssertEqual(browser.tabs.map(\.id), original, "One undo restores the position before holding ⌥⌘")
+        XCTAssertTrue(browser.window!.performKeyEquivalent(with: undoKey(in: browser, redo: true)))
+        XCTAssertEqual(browser.tabs.map(\.id), firstMove)
+        XCTAssertTrue(browser.window!.performKeyEquivalent(with: undoKey(in: browser, redo: true)))
+        XCTAssertEqual(browser.tabs.map(\.id), secondMove)
+    }
+    @MainActor func testTabMovementUndoYieldsToSubsequentTextEditing() {
+        let browser = makeBrowser(); defer { clean(browser) }
+        let current = browser.addTab(); browser.addTab(); browser.select(current.id)
+        browser.window!.performKeyEquivalent(with: moveKey(-1, in: browser))
+        let typing = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: browser.window!.windowNumber, context: nil, characters: "a", charactersIgnoringModifiers: "a", isARepeat: false, keyCode: 0)!
+        XCTAssertFalse(browser.handleTabMoveEvent(typing))
+        XCTAssertFalse(browser.handleTabOrderUndoKey(undoKey(in: browser)), "Text typed after a move keeps its own undo")
+    }
+
     @MainActor func testNumberedMenuItemsFollowSelectionRenamesReordersAndClosedTabs() {
         let browser = makeBrowser(); defer { clean(browser) }
         let old = NSApp.mainMenu; defer { NSApp.mainMenu = old }

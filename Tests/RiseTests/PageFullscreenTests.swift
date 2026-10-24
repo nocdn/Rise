@@ -4,35 +4,31 @@ import XCTest
 
 @MainActor final class PageFullscreenTests: XCTestCase {
     // The script itself, in a page, is checked on Chromium: Tests/Live/ChromiumMediaChecks.swift.
-    func testPlaqueSplitsMessagesAtTheWordsTheyShare() {
-        XCTAssertEqual(InfoPlaque.split("Native full screen enabled", "Simulated full screen enabled").rest, "full screen enabled")
-        XCTAssertEqual(InfoPlaque.split("Native full screen enabled", "Simulated full screen enabled").new, "Simulated")
-        XCTAssertEqual(InfoPlaque.split("Saved", "Copied").rest, "", "Nothing shared swaps the whole message")
-        XCTAssertEqual(InfoPlaque.split("Link copied", "copied").new, "copied", "At least one word always swaps")
-    }
-
-    func testShortcutTogglesTheSettingAndShowsThePlaque() throws {
+    func testNativeByDefaultAndTheShortcutSaysWhichInThePageBar() throws {
         let suite = "PageFullscreenTests.\(UUID().uuidString)"
         let preferences = UserDefaults(suiteName: suite)!
         defer { preferences.removePersistentDomain(forName: suite) }
         let session = FileManager.default.temporaryDirectory.appendingPathComponent("rise-fullscreen-\(UUID().uuidString)/session.json")
         let browser = BrowserController(sessionURL: session, restore: false, preferences: preferences)
+        let bar = browser.navBar
+        XCTAssertFalse(browser.pageFullscreen.isSimulated, "Native until switched")
         browser.toggleSimulatedFullscreen()
         XCTAssertTrue(browser.pageFullscreen.isSimulated)
-        XCTAssertTrue(browser.infoPlaque.isPresented)
-        XCTAssertEqual(browser.infoPlaque.text, "Simulated full screen enabled")
-        let narrow = browser.infoPlaque.panelWidth
+        let simulated = try XCTUnwrap(bar.notice)
+        XCTAssertEqual(simulated.text, "Simulated Full Screen Enabled")
         browser.toggleSimulatedFullscreen()
-        XCTAssertEqual(browser.infoPlaque.text, "Native full screen enabled")
-        XCTAssertNotEqual(browser.infoPlaque.panelWidth, narrow, "The plaque fits its text")
-        XCTAssertEqual(browser.infoPlaque.lead, "Native", "Toggling while it shows swaps only the word that changed")
-        XCTAssertEqual(browser.infoPlaque.rest, "full screen enabled")
-        browser.toggleSimulatedFullscreen()
-        XCTAssertEqual(browser.infoPlaque.lead, "Simulated")
-        XCTAssertEqual(browser.infoPlaque.text, "Simulated full screen enabled")
+        let native = try XCTUnwrap(bar.notice)
+        XCTAssertEqual(native.text, "Native Full Screen Enabled")
+        XCTAssertFalse(native === simulated, "Switching back swaps the whole row")
+        XCTAssertEqual(simulated.alphaValue, 0); XCTAssertEqual(native.alphaValue, 1); XCTAssertEqual(bar.text.alphaValue, 0)
+        // Copying over it swaps it out the same way.
+        browser.addTab().requestedURL = URL(string: "https://example.com"); browser.linkPasteboard = .withUniqueName()
+        browser.update(); browser.copyURL()
+        XCTAssertTrue(bar.isShowingCopied); XCTAssertEqual(native.alphaValue, 0)
+        browser.linkPasteboard.releaseGlobally()
         browser.toggleSimulatedFullscreen()
         let item = browser.makeMoreSiteMenu().items.first { $0.title == "Simulated Full Screen" }
-        XCTAssertEqual(item?.state, .off)
+        XCTAssertEqual(item?.state, .on)
         browser.window?.close()
     }
 }

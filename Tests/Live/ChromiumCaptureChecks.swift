@@ -82,7 +82,7 @@ import RiseChromium
             check(closed && settingsShown && browser.siteControlsPopover.isShown, "Escape closes just the capture popover, not the settings one under it (settings shown \(browser.siteControlsPopover.isShown))")
             browser.siteControlsPopover.close(); try? await Task.sleep(for: .milliseconds(300))
 
-            // JPEG, saved and copied, told with a preview.
+            // JPEG, saved and copied, told in the page bar.
             let pageHeight = (try? await tab.page.evaluate("return document.documentElement.scrollHeight", arguments: [:], in: nil, world: .page)) as? Double ?? 0
             browser.captureWholePage(.jpeg)
             let jpegSaved = await waitUntil(10) { !self.files("jpg").isEmpty }
@@ -90,28 +90,17 @@ import RiseChromium
             check(jpegSaved && files("jpg").first?.lastPathComponent == "Tall Page.jpg", "A JPEG saves to the captures folder, named for the page: \(files("jpg").map(\.lastPathComponent))")
             check((jpeg?.size.height ?? 0) >= pageHeight - 2 && pageHeight > 3000, "Of the whole page, not only what shows: \(jpeg?.size ?? .zero) for a page \(pageHeight) high")
             check(NSPasteboard.general.data(forType: NSPasteboard.PasteboardType("public.jpeg")) != nil, "And it's copied")
-            _ = await waitUntil(3) { self.browser.infoPlaque.isPresented }
-            check(browser.infoPlaque.text == "Saved to captures", "The notice says where: \(browser.infoPlaque.text)")
+            _ = await waitUntil(3) { self.browser.navBar.notice != nil }
+            let notice = browser.navBar.notice
+            check(notice?.text == "Saved to captures", "The page bar says where: \(notice?.text ?? "nothing")")
             try? await Task.sleep(for: .milliseconds(500))
             shot(browser.window, "capture-jpeg-notice", region: true)
-            let notice = browser.infoPlaque.notices.last { $0.kind == "capture" }
             check(notice?.linkLabel?.stringValue == "captures", "The folder's name is a link")
-            check(notice?.previewButton?.frame.height == 20, "With the picture's preview before it, as a button: \(notice?.previewButton?.frame.size ?? .zero)")
             try? await Task.sleep(for: .milliseconds(1000))
-            check(browser.infoPlaque.isPresented, "The notice stays for two seconds")
-            @MainActor func pageTracking() -> Int {
-                @MainActor func count(_ view: NSView) -> Int { view.trackingAreas.count + view.subviews.map(count).reduce(0, +) }
-                return (tab.page as? ChromiumPage).map { $0.browserView.subviews.map(count).reduce(0, +) } ?? -1
-            }
-            let tracking = pageTracking()
-            browser.infoPlaque.setHovered(true)
-            check(tracking > 0 && pageTracking() == 0, "The page under it takes no hover or cursor while the pointer's over it (\(tracking) → \(pageTracking()))")
-            try? await Task.sleep(for: .milliseconds(1500))
-            check(browser.infoPlaque.isPresented, "The pointer over it keeps it")
-            browser.infoPlaque.setHovered(false)
-            check(notice?.isPresented == false, "Leaving it after its time sends it up at once")
-            check(pageTracking() == tracking, "And takes them again once it's gone")
-            try? await Task.sleep(for: .seconds(1))
+            check(browser.navBar.notice === notice, "It stays for two seconds")
+            _ = await waitUntil(2) { self.browser.navBar.notice == nil }
+            check(browser.navBar.notice == nil && browser.navBar.text.alphaValue == 1, "Then the address comes back")
+            try? await Task.sleep(for: .milliseconds(500))
 
             // PDF, one page, the page's size.
             browser.captureWholePage(.pdf)
@@ -121,8 +110,8 @@ import RiseChromium
             check(pdfSaved && document?.pageCount == 1, "A PDF saves, one page: \(document?.pageCount ?? 0) pages, \(bounds.size) pt")
             check(abs(bounds.height - pageHeight*0.75) < 4, "As long as the page")
             check(NSPasteboard.general.data(forType: .pdf) != nil, "And it's copied")
-            _ = await waitUntil(3) { self.browser.infoPlaque.text == "Saved as PDF to captures" }
-            check(browser.infoPlaque.text == "Saved as PDF to captures", "The notice says it's a PDF: \(browser.infoPlaque.text)")
+            _ = await waitUntil(3) { self.browser.navBar.notice?.text == "Saved as PDF to captures" }
+            check(browser.navBar.notice?.text == "Saved as PDF to captures", "The page bar says it's a PDF: \(browser.navBar.notice?.text ?? "nothing")")
             try? await Task.sleep(for: .milliseconds(500))
             shot(browser.window, "capture-pdf-notice", region: true)
 

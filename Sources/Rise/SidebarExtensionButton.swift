@@ -20,6 +20,16 @@ final class SidebarExtensionButton: SidebarHoverButton {
         [icon, badge].forEach(addSubview)
     }
     required init?(coder: NSCoder) { fatalError() }
+    /// The pointer came onto it or left it, to have the extension ready before a press.
+    var onHover: ((Bool) -> Void)?
+    override func mouseEntered(with event: NSEvent) { super.mouseEntered(with: event); onHover?(true) }
+    override func mouseExited(with event: NSEvent) { super.mouseExited(with: event); onHover?(false) }
+    /// Opens on the press, as its popup closes on one, rather than waiting for the release.
+    /// Control-click still shows its menu.
+    override func mouseDown(with event: NSEvent) {
+        guard !event.modifierFlags.contains(.control) else { super.mouseDown(with: event); return }
+        runAction()
+    }
 
     /// What it shows now: the icon (a puzzle piece until it loads), a tooltip, a badge (empty for
     /// none), and dimmed where it doesn't work on the page.

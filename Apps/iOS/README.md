@@ -2,7 +2,7 @@
 
 With no saved session, New Page's plus dialog opens and focuses its search field while
 `https://news.ycombinator.com/` loads behind it in a persistent `WKWebView`. Later launches
-restore the open tabs in order and resume the selected page without opening that dialog.
+restore the open tabs in order and resume the selected page behind New Page.
 Addresses, titles and selection are saved atomically in Application Support on tab and
 navigation changes, including History API changes in background tabs. Scene lifecycle
 events flush pending writes; ordinary app updates retain the file. Only the selected
@@ -11,7 +11,12 @@ selected. Temporary Peek pages and DEBUG replays/audits have no session store. T
 restores the selected page and its Back/Forward list, including the current position.
 Local WebKit interaction archives retain the engine's session when possible; portable
 URL/title history restores tabs received from the Mac and adopted Peek pages.
-Returning to the app while it's still in memory preserves the existing page and panel.
+Returning within five minutes preserves the existing page and panel. After five minutes in
+the background, New Page reopens and focuses its search field above the selected page;
+no tab is created until a destination is chosen. An already-open search keeps its draft,
+selection and private/site-search mode. Incoming links and Home Screen actions take priority,
+and presented dialogs and summaries remain intact. Brief inactive transitions such as Control
+Centre do not count as time away. The timeout uses a monotonic clock and needs no background timer.
 Tabs also form one shared list with the Mac app through the user's existing iCloud
 account. Sync is enabled by default under **More → Site settings → App settings**;
 there is no app login. See [Shared tabs with iCloud](../../docs/TabSync.md) for the

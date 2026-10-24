@@ -66,6 +66,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private var pendingPrivacyPolicy = false
     private let allowsPeek: Bool
     private var opensSearchOnFirstAppearance: Bool
+    let backgroundSearch = BackgroundSearch()
+    private var pendingResumeSearch = false
     /// Fills the area behind the status bar with the colour along the page's top edge, as Arc
     /// does, so the page seems to reach the top of the screen. Peek pages have their own strip.
     let topStrip = UIView()
@@ -305,6 +307,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         }
         guard !quickActions.applyPending() else { return }
         openPendingLinks()
+        applyResumeSearch()
         applyPendingSharedTabs()
         updatePageTranslation()
     }
@@ -314,7 +317,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let links = urls.filter { ["http", "https"].contains($0.scheme?.lowercased()) }
         guard !links.isEmpty else { return }
         // The link is what the person came for, rather than the search a fresh launch opens with.
-        opensSearchOnFirstAppearance = false
+        suppressLaunchSearch()
         pendingLinks += links
         applyPendingChanges()
     }
@@ -1805,7 +1808,47 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         return isTabSwitcherOpen || tabSwitcher.isHidden
     }
 
-    func suppressLaunchSearch() { opensSearchOnFirstAppearance = false }
+    func suppressLaunchSearch() {
+        opensSearchOnFirstAppearance = false
+        cancelResumeSearch()
+    }
+
+    func cancelResumeSearch() {
+        backgroundSearch.cancel()
+        pendingResumeSearch = false
+    }
+
+    func prepareForInactivity() {
+        cancelResumeSearch()
+        if isPanelOpen, bottomBar.panel == .search { bottomBar.search.rememberSelectionForBackground() }
+    }
+
+    /// Reuse New Page over the selected page, without making a tab or reloading its content.
+    func reopenSearchAfterInactivity() {
+        pendingResumeSearch = true
+        applyPendingChanges()
+    }
+
+    private func applyResumeSearch() {
+        guard pendingResumeSearch, allowsPeek, isViewLoaded, view.window != nil,
+              view.window?.windowScene?.activationState == .foregroundActive,
+              !isSwipingToTabs, view.isUserInteractionEnabled else { return }
+        // Keep modal interactions and summaries intact. Explicit navigation cancels the
+        // request at its entry point, including while another panel is closing.
+        guard presentedViewController == nil, summarise == nil,
+              pendingLinks.isEmpty, quickActions.pending == nil else { pendingResumeSearch = false; return }
+        if isPanelOpen {
+            if bottomBar.panel == .search {
+                pendingResumeSearch = false
+                bottomBar.search.resumeFocus() // Beginning again would clear the unfinished draft.
+            } else { closePanel() }
+            return
+        }
+        if isTabSwitcherOpen { selectTab(tabIndex); return }
+        guard tabSwitcher.isHidden else { return }
+        pendingResumeSearch = false
+        openPanel()
+    }
 
     func openNewBlankTab(privateBrowsing: Bool? = nil) {
         let privateBrowsing = privateBrowsing ?? isPrivateBrowsing

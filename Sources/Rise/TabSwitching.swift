@@ -21,20 +21,18 @@ import AppKit
     }
     @objc func selectNumberedTab(_ item: NSMenuItem) { selectTab(at: item.tag) }
     func handleTabSwitchEvent(_ event: NSEvent) -> Bool {
-        if event.type == .keyDown,
-           event.modifierFlags.intersection([.command, .control, .option, .shift]) == .command,
-           let characters = event.charactersIgnoringModifiers, characters.count == 1,
-           let number = Int(characters), (1...9).contains(number) {
+        if handleTabMoveEvent(event) { return true }
+        if event.type == .keyDown, let number = (1...9).first(where: { keyboardShortcuts.matches("selectTab\($0)", event) }) {
             // Take these before Chromium or an address field handles them. An absent tab is
             // a no-op, so Chromium's own ⌘9 (last tab) cannot select a different one.
             selectTab(at: number-1); return true
         }
-        if event.type == .keyDown, event.keyCode == 48, event.modifierFlags.contains(.control),
-           event.modifierFlags.intersection([.command, .option]).isEmpty {
-            advanceTabSwitch(event.modifierFlags.contains(.shift) ? -1 : 1); return true
+        if event.type == .keyDown, keyboardShortcuts.matches("tabSwitcherNext", event) || keyboardShortcuts.matches("tabSwitcherPrevious", event) {
+            tabSwitchHeldModifiers = event.modifierFlags.intersection(KeyboardShortcut.modifierMask).subtracting(.shift)
+            advanceTabSwitch(keyboardShortcuts.matches("tabSwitcherPrevious", event) ? -1 : 1); return true
         }
         guard isSwitchingTabs else { return false }
-        if event.type == .flagsChanged, !event.modifierFlags.contains(.control) {
+        if event.type == .flagsChanged, !tabSwitchHeldModifiers.isEmpty, !event.modifierFlags.isSuperset(of: tabSwitchHeldModifiers) {
             commitTabSwitch(); return false // Forward modifier release to the responder too.
         }
         if event.type == .keyDown {
@@ -42,7 +40,9 @@ import AppKit
             if event.keyCode == 36 { commitTabSwitch(); return true }
             if event.keyCode == 123 || event.keyCode == 124 { advanceTabSwitch(event.keyCode == 123 ? -1 : 1); return true }
         }
-        if event.type == .keyUp, event.keyCode == 48 { return true }
+        if event.type == .keyUp, keyboardShortcuts.matches("tabSwitcherNext", event) || keyboardShortcuts.matches("tabSwitcherPrevious", event) {
+            if tabSwitchHeldModifiers.isEmpty { commitTabSwitch() }; return true
+        }
         if event.type == .leftMouseDown || event.type == .rightMouseDown {
             let point = root.convert(event.locationInWindow, from: nil)
             if tabSwitcher.isHidden || !tabSwitcher.frame.contains(point) {

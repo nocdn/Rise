@@ -15,8 +15,9 @@ import RiseCore
         /// Where the text's ink starts, 2 pt past its label's own edge.
         static let textX: CGFloat = 147, textInset: CGFloat = 2
         static let fieldX: CGFloat = 139.5, fieldHeight: CGFloat = 28.5, fieldRadius: CGFloat = 6
-        /// The field's buttons, its last centred this far in from its end.
-        static let fieldButtonStride: CGFloat = 25, fieldButtonInset: CGFloat = 14
+        /// The field's buttons: 27 by 24, 2.25 pt in from the field's top, bottom and end, and
+        /// 1 pt apart.
+        static let fieldButtonStride: CGFloat = 28, fieldButtonInset: CGFloat = 15.75
         /// The pinned extensions, the last centred as far in from the bar's end as the sidebar
         /// button is from its start; the field ends this far before the first's centre.
         static let extensionStride: CGFloat = 29.5, extensionInset: CGFloat = 19.5, fieldEndGap: CGFloat = 18.5
@@ -220,6 +221,7 @@ import RiseCore
         layer?.addSublayer(field); layer?.addSublayer(hairline); layer?.addSublayer(progressLine)
         progressLine.isHidden = true
         text.font = Metrics.font; text.lineBreakMode = .byTruncatingTail; text.cell?.usesSingleLineMode = true
+        text.wantsLayer = true
         addSubview(text)
         for button in [zoomButton, copyButton, settingsButton] as [SidebarHoverButton] { addSubview(button); button.alphaValue = 0 }
         setColor(.white, animated: false)
@@ -230,6 +232,7 @@ import RiseCore
     func show(url: URL?, title: String) {
         let url = url?.absoluteString == "about:blank" ? nil : url
         guard url != self.url || title != self.title else { return }
+        if url != self.url { hideNotice() }
         self.url = url; self.title = title
         updateText(); updateFieldControls(animated: false); needsLayout = true
     }
@@ -261,6 +264,7 @@ import RiseCore
             if button.contentTintColor != ink.strong { button.contentTintColor = ink.strong }
             button.hoverColor = ink.hover
         }
+        for case let notice as BarNotice in subviews { notice.tint(ink.strong) }
         updateText()
     }
 
@@ -299,7 +303,7 @@ import RiseCore
     var fieldRect: NSRect {
         NSRect(x: Metrics.fieldX-leadingRoom, y: Metrics.midY-Metrics.fieldHeight/2, width: max(0, fieldMaxX-Metrics.fieldX+leadingRoom), height: Metrics.fieldHeight)
     }
-    private var fieldButtons: [SidebarHoverButton] { (showsZoom ? [zoomButton] : []) + [copyButton, settingsButton] }
+    private var fieldButtons: [SidebarHoverButton] { (showsZoom ? [zoomButton] : []) + [settingsButton, copyButton] }
 
     override func layout() {
         super.layout()
@@ -326,6 +330,80 @@ import RiseCore
         let line = ceil(text.intrinsicContentSize.height)
         let textX = Metrics.textX-Metrics.textInset-leadingRoom
         text.frame = NSRect(x: textX, y: round((mid-line/2)*2)/2, width: max(0, textEnd-textX), height: line)
+        for case let notice as BarNotice in subviews { place(notice) }
+    }
+
+    // MARK: Saying something in the address's place
+
+    /// Copying the address or a link, switching full screen, starring a repository and saving a
+    /// capture say so where the address is, as Dia does,
+    /// measured from it: the address rises 10 pt as it fades, quickening, and the words rise 9 pt
+    /// into its place from below as they fade in, slowing; then they go the same way and it comes
+    /// back. Something else said while they show takes their place the same way, the whole row.
+    enum Notice {
+        static let rise: CGFloat = 10, entry: CGFloat = 9
+        static let exitDuration = 0.13, entryDelay = 0.11, entryDuration = 0.19
+        /// From the words coming to their starting to go.
+        static let hold = 1.25
+    }
+    /// What the bar says in the address's place, while it does.
+    private(set) var notice: BarNotice?
+    var isShowingCopied: Bool { notice?.text == BarNotice.copied }
+    private var noticeTimer: Timer?
+    func showCopied() { showNotice(BarNotice.copied, image: BarNotice.linkImage) }
+    /// Saying the same again while it shows holds it longer, and so does the pointer on its link.
+    func showNotice(_ words: String, image: NSImage, link: BarNotice.Link? = nil, hold: TimeInterval = Notice.hold) {
+        holdNotice(hold)
+        guard notice?.text != BarNotice.text(words, link: link) else { return }
+        let next = BarNotice(words, image: image, link: link)
+        next.tint(ink.strong); next.alphaValue = 0
+        addSubview(next); place(next)
+        let old: NSView = notice ?? text
+        notice = next
+        exchange(old, for: next)
+    }
+    private func holdNotice(_ hold: TimeInterval) {
+        noticeTimer?.invalidate()
+        let timer = Timer(timeInterval: hold, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if self.notice?.isLinkHovered == true { self.holdNotice(0.4) } else { self.hideNotice() }
+            }
+        }
+        noticeTimer = timer; RunLoop.main.add(timer, forMode: .common)
+    }
+    func hideNotice() {
+        noticeTimer?.invalidate(); noticeTimer = nil
+        guard let notice else { return }
+        self.notice = nil
+        exchange(notice, for: text)
+    }
+    private func place(_ notice: BarNotice) {
+        let textX = Metrics.textX-leadingRoom
+        notice.frame = NSRect(x: textX-1-BarNotice.inkStart, y: 0, width: notice.width, height: bounds.height)
+    }
+    private func exchange(_ old: NSView, for new: NSView) {
+        let from = old.layer?.presentation()?.opacity ?? 1
+        old.alphaValue = 0; new.alphaValue = 1
+        // Words that have gone are done with.
+        let done = { if let old = old as? BarNotice, old !== self.notice { old.removeFromSuperview() } }
+        guard window != nil, let oldLayer = old.layer, let newLayer = new.layer else { done(); return }
+        let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        // Up the screen, in the bar's flipped layers.
+        let up: CGFloat = oldLayer.superlayer?.contentsAreFlipped() == false ? 1 : -1
+        let now = CACurrentMediaTime()
+        func move(_ layer: CALayer, opacity: (Float, Float), y: (CGFloat, CGFloat), begin: CFTimeInterval, duration: CFTimeInterval, timing: CAMediaTimingFunction) {
+            let fade = CABasicAnimation(keyPath: "opacity"); fade.fromValue = opacity.0; fade.toValue = opacity.1
+            let rise = CABasicAnimation(keyPath: "transform.translation.y"); rise.fromValue = still ? 0 : y.0; rise.toValue = still ? 0 : y.1
+            let group = CAAnimationGroup(); group.animations = [fade, rise]
+            group.beginTime = begin; group.duration = duration; group.timingFunction = timing; group.fillMode = .backwards
+            layer.add(group, forKey: "notice")
+        }
+        move(oldLayer, opacity: (from, 0), y: (0, up*Notice.rise), begin: now, duration: Notice.exitDuration,
+             timing: CAMediaTimingFunction(controlPoints: 0.5, 0, 0.9, 0.6))
+        move(newLayer, opacity: (0, 1), y: (-up*Notice.entry, 0), begin: now+Notice.entryDelay, duration: Notice.entryDuration,
+             timing: CAMediaTimingFunction(controlPoints: 0.2, 0.7, 0.3, 1))
+        DispatchQueue.main.asyncAfter(deadline: .now()+Notice.exitDuration+0.05) { done() }
     }
 
     // MARK: Hovering the address
@@ -375,6 +453,135 @@ import RiseCore
     override func mouseDown(with event: NSEvent) {
         if fieldRect.contains(convert(event.locationInWindow, from: nil)) { onOpenAddress?() } else { window?.performDrag(with: event) }
     }
+}
+
+/// Words in the address's place, after a glyph, and perhaps a link after them: "Copied Current
+/// URL" with a link, say, or "Saved to Downloads" with the folder's name to click. The glyph's
+/// ink starts a point before the address's, 12 pt across, and the words' 7 pt after it.
+@MainActor final class BarNotice: FlippedView {
+    struct Link { let text: String; let perform: () -> Void }
+    static let copied = "Copied Current URL"
+    /// The copy button's confirmation glyph: the link with its marks around it.
+    static let linkImage = TablerIcon.image(TablerIcon.linkCopied, size: 16, description: nil)
+    /// The arrows of the full screen notices, drawn as heavy as the link.
+    static let fullScreenImage = symbol("arrow.up.left.and.arrow.down.right")
+    static let starImage = TablerIcon.image(TablerIcon.star, size: 14, description: nil)
+    static let warningImage = TablerIcon.image(TablerIcon.alertTriangle, size: 14, description: nil)
+    static let photoImage = symbol("photo"), documentImage = symbol("doc.richtext")
+    /// macOS's small spinner in the glyph's place, in the bar's ink, for something under way.
+    static let spinnerImage = NSImage(size: NSSize(width: 16, height: 16))
+    private static func symbol(_ name: String) -> NSImage {
+        NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)) ?? linkImage
+    }
+    /// Where the glyph's ink starts in its 16 pt frame.
+    static let inkStart: CGFloat = 3
+    /// How far below the words' middle a glyph sits, so it looks centred on them: the link and
+    /// the arrows draw high.
+    static func drop(_ image: NSImage) -> CGFloat {
+        image === linkImage ? 0.75 : image === fullScreenImage ? 0.5 : 0
+    }
+    private let drop: CGFloat
+    static func text(_ words: String, link: Link?) -> String { link.map { "\(words) \($0.text)" } ?? words }
+    private let icon = NSImageView()
+    private var spinner: SpinnerView?
+    private let words: PlainNavBarText
+    private(set) var linkLabel: BarLinkLabel?
+    let text: String
+    init(_ text: String, image: NSImage, link: Link? = nil) {
+        words = PlainNavBarText(labelWithString: text)
+        self.text = Self.text(text, link: link)
+        drop = Self.drop(image)
+        super.init(frame: .zero)
+        wantsLayer = true
+        icon.imageScaling = .scaleNone
+        if image === Self.spinnerImage { let spinner = SpinnerView(); self.spinner = spinner; icon.addSubview(spinner) } else { icon.image = image }
+        words.font = PlainNavBar.Metrics.font
+        addSubview(icon); addSubview(words)
+        if let link {
+            let label = BarLinkLabel(link.text, perform: link.perform)
+            linkLabel = label; addSubview(label)
+        }
+        setAccessibilityElement(link == nil); setAccessibilityRole(.staticText); setAccessibilityLabel(self.text)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    /// Only its link takes clicks, and only while it shows.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard alphaValue > 0, let linkLabel, linkLabel.frame.contains(convert(point, from: superview)) else { return nil }
+        return linkLabel
+    }
+    var isLinkHovered: Bool { linkLabel?.isHovered == true }
+    func tint(_ color: NSColor) { icon.contentTintColor = color; spinner?.color = color; words.textColor = color; linkLabel?.ink = color }
+    private var wordsX: CGFloat { Self.inkStart+19-PlainNavBar.Metrics.textInset }
+    /// The link a space after the words: both labels' margins are the same, so the words' own
+    /// width and a space's from where they start.
+    private var linkX: CGFloat {
+        let font = PlainNavBar.Metrics.font
+        return wordsX+((words.stringValue+" ") as NSString).size(withAttributes: [.font: font]).width
+    }
+    var width: CGFloat {
+        linkLabel.map { linkX+ceil($0.intrinsicContentSize.width) } ?? wordsX+ceil(words.intrinsicContentSize.width)
+    }
+    override func layout() {
+        super.layout()
+        let mid = PlainNavBar.Metrics.midY, line = ceil(words.intrinsicContentSize.height), y = round((mid-line/2)*2)/2
+        icon.frame = NSRect(x: 0, y: mid-8-1+drop, width: 16, height: 16)
+        spinner?.frame = NSRect(x: 2, y: 2, width: 12, height: 12)
+        words.frame = NSRect(x: wordsX, y: y, width: ceil(words.intrinsicContentSize.width), height: line)
+        linkLabel?.frame = NSRect(x: linkX, y: y,
+                                  width: ceil(linkLabel?.intrinsicContentSize.width ?? 0), height: line)
+    }
+}
+
+/// A notice's link in the bar: in the bar's ink, with a row of faint round dots under it that
+/// darken under the pointer, a hand cursor, and a click. The words before it share its ink, so
+/// the dots say which it is on any page's colour.
+@MainActor final class BarLinkLabel: NSTextField {
+    private let perform: () -> Void
+    var ink = NSColor.labelColor { didSet { textColor = ink; needsDisplay = true } }
+    private(set) var isHovered = false { didSet { needsDisplay = true } }
+    init(_ text: String, perform: @escaping () -> Void) {
+        self.perform = perform
+        super.init(frame: .zero)
+        stringValue = text; font = PlainNavBar.Metrics.font
+        isEditable = false; isSelectable = false; isBordered = false; drawsBackground = false
+        lineBreakMode = .byClipping
+        setAccessibilityRole(.link)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard let font, let cell else { return }
+        let text = cell.titleRect(forBounds: bounds)
+        let width = ceil((stringValue as NSString).size(withAttributes: [.font: font]).width)
+        let baseline = isFlipped ? text.minY+font.ascender : text.maxY-font.ascender
+        let y = baseline + (isFlipped ? 1 : -1)*Self.dotDrop
+        let (size, step) = (Self.dotSize, Self.dotStep)
+        ink.withAlphaComponent(isHovered ? 0.7 : 0.35).setFill()
+        // Label cells pad their text by 2 pt on each side; the dots start two points in from the
+        // word's left and run to its end, the row a pixel left of that.
+        let start = text.minX + 2 - Self.dotShift, end = start + width
+        var x = start + 2 + size/2
+        while x <= end - size/2 {
+            NSBezierPath(ovalIn: NSRect(x: x-size/2, y: y-size/2, width: size, height: size)).fill()
+            x += step
+        }
+    }
+    /// Round dots a little below where an underline would sit: AppKit's dotted underline draws
+    /// dashes at this size.
+    static let dotSize: CGFloat = 1.25, dotStep: CGFloat = 2.5, dotDrop: CGFloat = 3, dotShift: CGFloat = 0.5
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas(); removeOwnTrackingAreas()
+        addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .cursorUpdate, .activeAlways, .inVisibleRect], owner: self))
+    }
+    override func mouseEntered(with event: NSEvent) { isHovered = true }
+    override func mouseExited(with event: NSEvent) { isHovered = false }
+    override func cursorUpdate(with event: NSEvent) { NSCursor.pointingHand.set() }
+    override func mouseDown(with event: NSEvent) {}
+    override func mouseUp(with event: NSEvent) {
+        if bounds.contains(convert(event.locationInWindow, from: nil)) { perform() }
+    }
+    override func accessibilityPerformPress() -> Bool { perform(); return true }
 }
 
 /// The address, which leaves its clicks to the bar.

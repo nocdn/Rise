@@ -53,8 +53,7 @@ import RiseCore
     /// ⌘Z shortly after Split View made a split, unless an address or search is being typed.
     func handleSplitUndoKey(_ event: NSEvent) -> Bool {
         guard splitUndo != nil, event.type == .keyDown,
-              event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
-              event.charactersIgnoringModifiers?.lowercased() == "z", palette.isHidden,
+              keyboardShortcuts.matches("undo:", event), palette.isHidden,
               !(window?.firstResponder is NSText) else { return false }
         return undoSplit()
     }

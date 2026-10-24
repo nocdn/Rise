@@ -1,0 +1,352 @@
+diff --git a/chrome/browser/resources/settings/BUILD.gn b/chrome/browser/resources/settings/BUILD.gn
+--- a/chrome/browser/resources/settings/BUILD.gn
++++ b/chrome/browser/resources/settings/BUILD.gn
+@@ -394,6 +394,8 @@
+     "reset_page/reset_profile_dialog.ts",
+     "rise_page/rise_default_browser_banner.html.ts",
+     "rise_page/rise_default_browser_banner.ts",
++    "rise_page/rise_keyboard_shortcuts.html.ts",
++    "rise_page/rise_keyboard_shortcuts.ts",
+     "rise_page/rise_page.html.ts",
+     "rise_page/rise_page.ts",
+     "rise_page/rise_settings_rows.html.ts",
+diff --git a/chrome/browser/resources/settings/route.ts b/chrome/browser/resources/settings/route.ts
+--- a/chrome/browser/resources/settings/route.ts
++++ b/chrome/browser/resources/settings/route.ts
+@@ -220,6 +220,7 @@
+   // Rise's own sections, whose rows come from Rise.
+   r.RISE_TABS = r.BASIC.createSection('/tabs', 'riseTabs', 'Tabs');
+   r.RISE_AI = r.BASIC.createSection('/assistant', 'riseAi', 'AI');
++  r.RISE_SHORTCUTS = r.BASIC.createSection('/keyboardShortcuts', 'riseShortcuts', 'Keyboard shortcuts');
+ 
+   if (visibility.yourSavedInfo !== false) {
+     r.AUTOFILL = r.BASIC.createSection(
+diff --git a/chrome/browser/resources/settings/router.ts b/chrome/browser/resources/settings/router.ts
+--- a/chrome/browser/resources/settings/router.ts
++++ b/chrome/browser/resources/settings/router.ts
+@@ -54,6 +54,7 @@
+   PRIVACY_GUIDE: Route;
+   RESET: Route;
+   RISE_AI: Route;
++  RISE_SHORTCUTS: Route;
+   RISE_SITE_SEARCH: Route;
+   RISE_TABS: Route;
+   RESET_DIALOG: Route;
+diff --git a/chrome/browser/resources/settings/settings_main/settings_main.html b/chrome/browser/resources/settings/settings_main/settings_main.html
+--- a/chrome/browser/resources/settings/settings_main/settings_main.html
++++ b/chrome/browser/resources/settings/settings_main/settings_main.html
+@@ -125,6 +125,13 @@
+     </template>
+   </div>
+ 
++  <div slot="view" id="riseShortcuts">
++    <template is="dom-if" if="[[renderPlugin_(
++        routes_.RISE_SHORTCUTS, lastRoute_, inSearchMode_)]]">
++      <settings-rise-keyboard-shortcuts></settings-rise-keyboard-shortcuts>
++    </template>
++  </div>
++
+   <div slot="view" id="riseAi">
+     <template is="dom-if" if="[[renderPlugin_(
+         routes_.RISE_AI, lastRoute_, inSearchMode_)]]">
+diff --git a/chrome/browser/resources/settings/settings_main/settings_main.ts b/chrome/browser/resources/settings/settings_main/settings_main.ts
+--- a/chrome/browser/resources/settings/settings_main/settings_main.ts
++++ b/chrome/browser/resources/settings/settings_main/settings_main.ts
+@@ -20,6 +20,7 @@
+ import '../privacy_page/privacy_page_index.js';
+ import '../rise_page/rise_default_browser_banner.js';
+ import '../rise_page/rise_page.js';
++import '../rise_page/rise_keyboard_shortcuts.js';
+ import '../reset_page/reset_profile_banner.js';
+ import '../search_page/search_page_index.js';
+ // <if expr="not is_chromeos">
+diff --git a/chrome/browser/resources/settings/settings_menu/settings_menu.html b/chrome/browser/resources/settings/settings_menu/settings_menu.html
+--- a/chrome/browser/resources/settings/settings_menu/settings_menu.html
++++ b/chrome/browser/resources/settings/settings_menu/settings_menu.html
+@@ -137,6 +137,11 @@
+         <a role="menuitem" id="riseTabs" href="/tabs" class="cr-nav-menu-item">
+           <cr-icon icon="settings:web-asset"></cr-icon>
+           <span class="menu-label">Tabs</span>
++          <cr-ripple></cr-ripple>
++        </a>
++        <a role="menuitem" id="riseShortcuts" href="/keyboardShortcuts" class="cr-nav-menu-item">
++          <cr-icon icon="settings:rise-keyboard"></cr-icon>
++          <span class="menu-label">Keyboard shortcuts</span>
+           <cr-ripple></cr-ripple>
+         </a>
+         <a role="menuitem" id="riseAi" href="/assistant" class="cr-nav-menu-item">
+diff --git a/chrome/browser/resources/settings/icons.html.ts b/chrome/browser/resources/settings/icons.html.ts
+--- a/chrome/browser/resources/settings/icons.html.ts
++++ b/chrome/browser/resources/settings/icons.html.ts
+@@ -115,6 +115,7 @@
+ <cr-iconset name="settings" size="24">
+   <svg>
+     <defs>
++      <g id="rise-keyboard"><path d="M20 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 12H4V7h16v10ZM5 8h2v2H5Zm3 0h2v2H8Zm3 0h2v2h-2Zm3 0h2v2h-2Zm3 0h2v2h-2ZM5 11h2v2H5Zm3 0h2v2H8Zm3 0h2v2h-2Zm3 0h2v2h-2Zm3 0h2v2h-2ZM7 14h10v2H7Z"></path></g>
+       <!-- Rise's mark, for About Rise. -->
+       <g id="rise-product"><path d="M12.00 3.00L16.22 8.86L7.78 8.86ZM7.16 9.72L12.00 15.50L8.04 21.00L3.21 15.21ZM16.84 9.72L20.79 15.21L15.96 21.00L12.00 15.50Z"></path></g>
+       <!-- Domain verification GM3 icon -->
+@@ -355,6 +356,7 @@
+ <cr-iconset name="settings" size="24">
+   <svg>
+     <defs>
++      <g id="rise-keyboard"><path d="M20 5H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2Zm0 12H4V7h16v10ZM5 8h2v2H5Zm3 0h2v2H8Zm3 0h2v2h-2Zm3 0h2v2h-2Zm3 0h2v2h-2ZM5 11h2v2H5Zm3 0h2v2H8Zm3 0h2v2h-2Zm3 0h2v2h-2Zm3 0h2v2h-2ZM7 14h10v2H7Z"></path></g>
+       <!-- Rise's mark, for About Rise. -->
+       <g id="rise-product"><path d="M12.00 3.00L16.22 8.86L7.78 8.86ZM7.16 9.72L12.00 15.50L8.04 21.00L3.21 15.21ZM16.84 9.72L20.79 15.21L15.96 21.00L12.00 15.50Z"></path></g>
+       <!-- Domain verification GM3 icon -->
+diff --git a/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.ts b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.ts
+new file mode 100644
+--- /dev/null
++++ b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.ts
+@@ -0,0 +1,188 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++import 'chrome://resources/cr_components/cr_shortcut_input/cr_shortcut_input.js';
++import 'chrome://resources/cr_elements/cr_button/cr_button.js';
++import 'chrome://resources/cr_elements/cr_input/cr_input.js';
++import '../settings_page/settings_section.js';
++
++import type {CrShortcutInputElement} from 'chrome://resources/cr_components/cr_shortcut_input/cr_shortcut_input.js';
++import {getCss as getCrSharedStyle} from 'chrome://resources/cr_elements/cr_shared_style_lit.css.js';
++import {CrLitElement, css} from 'chrome://resources/lit/v3_0/lit.rollup.js';
++
++import {getSearchManager} from '../search_settings.js';
++import {getCss as getSettingsSharedStyle} from '../settings_shared_lit.css.js';
++import type {SettingsPlugin} from '../settings_main/settings_plugin.js';
++import {getHtml} from './rise_keyboard_shortcuts.html.js';
++
++interface Command {
++  id: string;
++  title: string;
++  group: string;
++  bindings: string[];
++  defaults: string[];
++  modified: boolean;
++}
++interface Result { commands: Command[]; error: string; }
++interface Bridge { request(kind: string, body: object): Promise<unknown>; }
++interface Recorded {
++  id: string;
++  index: number;
++  shortcut?: string;
++  cancelled?: boolean;
++  error?: string;
++}
++
++export class SettingsRiseKeyboardShortcutsElement extends CrLitElement implements SettingsPlugin {
++  static get is() { return 'settings-rise-keyboard-shortcuts'; }
++  static override get styles() {
++    return [getCrSharedStyle(), getSettingsSharedStyle(), css`
++      :host { display: block; padding-bottom: 24px; }
++      .intro { display: flex; align-items: center; gap: 20px; padding: 16px 20px; }
++      .intro .secondary { flex: 1; line-height: 1.6; }
++      .search { padding: 0 20px 16px; }
++      .command { display: flex; align-items: center; gap: 20px; padding: 16px 20px;
++        border-top: var(--cr-separator-line); min-height: 48px; }
++      .label { flex: 1; min-width: 120px; }
++      .group { margin-top: 6px; }
++      .bindings { display: flex; flex-direction: column; gap: 10px; align-items: flex-end; }
++      cr-shortcut-input { width: 360px; max-width: 100%; --cr-shortcut-input-width: 100%; }
++      .add { --cr-button-height: 28px; }
++      .error { color: var(--cr-error-color); margin: 0; padding: 0 20px 16px;
++        line-height: 1.5; }
++      .empty { padding: 24px 20px; color: var(--cr-secondary-text-color); }
++      @media (max-width: 740px) {
++        .command { flex-direction: column; align-items: stretch; }
++        .bindings { align-items: stretch; }
++        cr-shortcut-input { width: 100%; }
++        .reset { align-self: flex-end; }
++        .intro { flex-wrap: wrap; }
++      }
++    `];
++  }
++  override render() { return getHtml.bind(this)(); }
++  static override get properties() {
++    return {
++      commands_: {type: Array}, query_: {type: String}, error_: {type: String},
++      errorID_: {type: String}, extraID_: {type: String}, loading_: {type: Boolean},
++    };
++  }
++  protected accessor commands_: Command[] = [];
++  protected accessor query_: string = '';
++  protected accessor error_: string = '';
++  protected accessor errorID_: string = '';
++  private accessor extraID_: string = '';
++  protected accessor loading_: boolean = true;
++  private recorder_: {input: CrShortcutInputElement, id: string, index: number}|null = null;
++  private refresh_ = () => { void this.load_(); };
++  private recorded_ = (event: Event) => { void this.onRecorded_((event as CustomEvent<Recorded>).detail); };
++
++  override connectedCallback() {
++    super.connectedCallback();
++    window.addEventListener('rise-settings-ready', this.refresh_);
++    window.addEventListener('rise-shortcut-recorded', this.recorded_);
++    void this.load_();
++  }
++  override disconnectedCallback() {
++    this.stopRecording_();
++    window.removeEventListener('rise-settings-ready', this.refresh_);
++    window.removeEventListener('rise-shortcut-recorded', this.recorded_);
++    super.disconnectedCallback();
++  }
++  async searchContents(query: string) {
++    await this.load_();
++    return (await getSearchManager().search(query, this)).getSearchResult();
++  }
++  private async request_(body: object): Promise<Result|null> {
++    const bridge = window.riseSettings as unknown as Bridge|undefined;
++    if (!bridge) { return null; }
++    try { return await bridge.request('shortcuts', body) as Result; }
++    catch {
++      this.error_ = 'Could not save keyboard shortcuts. Please try again.';
++      this.errorID_ = '';
++      return null;
++    }
++  }
++  private async load_() {
++    const result = await this.request_({action: 'list'});
++    if (result) { this.commands_ = result.commands; this.loading_ = false; }
++  }
++  protected filteredCommands_(): Command[] {
++    const query = this.query_.trim().toLocaleLowerCase();
++    return this.commands_.filter(command => `${command.title} ${command.group}`.toLocaleLowerCase().includes(query));
++  }
++  protected hasModified_(): boolean { return this.commands_.some(command => command.modified); }
++  protected onFilterValueChanged_(event: CustomEvent<{value: string}>) { this.query_ = event.detail.value; }
++  protected onInputCaptureChange_(event: CustomEvent<boolean>) {
++    const input = event.currentTarget as CrShortcutInputElement;
++    void this.capture_(event, input.dataset['command']!, Number(input.dataset['index']));
++  }
++  protected onShortcutUpdated_(event: CustomEvent<string>) {
++    const input = event.currentTarget as CrShortcutInputElement;
++    void this.save_(input.dataset['command']!, Number(input.dataset['index']), event.detail);
++  }
++  protected onAddClick_(event: Event) { void this.add_((event.currentTarget as HTMLElement).dataset['command']!); }
++  protected onResetClick_(event: Event) { void this.reset_((event.currentTarget as HTMLElement).dataset['command']!); }
++  protected inputs_(command: Command): string[] {
++    const bindings = command.bindings.length ? [...command.bindings] : [''];
++    if (this.extraID_ === command.id && command.bindings.length) { bindings.push(''); }
++    return bindings;
++  }
++  protected async add_(id: string) {
++    this.stopRecording_(); this.extraID_ = id;
++    await this.updateComplete;
++    const row = Array.from(this.shadowRoot.querySelectorAll<HTMLElement>('.command')).find(row => row.dataset['command'] === id);
++    const inputs = row?.querySelectorAll<CrShortcutInputElement>('cr-shortcut-input');
++    inputs?.[inputs.length - 1]?.shadowRoot?.querySelector<HTMLElement>('#edit')?.click();
++  }
++  protected async capture_(event: CustomEvent<boolean>, id: string, index: number) {
++    event.stopPropagation();
++    const input = event.target as CrShortcutInputElement;
++    if (event.detail) {
++      if (this.recorder_ && this.recorder_.input !== input) { this.stopRecording_(); }
++      this.recorder_ = {input, id, index}; this.error_ = ''; this.errorID_ = '';
++    } else if (this.recorder_?.input === input) { this.recorder_ = null; }
++    await this.request_({action: 'capture', id, index, capturing: event.detail});
++  }
++  private stopRecording_() {
++    const recorder = this.recorder_;
++    if (!recorder) { return; }
++    this.recorder_ = null;
++    recorder.input.$.input.blur();
++    void this.request_({action: 'capture', id: recorder.id, index: recorder.index, capturing: false});
++  }
++  private async onRecorded_(detail: Recorded) {
++    const recorder = this.recorder_;
++    if (!recorder || recorder.id !== detail.id || recorder.index !== detail.index) { return; }
++    if (detail.error) { this.error_ = detail.error; this.errorID_ = detail.id; return; }
++    if (detail.shortcut !== undefined) { recorder.input.shortcut = detail.shortcut; }
++    this.stopRecording_(); this.extraID_ = ''; this.error_ = ''; this.errorID_ = '';
++    await this.load_();
++  }
++  protected async save_(id: string, index: number, shortcut: string) {
++    const result = await this.request_({action: 'set', id, index, shortcut});
++    if (!result) { return; }
++    this.error_ = result.error; this.errorID_ = id;
++    this.commands_ = result.commands;
++    if (!result.error) { this.extraID_ = ''; }
++  }
++  protected async reset_(id: string) {
++    this.stopRecording_();
++    const result = await this.request_({action: 'reset', id});
++    if (!result) { return; }
++    this.commands_ = result.commands; this.error_ = result.error; this.errorID_ = id; this.extraID_ = '';
++  }
++  protected async onResetAllClick_() {
++    this.stopRecording_();
++    const result = await this.request_({action: 'resetAll'});
++    if (!result) { return; }
++    this.commands_ = result.commands; this.error_ = ''; this.errorID_ = ''; this.extraID_ = '';
++  }
++}
++declare global {
++  interface HTMLElementTagNameMap {
++    'settings-rise-keyboard-shortcuts': SettingsRiseKeyboardShortcutsElement;
++  }
++}
++customElements.define(SettingsRiseKeyboardShortcutsElement.is, SettingsRiseKeyboardShortcutsElement);
+diff --git a/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.html.ts b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.html.ts
+new file mode 100644
+--- /dev/null
++++ b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.html.ts
+@@ -0,0 +1,46 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++import {html} from 'chrome://resources/lit/v3_0/lit.rollup.js';
++import type {SettingsRiseKeyboardShortcutsElement} from './rise_keyboard_shortcuts.js';
++
++export function getHtml(this: SettingsRiseKeyboardShortcutsElement) {
++    return html`
++      <settings-section page-title="Keyboard shortcuts" class="cr-centered-card-container">
++        <div class="intro">
++          <div class="secondary">Choose a shortcut to edit it, then press the keys you want.
++            Escape cancels recording. Changes are saved automatically.</div>
++          <cr-button id="resetAll" ?disabled="${!this.hasModified_()}"
++              @click="${this.onResetAllClick_}">Reset all</cr-button>
++        </div>
++        <div class="search"><cr-input id="filter" aria-label="Search keyboard shortcuts"
++            placeholder="Search keyboard shortcuts" .value="${this.query_}"
++            @value-changed="${this.onFilterValueChanged_}">
++        </cr-input></div>
++        ${this.error_ && !this.errorID_ ? html`<p class="error" role="alert">${this.error_}</p>` : ''}
++        ${this.filteredCommands_().map(command => html`
++          <div class="command" data-command="${command.id}">
++            <div class="label">${command.title}<div class="secondary group">${command.group}</div></div>
++            <div class="bindings">
++              ${this.inputs_(command).map((shortcut, index) => html`
++                <cr-shortcut-input data-command="${command.id}" data-index="${index}" .shortcut="${shortcut}" .allowCtrlAltShortcuts="${true}"
++                    .inputAriaLabel="${`${command.title} shortcut ${index + 1}`}"
++                    .editButtonAriaLabel="${`Record ${command.title} shortcut ${index + 1}`}"
++                    .clearButtonAriaLabel="${`Remove ${command.title} shortcut ${index + 1}`}"
++                    @input-capture-change="${this.onInputCaptureChange_}"
++                    @shortcut-updated="${this.onShortcutUpdated_}">
++                </cr-shortcut-input>
++              `)}
++              ${command.bindings.length > 0 ? html`<cr-button class="add" data-command="${command.id}"
++                  @click="${this.onAddClick_}">Add shortcut</cr-button>` : ''}
++            </div>
++            <cr-button class="reset" data-command="${command.id}" ?disabled="${!command.modified}"
++                aria-label="${`Reset ${command.title} shortcuts`}"
++                @click="${this.onResetClick_}">Reset</cr-button>
++          </div>
++          ${this.error_ && this.errorID_ === command.id ? html`<p class="error" role="alert">${this.error_}</p>` : ''}
++        `)}
++        ${!this.filteredCommands_().length ? html`<div class="empty" role="status">${this.loading_ ? 'Loading shortcuts…' : 'No matching shortcuts'}</div>` : ''}
++      </settings-section>`;
++}
+diff --git a/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.css b/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.css
+--- a/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.css
++++ b/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.css
+@@ -12,7 +12,7 @@
+ 
+  #main {
+   position: relative;
+-  width: 200px;
++  width: var(--cr-shortcut-input-width, 200px);
+ }
+ 
+ #input {

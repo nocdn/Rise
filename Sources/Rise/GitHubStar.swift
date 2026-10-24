@@ -2,23 +2,22 @@ import AppKit
 import RiseCore
 
 @MainActor extension BrowserController {
-    /// Stars `repository` as the person signed in to GitHub in Rise, saying so in the blue notice:
+    /// Stars `repository` as the person signed in to GitHub in Rise, saying so in the page bar:
     /// a spinner while it's under way, then a star.
     func starGitHubRepository(_ repository: GitHubRepository) {
-        let kind = "github-star"
-        // It stays while it's under way; what came of it holds as long as other notices do.
-        showInfo("Starring repository", image: InfoPlaque.spinnerIcon, hold: .seconds(90), kind: kind)
+        // It stays while it's under way; what came of it holds a little longer than other notices.
+        selectedBar.showNotice("Starring Repository", image: BarNotice.spinnerImage, hold: 90)
         Task { [weak self] in
             guard let self else { return }
+            let bar = self.selectedBar
             switch await self.githubStarrer.star(repository) {
-            case .starred: self.showInfo("Starred repository", image: InfoPlaque.starIcon, hold: .seconds(2), kind: kind)
-            case .alreadyStarred: self.showInfo("Already starred", image: InfoPlaque.starIcon, hold: .seconds(2), kind: kind)
+            case .starred: bar.showNotice("Starred Repository", image: BarNotice.starImage, hold: 2)
+            case .alreadyStarred: bar.showNotice("Already Starred", image: BarNotice.starImage, hold: 2)
             case .signedOut:
-                self.showInfo("Sign in to GitHub to star repositories", image: InfoPlaque.warningIcon,
-                              link: .init(text: "Sign In") { [weak self] in self?.addTab(url: URL(string: "https://github.com/login")!) },
-                              hold: .seconds(4), kind: kind)
-            case .notFound: self.showInfo("Couldn’t find that repository", image: InfoPlaque.warningIcon, hold: .seconds(3), kind: kind)
-            case .failed: self.showInfo("Couldn’t star repository", image: InfoPlaque.warningIcon, hold: .seconds(3), kind: kind)
+                bar.showNotice("Sign in to GitHub to star repositories", image: BarNotice.warningImage,
+                               link: .init(text: "Sign In") { [weak self] in self?.addTab(url: URL(string: "https://github.com/login")!) }, hold: 4)
+            case .notFound: bar.showNotice("Couldn’t Find That Repository", image: BarNotice.warningImage, hold: 3)
+            case .failed: bar.showNotice("Couldn’t Star Repository", image: BarNotice.warningImage, hold: 3)
             }
         }
     }

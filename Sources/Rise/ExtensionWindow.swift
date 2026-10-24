@@ -38,6 +38,8 @@ import RiseChromium
             observers.append(NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
                     self?.browser?.extensionPopup?.close()
+                    self?.browser?.extensionWarmer?.page.browserView.close(); self?.browser?.extensionWarmer = nil
+                    self?.browser?.spareExtensionPopup?.close(); self?.browser?.spareExtensionPopup = nil
                     self?.strip.close()
                 }
             })
@@ -92,6 +94,7 @@ import RiseChromium
             button.show(icon: action.icon(forTab: tab), title: title.isEmpty ? action.name : title, badge: action.badgeText(forTab: tab),
                         badgeColor: action.badgeColor(forTab: tab), enabled: action.isEnabled(forTab: tab))
             button.menu = browser.extensionMenu(for: action)
+            button.onHover = { [weak browser] hovering in browser?.warmExtension(id, hovering) }
             next.append(button)
         }
         buttons = Dictionary(uniqueKeysWithValues: next.map { ($0.extensionID, $0) })

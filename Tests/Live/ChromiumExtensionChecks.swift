@@ -198,13 +198,41 @@ import RiseChromium
         _ = await waitUntil("Pinning it puts its button in the page bar") { self.browser.navBar.extensionButtons.map(\.extensionID) == [id] }
         if let button = browser.navBar.extensionButtons.first {
             check(button.toolTip == "Rise Test", "The page bar button has its title: \(button.toolTip ?? "none")")
+            // The pointer on its button starts the extension's process, with a page that runs none of it.
+            browser.warmExtension(id, true)
+            check(browser.extensionWarmer?.id == id && browser.extensionWarmer?.page.browserView.scriptsDisabled == true,
+                  "Hovering its button readies the extension, running none of its scripts")
+            check(browser.spareExtensionPopup?.page.browserView.extensionPopup == true && browser.spareExtensionPopup?.page.url == nil,
+                  "And a popup's page, with nothing in it yet")
             button.performClick(nil)
-            _ = await waitUntil("Clicking it opens its popup", 5) { self.browser.extensionPopup?.popover.isShown == true }
+            _ = await waitUntil("Clicking it opens its popup", 5) { self.browser.extensionPopup?.isShown == true }
             if let popup = browser.extensionPopup {
-                check(popup.popover.contentSize == NSSize(width: 240, height: 120), "The popup is the size of its page: \(popup.popover.contentSize)")
+                check(popup.contentSize == NSSize(width: 240, height: 120) && popup.card.frame.size == popup.contentSize,
+                      "The popup's card is the size of its page: \(popup.card.frame.size)")
+                let buttonFrame = button.convert(button.bounds, to: browser.root)
+                check(abs(popup.card.frame.maxX-buttonFrame.maxX) < 0.5 && popup.card.frame.minY > buttonFrame.maxY,
+                      "Its right edge lines up with its button's, under it: \(popup.card.frame) \(buttonFrame)")
+                check(popup.card.superview === browser.root && popup.card.layer?.animation(forKey: CardMotionAnimator.inKeys[0]) != nil,
+                      "It's in the window, growing in as the hover cards do")
+                // A page that takes another size as it comes in, as big popups do: the card grows to
+                // the left, and its way in carries on, still out of its button.
+                let resized = CACurrentMediaTime()
+                _ = await value("document.body.style.width = '320px'; return 0", in: popup.page)
+                _ = await waitUntil("The card takes the page's new size") { popup.card.frame.width == 320 }
+                if let spring = popup.card.layer?.animation(forKey: CardMotionAnimator.inKeys[0]) as? CASpringAnimation,
+                   let from = (spring.fromValue as? NSValue)?.caTransform3DValue, from.m11 != 1 {
+                    let pivot = from.m41/(1-from.m11), expected = buttonFrame.midX-popup.card.frame.minX
+                    check(abs(pivot-expected) < 1 && spring.beginTime > 0 && spring.beginTime < resized,
+                          "Resized on its way in, it still grows out of its button, carrying on: \(pivot) \(expected) \(spring.beginTime) \(resized)")
+                } else {
+                    check(false, "Resized on its way in, it still grows out of its button: its way in had ended first")
+                }
+                _ = await value("document.body.style.width = '240px'; return 0", in: popup.page)
                 _ = await waitUntil("The popup sees its tab") { (await self.value("return document.body?.dataset.report ?? ''", in: popup.page) as? String ?? "").contains("second.html") }
                 let kind = await value("return document.body?.dataset.kind ?? ''", in: popup.page) as? String ?? ""
                 check(kind == "popup", "Extensions see it as a popup, not a tab: \(kind)")
+                // Once its motion has settled.
+                if ProcessInfo.processInfo.environment["RISE_PEEK_OUT"] != nil { try? await Task.sleep(for: .milliseconds(700)) }
                 if ProcessInfo.processInfo.environment["RISE_PEEK_OUT"] != nil, let shot = CGWindowListCreateImage(.null, .optionOnScreenOnly, kCGNullWindowID, .bestResolution) {
                     try? NSBitmapImageRep(cgImage: shot).representation(using: .png, properties: [:])?.write(to: folder.appendingPathComponent("extension-popup.png"))
                 }
@@ -229,11 +257,78 @@ import RiseChromium
         }
         check(commanded.first as? String == "rise-test-command" && commanded.last as? Int == secondID, "Its shortcut runs its command, for the tab: \(commanded)")
         press("u", 32)
-        _ = await waitUntil("Its button's shortcut opens its popup") { self.browser.extensionPopup?.popover.isShown == true }
+        _ = await waitUntil("Its button's shortcut opens its popup") { self.browser.extensionPopup?.isShown == true }
         if let popup = browser.extensionPopup {
             check(true, "Its button's shortcut opens its popup")
             popup.close()
             _ = await waitUntil("The popup closes") { self.browser.extensionPopup == nil }
+        }
+        // Real clicks, through the app as the mouse sends them: on its button again, and outside
+        // the card. Each collapses it back into its button with the cards' way out, and the
+        // button's click doesn't open it again.
+        func click(at point: NSPoint) {
+            guard let window = browser.window else { return }
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                if let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                  windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                    NSApp.sendEvent(event)
+                }
+            }
+        }
+        for (place, target) in [("its button", { (button: NSView) in button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil) }),
+                                ("the page", { (_: NSView) in NSPoint(x: 500, y: 200) })] {
+            guard let button = browser.navBar.extensionButtons.first else { break }
+            // With RISE_PEEK_OUT, frames of the screen under the button as the card opens.
+            let opening: CGRect? = ProcessInfo.processInfo.environment["RISE_PEEK_OUT"] == nil ? nil : browser.window.map { window in
+                let anchor = button.convert(button.bounds, to: nil)
+                let rect = window.convertToScreen(NSRect(x: anchor.maxX-300, y: anchor.minY-180, width: 320, height: 200+anchor.height))
+                return CGRect(x: rect.minX, y: (NSScreen.screens.first?.frame.height ?? 0)-rect.maxY, width: rect.width, height: rect.height)
+            }
+            // Pressed as the mouse does: it opens on the press.
+            click(at: button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil))
+            if let opening {
+                var shots: [CGImage] = []
+                let start = Date()
+                while Date().timeIntervalSince(start) < 0.7 {
+                    if let shot = CGWindowListCreateImage(opening, .optionOnScreenOnly, kCGNullWindowID, .bestResolution) { shots.append(shot) }
+                    try? await Task.sleep(for: .milliseconds(5))
+                }
+                for (index, shot) in shots.enumerated() {
+                    try? NSBitmapImageRep(cgImage: shot).representation(using: .png, properties: [:])?
+                        .write(to: folder.appendingPathComponent("open-\(place == "its button" ? "button" : "page")-\(index).png"))
+                }
+            }
+            _ = await waitUntil("Its button opens its popup, to click \(place)", 5) { self.browser.extensionPopup?.isShown == true }
+            guard let popup = browser.extensionPopup else { continue }
+            try? await Task.sleep(for: .milliseconds(600))
+            let card = popup.card
+            // With RISE_PEEK_OUT, frames of the screen around the card as it collapses.
+            var frames: [CGImage] = []
+            let area: CGRect? = ProcessInfo.processInfo.environment["RISE_PEEK_OUT"] == nil ? nil : browser.window.map { window in
+                let rect = window.convertToScreen(browser.root.convert(card.frame.insetBy(dx: -30, dy: -30), to: nil))
+                return CGRect(x: rect.minX, y: (NSScreen.screens.first?.frame.height ?? 0)-rect.maxY, width: rect.width, height: rect.height)
+            }
+            if let area, let shot = CGWindowListCreateImage(area, .optionOnScreenOnly, kCGNullWindowID, .bestResolution) { frames.append(shot) }
+            let others = browser.root.subviews.filter { $0 is ExtensionPopupCard && $0 !== card }
+            check(others.isEmpty, "Earlier popups' cards have all gone, before clicking \(place): \(others.count) left")
+            click(at: target(button))
+            let leaving = card.layer?.animation(forKey: CardMotionAnimator.outKeys[1]) != nil
+            check(browser.extensionPopup == nil && leaving && card.superview != nil, "Clicking \(place) collapses it with the cards' way out")
+            if let area {
+                let start = Date()
+                while Date().timeIntervalSince(start) < 0.3 {
+                    if let shot = CGWindowListCreateImage(area, .optionOnScreenOnly, kCGNullWindowID, .bestResolution) { frames.append(shot) }
+                    try? await Task.sleep(for: .milliseconds(8))
+                }
+                for (index, frame) in frames.enumerated() {
+                    try? NSBitmapImageRep(cgImage: frame).representation(using: .png, properties: [:])?
+                        .write(to: folder.appendingPathComponent("collapse-\(place == "its button" ? "button" : "page")-\(index).png"))
+                }
+            }
+            _ = await waitUntil("And it goes once it has collapsed, after clicking \(place)") { card.superview == nil }
+            try? await Task.sleep(for: .milliseconds(1200))
+            check(browser.extensionPopup == nil && !browser.root.subviews.contains { $0 is ExtensionPopupCard },
+                  "Clicking \(place) doesn't open it again, and leaves no card behind")
         }
         browser.siteMenu()
         _ = await waitUntil("The site controls open") { self.browser.siteControlsPopover.isShown }
@@ -246,7 +341,7 @@ import RiseChromium
         // unlocks. It must reach Rise's popup host even when the extension isn't pinned.
         let requested = await ask(["cmd": "popup"], in: second.page)
         check(requested?["opened"] as? Bool == true, "chrome.action.openPopup resolves successfully: \(requested ?? [:])")
-        _ = await waitUntil("The extension's openPopup request opens its popup", 3) { self.browser.extensionPopup?.popover.isShown == true }
+        _ = await waitUntil("The extension's openPopup request opens its popup", 3) { self.browser.extensionPopup?.isShown == true }
         if let popup = browser.extensionPopup {
             let duplicate = await ask(["cmd": "popup"], in: second.page)
             check(duplicate?["error"] as? String != nil && browser.extensionPopup === popup,
@@ -258,13 +353,15 @@ import RiseChromium
         }
         // A window/popup may close before its first size report. The API callback must finish
         // once, and the delayed fallback must not resurrect the dismissed popup.
-        let dismissed = ExtensionPopup(url: URL(string: "chrome-extension://\(id)/popup.html")!, theme: browser.theme)
+        let dismissed = ExtensionPopup()
         var answers: [Bool] = []
         dismissed.onShown = { answers.append($0) }
-        dismissed.show(relativeTo: browser.navBar.settingsButton.bounds, of: browser.navBar.settingsButton)
+        browser.raiseHoverCard(dismissed.card)
+        dismissed.show(under: browser.navBar.settingsButton)
+        dismissed.load(URL(string: "chrome-extension://\(id)/popup.html")!)
         dismissed.close()
         try? await Task.sleep(for: .milliseconds(1100))
-        check(answers == [false] && !dismissed.popover.isShown,
+        check(answers == [false] && !dismissed.isShown && dismissed.card.superview == nil,
               "Closing a pending popup answers once and cannot reopen after the fallback")
     }
 }

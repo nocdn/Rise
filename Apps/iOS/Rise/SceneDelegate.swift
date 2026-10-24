@@ -213,18 +213,23 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneWillResignActive(_ scene: UIScene) {
+        (window?.rootViewController as? BrowserViewController)?.prepareForInactivity()
         (window?.rootViewController as? BrowserViewController)?.cancelListening()
         if let window { (window.rootViewController as? BrowserViewController)?.quickActions.setActive(false, in: window) }
         (window?.rootViewController as? BrowserViewController)?.panelMotion.stop()
         (window?.rootViewController as? BrowserViewController)?.setTabPreviewsActive(false)
         saveSession()
     }
-    func sceneDidEnterBackground(_ scene: UIScene) { saveSession() }
+    func sceneDidEnterBackground(_ scene: UIScene) {
+        (window?.rootViewController as? BrowserViewController)?.backgroundSearch.enteredBackground()
+        saveSession()
+    }
     func sceneDidDisconnect(_ scene: UIScene) { saveSession() }
     func sceneDidBecomeActive(_ scene: UIScene) {
         let browser = window?.rootViewController as? BrowserViewController
         if let window { browser?.quickActions.setActive(true, in: window) }
         browser?.applyPendingChanges()
+        browser?.backgroundSearch.becameActive { [weak browser] in browser?.reopenSearchAfterInactivity() }
         browser?.tabSync?.refresh()
         browser?.setTabPreviewsActive(true)
     }

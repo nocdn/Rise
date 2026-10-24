@@ -196,8 +196,7 @@ struct PeekUndo {
     /// ⌘Z shortly after a Peek became a tab or a split, unless an address or search is being typed.
     func handlePeekUndoKey(_ event: NSEvent) -> Bool {
         guard peekUndo != nil, event.type == .keyDown,
-              event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command,
-              event.charactersIgnoringModifiers?.lowercased() == "z", palette.isHidden,
+              keyboardShortcuts.matches("undo:", event), palette.isHidden,
               !(window?.firstResponder is NSText) else { return false }
         return undoPeekPromotion()
     }

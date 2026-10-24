@@ -128,6 +128,100 @@ final class TabOrganizationTests: XCTestCase {
         undo.redo()
         XCTAssertEqual(browser.tabs.map(\.id), cleaned, "Redo cleans up again")
     }
+    @MainActor func testMoveCurrentTabToTopPreservesSelectionSavesAndUndoes() throws {
+        let browser = browser(); defer { clean(browser) }
+        browser.window?.setContentSize(NSSize(width: 900, height: 600))
+        let current = browser.addTab()
+        for _ in 0..<30 { browser.addTab() }
+        browser.select(current.id); browser.root.layoutSubtreeIfNeeded()
+        let before = browser.tabs.map(\.id), page = current.page.view
+        let row = try XCTUnwrap(browser.sidebar.rows[current.id])
+        row.scrollToVisible(row.bounds)
+        XCTAssertGreaterThan(browser.sidebar.scroll.contentView.bounds.minY, 0)
+
+        browser.moveCurrentTabToTop()
+
+        let moved = [current.id] + before.filter { $0 != current.id }
+        XCTAssertEqual(browser.tabs.map(\.id), moved)
+        XCTAssertEqual(browser.sidebar.orderedIDs, moved)
+        XCTAssertEqual(browser.selectedID, current.id)
+        XCTAssertTrue(current.page.view === page)
+        XCTAssertTrue(browser.sidebar.rows[current.id] === row)
+        XCTAssertEqual(browser.sidebar.scroll.contentView.bounds.minY, 0)
+        browser.saveNow()
+        XCTAssertEqual(SessionStorage.read(from: browser.sessionURL)?.tabs.map(\.id), moved)
+        XCTAssertFalse(browser.canMoveCurrentTabToTop)
+        browser.moveCurrentTabToTop()
+        let undo = try XCTUnwrap(browser.window?.undoManager)
+        undo.undo(); XCTAssertEqual(browser.tabs.map(\.id), before, "Repeating at the top adds no undo step")
+        undo.redo(); XCTAssertEqual(browser.tabs.map(\.id), moved)
+    }
+    @MainActor func testMoveCurrentTabToTopKeepsPinnedTilesSeparate() {
+        let browser = browser(); defer { clean(browser) }
+        let current = browser.addTab(), other = browser.addTab(), pin = browser.addTab(), nextPin = browser.addTab()
+        browser.pinTab(pin.id); browser.pinTab(nextPin.id)
+        browser.select(current.id); browser.moveCurrentTabToTop()
+        XCTAssertEqual(browser.tabs.map(\.id), [pin.id, nextPin.id, current.id, other.id])
+        XCTAssertEqual(browser.sidebar.orderedIDs, [current.id, other.id])
+        XCTAssertFalse(current.pinned)
+        browser.select(nextPin.id); browser.moveCurrentTabToTop()
+        XCTAssertEqual(browser.tabs.map(\.id), [nextPin.id, pin.id, current.id, other.id])
+        XCTAssertTrue(nextPin.pinned)
+        XCTAssertEqual(browser.selectedID, nextPin.id)
+        XCTAssertFalse(browser.canMoveCurrentTabToTop)
+    }
+    @MainActor func testMoveCurrentTabToTopMovesEitherSplitHalfTogether() {
+        let browser = browser(); defer { clean(browser) }
+        let left = browser.addTab(), right = browser.addTab(), other = browser.addTab()
+        browser.select(left.id); browser.showSplit(right)
+        let groups = browser.splitGroups
+        for tab in [left, right] {
+            browser.reorderTabs([other.id, left.id], animated: false)
+            browser.select(tab.id); browser.moveCurrentTabToTop()
+            XCTAssertEqual(browser.tabs.map(\.id), [left.id, right.id, other.id])
+            XCTAssertEqual(browser.sidebar.orderedIDs, [left.id, other.id])
+            XCTAssertEqual(browser.splitGroups, groups)
+            XCTAssertEqual(browser.selectedID, tab.id)
+            XCTAssertFalse(browser.canMoveCurrentTabToTop)
+        }
+    }
+    @MainActor func testMovingByOneRowKeepsSplitsTogetherAndPinnedTabsInTheirSection() {
+        let browser = browser(); defer { clean(browser) }
+        let first = browser.addTab(), left = browser.addTab(), right = browser.addTab(), last = browser.addTab()
+        let pin = browser.addTab(), secondPin = browser.addTab()
+        browser.pinTab(pin.id); browser.pinTab(secondPin.id)
+        browser.select(left.id); browser.showSplit(right)
+        browser.reorderTabs([first.id, left.id, last.id], animated: false)
+        browser.select(right.id)
+        browser.moveCurrentTabUp()
+        XCTAssertEqual(browser.tabs.map(\.id), [pin.id, secondPin.id, left.id, right.id, first.id, last.id])
+        XCTAssertFalse(browser.canMoveCurrentTab(by: -1))
+        browser.moveCurrentTabUp()
+        XCTAssertEqual(browser.sidebar.orderedIDs, [left.id, first.id, last.id])
+        browser.moveCurrentTabDown(); browser.moveCurrentTabDown(); browser.moveCurrentTabDown()
+        XCTAssertEqual(browser.sidebar.orderedIDs, [first.id, last.id, left.id])
+        XCTAssertFalse(browser.canMoveCurrentTab(by: 1))
+        XCTAssertEqual(browser.visibleTabIDs, [left.id, right.id])
+        XCTAssertEqual(browser.selectedID, right.id)
+        browser.select(pin.id); browser.moveCurrentTabDown(); browser.moveCurrentTabDown()
+        XCTAssertEqual(browser.tabs.map(\.id), [secondPin.id, pin.id, first.id, last.id, left.id, right.id])
+        XCTAssertTrue(pin.pinned)
+        XCTAssertFalse(browser.canMoveCurrentTab(by: 1))
+        browser.moveCurrentTabUp()
+        XCTAssertEqual(browser.tabs.prefix(2).map(\.id), [pin.id, secondPin.id])
+    }
+    @MainActor func testMovingDownKeepsTheCurrentRowVisibleInAScrolledSidebar() throws {
+        let browser = browser(); defer { clean(browser) }
+        browser.window?.setContentSize(NSSize(width: 900, height: 600))
+        for _ in 0..<30 { browser.addTab() }
+        let current = browser.tabs[0]; browser.select(current.id)
+        for _ in 0..<25 { browser.moveCurrentTabDown() }
+        let row = try XCTUnwrap(browser.sidebar.displayedRow(for: current.id))
+        XCTAssertTrue(browser.sidebar.scroll.contentView.bounds.contains(row.frame))
+        XCTAssertGreaterThan(browser.sidebar.scroll.contentView.bounds.minY, 0)
+        browser.saveNow()
+        XCTAssertEqual(SessionStorage.read(from: browser.sessionURL)?.tabs.map(\.id), browser.tabs.map(\.id))
+    }
     @MainActor func testNewTabsAppearAtTopWhileExistingRowsMoveTogetherAndCloseCollapsesTogether() throws {
         let browser = browser(); defer { clean(browser) }
         let a = browser.addTab(), b = browser.addTab()
