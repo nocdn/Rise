@@ -88,11 +88,37 @@ import RiseChromium
         check(!browser.palette.isPresented, "Recording did not execute New Tab")
         let item = browser.keyboardShortcuts.commands.first { $0.id == "newTab" }!.items[0]
         check(item.keyEquivalentModifierMask == [.command, .control, .option, .shift], "The menu shortcut updates immediately")
+        _ = await js("document.documentElement.dataset.shortcutCheckDocument = 'before-reload'; return true")
         settings.page.reload()
         await wait("The saved shortcut survives reloading Settings") {
-            await self.js("return editor?.shadowRoot.querySelector('[data-command=newTab].command cr-shortcut-input')?.shortcut === 'Command+Ctrl+Alt+Shift+Y'") as? Bool == true
+            await self.js("return document.documentElement.dataset.shortcutCheckDocument !== 'before-reload' && !!editor?.shadowRoot.querySelector('[data-command=newTab].command .add') && editor.shadowRoot.querySelector('[data-command=newTab].command cr-shortcut-input')?.shortcut === 'Command+Ctrl+Alt+Shift+Y'") as? Bool == true
         }
-        print("Recorder state:", await js("return JSON.stringify({html: editor.shadowRoot.querySelector('[data-command=newTab].command').innerHTML})") ?? "missing")
+
+        check(await js("""
+        const row = editor.shadowRoot.querySelector('[data-command=newTab].command');
+        const input = row.querySelector('cr-shortcut-input').getBoundingClientRect();
+        return Math.abs(row.querySelector('.label').getBoundingClientRect().top - input.top) < 1 &&
+            Math.abs(row.querySelector('.add').getBoundingClientRect().left - input.left) < 1;
+        """) as? Bool == true, "Action labels align with the first field and Add shortcut aligns with its left edge")
+
+        for leaveRecording in [true, false] {
+            await click("[data-command=newTab].command .add")
+            await wait("An empty additional shortcut starts recording") { self.browser.shortcutRecordingID == "newTab" && self.browser.shortcutRecordingIndex == 1 }
+            if leaveRecording {
+                _ = await js("editor.shadowRoot.querySelector('[data-command=newTab].command').querySelectorAll('cr-shortcut-input')[1].$.input.blur(); return true")
+                await wait("An unset shortcut can be left without recording keys") { self.browser.shortcutRecordingID == nil }
+            }
+            check(await js("""
+            const input = editor.shadowRoot.querySelector('[data-command=newTab].command').querySelectorAll('cr-shortcut-input')[1];
+            return input.shortcut === '' && !input.$.clear.disabled;
+            """) as? Bool == true, "The empty shortcut has an enabled remove button")
+            _ = await js("editor.shadowRoot.querySelector('[data-command=newTab].command').querySelectorAll('cr-shortcut-input')[1].$.clear.click(); return true")
+            await wait("Removing an unset shortcut removes its row and stops recording") {
+                let oneInput = await self.js("return editor.shadowRoot.querySelector('[data-command=newTab].command').querySelectorAll('cr-shortcut-input').length === 1") as? Bool == true
+                return oneInput && self.browser.shortcutRecordingID == nil
+            }
+            check(browser.keyboardShortcuts.bindings("newTab") == [KeyboardShortcut("Command+Ctrl+Alt+Shift+Y")!], "Removing an empty slot preserves the saved shortcut")
+        }
 
         await click("[data-command=newTab].command .add")
         await wait("Add shortcut starts another native recorder") { self.browser.shortcutRecordingID == "newTab" && self.browser.shortcutRecordingIndex == 1 }

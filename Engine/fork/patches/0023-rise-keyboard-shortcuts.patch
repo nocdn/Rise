@@ -98,7 +98,7 @@ diff --git a/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts
 new file mode 100644
 --- /dev/null
 +++ b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.ts
-@@ -0,0 +1,188 @@
+@@ -0,0 +1,197 @@
 +// Copyright 2026 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -143,13 +143,14 @@ new file mode 100644
 +      .intro { display: flex; align-items: center; gap: 20px; padding: 16px 20px; }
 +      .intro .secondary { flex: 1; line-height: 1.6; }
 +      .search { padding: 0 20px 16px; }
-+      .command { display: flex; align-items: center; gap: 20px; padding: 16px 20px;
++      .command { display: flex; align-items: flex-start; gap: 20px; padding: 16px 20px;
 +        border-top: var(--cr-separator-line); min-height: 48px; }
 +      .label { flex: 1; min-width: 120px; }
 +      .group { margin-top: 6px; }
-+      .bindings { display: flex; flex-direction: column; gap: 10px; align-items: flex-end; }
++      .bindings { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
 +      cr-shortcut-input { width: 360px; max-width: 100%; --cr-shortcut-input-width: 100%; }
-+      .add { --cr-button-height: 28px; }
++      .add { --cr-button-height: 28px; align-self: flex-start; }
++      .reset { align-self: center; }
 +      .error { color: var(--cr-error-color); margin: 0; padding: 0 20px 16px;
 +        line-height: 1.5; }
 +      .empty { padding: 24px 20px; color: var(--cr-secondary-text-color); }
@@ -221,7 +222,15 @@ new file mode 100644
 +  }
 +  protected onShortcutUpdated_(event: CustomEvent<string>) {
 +    const input = event.currentTarget as CrShortcutInputElement;
-+    void this.save_(input.dataset['command']!, Number(input.dataset['index']), event.detail);
++    const id = input.dataset['command']!;
++    const index = Number(input.dataset['index']);
++    const command = this.commands_.find(command => command.id === id);
++    if (!event.detail && this.extraID_ === id && index === command?.bindings.length) {
++      this.stopRecording_();
++      this.extraID_ = ''; this.error_ = ''; this.errorID_ = '';
++      return;
++    }
++    void this.save_(id, index, event.detail);
 +  }
 +  protected onAddClick_(event: Event) { void this.add_((event.currentTarget as HTMLElement).dataset['command']!); }
 +  protected onResetClick_(event: Event) { void this.reset_((event.currentTarget as HTMLElement).dataset['command']!); }
@@ -291,7 +300,7 @@ diff --git a/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts
 new file mode 100644
 --- /dev/null
 +++ b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.html.ts
-@@ -0,0 +1,46 @@
+@@ -0,0 +1,47 @@
 +// Copyright 2026 The Chromium Authors
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -319,6 +328,7 @@ new file mode 100644
 +            <div class="bindings">
 +              ${this.inputs_(command).map((shortcut, index) => html`
 +                <cr-shortcut-input data-command="${command.id}" data-index="${index}" .shortcut="${shortcut}" .allowCtrlAltShortcuts="${true}"
++                    .allowClearingEmpty="${command.bindings.length > 0 && index === command.bindings.length}"
 +                    .inputAriaLabel="${`${command.title} shortcut ${index + 1}`}"
 +                    .editButtonAriaLabel="${`Record ${command.title} shortcut ${index + 1}`}"
 +                    .clearButtonAriaLabel="${`Remove ${command.title} shortcut ${index + 1}`}"
@@ -350,3 +360,35 @@ diff --git a/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_inpu
  }
  
  #input {
+diff --git a/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.ts b/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.ts
+--- a/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.ts
++++ b/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.ts
+@@ -57,6 +57,7 @@
+       clearButtonAriaLabel: {type: String},
+       inputDisabled: {type: Boolean},
+       allowCtrlAltShortcuts: {type: Boolean},
++      allowClearingEmpty: {type: Boolean},
+       error_: {type: Number},
+
+       readonly_: {
+@@ -72,6 +73,8 @@
+   accessor clearButtonAriaLabel: string = '';
+   accessor inputDisabled: boolean = false;
+   accessor allowCtrlAltShortcuts = false;
++  // Lets hosts remove an empty, newly added shortcut slot.
++  accessor allowClearingEmpty = false;
+   protected accessor readonly_: boolean = true;
+   private capturing_: boolean = false;
+   private accessor error_: ShortcutError = ShortcutError.NO_ERROR;
+diff --git a/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.html.ts b/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.html.ts
+--- a/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.html.ts
++++ b/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.html.ts
+@@ -27,7 +27,7 @@
+     <cr-icon-button id="clear" title="${this.i18n('shortcutClear')}"
+         aria-label="${this.clearButtonAriaLabel}" slot="suffix"
+         class="icon-clear no-overlap"
+-        ?disabled="${this.inputDisabled || !this.shortcut}"
++        ?disabled="${this.inputDisabled || (!this.shortcut && !this.allowClearingEmpty)}"
+         @click="${this.onClearClick_}">
+     </cr-icon-button>
+   </cr-input>
