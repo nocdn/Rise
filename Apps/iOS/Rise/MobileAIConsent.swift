@@ -27,7 +27,7 @@ import UIKit
 
     static func disclosure(for provider: AIProvider) -> String {
         let recipient = provider == .openRouter ? "OpenRouter and the model provider it routes to (currently OpenAI)" : "OpenAI"
-        return "When you use Ask or Summarise, Rise sends this page’s readable text, selection, title and full URL, plus your questions and conversation context, to \(recipient) to generate an answer. This may include personal or sensitive information, including on private tabs.\n\nYour API key authenticates requests to \(provider.title). The provider’s privacy and retention policies apply.\n\nAllow future AI requests to this provider? You can withdraw permission in Settings → Privacy Policy, or by turning AI features off."
+        return "When you use Ask, Summarise or Explain in Context, Rise sends this page’s readable text, selection, title and full URL, plus your questions and conversation context, to \(recipient) to generate an answer. This may include personal or sensitive information, including on private tabs.\n\nYour API key authenticates requests to \(provider.title). The provider’s privacy and retention policies apply.\n\nAllow future AI requests to this provider? You can withdraw permission in Settings → Privacy Policy, or by turning AI features off."
     }
 }
 

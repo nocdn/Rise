@@ -325,19 +325,32 @@ final class MenuPanel: UIView {
     }
 }
 
-/// More in the tab switcher, using the address row's exact geometry and the usual button feedback.
+/// More in the tab switcher: Incognito mode's switch, then History, using the address row's
+/// geometry and the usual button feedback.
 final class TabMenuPanel: UIView {
+    static let incognitoRowHeight: CGFloat = 52
+    let incognitoRow = SettingsToggleRow("Incognito mode", icon: nil, colour: .label, on: false)
     let historyButton = MenuTile(image: MenuIcons.history, label: "History", showsLabel: true, labelFont: SearchPanel.fieldFont)
+    static var height: CGFloat { incognitoRowHeight+MenuPanel.spacing+SearchPanel.fieldHeight }
     override init(frame: CGRect) {
         super.init(frame: frame)
+        incognitoRow.layer.cornerCurve = .continuous
+        incognitoRow.layer.cornerRadius = SearchPanel.cornerRadius
+        incognitoRow.clipsToBounds = true
+        incognitoRow.toggle.onTintColor = SiteSettingsPanel.switchBlue
         historyButton.layer.cornerRadius = SearchPanel.cornerRadius
+        addSubview(incognitoRow)
         addSubview(historyButton)
     }
     required init?(coder: NSCoder) { fatalError() }
     override func layoutSubviews() {
         super.layoutSubviews()
-        historyButton.bounds = CGRect(x: 0, y: 0, width: max(0, bounds.width-2*MenuPanel.inset), height: SearchPanel.fieldHeight)
-        historyButton.center = CGPoint(x: bounds.midX, y: SearchPanel.fieldHeight/2)
+        let width = max(0, bounds.width-2*MenuPanel.inset)
+        // By bounds and center, as a pressed row is scaled.
+        incognitoRow.bounds = CGRect(x: 0, y: 0, width: width, height: Self.incognitoRowHeight)
+        incognitoRow.center = CGPoint(x: bounds.midX, y: Self.incognitoRowHeight/2)
+        historyButton.bounds = CGRect(x: 0, y: 0, width: width, height: SearchPanel.fieldHeight)
+        historyButton.center = CGPoint(x: bounds.midX, y: Self.incognitoRowHeight+MenuPanel.spacing+SearchPanel.fieldHeight/2)
     }
 }
 

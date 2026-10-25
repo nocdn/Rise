@@ -31,10 +31,14 @@ enum SendMotion {
 /// the right, measured from the recording (#E6F3FF; the text, #3B5576 there, with the colour the
 /// video's compression takes out of thin strokes put back, at the same hue).
 enum SendBubble {
-    static let fill = UIColor(red: 230/255, green: 243/255, blue: 255/255, alpha: 1)
-    static let ink = UIColor(red: 45/255, green: 91/255, blue: 159/255, alpha: 1)
-    /// The band sweeping the text while it's being answered.
-    static let shimmer = UIColor(red: 20/255, green: 52/255, blue: 108/255, alpha: 1)
+    /// In dark mode, a deep blue bubble with pale blue text.
+    static let fill = UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 30/255, green: 50/255, blue: 82/255, alpha: 1)
+        : UIColor(red: 230/255, green: 243/255, blue: 255/255, alpha: 1) }
+    static let ink = UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 160/255, green: 202/255, blue: 255/255, alpha: 1)
+        : UIColor(red: 45/255, green: 91/255, blue: 159/255, alpha: 1) }
+    /// The band sweeping the text while it's being answered: deeper, or in dark mode brighter.
+    static let shimmer = UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 228/255, green: 241/255, blue: 255/255, alpha: 1)
+        : UIColor(red: 20/255, green: 52/255, blue: 108/255, alpha: 1) }
     static let horizontalPadding: CGFloat = 18
     static let verticalPadding: CGFloat = 14
     static let radius: CGFloat = 20

@@ -81,7 +81,7 @@ final class BottomBar: UIView {
     private let privacyAppearance = PrivatePanelAppearance()
     private(set) var isPrivateBrowsing = false
     #if DEBUG
-    var privateSweepY: CGFloat? { privacyAppearance.shownSweepY }
+    var privateFade: Float? { privacyAppearance.shownFade }
     #endif
 
     func setPrivateBrowsing(_ enabled: Bool, animated: Bool) {
@@ -161,7 +161,7 @@ final class BottomBar: UIView {
     }
 
     static func tabMenuHeight(safeBottom: CGFloat) -> CGFloat {
-        searchTop+SearchPanel.fieldHeight+max(safeBottom, 16)
+        searchTop+TabMenuPanel.height+max(safeBottom, 16)
     }
 
     static func siteSettingsHeight(width: CGFloat, safeBottom: CGFloat) -> CGFloat {
@@ -232,7 +232,7 @@ final class BottomBar: UIView {
         for button in [tabsButton, newPageButton] { row.addSubview(button) }
         row.addSubview(moreLanding)
         moreLanding.addSubview(moreButton)
-        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton, search.privateButton, tabMenu.historyButton, history.closeButton]+menu.buttons+siteSettings.buttons+appSettings.buttons+privacyPolicy.buttons+downloads.buttons+find.buttons+[find.modeButton, find.sendButton] {
+        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton, search.privateButton, tabMenu.incognitoRow, tabMenu.historyButton, history.closeButton]+menu.buttons+siteSettings.buttons+appSettings.buttons+privacyPolicy.buttons+downloads.buttons+find.buttons+[find.modeButton, find.sendButton] {
             // A light, crisp tap as the finger lands, rather than a soft thud; actions wait for it to lift.
             button.addAction(UIAction { [weak self, weak button] _ in
                 guard let self else { return }
@@ -397,7 +397,7 @@ final class BottomBar: UIView {
         // beneath the keyboard, so expanding carries them up rather than resizing each row.
         place(search, Self.searchTop, SearchPanel.height)
         place(menu, Self.searchTop, MenuPanel.height(width: bounds.width))
-        place(tabMenu, Self.searchTop, SearchPanel.fieldHeight)
+        place(tabMenu, Self.searchTop, TabMenuPanel.height)
         place(find, Self.searchTop, SearchPanel.fieldHeight+find.answerHeight)
         place(siteSettings, Self.searchTop, SiteSettingsPanel.height)
         place(appSettings, Self.searchTop, AppSettingsPanel.height)
@@ -525,6 +525,18 @@ final class TabsPreviewButton: UIButton {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// A quick side-to-side shake, for a tap that can't be done.
+    func shake() {
+        guard !UIAccessibility.isReduceMotionEnabled else { return }
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -7, 6, -4, 2.5, -1, 0]
+        shake.keyTimes = [0, 0.15, 0.33, 0.5, 0.67, 0.84, 1]
+        shake.duration = 0.36
+        // Added to the press's shrink, rather than replacing it.
+        shake.isAdditive = true
+        layer.add(shake, forKey: "refusal-shake")
+    }
 
     /// The current page, as the top card.
     var preview: UIImage? {

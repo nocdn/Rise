@@ -277,8 +277,14 @@ fades in `backDelay` 0.38 s after the card starts settling, over `backDuration` 
 - **Palette:** Bartosz asked for Rise's app icon colours, with a subtler background while loading
   and after the reveal. The palette is sampled from `Assets/AppIcon/Rise.icon/Assets/Light.png`.
 - **Wash:** a 100° linear gradient #FFF8EC → #F1FCFB → #F9F4FE (cream, mint and lilac softened
-  towards white), always light, even in dark mode. It lightens towards the bottom with #F9FAFD
-  from 68% down.
+  towards white). It lightens towards the bottom with #F9FAFD from 68% down.
+- **Dark mode** (Bartosz asked on 25 October, finding the light backdrop jarring there): the same
+  hues taken down to the bar's dark grey, #282017 → #13272A → #251B32 (umber, deep teal, plum),
+  settling to #18181B at the bottom. The glows are deeper and more saturated: cool mint (56, 172,
+  160) / blue (66, 112, 204), warm amber (204, 138, 58) / plum (194, 70, 142), at the same 0.55.
+  The summary's ink goes near white (236, 236, 241), the question bubble deep blue #1E3252 with
+  #A0CAFF text, the card's back #3A3A3C, and the status bar light. The appearance is fixed as
+  Summarise opens.
 - **Glows:** a cool one (460 pt; mint inner (197, 242, 239), blue outer (206, 231, 251)) and a
   warm one (480 pt; cream inner (254, 234, 202), blush outer (254, 208, 232)). Bartosz asked for
   slightly larger orbs, allowing them to overlap; these are about 20% wider than the original

@@ -11,6 +11,7 @@ import WebKit
     private let preferences: UserDefaults?
     private var privateDisabledSites = Set<String>()
     let cookieBanners: MobileCookieBannerBlocker
+    let popups: MobilePopupBlocker
     // Pages can move between browser owners (Peek -> full tab). A single ledger also
     // prevents an old owner's pending preparation from undoing the new owner's policy.
     private static let versions = NSMapTable<WKWebView, NSNumber>.weakToStrongObjects()
@@ -64,6 +65,7 @@ import WebKit
     init(preferences: UserDefaults? = .standard) {
         self.preferences = preferences
         cookieBanners = MobileCookieBannerBlocker(preferences: preferences)
+        popups = MobilePopupBlocker(preferences: preferences)
         _ = Self.compilation // Prepare the immutable catalog while the initial UI opens.
     }
 
@@ -96,6 +98,7 @@ import WebKit
 
     func prepare(_ page: WKWebView, for url: URL?) async throws {
         let id = beginPreparation(on: page)
+        popups.prepare(page, for: url)
         try await cookieBanners.prepare(page, for: url)
         guard !Task.isCancelled, Self.versions.object(forKey: page)?.intValue == id else { throw CancellationError() }
         guard isEnabled(for: url) else { apply(false, to: page); return }
@@ -108,6 +111,7 @@ import WebKit
     /// decisions synchronously: an unnecessary async decision can race stopLoading().
     func prepareIfReady(_ page: WKWebView, for url: URL?) -> Bool {
         _ = beginPreparation(on: page)
+        popups.prepare(page, for: url)
         guard cookieBanners.prepareIfReady(page, for: url) else { return false }
         let enabled = isEnabled(for: url)
         guard !enabled || Self.compiledCatalog != nil else { return false }

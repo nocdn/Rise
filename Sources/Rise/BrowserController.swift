@@ -911,7 +911,7 @@ import RiseCore
     }
     /// Reloads without the cache, refetching the page and everything it loads.
     @objc func hardReload() {
-        historySwipe.cancel(); errorWebView = nil
+        historySwipe.cancel(); errorWebView = nil; selectedReloadButton?.armAnimation()
         selectedTab?.isHardReloading = true
         if let tab = selectedTab, tab.page.url == nil, let url = tab.requestedURL { tab.load(url) } else { selectedTab?.page.reloadIgnoringCache() }
         update()

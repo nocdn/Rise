@@ -67,19 +67,20 @@ import WebKit
         let frame = bar.frame
         try capture("regular-light")
         panel.privateButton.sendActions(for: .primaryActionTriggered)
-        try check("eye-swap-starts-above-the-sweep-immediately", panel.privateButton.symbolName == "private-eye" && panel.privateButton.superview === bar)
+        try check("eye-swap-starts-above-the-fade-immediately", panel.privateButton.symbolName == "private-eye" && panel.privateButton.superview === bar)
         try await Task.sleep(for: .milliseconds(55))
-        let first = bar.privateSweepY
+        let first = bar.privateFade
         try capture("purple-rising-early")
         try await Task.sleep(for: .milliseconds(70))
-        let second = bar.privateSweepY
+        let second = bar.privateFade
         try capture("purple-rising-late")
-        try check("purple-sweep-rises-from-the-bottom", first != nil && second != nil && second! < first!)
-        try await Task.sleep(for: .milliseconds(185))
-        try check("sweep-finishes-without-a-panel-bounce", bar.layer.animation(forKey: "private-rubber-band") == nil)
+        // Partway at first, then less, or already over: the 0.2 s fade can end before a late sample.
+        try check("purple-fades-in-as-one", first.map { $0 > 0 && $0 < 1 } == true && (second.map { $0 < first! } ?? true))
+        try await Task.sleep(for: .milliseconds(120))
+        try check("fade-finishes-without-a-panel-bounce", bar.layer.animation(forKey: "private-rubber-band") == nil)
         if let shown = bar.layer.presentation() {
             let transform = shown.transform
-            try check("sweep-keeps-the-panel-still", abs(transform.m22-1) < 0.001 && abs(transform.m42) < 0.1)
+            try check("fade-keeps-the-panel-still", abs(transform.m22-1) < 0.001 && abs(transform.m42) < 0.1)
         }
         try await settle()
         try check("private-panel-has-the-requested-purple", bar.isPrivateBrowsing && bar.backgroundColor == PrivatePanelAppearance.background)
@@ -94,7 +95,7 @@ import WebKit
         try await Task.sleep(for: .milliseconds(55))
         try capture("regular-returning-arc")
         try await settle()
-        try check("eye-returns-to-the-search-panel-after-the-sweep", panel.privateButton.superview === panel)
+        try check("eye-returns-to-the-search-panel-after-the-fade", panel.privateButton.superview === panel)
         try check("toggle-restores-regular-light-appearance", !bar.isPrivateBrowsing && bar.overrideUserInterfaceStyle == .unspecified)
         browser.overrideUserInterfaceStyle = .dark
         browser.view.layoutIfNeeded()
@@ -104,7 +105,7 @@ import WebKit
         try capture("private-dark")
         for enabled in [false, true, false, true] { panel.setPrivateBrowsing(enabled); try await Task.sleep(for: .milliseconds(35)) }
         try await settle()
-        try check("rapid-toggle-reversal-settles-on-the-latest-mode", panel.isPrivateBrowsing && bar.isPrivateBrowsing && bar.privateSweepY == nil)
+        try check("rapid-toggle-reversal-settles-on-the-latest-mode", panel.isPrivateBrowsing && bar.isPrivateBrowsing && bar.privateFade == nil)
         browser.openFromPanel(privateURL)
         try await wait("private-page-loads-in-the-main-tab-list") { browser.tabs.count == 2 && browser.isPrivateBrowsing && browser.webView.url == privateURL && !browser.webView.isLoading }
         let privateTab = browser.tabs[browser.tabIndex], privatePage = browser.webView, privateStore = browser.websiteDataStore
@@ -134,16 +135,38 @@ import WebKit
         sync.capture(incoming); sync.onTabsChange?(incoming)
         try check("sync-retains-private-tabs-locally", browser.tabs.contains { $0 === privateTab } && browser.isPrivateBrowsing)
         try check("remote-tabs-never-inherit-private-storage", browser.tabs.first { $0.id == remote.id }?.webView.configuration.websiteDataStore === regularStore)
+        // More's Incognito mode switch in the tab switcher, as a tap leaves it.
+        func showPrivateTabs(_ value: Bool) {
+            let toggle = browser.bottomBar.tabMenu.incognitoRow.toggle
+            toggle.setOn(value, animated: false)
+            toggle.sendActions(for: .valueChanged)
+        }
         browser.showTabSwitcher(); try await settle()
-        try check("private-card-is-in-the-normal-tab-deck", browser.tabSwitcher.cells.count == browser.tabs.count)
-        try capture("mixed-tab-deck")
+        try check("a-private-page-opens-the-switcher-on-the-private-tabs", browser.switcherMode == .private
+                  && browser.tabSwitcher.cells.count == browser.tabs.filter(\.isPrivateBrowsing).count && browser.tabSwitcher.showsIncognitoLabel)
+        try capture("incognito-tab-deck")
+        browser.openPanel(.menu); try await settle()
+        try check("more-in-the-switcher-shows-incognito-selected", browser.bottomBar.tabMenu.incognitoRow.toggle.isOn)
+        try capture("incognito-switch-private")
+        browser.closePanel(); try await settle()
+        showPrivateTabs(false); try await settle()
+        browser.openPanel(.menu); try await settle()
+        try capture("incognito-switch-tabs")
+        browser.closePanel(); try await settle()
+        try check("the-switch-shows-only-the-other-tabs", browser.switcherMode == .regular && !browser.tabSwitcher.showsIncognitoLabel
+                  && browser.tabSwitcher.cells.count == browser.tabs.filter { !$0.isPrivateBrowsing }.count)
+        try capture("regular-tab-deck")
         browser.selectTab(browser.tabs.firstIndex { $0.id == normal.id }!); try await settle()
         let lateURL = fixture.url.appendingPathComponent("preview/blue-2")
         privatePage.load(URLRequest(url: lateURL))
         try await wait("background-private-page-finishes") { privatePage.url == lateURL && !privatePage.isLoading }
         try check("background-private-callbacks-cannot-write-regular-history", !browser.addressSuggestions.history.entries.contains { $0.url == lateURL.absoluteString })
         browser.showTabSwitcher(); try await settle()
-        let index = browser.tabs.firstIndex { $0.id == privateTab.id }!, cell = browser.tabSwitcher.cells[index]
+        try check("a-normal-page-opens-the-switcher-on-the-other-tabs", browser.switcherMode == .regular)
+        // Opened from a private page earlier, the private tabs are already unlocked.
+        showPrivateTabs(true); try await settle()
+        try check("switching-back-to-unlocked-private-tabs-needs-no-face-id", browser.switcherMode == .private && browser.tabSwitcher.cells.count == 1)
+        let cell = browser.tabSwitcher.cells[0]
         cell.beginCloseDrag(); cell.updateCloseDrag(-cell.bounds.height*0.3)
         cell.endCloseDrag(-cell.bounds.height*0.3, velocity: -1000, cancelled: false)
         try await wait("swiping-private-card-really-closes-it") { !browser.tabs.contains { $0.id == privateTab.id } }
@@ -158,32 +181,42 @@ import WebKit
         try check("last-private-close-discards-its-cookie-session", fresh !== privateStore && !freshCookies.contains { $0.name == "rise_mode" })
         let freshPrivateID = browser.tabs[browser.tabIndex].id
         browser.showTabSwitcher(); try await settle()
-        while let index = browser.tabs.firstIndex(where: { !$0.isPrivateBrowsing }) {
-            browser.tabSwitcher.cells[index].onClose()
-            try await Task.sleep(for: .milliseconds(320))
-        }
-        try check("the-last-private-tab-can-still-be-swiped-away", browser.tabs.count == 1 && browser.tabSwitcher.cells[0].canClose)
+        try check("the-last-private-tab-can-still-be-swiped-away", browser.tabSwitcher.cells.count == 1 && browser.tabSwitcher.cells[0].canClose)
         let last = browser.tabSwitcher.cells[0]
         last.beginCloseDrag(); last.updateCloseDrag(-last.bounds.height*0.3)
         last.endCloseDrag(-last.bounds.height*0.3, velocity: -1000, cancelled: false)
-        try await wait("closing-the-final-private-tab-returns-to-normal-new-page") { browser.tabs.count == 1 && !browser.isPrivateBrowsing && browser.isPanelOpen }
+        try await wait("closing-the-final-private-tab-leaves-an-empty-incognito-deck") {
+            !browser.tabs.contains(where: \.isPrivateBrowsing) && browser.isTabSwitcherOpen && browser.tabSwitcher.cells.isEmpty
+        }
         try check("the-final-private-tab-is-not-resurrected", !browser.tabs.contains { $0.id == freshPrivateID })
+        try capture("empty-incognito-deck")
+        let tabsButton = browser.bottomBar.tabsButton
+        try check("incognito-mode-counts-only-incognito-tabs", tabsButton.count == 0)
+        tabsButton.sendActions(for: .primaryActionTriggered)
+        try check("tabs-cannot-leave-an-empty-incognito-deck", browser.isTabSwitcherOpen && browser.switcherMode == .private
+                  && tabsButton.layer.animation(forKey: "refusal-shake") != nil)
+        try await settle()
+        showPrivateTabs(false); try await settle()
+        try check("turning-incognito-off-counts-the-other-tabs-again", tabsButton.count == browser.tabs.count)
+        showPrivateTabs(true); try await settle()
+        browser.selectTab(browser.tabIndex); try await settle()
+        try check("leaving-an-empty-incognito-deck-returns-to-a-normal-page", !browser.isTabSwitcherOpen && !browser.isPrivateBrowsing)
         browser.closePanel(); try await settle()
         browser.quickActions.open(.newPrivateTab)
         try await wait("home-screen-shortcut-opens-the-same-private-panel") { browser.isPanelOpen && panel.isPrivateBrowsing && browser.presentedViewController == nil }
-        try check("warm-shortcut-opens-already-purple-without-a-sweep", bar.backgroundColor == PrivatePanelAppearance.background && bar.privateSweepY == nil)
+        try check("warm-shortcut-opens-already-purple-without-a-fade", bar.backgroundColor == PrivatePanelAppearance.background && bar.privateFade == nil)
         try capture("shortcut-private-panel")
         panel.setPrivateBrowsing(false); try await settle()
         panel.setPrivateBrowsing(true)
         try await Task.sleep(for: .milliseconds(55))
         browser.quickActions.open(.newPrivateTab)
-        try check("shortcut-finishes-an-in-flight-purple-transition", bar.backgroundColor == PrivatePanelAppearance.background && bar.privateSweepY == nil && bar.layer.animation(forKey: "private-rubber-band") == nil)
+        try check("shortcut-finishes-an-in-flight-purple-transition", bar.backgroundColor == PrivatePanelAppearance.background && bar.privateFade == nil && bar.layer.animation(forKey: "private-rubber-band") == nil)
         browser.saveSession(flush: true)
         let cold = BrowserViewController(startURL: nil, opensSearchOnFirstAppearance: true)
         cold.quickActions.open(.newPrivateTab)
         window.rootViewController = cold; window.makeKeyAndVisible(); cold.view.layoutIfNeeded()
         try await wait("cold-private-shortcut-opens-the-new-page-panel") { cold.isPanelOpen && cold.bottomBar.search.isPrivateBrowsing }
-        try check("cold-shortcut-opens-already-purple-without-a-sweep", cold.bottomBar.backgroundColor == PrivatePanelAppearance.background && cold.bottomBar.privateSweepY == nil && cold.presentedViewController == nil)
+        try check("cold-shortcut-opens-already-purple-without-a-fade", cold.bottomBar.backgroundColor == PrivatePanelAppearance.background && cold.bottomBar.privateFade == nil && cold.presentedViewController == nil)
         try capture("shortcut-private-cold")
     }
 }

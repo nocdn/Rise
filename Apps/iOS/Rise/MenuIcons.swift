@@ -7,12 +7,14 @@ import UIKit
     /// The supplied SVG, preserved as a vector asset with the same 1.8-point stroke.
     static let siteSettings = UIImage(named: "MenuSiteSettings")
     static let blockAds = UIImage(named: "MenuBlockAds")
+    static let blockPopups = UIImage(named: "MenuBlockPopups")
     static let blockCookieBanners = UIImage(named: "MenuBlockCookieBanners")
     static let bypassPaywall = UIImage(named: "MenuBypassPaywall")
     /// The arrow from Tabler's cloud download, enlarged slightly and centred.
     static let downloads = UIImage(named: "MenuDownloads")
     static let history = UIImage(named: "MenuHistory")
     static let syncTabs = UIImage(named: "MenuSyncTabs")
+    static let lockedIncognito = UIImage(named: "MenuLockedIncognito")
     static let video = UIImage(named: "MenuVideo")
     static let aiFeatures = UIImage(named: "MenuAIFeatures")
     static let aiSharing = UIImage(named: "MenuAISharing")

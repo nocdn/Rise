@@ -111,6 +111,7 @@ def main():
                     "lists": lists, "scripts": [asset(OUTPUT / name) for name in ["adblock-start.js", "adblock-end.js"]],
                     "sources": [asset(SOURCES / name, url=url) for name, url in FILTERS.items()], "advanced": stats}
         (OUTPUT / "adblock-manifest.json").write_text(json.dumps(manifest, indent=2)+"\n")
+        subprocess.run(["python3", str(ROOT / "scripts/ios-adblock/popup_rules.py")], check=True)
         print(json.dumps({"lists": lists, "advanced": stats}, indent=2))
 
 

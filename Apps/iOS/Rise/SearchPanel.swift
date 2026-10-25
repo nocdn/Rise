@@ -419,11 +419,12 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         remote.cancel()
         if !enabled { privateRemote = nil }
         isPrivateBrowsing = enabled
-        if enabled { source?.icons.previewCandidate(nil) }
-        refresh()
+        // The colours and the eye change first; the suggestions refresh after, under the fade.
         onPrivateBrowsingChanged?()
         updatePrivateButton()
-        // The colour sweep is already committed before UIKit refreshes its keyboard appearance.
+        if enabled { source?.icons.previewCandidate(nil) }
+        refresh()
+        // The colour change is already committed before UIKit refreshes its keyboard appearance.
         if field.isFirstResponder { field.reloadInputViews() }
     }
 

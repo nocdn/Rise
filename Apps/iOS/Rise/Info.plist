@@ -48,6 +48,7 @@
     <key>LSSupportsOpeningDocumentsInPlace</key><true/>
     <!-- Lets animations run at up to 120 Hz on ProMotion iPhones, rather than 60. -->
     <key>CADisableMinimumFrameDurationOnPhone</key><true/>
+    <key>NSFaceIDUsageDescription</key><string>Face ID unlocks your incognito tabs.</string>
     <key>NSMicrophoneUsageDescription</key><string>Hold New Page to say what to search for.</string>
     <key>NSPhotoLibraryAddUsageDescription</key><string>Save images from websites to your photo library.</string>
     <key>NSRemindersFullAccessUsageDescription</key><string>Add a reminder for a date or time you selected on a web page.</string>

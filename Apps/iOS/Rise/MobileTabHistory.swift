@@ -8,7 +8,10 @@ import WebKit
     nonisolated static let maximumStateBytes = 2_000_000
 
     static func configure(_ configuration: WKWebViewConfiguration) {
-        configuration.setURLSchemeHandler(HistorySchemeHandler(), forURLScheme: scheme)
+        // WebKit supplies an inherited handler when creating a popup window.
+        if configuration.urlSchemeHandler(forURLScheme: scheme) == nil {
+            configuration.setURLSchemeHandler(HistorySchemeHandler(), forURLScheme: scheme)
+        }
         configuration.userContentController.addUserScript(WKUserScript(source: #"""
         (() => {
           const changed = () => setTimeout(() => window.webkit.messageHandlers.riseTabHistoryChanged.postMessage(null), 0);

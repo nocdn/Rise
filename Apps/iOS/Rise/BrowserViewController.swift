@@ -11,7 +11,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     // Keep the complete Peek implementation below for when link previews return.
     static let longPressPeekEnabled = false
     let githubStarrer = MobileGitHubStarrer()
-    var githubStarToast: GitHubStarToast?
+    /// One toast at a time, over the page and under the bottom bar.
+    var toast: Toast?
+    var githubStarToast: GitHubStarToast? {
+        get { toast as? GitHubStarToast }
+        set { toast = newValue }
+    }
     var githubRepositoryMenu: GitHubRepositoryMenu?
     /// The open tabs, in the switcher's order.
     private(set) var tabs: [BrowserTab]
@@ -30,12 +35,26 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// The tabs as cards, over the page and under the bottom bar, which stays.
     let tabSwitcher = TabSwitcherView()
     private(set) var isTabSwitcherOpen = false
+    /// When Tabs opened the switcher: tapped again within `tabsDoubleTap`, it goes to the previous tab.
+    private var tabsOpenedAt: CFTimeInterval?
+    static let tabsDoubleTap: CFTimeInterval = 0.25
+    /// Which tabs the switcher shows, chosen in its More menu. The private ones wait behind
+    /// `privateLocked` for Face ID while Locked incognito mode is on.
+    enum SwitcherMode { case regular, privateLocked, `private` }
+    private(set) var switcherMode = SwitcherMode.regular
+    /// Face ID has shown the private tabs since the app last went to the background.
+    private var privateTabsUnlocked = false
+    private var isUnlockingPrivateTabs = false
+    private var lastPrivateTabID: UUID?
     /// A swipe up anywhere on the bottom bar shrinks the page into the tab switcher.
     private lazy var tabSwipe = UIPanGestureRecognizer(target: self, action: #selector(swipeToTabs))
     /// A swipe down the open bar collapses it, as scrolling down the page does.
     private lazy var barCollapseSwipe = UIPanGestureRecognizer(target: self, action: #selector(swipeBarDown))
     /// Holding New Page listens for a search; letting go opens New Page with it transcribed.
     private lazy var newPageHold = UILongPressGestureRecognizer(target: self, action: #selector(holdNewPage))
+    /// Holding Reload in More reloads without the cache, as ⌘⇧R does on the Mac.
+    private lazy var hardReloadHold = UILongPressGestureRecognizer(target: self, action: #selector(holdReload))
+    private let hardReloadClick = UIImpactFeedbackGenerator(style: .rigid)
     let voice = VoiceInput()
     private var isSwipingToTabs = false
     private lazy var backSwipe = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(swipeBack))
@@ -286,7 +305,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         tabs = next
         tabIndex = tabs.firstIndex { $0.id == selected } ?? min(previousIndex, tabs.count-1)
         if previous !== webView { install(webView); previous.removeFromSuperview() }
-        bottomBar.tabsButton.count = tabs.count
+        updateTabsCount()
         tabSync?.acknowledge(sharedTabsSnapshot)
         pageChanged()
         isApplyingSharedTabs = false
@@ -354,8 +373,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
 
     static func makeWebView(dataStore: WKWebsiteDataStore = .default(),
-                            videoPlayback: VideoPlaybackPolicy = .shared) -> WKWebView {
-        let configuration = WKWebViewConfiguration()
+                            videoPlayback: VideoPlaybackPolicy = .shared,
+                            configuration suppliedConfiguration: WKWebViewConfiguration? = nil) -> WKWebView {
+        let configuration = suppliedConfiguration ?? WKWebViewConfiguration()
         configuration.websiteDataStore = dataStore
         MobileTabHistory.configure(configuration)
         videoPlayback.configure(configuration)
@@ -405,7 +425,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
     private func updatePrivacyAppearance(animated: Bool) {
         let pending = isPanelOpen && bottomBar.panel == .search
-        let enabled = pending ? bottomBar.search.isPrivateBrowsing : isPrivateBrowsing
+        let enabled = pending ? bottomBar.search.isPrivateBrowsing
+            : isTabSwitcherOpen ? switcherMode == .private : isPrivateBrowsing
         bottomBar.setPrivateBrowsing(enabled, animated: animated)
         bottomBarUnderfill.backgroundColor = bottomBar.backgroundColor
         updateAppSettings()
@@ -413,7 +434,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     var hasVisiblePrivateContent: Bool {
         isPrivateBrowsing || (isPanelOpen && bottomBar.panel == .search && bottomBar.search.isPrivateBrowsing)
-            || (!tabSwitcher.isHidden && tabs.contains(where: \.isPrivateBrowsing))
+            || (!tabSwitcher.isHidden && switcherMode == .private)
             || (bottomBar.search.isPrivateBrowsing && bottomBar.panelExpansion > 0 && bottomBar.panel == .search)
     }
 
@@ -584,7 +605,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         pullToReload.layoutGap()
         bottomBar.find.maximumAnswerHeight = max(80, min(300, view.bounds.height-keyboardHeight-160))
         layoutBottomBar()
-        githubStarToast?.place(above: bottomBar.frame.minY, in: view.bounds, safeTop: view.safeAreaInsets.top)
+        toast?.place(above: bottomBar.frame.minY, in: view.bounds, safeTop: view.safeAreaInsets.top)
         // Summarise is laid out for the window it started in.
         if let summarise, summarise.bounds.size != view.bounds.size { summarise.finish() }
         if tabSwitcher.superview === content {
@@ -618,8 +639,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     /// Light text and icons over a dark strip, dark ones over a light strip.
     override var preferredStatusBarStyle: UIStatusBarStyle {
-        // Over Summarise's light backdrop.
-        if let summarise, !summarise.isOverPage { return .darkContent }
+        // Over Summarise's backdrop, light or dark as it opened.
+        if let summarise, !summarise.isOverPage { return summarise.isDark ? .lightContent : .darkContent }
         // Over the dark backdrop around the receded page. Behind More's panel, the page recedes
         // too little to clear the clock.
         if isPanelOpen, bottomBar.panel == .search, !UIAccessibility.isReduceMotionEnabled { return .lightContent }
@@ -648,7 +669,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// the pull to reload, and the bar collapsing as the page scrolls.
     private func pageChanged(from topColor: UIColor? = nil) {
         guard allowsPeek else { return }
-        if !isPrivateBrowsing { lastRegularTabID = currentTab.id }
+        if isPrivateBrowsing { lastPrivateTabID = currentTab.id } else { lastRegularTabID = currentTab.id }
         updatePrivacyAppearance(animated: false)
         tint.track(webView, from: topColor)
         pullToReload.attach(to: webView)
@@ -775,6 +796,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         if gestureRecognizer === newPageHold {
             return VoiceInput.isSupported && !isPanelOpen && presentedViewController == nil && !isSwipingToTabs
         }
+        // While the address is being edited, the button is X, which only clears.
+        if gestureRecognizer === hardReloadHold { return isPanelOpen && !bottomBar.menu.address.isEditingURL }
         if gestureRecognizer === panelBackSwipe {
             let delta = panelBackSwipe.translation(in: view), velocity = panelBackSwipe.velocity(in: view)
             let direction = abs(delta.x)+abs(delta.y) > 1 ? delta : velocity
@@ -801,6 +824,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             if bottomBar.panel == .find, touched.isDescendant(of: bottomBar.find.field)
                 || touched.isDescendant(of: bottomBar.find.answerView) { return false }
             if bottomBar.panel == .search, touched.isDescendant(of: bottomBar.search.field) { return false }
+            if bottomBar.panel == .tabMenu, touched.isDescendant(of: bottomBar.tabMenu.incognitoRow.toggle) { return false }
             if bottomBar.panel == .siteSettings,
                bottomBar.siteSettings.switches.contains(where: { touched.isDescendant(of: $0) }) { return false }
             if bottomBar.panel == .privacyPolicy,
@@ -905,17 +929,44 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.addGestureRecognizer(barCollapseSwipe)
         bottomBar.tabsButton.addAction(UIAction { [weak self] _ in
             guard let self else { return }
-            if isTabSwitcherOpen { selectTab(tabIndex) } else { showTabSwitcher() }
+            guard isTabSwitcherOpen else {
+                showTabSwitcher()
+                tabsOpenedAt = isTabSwitcherOpen ? CACurrentMediaTime() : nil
+                return
+            }
+            // Tapped again quickly, as if the previous tab's card, in front, had been tapped.
+            if let opened = tabsOpenedAt, CACurrentMediaTime()-opened <= Self.tabsDoubleTap,
+               let previous = tabSwitcher.displayOrder.dropLast().last.flatMap(tabIndex(ofCard:)) {
+                tabsOpenedAt = nil
+                selectTab(previous)
+                return
+            }
+            tabsOpenedAt = nil
+            // With no incognito tabs there's nothing to go back to until Incognito mode is off.
+            if switcherMode != .regular, switcherTabs.isEmpty {
+                UINotificationFeedbackGenerator().notificationOccurred(.error)
+                bottomBar.tabsButton.shake()
+                return
+            }
+            selectTab(tabIndex)
         }, for: .primaryActionTriggered)
-        bottomBar.tabsButton.count = tabs.count
-        tabSwitcher.onSelect = { [weak self] index in self?.selectTab(index) }
-        tabSwitcher.onClose = { [weak self] index in self?.closeTab(index) }
-        tabSwitcher.onFocusChange = { [weak self] index in
-            guard let self, let previews = tabPreviews, let slot = tabSwitcher.displayOrder.firstIndex(of: index) else { return }
-            let order = tabSwitcher.displayOrder
-            let nearby = (max(0, slot-3)...min(order.count-1, slot+2)).sorted { abs($0-slot) < abs($1-slot) }
-            previews.prioritize(nearby.compactMap { tabs.indices.contains(order[$0]) ? tabs[order[$0]].id : nil })
+        updateTabsCount()
+        // The switcher's cards are only the tabs it shows, numbered among themselves.
+        tabSwitcher.onSelect = { [weak self] card in
+            guard let self, let index = tabIndex(ofCard: card) else { return }
+            selectTab(index)
         }
+        tabSwitcher.onClose = { [weak self] card in
+            guard let self, let index = tabIndex(ofCard: card) else { return }
+            closeTab(index)
+        }
+        tabSwitcher.onFocusChange = { [weak self] card in
+            guard let self, let previews = tabPreviews, let slot = tabSwitcher.displayOrder.firstIndex(of: card) else { return }
+            let order = tabSwitcher.displayOrder, shown = switcherTabs
+            let nearby = (max(0, slot-3)...min(order.count-1, slot+2)).sorted { abs($0-slot) < abs($1-slot) }
+            previews.prioritize(nearby.compactMap { shown.indices.contains(order[$0]) ? shown[order[$0]].id : nil })
+        }
+        bottomBar.tabMenu.incognitoRow.onChanged = { [weak self] enabled in self?.showPrivateTabsInSwitcher(enabled) }
         tabSwitcher.onFlight = { [weak self] in
             guard self?.pendingCard != nil else { return }
             // Once the flight is with the render server.
@@ -1029,12 +1080,21 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             (menu.siteSettingsButton, { $0.openSiteSettings() }),
             (bottomBar.siteSettings.appSettingsRow, { $0.openAppSettings() }),
             (bottomBar.appSettings.privacyRow, { $0.showPrivacyPolicy() }),
+            (bottomBar.appSettings.popupDiagnosticsRow, { $0.sharePopupDiagnostics() }),
             (menu.downloadsButton, { $0.openDownloads() }),
             (bottomBar.tabMenu.historyButton, { $0.openHistory() }),
         ]
         for (control, action) in actions {
             control.addAction(UIAction { [weak self] _ in if let self { action(self) } }, for: .primaryActionTriggered)
         }
+        hardReloadHold.minimumPressDuration = 0.4
+        hardReloadHold.delegate = self
+        address.reloadButton.addGestureRecognizer(hardReloadHold)
+        address.reloadButton.addAction(UIAction { [weak self] _ in self?.hardReloadClick.prepare() }, for: .touchDown)
+        address.reloadButton.accessibilityCustomActions = [UIAccessibilityCustomAction(name: "Reload Without Cache") { [weak self] _ in
+            guard let self, !bottomBar.menu.address.isEditingURL else { return false }
+            hardReload(); return true
+        }]
         bottomBar.showTranslationProgress = { [weak self] source in self?.showTranslationProgress(from: source) }
         bottomBar.configureTranslationSpinner = { [weak self] source in self?.addTranslationCancelHold(to: source) }
         addTranslationCancelHold(to: address.translateButton)
@@ -1045,6 +1105,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         }
         bottomBar.siteSettings.onAdBlockingChanged = { [weak self] enabled in self?.changeAdBlocking(enabled) }
         bottomBar.siteSettings.onCookieBannersChanged = { [weak self] enabled in self?.changeCookieBanners(enabled) }
+        bottomBar.siteSettings.onPopupsChanged = { [weak self] enabled in self?.changePopupBlocking(enabled) }
         bottomBar.appSettings.onSyncChanged = { [weak self] enabled in
             self?.tabSync?.setEnabled(enabled)
             self?.updateAppSettings()
@@ -1186,10 +1247,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.restoreAddress()
         bottomBar.panel = panel
         if panel == .search {
-            bottomBar.search.begin(privateBrowsing: privateBrowsing ?? isPrivateBrowsing)
+            // From the switcher, New Page opens a tab of the kind it shows.
+            bottomBar.search.begin(privateBrowsing: privateBrowsing ?? (isTabSwitcherOpen ? switcherMode == .private : isPrivateBrowsing))
             updatePrivacyAppearance(animated: false)
         }
-        else if panel != .tabMenu { updateAddress() }
+        else if panel == .tabMenu { updateSwitcherChrome(animated: false) }
+        else { updateAddress() }
         dimming.isUserInteractionEnabled = true
         bottomBar.accessibilityViewIsModal = true
         bottomBar.showContents(of: panel)
@@ -1694,7 +1757,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         if attachingHost { addChild(summaryHost) }
         let summarise = SummariseView(page: { [content] in
             content.snapshotView(afterScreenUpdates: false) ?? UIView(frame: CGRect(origin: .zero, size: size))
-        }, title: title, size: size, summaryHost: summaryHost)
+        }, title: title, size: size, summaryHost: summaryHost, style: traitCollection.userInterfaceStyle)
         // Summarised before and unchanged since, the page flies straight to its summary: from
         // memory, or after a relaunch from disk by its text's fingerprint (`SummaryCache`). The
         // one taken as the page loaded can be of text still landing, so the text is fingerprinted
@@ -1868,7 +1931,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         track(tab)
         tabs.insert(tab, at: tabIndex+1)
         tabIndex += 1
-        bottomBar.tabsButton.count = tabs.count
+        updateTabsCount()
         page.transform = .identity
         install(page)
         previous.removeFromSuperview()
@@ -1905,8 +1968,13 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             // on its way on Core Animation.
             let replica = content.snapshotView(afterScreenUpdates: false)
             pendingCard = currentTab
-            tabSwitcher.load(tabs, current: tabIndex)
+            // It opens on the page's own kind of tab; a private page is already unlocked.
+            switcherMode = isPrivateBrowsing ? .private : .regular
+            if isPrivateBrowsing { privateTabsUnlocked = true }
+            tabSwitcher.load(switcherTabs, current: card(ofTab: tabIndex) ?? 0)
             tabSwitcher.prepare(page: replica)
+            updateSwitcherChrome(animated: true)
+            updateTabsCount()
         }
         isTabSwitcherOpen = true
         bottomBar.tabsButton.setShowsSwitcher(true, animated: true)
@@ -1916,8 +1984,17 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// Grows a tab's card back into the page, making it the current tab.
     func selectTab(_ index: Int) {
         guard isTabSwitcherOpen, !isSwipingToTabs, tabs.indices.contains(index) else { return }
+        var index = index
+        if card(ofTab: index) == nil {
+            // Its card isn't showing, as when Tabs closes the switcher on the other kind of tab:
+            // the most recent card shown instead, or with none, the page's own kind again.
+            if let recent = tabSwitcher.displayOrder.last.flatMap(tabIndex(ofCard:)) { index = recent }
+            else { setSwitcherMode(isPrivateBrowsing ? .private : .regular, animated: false); index = tabIndex }
+        }
+        guard let card = card(ofTab: index) else { closeTabSwitcherAtOnce(); return }
+        isUnlockingPrivateTabs = false
         isTabSwitcherOpen = false
-        tabSwitcher.dismiss(to: index) { [weak self] in
+        tabSwitcher.dismiss(to: card) { [weak self] in
             self?.updateTabsPreview(); self?.applyPendingChanges()
         }
         // The selected card is already flying on Core Animation before WebKit/tint tracking,
@@ -1944,7 +2021,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         }
         tab.snapshot = image
         tabPreviews?.save(tab)
-        tabSwitcher.setPicture(image, at: index)
+        if let card = card(ofTab: index) { tabSwitcher.setPicture(image, at: card) }
     }
 
     private func closeTabSwitcherAtOnce() {
@@ -1978,8 +2055,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private var closedTabs: [ClosedTab] = []
 
     /// Closes a tab from its card; the last one stays.
-    private func closeTab(_ index: Int) {
-        guard isTabSwitcherOpen, tabs.indices.contains(index), tabs.count > 1 || tabs[index].isPrivateBrowsing else { return }
+    private func closeTab(_ index: Int, fromPage: Bool = false) {
+        guard isTabSwitcherOpen || fromPage, tabs.indices.contains(index), tabs.count > 1 || tabs[index].isPrivateBrowsing else { return }
+        // In the switcher, the last of the other tabs stays, as the last tab always did.
+        if isTabSwitcherOpen, !fromPage, !tabs[index].isPrivateBrowsing, regularTabCount <= 1 { return }
         if tabs.count == 1 {
             let closing = tabs[0]
             pendingCard = nil
@@ -1993,17 +2072,18 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             transientPrivateSession = nil
             closeTabSwitcherAtOnce()
             install(webView); closing.webView.removeFromSuperview()
-            bottomBar.tabsButton.count = 1
+            updateTabsCount()
             pageChanged()
             openPanel()
             return
         }
         let closesSelected = index == tabIndex
-        let order = tabSwitcher.displayOrder
+        let order = isTabSwitcherOpen ? tabSwitcher.displayOrder.compactMap(tabIndex(ofCard:)) : Array(tabs.indices)
         let after = order.firstIndex(of: index).flatMap { order.indices.contains($0+1) ? tabs[order[$0+1]].id : nil }
+        let closingCard = isTabSwitcherOpen ? card(ofTab: index) : nil
         let closing = tabs.remove(at: index)
         for page in [closing.webView]+closing.previousPages+closing.forwardPages { pageTranslation.cancel(page) }
-        if closing.isPrivateBrowsing {
+        if closing.isPrivateBrowsing || fromPage {
             closing.onPageChange = nil
             for page in [closing.webView]+closing.previousPages+closing.forwardPages {
                 page.stopLoading(); page.navigationDelegate = nil; page.uiDelegate = nil
@@ -2021,14 +2101,16 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             tabIndex = min(index, tabs.count-1)
         }
         // Commit the deck's reflow before WebKit/session work can occupy the main thread.
-        tabSwitcher.remove(at: index, current: tabIndex)
-        drawPendingCard()
+        if isTabSwitcherOpen {
+            if let closingCard { tabSwitcher.remove(at: closingCard, current: card(ofTab: tabIndex) ?? 0) }
+            drawPendingCard()
+        }
         if closesSelected {
             install(webView)
             closing.webView.removeFromSuperview()
             pageChanged()
         }
-        bottomBar.tabsButton.count = tabs.count
+        updateTabsCount()
         if !tabs.contains(where: \.isPrivateBrowsing) { transientPrivateSession = nil }
         saveSession()
     }
@@ -2040,7 +2122,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         guard allowsPeek, let closed = closedTabs.last, !isSwipingToTabs, summarise == nil, !isPanelOpen,
               presentedViewController == nil else { return false }
         let inSwitcher = !tabSwitcher.isHidden
-        if inSwitcher && (!isTabSwitcherOpen || tabSwitcher.isAnimatingOrTracking) { return false }
+        if inSwitcher && (!isTabSwitcherOpen || tabSwitcher.isAnimatingOrTracking || switcherMode != .regular) { return false }
         closedTabs.removeLast()
         let tab = BrowserTab(webView: Self.makeWebView(dataStore: regularWebsiteDataStore, videoPlayback: videoPlayback),
                              restoring: closed.saved)
@@ -2054,10 +2136,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let index = min(closed.index, tabs.count)
         tabs.insert(tab, at: index)
         if index <= tabIndex { tabIndex += 1 }
-        bottomBar.tabsButton.count = tabs.count
+        updateTabsCount()
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
         if inSwitcher {
-            tabSwitcher.restore(tabs, current: tabIndex, restored: index, before: closed.before)
+            if let restored = card(ofTab: index) {
+                tabSwitcher.restore(switcherTabs, current: card(ofTab: tabIndex) ?? restored, restored: restored, before: closed.before)
+            }
             saveSession()
         } else {
             switchTab(to: index)
@@ -2110,6 +2194,91 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         tabSwitcher.finishSwipe(commit: commit) { [weak self] in self?.applyPendingChanges() }
     }
 
+    // MARK: Incognito in the switcher
+
+    /// The tabs the switcher shows, as indices into `tabs`, in its order: none while locked.
+    private var switcherTabIndices: [Int] {
+        switch switcherMode {
+        case .regular: tabs.indices.filter { !tabs[$0].isPrivateBrowsing }
+        case .private: tabs.indices.filter { tabs[$0].isPrivateBrowsing }
+        case .privateLocked: []
+        }
+    }
+    private var switcherTabs: [BrowserTab] { switcherTabIndices.map { tabs[$0] } }
+    private var regularTabCount: Int { tabs.reduce(0) { $0+($1.isPrivateBrowsing ? 0 : 1) } }
+
+    /// The Tabs button's number: in the switcher, the kind of tab it shows, so Incognito mode
+    /// counts the incognito tabs; otherwise every tab.
+    private func updateTabsCount() {
+        guard isTabSwitcherOpen || !tabSwitcher.isHidden else { bottomBar.tabsButton.count = tabs.count; return }
+        let showsPrivate = switcherMode != .regular
+        bottomBar.tabsButton.count = tabs.reduce(0) { $0+($1.isPrivateBrowsing == showsPrivate ? 1 : 0) }
+    }
+    private func card(ofTab index: Int) -> Int? { switcherTabIndices.firstIndex(of: index) }
+    private func tabIndex(ofCard card: Int) -> Int? {
+        let shown = switcherTabIndices
+        return shown.indices.contains(card) ? shown[card] : nil
+    }
+
+    /// From More's switcher: the private tabs, behind Face ID while Locked incognito mode is on,
+    /// or the others.
+    private func showPrivateTabsInSwitcher(_ showsPrivate: Bool) {
+        guard isTabSwitcherOpen else { return }
+        guard showsPrivate else { isUnlockingPrivateTabs = false; setSwitcherMode(.regular); return }
+        guard switcherMode == .regular else { return }
+        guard IncognitoLock.isEnabled, !privateTabsUnlocked else { setSwitcherMode(.private); return }
+        setSwitcherMode(.privateLocked)
+        unlockPrivateTabs()
+    }
+
+    private func unlockPrivateTabs() {
+        guard !isUnlockingPrivateTabs else { return }
+        isUnlockingPrivateTabs = true
+        IncognitoLock.authenticate { [weak self] unlocked in
+            guard let self, isUnlockingPrivateTabs else { return }
+            isUnlockingPrivateTabs = false
+            guard isTabSwitcherOpen, switcherMode == .privateLocked else { return }
+            if unlocked { privateTabsUnlocked = true }
+            // Turned down, the switch goes back off and the other tabs show again.
+            setSwitcherMode(unlocked ? .private : .regular)
+        }
+    }
+
+    /// Shows the other kind of tab at once, in the cards, in More, and in the bar's colours.
+    private func setSwitcherMode(_ mode: SwitcherMode, animated: Bool = true) {
+        guard mode != switcherMode else { return }
+        switcherMode = mode
+        let recent = mode == .private ? lastPrivateTabID : lastRegularTabID
+        let shown = switcherTabIndices
+        let current = card(ofTab: tabIndex) ?? tabs.firstIndex { $0.id == recent }.flatMap(card(ofTab:)) ?? shown.count-1
+        tabSwitcher.switchDeck(to: switcherTabs, current: shown.isEmpty ? nil : current, animated: animated)
+        updateSwitcherChrome(animated: animated)
+        updateTabsCount()
+        updatePrivacyAppearance(animated: animated)
+    }
+
+    /// "Incognito mode" over the cards, the empty deck's words, and More's switch.
+    private func updateSwitcherChrome(animated: Bool) {
+        tabSwitcher.setIncognitoLabel(switcherMode == .private, animated: animated)
+        tabSwitcher.emptyText = switcherMode == .private ? "No tabs" : nil
+        let toggle = bottomBar.tabMenu.incognitoRow.toggle, showsPrivate = switcherMode != .regular
+        if toggle.isOn != showsPrivate { toggle.setOn(showsPrivate, animated: animated && isPanelOpen) }
+    }
+
+    /// Going to the background locks the private tabs again; an open switcher showing them hides
+    /// them, and asks for Face ID once the app is back.
+    func lockPrivateTabs() {
+        guard IncognitoLock.isEnabled else { return }
+        privateTabsUnlocked = false
+        isUnlockingPrivateTabs = false
+        if isTabSwitcherOpen, switcherMode == .private { setSwitcherMode(.privateLocked, animated: false) }
+    }
+
+    func resumeLockedSwitcher() {
+        guard isTabSwitcherOpen, switcherMode == .privateLocked else { return }
+        unlockPrivateTabs()
+    }
+
     /// The current page, small, as the top card of the Tabs button.
     private func updateTabsPreview() {
         guard allowsPeek, webView.window != nil, webView.bounds.width > 0 else { return }
@@ -2132,9 +2301,37 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         navigationStatus.show(address: currentTab.addressURL, committed: currentTab.hasCommittedDocument,
                               error: currentTab.navigationError)
     }
-    func reloadPage() {
-        currentTab.reload()
+    func reloadPage(ignoringCache: Bool = false) {
+        currentTab.reload(ignoringCache: ignoringCache)
         updateNavigationStatus()
+    }
+
+    @objc private func holdReload(_ hold: UILongPressGestureRecognizer) {
+        guard hold.state == .began else { return }
+        hardReloadClick.impactOccurred(intensity: 1)
+        hardReload()
+    }
+
+    /// Closes More, as tapping Reload does, and says so briefly.
+    func hardReload() {
+        closePanel()
+        reloadPage(ignoringCache: true)
+        let toast = Toast(message: "Hard reloaded", glyph: UIImage(named: "HardReloadToast"), name: "hard-reload", trailingInset: 19)
+        showToast(toast)
+        toast.leave(after: 1)
+        UIAccessibility.post(notification: .announcement, argument: toast.label.text)
+    }
+
+    /// Replaces any toast showing, rising from behind the bottom bar.
+    func showToast(_ next: Toast) {
+        toast?.dismiss(animated: false)
+        toast = next
+        next.onDismiss = { [weak self, weak next] in
+            if self?.toast === next { self?.toast = nil }
+        }
+        view.insertSubview(next, belowSubview: bottomBar)
+        next.place(above: bottomBar.frame.minY, in: view.bounds, safeTop: view.safeAreaInsets.top)
+        next.appear()
     }
 
     private func goBack() {
@@ -2226,17 +2423,37 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         }
     }
 
-    // With no tab UI yet, links requesting a new window navigate this page instead.
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if navigationAction.targetFrame == nil { webView.load(navigationAction.request) }
-        return nil
+        let popupPolicy = blocker(for: webView).popups
+        guard webView === self.webView else { popupPolicy.rejectWindow(navigationAction, in: webView, reason: "background_page"); return nil }
+        guard !isPanelOpen else { popupPolicy.rejectWindow(navigationAction, in: webView, reason: "browser_panel_open"); return nil }
+        guard presentedViewController == nil else { popupPolicy.rejectWindow(navigationAction, in: webView, reason: "native_presentation_open"); return nil }
+        guard popupPolicy.allows(navigationAction, in: webView) else { return nil }
+        // Return WebKit's actual new window: replaying its request in the opener
+        // loses POST bodies, window handles, blank-then-navigate and OAuth flows.
+        let blocker = blocker(for: webView)
+        configuration.userContentController = WKUserContentController()
+        let page = Self.makeWebView(dataStore: webView.configuration.websiteDataStore,
+                                   videoPlayback: videoPlayback, configuration: configuration)
+        blocker.popups.prepare(page, for: navigationAction.request.url ?? webView.url)
+        blocker.popups.protectPopup(page, openedFrom: webView.url, opener: webView)
+        openInNewTab(page, topColor: nil, initialURL: navigationAction.request.url,
+                     privateBrowsing: isPrivateBrowsing)
+        return page
+    }
+
+    func webViewDidClose(_ webView: WKWebView) {
+        guard let index = tabs.firstIndex(where: { $0.webView === webView }), tabs.count > 1 else { return }
+        blocker(for: webView).popups.noteNavigation("window.closed", in: webView)
+        closeTab(index, fromPage: true)
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         if webView.url?.scheme == MobileTabHistory.scheme { return }
+        blocker(for: webView).popups.didCommit(webView)
         pageTranslation.didCommit(webView)
-        tabs.first { $0.webView === webView }?.didCommit(navigation)
+        if let navigation { tabs.first { $0.webView === webView }?.didCommit(navigation) }
         addressSuggestions.committed(webView)
         if webView === self.webView { updateNavigationStatus(); updateAddress() }
     }
@@ -2246,6 +2463,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             MobileTabHistory.finishInternalDocument(in: webView)
             return
         }
+        blocker(for: webView).popups.noteNavigation("navigation.finished", in: webView)
         tabs.first { $0.webView === webView }?.didFinish()
         pageTranslation.didFinish(webView)
         finishAdBlockingReload(on: webView, navigation: navigation)

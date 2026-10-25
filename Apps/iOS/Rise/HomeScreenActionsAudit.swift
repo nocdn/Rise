@@ -82,7 +82,7 @@ import WebKit
         try await settle()
         browser.quickActions.open(.newPrivateTab)
         try await wait("private new-page panel") { browser.isPanelOpen && browser.bottomBar.panel == .search && browser.bottomBar.search.isPrivateBrowsing }
-        try check("already-open-search-becomes-purple-without-a-sweep", browser.bottomBar.backgroundColor == PrivatePanelAppearance.background && browser.bottomBar.privateSweepY == nil)
+        try check("already-open-search-becomes-purple-without-a-fade", browser.bottomBar.backgroundColor == PrivatePanelAppearance.background && browser.bottomBar.privateFade == nil)
         try check("shortcut-does-not-trigger-the-toggle-bounce", browser.bottomBar.layer.animation(forKey: "private-rubber-band") == nil)
         try await settle()
         try check("private-shortcut-uses-the-existing-panel", browser.presentedViewController == nil && browser.bottomBar.shown === browser.bottomBar.search)

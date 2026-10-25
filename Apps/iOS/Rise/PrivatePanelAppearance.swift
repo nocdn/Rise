@@ -1,14 +1,19 @@
 import UIKit
 
-/// Reveal the new live colours under a snapshot of the old ones. Only a wide gradient mask
-/// moves: text and controls keep their geometry, and a quick reversal starts from what's shown.
+/// Change to the private colours, and back, as one: the old colours fade quickly off the whole
+/// panel over the new live ones, starting at once. Text and controls keep their geometry, and a
+/// quick reversal starts from what's shown.
 @MainActor final class PrivatePanelAppearance {
     static let background = UIColor(red: 34/255, green: 26/255, blue: 49/255, alpha: 1)
-    static let duration: CFTimeInterval = 0.28
+    static let duration: CFTimeInterval = 0.14
     private var outgoing: UIView?
     private var eyeTint: UIViewPropertyAnimator?
+    /// Controls lifted above the old colours, so their own motion shows from the start, and
+    /// where they came from.
+    private var lifted: [(view: UIView, home: UIView)] = []
     #if DEBUG
-    var shownSweepY: CGFloat? { outgoing?.layer.mask?.presentation()?.position.y }
+    /// How much of the old colours still shows, while they fade.
+    var shownFade: Float? { outgoing?.layer.presentation()?.opacity }
     #endif
 
     func finish(on bar: BottomBar) {
@@ -16,25 +21,23 @@ import UIKit
         eyeTint = nil
         outgoing?.removeFromSuperview()
         outgoing = nil
-        let button = bar.search.privateButton
-        if button.superview === bar {
-            let center = bar.search.convert(button.center, from: bar)
-            bar.search.addSubview(button)
-            button.center = center
-            button.overrideUserInterfaceStyle = .unspecified
-            button.tintColor = .label
+        for (view, home) in lifted where view.superview === bar {
+            let center = home.convert(view.center, from: bar)
+            home.addSubview(view)
+            view.center = center
+            view.overrideUserInterfaceStyle = .unspecified
         }
+        lifted = []
+        bar.search.privateButton.tintColor = .label
     }
 
     func apply(_ enabled: Bool, to bar: BottomBar, animated: Bool) {
-        // Keep the live eye above the colour snapshot, so its own symbol swap starts now.
-        let button = bar.search.privateButton, hidden = button.isHidden
+        let button = bar.search.privateButton
         let previousStyle = button.traitCollection.userInterfaceStyle
         let previousTint = button.tintColor.resolvedColor(with: button.traitCollection)
-        button.isHidden = true
+        // What's on screen now, without waiting for another frame to be drawn.
         let previous = animated && bar.window != nil && !UIAccessibility.isReduceMotionEnabled
-            ? bar.snapshotView(afterScreenUpdates: true) : nil
-        button.isHidden = hidden
+            ? bar.snapshotView(afterScreenUpdates: false) : nil
         finish(on: bar)
         outgoing = previous
         UIView.performWithoutAnimation {
@@ -47,79 +50,54 @@ import UIKit
         previous.accessibilityElementsHidden = true
         previous.frame = bar.bounds
         bar.addSubview(previous)
-        if bar.panel == .search, !hidden, bar.shown === bar.search {
-            let center = bar.convert(button.center, from: button.superview)
-            bar.addSubview(button)
-            button.center = center
-            // The field under the eye still has its outgoing colour until the sweep reaches it.
+        // The control that was tapped keeps moving above the old colours: the eye's symbol swap,
+        // or Incognito mode's switch, which shows through a hole in them. Moved out of its row, the
+        // switch's glass thumb would be drawn away from its track.
+        if bar.panel == .search, !button.isHidden, bar.shown === bar.search {
+            lift(button, in: bar)
+            // The eye changes colour with everything under it.
             button.overrideUserInterfaceStyle = previousStyle
-        }
-        let height = max(1, bar.bounds.height), feather = min(220, height*0.55)
-        let arc = min(72, bar.bounds.width*0.15)
-        let travel = height+feather+arc
-        if button.superview === bar {
             button.tintColor = previousTint
-            let u = min(1, max(0, button.center.x/max(1, bar.bounds.width)))
-            let edge = height+arc-arc*4*u*(1-u)
-            let crossing = min(1, max(0, (edge+feather/2-button.center.y)/travel))
-            let progress = enabled ? crossing : 1-crossing
-            // Invert the ease-out curve to change the live eye's tint as the arc reaches it.
-            var low: CGFloat = 0, high: CGFloat = 1
-            for _ in 0..<12 {
-                let t = (low+high)/2
-                if t*t*(3-2*t) < progress { low = t } else { high = t }
-            }
-            let t = (low+high)/2, time = 3*0.58*(1-t)*t*t+t*t*t
             let tint = UIColor.label.resolvedColor(with: bar.traitCollection)
-            let animator = UIViewPropertyAnimator(duration: 0.08, curve: .linear) { button.tintColor = tint }
+            let animator = UIViewPropertyAnimator(duration: Self.duration, curve: .easeOut) { button.tintColor = tint }
             eyeTint = animator
-            animator.startAnimation(afterDelay: max(0, Self.duration*Double(time)-0.04))
+            animator.startAnimation()
+        } else if bar.panel == .tabMenu, bar.shown === bar.tabMenu {
+            let toggle = bar.tabMenu.incognitoRow.toggle
+            let frame = bar.convert(toggle.bounds, from: toggle).insetBy(dx: -1, dy: -1)
+            let path = UIBezierPath(rect: previous.bounds)
+            path.append(UIBezierPath(roundedRect: frame, cornerRadius: frame.height/2))
+            let hole = CAShapeLayer()
+            hole.frame = previous.bounds
+            hole.path = path.cgPath
+            hole.fillRule = .evenOdd
+            previous.layer.mask = hole
         }
-        let mask = CALayer()
-        mask.anchorPoint = .zero
-        // The opaque tail also covers the page at the start of the reverse sweep.
-        mask.bounds = CGRect(x: 0, y: 0, width: bar.bounds.width, height: travel+height)
-        mask.contents = Self.curvedMask(height: height, feather: feather, arc: arc, enabled: enabled)
-        let from: CGFloat = enabled ? 0 : -travel, to: CGFloat = enabled ? -travel : 0
-        previous.layer.mask = mask
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        mask.position = CGPoint(x: 0, y: to)
+        previous.layer.opacity = 0
         CATransaction.setCompletionBlock { [weak self, weak previous, weak bar] in
             guard let self, let previous, self.outgoing === previous else { return }
             if let bar { self.finish(on: bar) }
             else { previous.removeFromSuperview(); self.outgoing = nil }
         }
-        let sweep = CABasicAnimation(keyPath: "position.y")
-        sweep.fromValue = from; sweep.toValue = to
-        sweep.duration = Self.duration
-        sweep.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 1; fade.toValue = 0
+        fade.duration = Self.duration
+        // Changing visibly from the first frame, rather than easing in.
+        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
         let rate = Float(min(120, bar.window?.screen.maximumFramesPerSecond ?? 60))
-        sweep.preferredFrameRateRange = CAFrameRateRange(minimum: min(80, rate), maximum: rate, preferred: rate)
-        mask.add(sweep, forKey: "private-colours")
+        fade.preferredFrameRateRange = CAFrameRateRange(minimum: min(80, rate), maximum: rate, preferred: rate)
+        previous.layer.add(fade, forKey: "private-colours")
         CATransaction.commit()
         CATransaction.flush()
     }
 
-    /// A shallow arch in the feathered front: its centre leads its edges. A small alpha
-    /// texture is linearly sampled by Core Animation; only its position moves each frame.
-    private static func curvedMask(height: CGFloat, feather: CGFloat, arc: CGFloat, enabled: Bool) -> CGImage? {
-        let width = 128, rows = 512, extent = Double(2*height+feather+arc)
-        let edges = (0..<width).map { x -> Double in
-            let u = Double(x)/Double(width-1)
-            return Double(height+arc)-Double(arc)*4*u*(1-u)
-        }
-        var pixels = [UInt8](repeating: 0, count: width*rows*4)
-        for y in 0..<rows {
-            let position = Double(y)/Double(rows-1)*extent
-            for x in 0..<width {
-                let opacity = min(1, max(0, (edges[x]+Double(feather)-position)/Double(feather)))
-                pixels[(y*width+x)*4+3] = UInt8(((enabled ? opacity : 1-opacity)*255).rounded())
-            }
-        }
-        guard let provider = CGDataProvider(data: Data(pixels) as CFData) else { return nil }
-        return CGImage(width: width, height: rows, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: width*4,
-                       space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
-                       provider: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent)
+    private func lift(_ view: UIView, in bar: BottomBar) {
+        guard let home = view.superview, home !== bar else { return }
+        let center = bar.convert(view.center, from: home)
+        bar.addSubview(view)
+        view.center = center
+        lifted.append((view, home))
     }
 }

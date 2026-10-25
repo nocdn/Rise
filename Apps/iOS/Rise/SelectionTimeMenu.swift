@@ -3,11 +3,13 @@ import EventKitUI
 import UIKit
 import WebKit
 
-/// Rise's pages: WebKit's own, with a time selected in another zone leading the selection menu.
+/// Rise's pages: WebKit's own, with a time selected in another zone leading the selection menu,
+/// and Explain in Context beside Look Up.
 final class RiseWebView: WKWebView {
     override func buildMenu(with builder: UIMenuBuilder) {
         super.buildMenu(with: builder)
         SelectionTimeMenu.build(builder, in: self)
+        SelectionExplanation.build(builder, in: self)
     }
 }
 

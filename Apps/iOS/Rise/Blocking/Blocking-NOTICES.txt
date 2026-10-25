@@ -26,3 +26,6 @@ https://github.com/nocdn/Rise
 The generated JavaScript is modified to select fixes by site, honor exceptions,
 and exclude YouTube. The native lists append mandatory YouTube exceptions.
 Filters are bundled at build time; the app never downloads executable filter code.
+
+popup-rules.json contains popup-only rules and exceptions from the same snapshots,
+extracted by scripts/ios-adblock/popup_rules.py for Rise's independent popup setting.

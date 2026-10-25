@@ -8,10 +8,23 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let scene = scene as? UIWindowScene else { return }
         let window = RiseWindow(windowScene: scene)
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains(PopupBlockingAudit.argument) {
+            let controller = BrowserViewController(startURL: nil, adBlocker: MobileAdBlocker(preferences: nil),
+                isPrivateBrowsing: ProcessInfo.processInfo.arguments.contains("-RisePopupPrivate"), websiteDataStore: .nonPersistent())
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            PopupBlockingAudit.run(in: controller)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains(SelectionTimeMenuAudit.argument) {
             let controller = BrowserViewController(startURL: nil,websiteDataStore: .nonPersistent())
             window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
             SelectionTimeMenuAudit.run(in: controller)
+            return
+        }
+        if ProcessInfo.processInfo.arguments.contains(SelectionExplanationAudit.argument) {
+            let controller = BrowserViewController(startURL: nil,websiteDataStore: .nonPersistent())
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            SelectionExplanationAudit.run(in: controller)
             return
         }
         if ProcessInfo.processInfo.arguments.contains(TorphTextAudit.argument) {
@@ -222,6 +235,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
     func sceneDidEnterBackground(_ scene: UIScene) {
         (window?.rootViewController as? BrowserViewController)?.backgroundSearch.enteredBackground()
+        (window?.rootViewController as? BrowserViewController)?.lockPrivateTabs()
         saveSession()
     }
     func sceneDidDisconnect(_ scene: UIScene) { saveSession() }
@@ -232,6 +246,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         browser?.backgroundSearch.becameActive { [weak browser] in browser?.reopenSearchAfterInactivity() }
         browser?.tabSync?.refresh()
         browser?.setTabPreviewsActive(true)
+        browser?.resumeLockedSwitcher()
     }
 
     private func saveSession() {

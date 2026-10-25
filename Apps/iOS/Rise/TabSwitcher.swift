@@ -184,11 +184,12 @@ import WebKit
         if !cancelled || restoring { navigationError = error }
         return false
     }
-    func reload() {
+    /// Ignoring the cache, as Safari's Reload Page From Origin does, revalidates the page and everything it loads.
+    func reload(ignoringCache: Bool = false) {
         let failed = navigationError != nil
         navigationError = nil; cancellationRetries = 0
         if hasCommittedDocument && !failed, webView.url != nil {
-            webView.reload()
+            if ignoringCache { webView.reloadFromOrigin() } else { webView.reload() }
         } else if let url = addressURL {
             restoreNavigation = nil; activeNavigation = nil
             pendingURL = url
@@ -807,11 +808,31 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
     var bottomInset: CGFloat = 0 { didSet { setNeedsLayout() } }
     var onSelect: (Int) -> Void = { _ in }
     var onClose: (Int) -> Void = { _ in }
+    /// "Incognito mode", just under the Dynamic Island, while the private tabs show.
+    private let modeLabel = UILabel()
+    private(set) var showsIncognitoLabel = false
+    /// Said in the middle when there are no cards, such as when no private tabs are open.
+    private let emptyLabel = UILabel()
+    var emptyText: String? {
+        didSet { emptyLabel.text = emptyText; updateEmptyLabel(animated: window != nil) }
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         isHidden = true
         backgroundColor = Self.background
+        modeLabel.text = "Incognito mode"
+        modeLabel.font = SearchPanel.roundedFont(ofSize: 15, weight: .semibold)
+        modeLabel.adjustsFontForContentSizeCategory = true
+        modeLabel.textColor = .secondaryLabel
+        modeLabel.textAlignment = .center
+        modeLabel.alpha = 0
+        modeLabel.accessibilityTraits = .header
+        emptyLabel.font = SearchPanel.roundedFont(ofSize: 17, weight: .semibold)
+        emptyLabel.adjustsFontForContentSizeCategory = true
+        emptyLabel.textColor = .tertiaryLabel
+        emptyLabel.textAlignment = .center
+        emptyLabel.alpha = 0
         scroll.delegate = self
         scroll.alwaysBounceHorizontal = true
         scroll.alwaysBounceVertical = false
@@ -824,9 +845,77 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
         addSubview(scroll)
         scroll.addSubview(grid)
         scroll.addSubview(flightContainer)
+        addSubview(emptyLabel)
+        addSubview(modeLabel)
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// Brings "Incognito mode" in, settling down into place, or sends it up and away, quickly.
+    func setIncognitoLabel(_ shown: Bool, animated: Bool) {
+        guard shown != showsIncognitoLabel else { return }
+        showsIncognitoLabel = shown
+        modeLabel.accessibilityElementsHidden = !shown
+        let apply = {
+            self.modeLabel.alpha = shown ? 1 : 0
+            self.modeLabel.transform = shown ? .identity : CGAffineTransform(translationX: 0, y: -6).scaledBy(x: 0.96, y: 0.96)
+        }
+        guard animated, !isHidden, window != nil, !UIAccessibility.isReduceMotionEnabled else {
+            modeLabel.layer.removeAllAnimations(); apply(); return
+        }
+        if shown, modeLabel.alpha == 0 {
+            modeLabel.transform = CGAffineTransform(translationX: 0, y: -6).scaledBy(x: 0.96, y: 0.96)
+        }
+        UIView.animate(springDuration: shown ? 0.32 : 0.2, bounce: 0, initialSpringVelocity: 0, delay: 0,
+                       options: [.beginFromCurrentState, .allowUserInteraction], animations: apply)
+    }
+
+    private func updateEmptyLabel(animated: Bool) {
+        let shown: CGFloat = cells.isEmpty && emptyText != nil ? 1 : 0
+        guard emptyLabel.alpha != shown else { return }
+        guard animated, !isHidden else { emptyLabel.layer.removeAllAnimations(); emptyLabel.alpha = shown; return }
+        UIView.animate(withDuration: shown > 0 ? 0.22 : 0.12, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+            self.emptyLabel.alpha = shown
+        }
+    }
+
+    /// Swaps the cards for another set, such as the private tabs for the others, with the
+    /// switcher open: the new cards come in as the old ones go, quickly, where they'd rest.
+    func switchDeck(to tabs: [BrowserTab], current: Int?, animated: Bool = true) {
+        let outgoing = !animated || isHidden || cells.isEmpty ? nil : grid.snapshotView(afterScreenUpdates: false)
+        stop()
+        load(tabs, current: current ?? 0)
+        UIView.performWithoutAnimation {
+            for cell in cells {
+                cell.transform = .identity
+                cell.setCardOpacity(1)
+                cell.caption.layer.removeAllAnimations()
+                cell.caption.alpha = 1
+                cell.caption.transform = .identity
+            }
+            scrollToCurrent()
+            anchorGridOnScreen()
+            grid.transform = .identity
+        }
+        updateEmptyLabel(animated: animated)
+        guard animated, window != nil, !isHidden, !UIAccessibility.isReduceMotionEnabled else { grid.alpha = 1; return }
+        if let outgoing {
+            outgoing.frame = convert(grid.frame, from: scroll)
+            outgoing.isUserInteractionEnabled = false
+            insertSubview(outgoing, aboveSubview: scroll)
+            UIView.animate(withDuration: 0.14, delay: 0, options: [.curveEaseOut]) {
+                outgoing.alpha = 0
+                outgoing.transform = CGAffineTransform(scaleX: 0.98, y: 0.98)
+            } completion: { _ in outgoing.removeFromSuperview() }
+        }
+        grid.alpha = 0
+        grid.transform = CGAffineTransform(scaleX: 1.02, y: 1.02)
+        UIView.animate(springDuration: 0.3, bounce: 0, initialSpringVelocity: 0, delay: 0.04,
+                       options: [.beginFromCurrentState, .allowUserInteraction]) {
+            self.grid.alpha = 1
+            self.grid.transform = .identity
+        }
+    }
 
     private var deck: TabDeckLayout {
         TabDeckLayout(size: bounds.size, stripHeight: stripHeight, topInset: topInset,
@@ -860,6 +949,11 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
         scroll.contentInset = .zero
         scroll.contentSize = CGSize(width: bounds.width+CGFloat(max(0, cells.count-1))*deck.step, height: bounds.height)
         layingOutDeck = false
+        let labelHeight = ceil(modeLabel.font.lineHeight)
+        modeLabel.bounds = CGRect(x: 0, y: 0, width: bounds.width-32, height: labelHeight)
+        // A little under the Dynamic Island, above the cards' titles.
+        modeLabel.center = CGPoint(x: bounds.midX, y: topInset-4+labelHeight/2)
+        emptyLabel.frame = CGRect(x: 16, y: topInset, width: bounds.width-32, height: max(0, bounds.height-topInset-bottomInset))
         layoutDeck()
     }
 
@@ -948,9 +1042,11 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
         entrance.stop(cells: cells)
         cells.forEach { $0.removeFromSuperview() }
         tabIDs = tabs.map(\.id)
-        recentIDs.removeAll { !tabIDs.contains($0) || $0 == tabIDs[current] }
-        recentIDs.append(contentsOf: tabIDs.filter { !recentIDs.contains($0) && $0 != tabIDs[current] })
-        recentIDs.append(tabIDs[current])
+        // The other set's order is kept for when it shows again, such as the tabs after Incognito.
+        let currentID = tabIDs.indices.contains(current) ? tabIDs[current] : nil
+        recentIDs.removeAll { $0 == currentID }
+        recentIDs.append(contentsOf: tabIDs.filter { !recentIDs.contains($0) && $0 != currentID })
+        if let currentID { recentIDs.append(currentID) }
         displayOrder = recentIDs.compactMap { tabIDs.firstIndex(of: $0) }
         cells = tabs.map { tab in
             let cell = TabCell()
@@ -984,6 +1080,7 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
         }
         self.current = current
         for index in displayOrder { grid.bringSubviewToFront(cells[index]) }
+        updateEmptyLabel(animated: false)
         setNeedsLayout()
         layoutIfNeeded()
     }
@@ -1167,7 +1264,9 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
         grow(card, alongside: {
             UIView.animate(withDuration: 0.18, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
                 self.grid.alpha = 0
+                self.emptyLabel.alpha = 0
             }
+            self.setIncognitoLabel(false, animated: true)
             self.fadeCaptions()
         }, completion: completion)
     }
@@ -1188,6 +1287,7 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
         displayOrder = recentIDs.compactMap { tabIDs.firstIndex(of: $0) }
         self.current = current
         caughtCells = [:]
+        updateEmptyLabel(animated: true)
         if cell.isUserInteractionEnabled {
             // Closed from VoiceOver's action, it shrinks and fades where it is.
             cell.isUserInteractionEnabled = false
@@ -1280,7 +1380,7 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
     private func closeGesture(_ gesture: TabCell.CloseGesture, at index: Int) {
         switch gesture {
         case .began:
-            guard closing == nil, cells.count > 1 else { return }
+            guard closing == nil, cells.count > 1 || cells[index].isPrivateBrowsing else { return }
             if moving != nil { land() }
             entrance.freeze(cells: cells)
             caughtCells = [:]
@@ -1317,6 +1417,8 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
     /// Hides the switcher at once.
     func hide() {
         stop()
+        setIncognitoLabel(false, animated: false)
+        emptyLabel.alpha = 0
         isHidden = true
         grid.alpha = 0
         grid.transform = .identity

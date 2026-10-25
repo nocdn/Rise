@@ -199,8 +199,8 @@ import WebKit
         browser.bottomBar.moreButton.sendActions(for: .primaryActionTriggered)
         try await Task.sleep(for: .milliseconds(400))
         let bar = browser.bottomBar, history = bar.tabMenu.historyButton
-        try check("switcher-more-shows-only-the-history-panel", bar.panel == .tabMenu && bar.shown === bar.tabMenu
-                  && bar.tabMenu.subviews.count == 1 && bar.menu.alpha == 0 && !bar.menu.isUserInteractionEnabled)
+        try check("switcher-more-shows-only-incognito-mode-and-history", bar.panel == .tabMenu && bar.shown === bar.tabMenu
+                  && bar.tabMenu.subviews.count == 2 && bar.menu.alpha == 0 && !bar.menu.isUserInteractionEnabled)
         try check("history-row-matches-the-address-row-geometry", history.bounds.size == bar.menu.address.bounds.size
                   && history.layer.cornerRadius == SearchPanel.cornerRadius && history.center.x == bar.menu.address.center.x)
         try check("history-uses-the-supplied-icon", MenuIcons.history != nil && history.accessibilityLabel == "History")

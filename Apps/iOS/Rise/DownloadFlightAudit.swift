@@ -57,7 +57,7 @@ import UIKit
         try check("download-start-waits-for-impact-before-its-single-pulse", flight.impactFeedbackCount == 0)
         let position = flight.card.layer.animation(forKey: "download.position") as? CAKeyframeAnimation
         try check("flight-starts-at-the-original-window-touch", (position?.values?.first as? NSValue)?.cgPointValue == origin)
-        try check("flight-reuses-the-download-list-row-style", flight.card.backgroundColor == DownloadsPanel.rowFill
+        try check("flight-uses-a-solid-download-row", flight.card.backgroundColor == MobileDownloadFlight.fill
                   && flight.card.bounds.height == DownloadsPanel.rowHeight && flight.card.layer.cornerRadius == MenuPanel.cornerRadius)
         try check("flight-never-intercepts-touches", !flight.isUserInteractionEnabled && flight.accessibilityElementsHidden)
         let target = button.convert(CGPoint(x: button.bounds.midX, y: button.bounds.midY), to: window)

@@ -51,6 +51,10 @@ import UIKit
 /// This overlay never intercepts a touch; each transfer has its own flight and additive
 /// impact, so rapid successive downloads don't replace one another's animation.
 @MainActor final class MobileDownloadFlight: UIView {
+    /// Solid, unlike the list's translucent row: the Downloads row as it looks over the
+    /// dark bar, and white in light mode, so pages never show through mid-flight.
+    static let fill = UIColor { $0.userInterfaceStyle == .dark
+        ? UIColor(red: 44/255, green: 44/255, blue: 46/255, alpha: 1) : .white }
     let path: MobileDownloadFlightPath
     let card: DownloadsPanel.Row
     private weak var landing: UIView?
@@ -78,9 +82,12 @@ import UIKit
         card.layer.cornerRadius = MenuPanel.cornerRadius
         card.bounds = CGRect(origin: .zero, size: MobileDownloadFlightPath.cardSize)
         card.center = origin
+        card.backgroundColor = Self.fill
+        // Black shadows fade into dark pages, so dark mode needs a deeper one to read as subtle.
+        let dark = window.traitCollection.userInterfaceStyle == .dark
         card.layer.shadowColor = UIColor.black.cgColor
-        card.layer.shadowOpacity = 0.18
-        card.layer.shadowRadius = 10
+        card.layer.shadowOpacity = dark ? 0.4 : 0.12
+        card.layer.shadowRadius = dark ? 14 : 12
         card.layer.shadowOffset = CGSize(width: 0, height: 4)
         card.layer.shadowPath = UIBezierPath(roundedRect: card.bounds, cornerRadius: MenuPanel.cornerRadius).cgPath
         addSubview(card)

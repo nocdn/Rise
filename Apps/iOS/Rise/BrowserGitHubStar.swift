@@ -24,15 +24,8 @@ extension BrowserViewController {
     }
     func setGitHubRepositoryStar(_ action: MobileGitHubStarrer.Action,repository: GitHubRepository,store: WKWebsiteDataStore) {
         guard view.window != nil, !githubStarrer.isPending(repository, store: store) else { return }
-        githubStarToast?.dismiss(animated: false)
         let toast = GitHubStarToast(repository: repository,action: action)
-        githubStarToast = toast
-        toast.onDismiss = { [weak self, weak toast] in
-            if self?.githubStarToast === toast { self?.githubStarToast = nil }
-        }
-        view.insertSubview(toast, belowSubview: bottomBar)
-        toast.place(above: bottomBar.frame.minY, in: view.bounds, safeTop: view.safeAreaInsets.top)
-        toast.appear()
+        showToast(toast)
         Task { [weak self, weak toast] in
             guard let self else { return }
             // Give WebKit time to finish if the user briefly leaves the app. Expiration

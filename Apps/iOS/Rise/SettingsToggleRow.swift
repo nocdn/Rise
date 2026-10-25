@@ -61,7 +61,8 @@ final class SettingsToggleRow: UIButton {
         toggle.center = CGPoint(x: bounds.width-16-toggle.bounds.width/2, y: bounds.midY)
         spinner.bounds.size = spinner.intrinsicContentSize
         spinner.center = CGPoint(x: toggle.frame.minX-21, y: bounds.midY)
-        let iconColumn: CGFloat = 28, textX: CGFloat = 16+iconColumn+10
+        // Without an icon, the title starts where the icon would.
+        let iconColumn: CGFloat = 28, textX: CGFloat = symbol.image == nil ? 16 : 16+iconColumn+10
         symbol.frame = CGRect(x: 16+(iconColumn-iconSide)/2, y: bounds.midY-iconSide/2,
                               width: iconSide, height: iconSide)
         label.frame = CGRect(x: textX, y: 0, width: max(0, toggle.frame.minX-12-textX), height: bounds.height)

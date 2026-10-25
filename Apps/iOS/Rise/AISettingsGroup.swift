@@ -140,7 +140,7 @@ final class AISettingsGroup: UIView, UITextFieldDelegate {
     }
 
     private func updateDetail() {
-        detail.text = saveError ?? "Ask and Summarise use your AI provider with permission. Keys stay in this device’s Keychain."
+        detail.text = saveError ?? "Ask, Summarise and Explain in Context use your AI provider with permission. Keys stay in this device’s Keychain."
         detail.numberOfLines = saveError == nil ? 3 : 0
         detail.textColor = saveError == nil ? .secondaryLabel : .systemRed
     }

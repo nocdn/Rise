@@ -106,15 +106,15 @@ import WebKit
         browser.openPanel(.menu); browser.openSiteSettings()
         try? await Task.sleep(for: .milliseconds(650))
         let panel = browser.bottomBar.siteSettings
-        panel.switches[1].setOn(true, animated: false); panel.switches[1].sendActions(for: .valueChanged)
-        settings["spinnerStarts"] = panel.isUpdatingCookieBanners && !panel.switches[1].isEnabled
+        panel.switches[2].setOn(true, animated: false); panel.switches[2].sendActions(for: .valueChanged)
+        settings["spinnerStarts"] = panel.isUpdatingCookieBanners && !panel.switches[2].isEnabled
         for _ in 0..<200 {
             try? await Task.sleep(for: .milliseconds(50))
             let accepted = (try? await page.evaluateJavaScript("window.accepted===1")) as? Bool == true
             if !panel.isUpdatingCookieBanners && accepted { break }
         }
         settings["enabledAccepts"] = (try? await page.evaluateJavaScript("window.accepted===1 && !window.banner?.isConnected")) as? Bool ?? false
-        settings["spinnerStops"] = !panel.isUpdatingCookieBanners && panel.switches[1].isEnabled
+        settings["spinnerStops"] = !panel.isUpdatingCookieBanners && panel.switches[2].isEnabled
         settings["panelStaysOpen"] = browser.isPanelOpen && browser.bottomBar.shown === panel
         settings["adsRemainOff"] = !browser.adBlocker.isInstalled(on: page)
         await load(page, url: url)
@@ -143,13 +143,13 @@ import WebKit
         for _ in 0..<200 where browser.adBlockingNavigation == nil { try? await Task.sleep(for:.milliseconds(1)) }
         page.load(URLRequest(url:base.appendingPathComponent("case/no-cookie-purpose")))
         for _ in 0..<200 { if !panel.isUpdatingCookieBanners { break };try? await Task.sleep(for:.milliseconds(25)) }
-        settings["interruptedCookieReloadSettles"] = !panel.isUpdatingCookieBanners && panel.switches[1].isEnabled
+        settings["interruptedCookieReloadSettles"] = !panel.isUpdatingCookieBanners && panel.switches[2].isEnabled
         await load(page,url:url)
         browser.changeCookieBanners(true)
         for _ in 0..<200 where browser.adBlockingNavigation == nil { try? await Task.sleep(for:.milliseconds(1)) }
         page.load(URLRequest(url:URL(string:"http://127.0.0.1:1/unavailable")!))
         for _ in 0..<200 { if !panel.isUpdatingCookieBanners { break };try? await Task.sleep(for:.milliseconds(25)) }
-        settings["failedCookieReloadSettles"] = !panel.isUpdatingCookieBanners && panel.switches[1].isEnabled
+        settings["failedCookieReloadSettles"] = !panel.isUpdatingCookieBanners && panel.switches[2].isEnabled
         // Fast cross-host history must not leave a restored isolated engine stopped.
         cookie.setEnabled(true,for:base)
         let second = URL(string:base.absoluteString.replacingOccurrences(of:"127.0.0.1",with:"localhost"))!

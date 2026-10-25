@@ -10,6 +10,14 @@ extension BrowserViewController {
         bottomBar.siteSettings.setCookieBanners(enabled: adBlocker.cookieBanners.isEnabled(for: url),
             available: url?.host != nil && ["http","https"].contains(url?.scheme ?? "") && (reloadingCookieBanners || adBlockingPage == nil),
             busy: adBlockingPage === webView && reloadingCookieBanners)
+        bottomBar.siteSettings.setPopups(enabled: adBlocker.popups.isEnabled(for: url),
+            available: CookieConsentPolicy.site(url) != nil)
+    }
+
+    func changePopupBlocking(_ enabled: Bool) {
+        guard let url = webView.url else { updateAdBlockingSettings(); return }
+        adBlocker.popups.setEnabled(enabled, for: url)
+        updateAdBlockingSettings()
     }
 
     func changeAdBlocking(_ enabled: Bool) {
@@ -79,6 +87,17 @@ extension BrowserViewController {
     func webView(_ page: WKWebView, decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping @MainActor @Sendable (WKNavigationActionPolicy) -> Void) {
         let adBlocker = blocker(for: page)
+        if action.targetFrame?.isMainFrame == true {
+            adBlocker.popups.noteNavigation("navigation.requested", in: page, destination: action.request.url,
+                details: ["navigationType": String(action.navigationType.rawValue), "method": action.request.httpMethod ?? "GET"])
+        }
+        if adBlocker.popups.blocksOpenerNavigation(action, in: page) {
+            decisionHandler(.cancel); return
+        }
+        if action.targetFrame?.isMainFrame == true, let url = action.request.url,
+           adBlocker.popups.blocksPopupNavigation(to: url, in: page) {
+            decisionHandler(.cancel); webViewDidClose(page); return
+        }
         if let url = action.request.url, url.scheme == MobileTabHistory.scheme {
             decisionHandler(action.targetFrame?.isMainFrame == true && MobileTabHistory.permits(url, in: page) ? .allow : .cancel)
             return
@@ -98,6 +117,13 @@ extension BrowserViewController {
     func webView(_ page: WKWebView, decidePolicyFor response: WKNavigationResponse,
                  decisionHandler: @escaping @MainActor @Sendable (WKNavigationResponsePolicy) -> Void) {
         let adBlocker = blocker(for: page)
+        if response.isForMainFrame {
+            adBlocker.popups.noteNavigation("navigation.response", in: page, destination: response.response.url,
+                details: ["status": String((response.response as? HTTPURLResponse)?.statusCode ?? 0), "displayable": String(response.canShowMIMEType)])
+        }
+        if response.isForMainFrame, let url = response.response.url, adBlocker.popups.blocksPopupNavigation(to: url, in: page, stage: "response") {
+            decisionHandler(.cancel); webViewDidClose(page); return
+        }
         if let url = response.response.url, url.scheme == MobileTabHistory.scheme {
             decisionHandler(response.isForMainFrame && MobileTabHistory.permits(url, in: page) ? .allow : .cancel)
             return

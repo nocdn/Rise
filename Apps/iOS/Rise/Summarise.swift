@@ -364,6 +364,8 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     /// What the page underneath is up to, noted as the card grows back into it.
     var describePage: (() -> String)?
     private(set) var isOverPage = true
+    /// Opened in dark mode, over the dark backdrop.
+    let isDark: Bool
     var isRevealed: Bool { revealT != nil }
     /// Set, the scene runs on this clock, in seconds, instead of the display's; tests step it.
     var manualTime: CFTimeInterval? {
@@ -448,15 +450,19 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
 
     /// `page` makes a replica of the page, as `snapshotView(afterScreenUpdates:)` does, which is
     /// quick enough to make as the fingers start to move, unlike drawing it.
-    init(page: @escaping () -> UIView, title: String, size: CGSize, summaryHost: UIHostingController<SummaryBlocks>) {
+    init(page: @escaping () -> UIView, title: String, size: CGSize, summaryHost: UIHostingController<SummaryBlocks>,
+         style: UIUserInterfaceStyle) {
         pageReplica = page()
+        isDark = style == .dark
         self.size = size
         let reveal = SummaryReveal()
         self.reveal = reveal
         self.summaryHost = summaryHost
         super.init(frame: CGRect(origin: .zero, size: size))
-        // A light canvas keeps the summary readable over Rise's pale icon colours.
-        overrideUserInterfaceStyle = .light
+        // Held at the appearance it opened in, so its colours stay put whatever the system does.
+        overrideUserInterfaceStyle = isDark ? .dark : .light
+        summaryHost.overrideUserInterfaceStyle = overrideUserInterfaceStyle
+        let palette = isDark ? Backdrop.dark : Backdrop.light
         accessibilityViewIsModal = true
 
         backdrop.frame = bounds
@@ -465,21 +471,20 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         // linear-gradient(100deg, …): the line runs through the middle, long enough to reach the corners.
         let angle = 100*degrees, direction = CGPoint(x: sin(angle), y: -cos(angle))
         let half = (abs(size.width*direction.x)+abs(size.height*direction.y))/2
-        // Rise.icon's cream, mint and lilac, softened towards white.
-        wash.colors = [Self.color(0xFFF8EC), Self.color(0xF1FCFB), Self.color(0xF9F4FE)]
+        wash.colors = palette.wash.map { Self.color($0) }
         wash.locations = [0, 0.5, 1]
         wash.startPoint = CGPoint(x: 0.5-direction.x*half/size.width, y: 0.5-direction.y*half/size.height)
         wash.endPoint = CGPoint(x: 0.5+direction.x*half/size.width, y: 0.5+direction.y*half/size.height)
         wash.frame = bounds
         for glow in [coolGlow, warmGlow] { glow.opacity = 0 }
-        coolGlow.contents = Self.coolGlowImage
-        warmGlow.contents = Self.warmGlowImage
+        coolGlow.contents = palette.coolGlow
+        warmGlow.contents = palette.warmGlow
         for glow in [coolGlow, warmGlow] {
             guard let image = glow.contents.map({ $0 as! CGImage }) else { continue }
             glow.bounds.size = CGSize(width: image.width, height: image.height)
         }
-        // Lighter towards the bottom.
-        fade.colors = [Self.color(0xF9FAFD, alpha: 0), Self.color(0xF9FAFD)]
+        // Lighter towards the bottom, or in dark mode settling towards the bar's grey.
+        fade.colors = [Self.color(palette.fade, alpha: 0), Self.color(palette.fade)]
         fade.startPoint = CGPoint(x: 0.5, y: 0.68)
         fade.endPoint = CGPoint(x: 0.5, y: 1)
         fade.frame = bounds
@@ -500,8 +505,9 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
 
         // Plain, as the summary's text: no fill or border, its text where the paragraphs' starts.
         followUp.font = .systemFont(ofSize: 17)
-        followUp.textColor = UIColor(red: 28/255, green: 28/255, blue: 30/255, alpha: 0.85)
-        followUp.tintColor = UIColor(red: 42/255, green: 48/255, blue: 1, alpha: 1)
+        followUp.textColor = SummaryBlocks.uiInk(0.85)
+        followUp.tintColor = UIColor { $0.userInterfaceStyle == .dark
+            ? UIColor(red: 112/255, green: 142/255, blue: 1, alpha: 1) : UIColor(red: 42/255, green: 48/255, blue: 1, alpha: 1) }
         followUp.returnKeyType = .send
         followUp.enablesReturnKeyAutomatically = true
         followUp.isUserInteractionEnabled = false
@@ -518,7 +524,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         dock.translatesAutoresizingMaskIntoConstraints = false
         dock.addSubview(followUp)
         // Softer than the text, stronger than the placeholder.
-        let accessoryTint = UIColor(red: 28/255, green: 28/255, blue: 30/255, alpha: 0.55)
+        let accessoryTint = SummaryBlocks.uiInk(0.55)
         plusGlyph.tintColor = accessoryTint
         plusGlyph.contentMode = .scaleAspectFit
         plusGlyph.isUserInteractionEnabled = false
@@ -567,17 +573,17 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
                                                name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
 
         back.frame = CGRect(x: M.backInset, y: -M.backPeek, width: size.width-2*M.backInset, height: 90)
-        back.backgroundColor = Self.color(0xC7C7CB)
+        back.backgroundColor = Self.color(isDark ? 0x3A3A3C : 0xC7C7CB)
         back.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner]
         back.opacity = 0
         for shadow in [shadowWide, shadowNear] {
-            shadow.shadowColor = Self.color(0x343232)
+            shadow.shadowColor = isDark ? UIColor.black.cgColor : Self.color(0x343232)
             shadow.shadowOpacity = 0
         }
         shadowWide.shadowRadius = 17; shadowWide.shadowOffset = CGSize(width: 0, height: 10)
         shadowNear.shadowRadius = 1.5; shadowNear.shadowOffset = CGSize(width: 0, height: 1)
         card.masksToBounds = true
-        card.backgroundColor = UIColor.systemBackground.cgColor
+        card.backgroundColor = UIColor.systemBackground.resolvedColor(with: traitCollection).cgColor
         card.addSublayer(pageReplica.layer)
         for layer in [back, shadowWide, shadowNear, card] { group.addSublayer(layer) }
         content.layer.addSublayer(group)
@@ -1171,7 +1177,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     private func setFollowUpPlaceholder(_ text: String) {
         followUp.attributedPlaceholder = NSAttributedString(string: text, attributes: [
             .font: SummaryBlocks.font,
-            .foregroundColor: UIColor(red: 28/255, green: 28/255, blue: 30/255, alpha: 0.35),
+            .foregroundColor: SummaryBlocks.uiInk(0.35),
         ])
     }
 
@@ -1278,10 +1284,14 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         scroll.contentOffset.y = CGFloat(target)
         if !reducesMotion {
             let flight = SendFlight(from: from, to: to, scrollFrom: start, scrollTo: target)
-            let ghost = SendGhost(mask: drawn.image, textSize: drawn.size, scale: max(1, scale))
-            // Over the field and the summary's fade, so it lifts off the field where it shows.
-            layer.addSublayer(ghost.layer)
-            ghost.fly(flight, startInk: followUp.textColor ?? .label, scroll: scroll.layer, onScreen: true)
+            // The bubble's colours resolve for the summary's appearance, not the app's.
+            var ghost: SendGhost!
+            traitCollection.performAsCurrent {
+                ghost = SendGhost(mask: drawn.image, textSize: drawn.size, scale: max(1, scale))
+                // Over the field and the summary's fade, so it lifts off the field where it shows.
+                layer.addSublayer(ghost.layer)
+                ghost.fly(flight, startInk: followUp.textColor ?? .label, scroll: scroll.layer, onScreen: true)
+            }
             sending = (flight, t, asked, ghost)
             // On the render server before the keyboard's teardown holds up the main thread.
             CATransaction.flush()
@@ -1717,10 +1727,23 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     }
 
     /// Drawn once, as blurring them takes a moment: early, so the first summary doesn't wait.
-    static func prepareGlows() { _ = coolGlowImage; _ = warmGlowImage }
-    // Sampled from Assets/AppIcon/Rise.icon/Assets/Light.png: mint/blue and cream/blush.
-    private static let coolGlowImage = glow(size: M.coolGlowSize, inner: (197, 242, 239), outer: (206, 231, 251))
-    private static let warmGlowImage = glow(size: M.warmGlowSize, inner: (254, 234, 202), outer: (254, 208, 232))
+    static func prepareGlows() { _ = Backdrop.light; _ = Backdrop.dark }
+
+    /// The wash, the glows and the bottom's fade, for each appearance.
+    @MainActor private struct Backdrop {
+        let wash: [Int], fade: Int
+        let coolGlow: CGImage?, warmGlow: CGImage?
+        // Rise.icon's cream, mint and lilac, softened towards white, with glows sampled from
+        // Assets/AppIcon/Rise.icon/Assets/Light.png: mint/blue and cream/blush.
+        static let light = Backdrop(wash: [0xFFF8EC, 0xF1FCFB, 0xF9F4FE], fade: 0xF9FAFD,
+            coolGlow: glow(size: M.coolGlowSize, inner: (197, 242, 239), outer: (206, 231, 251)),
+            warmGlow: glow(size: M.warmGlowSize, inner: (254, 234, 202), outer: (254, 208, 232)))
+        // The same hues taken down to the bar's dark grey: umber, deep teal and plum, under
+        // deeper, more saturated glows, which glow a little brighter than the wash they sit on.
+        static let dark = Backdrop(wash: [0x282017, 0x13272A, 0x251B32], fade: 0x18181B,
+            coolGlow: glow(size: M.coolGlowSize, inner: (56, 172, 160), outer: (66, 112, 204)),
+            warmGlow: glow(size: M.warmGlowSize, inner: (204, 138, 58), outer: (194, 70, 142)))
+    }
 
     /// A soft elliptical glow, as `radial-gradient(closest-side, …)` under `blur(40px)` in the playground.
     private static func glow(size: Double, inner: (Double, Double, Double), outer: (Double, Double, Double)) -> CGImage? {
@@ -1783,7 +1806,12 @@ struct SummaryBlocks: View {
     static let font = UIFont.systemFont(ofSize: 17)
     /// 22-point lines.
     static let lineSpacing = 22-font.lineHeight
-    static let ink = Color(red: 28/255, green: 28/255, blue: 30/255)
+    static let ink = Color(uiInk(1))
+    /// Near black, or in dark mode near white.
+    static func uiInk(_ alpha: CGFloat) -> UIColor {
+        UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 236/255, green: 236/255, blue: 241/255, alpha: alpha)
+            : UIColor(red: 28/255, green: 28/255, blue: 30/255, alpha: alpha) }
+    }
     static let sideSpacing: CGFloat = 24
     static let paragraphSpacing: CGFloat = 18
     static let endSpacing: CGFloat = 64
