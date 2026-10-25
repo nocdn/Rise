@@ -30,7 +30,7 @@ took: Chromium built from source with our own patches and our own embedding laye
 | `scripts/engine/patch.sh` | Applies our patches (skips any already applied), then the branding |
 | `scripts/engine/brand.py` | Names Rise where Chromium names itself (in every language) and puts Rise's icon (`Engine/branding/logo.png`) where Chromium's logo shows; a script rather than a patch, so it needs no fitting to new versions |
 | `scripts/engine/build.sh` | Builds Chromium.app for Apple silicon, whose framework Rise links and carries |
-| `Engine/adblock/` | Ad and tracker blocking for pages: Brave's `adblock` crate behind a small C interface |
+| `Engine/adblock/` | Ad blocking for pages: Brave's `adblock` crate behind a small C interface |
 
 Needs Xcode with the macOS SDK the pin expects (26.5 for Chromium 156), its Metal
 toolchain (`xcodebuild -downloadComponent MetalToolchain`), and about 100 GB free.

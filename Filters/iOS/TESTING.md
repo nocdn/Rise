@@ -70,8 +70,8 @@ Resource-timing entries are supporting evidence, not a packet capture: blocked o
 cross-origin requests can still appear in timing data. DOM ad slots can be empty
 placeholders. The HTTP fixture and paired snapshots provide independent checks.
 The audit does not bypass paywalls, consent requirements or login restrictions;
-cookie consent prompts can still cover a page. Separate tracker/cookie-banner
-controls remain visual and are not implemented by this change.
+cookie consent prompts can still cover a page. Cookie banner handling has its own
+engine and control; see `docs/CookieConsent.md`.
 
 ## Reproduce
 

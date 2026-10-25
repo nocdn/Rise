@@ -7,7 +7,6 @@ import UIKit
     /// The supplied SVG, preserved as a vector asset with the same 1.8-point stroke.
     static let siteSettings = UIImage(named: "MenuSiteSettings")
     static let blockAds = UIImage(named: "MenuBlockAds")
-    static let blockTrackers = UIImage(named: "MenuBlockTrackers")
     static let blockCookieBanners = UIImage(named: "MenuBlockCookieBanners")
     static let bypassPaywall = UIImage(named: "MenuBypassPaywall")
     /// The arrow from Tabler's cloud download, enlarged slightly and centred.

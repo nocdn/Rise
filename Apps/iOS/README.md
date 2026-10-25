@@ -128,14 +128,14 @@ icons, with its gear and title centred, using their fill, press effects and outl
 It swaps More's contents with the same blurred crossfade as returning to the bar, while the panel
 grows on the closing spring. Settings has an Open Runde Semibold title at the left and the address
 editor's X at the right, returning to More with the same animated swap. Beneath it, a joined group
-of 60-point rows offers Block ads, Block trackers and Block cookie banners in Open Runde Medium,
+of two 60-point rows offers Block ads and Block cookie banners in Open Runde Medium,
 with the supplied Tabler icons, inset hairline dividers and blue native switches. The ads icon is
-red, trackers orange and cookies green; switching a protection off mutes its icon to 35% opacity.
-Tracker and cookie icons are slightly smaller, centred in the same icon column. The rows darken
+red and the cookie icon is orange; switching a protection off mutes its icon to 35% opacity.
+The cookie icon is slightly smaller, centred in the same icon column. The rows darken
 while pressed without scaling.
 Rapid panel changes keep all earlier visible contents in the outgoing fade, so tapping More then
 Site settings before the first swap finishes cannot leave the compact toolbar behind.
-The switches start on and only change their appearance for now; WebKit's protections are unchanged.
+Both switches default on and apply their independent per-site policies, reloading the page with native progress feedback.
 Tapping the page or swiping down still closes the panel.
 The Downloads button fills horizontally with translucent light blue while files download.
 Progress combines the current batch by byte count when sizes are known; completed files keep

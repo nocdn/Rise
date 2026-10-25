@@ -1,0 +1,5 @@
+! Site compatibility exceptions are included in every engine so a broader list
+! cannot override them. Keep both the destination and the source site scoped.
+! Sentry's dashboard and sign-in app load CSS and JavaScript (including their
+! ads.js blocker probe) from this static asset host.
+@@||s1.sentry-cdn.com^$domain=sentry.io|sentry.dev

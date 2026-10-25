@@ -76,7 +76,7 @@ The Rise theme's Mist wash (Sources/Rise/Chrome.swift), the Plain light theme's 
 
 ## Blocking filter data
 
-EasyList and EasyPrivacy: The EasyList authors (https://easylist.to/). HaGeZi Multi PRO mini: HaGeZi (https://github.com/hagezi/dns-blocklists). The filter data is distributed under GPL-3.0; its complete license is in Filters/LICENSES/GPL-3.0.txt. Original source snapshots are included in Filters/Sources/.
+EasyList: The EasyList authors (https://easylist.to/). The filter data is distributed under GPL-3.0; its complete license is in Filters/LICENSES/GPL-3.0.txt. The original source snapshot is included in Filters/Sources/.
 
 AdGuard SafariConverterLib 4.3.0 is used as a build-time conversion tool for the iPhone app's rules (GPL-3.0, https://github.com/AdguardTeam/SafariConverterLib); its binary is not bundled or linked into Rise.
 

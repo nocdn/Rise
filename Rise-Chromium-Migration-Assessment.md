@@ -46,7 +46,7 @@ Electron's WebContentsView is part of Electron's own View/window architecture; i
 | Split tabs | Two independent child page views | Preserve layout and tab grouping. Validate two CEF views, keyboard focus and context sharing. Medium risk. |
 | Swipe arrows, threshold haptic | Native event routing and `HistorySwipeState` | Keep gesture mathematics/haptics. Replace page hit-testing, isolated DOM probe, replay and navigation. Medium risk. |
 | Compression/ripple | Metal drawing over captured pages | Keep shader/motion; replace capture and history-entry cache keys. Lower priority, medium/high capture risk. |
-| Ad/tracker blocking | WK content-rule lists, native compiled rules | Replace backend completely. Reuse original filter lists and toggle UX. High work. |
+| Ad blocking | WK content-rule lists, native compiled rules | Replace backend completely. Reuse ad filter lists and toggle UX. High work. |
 | Hover preloading/shimmer | Hidden WK pages sharing storage, isolated hover bridge | Keep pill/shimmer. Replace page bridge and cache-warming mechanism. Medium/high work. |
 | Find, zoom, developer tools, dialogs | WK APIs and AppKit UI | Map to CEF APIs; preserve native controls. Zoom and callback semantics differ. Medium work. |
 | Downloads | WKDownload feeds native model/progress | CEF download handlers feed the same model. Keep collision-safe filenames and flight animation. Medium work. |
@@ -85,7 +85,7 @@ CEF permission/media callbacks can feed the current native permission coordinato
 
 ### Ad blocking
 
-The current compiled WK rule JSON cannot be attached to a Chromium browser. Keep the original EasyList/EasyPrivacy/HaGeZi inputs and Rise-specific rules, then use a native filter matcher through CEF request interception. Brave's `adblock-rust` is a credible candidate because it implements network and cosmetic filtering, hosts rules and additional filter syntax. It still requires integration, resource packaging and its license/notices; it is not a one-call CEF plugin. [Current blocker](/Users/bartosz/github/Rise/Sources/Rise/AdBlocker.swift:6), [Brave library](https://github.com/brave/adblock-rust).
+The current compiled WK rule JSON cannot be attached to a Chromium browser. Keep the original EasyList input and Rise-specific ad rules, then use a native filter matcher through CEF request interception. Brave's `adblock-rust` is a credible candidate because it implements network and cosmetic filtering, hosts rules and additional filter syntax. It still requires integration, resource packaging and its license/notices; it is not a one-call CEF plugin. [Current blocker](/Users/bartosz/github/Rise/Sources/Rise/AdBlocker.swift:6), [Brave library](https://github.com/brave/adblock-rust).
 
 Matching must include requesting-frame origin, resource type, exceptions, redirects and relevant worker requests. Cosmetic hiding needs its own installation and dynamic-document behavior. Decisions should happen efficiently on the engine's request path, not through an AppKit callback per resource. Preserve the enabled-by-default preference and reload-on-toggle behavior, including Peek, standby and inactive tabs. Re-run controlled request/cosmetic tests and the public test suites; the WebKit build's scores do not prove Chromium blocking parity. [CEF request interception](https://github.com/chromiumembedded/cef/blob/ff57d4eae16d36457895f2de115a71d502e85a08/include/cef_resource_request_handler.h).
 

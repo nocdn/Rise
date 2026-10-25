@@ -2,9 +2,8 @@
 
 The iPhone uses WebKit content rules converted from AdGuard's full Safari Base
 list (including EasyList), Mobile Ads, and Quick Fixes. The Base/Mobile lists also
-contain maintained anti-adblock fixes. It does not install the desktop's separate
-EasyPrivacy or HaGeZi lists; the tracker switch remains a visual control. Cookie
-banner acceptance has a separate engine and functional per-site switch; see
+contain maintained anti-adblock fixes. There is no separate tracker-blocking
+engine or switch. Cookie banner acceptance has a separate engine and functional per-site switch; see
 [Cookie consent](../../docs/CookieConsent.md).
 
 `Sources/` contains the original GPL-3.0 snapshots. Converted rules, bundled

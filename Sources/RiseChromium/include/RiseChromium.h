@@ -8,7 +8,7 @@ NS_ASSUME_NONNULL_BEGIN
 #endif
 
 /// Chromium's browser process inside Rise: started once, before any page.
-/// Ad and tracker blocking for every Chromium page, from Brave's adblock engine built with the
+/// Ad blocking for every Chromium page, from Brave's adblock engine built with the
 /// filter lists WebKit's rules come from. Requests go out unchecked until the lists are loaded.
 RC_EXPORT @interface RCAdBlock : NSObject
 /// Whether this build has it.

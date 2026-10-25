@@ -139,7 +139,7 @@ final class SiteSettingRow: NSButton {
         let cookies = browser.cookieConsent.isEnabled(for: browser.selectedTab?.url)
         row("Dismiss Cookie Dialogs", subtitle: cookies ? "On" : "Off", symbol: "", image: TablerIcon.image(TablerIcon.cookie, size: 17*scale), active: cookies, checked: cookies) { [weak browser] in browser?.toggleCookieConsent() }
         rows["Dismiss Cookie Dialogs"]?.isEnabled = SitePermissions.origin(browser.selectedTab?.url) != nil
-        row("Block Ads & Trackers", subtitle: browser.adBlocker.enabled ? "On" : "Off", symbol: "shield.fill", active: browser.adBlocker.enabled, checked: browser.adBlocker.enabled) { [weak browser] in browser?.toggleAdBlocking(); browser?.refreshSiteControls() }
+        row("Block Ads", subtitle: browser.adBlocker.enabled ? "On" : "Off", symbol: "shield.fill", active: browser.adBlocker.enabled, checked: browser.adBlocker.enabled) { [weak browser] in browser?.toggleAdBlocking(); browser?.refreshSiteControls() }
         let pip = browser.sitePermissions.automaticPictureInPicture(origin: origin)
         row("Automatic Picture-In-Picture", subtitle: pip ? "Allowed" : "Blocked", symbol: "gearshape.fill", active: pip) { [weak browser] in browser?.toggleAutomaticPictureInPicture(); browser?.refreshSiteControls() }
         row("Preload Links", subtitle: browser.linkPreloader.enabled ? "On · Experimental" : "Off · Experimental", symbol: "bolt.fill", active: browser.linkPreloader.enabled, checked: browser.linkPreloader.enabled) { [weak browser] in

@@ -8,7 +8,7 @@ final class SiteSettingsPanel: UIView {
     static let appSettingsRowHeight: CGFloat = 68
     /// Between the protections and Bypass paywall, set apart below them.
     static let groupGap: CGFloat = 18
-    static var height: CGFloat { rowsTop+4*rowHeight+2*groupGap+appSettingsRowHeight }
+    static var height: CGFloat { rowsTop+3*rowHeight+2*groupGap+appSettingsRowHeight }
     /// The reference screenshot's blue, sampled in its Display P3 colour space.
     static let switchBlue = UIColor(displayP3Red: 63/255, green: 141/255, blue: 247/255, alpha: 1)
 
@@ -16,9 +16,8 @@ final class SiteSettingsPanel: UIView {
     var closeButton: AnimatedSymbolButton { header.closeButton }
     private let group = UIView()
     private let rows = [SettingsToggleRow("Block ads", icon: MenuIcons.blockAds, colour: .systemRed),
-                        SettingsToggleRow("Block trackers", icon: MenuIcons.blockTrackers, colour: .systemOrange, iconSide: 26),
-                        SettingsToggleRow("Block cookie banners", icon: MenuIcons.blockCookieBanners, colour: .systemGreen, iconSide: 26)]
-    private let dividers = [UIView(), UIView()]
+                        SettingsToggleRow("Block cookie banners", icon: MenuIcons.blockCookieBanners, colour: .systemOrange, iconSide: 26)]
+    private let divider = UIView()
     /// Off by default, and for now it changes nothing.
     private let paywallGroup = UIView()
     private let paywallRow = SettingsToggleRow("Bypass paywall", icon: MenuIcons.bypassPaywall, colour: .systemBlue, iconSide: 26, on: false)
@@ -28,10 +27,10 @@ final class SiteSettingsPanel: UIView {
     var onAdBlockingChanged: ((Bool) -> Void)?
     var onCookieBannersChanged: ((Bool) -> Void)?
     var isUpdatingAdBlocking: Bool { rows[0].spinner.isAnimating }
-    var isUpdatingCookieBanners: Bool { rows[2].spinner.isAnimating }
+    var isUpdatingCookieBanners: Bool { rows[1].spinner.isAnimating }
 
     func setCookieBanners(enabled: Bool, available: Bool, busy: Bool) {
-        let row = rows[2]
+        let row = rows[1]
         row.toggle.setOn(enabled, animated: window != nil)
         row.isEnabled = available && !busy
         row.toggle.isEnabled = available && !busy
@@ -67,12 +66,10 @@ final class SiteSettingsPanel: UIView {
         paywallRow.toggle.onTintColor = Self.switchBlue
         paywallGroup.addSubview(paywallRow)
         rows[0].onChanged = { [weak self] enabled in self?.onAdBlockingChanged?(enabled) }
-        rows[2].onChanged = { [weak self] enabled in self?.onCookieBannersChanged?(enabled) }
-        for divider in dividers {
-            divider.backgroundColor = .separator
-            divider.isUserInteractionEnabled = false
-            group.addSubview(divider)
-        }
+        rows[1].onChanged = { [weak self] enabled in self?.onCookieBannersChanged?(enabled) }
+        divider.backgroundColor = .separator
+        divider.isUserInteractionEnabled = false
+        group.addSubview(divider)
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -82,7 +79,7 @@ final class SiteSettingsPanel: UIView {
         header.frame = CGRect(x: 0, y: 0, width: bounds.width, height: Self.headerHeight)
         // Match More's full-width action exactly, including its rounded-down tile widths.
         let width = 4*MenuPanel.tileSize(width: bounds.width).width+3*MenuPanel.spacing
-        group.frame = CGRect(x: bounds.midX-width/2, y: Self.rowsTop, width: width, height: 3*Self.rowHeight)
+        group.frame = CGRect(x: bounds.midX-width/2, y: Self.rowsTop, width: width, height: CGFloat(rows.count)*Self.rowHeight)
         for (index, row) in rows.enumerated() {
             row.bounds = CGRect(x: 0, y: 0, width: width, height: Self.rowHeight)
             row.center = CGPoint(x: width/2, y: (CGFloat(index)+0.5)*Self.rowHeight)
@@ -93,9 +90,7 @@ final class SiteSettingsPanel: UIView {
         appSettingsRow.bounds = CGRect(x: 0, y: 0, width: width, height: Self.appSettingsRowHeight)
         appSettingsRow.center = CGPoint(x: bounds.midX, y: paywallGroup.frame.maxY+Self.groupGap+Self.appSettingsRowHeight/2)
         let hairline = 1/max(1, traitCollection.displayScale)
-        for (index, divider) in dividers.enumerated() {
-            divider.frame = CGRect(x: 16, y: CGFloat(index+1)*Self.rowHeight-hairline/2, width: width-32, height: hairline)
-        }
+        divider.frame = CGRect(x: 16, y: Self.rowHeight-hairline/2, width: width-32, height: hairline)
     }
 
 }

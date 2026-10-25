@@ -47,7 +47,7 @@ final class SiteControlsTests: XCTestCase {
         XCTAssertTrue(content.rows.values.allSatisfy { $0.subviews.filter { $0 is NSImageView }.count == 1 }, "Each row has only its status icon")
         XCTAssertEqual(content.view.frame.height, 374)
         XCTAssertEqual(browser.makeMoreSiteMenu().items.filter { !$0.isSeparatorItem }.map(\.title), ["Copy URL", "Site Information", "Save Page Screenshot…", "Split View", "Search Engine", "Theme", "AI Provider", "Gmail Preview Category", "Hide Notification Counts", "Show Repository Under Merge Request Tabs", "Live Page While Expanding Peek", "Animate Developer Tools", "Simulated Full Screen", "Clear Browsing History…", "Camera Permissions…", "Microphone Permissions…", "Location Permissions…"])
-        XCTAssertEqual(content.rows["Block Ads & Trackers"]?.state, .on)
+        XCTAssertEqual(content.rows["Block Ads"]?.state, .on)
         XCTAssertNil(content.rows["Notifications"])
         XCTAssertEqual(content.rows["Dismiss Cookie Dialogs"]?.state, .on)
         XCTAssertNotNil(content.rows["Dismiss Cookie Dialogs"]?.icon.image)

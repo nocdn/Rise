@@ -75,6 +75,7 @@ final class AdBlockingTests: XCTestCase {
         browser.openPanel(.menu); browser.openSiteSettings()
         try await Task.sleep(for: .milliseconds(600))
         let panel = browser.bottomBar.siteSettings
+        XCTAssertEqual(panel.switches.map(\.accessibilityLabel), ["Block ads", "Block cookie banners", "Bypass paywall"])
         panel.switches[0].setOn(false, animated: false); panel.switches[0].sendActions(for: .valueChanged)
         XCTAssertTrue(panel.isUpdatingAdBlocking)
         XCTAssertFalse(panel.switches[0].isEnabled)
@@ -94,6 +95,14 @@ final class AdBlockingTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(fixture.pageRequests, 3, "Both toggles reloaded the page behind the panel")
         XCTAssertTrue(browser.isPanelOpen)
         XCTAssertTrue(browser.bottomBar.shown === panel)
+        // The remaining cookie row must still control its own policy after the menu shrinks.
+        for enabled in [false, true] {
+            panel.switches[1].setOn(enabled, animated: false); panel.switches[1].sendActions(for: .valueChanged)
+            for _ in 0..<1500 where panel.isUpdatingCookieBanners { try await Task.sleep(for: .milliseconds(20)) }
+            XCTAssertFalse(panel.isUpdatingCookieBanners)
+            XCTAssertEqual(filter.cookieBanners.isEnabled(for: fixture.url), enabled)
+            XCTAssertTrue(filter.isInstalled(on: browser.webView), "Cookie changes leave ad blocking enabled")
+        }
         browser.changeAdBlocking(false)
         for _ in 0..<100 where browser.adBlockingNavigation == nil { try await Task.sleep(for: .milliseconds(1)) }
         let replacement = fixture.url.appendingPathComponent("replacement")

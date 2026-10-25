@@ -3,7 +3,7 @@ name = "rise-adblock"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Rise's ad and tracker blocking for Chromium pages: Brave's adblock engine behind a small C interface."
+description = "Rise's ad blocking for Chromium pages: Brave's adblock engine behind a small C interface."
 
 [lib]
 crate-type = ["staticlib"]

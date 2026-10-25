@@ -1,7 +1,7 @@
 import Foundation
 import RiseChromium
 
-/// Ads and trackers, blocked by the engine from Engine/adblock's filter lists; pages get a script
+/// Ads, blocked by the engine from Engine/adblock's filter lists; pages get a script
 /// that hides the slots the lists say to.
 @MainActor final class AdBlocker {
     static let preferenceKey = "Rise.AdBlocking"
