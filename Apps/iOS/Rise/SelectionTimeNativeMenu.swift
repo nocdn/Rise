@@ -74,6 +74,9 @@ import WebKit
         guard riseSections.count == 1, !dateSections.isEmpty else { return root }
         let timeMenus = riseSections[0].children.compactMap { $0 as? UIMenu }
         guard !timeMenus.isEmpty, timeMenus.count == riseSections[0].children.count else { return root }
+        // A zone-only selection offers a current-time snapshot and Copy. It does
+        // not name a calendar date whose native actions could be relocated here.
+        guard timeMenus.allSatisfy({ $0.children.count > 1 }) else { return root }
         let nativeGroups = dateSections.map { section in
             let actions = section.children.compactMap { $0 as? UIAction }
             return actionKinds.compactMap { kind in actions.first { $0.identifier.rawValue.hasPrefix(kind) } }

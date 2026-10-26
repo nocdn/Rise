@@ -27,6 +27,8 @@ import RiseCore
     let subtitleAccessory = NSImageView(frame: .zero)
     /// Kero's chosen row and hover, fading.
     let plainBackground = PlainTabBackground()
+    /// Developer mode's yellow and black border, over the chosen tab's card.
+    let constructionBorder = ConstructionBorder()
     /// The find bar's shimmer over the title, for Smart Rename.
     let titleShimmer = InputShimmer()
     var selected = false
@@ -78,7 +80,7 @@ import RiseCore
         isBordered = false; title = ""; wantsLayer = true; clipsToBounds = false
         layer?.cornerRadius = TabAppearance.radius; layer?.cornerCurve = .continuous
         target = self; action = #selector(selectTab)
-        addSubview(plainBackground); addSubview(icon); addSubview(titleField); addSubview(subtitle); addSubview(subtitleAccessory); addSubview(close); addSubview(playback); addSubview(audio)
+        addSubview(plainBackground); addSubview(constructionBorder); addSubview(icon); addSubview(titleField); addSubview(subtitle); addSubview(subtitleAccessory); addSubview(close); addSubview(playback); addSubview(audio)
         addSubview(peekIndicator, positioned: .below, relativeTo: close)
         addSubview(badge); badge.isHidden = true
         peekIndicator.isHidden = true; peekIndicator.alphaValue = 0
@@ -256,7 +258,9 @@ import RiseCore
         // A split half has room for its close button only.
         playback.isHidden = close.isHidden || playbackPaused == nil || isSplitMember
         if !playback.isHidden { playback.refreshHover() }
-        subtitleAccessory.isHidden = !showsSubtitle || configuration.subtitleAccessory == nil || hover || isSplitMember || showsPeek
+        subtitleAccessory.isHidden = configuration.subtitleAccessory == nil || hover || isSplitMember || showsPeek
+        constructionBorder.isHidden = !(selected && configuration.constructionBorder)
+        constructionBorder.radius = isSplitMember ? 8 : TabAppearance.radius
         needsLayout = true
     }
     override func layout() {
@@ -265,7 +269,7 @@ import RiseCore
         animateSubtitleLayout = false; hasLaidOut = bounds.width > 0 && bounds.height > 0
         let time = CACurrentMediaTime()
         let subtitleOpacity = subtitle.layer?.presentation()?.opacity ?? Float(subtitle.alphaValue)
-        plainBackground.frame = bounds
+        plainBackground.frame = bounds; constructionBorder.frame = bounds
         let titleHeight = ceil(titleField.intrinsicContentSize.height)
         let subtitleHeight = ceil(subtitle.intrinsicContentSize.height)
         let textHeight = showsSubtitle ? titleHeight + 1 + subtitleHeight : titleHeight
@@ -333,16 +337,6 @@ import RiseCore
         let accessorySize = subtitleAccessory.image?.size ?? .zero
         subtitleAccessory.frame = NSRect(x: close.frame.midX - accessorySize.width/2,
             y: close.frame.midY - accessorySize.height/2, width: accessorySize.width, height: accessorySize.height)
-    }
-    override func draw(_ dirtyRect: NSRect) {
-        // The layer and child views draw this custom row, without a button bezel.
-        if selected && configuration.constructionBorder {
-            let radius: CGFloat = isSplitMember ? 8 : TabAppearance.radius
-            let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.8, dy: 0.8), xRadius: radius, yRadius: radius)
-            let scale = TabAppearance.height / 37
-            NSColor(hex: 0xFFD73D).setStroke(); path.lineWidth = 2*scale; path.stroke()
-            NSColor(hex: 0x332D25).setStroke(); path.setLineDash([5*scale, 6*scale], count: 2, phase: 0); path.stroke()
-        }
     }
     override func updateTrackingAreas() {
         super.updateTrackingAreas(); removeOwnTrackingAreas()
@@ -452,5 +446,35 @@ final class TabBadge: FlippedView {
         let baseline = ((bounds.height+font.capHeight)/2).rounded()
         // In a flipped view, a string draws from the top of its line, its ascender above the baseline.
         string.draw(at: NSPoint(x: ((bounds.width-width)/2).rounded(), y: baseline-font.ascender))
+    }
+}
+
+/// Developer mode's border on the chosen tab: a yellow line dashed with near-black, as on a
+/// building site, over the tab's card so the card doesn't cover it.
+final class ConstructionBorder: FlippedView {
+    private let yellow = CAShapeLayer(), dashes = CAShapeLayer()
+    /// A whole pixel on any screen, two on a Retina one, so it draws crisp.
+    static let width: CGFloat = 1
+    var radius: CGFloat = TabAppearance.radius { didSet { if radius != oldValue { needsLayout = true } } }
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true; isHidden = true
+        let scale = TabAppearance.height/37
+        for (line, color) in [(yellow, NSColor(hex: 0xFFD73D)), (dashes, NSColor(hex: 0x332D25))] {
+            line.fillColor = nil; line.strokeColor = color.cgColor; line.lineWidth = Self.width
+            layer?.addSublayer(line)
+        }
+        dashes.lineDashPattern = [NSNumber(value: Double(5*scale)), NSNumber(value: Double(6*scale))]
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func layout() {
+        super.layout()
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        // On the card's own continuous corners, its outer edge on the card's.
+        let inset = Self.width/2
+        let path = PageOutline.path(in: bounds.insetBy(dx: inset, dy: inset), radius: max(0, radius-inset), continuous: true)
+        for line in [yellow, dashes] { line.frame = bounds; line.path = path }
+        CATransaction.commit()
     }
 }

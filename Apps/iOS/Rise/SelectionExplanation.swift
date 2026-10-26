@@ -9,7 +9,7 @@ import WebKit
     static let reasoningEffort = "none"
     /// Either side of the selection, from the text around it.
     static let passageRadius = 600
-    static let systemPrompt = """
+    nonisolated static let systemPrompt = """
     You explain text a reader selected on a web page in Rise, a web browser. They want to know what it means where it appears, so read the passage around it and the rest of the page for the sense it's used in.
 
     Reply in one or two short sentences, about 35 words at most. Start straight with the meaning in plain words — never with "This means", "It means", "Here", "In this context", "The selected text" or the selection itself followed by "refers to". If the page uses it in a particular or unusual sense, explain that sense, not the dictionary one; if it's a whole sentence or more, say what it's getting at in plainer words. Add why it matters here only when that helps. Write in English. No headings, lists or quotation of the page; **bold** at most one key term.
@@ -88,7 +88,8 @@ import WebKit
         let context = "Title: \(page.title)\nURL: \(page.url)\n\n<page>\n\(page.text)\n</page>"
         var question = "Selected text: \(selection)"
         if !passage.isEmpty { question += "\n\nWhere it appears:\n<passage>\n\(passage)\n</passage>" }
-        return [["role": "system", "content": systemPrompt+"\n\n"+context], ["role": "user", "content": question]]
+        let values = ["selection": selection, "passage": passage, "title": page.title, "address": page.url, "text": page.text]
+        return [["role": "system", "content": AIPrompt.explain.system(context: context, values: values)], ["role": "user", "content": question]]
     }
 }
 

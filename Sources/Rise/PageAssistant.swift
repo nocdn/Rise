@@ -15,11 +15,15 @@ enum PageAssistant {
     static let endpoint = URL(string: "https://openrouter.ai/api/v1/chat/completions")!
     /// Roughly 30k tokens of page text; long pages are cut off at the end.
     static let pageCharacterLimit = 120_000
-    static let systemPrompt = """
+    /// How to answer, which the iOS app lets the user change; `answerFormat` always follows it.
+    static let instructions = """
     You are the page assistant in Rise, a web browser. The user is reading a web page and asks a question about it in the browser's find bar. The page's text is below.
 
     Answer from the page. Be short and direct: usually one or two sentences, no preamble, and don't restate the question. Lead with the answer itself, such as the date, number, name or yes/no. If the page doesn't say, reply that it doesn't in one short sentence; only then add what you know, clearly marked as not from the page. Write plain sentences; use **bold** at most for the key fact, and no headings, tables or lists unless asked.
-
+    """
+    static var systemPrompt: String { instructions+"\n\n"+answerFormat }
+    /// The snippet header that highlighting reads, so it isn't left to a custom prompt.
+    static let answerFormat = """
     Output a single-line JSON object first, then a newline, then your answer as plain text with the light Markdown described above. The JSON object must contain exactly one field: "snippet", a string. When a specific passage on the page answers the question, put that passage in snippet, copied exactly and contiguously from the page, a sentence or two at most. Use an empty string when no passage supports the answer. JSON-escape quotes, backslashes and newlines inside the snippet so the header always occupies one line. Do not use code fences, labels, or any other text before the JSON header. Do not mention the snippet or highlighting in your answer.
 
     Example format (illustrative content, never evidence about the current page):
@@ -43,11 +47,14 @@ enum PageAssistant {
                     selection: parts.count > 1 ? parts[1] : "", text: String((source ?? parts.first ?? "").prefix(pageCharacterLimit)))
     }
 
-    static func messages(question: String, history: [Turn], page: Page) -> [[String: Any]] {
+    /// `fill` may place the page in the instructions itself, in which case it isn't added after.
+    static func messages(question: String, history: [Turn], page: Page, instructions: String = instructions,
+                         fill: (@Sendable (String, Page) -> String?)? = nil) -> [[String: Any]] {
         var context = "Title: \(page.title)\nURL: \(page.url)\n"
         if !page.selection.isEmpty { context += "Selected text: \(page.selection)\n" }
         context += "\n<page>\n\(page.text)\n</page>"
-        var messages: [[String: Any]] = [["role": "system", "content": systemPrompt+"\n\n"+context]]
+        let system = fill?(instructions, page).map { $0+"\n\n"+answerFormat } ?? instructions+"\n\n"+answerFormat+"\n\n"+context
+        var messages: [[String: Any]] = [["role": "system", "content": system]]
         for turn in history {
             messages.append(["role": "user", "content": turn.question])
             messages.append(["role": "assistant", "content": "{\"snippet\":\"\"}\n"+turn.answer])
@@ -63,11 +70,13 @@ enum PageAssistant {
                        highlight: @escaping @MainActor (String) async -> Bool,
                        inputTokens: @escaping @MainActor (Int) -> Void = { _ in },
                        provider: ModelChoice = .openRouter,
+                       instructions: String = instructions,
+                       fill: (@Sendable (String, Page) -> String?)? = nil,
                        session: URLSession = .shared) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    let messages = messages(question: question, history: history, page: try await page())
+                    let messages = messages(question: question, history: history, page: try await page(), instructions: instructions, fill: fill)
                     try Task.checkCancellation()
                     try await streamAnswer(messages, provider: provider, session: session, highlight: highlight, inputTokens: inputTokens) { continuation.yield($0) }
                     continuation.finish()

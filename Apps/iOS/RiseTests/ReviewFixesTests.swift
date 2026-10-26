@@ -152,7 +152,7 @@ final class ReviewFixesTests: XCTestCase {
         let panel = AppSettingsPanel(frame: CGRect(x: 0, y: 0, width: 393, height: 650))
         panel.layoutIfNeeded()
         XCTAssertTrue(panel.buttons.contains { $0 === panel.privacyRow })
-        XCTAssertGreaterThan(panel.privacyRow.frame.minY, panel.ai.frame.maxY)
+        XCTAssertGreaterThan(panel.privacyRow.frame.minY, panel.aiOptionsRow.frame.maxY)
         let name = "Rise.Privacy.Tests.\(UUID())"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
         defer { defaults.removePersistentDomain(forName: name) }

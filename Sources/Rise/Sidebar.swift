@@ -70,6 +70,8 @@ import RiseCore
     /// Whether a tab's video is paused, or nil when it shows none.
     var playbackState: ((UUID) -> Bool?)?
     var peekState: ((UUID) -> BrowserTab?)?
+    /// What its tabs in developer mode show, as chosen in rise://settings.
+    var developerTabLook = DeveloperTabLook()
     var onTogglePlayback: ((UUID) -> Void)?
     var onToggleMute: ((UUID) -> Void)?
     var onTabPress: (() -> Void)?
@@ -133,7 +135,8 @@ import RiseCore
             row.isSplitMember = group != nil
             row.hoverFocuses = isSearchingTabs
             let isSelected = group.map { group in selected.map { group.contains($0.id) } ?? false } ?? (tab.id == selected?.id)
-            row.update(tab: tab, selected: isSelected, theme: theme, configuration: .forTab(tab, theme: theme, peek: peekState?(tab.id)))
+            row.update(tab: tab, selected: isSelected, theme: theme,
+                       configuration: .forTab(tab, theme: theme, peek: peekState?(tab.id), developerLook: developerTabLook))
             row.setPlayback(paused: playbackState?(tab.id))
             if pinned.contains(tab.id) { if row.superview === rowsHost { row.removeFromSuperview() } }
             else if group == nil && row.superview !== rowsHost && drag?.view !== row && returningDrag?.view !== row { rowsHost.addSubview(row) }

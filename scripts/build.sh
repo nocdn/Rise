@@ -28,9 +28,9 @@ if [[ "$EXECUTABLE" == RiseLab ]]; then
   done
 fi
 cp THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/THIRD_PARTY_NOTICES.md"
-# Inter, with its license, as the font's license asks.
+# Inter and Ioskeley Mono, each with its license, as the fonts' licenses ask.
 mkdir -p "$APP/Contents/Resources/Fonts"
-cp Assets/Fonts/InterVariable.ttf Assets/Fonts/Inter-LICENSE.txt "$APP/Contents/Resources/Fonts/"
+cp Assets/Fonts/InterVariable.ttf Assets/Fonts/Inter-LICENSE.txt Assets/Fonts/IoskeleyMono-Regular.ttf Assets/Fonts/IoskeleyMono-LICENSE.txt "$APP/Contents/Resources/Fonts/"
 # Both platforms ship the same verified bundle, rebuilt from scripts/ios-cookie-consent.
 rsync -a --delete Apps/iOS/Rise/CookieConsent/ "$APP/Contents/Resources/CookieConsent/"
 xcrun actool "$PWD/Assets/AppIcon/Rise.icon" --compile "$APP/Contents/Resources" --app-icon Rise --include-all-app-icons \

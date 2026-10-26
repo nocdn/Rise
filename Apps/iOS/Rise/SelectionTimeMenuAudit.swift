@@ -7,10 +7,16 @@ import WebKit
 @MainActor enum SelectionTimeMenuAudit {
     static let argument = "-RiseSelectionTimeMenuAudit"
     static func run(in browser: BrowserViewController) {
+        let arguments = ProcessInfo.processInfo.arguments
+        let sample: String
+        if let index = arguments.firstIndex(of: "-RiseSelectionTimeMenuAuditText"), arguments.indices.contains(index+1) {
+            sample = arguments[index+1]
+        } else { sample = "10am PST" }
+        let escaped = sample.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
         browser.webView.loadHTMLString("""
         <meta name="viewport" content="width=device-width,initial-scale=1">
         <body style="padding:25px;font:24px system-ui;background:#fff;color:#111">
-        <h2>Selected time</h2><p id="time">10am PST</p><p>Select the time above.</p>
+        <h2>Selected time</h2><p id="time">\(escaped)</p><p>Select the time above.</p>
         <button style="font:20px system-ui" onclick="getSelection().selectAllChildren(document.getElementById('time'))">Select time</button>
         </body>
         """, baseURL: URL(string: "https://example.com/"))
@@ -20,7 +26,12 @@ import WebKit
                 try? await Task.sleep(for: .milliseconds(50))
             }
             _ = try? await browser.webView.evaluateJavaScript("getSelection().selectAllChildren(document.getElementById('time'))")
-            let checks = checks()
+            var checks = checks()
+            for _ in 0..<100 where SelectionTimeMenu.selection(in: browser.webView) != sample { try? await Task.sleep(for: .milliseconds(25)) }
+            checks["webKitSelectionReceived"] = SelectionTimeMenu.selection(in: browser.webView) == sample
+            let elements = SelectionTimeMenu.elements(for: sample, in: browser.webView)
+            checks["selectedTextHasAMenu"] = !elements.isEmpty
+            write(elements.compactMap { ($0 as? UIMenu).map { ["title": $0.title, "actions": $0.children.map(\.title)] } }, name: "selection-menu.json")
             write(checks, name: "checks.json")
         }
     }
@@ -63,6 +74,9 @@ import WebKit
         }
         let incomplete = root.replacingChildren([rise, lookup, dates.replacingChildren([heading, actions[0]])])
         let own = SelectionTimeMenu.elements(for: "10am PST", in: nil).first as? UIMenu
+        let zoneOnly = SelectionTimeMenu.elements(for: "UTC+14:00", in: nil).first as? UIMenu
+        let zoneSection = UIMenu(identifier: SelectionTimeMenu.menuIdentifier, children: zoneOnly.map { [$0] } ?? [])
+        let zoneRoot = root.replacingChildren([zoneSection, lookup, dates])
         return [
             "fourActions": children.count == 4,
             "copyPreserved": children.first === copy,
@@ -72,6 +86,9 @@ import WebKit
             "idempotent": SelectionTimeNativeMenu.relocatingDateActions(in: result) === result,
             "incompleteNativeActionsPreserved": SelectionTimeNativeMenu.relocatingDateActions(in: incomplete) === incomplete,
             "directSubmenuHasAllActions": own?.children.count == 4,
+            "zoneOnlyShowsCurrentTimeAndDifference": zoneOnly?.title.contains("there ·") == true,
+            "zoneOnlyOffersOnlyCopy": zoneOnly?.children.count == 1 && zoneOnly?.children.first?.title.hasPrefix("Copy “") == true,
+            "zoneOnlyKeepsNativeDateActionsSeparate": SelectionTimeNativeMenu.relocatingDateActions(in: zoneRoot) === zoneRoot,
             "noDateHasNoCustomMenu": SelectionTimeMenu.elements(for: "ordinary words", in: nil).isEmpty
         ]
     }

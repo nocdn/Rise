@@ -2,6 +2,8 @@ import UIKit
 
 /// A settings destination, with the address bar's chevron in place of a switch.
 final class SettingsNavigationRow: UIButton {
+    /// Destinations together sit flush, a little closer than switch rows.
+    static let height: CGFloat = 52
     private let label = UILabel()
     private let chevron = UIImageView(image: UIImage(systemName: "chevron.right", withConfiguration:
         UIImage.SymbolConfiguration(pointSize: 14.5, weight: .semibold)))

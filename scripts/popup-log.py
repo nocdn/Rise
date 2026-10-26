@@ -44,7 +44,7 @@ def main():
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument('--device', help='Paired iPhone name or UDID')
     source.add_argument('--simulator', help='Simulator UDID')
-    source.add_argument('--read', type=Path, help='Directory of fetched JSONL files or a Share popup diagnostics JSON export')
+    source.add_argument('--read', type=Path, help='Directory of fetched JSONL files, or an older JSON export')
     parser.add_argument('--output', type=Path, help='Keep a local copy here')
     parser.add_argument('--site', help='Filter by website hostname')
     parser.add_argument('--last', type=int, default=100)
@@ -63,7 +63,7 @@ def main():
                             '--domain-type', 'appDataContainer', '--domain-identifier', BUNDLE,
                             '--source', LOG, '--destination', str(path)], check=True, stdout=subprocess.DEVNULL)
         if not path.exists():
-            print('No persistent popup diagnostics yet. Private traces are in-memory and must be shared from App settings during that private session.')
+            print('No persistent popup diagnostics yet. Private traces stay in memory and are never written to the log.')
             return
         if args.output:
             if path.is_dir():

@@ -82,12 +82,9 @@ python3 scripts/popup-log.py --device "Bartek’s iPhone" --site example.com --l
 python3 scripts/popup-log.py --read build/popup-diagnostics --site example.com --blocked
 ```
 
-Away from the Mac, App settings → **Share popup diagnostics** creates a JSON
-export. The helper can read that export with `--read`. Private traces are a
-separate bounded in-memory ring, released with their private session, and are
-never written to the persistent log. Sharing from a private tab explicitly
-exports that private session. Temporary exports are deleted after the share
-sheet closes; abandoned exports are pruned on a later export.
+Private traces are a separate bounded in-memory ring, released with their
+private session, and are never written to the persistent log, so they can't be
+fetched.
 
 Records include app-run/policy/page/document/request/chain IDs; exact executable
 hash (including the Debug library where applicable); version, OS, engine and

@@ -33,13 +33,15 @@ import RiseCore
 
     private static let hammer = TablerIcon.image(LucideIcon.hammer, size: 12, description: "Developer mode")
 
-    static func forTab(_ tab: BrowserTab, theme: RiseTheme, peek: BrowserTab? = nil) -> Self {
+    static func forTab(_ tab: BrowserTab, theme: RiseTheme, peek: BrowserTab? = nil, developerLook: DeveloperTabLook = .init()) -> Self {
         var configuration = Self()
         if let peek { configuration.peek = Peek(favicon: peek.favicon(for: theme), title: peek.title) }
         if tab.developer {
-            configuration.subtitle = Subtitle(text: AddressResolver.displayHost(tab.url) + (tab.url?.port.map { ":\($0)" } ?? ""))
-            configuration.constructionBorder = true
-            configuration.subtitleAccessory = hammer
+            if developerLook.address {
+                configuration.subtitle = Subtitle(text: AddressResolver.displayHost(tab.url) + (tab.url?.port.map { ":\($0)" } ?? ""))
+            }
+            configuration.constructionBorder = developerLook.border
+            if developerLook.hammer { configuration.subtitleAccessory = hammer }
         }
         if tab.showsRepositorySubtitle, let request = PullRequest(url: tab.url), case .gitlab = request.forge {
             let repository = request.project as NSString
@@ -50,5 +52,24 @@ import RiseCore
                 highlightRange: NSRange(location: start, length: repository.length - start))
         }
         return configuration
+    }
+}
+
+/// What a tab in developer mode shows: its site and port under its title, the yellow and black
+/// border while it's chosen, and the hammer. Each is on unless turned off in rise://settings.
+struct DeveloperTabLook: Equatable {
+    var address = true, border = true, hammer = true
+}
+
+@MainActor extension BrowserController {
+    static let developerTabAddressKey = "Rise.DeveloperTabAddress", developerTabBorderKey = "Rise.DeveloperTabBorder",
+               developerTabHammerKey = "Rise.DeveloperTabHammer"
+    var developerTabLook: DeveloperTabLook {
+        func on(_ key: String) -> Bool { preferences.object(forKey: key) as? Bool ?? true }
+        return DeveloperTabLook(address: on(Self.developerTabAddressKey), border: on(Self.developerTabBorderKey), hammer: on(Self.developerTabHammerKey))
+    }
+    func setDeveloperTabLook(_ value: Bool, forKey key: String) {
+        preferences.set(value, forKey: key)
+        update()
     }
 }

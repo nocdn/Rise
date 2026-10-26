@@ -254,7 +254,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
 
     private func updateAppSettings() {
-        bottomBar.appSettings.ai.refresh()
+        bottomBar.aiOptions.ai.refresh()
         updateAIAvailability()
         bottomBar.appSettings.showAutoplay(enabled: videoPlayback.allowsAutoplay)
         if isPrivateBrowsing {
@@ -775,6 +775,21 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
                 return bottomBar.appSettings.canPullToClose(at: panelPan.location(in: bottomBar.appSettings),
                                                           velocity: panelPan.velocity(in: view))
             }
+            if bottomBar.panel == .aiOptions {
+                return bottomBar.aiOptions.canPullToClose(at: panelPan.location(in: bottomBar.aiOptions),
+                                                         velocity: panelPan.velocity(in: view))
+            }
+            if bottomBar.panel == .aiPrompt {
+                // Up against resistance or down to close, as App settings; in the field, only when
+                // it isn't being edited and has nothing to scroll that way.
+                let editor = bottomBar.aiPrompt.editor, velocity = panelPan.velocity(in: view)
+                guard abs(velocity.y) > abs(velocity.x) else { return false }
+                guard editor.bounds.contains(panelPan.location(in: editor)) else { return true }
+                if editor.isFirstResponder { return false }
+                let top = -editor.adjustedContentInset.top
+                let scrollable = editor.contentSize.height > editor.bounds.height-editor.adjustedContentInset.top-editor.adjustedContentInset.bottom+1
+                return !scrollable || (editor.contentOffset.y <= top+1 && velocity.y > 0)
+            }
             if bottomBar.panel == .privacyPolicy {
                 return bottomBar.privacyPolicy.canPullToClose(at: panelPan.location(in: bottomBar.privacyPolicy),
                                                             velocity: panelPan.velocity(in: view))
@@ -829,6 +844,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
                bottomBar.siteSettings.switches.contains(where: { touched.isDescendant(of: $0) }) { return false }
             if bottomBar.panel == .privacyPolicy,
                touched.isDescendant(of: bottomBar.privacyPolicy.sharingRow.toggle) { return false }
+            // A hold that drifts mustn't become a drag of the panel, cancelling the reset.
+            if bottomBar.panel == .aiPrompt, touched.isDescendant(of: bottomBar.aiPrompt.resetButton) { return false }
         }
         return true
     }
@@ -876,7 +893,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     var canReturnFromPanel: Bool {
         guard isPanelOpen else { return false }
         switch bottomBar.panel {
-        case .history, .downloads, .siteSettings, .appSettings, .privacyPolicy: return true
+        case .history, .downloads, .siteSettings, .appSettings, .aiOptions, .aiPrompt, .privacyPolicy: return true
         default: return false
         }
     }
@@ -889,6 +906,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         case .downloads: closeDownloads()
         case .siteSettings: closeSiteSettings()
         case .appSettings: closeAppSettings()
+        case .aiOptions: closeAIOptions()
+        case .aiPrompt: closeAIPrompt()
         case .privacyPolicy: closePrivacyPolicy()
         default: closePanel()
         }
@@ -1036,7 +1055,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
                 }
                 if found { await self.revealPassage(in: page) }
                 return found
-            }, provider: MobileAISettings.shared.modelChoice)
+            }, provider: MobileAISettings.shared.modelChoice, instructions: AIPrompt.ask.text, fill: { instructions, page in
+                AIPrompt.fill(instructions, values: ["title": page.title, "address": page.url, "selection": page.selection, "text": page.text],
+                              known: AIPrompt.ask.placeholders)
+            })
         }
         bottomBar.find.clearPassage = { [weak self] in
             guard let page = self?.webView else { return }
@@ -1079,8 +1101,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             (menu.copyTile, { $0.copyLink() }),
             (menu.siteSettingsButton, { $0.openSiteSettings() }),
             (bottomBar.siteSettings.appSettingsRow, { $0.openAppSettings() }),
+            (bottomBar.appSettings.aiOptionsRow, { $0.openAIOptions() }),
+            (bottomBar.aiPrompt.saveButton, { $0.saveAIPrompt() }),
             (bottomBar.appSettings.privacyRow, { $0.showPrivacyPolicy() }),
-            (bottomBar.appSettings.popupDiagnosticsRow, { $0.sharePopupDiagnostics() }),
             (menu.downloadsButton, { $0.openDownloads() }),
             (bottomBar.tabMenu.historyButton, { $0.openHistory() }),
         ]
@@ -1100,8 +1123,20 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         addTranslationCancelHold(to: address.translateButton)
         for button in [bottomBar.history.closeButton, bottomBar.downloads.closeButton,
                        bottomBar.siteSettings.closeButton, bottomBar.appSettings.closeButton,
+                       bottomBar.aiOptions.closeButton, bottomBar.aiPrompt.closeButton,
                        bottomBar.privacyPolicy.closeButton] {
             button.addAction(UIAction { [weak self] _ in self?.returnFromPanel() }, for: .primaryActionTriggered)
+        }
+        for (row, prompt) in zip(bottomBar.aiOptions.promptRows, AIPrompt.allCases) {
+            row.addAction(UIAction { [weak self] _ in self?.openAIPrompt(prompt) }, for: .primaryActionTriggered)
+        }
+        // A line more or less of prompt, and the sheet follows, up to its limit.
+        bottomBar.aiPrompt.onHeightChange = { [weak self] in
+            guard let self, isPanelOpen, bottomBar.panel == .aiPrompt, panelPan.state != .changed else { return }
+            UIView.animate(springDuration: 0.3, bounce: 0, initialSpringVelocity: 0, delay: 0,
+                           options: [.beginFromCurrentState, .allowUserInteraction]) {
+                self.setPanel(self.panelExpansion)
+            }
         }
         bottomBar.siteSettings.onAdBlockingChanged = { [weak self] enabled in self?.changeAdBlocking(enabled) }
         bottomBar.siteSettings.onCookieBannersChanged = { [weak self] enabled in self?.changeCookieBanners(enabled) }
@@ -1208,6 +1243,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         case .find: BottomBar.findHeight(keyboard: keyboardHeight, safeBottom: safeBottom, answer: bottomBar.find.answerHeight)
         case .siteSettings: BottomBar.siteSettingsHeight(width: view.bounds.width, safeBottom: safeBottom)
         case .appSettings: min(view.bounds.height-view.safeAreaInsets.top-12, BottomBar.appSettingsHeight(width: view.bounds.width, safeBottom: safeBottom))
+        case .aiOptions: min(view.bounds.height-view.safeAreaInsets.top-12, BottomBar.aiOptionsHeight(safeBottom: safeBottom))
+        case .aiPrompt: min(view.bounds.height-view.safeAreaInsets.top-12,
+                            BottomBar.aiPromptHeight(bottomBar.aiPrompt, width: view.bounds.width, keyboard: keyboardHeight, safeBottom: safeBottom))
         case .privacyPolicy: min(view.bounds.height-view.safeAreaInsets.top-12, BottomBar.privacyPolicyHeight(safeBottom: safeBottom))
         case .downloads: downloadsSheet.height(in: downloadsHeights)
         case .history: BottomBar.historyHeight(screenHeight: view.bounds.height, safeTop: view.safeAreaInsets.top)
@@ -1292,7 +1330,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// Shrinks the panel back into the bar, carrying on at `velocity`, in points per second downwards.
     func closePanel(velocity: CGFloat = 0) {
         guard isPanelOpen else { return }
-        bottomBar.appSettings.endEditing(true)
+        bottomBar.aiOptions.endEditing(true)
+        bottomBar.aiPrompt.endEditing(true)
         historyReturnPanel = nil
         isPanelOpen = false
         dimming.isUserInteractionEnabled = false
@@ -1379,6 +1418,38 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         swapMenuPanel(to: .siteSettings)
     }
 
+    /// AI options goes a level deeper than Settings, and each prompt a level deeper again.
+    func openAIOptions() {
+        guard isPanelOpen, bottomBar.panel == .appSettings else { return }
+        bottomBar.aiOptions.ai.refresh()
+        swapMenuPanel(to: .aiOptions)
+    }
+
+    func closeAIOptions() {
+        guard isPanelOpen, bottomBar.panel == .aiOptions else { return }
+        updateAppSettings()
+        swapMenuPanel(to: .appSettings)
+    }
+
+    func openAIPrompt(_ prompt: AIPrompt) {
+        guard isPanelOpen, bottomBar.panel == .aiOptions else { return }
+        bottomBar.aiPrompt.keyboardOverlap = 0
+        bottomBar.aiPrompt.show(prompt)
+        swapMenuPanel(to: .aiPrompt)
+    }
+
+    /// X and the edge swipe leave without saving; Save prompt keeps the edit.
+    func closeAIPrompt() {
+        guard isPanelOpen, bottomBar.panel == .aiPrompt else { return }
+        swapMenuPanel(to: .aiOptions)
+    }
+
+    func saveAIPrompt() {
+        guard isPanelOpen, bottomBar.panel == .aiPrompt else { return }
+        bottomBar.aiPrompt.save()
+        swapMenuPanel(to: .aiOptions)
+    }
+
     /// Privacy is the next settings surface in the same toolbar, never a presented sheet.
     func showPrivacyPolicy() {
         guard allowsPeek, presentedViewController == nil else { return }
@@ -1453,7 +1524,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
 
     private func swapMenuPanel(to panel: BottomBar.Panel) {
-        if panel != .appSettings { bottomBar.appSettings.endEditing(true) }
+        if panel != .aiOptions { bottomBar.aiOptions.endEditing(true) }
+        if panel != .aiPrompt { bottomBar.aiPrompt.endEditing(true) }
         bottomBar.panel = panel
         bottomBar.showContents(of: panel)
         let change = { self.setPanel(1); self.setNeedsStatusBarAppearanceUpdate() }
@@ -1485,11 +1557,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
               let screen = view.window?.screen else { return }
         let frame = view.convert(end, from: screen.coordinateSpace)
         keyboardHeight = frame.minY < view.bounds.maxY ? view.bounds.maxY-frame.minY : 0
-        if isPanelOpen, bottomBar.panel == .appSettings {
-            bottomBar.appSettings.keyboardInset = max(0, keyboardHeight-(view.window?.safeAreaInsets.bottom ?? 0))
+        if isPanelOpen, bottomBar.panel == .aiOptions {
+            bottomBar.aiOptions.keyboardInset = max(0, keyboardHeight-(view.window?.safeAreaInsets.bottom ?? 0))
             return
         }
-        guard isPanelOpen, bottomBar.panel == .find || bottomBar.panel == .search else { return }
+        guard isPanelOpen, [.find, .search, .aiPrompt].contains(bottomBar.panel) else { return }
+        let overlap = BottomBar.aiPromptKeyboardOverlap(keyboard: keyboardHeight, safeBottom: view.window?.safeAreaInsets.bottom ?? 0)
         let duration = note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0.25
         let curve = note.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt ?? 7
         UIView.animate(withDuration: duration, delay: 0, options: [UIView.AnimationOptions(rawValue: curve << 16),
@@ -1499,7 +1572,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
                 self.layoutBottomBar()
                 self.bottomBar.layoutIfNeeded()
             } else {
+                if self.bottomBar.panel == .aiPrompt { self.bottomBar.aiPrompt.keyboardOverlap = overlap }
                 self.setPanel(self.panelExpansion)
+                if self.bottomBar.panel == .aiPrompt { self.bottomBar.layoutIfNeeded() }
             }
         }
     }

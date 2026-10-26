@@ -65,6 +65,10 @@ final class RiseWebView: WKWebView {
             let copy = UIAction(title: "Copy “\(copied)”", image: UIImage(systemName: "doc.on.doc")) { _ in
                 UIPasteboard.general.string = copied
             }
+            if time.isZoneOnly {
+                return UIMenu(title: SelectionTimes.label(time, of: times.count, now: now), image: UIImage(systemName: "clock"),
+                    identifier: .init("\(menuIdentifier.rawValue).\(index)"), children: [copy])
+            }
             let calendar = UIAction(title: "Add to Calendar", image: UIImage(systemName: "calendar")) { [weak page] _ in
                 guard let page else { return }
                 installed.object(forKey: page)?.addToCalendar(time, selection: text)
@@ -93,7 +97,8 @@ final class RiseWebView: WKWebView {
     }
 
     static func willPresent(in page: WKWebView) {
-        guard let owner = installed.object(forKey: page), !SelectionTimes.find(in: selection(in: page)).isEmpty else { return }
+        let times = SelectionTimes.find(in: selection(in: page))
+        guard let owner = installed.object(forKey: page), !times.isEmpty, times.allSatisfy({ !$0.isZoneOnly }) else { return }
         if owner.nativeMenu == nil { owner.nativeMenu = SelectionTimeNativeMenu(page: page) }
         owner.nativeMenu?.begin()
     }

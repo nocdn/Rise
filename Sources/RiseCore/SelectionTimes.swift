@@ -1,12 +1,18 @@
 import Foundation
 
-/// A time written in another zone, found in selected text: when it starts, when it ends if it's a
-/// range, the zone it was written in and the words it was read from.
+/// A selected clock time in another zone, or a snapshot of the current time in a selected offset.
 public struct SelectionTime: Equatable {
     public let start: Date
     public let end: Date?
     public let zone: TimeZone
     public let written: String
+    /// A zone without a clock time describes the current time there, not an appointment.
+    public let isZoneOnly: Bool
+
+    init(start: Date, end: Date?, zone: TimeZone, written: String, isZoneOnly: Bool = false) {
+        self.start = start; self.end = end; self.zone = zone; self.written = written
+        self.isZoneOnly = isZoneOnly
+    }
 }
 
 /// Times in selected text, in the person's own zone, for the right-click menu to head with: "10am PST"
@@ -29,7 +35,7 @@ public enum SelectionTimes {
         "PACIFIC": "America/Los_Angeles", "MOUNTAIN": "America/Denver", "CENTRAL": "America/Chicago", "EASTERN": "America/New_York",
     ]
 
-    /// The times in `text` that are in a zone other than `local`'s at the time, read as of `now`.
+    /// Foreign clock times and standalone numeric zones in `text`, read as of `now`.
     public static func find(in text: String, now: Date = Date(), local: TimeZone = .current) -> [SelectionTime] {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, text.count <= maximumLength,
@@ -38,14 +44,40 @@ public enum SelectionTimes {
         let normal = text.replacingOccurrences(of: #"(?i)\bnoon\b"#, with: "12:00pm", options: .regularExpression)
             .replacingOccurrences(of: #"(?i)\bmidnight\b"#, with: "11:59:59pm", options: .regularExpression)
         let source = normal as NSString
-        var found: [SelectionTime] = []
+        let offsets = Offset.matches(in: normal)
+        var usedOffsets = Set<Int>(), found: [(position: Int, time: SelectionTime)] = []
         for match in detector.matches(in: normal, range: NSRange(location: 0, length: source.length)) {
             guard let detected = match.date else { continue }
             let words = source.substring(with: match.range)
-            guard let clock = Clock(words) else { continue }
+            // An offset's digits are not a clock time. Mask them before reading the clock.
+            let clockWords = NSMutableString(string: words)
+            for offset in offsets.reversed() {
+                let overlap = NSIntersectionRange(match.range, offset.range)
+                if overlap.length > 0 {
+                    clockWords.replaceCharacters(in: NSRange(location: overlap.location-match.range.location, length: overlap.length),
+                        with: String(repeating: " ", count: overlap.length))
+                }
+            }
+            guard let clock = Clock(clockWords as String) else { continue }
             // The zone it was written in: as the detector read it, or written just after it.
             let after = source.substring(from: NSMaxRange(match.range))
-            guard let zone = match.timeZone ?? zone(at: after) ?? zone(at: words) else { continue }
+            let attached = offsets.firstIndex { offset in
+                if NSIntersectionRange(match.range, offset.range).length > 0 { return true }
+                guard match.timeZone == nil else { return false }
+                let gap = offset.range.location >= NSMaxRange(match.range)
+                    ? NSRange(location: NSMaxRange(match.range), length: offset.range.location-NSMaxRange(match.range))
+                    : NSRange(location: NSMaxRange(offset.range), length: match.range.location-NSMaxRange(offset.range))
+                return source.substring(with: gap).trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "()[]"))).isEmpty
+            }
+            let zone: TimeZone
+            if let attached {
+                usedOffsets.insert(attached)
+                guard let explicit = offsets[attached].zone else { continue }
+                zone = explicit
+            } else {
+                guard let detectedZone = match.timeZone ?? Self.zone(at: after) ?? Self.zone(at: words) else { continue }
+                zone = detectedZone
+            }
             // The wall time as written, from the zone the detector read it in.
             var calendar = Calendar(identifier: .gregorian)
             calendar.timeZone = match.timeZone ?? .current
@@ -74,10 +106,14 @@ public enum SelectionTimes {
             guard !same(zone, local, at: start) else { continue }
             let written = words.replacingOccurrences(of: "11:59:59pm", with: "midnight").trimmingCharacters(in: .whitespaces)
             let time = SelectionTime(start: start, end: end, zone: zone, written: written)
-            if !found.contains(where: { $0.start == time.start && $0.end == time.end }) { found.append(time) }
-            if found.count == maximumTimes { break }
+            if !found.contains(where: { $0.time.start == time.start && $0.time.end == time.end }) { found.append((match.range.location, time)) }
         }
-        return found
+        for (index, offset) in offsets.enumerated() where !usedOffsets.contains(index) {
+            guard let zone = offset.zone, !found.contains(where: { $0.time.isZoneOnly && $0.time.zone == zone }) else { continue }
+            found.append((offset.range.location, SelectionTime(start: now, end: nil, zone: zone,
+                written: source.substring(with: offset.range), isZoneOnly: true)))
+        }
+        return found.sorted { $0.position < $1.position }.prefix(maximumTimes).map(\.time)
     }
 
     /// Whether two zones are the same place's: one zone, or one keeping the same time all year.
@@ -97,14 +133,9 @@ public enum SelectionTimes {
                   let match = regex.firstMatch(in: text as String, range: NSRange(location: 0, length: text.length)) else { return nil }
             return text.substring(with: match.range(at: 1))
         }
-        if let offset = first(#"^\s*\(?\s*((?:UTC|GMT)\s*[+\-−–]\s*\d{1,2}(?::?\d{2})?)"#) {
-            let digits = offset.dropFirst(3).trimmingCharacters(in: .whitespaces)
-            let negative = digits.hasPrefix("-") || digits.hasPrefix("−") || digits.hasPrefix("–")
-            let number = digits.dropFirst().replacingOccurrences(of: ":", with: "").trimmingCharacters(in: .whitespaces)
-            let hours = Int(number.count > 2 ? String(number.prefix(number.count-2)) : number) ?? 0
-            let minutes = number.count > 2 ? Int(number.suffix(2)) ?? 0 : 0
-            guard hours <= 14, minutes < 60 else { return nil }
-            return TimeZone(secondsFromGMT: (negative ? -1 : 1)*(hours*3600+minutes*60))
+        if let offset = Offset.matches(in: text as String).first,
+           text.substring(to: offset.range.location).trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "("))).isEmpty {
+            return offset.zone
         }
         if let city = first(#"^\s*\(?\s*([A-Z][A-Za-z_]+/[A-Za-z_]+(?:/[A-Za-z_]+)?)"#) { return TimeZone(identifier: city) }
         guard let word = first(#"^\s*\(?\s*([A-Z]{1,5}|Pacific|Mountain|Central|Eastern)\b"#)?.uppercased() else { return nil }
@@ -116,20 +147,24 @@ public enum SelectionTimes {
     /// as they'd say it unless it's today; how far off it is; a range from its start to its end; and,
     /// of several, what each was written as.
     public static func label(_ time: SelectionTime, of count: Int = 1, now: Date = Date(), local: TimeZone = .current, locale: Locale = .current) -> String {
-        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = local; calendar.locale = locale
-        let clock = DateFormatter(); clock.locale = locale; clock.timeZone = local; clock.setLocalizedDateFormatFromTemplate("jmm")
+        let displayZone = time.isZoneOnly ? time.zone : local
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = displayZone; calendar.locale = locale
+        var here = calendar; here.timeZone = local
+        // For a zone-only result, tomorrow/yesterday compares its date with today's date here.
+        let referenceDay = time.isZoneOnly ? calendar.date(from: here.dateComponents([.year, .month, .day], from: now)) ?? now : now
+        let clock = DateFormatter(); clock.locale = locale; clock.timeZone = displayZone; clock.setLocalizedDateFormatFromTemplate("jmm")
         func day(_ date: Date) -> String {
-            let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: date)).day ?? 0
+            let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: referenceDay), to: calendar.startOfDay(for: date)).day ?? 0
             switch days {
             case 0: return ""
             case 1: return "Tomorrow"
             case -1: return "Yesterday"
             case 2...6:
-                let weekday = DateFormatter(); weekday.locale = locale; weekday.timeZone = local; weekday.setLocalizedDateFormatFromTemplate("EEEE")
+                let weekday = DateFormatter(); weekday.locale = locale; weekday.timeZone = displayZone; weekday.setLocalizedDateFormatFromTemplate("EEEE")
                 return weekday.string(from: date)
             default:
                 let sameYear = calendar.component(.year, from: date) == calendar.component(.year, from: now)
-                let dated = DateFormatter(); dated.locale = locale; dated.timeZone = local
+                let dated = DateFormatter(); dated.locale = locale; dated.timeZone = displayZone
                 dated.setLocalizedDateFormatFromTemplate(sameYear ? "EEEdMMM" : "EEEdMMMy")
                 return dated.string(from: date)
             }
@@ -146,7 +181,13 @@ public enum SelectionTimes {
         } else {
             text = at(time.start, joined: " at ")
         }
-        if let end = time.end, time.start <= now, now < end { text += " · happening now" }
+        if time.isZoneOnly {
+            let difference = time.zone.secondsFromGMT(for: time.start)-local.secondsFromGMT(for: time.start)
+            let minutes = abs(difference)/60, hours = minutes/60, remainder = minutes%60
+            let amount = remainder == 0 ? "\(hours) \(hours == 1 ? "hour" : "hours")"
+                : hours == 0 ? "\(remainder) min" : "\(hours) hr \(remainder) min"
+            text += " there · " + (difference == 0 ? "same time as here" : amount + (difference > 0 ? " ahead" : " behind"))
+        } else if let end = time.end, time.start <= now, now < end { text += " · happening now" }
         else if let away = away(from: now, to: time.start) { text += " · \(away)" }
         return count > 1 ? "\(time.written) → \(text)" : text
     }
@@ -154,16 +195,53 @@ public enum SelectionTimes {
     /// The time to paste somewhere, which mustn't go stale: "07:00", or "Sat 24 Oct at 07:00" on another
     /// day, and a range from its start to its end.
     public static func copied(_ time: SelectionTime, now: Date = Date(), local: TimeZone = .current, locale: Locale = .current) -> String {
-        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = local
+        let displayZone = time.isZoneOnly ? time.zone : local
+        var calendar = Calendar(identifier: .gregorian); calendar.timeZone = displayZone
         func text(_ date: Date, day: Bool) -> String {
-            let format = DateFormatter(); format.locale = locale; format.timeZone = local
-            let sameYear = calendar.component(.year, from: date) == calendar.component(.year, from: now)
+            let format = DateFormatter(); format.locale = locale; format.timeZone = displayZone
+            let sameYear = !time.isZoneOnly && calendar.component(.year, from: date) == calendar.component(.year, from: now)
             format.setLocalizedDateFormatFromTemplate(day ? (sameYear ? "EEEdMMMjmm" : "EEEdMMMyjmm") : "jmm")
             return format.string(from: date)
         }
+        if time.isZoneOnly { return text(time.start, day: true)+" "+Offset.name(time.zone.secondsFromGMT(for: time.start)) }
         let start = text(time.start, day: !calendar.isDate(time.start, inSameDayAs: now))
         guard let end = time.end else { return start }
         return "\(start) – \(text(end, day: !calendar.isDate(end, inSameDayAs: time.start)))"
+    }
+
+    /// Keep invalid numeric tokens too, so an attached malformed offset cannot fall back to UTC.
+    private struct Offset {
+        let range: NSRange
+        let zone: TimeZone?
+        private static let expression = try! NSRegularExpression(
+            pattern: #"(?i)(?<![\p{L}\p{N}_])(?:UTC|GMT)\h*[+\-−–]\h*[\p{L}\p{N}_:.]*"#)
+
+        static func matches(in text: String) -> [Offset] {
+            let source = text as NSString
+            return expression.matches(in: text, range: NSRange(location: 0, length: source.length)).map { match in
+                let written = source.substring(with: match.range).trimmingCharacters(in: CharacterSet(charactersIn: "."))
+                let range = NSRange(location: match.range.location, length: (written as NSString).length)
+                let token = written.filter { !$0.isWhitespace }
+                let number = String(token.dropFirst(4)), parts = number.split(separator: ":", omittingEmptySubsequences: false)
+                let hours: Int?, minutes: Int?
+                if parts.count == 2, (1...2).contains(parts[0].count), parts[1].count == 2 {
+                    hours = Int(parts[0]); minutes = Int(parts[1])
+                } else if parts.count == 1, (1...4).contains(number.count) {
+                    hours = Int(number.count <= 2 ? number : String(number.dropLast(2)))
+                    minutes = number.count <= 2 ? 0 : Int(number.suffix(2))
+                } else { hours = nil; minutes = nil }
+                let negative = token.dropFirst(3).first != "+"
+                let zone: TimeZone?
+                if let hours, let minutes, minutes < 60, hours*60+minutes <= 14*60 {
+                    zone = TimeZone(secondsFromGMT: (negative ? -1 : 1)*(hours*3600+minutes*60))
+                } else { zone = nil }
+                return Offset(range: range, zone: zone)
+            }
+        }
+
+        static func name(_ seconds: Int) -> String {
+            String(format: "UTC%@%02d:%02d", seconds < 0 ? "−" : "+", abs(seconds)/3600, abs(seconds)/60%60)
+        }
     }
 
     /// "in 3 hours", "45 min ago", "in 2 days": round enough to read at a glance.

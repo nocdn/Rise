@@ -30,6 +30,11 @@ final class PanelHeader: UIView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    var title: String? {
+        get { titleLabel.text }
+        set { titleLabel.text = newValue; setNeedsLayout() }
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         closeButton.bounds = CGRect(x: 0, y: 0, width: AddressBar.buttonWidth, height: Self.height)

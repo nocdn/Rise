@@ -53,6 +53,12 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             PageTranslationAudit.run(in: controller)
             return
         }
+        if ProcessInfo.processInfo.arguments.contains(AIPromptsAudit.argument) {
+            let controller = HistoryPanelAudit.makeBrowser()
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            AIPromptsAudit.run(in: controller)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains(PrivateTabsAudit.argument) {
             let controller = BrowserViewController(startURL: nil)
             window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()

@@ -47,4 +47,21 @@ final class SelectionTimeMenuTests: XCTestCase {
         XCTAssertEqual(url.scheme, "calshow")
         XCTAssertEqual(Double(url.absoluteString.dropFirst("calshow:".count)), date.timeIntervalSinceReferenceDate)
     }
+
+    @MainActor func testAZoneOnlySelectionOffersACopyOfTheCurrentTimeWithoutAppointmentActions() throws {
+        let now = Date(timeIntervalSince1970: 1_792_764_000)
+        let menus = SelectionTimeMenu.elements(for: "UTC+14:00", in: nil, now: now).compactMap { $0 as? UIMenu }
+        let menu = try XCTUnwrap(menus.first)
+        XCTAssertEqual(menus.count, 1)
+        XCTAssertTrue(menu.title.contains("there"))
+        XCTAssertEqual(menu.children.count, 1)
+        let action = try XCTUnwrap(menu.children.first as? UIAction)
+        XCTAssertTrue(action.title.hasPrefix("Copy “"))
+        let previous = UIPasteboard.general.items
+        defer { UIPasteboard.general.items = previous }
+        let button = UIButton(); button.addAction(action, for: .touchUpInside); button.sendActions(for: .touchUpInside)
+        let copied = try XCTUnwrap(UIPasteboard.general.string)
+        XCTAssertTrue(copied.contains("2026"))
+        XCTAssertTrue(copied.hasSuffix("UTC+14:00"))
+    }
 }

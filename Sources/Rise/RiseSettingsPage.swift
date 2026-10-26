@@ -40,6 +40,9 @@ import RiseChromium
                 toggle("showReopenedTabs", "Switch to reopened tabs", "⌘⇧T shows the tab it brings back, rather than keeping you where you are", showsReopenedTabs),
                 toggle("hideNotificationCounts", "Hide notification counts", "Leave counts such as (3) out of tab titles and history", hidesNotificationCounts),
                 toggle("repositorySubtitle", "Show repository under merge request tabs", nil, showsRepositorySubtitle),
+                toggle("developerTabAddress", "Show the address under developer mode tabs", "The site and port, such as localhost:3000, under the tab's title", developerTabLook.address),
+                toggle("developerTabBorder", "Yellow and black border on developer mode tabs", "Around the tab while it's the one you're on", developerTabLook.border),
+                toggle("developerTabHammer", "Hammer on developer mode tabs", "At the tab's end, where its close button shows on hover", developerTabLook.hammer),
                 toggle("calendarBadge", "Show upcoming events on Calendar tabs", "A badge such as “in 17m” after the tab’s title, for an event starting within the hour", showsCalendarBadge),
             ]
         case "ai":
@@ -103,6 +106,9 @@ import RiseChromium
         case "showReopenedTabs": setShowsReopenedTabs(on)
         case "hideNotificationCounts": setHidesNotificationCounts(on)
         case "repositorySubtitle": setShowsRepositorySubtitle(on)
+        case "developerTabAddress": setDeveloperTabLook(on, forKey: Self.developerTabAddressKey)
+        case "developerTabBorder": setDeveloperTabLook(on, forKey: Self.developerTabBorderKey)
+        case "developerTabHammer": setDeveloperTabLook(on, forKey: Self.developerTabHammerKey)
         case "calendarBadge": setShowsCalendarBadge(on)
         case "aiProvider": if let provider = AIProvider(rawValue: text) { selectAIProvider(provider) }
         case "aiKey": if !text.isEmpty { setAIKey(text, for: aiProvider) }

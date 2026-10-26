@@ -424,8 +424,9 @@ import RiseCore
         // The page bar's, drawn as Dia's: chevrons, and a smaller sidebar glyph.
         navBar.navigation = toolbarButtons
         installSplitBar()
-        developerAddress.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
+        developerAddress.font = IoskeleyMonoFont.regular(ofSize: 12)
         developerAddress.textColor = NSColor(hex: 0x393134); developerBar.addSubview(developerAddress)
+        navBar.developerAddress = developerAddress; splitBar.developerAddress = developerAddress
         developerAddress.onSubmit = { [weak self] text in self?.navigateDeveloperAddress(text) }
         developerAddress.onCancel = { [weak self] in self?.window?.makeFirstResponder(self?.selectedTab?.page.view) }
         siteInfoPopover.behavior = .transient
@@ -531,16 +532,10 @@ import RiseCore
         grip.frame = NSRect(x: width-3, y: 44, width: 6, height: b.height-88)
         grip.isHidden = !sidebarVisible || sidebarPeek.progress > 0 || sidebarFloat.dockProgress < 1
         let cb = pageClip.bounds
-        let devHeight = developerMotion.height(for: selectedID, enabled: selectedTab?.developer == true)
-        // The page bar is the page's top; developer mode's opens under it.
         let barHeight = PlainNavBar.Metrics.height
         layoutPageBars(width: cb.width)
-        developerBar.frame = NSRect(x: 0, y: barHeight+devHeight-DeveloperModeMotion.headerHeight, width: cb.width, height: DeveloperModeMotion.headerHeight)
-        developerBar.isHidden = devHeight == 0
-        let addressHeight = developerAddress.intrinsicContentSize.height
-        developerAddress.frame = NSRect(x: 18, y: (DeveloperModeMotion.headerHeight-addressHeight)/2, width: max(100, cb.width-270), height: addressHeight)
-        devButtons.enumerated().forEach { i, button in button.frame = NSRect(x: cb.width-240+CGFloat(i)*38, y: 6, width: 30, height: 28) }
-        let body = NSRect(x: 0, y: barHeight+devHeight, width: cb.width, height: cb.height-barHeight-devHeight)
+        layoutDeveloperBar()
+        let body = NSRect(x: 0, y: barHeight, width: cb.width, height: cb.height-barHeight)
         emptyPage.frame = body; pageBody = body
         if pageLayoutHeld {
             // An animation is placing the pages.
@@ -560,8 +555,7 @@ import RiseCore
         errorMessage.frame = NSRect(x: 60, y: body.height/2-12, width: body.width-120, height: 56)
         retryButton.frame = NSRect(x: body.width/2-55, y: body.height/2+55, width: 110, height: 32)
         // The panels come down from beneath the page bar and what's under it.
-        let tucked = barHeight+devHeight
-        selectedFindBar.frame = pageShadow.frame; selectedFindBar.topInset = barHeight+devHeight; selectedFindBar.tuckedInset = tucked
+        selectedFindBar.frame = pageShadow.frame; selectedFindBar.topInset = barHeight; selectedFindBar.tuckedInset = barHeight
         dismissArea.frame = b
         // The centred palette dims the window behind it.
         veil.frame = b
@@ -584,6 +578,29 @@ import RiseCore
         layoutLinkStatus()
         tabSwitchBackdrop.frame = b
         if !tabSwitcher.isHidden { tabSwitcher.place(in: b) }
+    }
+    /// Developer mode's bar is under the selected page's bar, in its place, and the bar becomes
+    /// it: the page bar's colour eases away over the stripes, its address is exchanged for
+    /// developer mode's as a notice is, and developer mode's buttons come in one after another.
+    func layoutDeveloperBar() {
+        let enabled = selectedTab?.developer == true
+        let progress = developerMotion.progress(for: selectedID, enabled: enabled)
+        let bar = selectedBar
+        // The bars share developer mode's address: the other gives it up before this one takes it.
+        for each in [bar === navBar ? splitBar : navBar, bar] {
+            each.setDeveloper(each === bar ? progress : 0, enabled: each === bar && enabled, surface: theme.developerSurface)
+        }
+        developerBar.frame = bar.frame
+        developerBar.isHidden = progress == 0
+        let height = developerBar.bounds.height, end = min(bar.developerControlsMaxX-8, bar.frame.width-20)
+        for (i, button) in devButtons.enumerated() {
+            button.frame = NSRect(x: end-CGFloat(devButtons.count-i)*38+8, y: 6, width: 30, height: 28)
+            button.alphaValue = DeveloperModeMotion.arriving(progress, delay: CGFloat(i)*0.04)
+        }
+        // Where the page bar's address starts.
+        let x = PlainNavBar.Metrics.textX-PlainNavBar.Metrics.textInset-bar.leadingRoom
+        // As tall as the bar, its line centred in it.
+        developerAddress.frame = NSRect(x: x, y: 0, width: max(60, (devButtons.first?.frame.minX ?? end)-12-x), height: height)
     }
     func windowDidResize(_ notification: Notification) { layoutChrome() }
     func windowWillClose(_ notification: Notification) { githubStarrer.tearDown(); linkPullRequests.summaries.tearDown(); plainBarTimer?.invalidate(); plainBarTimer = nil; tabPressed(); gmailInbox.tearDown(); protonMailInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); saveNow() }
@@ -765,6 +782,7 @@ import RiseCore
         if let first = tabs.firstIndex(where: { !$0.pinned }), tabs[first...].contains(where: \.pinned) {
             tabs = tabs.filter(\.pinned) + tabs.filter { !$0.pinned }
         }
+        sidebar.developerTabLook = developerTabLook
         sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: splitGroups)
         refreshTabHoverCard(); preloadGmailInbox(); preloadProtonMailInbox(); preloadCalendarAgenda()
         window?.title = (selectedTab?.title).map { "\($0) — Rise" } ?? "Rise"
@@ -937,7 +955,10 @@ import RiseCore
         layoutChrome(); root.layoutSubtreeIfNeeded()
         CATransaction.commit()
     }
-    @objc func toggleDeveloper() {
+    @objc func toggleDeveloper() { toggleDeveloperMode(from: NSApp.currentEvent) }
+    /// Holding the shortcut toggles once: its key's repeats don't toggle it back and forth.
+    func toggleDeveloperMode(from event: NSEvent?) {
+        if let event, event.type == .keyDown, event.isARepeat { return }
         guard let tab = selectedTab else { return }
         toggleDeveloperMode(for: tab)
     }
@@ -947,7 +968,7 @@ import RiseCore
             historySwipe.cancel()
             window?.makeFirstResponder(tab.page.view); siteInfoPopover.close()
         }
-        let from = visible ? developerMotion.height(for: tab.id, enabled: tab.developer) : 0
+        let from = visible ? developerMotion.progress(for: tab.id, enabled: tab.developer) : 0
         tab.developer.toggle()
         if visible {
             developerMotion.start(tabID: tab.id, from: from, enabled: tab.developer, animated: window?.isVisible == true)

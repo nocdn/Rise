@@ -2,21 +2,17 @@ import UIKit
 
 /// App-wide settings, with matching toggle rows and explanatory subtitles.
 final class AppSettingsPanel: UIView {
-    static var height: CGFloat { SiteSettingsPanel.height+338 }
+    static var height: CGFloat { SiteSettingsPanel.height+120 }
     private let header = PanelHeader(title: "Settings")
     var closeButton: AnimatedSymbolButton { header.closeButton }
     let syncRow = SettingsToggleRow("Sync tabs with iCloud", icon: MenuIcons.syncTabs, colour: .systemBlue, iconSide: 26)
     let autoplayRow = SettingsToggleRow("Autoplay videos", icon: MenuIcons.video, colour: .systemGreen, iconSide: 26)
     let incognitoLockRow = SettingsToggleRow("Locked incognito mode", icon: MenuIcons.lockedIncognito, colour: .systemPurple,
                                              iconSide: 26, on: IncognitoLock.isEnabled)
-    let ai = AISettingsGroup()
+    let aiOptionsRow = SettingsNavigationRow("AI Options")
     let privacyRow = SettingsNavigationRow("Privacy Policy")
-    let popupDiagnosticsRow = SettingsNavigationRow("Share popup diagnostics")
     private let scroll = UIScrollView()
-    var buttons: [UIButton] { [closeButton, syncRow, autoplayRow, incognitoLockRow, privacyRow, popupDiagnosticsRow]+ai.buttons }
-    var keyboardInset: CGFloat = 0 {
-        didSet { setNeedsLayout(); layoutIfNeeded(); revealKey() }
-    }
+    var buttons: [UIButton] { [closeButton, syncRow, autoplayRow, incognitoLockRow, aiOptionsRow, privacyRow] }
     private let detail = UILabel()
     private let autoplayDetail = UILabel()
     private let incognitoLockDetail = UILabel()
@@ -28,14 +24,9 @@ final class AppSettingsPanel: UIView {
         header.closeButton.accessibilityLabel = "Back to Site settings"
         addSubview(header)
         addSubview(scroll)
-        scroll.keyboardDismissMode = .interactive
         scroll.alwaysBounceVertical = false
-        scroll.addSubview(ai)
+        scroll.addSubview(aiOptionsRow)
         scroll.addSubview(privacyRow)
-        scroll.addSubview(popupDiagnosticsRow)
-        popupDiagnosticsRow.accessibilityHint = "Share recent popup decisions and reasons to diagnose a broken website. URL query values are redacted."
-        ai.onChanged = { [weak self] in self?.setNeedsLayout() }
-        ai.onEditing = { [weak self] in self?.revealKey() }
         for row in [syncRow, autoplayRow, incognitoLockRow] {
             row.layer.cornerCurve = .continuous
             row.layer.cornerRadius = MenuPanel.cornerRadius
@@ -60,14 +51,9 @@ final class AppSettingsPanel: UIView {
         incognitoLockRow.toggle.accessibilityHint = incognitoLockDetail.text
     }
 
-    private func revealKey() {
-        guard ai.keyField.isFirstResponder else { return }
-        scroll.scrollRectToVisible(ai.keyField.convert(ai.keyField.bounds, to: scroll).insetBy(dx: 0, dy: -16), animated: true)
-    }
-
     func canPullToClose(at point: CGPoint, velocity: CGPoint) -> Bool {
         guard scroll.bounds.contains(convert(point, to: scroll)) else { return true }
-        return !ai.keyField.isFirstResponder && velocity.y > abs(velocity.x)
+        return velocity.y > abs(velocity.x)
             && scroll.contentOffset.y <= -scroll.adjustedContentInset.top+1
     }
 
@@ -89,8 +75,6 @@ final class AppSettingsPanel: UIView {
         super.layoutSubviews()
         header.frame = CGRect(x: 0, y: 0, width: bounds.width, height: PanelHeader.height)
         scroll.frame = CGRect(x: 0, y: PanelHeader.height, width: bounds.width, height: max(0,bounds.height-PanelHeader.height))
-        scroll.contentInset.bottom = keyboardInset
-        scroll.verticalScrollIndicatorInsets.bottom = keyboardInset
         let width = 4*MenuPanel.tileSize(width: bounds.width).width+3*MenuPanel.spacing
         syncRow.bounds = CGRect(x: 0, y: 0, width: width, height: SiteSettingsPanel.rowHeight)
         syncRow.center = CGPoint(x: bounds.midX, y: MenuPanel.top+SiteSettingsPanel.rowHeight/2)
@@ -105,12 +89,9 @@ final class AppSettingsPanel: UIView {
         incognitoLockRow.center = CGPoint(x: bounds.midX, y: autoplayDetail.frame.maxY+SiteSettingsPanel.groupGap+SiteSettingsPanel.rowHeight/2)
         let lockSize = incognitoLockDetail.sizeThatFits(CGSize(width: textWidth, height: .greatestFiniteMagnitude))
         incognitoLockDetail.frame = CGRect(x: detail.frame.minX, y: incognitoLockRow.frame.maxY+12, width: textWidth, height: lockSize.height)
-        ai.frame = CGRect(x: syncRow.frame.minX, y: incognitoLockDetail.frame.maxY+SiteSettingsPanel.groupGap,
-                          width: width, height: ai.height(for: width))
-        privacyRow.frame = CGRect(x: ai.frame.minX, y: ai.frame.maxY+SiteSettingsPanel.groupGap,
-                                  width: width, height: SiteSettingsPanel.rowHeight)
-        popupDiagnosticsRow.frame = CGRect(x: privacyRow.frame.minX, y: privacyRow.frame.maxY+8,
-            width: width, height: SiteSettingsPanel.rowHeight)
-        scroll.contentSize = CGSize(width: bounds.width, height: popupDiagnosticsRow.frame.maxY+12)
+        aiOptionsRow.frame = CGRect(x: syncRow.frame.minX, y: incognitoLockDetail.frame.maxY+SiteSettingsPanel.groupGap,
+                                    width: width, height: SettingsNavigationRow.height)
+        privacyRow.frame = aiOptionsRow.frame.offsetBy(dx: 0, dy: SettingsNavigationRow.height+12)
+        scroll.contentSize = CGSize(width: bounds.width, height: privacyRow.frame.maxY+12)
     }
 }

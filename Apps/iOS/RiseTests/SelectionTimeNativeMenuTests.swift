@@ -81,4 +81,11 @@ final class SelectionTimeNativeMenuTests: XCTestCase {
         XCTAssertTrue(result.children.first === rise, "Each date retains its own captured instant")
         XCTAssertEqual(rise.children.compactMap { ($0 as? UIMenu)?.children.count }, [4, 4])
     }
+
+    @MainActor func testAZoneOnlySnapshotDoesNotAcquireNativeAppointmentActions() {
+        let (root, _, _) = fixture()
+        let rise = UIMenu(identifier: SelectionTimeMenu.menuIdentifier, children: SelectionTimeMenu.elements(for: "UTC+14:00", in: nil))
+        let input = root.replacingChildren([rise] + root.children.dropFirst())
+        XCTAssertTrue(SelectionTimeNativeMenu.relocatingDateActions(in: input) === input)
+    }
 }

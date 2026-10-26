@@ -180,6 +180,8 @@ import RiseCore
         return path
     }
     let text = PlainNavBarText(labelWithString: "")
+    /// The field's buttons, which give way to developer mode's.
+    private let addressHost = ContentHost()
     let copyButton: SidebarCopyButton
     let settingsButton: SidebarHoverButton, zoomButton: SidebarHoverButton
     var onOpenAddress: (() -> Void)?
@@ -204,6 +206,9 @@ import RiseCore
     }
     private(set) var color = NSColor.white
     private(set) var ink = Ink.on(.white)
+    /// The ink of what shows over developer mode's bar while it's more than half in.
+    private var developerInk: Ink?
+    private var shownInk: Ink { developerInk ?? ink }
     private(set) var isHovered = false
     private var url: URL?, title = ""
     var pageZoom: CGFloat = 1 { didSet { if pageZoom != oldValue { needsLayout = true; updateFieldControls(animated: true) } } }
@@ -222,8 +227,8 @@ import RiseCore
         progressLine.isHidden = true
         text.font = Metrics.font; text.lineBreakMode = .byTruncatingTail; text.cell?.usesSingleLineMode = true
         text.wantsLayer = true
-        addSubview(text)
-        for button in [zoomButton, copyButton, settingsButton] as [SidebarHoverButton] { addSubview(button); button.alphaValue = 0 }
+        addSubview(text); addSubview(addressHost)
+        for button in [zoomButton, copyButton, settingsButton] as [SidebarHoverButton] { addressHost.addSubview(button); button.alphaValue = 0 }
         setColor(.white, animated: false)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -244,11 +249,11 @@ import RiseCore
         let from = layer?.presentation()?.backgroundColor ?? layer?.backgroundColor
         self.color = next; ink = Ink.on(next)
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        layer?.backgroundColor = next.cgColor
+        layer?.backgroundColor = background
         CATransaction.commit()
         if animated, window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, let from {
             let fade = CABasicAnimation(keyPath: "backgroundColor")
-            fade.fromValue = from; fade.toValue = next.cgColor; fade.duration = 0.2
+            fade.fromValue = from; fade.toValue = background; fade.duration = 0.2
             fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
             layer?.add(fade, forKey: "color")
         }
@@ -259,12 +264,15 @@ import RiseCore
         CATransaction.begin(); CATransaction.setDisableActions(true)
         hairline.backgroundColor = ink.hairline.cgColor; field.backgroundColor = ink.field.cgColor
         CATransaction.commit()
-        let buttons: [ChromeButton] = navigation + [zoomButton, copyButton, settingsButton] + extensionButtons
-        for button in buttons {
-            if button.contentTintColor != ink.strong { button.contentTintColor = ink.strong }
-            button.hoverColor = ink.hover
+        // The buttons that stay over developer mode's bar take its ink.
+        let staying: [ChromeButton] = navigation + extensionButtons, field: [ChromeButton] = [zoomButton, copyButton, settingsButton]
+        for (buttons, ink) in [(staying, shownInk), (field, ink)] {
+            for button in buttons {
+                if button.contentTintColor != ink.strong { button.contentTintColor = ink.strong }
+                button.hoverColor = ink.hover
+            }
         }
-        for case let notice as BarNotice in subviews { notice.tint(ink.strong) }
+        for case let notice as BarNotice in subviews { notice.tint(shownInk.strong) }
         updateText()
     }
 
@@ -312,6 +320,7 @@ import RiseCore
         hairline.frame = NSRect(x: 0, y: bounds.height-1/scale, width: bounds.width, height: 1/scale)
         field.frame = fieldRect
         CATransaction.commit()
+        addressHost.frame = bounds
         layoutProgress()
         for (button, centre) in zip(navigation, navigationCentres) {
             button.frame = NSRect(x: centre-14, y: mid-14, width: 28, height: 28)
@@ -356,9 +365,9 @@ import RiseCore
         holdNotice(hold)
         guard notice?.text != BarNotice.text(words, link: link) else { return }
         let next = BarNotice(words, image: image, link: link)
-        next.tint(ink.strong); next.alphaValue = 0
+        next.tint(shownInk.strong); next.alphaValue = 0
         addSubview(next); place(next)
-        let old: NSView = notice ?? text
+        let old: NSView = notice ?? address
         notice = next
         exchange(old, for: next)
     }
@@ -376,8 +385,10 @@ import RiseCore
         noticeTimer?.invalidate(); noticeTimer = nil
         guard let notice else { return }
         self.notice = nil
-        exchange(notice, for: text)
+        exchange(notice, for: address)
     }
+    /// What a notice takes the place of: the address, or developer mode's while it's on.
+    private var address: NSView { showsDeveloperAddress ? developerAddress ?? text : text }
     private func place(_ notice: BarNotice) {
         let textX = Metrics.textX-leadingRoom
         notice.frame = NSRect(x: textX-1-BarNotice.inkStart, y: 0, width: notice.width, height: bounds.height)
@@ -406,6 +417,47 @@ import RiseCore
         DispatchQueue.main.asyncAfter(deadline: .now()+Notice.exitDuration+0.05) { done() }
     }
 
+    // MARK: Becoming developer mode's bar
+
+    /// Developer mode's address, in its bar under this one, which takes the address's place.
+    weak var developerAddress: NSView?
+    private(set) var showsDeveloperAddress = false
+    /// How far the bar has become developer mode's, which is under it: its colour and hairline
+    /// ease away and its field gives way, and the buttons that stay take developer mode's ink.
+    /// Developer mode's bar takes the clicks they don't. Its address, or what a notice says in its
+    /// place, is exchanged for developer mode's as a notice is, at once when it isn't moving.
+    private(set) var developerProgress: CGFloat = 0
+    func setDeveloper(_ progress: CGFloat, enabled: Bool, surface: NSColor) {
+        if enabled != showsDeveloperAddress {
+            let old = notice ?? address
+            showsDeveloperAddress = enabled
+            noticeTimer?.invalidate(); noticeTimer = nil; notice = nil
+            if progress != (enabled ? 1 : 0) { exchange(old, for: address) } else {
+                for view in [old, address] { view.layer?.removeAnimation(forKey: "notice") }
+                old.alphaValue = 0; address.alphaValue = 1
+                if old is BarNotice { old.removeFromSuperview() }
+            }
+        }
+        let ink = progress > 0.5 ? Ink.on(surface) : nil
+        guard progress != developerProgress || ink?.strong != developerInk?.strong else { return }
+        developerProgress = progress; developerInk = ink
+        if progress > 0 { setHovered(false) }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        layer?.removeAnimation(forKey: "color"); layer?.backgroundColor = background
+        hairline.opacity = Float(DeveloperModeMotion.covering(progress))
+        CATransaction.commit()
+        addressHost.alphaValue = DeveloperModeMotion.leaving(progress)
+        applyInk()
+    }
+    private var background: CGColor { color.withAlphaComponent(color.alphaComponent*DeveloperModeMotion.covering(developerProgress)).cgColor }
+    /// Where developer mode's buttons can run to: up to the pinned extensions.
+    var developerControlsMaxX: CGFloat { extensionButtons.isEmpty ? bounds.width : extensionCentre(0)-14 }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        guard developerProgress > 0 else { return hit }
+        return (navigation+extensionButtons).contains { hit?.isDescendant(of: $0) == true } ? hit : nil
+    }
+
     // MARK: Hovering the address
 
     override func updateTrackingAreas() {
@@ -418,7 +470,7 @@ import RiseCore
     override func mouseEntered(with event: NSEvent) { mouseMoved(with: event) }
     override func mouseExited(with event: NSEvent) { setHovered(false) }
     func setHovered(_ hovered: Bool) {
-        let hovered = hovered && url != nil
+        let hovered = hovered && url != nil && developerProgress == 0
         guard hovered != isHovered else { return }
         isHovered = hovered
         fade(field, to: hovered ? 1 : 0)
@@ -587,4 +639,12 @@ import RiseCore
 /// The address, which leaves its clicks to the bar.
 final class PlainNavBarText: NSTextField {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
+/// Views together so they can fade and move as one; its own clicks go to what's behind it.
+final class ContentHost: FlippedView {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let hit = super.hitTest(point)
+        return hit === self ? nil : hit
+    }
 }

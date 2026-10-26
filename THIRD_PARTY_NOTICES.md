@@ -66,6 +66,10 @@ SOFTWARE.
 
 Inter 4.1, the variable font in Assets/Fonts (bundled as Contents/Resources/Fonts): Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter). Licensed under the SIL Open Font License, Version 1.1; its complete license is in Assets/Fonts/Inter-LICENSE.txt, bundled beside the font.
 
+## Ioskeley Mono
+
+Ioskeley Mono 2.2.0 Regular, in Assets/Fonts (bundled as Contents/Resources/Fonts), for developer mode's address: Copyright (c) 2025, Ahmed Hatem (https://github.com/ahatem/IoskeleyMono). Licensed under the SIL Open Font License, Version 1.1; its complete license is in Assets/Fonts/IoskeleyMono-LICENSE.txt, bundled beside the font.
+
 ## Framework7 Icons
 
 The address palette's search glyph (Sources/Rise/CenteredPaletteStyle.swift) is Framework7 Icons' `search`, as Kero (https://github.com/egoist/kero) uses it: Copyright (c) Vladimir Kharlampidi (https://framework7.io/icons/). Licensed under the MIT License: permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files, to deal in the Software without restriction, subject to including the copyright notice and this permission notice in all copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.

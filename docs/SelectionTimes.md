@@ -1,8 +1,22 @@
-# Selected times on iOS
+# Selected times on desktop and iOS
 
 `SelectionTimes` in RiseCore interprets explicit-zone selections. Each page's
 `SelectionTimeMenu` tracks selection changes in an isolated WebKit world and adds
-the local time as the first selection-menu item.
+the local time as the first selection-menu item. Desktop's Chromium context menu
+uses the same parser and labels.
+
+A numeric zone selected without a clock, such as `UTC+14:00`, shows the current
+time there and how far ahead of or behind the local clock it is. Tomorrow and
+yesterday compare the two places' calendar dates. The difference uses the local
+offset at that instant, including daylight saving. `UTC`/`GMT`, positive/negative
+offsets, Unicode minus signs, colon or compact minutes, and fractional hours are
+supported. Selecting prose containing several offsets shows up to three distinct
+zones in text order. An offset belonging to an actual clock time is consumed by
+that conversion, and malformed or out-of-range offsets are ignored.
+
+On iOS a zone-only result offers Copy, capturing the date, time, and explicit zone
+so the pasted value remains meaningful later. It does not create an appointment
+or acquire the system's Calendar/Reminders actions.
 
 The submenu offers Copy, Add to Calendar, Add to Reminders and Show in Calendar.
 Calendar uses EventKitUI without requesting calendar read access. The direct
@@ -40,6 +54,8 @@ Validation:
   Long-press the selected time, test the direct item, then reopen and test the
   expand chevron. The latter writes `relocated-menu.json` with the real native
   hierarchy. Check Calendar and Reminders without saving test items on a phone.
+  Add `-RiseSelectionTimeMenuAuditText 'UTC+14:00'` to exercise a standalone offset;
+  `selection-menu.json` records its actual menu title and actions.
 
 The local Xcode-beta simulator test service currently fails with
 `DTServiceHubClient failed to bless service hub`. The test target can still compile

@@ -7,7 +7,7 @@ import UIKit
 /// page's address and a few actions, whose Find turns it into a find field above the keyboard.
 /// Either way the bar's contents swap with a quick, blurred crossfade.
 final class BottomBar: UIView {
-    enum Panel { case search, menu, tabMenu, find, siteSettings, appSettings, privacyPolicy, downloads, history }
+    enum Panel { case search, menu, tabMenu, find, siteSettings, appSettings, aiOptions, aiPrompt, privacyPolicy, downloads, history }
 
     /// The buttons' row, and the space above it.
     static let rowHeight: CGFloat = 42
@@ -100,6 +100,8 @@ final class BottomBar: UIView {
     /// Site protections, currently a visual preview.
     let siteSettings = SiteSettingsPanel()
     let appSettings = AppSettingsPanel()
+    let aiOptions = AIOptionsPanel()
+    let aiPrompt = AIPromptPanel()
     let privacyPolicy = PrivacyPolicyPanel()
     /// More's Downloads: the list of downloads.
     let downloads = DownloadsPanel()
@@ -125,7 +127,7 @@ final class BottomBar: UIView {
     private var copySuccessTask: Task<Void, Never>?
     /// Whichever of the row, the search and the menu is showing, if any.
     private(set) var shown: UIView?
-    private var contents: [UIView] { [home, search, menu, tabMenu, find, siteSettings, appSettings, privacyPolicy, downloads, history] }
+    private var contents: [UIView] { [home, search, menu, tabMenu, find, siteSettings, appSettings, aiOptions, aiPrompt, privacyPolicy, downloads, history] }
     /// Collapsed, only the strip remains; set it inside an animation to animate.
     var isCollapsed = false {
         didSet {
@@ -171,6 +173,21 @@ final class BottomBar: UIView {
 
     static func appSettingsHeight(width: CGFloat, safeBottom: CGFloat) -> CGFloat {
         searchTop+AppSettingsPanel.height+max(safeBottom, 16)
+    }
+
+    static func aiOptionsHeight(safeBottom: CGFloat) -> CGFloat {
+        searchTop+AIOptionsPanel.height+max(safeBottom, 16)
+    }
+
+    /// As tall as the whole prompt needs, above the keyboard while it's edited.
+    static func aiPromptHeight(_ panel: AIPromptPanel, width: CGFloat, keyboard: CGFloat, safeBottom: CGFloat) -> CGFloat {
+        let overlap = aiPromptKeyboardOverlap(keyboard: keyboard, safeBottom: safeBottom)
+        return searchTop+panel.naturalHeight(width: width, keyboardOverlap: overlap)+max(safeBottom, 16)
+    }
+
+    /// How far into the prompt's panel the keyboard reaches, leaving 12 points above it.
+    static func aiPromptKeyboardOverlap(keyboard: CGFloat, safeBottom: CGFloat) -> CGFloat {
+        keyboard > 0 ? max(0, keyboard+12-max(safeBottom, 16)) : 0
     }
 
     static func privacyPolicyHeight(safeBottom: CGFloat) -> CGFloat {
@@ -232,7 +249,7 @@ final class BottomBar: UIView {
         for button in [tabsButton, newPageButton] { row.addSubview(button) }
         row.addSubview(moreLanding)
         moreLanding.addSubview(moreButton)
-        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton, search.privateButton, tabMenu.incognitoRow, tabMenu.historyButton, history.closeButton]+menu.buttons+siteSettings.buttons+appSettings.buttons+privacyPolicy.buttons+downloads.buttons+find.buttons+[find.modeButton, find.sendButton] {
+        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton, search.privateButton, tabMenu.incognitoRow, tabMenu.historyButton, history.closeButton]+menu.buttons+siteSettings.buttons+appSettings.buttons+aiOptions.buttons+aiPrompt.buttons+privacyPolicy.buttons+downloads.buttons+find.buttons+[find.modeButton, find.sendButton] {
             // A light, crisp tap as the finger lands, rather than a soft thud; actions wait for it to lift.
             button.addAction(UIAction { [weak self, weak button] _ in
                 guard let self else { return }
@@ -287,6 +304,8 @@ final class BottomBar: UIView {
         case .find: find
         case .siteSettings: siteSettings
         case .appSettings: appSettings
+        case .aiOptions: aiOptions
+        case .aiPrompt: aiPrompt
         case .privacyPolicy: privacyPolicy
         case .downloads: downloads
         case .history: history
@@ -401,7 +420,9 @@ final class BottomBar: UIView {
         place(find, Self.searchTop, SearchPanel.fieldHeight+find.answerHeight)
         place(siteSettings, Self.searchTop, SiteSettingsPanel.height)
         place(appSettings, Self.searchTop, AppSettingsPanel.height)
+        place(aiOptions, Self.searchTop, AIOptionsPanel.height)
         let safeBottom = window?.safeAreaInsets.bottom ?? 0
+        place(aiPrompt, Self.searchTop, max(0, bounds.height-Self.searchTop-max(safeBottom, 16)))
         place(privacyPolicy, Self.searchTop, max(0, bounds.height-Self.searchTop-max(safeBottom,16)))
         let historyHeight = Self.historyHeight(screenHeight: superview?.bounds.height ?? bounds.height,
                                                safeTop: window?.safeAreaInsets.top ?? 0)

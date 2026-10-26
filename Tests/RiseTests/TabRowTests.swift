@@ -108,6 +108,59 @@ final class TabRowTests: XCTestCase {
         XCTAssertEqual(row.rowHeight, TabAppearance.height)
     }
 
+    @MainActor func testDeveloperBorderDrawsOverTheChosenCardInFullYellow() throws {
+        _ = NSApplication.shared
+        let tab = BrowserTab(); tab.developer = true; tab.requestedURL = URL(string: "http://localhost:3000")
+        let row = TabRow(tab: tab, onClose: {})
+        row.update(tab: tab, selected: true, theme: .neutral, configuration: .forTab(tab, theme: .neutral))
+        row.frame = NSRect(x: 0, y: 0, width: 240, height: row.rowHeight); row.layoutSubtreeIfNeeded()
+        XCTAssertFalse(row.constructionBorder.isHidden)
+        let card = try XCTUnwrap(row.subviews.firstIndex(of: row.plainBackground)), border = try XCTUnwrap(row.subviews.firstIndex(of: row.constructionBorder))
+        XCTAssertGreaterThan(border, card, "The border is over the card, not under it")
+        // Its yellow shows at full strength along the top edge, between the dashes.
+        let rep = try XCTUnwrap(row.bitmapImageRepForCachingDisplay(in: row.bounds))
+        row.cacheDisplay(in: row.bounds, to: rep)
+        let scale = CGFloat(rep.pixelsWide)/row.bounds.width
+        let yellow = (Int(20*scale)..<Int(200*scale)).contains { x in
+            guard let c = rep.colorAt(x: x, y: Int(ConstructionBorder.width/2*scale))?.usingColorSpace(.sRGB) else { return false }
+            return c.redComponent > 0.9 && c.greenComponent > 0.75 && c.blueComponent < 0.4
+        }
+        XCTAssertTrue(yellow)
+        row.update(tab: tab, selected: false, theme: .neutral, configuration: .forTab(tab, theme: .neutral))
+        XCTAssertTrue(row.constructionBorder.isHidden, "Only the chosen tab has it")
+    }
+
+    @MainActor func testDeveloperTabLookTurnsEachPartOff() {
+        _ = NSApplication.shared
+        let tab = BrowserTab(); tab.developer = true; tab.requestedURL = URL(string: "http://localhost:3000")
+        let all = TabRowConfiguration.forTab(tab, theme: .neutral)
+        XCTAssertEqual(all.subtitle?.text, "localhost:3000"); XCTAssertTrue(all.constructionBorder); XCTAssertNotNil(all.subtitleAccessory)
+        let noAddress = TabRowConfiguration.forTab(tab, theme: .neutral, developerLook: .init(address: false))
+        XCTAssertNil(noAddress.subtitle); XCTAssertTrue(noAddress.constructionBorder); XCTAssertNotNil(noAddress.subtitleAccessory)
+        XCTAssertFalse(TabRowConfiguration.forTab(tab, theme: .neutral, developerLook: .init(border: false)).constructionBorder)
+        XCTAssertNil(TabRowConfiguration.forTab(tab, theme: .neutral, developerLook: .init(hammer: false)).subtitleAccessory)
+        // The hammer shows on a one-line tab too.
+        let row = TabRow(tab: tab, onClose: {})
+        row.update(tab: tab, selected: true, theme: .neutral, configuration: noAddress)
+        XCTAssertEqual(row.rowHeight, TabAppearance.height); XCTAssertFalse(row.subtitleAccessory.isHidden)
+    }
+
+    @MainActor func testDeveloperTabSettingsAreOnByDefaultAndReachTheSidebar() throws {
+        _ = NSApplication.shared
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: "RiseTests.\(UUID().uuidString)"))
+        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"), restore: false, preferences: preferences)
+        defer { browser.tabs.forEach { $0.page.stopLoading() }; browser.saveWork?.cancel() }
+        let tab = browser.addTab(); tab.developer = true; tab.requestedURL = URL(string: "http://localhost:3000"); browser.update()
+        let rows = browser.riseSettingRows("tabs").filter { ($0["key"] as? String)?.hasPrefix("developerTab") == true }
+        XCTAssertEqual(rows.compactMap { $0["value"] as? Bool }, [true, true, true])
+        let row = try XCTUnwrap(browser.sidebar.rows[tab.id])
+        XCTAssertTrue(row.showsSubtitle); XCTAssertFalse(row.constructionBorder.isHidden)
+        browser.setRiseSetting("developerTabAddress", false); browser.setRiseSetting("developerTabBorder", false); browser.setRiseSetting("developerTabHammer", false)
+        XCTAssertFalse(row.showsSubtitle); XCTAssertTrue(row.constructionBorder.isHidden); XCTAssertTrue(row.subtitleAccessory.isHidden)
+        XCTAssertEqual(browser.developerTabLook, DeveloperTabLook(address: false, border: false, hammer: false))
+    }
+
     @MainActor func testSplitMergeRequestHasRoomForRepositorySubtitle() throws {
         _ = NSApplication.shared
         let sidebar = SidebarView(archive: {}, cleanUp: {})

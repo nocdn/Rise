@@ -215,6 +215,8 @@ final class BrowserWindow: NSWindow {
 }
 
 final class DeveloperHeader: Surface {
+    /// Where nothing's to click, it moves the window, as the page bar does.
+    override func mouseDown(with event: NSEvent) { window?.performDrag(with: event) }
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua

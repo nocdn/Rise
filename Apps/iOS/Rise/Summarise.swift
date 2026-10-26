@@ -247,7 +247,8 @@ struct PageSummary: Equatable {
     /// Asks the shared model for the page's summary, all at once, as it's revealed all at once.
     @MainActor static func make(of page: PageAssistant.Page, provider: ModelChoice = .openRouter, session: URLSession = .shared) async throws -> PageSummary {
         let messages: [[String: Any]] = [
-            ["role": "system", "content": systemPrompt+"\n\n"+context(of: page)],
+            ["role": "system", "content": AIPrompt.summarise.system(context: context(of: page),
+                                                                     values: ["title": page.title, "address": page.url, "text": page.text])],
             ["role": "user", "content": "Summarise this page."],
         ]
         return try decode(try await reply(to: messages, provider: provider, session: session))
