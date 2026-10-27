@@ -81,7 +81,7 @@ final class SplitTabsTests: XCTestCase {
         let old = NSApp.mainMenu; defer { NSApp.mainMenu = old }
         let delegate = AppDelegate(); delegate.browser = browser; delegate.buildMenu()
         let key = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command, .shift], timestamp: 0,
-            windowNumber: browser.window!.windowNumber, context: nil, characters: "D", charactersIgnoringModifiers: "d", isARepeat: false, keyCode: 2))
+            windowNumber: browser.window!.windowNumber, context: nil, characters: "D", charactersIgnoringModifiers: "D", isARepeat: false, keyCode: 2))
         XCTAssertTrue(NSApp.mainMenu!.performKeyEquivalent(with: key))
         let group = try XCTUnwrap(browser.activeSplitGroup)
         XCTAssertEqual(group.leftID, tab.id)

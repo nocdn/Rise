@@ -42,6 +42,10 @@ Engine builds reuse `out/Release` and its dependency cache. The script defaults 
 four parallel jobs to leave RAM for the desktop; set `RISE_CHROMIUM_JOBS` explicitly
 to change that limit. `./scripts/engine/build.sh -n` previews pending work.
 
+The patch script recognizes an installed prefix of overlapping patches, so adding the next
+patch applies only the new suffix instead of replaying older changes. Its regression checks
+run without a Chromium checkout: `python3 -m unittest discover -s scripts/engine/tests`.
+
 ## Patches
 
 | Patch | Why |

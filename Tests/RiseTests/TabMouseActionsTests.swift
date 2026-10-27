@@ -48,7 +48,7 @@ final class TabMouseActionsTests: XCTestCase {
         XCTAssertEqual(browser.tabs.map(\.id), [left.id])
         XCTAssertEqual(browser.selectedID, left.id)
         XCTAssertTrue(browser.splitGroups.isEmpty)
-        XCTAssertEqual(left.page.view.frame, browser.pageClip.bounds)
+        XCTAssertEqual(left.page.view.frame, browser.pageBody, "The remaining page stays below its navigation bar")
     }
     @MainActor func testReleasingElsewhereOrWithoutPressDoesNotCloseTabs() throws {
         let browser = browser(); defer { clean(browser) }

@@ -77,6 +77,9 @@ final class SiteControlsTests: XCTestCase {
         let suite = "Rise.PromptTests.\(UUID())", defaults = UserDefaults(suiteName: suite)!
         let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), restore: false, preferences: defaults)
         defer { browser.permissionCoordinator.cancel(); browser.saveWork?.cancel(); browser.window?.orderOut(nil); defaults.removePersistentDomain(forName: suite) }
+        // Leave room for the popover on both sides of its anchor. An autosaved full-width window
+        // makes AppKit clamp the popover against the screen edge instead of centering it there.
+        browser.window?.setContentSize(NSSize(width: 900, height: 650)); browser.window?.center()
         let tab = browser.addTab(); tab.requestedURL = URL(string: "https://example.com")
         browser.showWindow(nil); browser.update()
         let origin = SitePermissions.origin(tab.url)!

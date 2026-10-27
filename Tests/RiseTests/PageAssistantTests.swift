@@ -196,13 +196,21 @@ private final class AssistantStreamProtocol: URLProtocol {
     func testCancellationAtHighlightDoesNotDeliverLateAnswerText() async throws {
         let session = try session(contents: ["{\"snippet\":\"March 3\"}\nLate answer"])
         defer { session.invalidateAndCancel() }
+        let ready = AsyncStream<Void>.makeStream()
+        defer { ready.continuation.finish() }
         var consumer: Task<[String], Never>!
         let stream = PageAssistant.answer("When?", history: [], page: {
             PageAssistant.Page(title: "Release", url: "https://example.test", selection: "", text: "March 3")
-        }, highlight: { _ in consumer.cancel(); await Task.yield(); return true }, session: session)
+        }, highlight: { _ in
+            // Cancel while the consumer is awaiting the answer, rather than racing delivery of
+            // the initial Thinking token against AsyncThrowingStream's termination handler.
+            var iterator = ready.stream.makeAsyncIterator()
+            _ = await iterator.next()
+            consumer.cancel(); await Task.yield(); return true
+        }, session: session)
         consumer = Task {
             var tokens: [String] = []
-            do { for try await token in stream { tokens.append(token) } } catch {}
+            do { for try await token in stream { tokens.append(token); ready.continuation.yield(()) } } catch {}
             return tokens
         }
         let tokens = await consumer.value
