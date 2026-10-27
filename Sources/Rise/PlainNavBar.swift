@@ -201,6 +201,10 @@ import RiseCore
             needsLayout = true; updateFieldControls(animated: true)
         }
     }
+    /// Keeps titlebar controls in the same ink as the navigation glyphs, including Reload.
+    var onNavigationTintChanged: ((NSColor) -> Void)? {
+        didSet { onNavigationTintChanged?(shownInk.strong) }
+    }
     /// Where its buttons sit, and how much sooner its address starts for fewer of them: a split's
     /// right page has no sidebar button, so its back, forward and reload move up a place.
     var navigationCentres = Metrics.navigationCentres
@@ -233,6 +237,7 @@ import RiseCore
     init(copy: @escaping () -> Void, settings: @escaping () -> Void, zoom: @escaping () -> Void, permission: @escaping () -> Void = {}) {
         copyButton = SidebarCopyButton(action: copy)
         settingsButton = SidebarHoverButton(symbol: "slider.horizontal.3", size: 14, title: "Site controls", action: settings)
+        settingsButton.setHoverHint("Site controls")
         settingsButton.image = TablerIcon.image(TablerIcon.adjustments, size: 16, description: "Site controls")
         zoomButton = SidebarHoverButton(symbol: "plus.magnifyingglass", size: 14, title: "Zoom", action: zoom)
         zoomButton.image = TablerIcon.image(TablerIcon.zoomIn, size: 16, description: "Zoom")
@@ -291,6 +296,7 @@ import RiseCore
                 button.hoverColor = ink.hover
             }
         }
+        onNavigationTintChanged?(shownInk.strong)
         for case let notice as BarNotice in subviews { notice.tint(shownInk.strong) }
         updateText()
     }

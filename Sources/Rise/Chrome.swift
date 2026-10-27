@@ -73,6 +73,7 @@ func label(_ text: String, size: CGFloat = 14, weight: NSFont.Weight = .regular,
 }
 class ChromeButton: NSButton {
     var actionBlock: (() -> Void)?
+    private(set) var hoverHint: ButtonHoverHint?
     var baseColor = NSColor.clear
     var hover = false
     var hoverColor = NSColor.black.withAlphaComponent(0.05) {
@@ -88,7 +89,15 @@ class ChromeButton: NSButton {
         wantsLayer = true; layer?.cornerRadius = 6
     }
     required init?(coder: NSCoder) { fatalError() }
-    @objc func runAction() { actionBlock?() }
+    func setHoverHint(_ text: String, shortcut: String = "") {
+        if let hoverHint { hoverHint.update(text: text, shortcut: shortcut) }
+        else { hoverHint = ButtonHoverHint(button: self, text: text, shortcut: shortcut) }
+        toolTip = nil; setAccessibilityLabel(text)
+    }
+    @objc func runAction() { hoverHint?.hide(); actionBlock?() }
+    override func mouseDown(with event: NSEvent) { hoverHint?.hide(); super.mouseDown(with: event) }
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); if window == nil { hoverHint?.setHovered(false) } }
+    override func viewDidHide() { super.viewDidHide(); hoverHint?.setHovered(false) }
     override func updateTrackingAreas() {
         super.updateTrackingAreas(); removeOwnTrackingAreas()
         // Moves too: off something in front of it and onto it is no entry of its own.
@@ -104,6 +113,7 @@ class ChromeButton: NSButton {
             let point = point ?? window.mouseLocationOutsideOfEventStream
             hover = hoverRect.contains(convert(point, from: nil)) && isFrontmost(at: point)
         } else { hover = false }
+        hoverHint?.setHovered(hover)
         let color = (hover ? hoverColor : baseColor).cgColor
         guard layer?.backgroundColor != color else { return }
         CATransaction.begin(); CATransaction.setDisableActions(true)

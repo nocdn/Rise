@@ -29,8 +29,17 @@ import AppKit
     func keyboardShortcutsChanged() {
         let newTabKey = keyboardShortcuts.bindings("newTab").first?.display ?? ""
         sidebar.newTab.toolTip = newTabKey.isEmpty ? "New Tab" : "New Tab (\(newTabKey))"
-        sidebar.titlebarNewTab.setShortcut(newTabKey)
-        sidebar.cleanUpButton.setShortcut(keyboardShortcuts.bindings("cleanUpTabs").first?.display ?? "")
+        func shortcut(_ id: String) -> String { keyboardShortcuts.bindings(id).first?.display ?? "" }
+        for (button, id) in [(sidebar.titlebarNewTab, "newTab"), (sidebar.cleanUpButton, "cleanUpTabs"),
+                             (sidebar.archiveButton, "toggleDownloads"), (toolbarButtons[0], "toggleSidebar"),
+                             (navBar.copyButton, "copyURL"), (splitBar.copyButton, "copyURL")] as [(ChromeButton, String)] {
+            button.hoverHint?.setShortcut(shortcut(id))
+        }
+        for buttons in [Array(toolbarButtons.dropFirst()), splitBarButtons] {
+            buttons[0].hoverHint?.setShortcut(shortcut("goBack"))
+            buttons[1].hoverHint?.setShortcut(shortcut("goForward"))
+            (buttons[2] as? ReloadButton)?.setHintShortcuts(reload: shortcut("reload"), stop: shortcut("stopLoadingPage"))
+        }
         for tab in tabs where ["rise", "chrome"].contains(tab.url?.scheme ?? "") && tab.url?.host == "settings" {
             tab.page.evaluate("dispatchEvent(new Event('rise-settings-ready'))", arguments: [:], in: nil, world: .page) { _ in }
         }

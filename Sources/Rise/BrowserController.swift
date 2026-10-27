@@ -424,10 +424,12 @@ import RiseCore
             } else if symbol == "arrow.clockwise" {
                 button = ReloadButton(title: title, action: action)
             } else { button = ChromeButton(symbol: symbol, size: 13, title: title, action: action) }
+            if symbol == "sidebar.left" { button.setHoverHint("Toggle Sidebar", shortcut: "⌘B") }
             toolbarButtons.append(button)
         }
         // The page bar's, drawn as Dia's: chevrons, and a smaller sidebar glyph.
         navBar.navigation = toolbarButtons
+        navBar.onNavigationTintChanged = { [weak self] in self?.sidebar.titlebarNewTab.contentTintColor = $0 }
         installSplitBar()
         developerAddress.font = IoskeleyMonoFont.regular(ofSize: 12)
         developerAddress.textColor = NSColor(hex: 0x393134); developerBar.addSubview(developerAddress)

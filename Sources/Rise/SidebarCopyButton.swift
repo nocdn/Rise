@@ -15,6 +15,7 @@ final class SidebarCopyButton: SidebarHoverButton {
     }
     init(action: @escaping () -> Void) {
         super.init(symbol: "link", size: 14, title: "Copy current URL (⌘⇧C)", action: action)
+        setHoverHint("Copy current URL", shortcut: "⇧⌘C")
         glyph.image = Self.linkImage; image = nil
         glyph.imageScaling = .scaleNone
         glyph.contentTintColor = contentTintColor

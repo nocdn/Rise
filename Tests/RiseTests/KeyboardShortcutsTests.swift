@@ -106,4 +106,50 @@ final class KeyboardShortcutsTests: XCTestCase {
             XCTAssertFalse(browser.palette.isPresented, "Recording never executes the chosen command")
         }
     }
+    @MainActor func testButtonHintsFollowRemappedAndRemovedShortcutsInBothPageBars() throws {
+        try withBrowser { browser, _ in
+            let shortcuts = browser.keyboardShortcuts
+            let controls: [(String, [ChromeButton])] = [
+                ("newTab", [browser.sidebar.titlebarNewTab]),
+                ("cleanUpTabs", [browser.sidebar.cleanUpButton]),
+                ("toggleDownloads", [browser.sidebar.archiveButton]),
+                ("toggleSidebar", [browser.toolbarButtons[0]]),
+                ("goBack", [browser.toolbarButtons[1], browser.splitBarButtons[0]]),
+                ("goForward", [browser.toolbarButtons[2], browser.splitBarButtons[1]]),
+                ("reload", [browser.toolbarButtons[3], browser.splitBarButtons[2]]),
+                ("copyURL", [browser.navBar.copyButton, browser.splitBar.copyButton]),
+            ]
+            for (id, buttons) in controls {
+                XCTAssertNil(shortcuts.set(id, at: 0, to: "Command+Ctrl+Alt+9"))
+                for button in buttons {
+                    XCTAssertEqual(try XCTUnwrap(button.hoverHint).shortcut, "⌘⌃⌥9", id)
+                    XCTAssertNil(button.toolTip, "The native hint replaces the plain tooltip")
+                }
+                for _ in shortcuts.bindings(id) { XCTAssertNil(shortcuts.set(id, at: 0, to: "")) }
+                for button in buttons {
+                    let hint = try XCTUnwrap(button.hoverHint)
+                    XCTAssertEqual(hint.hintText.string, hint.text, "An unassigned shortcut leaves no blank suffix")
+                }
+                shortcuts.resetAll()
+            }
+            for button in [browser.navBar.settingsButton, browser.splitBar.settingsButton] {
+                XCTAssertEqual(try XCTUnwrap(button.hoverHint).hintText.string, "Site controls")
+                XCTAssertNil(button.toolTip)
+            }
+        }
+    }
+    @MainActor func testStopHintKeepsItsOwnShortcutWhenReloadIsRemapped() throws {
+        try withBrowser { browser, _ in
+            let buttons = try [browser.toolbarButtons[3], browser.splitBarButtons[2]].map { try XCTUnwrap($0 as? ReloadButton) }
+            buttons.forEach { $0.setMode(.stop, force: true) }
+            XCTAssertNil(browser.keyboardShortcuts.set("reload", at: 0, to: "Command+Ctrl+Alt+9"))
+            XCTAssertNil(browser.keyboardShortcuts.set("stopLoadingPage", at: 0, to: "F8"))
+            for button in buttons {
+                XCTAssertEqual(try XCTUnwrap(button.hoverHint).hintText.string, "Stop Loading  F8")
+                XCTAssertNil(button.toolTip)
+                button.setMode(.reload, force: true)
+                XCTAssertEqual(try XCTUnwrap(button.hoverHint).hintText.string, "Reload  ⌘⌃⌥9")
+            }
+        }
+    }
 }

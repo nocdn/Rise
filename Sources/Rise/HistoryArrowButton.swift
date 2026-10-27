@@ -32,6 +32,7 @@ final class HistoryArrowButton: ChromeButton {
     init(direction: HistoryDirection, title: String, action: @escaping () -> Void) {
         self.direction = direction
         super.init(symbol: direction == .back ? "arrow.left" : "arrow.right", size: 16, title: title, action: action)
+        setHoverHint(direction == .back ? "Back" : "Forward", shortcut: direction == .back ? "⌘[" : "⌘]")
         image = nil
         arrow.fillColor = nil; arrow.lineCap = .round; arrow.lineJoin = .round
         arrow.lineWidth = 1.40

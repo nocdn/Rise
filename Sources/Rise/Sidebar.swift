@@ -79,7 +79,7 @@ import RiseCore
         archiveButton = DownloadsButton(title: "Downloads", action: archive)
         cleanUpButton = HoverHintButton(image: TablerIcon.image(TablerIcon.tabCleanup, size: 20, description: "Sort tabs by domain"),
                                         text: "Sort tabs by domain", shortcut: "⇧⌘K", action: cleanUp)
-        titlebarNewTab = HoverHintButton(image: TablerIcon.image(TablerIcon.plus, size: 20, description: "New Tab"),
+        titlebarNewTab = HoverHintButton(image: TablerIcon.image(TablerIcon.plus, size: 20, strokeWidth: ReloadMorph.lineWidth, description: "New Tab"),
                                          text: "New Tab", shortcut: "⌘T", action: {})
         super.init()
         newTab.target = self; newTab.action = #selector(createTab); newTab.isHidden = minimalNewTab
@@ -98,9 +98,12 @@ import RiseCore
             fill = theme.background
             newTab.theme = theme; searchRow.apply(theme)
             (scroll.verticalScroller as? ThinScroller)?.dark = theme == .dark
-            cleanUpButton.hintAppearance = theme.appearance; titlebarNewTab.hintAppearance = theme.appearance
             for button in [archiveButton, cleanUpButton, titlebarNewTab] as [ChromeButton] {
-                button.contentTintColor = theme.sidebarIcon; button.hoverColor = theme.text.withAlphaComponent(0.07)
+                button.hoverHint?.appearance = theme.appearance
+            }
+            [archiveButton, cleanUpButton].forEach { $0.contentTintColor = theme.sidebarIcon }
+            for button in [archiveButton, cleanUpButton, titlebarNewTab] as [ChromeButton] {
+                button.hoverColor = theme.text.withAlphaComponent(0.07)
             }
         }
         selectedTabID = selected?.id

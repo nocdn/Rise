@@ -8,6 +8,7 @@ import QuartzCore
 final class ReloadButton: ChromeButton {
     enum Mode { case reload, stop }
     private(set) var mode: Mode = .reload
+    private var reloadShortcut = "⌘R", stopShortcut = "⌘."
     private let glyph = CAShapeLayer()
     private let morph = ReloadMorph.shared
     /// The animation's frame on show; reload rests at 0, stop at 123.
@@ -34,6 +35,7 @@ final class ReloadButton: ChromeButton {
     }
     init(title: String, action: @escaping () -> Void) {
         super.init(symbol: "arrow.clockwise", size: 16, title: title, action: action)
+        updateHint()
         image = nil
         glyph.fillColor = nil; glyph.lineCap = .round; glyph.lineJoin = .round
         glyph.strokeColor = (contentTintColor ?? .secondaryLabelColor).cgColor
@@ -53,6 +55,12 @@ final class ReloadButton: ChromeButton {
     }
     /// Reload or Stop was used, here or with ⌘R: the swap that follows animates.
     func armAnimation() { animatesNext = true }
+    func setHintShortcuts(reload: String, stop: String) {
+        reloadShortcut = reload; stopShortcut = stop; updateHint()
+    }
+    private func updateHint() {
+        setHoverHint(mode == .reload ? "Reload" : "Stop Loading", shortcut: mode == .reload ? reloadShortcut : stopShortcut)
+    }
     override func layout() { super.layout(); draw() }
     override func viewDidChangeBackingProperties() { super.viewDidChangeBackingProperties(); draw() }
 
@@ -72,8 +80,7 @@ final class ReloadButton: ChromeButton {
         }
         mode = next
         if next == .stop { stopShownAt = CACurrentMediaTime() }
-        let label = next == .stop ? "Stop Loading" : "Reload (⌘R)"
-        toolTip = label; setAccessibilityLabel(label)
+        updateHint()
         guard animate else { stopAnimation(); shownFrame = next == .stop ? ReloadMorph.stopFrame : 0; draw(); return }
         let time = ReloadMorph.duration
         if next == .stop {

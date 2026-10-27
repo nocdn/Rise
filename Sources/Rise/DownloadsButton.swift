@@ -124,6 +124,7 @@ final class DownloadsButton: ChromeButton {
     }
     init(title: String, action: @escaping () -> Void) {
         super.init(symbol: "arrow.down.circle", size: 15, title: title, action: action)
+        setHoverHint("Downloads", shortcut: "⌥⌘L")
         image = nil; self.title = ""
         addSubview(glyph)
     }
@@ -131,6 +132,7 @@ final class DownloadsButton: ChromeButton {
     var secondaryAction: (() -> Void)?
     override func layout() { super.layout(); glyph.frame = bounds }
     override func rightMouseDown(with event: NSEvent) {
+        hoverHint?.hide()
         if let secondaryAction { secondaryAction() } else { super.rightMouseDown(with: event) }
     }
 }

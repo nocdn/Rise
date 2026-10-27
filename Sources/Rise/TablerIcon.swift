@@ -35,9 +35,10 @@ enum TablerIcon {
     static let bellClapper = "M10 20h4a2 2 0 0 1-4 0"
 
     /// A `size`-point template image of the 24-unit icon, stroked 2 units wide like the original.
+    /// `strokeWidth` overrides the stroke in points.
     /// `filled` also fills each outline's enclosed area. `centered` centers the
     /// drawn shape itself, rather than the 24-unit box it sits in.
-    static func image(_ data: String, size: CGFloat, filled: Bool = false, centered: Bool = false, description: String? = nil) -> NSImage {
+    static func image(_ data: String, size: CGFloat, filled: Bool = false, centered: Bool = false, strokeWidth: CGFloat? = nil, description: String? = nil) -> NSImage {
         let path = self.path(data)
         let image = NSImage(size: NSSize(width: size, height: size), flipped: true) { _ in
             guard let context = NSGraphicsContext.current?.cgContext else { return false }
@@ -47,7 +48,7 @@ enum TablerIcon {
                 context.translateBy(x: 12-ink.midX, y: 12-ink.midY)
             }
             if filled { context.addPath(path); context.setFillColor(NSColor.black.cgColor); context.fillPath() }
-            context.addPath(path); context.setStrokeColor(NSColor.black.cgColor); context.setLineWidth(2)
+            context.addPath(path); context.setStrokeColor(NSColor.black.cgColor); context.setLineWidth(strokeWidth.map { $0*24/size } ?? 2)
             context.setLineCap(.round); context.setLineJoin(.round); context.strokePath()
             return true
         }
