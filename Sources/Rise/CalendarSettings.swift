@@ -21,6 +21,7 @@ import AppKit
             let badge = calendarBadge(for: tab)
             sidebar.rows[tab.id]?.setBadge(badge); sidebar.pinnedView.tiles[tab.id]?.setBadge(badge)
         }
+        sidebar.pinnedView.updateTileHeight()
         let counting = showsCalendarBadge && tabs.contains { CalendarAccount(url: $0.url) != nil }
         if counting, calendarAgenda.clock == nil {
             calendarAgenda.clock = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in

@@ -337,6 +337,8 @@ enum CalendarSchedule {
       for (const chip of document.querySelectorAll('[data-eventchip][data-eventid]')) {
         if (!chip.getClientRects().length) continue;
         const id = chip.getAttribute('data-eventid') || '';
+        // Working location ("Office", "Home") is a pill above the day, not an event.
+        if (id.startsWith('_WL_') || chip.querySelector('[data-is-pill]')) continue;
         const label = clean(chip.querySelector('.XuJrye')?.textContent || chip.getAttribute('aria-label'));
         let title = clean(chip.querySelector('.I0UMhf, .WBi6vc')?.textContent);
         if (!title) title = clean(label.split(', ')[1]) || clean(chip.innerText.split('\n')[0]);

@@ -186,6 +186,21 @@ final class PinnedTabsTests: XCTestCase {
     }
 
     /// However tiles are dragged about, each comes to rest in its slot.
+    @MainActor func testTilesGrowUpwardForACalendarCountdownAndBack() async throws {
+        let browser = browser(); defer { clean(browser) }
+        let tab = browser.addTab(); browser.pinTab(tab.id); browser.root.layoutSubtreeIfNeeded()
+        let grid = browser.sidebar.pinnedView, tile = try XCTUnwrap(grid.tiles[tab.id])
+        let bottom = grid.frame.maxY, newTab = browser.sidebar.newTab.frame.minY
+        XCTAssertEqual(tile.frame.height, PinnedLayout.compactHeight, "Without a countdown, tiles are compact")
+        for (badge, height) in [("in 15m", PinnedLayout.tileHeight), (nil, PinnedLayout.compactHeight)] {
+            tile.setBadge(badge)
+            let deadline = Date().addingTimeInterval(2)
+            while tile.frame.height != height, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+            XCTAssertEqual(tile.frame.height, height)
+            XCTAssertEqual(grid.frame.maxY, bottom, "The grid keeps its bottom, growing upward")
+            XCTAssertEqual(browser.sidebar.newTab.frame.minY, newTab, "What's below stays put")
+        }
+    }
     @MainActor func testTilesSettleInTheirSlotsAfterReordering() async throws {
         let browser = browser(); defer { clean(browser) }
         let tabs = (0..<5).map { _ in browser.addTab() }

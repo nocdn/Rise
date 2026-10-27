@@ -198,7 +198,9 @@ import RiseCore
         super.layout(); let w = bounds.width
         let pinnedHeight = PinnedLayout.height(count: pinnedView.count)
         let lift = Self.pinnedLift
-        pinnedView.frame = NSRect(x: 0, y: PinnedLayout.top-lift, width: w, height: max(0, pinnedHeight-PinnedLayout.bottom))
+        // The grid's room fits tiles at their tallest; shorter, they sit at its bottom.
+        let shown = PinnedLayout.height(count: pinnedView.count, tileHeight: pinnedView.tileHeight)
+        pinnedView.frame = NSRect(x: 0, y: PinnedLayout.top-lift+pinnedHeight-shown, width: w, height: max(0, shown-PinnedLayout.bottom))
         pinnedView.layoutTiles(animated: animatesRows && window != nil)
         let start: CGFloat = (pinnedHeight > 0 ? PinnedLayout.top+pinnedHeight : 98)-lift
         let shift = start-newTab.frame.minY

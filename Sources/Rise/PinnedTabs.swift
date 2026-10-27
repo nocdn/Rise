@@ -5,6 +5,18 @@ import AppKit
 enum PinnedLayout {
     static let maximum = 6, perRow = 3
     static let tileHeight: CGFloat = 48, gap: CGFloat = 6, radius: CGFloat = 12, border: CGFloat = 1.5
+    /// Without a Calendar countdown to fit under an icon, tiles are a little shorter, growing
+    /// upward to `tileHeight` as one appears.
+    static let compactHeight: CGFloat = 44
+    /// How quickly the tiles grow and shrink: fast, without a bounce.
+    static let heightResponse = 0.2
+    /// A countdown comes in from smaller, clear and a little high, and springs down into place.
+    static let countdownScale: CGFloat = 0.6, countdownRise: CGFloat = -6, countdownResponse = 0.32, countdownBounce = 0.28
+    /// It starts once the tile has grown a little, so it has room.
+    static let countdownDelay = 0.06
+    /// Going, it goes back the way it came; the tile shrinks once it's mostly gone.
+    static let countdownOutDuration = 0.2, countdownOutLead = 0.12
+    static let frameRate = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
     /// Each tile's wash of its favicon's colour (a grey without one), at rest, under the pointer
     /// and chosen; Dark needs twice as much to show.
     static func tint(_ accent: NSColor?, theme: RiseTheme, selected: Bool, hovered: Bool) -> NSColor {
@@ -33,7 +45,7 @@ enum PinnedLayout {
     static let bottom: CGFloat = 8
 
     /// The tiles' frames for `count` of them, in a grid `width` wide from the origin.
-    static func frames(count: Int, width: CGFloat) -> [NSRect] {
+    static func frames(count: Int, width: CGFloat, tileHeight: CGFloat = tileHeight) -> [NSRect] {
         (0..<max(0, count)).map { index in
             let row = index/perRow, inRow = min(perRow, count-row*perRow), column = index%perRow
             let tileWidth = (width-CGFloat(inRow-1)*gap)/CGFloat(inRow)
@@ -42,14 +54,14 @@ enum PinnedLayout {
         }
     }
     /// The grid's room in the sidebar, nothing without tiles.
-    static func height(count: Int) -> CGFloat {
+    static func height(count: Int, tileHeight: CGFloat = tileHeight) -> CGFloat {
         guard count > 0 else { return 0 }
         let rows = CGFloat((count+perRow-1)/perRow)
         return rows*tileHeight+(rows-1)*gap+bottom
     }
     /// The slot nearest `point` among `count` tiles: the one it's over, or the closest edge.
-    static func slot(nearest point: NSPoint, count: Int, width: CGFloat) -> Int {
-        let frames = frames(count: count, width: width)
+    static func slot(nearest point: NSPoint, count: Int, width: CGFloat, tileHeight: CGFloat = tileHeight) -> Int {
+        let frames = frames(count: count, width: width, tileHeight: tileHeight)
         func distance(_ frame: NSRect) -> CGFloat {
             hypot(max(frame.minX-point.x, 0, point.x-frame.maxX), max(frame.minY-point.y, 0, point.y-frame.maxY))
         }
@@ -227,10 +239,71 @@ enum PinnedLayout {
     }
     func setBadge(_ text: String?) {
         guard text != badgeText else { return }
+        let arriving = badgeText == nil, going = text == nil
         badgeText = text
-        if let text { badge.text = text }
-        badge.isHidden = text == nil
+        if let text {
+            badge.text = text
+            if arriving { leavingBadge = false; animateBadgeIn() }
+        } else if canAnimate, !badge.isHidden {
+            leavingBadge = true; animateBadgeOut()
+        } else {
+            badge.isHidden = true
+        }
         needsLayout = true
+        (superview as? PinnedTabsView)?.updateTileHeight(after: going && leavingBadge ? PinnedLayout.countdownOutLead : 0)
+    }
+    private var leavingBadge = false
+    /// How much room the tiles have grown for a countdown, from none to all of it.
+    private var countdownRoom: CGFloat { (superview as? PinnedTabsView)?.countdownRoom ?? (badgeText == nil ? 0 : 1) }
+    /// Smaller and a little high, about its centre, as a view's layer turns about its corner.
+    private var badgeAway: CATransform3D {
+        let size = badge.fittingSize, scale = PinnedLayout.countdownScale
+        var t = CATransform3DMakeTranslation(size.width/2, size.height/2+PinnedLayout.countdownRise, 0)
+        t = CATransform3DScale(t, scale, scale, 1)
+        return CATransform3DTranslate(t, -size.width/2, -size.height/2, 0)
+    }
+    private static let badgeKeys = ["Rise.CountdownIn", "Rise.CountdownFade", "Rise.CountdownOut", "Rise.CountdownFadeOut"]
+    private func animateBadgeIn() {
+        guard canAnimate, let layer = badge.layer else { return }
+        Self.badgeKeys.forEach { layer.removeAnimation(forKey: $0) }
+        let start = CACurrentMediaTime()+PinnedLayout.countdownDelay
+        let move = CASpringAnimation(perceptualDuration: PinnedLayout.countdownResponse, bounce: PinnedLayout.countdownBounce)
+        move.keyPath = "transform"
+        move.fromValue = badgeAway; move.toValue = CATransform3DIdentity
+        move.duration = move.settlingDuration
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0; fade.toValue = 1; fade.duration = PinnedLayout.countdownResponse*0.7
+        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        for animation in [move, fade] as [CAAnimation] {
+            animation.beginTime = start; animation.fillMode = .backwards; animation.preferredFrameRateRange = PinnedLayout.frameRate
+        }
+        layer.add(move, forKey: "Rise.CountdownIn"); layer.add(fade, forKey: "Rise.CountdownFade")
+    }
+    /// From wherever it is, even still coming in, back to smaller, clear and a little high.
+    private func animateBadgeOut() {
+        guard let layer = badge.layer else { return }
+        let shown = layer.presentation()
+        let transform = shown?.transform ?? CATransform3DIdentity, opacity = shown?.opacity ?? 1
+        Self.badgeKeys.forEach { layer.removeAnimation(forKey: $0) }
+        let move = CABasicAnimation(keyPath: "transform")
+        move.fromValue = transform; move.toValue = badgeAway
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = opacity; fade.toValue = 0
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            guard let self, self.leavingBadge else { return }
+            self.leavingBadge = false; self.badge.isHidden = true
+            Self.badgeKeys.forEach { layer.removeAnimation(forKey: $0) }
+            self.needsLayout = true
+        }
+        for animation in [move, fade] {
+            animation.duration = PinnedLayout.countdownOutDuration
+            animation.timingFunction = CAMediaTimingFunction(controlPoints: 0.4, 0, 0.8, 0.6)
+            animation.fillMode = .forwards; animation.isRemovedOnCompletion = false
+            animation.preferredFrameRateRange = PinnedLayout.frameRate
+        }
+        layer.add(move, forKey: "Rise.CountdownOut"); layer.add(fade, forKey: "Rise.CountdownFadeOut")
+        CATransaction.commit()
     }
     /// The favicon's colour, a little lighter, or a grey for a favicon without one.
     var borderColor: NSColor {
@@ -258,18 +331,23 @@ enum PinnedLayout {
     override func layout() {
         super.layout()
         let r = shape
-        let side: CGFloat = 16, badgeSize = badge.fittingSize
-        let showsBadge = badgeText != nil && r < 1
+        let side: CGFloat = 16, badgeSize = badge.fittingSize, room = countdownRoom
+        let showsBadge = (badgeText != nil || leavingBadge) && r < 1
         badge.isHidden = !showsBadge
-        // The countdown leaves room above and below it; a row's height has none.
-        let stack = side+(showsBadge ? (3+badgeSize.height)*(1-r) : 0)
+        // The countdown leaves room above and below it, as the tile grows for it; a row's height has none.
+        let stack = side+(showsBadge ? (3+badgeSize.height)*(1-r)*room : 0)
         let tile = NSPoint(x: (bounds.width-side)/2, y: (bounds.height-stack)/2)
         let row = NSPoint(x: 8, y: (bounds.height-side)/2)
         let iconFrame = NSRect(x: (tile.x+(row.x-tile.x)*r).rounded(), y: (tile.y+(row.y-tile.y)*r).rounded(), width: side, height: side)
         icon.layer?.removeAnimation(forKey: TabListMotion.movementKey)
         icon.frame = iconFrame
         if showsBadge {
-            badge.frame = NSRect(x: ((bounds.width-badgeSize.width)/2).rounded(), y: iconFrame.maxY+3, width: badgeSize.width, height: badgeSize.height)
+            // A tile keeps its bottom as it grows, and so does the countdown, so it only moves
+            // as it comes in. As a row, it follows the icon.
+            let full = side+3+badgeSize.height
+            let settledY = bounds.height-(PinnedLayout.tileHeight-full)/2-badgeSize.height
+            let y = settledY+(iconFrame.maxY+3-settledY)*r
+            badge.frame = NSRect(x: ((bounds.width-badgeSize.width)/2).rounded(), y: y.rounded(), width: badgeSize.width, height: badgeSize.height)
             badge.alphaValue = 1-r
         }
         title.frame = NSRect(x: 30, y: ((bounds.height-17)/2).rounded(), width: max(0, bounds.width-38), height: 17)
@@ -328,15 +406,71 @@ enum PinnedLayout {
         }
         for id in order where tiles[id] == nil { let tile = make(id); tiles[id] = tile; addSubview(tile) }
         self.order = order
+        updateTileHeight()
     }
     func setOpening(_ slot: Int?) { opening = slot }
+    // MARK: Height
+    private var height = MotionSpring(PinnedLayout.compactHeight)
+    private var link: CADisplayLink?, lastTick: CFTimeInterval?
+    /// The tiles' height now, between compact and tall.
+    var tileHeight: CGFloat { height.value }
+    var countdownRoom: CGFloat {
+        min(1, max(0, (height.value-PinnedLayout.compactHeight)/(PinnedLayout.tileHeight-PinnedLayout.compactHeight)))
+    }
+    private var delayed: (target: CGFloat, task: Task<Void, Never>)?
+    /// Tall while any tile shows a countdown. The grid keeps its bottom, so the tiles grow upward,
+    /// starting `after` a moment when they're to wait for a countdown to go.
+    func updateTileHeight(after delay: TimeInterval = 0) {
+        let target = tiles.values.contains { $0.badgeText != nil } ? PinnedLayout.tileHeight : PinnedLayout.compactHeight
+        if let delayed {
+            if delayed.target == target { return }
+            delayed.task.cancel(); self.delayed = nil
+        }
+        guard target != height.target else { return }
+        guard window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            height = MotionSpring(target); followHeight(); return
+        }
+        if delay > 0 {
+            let task = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(delay))
+                guard !Task.isCancelled, let self else { return }
+                self.delayed = nil; self.updateTileHeight()
+            }
+            delayed = (target, task); return
+        }
+        if link == nil { var spring = MotionSpring(height.value); spring.configure(response: PinnedLayout.heightResponse, bounce: 0); height = spring }
+        height.target = target
+        guard link == nil else { return }
+        lastTick = CACurrentMediaTime()
+        let link = displayLink(target: self, selector: #selector(tick(_:)))
+        link.preferredFrameRateRange = PinnedLayout.frameRate
+        link.add(to: .main, forMode: .common); self.link = link
+    }
+    @objc private func tick(_ link: CADisplayLink) {
+        let now = CACurrentMediaTime(), dt = min(0.05, now-(lastTick ?? now)); lastTick = now
+        height.step(dt)
+        if height.isResting(within: 0.02) { height.settle(); link.invalidate(); self.link = nil; lastTick = nil }
+        followHeight()
+    }
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil, link != nil { link?.invalidate(); link = nil; height.settle(); followHeight() }
+    }
+    /// The grid's top and its tiles follow the height, keeping its bottom where it is.
+    private func followHeight() {
+        let room = max(0, PinnedLayout.height(count: count, tileHeight: tileHeight)-PinnedLayout.bottom)
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        frame = NSRect(x: frame.minX, y: frame.maxY-room, width: frame.width, height: room)
+        CATransaction.commit()
+        layoutTiles(animated: false)
+    }
     func move(_ id: UUID, to index: Int) {
         guard let from = order.firstIndex(of: id) else { return }
         order.remove(at: from); order.insert(id, at: min(index, order.count))
     }
     /// The frames tiles take, with the slot held open and without the held tile.
     func slotFrames(width: CGFloat) -> [NSRect] {
-        PinnedLayout.frames(count: count, width: width-2*PinnedLayout.sideInset).map { $0.offsetBy(dx: PinnedLayout.sideInset, dy: 0) }
+        PinnedLayout.frames(count: count, width: width-2*PinnedLayout.sideInset, tileHeight: tileHeight).map { $0.offsetBy(dx: PinnedLayout.sideInset, dy: 0) }
     }
     func layoutTiles(animated: Bool) {
         let frames = slotFrames(width: bounds.width)
@@ -344,7 +478,9 @@ enum PinnedLayout {
         for id in order where id != held {
             if slot == opening { slot += 1 }
             guard let tile = tiles[id], slot < frames.count else { continue }
-            if tile.superview === self, tile.frame != frames[slot] || tile.isMoving { tile.move(to: frames[slot], animated: animated, bouncy: false, completion: tile.onRest) }
+            if tile.superview === self, tile.frame != frames[slot] || tile.isMoving {
+                tile.move(to: frames[slot], animated: animated || tile.isMoving, bouncy: false, completion: tile.onRest)
+            }
             slot += 1
         }
     }
@@ -445,7 +581,7 @@ extension PinnedLayout {
     private func gridSlot(at location: NSPoint, count: Int) -> Int {
         let point = pinnedView.convert(location, from: nil)
         return PinnedLayout.slot(nearest: NSPoint(x: point.x-PinnedLayout.sideInset, y: point.y), count: count,
-                                 width: pinnedView.bounds.width-2*PinnedLayout.sideInset)
+                                 width: pinnedView.bounds.width-2*PinnedLayout.sideInset, tileHeight: pinnedView.tileHeight)
     }
     /// Whether `location` reaches above New Tab, where tabs are pinned; without its row, anywhere
     /// above the list.
