@@ -216,6 +216,10 @@ final class GmailTooltipTests: XCTestCase {
         try await wait { browser.tabHoverCards.gmailCard.isHidden }
         browser.tabHoverChanged(tab.id, hovering: true)
         try await wait { browser.tabHoverCards.shownID == tab.id }
+        // Back within moments of closing, it shows at once, still coming out of its tab.
+        browser.hideTabHoverCard(); browser.tabHoverChanged(tab.id, hovering: true)
+        XCTAssertEqual(browser.tabHoverCards.shownID, tab.id)
+        XCTAssertNotNil(browser.tabHoverCards.gmailCard.layer?.animation(forKey: CardMotionAnimator.inKeys[0]), "It animates in rather than popping in")
         tab.requestedURL = URL(string: "https://example.com/"); browser.refreshTabHoverCard()
         XCTAssertNil(browser.tabHoverCards.shownID)
     }

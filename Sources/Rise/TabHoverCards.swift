@@ -151,6 +151,9 @@ import AppKit
                                     pinned: row is PinnedTabTile, theme: theme)
             return
         }
+        // Only a pull request's own card, just gone, glides over to the next; any other card
+        // goes out with its motion and this one comes in with its own.
+        let glides = hover.kind == .pullRequest && CACurrentMediaTime()-hover.hiddenAt < TabHoverCards.grace
         hover.shownID = id
         hover.gmailCard.dismiss(); hover.calendarCard.dismiss(); hover.titleCard.dismiss(); hover.kind = .pullRequest
         let title = pr.title(fromTab: tab.title)
@@ -178,7 +181,7 @@ import AppKit
         let anchor = previewAnchor(row)
         hover.pullRequestCard.present(key: pr.key, content: tooltipContent(pr, title: title), left: sidebar.frame.maxX+6,
                               placement: .beside(top: anchor.top, maxBottom: root.bounds.height-8), theme: theme,
-                              glides: CACurrentMediaTime()-hover.hiddenAt < TabHoverCards.grace, fromTab: true, growsFrom: anchor.growsFrom)
+                              glides: glides, fromTab: true, growsFrom: anchor.growsFrom)
     }
     /// The card's tab closed, changed accounts, or stopped being a supported page.
     func refreshTabHoverCard() {
@@ -373,7 +376,7 @@ import AppKit
         let anchor = previewAnchor(row)
         hover.gmailCard.present(key: account.baseURL.absoluteString+"|"+gmailCategory.rawValue, inbox: gmailInbox,
                             left: sidebar.frame.maxX+6, anchorTop: anchor.top, maxBottom: root.bounds.height-8,
-                            theme: theme, glides: CACurrentMediaTime()-hover.hiddenAt < TabHoverCards.grace, growsFrom: anchor.growsFrom)
+                            theme: theme, growsFrom: anchor.growsFrom)
     }
     func gmailInboxChanged() {
         guard tabHoverCards.kind == .gmail, tabHoverCards.shownID != nil else { return }
@@ -396,7 +399,7 @@ import AppKit
         let anchor = previewAnchor(row)
         hover.gmailCard.present(key: account.baseURL.absoluteString, inbox: protonMailInbox,
                                 left: sidebar.frame.maxX+6, anchorTop: anchor.top, maxBottom: root.bounds.height-8,
-                                theme: theme, glides: CACurrentMediaTime()-hover.hiddenAt < TabHoverCards.grace, growsFrom: anchor.growsFrom)
+                                theme: theme, growsFrom: anchor.growsFrom)
     }
     func protonMailInboxChanged() {
         guard tabHoverCards.kind == .protonMail, tabHoverCards.shownID != nil else { return }
@@ -493,8 +496,7 @@ import AppKit
         let anchor = previewAnchor(row)
         hover.calendarCard.present(key: account.baseURL.absoluteString, agenda: calendarAgenda,
                                    left: sidebar.frame.maxX+6, anchorTop: anchor.top, maxBottom: root.bounds.height-8,
-                                   theme: theme, glides: CACurrentMediaTime()-hover.hiddenAt < TabHoverCards.grace,
-                                   growsFrom: anchor.growsFrom)
+                                   theme: theme, growsFrom: anchor.growsFrom)
     }
     func calendarAgendaChanged() {
         refreshCalendarBadges()

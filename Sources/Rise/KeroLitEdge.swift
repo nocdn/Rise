@@ -30,32 +30,17 @@ enum KeroLitEdge {
     }
 }
 
-/// The lit edge over a view, above its contents and taking no clicks; in Light, where there's no lit
-/// edge, it can cast a shadow inward instead.
+/// The lit edge over a card, above its contents and taking no clicks.
 final class KeroLitEdgeView: FlippedView {
     private let gradient = CAGradientLayer(), shape = CAShapeLayer()
-    /// A shadow cast inward from the edge, as if pressed in.
-    private let insetHost = CALayer(), insetMask = CAShapeLayer(), insetShape = CAShapeLayer()
     var radius: CGFloat = 0 { didSet { if radius != oldValue { needsLayout = true } } }
-    var dark = true { didSet { gradient.isHidden = !dark; insetHost.isHidden = dark || insetShape.shadowOpacity == 0 } }
-    /// The inward shadow: `offset` down and right in points, its blur, and how dark.
-    func setInsetShadow(offset: CGSize, blur: CGFloat, opacity: Float) {
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        insetShape.shadowOffset = offset
-        insetShape.shadowRadius = blur/2; insetShape.shadowOpacity = opacity
-        insetHost.isHidden = dark || opacity == 0
-        CATransaction.commit()
-    }
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true; layer?.zPosition = 100
         gradient.startPoint = CGPoint(x: 0.5, y: 0); gradient.endPoint = CGPoint(x: 0.5, y: 1)
         gradient.colors = KeroLitEdge.colors
         shape.fillRule = .evenOdd; gradient.mask = shape
-        insetShape.fillRule = .evenOdd; insetShape.fillColor = NSColor.black.cgColor; insetShape.shadowColor = NSColor.black.cgColor
-        insetShape.shadowOpacity = 0; insetHost.mask = insetMask; insetHost.isHidden = true
-        insetHost.addSublayer(insetShape)
-        layer?.addSublayer(gradient); layer?.addSublayer(insetHost)
+        layer?.addSublayer(gradient)
     }
     required init?(coder: NSCoder) { fatalError() }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
@@ -64,12 +49,6 @@ final class KeroLitEdgeView: FlippedView {
         CATransaction.begin(); CATransaction.setDisableActions(true)
         gradient.frame = bounds; shape.frame = bounds
         shape.path = KeroLitEdge.path(in: bounds, radius: radius)
-        insetHost.frame = bounds; insetMask.frame = bounds; insetShape.frame = bounds
-        let outline = PageOutline.path(in: bounds, radius: radius, continuous: true)
-        insetMask.path = outline
-        // Everything around the outline, so only its shadow falls inside.
-        let around = CGMutablePath(); around.addRect(bounds.insetBy(dx: -20, dy: -20)); around.addPath(outline)
-        insetShape.path = around
         CATransaction.commit()
     }
 }

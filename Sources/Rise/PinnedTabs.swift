@@ -5,20 +5,22 @@ import AppKit
 enum PinnedLayout {
     static let maximum = 6, perRow = 3
     static let tileHeight: CGFloat = 48, gap: CGFloat = 6, radius: CGFloat = 12, border: CGFloat = 1.5
-    /// A Light tile at rest, after Dia's: a shade darker than the sidebar, a fine ring, and a
-    /// shadow cast in from its top and a little from its left, as if pressed into the sidebar.
-    enum LightResting {
-        static let shade: CGFloat = 0.03, hoverShade: CGFloat = 0.06
-        static let ringWidth: CGFloat = 0.5
-        static let ring = NSColor.black.withAlphaComponent(0.13)
-        static let shadowOffset = CGSize(width: 0.25, height: 1), shadowBlur: CGFloat = 3, shadow: Float = 0.06
+    /// Each tile's wash of its favicon's colour (a grey without one), at rest, under the pointer
+    /// and chosen; Dark needs twice as much to show.
+    static func tint(_ accent: NSColor?, theme: RiseTheme, selected: Bool, hovered: Bool) -> NSColor {
+        let dark = theme == .dark
+        let amount: CGFloat = selected ? 0.14 : hovered ? 0.1 : 0.06
+        guard let accent else { return (dark ? NSColor.white : .black).withAlphaComponent(amount*(dark ? 0.6 : 0.5)) }
+        return accent.withAlphaComponent(amount*(dark ? 1.7 : 1))
     }
-    /// A tile's fill when it isn't chosen, over the sidebar as a row's is: nothing in Dark, Light's
-    /// shade; under the pointer, a little more.
-    static func restingFill(_ theme: RiseTheme, hovered: Bool) -> NSColor {
-        if theme == .dark { return hovered ? PlainTabBackground.hover(dark: true) : .clear }
-        return .black.withAlphaComponent(hovered ? LightResting.hoverShade : LightResting.shade)
+    /// The grid sits a little further in from the sidebar's sides than the tab rows.
+    static let sideInset: CGFloat = 10
+    /// A tile's edge in its favicon's colour: faint at rest, full chosen (a grey without one).
+    static func edge(_ accent: NSColor?, theme: RiseTheme) -> NSColor {
+        guard let accent else { return (theme == .dark ? NSColor.white : .black).withAlphaComponent(theme == .dark ? 0.08 : 0.06) }
+        return accent.withAlphaComponent(theme == .dark ? 0.22 : 0.15)
     }
+    static let restingBorder: CGFloat = 1
     /// `fill` laid flat on the sidebar's colour, so a tile in a drag hides the tiles it crosses, as
     /// a dragged row does (`TabAppearance.dragFill`).
     static func solid(_ fill: NSColor, on theme: RiseTheme) -> NSColor {
@@ -72,8 +74,6 @@ enum PinnedLayout {
     var onDragMove: ((NSEvent) -> Void)?
     var onDragEnd: (() -> Void)?
     private(set) var selected = false
-    /// The chosen tab's edge, which a tile at rest wears.
-    private let edge = KeroLitEdgeView(frame: .zero)
     private var theme = RiseTheme.neutral, accent: NSColor?
     private var hovered = false, pressEvent: NSEvent?, dragging = false
     /// From picking up until it has sprung back into place, when it may cross other tiles.
@@ -211,7 +211,7 @@ enum PinnedLayout {
         wantsLayer = true; layer?.cornerCurve = .continuous
         title.font = .systemFont(ofSize: 13); title.lineBreakMode = .byTruncatingTail; title.alphaValue = 0
         badge.isHidden = true
-        [icon, badge, title, edge].forEach(addSubview)
+        [icon, badge, title].forEach(addSubview)
         setAccessibilityElement(true); setAccessibilityRole(.button)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -244,18 +244,13 @@ enum PinnedLayout {
         let held = TabAppearance.dragFill(theme, sidebarFraction: 0.3)
         // Settling into a row, the held row's fill gives way to that row's own.
         let row = restingFill.map { held.blended(withFraction: settled, of: $0) ?? $0 } ?? held
-        // At rest, inside Dark's lit edge or Light's ring and inward shadow.
-        typealias Light = PinnedLayout.LightResting
-        let dark = theme == .dark
-        let shown = selected ? TabAppearance.selectedFill(theme) : PinnedLayout.restingFill(theme, hovered: hovered && !dragging)
+        // A breath of the favicon's colour, more under the pointer and more again chosen.
+        let shown = PinnedLayout.tint(accent, theme: theme, selected: selected, hovered: hovered && !dragging)
         let fill = lifted || !takesClicks ? PinnedLayout.solid(shown, on: theme) : shown
         layer?.backgroundColor = (fill.blended(withFraction: r, of: row) ?? fill).cgColor
-        // Chosen, a border in the favicon's colour; at rest in Light, a fine ring.
-        layer?.borderWidth = selected ? PinnedLayout.border*(1-r) : dark ? 0 : Light.ringWidth*(1-r)
-        layer?.borderColor = (selected ? borderColor : Light.ring).cgColor
-        edge.dark = dark; edge.radius = cornerRadius
-        edge.setInsetShadow(offset: Light.shadowOffset, blur: Light.shadowBlur, opacity: Light.shadow)
-        edge.isHidden = selected || r >= 1; edge.alphaValue = 1-r
+        // Chosen, a border in the favicon's colour; at rest, a faint one in it.
+        layer?.borderWidth = (selected ? PinnedLayout.border : PinnedLayout.restingBorder)*(1-r)
+        layer?.borderColor = (selected ? borderColor : PinnedLayout.edge(accent, theme: theme)).cgColor
         CATransaction.commit()
     }
     /// Everything inside follows the tile's frame each step, from the centre of a tile to a
@@ -263,7 +258,6 @@ enum PinnedLayout {
     override func layout() {
         super.layout()
         let r = shape
-        edge.frame = bounds
         let side: CGFloat = 16, badgeSize = badge.fittingSize
         let showsBadge = badgeText != nil && r < 1
         badge.isHidden = !showsBadge
@@ -342,7 +336,7 @@ enum PinnedLayout {
     }
     /// The frames tiles take, with the slot held open and without the held tile.
     func slotFrames(width: CGFloat) -> [NSRect] {
-        PinnedLayout.frames(count: count, width: width-2*TabAppearance.inset).map { $0.offsetBy(dx: TabAppearance.inset, dy: 0) }
+        PinnedLayout.frames(count: count, width: width-2*PinnedLayout.sideInset).map { $0.offsetBy(dx: PinnedLayout.sideInset, dy: 0) }
     }
     func layoutTiles(animated: Bool) {
         let frames = slotFrames(width: bounds.width)
@@ -450,8 +444,8 @@ extension PinnedLayout {
     private func relayoutForDrag() { applyDragToList(); needsLayout = true; layoutSubtreeIfNeeded() }
     private func gridSlot(at location: NSPoint, count: Int) -> Int {
         let point = pinnedView.convert(location, from: nil)
-        return PinnedLayout.slot(nearest: NSPoint(x: point.x-TabAppearance.inset, y: point.y), count: count,
-                                 width: pinnedView.bounds.width-2*TabAppearance.inset)
+        return PinnedLayout.slot(nearest: NSPoint(x: point.x-PinnedLayout.sideInset, y: point.y), count: count,
+                                 width: pinnedView.bounds.width-2*PinnedLayout.sideInset)
     }
     /// Whether `location` reaches above New Tab, where tabs are pinned; without its row, anywhere
     /// above the list.
