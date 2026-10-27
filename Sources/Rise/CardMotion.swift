@@ -179,7 +179,7 @@ struct CardMotion: Equatable {
         CardMotion.select(presets[(index+delta+presets.count)%presets.count])
         refresh()
         guard let hover = browser?.tabHoverCards else { return }
-        hover.calendarCard.replayMotion(); hover.gmailCard.replayMotion(); hover.pullRequestCard.replayMotion()
+        hover.calendarCard.replayMotion(); hover.gmailCard.replayMotion(); hover.chatCard.replayMotion(); hover.pullRequestCard.replayMotion()
     }
     func adjustDelay(_ steps: Int) {
         CardMotion.hoverDelay += Double(steps)*CardMotion.delayStep

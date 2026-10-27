@@ -51,7 +51,10 @@ struct GmailAccount: Equatable {
     }
 }
 
-struct GmailEmail: Equatable, Decodable {
+/// An entry in a card's list: an email, or a Chat conversation.
+protocol MailListItem: Equatable, Decodable { var id: String { get } }
+
+struct GmailEmail: MailListItem {
     let id: String
     let sender: String
     let subject: String
@@ -59,17 +62,19 @@ struct GmailEmail: Equatable, Decodable {
     var unread = false
 }
 
-struct GmailPage: Decodable {
-    let emails: [GmailEmail]
+struct MailPage<Item: Decodable>: Decodable {
+    let emails: [Item]
     let hasMore: Bool
 }
+typealias GmailPage = MailPage<GmailEmail>
 
 /// Reads a mailbox's list a page at a time, from a companion page of the mail site.
 @MainActor protocol MailPageReader: AnyObject {
     associatedtype Request: Equatable
+    associatedtype Item: MailListItem
     init()
     func prepare(source: WebPage, host: NSView)
-    func load(_ request: Request, _ page: Int) async throws -> GmailPage
+    func load(_ request: Request, _ page: Int) async throws -> MailPage<Item>
     func cancel()
     func tearDown()
 }
@@ -99,9 +104,9 @@ typealias GmailInbox = MailInbox<GmailPageReader>
 /// Only one account/category is held in memory. Nothing from the mailbox is saved to disk.
 @MainActor final class MailInbox<Reader: MailPageReader> {
     typealias Request = Reader.Request
-    typealias PageLoader = (Request, Int) async throws -> GmailPage
+    typealias PageLoader = (Request, Int) async throws -> MailPage<Reader.Item>
     private(set) var request: Request?
-    private(set) var emails: [GmailEmail] = []
+    private(set) var emails: [Reader.Item] = []
     private(set) var isLoading = false
     private(set) var hasMore = true
     private(set) var error: String?

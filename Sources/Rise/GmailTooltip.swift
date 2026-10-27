@@ -38,9 +38,33 @@ final class CardScrollView: NSScrollView {
     }
 }
 
-final class GmailEmailRow: NSButton {
+/// A row of a list card, for one item, which a click opens. Its type sets the card's size and
+/// what its footer says.
+@MainActor protocol CardListRow: NSButton {
+    associatedtype Item: MailListItem
+    static var cardWidth: CGFloat { get }
+    static var cardMaximumHeight: CGFloat { get }
+    static var loadingText: String { get }
+    static var loadingMoreText: String { get }
+    static var emptyText: String { get }
+    var item: Item { get }
+    var onOpen: (() -> Void)? { get set }
+    /// The card sets this from the pointer, since scrolling moves rows without telling them.
+    var isHovered: Bool { get set }
+    init(_ item: Item)
+    func applyTheme(_ theme: RiseTheme, last: Bool)
+    func fittingHeight(width: CGFloat) -> CGFloat
+}
+
+final class GmailEmailRow: NSButton, CardListRow {
     static let inset: CGFloat = 14
+    static var cardWidth: CGFloat { PullRequestTooltip.width }
+    static var cardMaximumHeight: CGFloat { 400 }
+    static var loadingText: String { "Loading emails" }
+    static var loadingMoreText: String { "Loading more emails" }
+    static var emptyText: String { "No emails in this category" }
     let email: GmailEmail
+    var item: GmailEmail { email }
     let sender = NSTextField(labelWithString: "")
     let subject = NSTextField(labelWithString: "")
     let preview = NSTextField(wrappingLabelWithString: "")
@@ -103,15 +127,17 @@ final class GmailEmailRow: NSButton {
     @objc private func openEmail() { onOpen?() }
 }
 
+/// Gmail and Proton Mail tabs share their card.
+typealias GmailTooltip = ListCard<GmailEmailRow>
+
 /// The same surface and positioning springs as the PR card, with a bounded, native list.
-/// Gmail and Proton Mail tabs share it.
-@MainActor final class GmailTooltip: FlippedView {
-    static let width = PullRequestTooltip.width
-    static let maximumHeight: CGFloat = 400
+@MainActor final class ListCard<Row: CardListRow>: FlippedView {
+    static var width: CGFloat { Row.cardWidth }
+    static var maximumHeight: CGFloat { Row.cardMaximumHeight }
     let scroll = CardScrollView()
     private let panel = Surface(radius: FindBar.radius)
     private let clip = FlippedView(), stack = FlippedView()
-    private(set) var rows: [GmailEmailRow] = []
+    private(set) var rows: [Row] = []
     let footer = NSTextField(labelWithString: "")
     let shimmer = InputShimmer()
     private let retry = NSButton(title: "Try Again", target: nil, action: nil)
@@ -124,7 +150,7 @@ final class GmailEmailRow: NSButton {
     private(set) var key: String?
     var onPointer: ((Bool) -> Void)?
     var onLoadMore: (() -> Void)?
-    var onOpen: ((GmailEmail) -> Void)?
+    var onOpen: ((Row.Item) -> Void)?
 
     init() {
         super.init(frame: .zero)
@@ -168,7 +194,7 @@ final class GmailEmailRow: NSButton {
 
     /// Comes and goes with the hover cards' motion, out of its tab or out of `growsFrom` when given.
     func present<Reader>(key: String, inbox: MailInbox<Reader>, left: CGFloat, anchorTop: CGFloat, maxBottom: CGFloat, theme: RiseTheme,
-                 glides: Bool = false, growsFrom: NSPoint? = nil) {
+                 glides: Bool = false, growsFrom: NSPoint? = nil) where Reader.Item == Row.Item {
         let appearing = self.key == nil, switching = self.key != key
         if appearing { CardMotionAnimator.cancelOut(self) }
         self.key = key; self.theme = theme; isHidden = false
@@ -188,15 +214,15 @@ final class GmailEmailRow: NSButton {
         let point = tabPoint ?? NSPoint(x: frame.minX, y: anchorTop+TabAppearance.height/2)
         return CGPoint(x: point.x-frame.minX, y: point.y-frame.minY)
     }
-    func update<Reader>(_ inbox: MailInbox<Reader>) {
+    func update<Reader>(_ inbox: MailInbox<Reader>) where Reader.Item == Row.Item {
         guard key != nil else { return }
         loading = inbox.showsLoading; hasMore = inbox.hasMore; error = inbox.error
-        if rows.map(\.email) != inbox.emails {
-            let existing = Dictionary(uniqueKeysWithValues: rows.map { ($0.email.id, $0) })
-            let next = inbox.emails.map { email -> GmailEmailRow in
-                if let row = existing[email.id], row.email == email { return row }
-                let row = GmailEmailRow(email)
-                row.onOpen = { [weak self] in self?.onOpen?(email) }; return row
+        if rows.map(\.item) != inbox.emails {
+            let existing = Dictionary(uniqueKeysWithValues: rows.map { ($0.item.id, $0) })
+            let next = inbox.emails.map { item -> Row in
+                if let row = existing[item.id], row.item == item { return row }
+                let row = Row(item)
+                row.onOpen = { [weak self] in self?.onOpen?(item) }; return row
             }
             rows.filter { !next.contains($0) }.forEach { $0.removeFromSuperview() }
             next.filter { $0.superview == nil }.forEach(stack.addSubview)
@@ -232,7 +258,7 @@ final class GmailEmailRow: NSButton {
         let showsFooter = loading || error != nil || rows.isEmpty
         footer.isHidden = !showsFooter; retry.isHidden = error == nil
         if showsFooter {
-            let text = error ?? (loading ? (rows.isEmpty ? "Loading emails" : "Loading more emails") : "No emails in this category")
+            let text = error ?? (loading ? (rows.isEmpty ? Row.loadingText : Row.loadingMoreText) : Row.emptyText)
             if footer.stringValue != text { shimmer.cancel(); footer.stringValue = text }
             footer.textColor = theme.muted; shimmer.baseColor = theme.muted; shimmer.bandColor = theme.text
             let textWidth = ceil(footer.attributedStringValue.size().width)+4
