@@ -388,10 +388,11 @@ import RiseCore
     private var noticeTimer: Timer?
     func showCopied() { showNotice(BarNotice.copied, image: BarNotice.linkImage) }
     /// Saying the same again while it shows holds it longer, and so does the pointer on its link.
-    func showNotice(_ words: String, image: NSImage, link: BarNotice.Link? = nil, hold: TimeInterval = Notice.hold) {
+    func showNotice(_ words: String, image: NSImage, link: BarNotice.Link? = nil, action: BarNotice.Link? = nil, hold: TimeInterval = Notice.hold) {
         holdNotice(hold)
-        guard notice?.text != BarNotice.text(words, link: link) else { return }
-        let next = BarNotice(words, image: image, link: link)
+        // Two saves can say the same thing while referring to different items.
+        guard link != nil || action != nil || notice?.text != BarNotice.text(words, link: link) else { return }
+        let next = BarNotice(words, image: image, link: link, action: action)
         next.tint(shownInk.strong); next.alphaValue = 0
         addSubview(next); place(next)
         let old: NSView = notice ?? address
@@ -403,7 +404,7 @@ import RiseCore
         let timer = Timer(timeInterval: hold, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                if self.notice?.isLinkHovered == true { self.holdNotice(0.4) } else { self.hideNotice() }
+                if self.notice?.actionLabel == nil, self.notice?.isLinkHovered == true { self.holdNotice(0.4) } else { self.hideNotice() }
             }
         }
         noticeTimer = timer; RunLoop.main.add(timer, forMode: .common)
@@ -418,7 +419,9 @@ import RiseCore
     private var address: NSView { showsDeveloperAddress ? developerAddress ?? text : text }
     private func place(_ notice: BarNotice) {
         let textX = Metrics.textX-leadingRoom
-        notice.frame = NSRect(x: textX-1-BarNotice.inkStart, y: 0, width: notice.width, height: bounds.height)
+        let x = textX-1-BarNotice.inkStart
+        let end = fieldButtons.filter { !$0.isHidden }.map(\.frame.minX).min() ?? fieldRect.maxX
+        notice.frame = NSRect(x: x, y: 0, width: min(notice.width, max(0, end-8-x)), height: bounds.height)
     }
     private func exchange(_ old: NSView, for new: NSView) {
         let from = old.layer?.presentation()?.opacity ?? 1
@@ -547,6 +550,7 @@ import RiseCore
     static let starImage = TablerIcon.image(TablerIcon.star, size: 14, description: nil)
     static let warningImage = TablerIcon.image(TablerIcon.alertTriangle, size: 14, description: nil)
     static let photoImage = symbol("photo"), documentImage = symbol("doc.richtext")
+    static let calendarImage = symbol("calendar.badge.checkmark"), reminderImage = symbol("checklist.checked")
     /// macOS's small spinner in the glyph's place, in the bar's ink, for something under way.
     static let spinnerImage = NSImage(size: NSSize(width: 16, height: 16))
     private static func symbol(_ name: String) -> NSImage {
@@ -587,8 +591,9 @@ import RiseCore
     private var spinner: SpinnerView?
     private let words: PlainNavBarText
     private(set) var linkLabel: BarLinkLabel?
+    private(set) var actionLabel: BarLinkLabel?
     let text: String
-    init(_ text: String, image: NSImage, link: Link? = nil) {
+    init(_ text: String, image: NSImage, link: Link? = nil, action: Link? = nil) {
         words = PlainNavBarText(labelWithString: text)
         self.text = Self.text(text, link: link)
         self.image = image
@@ -597,21 +602,27 @@ import RiseCore
         icon.imageScaling = .scaleNone
         if image === Self.spinnerImage { let spinner = SpinnerView(); self.spinner = spinner; icon.addSubview(spinner) } else { icon.image = image }
         words.font = PlainNavBar.Metrics.font
+        words.usesSingleLineMode = true; words.cell?.wraps = false
         addSubview(icon); addSubview(words)
         if let link {
             let label = BarLinkLabel(link.text, perform: link.perform)
             linkLabel = label; addSubview(label)
         }
-        setAccessibilityElement(link == nil); setAccessibilityRole(.staticText); setAccessibilityLabel(self.text)
+        if let action {
+            let label = BarLinkLabel(action.text, perform: action.perform)
+            actionLabel = label; addSubview(label)
+        }
+        setAccessibilityElement(link == nil && action == nil); setAccessibilityRole(.staticText); setAccessibilityLabel(self.text)
     }
     required init?(coder: NSCoder) { fatalError() }
     /// Only its link takes clicks, and only while it shows.
     override func hitTest(_ point: NSPoint) -> NSView? {
-        guard alphaValue > 0, let linkLabel, linkLabel.frame.contains(convert(point, from: superview)) else { return nil }
-        return linkLabel
+        guard alphaValue > 0 else { return nil }
+        let local = convert(point, from: superview)
+        return [linkLabel, actionLabel].compactMap { $0 }.first { $0.frame.contains(local) }
     }
-    var isLinkHovered: Bool { linkLabel?.isHovered == true }
-    func tint(_ color: NSColor) { icon.contentTintColor = color; spinner?.color = color; words.textColor = color; linkLabel?.ink = color }
+    var isLinkHovered: Bool { linkLabel?.isHovered == true || actionLabel?.isHovered == true }
+    func tint(_ color: NSColor) { icon.contentTintColor = color; spinner?.color = color; words.textColor = color; linkLabel?.ink = color; actionLabel?.ink = color }
     private var wordsX: CGFloat { Self.inkStart+19-PlainNavBar.Metrics.textInset }
     /// The link a space after the words: both labels' margins are the same, so the words' own
     /// width and a space's from where they start.
@@ -620,7 +631,8 @@ import RiseCore
         return wordsX+((words.stringValue+" ") as NSString).size(withAttributes: [.font: font]).width
     }
     var width: CGFloat {
-        linkLabel.map { linkX+ceil($0.intrinsicContentSize.width) } ?? wordsX+ceil(words.intrinsicContentSize.width)
+        let main = linkLabel.map { linkX+$0.fittingWidth } ?? wordsX+ceil(words.intrinsicContentSize.width)+4
+        return main+(actionLabel.map { 12+$0.fittingWidth } ?? 0)
     }
     override func layout() {
         super.layout()
@@ -640,9 +652,12 @@ import RiseCore
             icon.frame = NSRect(x: 0, y: round((level-Self.inkMidFromTop(image))*scale)/scale, width: 16, height: height)
         }
         spinner?.frame = NSRect(x: 2, y: 2, width: 12, height: 12)
-        words.frame = NSRect(x: wordsX, y: y, width: ceil(words.intrinsicContentSize.width), height: line)
+        let actionWidth = actionLabel?.fittingWidth ?? 0
+        let mainEnd = max(wordsX, bounds.width-(actionLabel == nil ? 0 : actionWidth+12))
+        words.frame = NSRect(x: wordsX, y: y, width: min(ceil(words.intrinsicContentSize.width)+4, max(0, mainEnd-wordsX)), height: line)
         linkLabel?.frame = NSRect(x: linkX, y: y,
-                                  width: ceil(linkLabel?.intrinsicContentSize.width ?? 0), height: line)
+                                  width: min(linkLabel?.fittingWidth ?? 0, max(0, mainEnd-linkX)), height: line)
+        actionLabel?.frame = NSRect(x: max(wordsX, bounds.width-actionWidth), y: y, width: actionWidth, height: line)
     }
 }
 
@@ -658,15 +673,21 @@ import RiseCore
         super.init(frame: .zero)
         stringValue = text; font = PlainNavBar.Metrics.font
         isEditable = false; isSelectable = false; isBordered = false; drawsBackground = false
-        lineBreakMode = .byClipping
+        usesSingleLineMode = true; cell?.wraps = false; cell?.isScrollable = false
+        lineBreakMode = .byTruncatingTail
         setAccessibilityRole(.link)
     }
     required init?(coder: NSCoder) { fatalError() }
+    /// NSTextField's intrinsic width can round down its last glyph. Include its cell's two-point
+    /// margins and a spare pixel, so Calendar/Reminders are fully drawn at either display scale.
+    var fittingWidth: CGFloat {
+        ceil((stringValue as NSString).size(withAttributes: [.font: font ?? PlainNavBar.Metrics.font]).width)+6
+    }
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard let font, let cell else { return }
         let text = cell.titleRect(forBounds: bounds)
-        let width = ceil((stringValue as NSString).size(withAttributes: [.font: font]).width)
+        let width = min(ceil((stringValue as NSString).size(withAttributes: [.font: font]).width), max(0, bounds.width-4))
         let baseline = isFlipped ? text.minY+font.ascender : text.maxY-font.ascender
         let y = baseline + (isFlipped ? 1 : -1)*Self.dotDrop
         let (size, step) = (Self.dotSize, Self.dotStep)

@@ -44,6 +44,11 @@ reading is shared with the Mac's right-click menu (`Sources/RiseCore/SelectionTi
 script in each frame keeps the app told of the selection, as UIKit asks for the menu before the
 page could be asked.
 
+Selecting an event, such as an invitation's date, time and location, puts its time first in the
+same menu ("Tue 3 Nov, 13:30 – 20:30"), opening to Add to Calendar with Calendar's editor filled
+in with its title, place, times and zone, Add to Reminders and Show in Calendar. See
+[Selected events](../../docs/SelectionEvents.md).
+
 **More → Site settings → App settings → AI features** enables or disables page questions,
 Summarise, and summary follow-ups. It is enabled by default. The joined AI Provider and
 API key rows select OpenRouter or OpenAI and save a separate masked key for each provider

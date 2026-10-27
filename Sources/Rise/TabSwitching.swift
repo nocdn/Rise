@@ -21,6 +21,7 @@ import AppKit
     }
     @objc func selectNumberedTab(_ item: NSMenuItem) { selectTab(at: item.tag) }
     func handleTabSwitchEvent(_ event: NSEvent) -> Bool {
+        if handleSelectionItemUndoKey(event) { return true }
         if handleTabMoveEvent(event) { return true }
         if event.type == .keyDown, let number = (1...9).first(where: { keyboardShortcuts.matches("selectTab\($0)", event) }) {
             // Take these before Chromium or an address field handles them. An absent tab is

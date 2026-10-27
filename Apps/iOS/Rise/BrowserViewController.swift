@@ -13,6 +13,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     let githubStarrer = MobileGitHubStarrer()
     /// One toast at a time, over the page and under the bottom bar.
     var toast: Toast?
+    var selectionItemReceipt: SelectionItemReceipt?
+    var selectionItemExpiry: Task<Void, Never>?
+    var assistantSubmissions: [ObjectIdentifier: AssistantPromptSubmission] = [:]
     var githubStarToast: GitHubStarToast? {
         get { toast as? GitHubStarToast }
         set { toast = newValue }
@@ -1022,6 +1025,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             closePanel(); switchTab(to: index)
         }
         bottomBar.search.onOpen = { [weak self] url in self?.openFromPanel(url) }
+        bottomBar.search.onAsk = { [weak self] request in self?.openFromPanel(request.service.entryURL, assistantPrompt: request) }
         bottomBar.search.onClose = { [weak self] in self?.closePanel() }
         bottomBar.search.onSiteSearchChanged = { [weak self] in
             guard let self, isPanelOpen, bottomBar.panel == .search else { return }
@@ -1632,11 +1636,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     /// Opens a page chosen in the panel. The panel grows up to fill the window as its search fades
     /// out and the new page appears inside it; the page then stays, the previous one held for Back.
-    func openFromPanel(_ url: URL) {
+    func openFromPanel(_ url: URL, assistantPrompt: AssistantPrompt? = nil) {
         guard isPanelOpen else { return }
-        if bottomBar.search.editingAddress != nil {
+        if bottomBar.search.editingAddress != nil, assistantPrompt == nil {
             closePanel()
             webView.load(URLRequest(url: url))
+            if let assistantPrompt { submitAssistantPrompt(assistantPrompt, in: webView) }
             return
         }
         isPanelOpen = false
@@ -1649,6 +1654,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let page = Self.makeWebView(dataStore: dataStore(privateBrowsing: privateBrowsing), videoPlayback: videoPlayback)
         adoptDelegates(of: page, privateBrowsing: privateBrowsing)
         page.load(URLRequest(url: url))
+        if let assistantPrompt { submitAssistantPrompt(assistantPrompt, in: page) }
         // Until the page paints, the strip above it and the bar take its background's colour, or
         // in dark mode the dark surface it shows through to.
         let color = (PagePaintWatcher.shared.isTransparent(page) ? .systemBackground : page.underPageBackgroundColor)

@@ -82,7 +82,7 @@ final class AddressSuggestionRow: UIButton {
     func showSite(_ site: PopularSite, image: UIImage?, color: UIColor?) {
         let font = SearchPanel.font
         titleLabelView.font = font
-        let title = NSMutableAttributedString(string: "Search in ", attributes: [.font: font, .foregroundColor: UIColor.label])
+        let title = NSMutableAttributedString(string: site.assistant == nil ? "Search in " : "Ask ", attributes: [.font: font, .foregroundColor: UIColor.label])
         title.append(NSAttributedString(string: site.name, attributes: [.font: font, .foregroundColor: color ?? UIColor.label]))
         titleLabelView.attributedText = title; addressLabel.text = nil
         fillGlyph.image = SearchPanel.searchIcon
@@ -94,7 +94,7 @@ final class AddressSuggestionRow: UIButton {
         iconSide = 20
         iconOffset = 1
         icon.tintColor = image == nil ? color ?? SearchPanel.iconColor : nil
-        accessibilityLabel = "Search in \(site.name)"; accessibilityHint = "Enter a search for this website"
+        accessibilityLabel = "\(site.action) \(site.name)"; accessibilityHint = site.assistant == nil ? "Enter a search for this website" : "Enter a prompt to send"
         fillButton.accessibilityLabel = "Fill \(site.homeURL.absoluteString) in search field"
         setNeedsLayout()
     }

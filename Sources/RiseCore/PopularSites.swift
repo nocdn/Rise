@@ -9,9 +9,11 @@ public struct PopularSite: Equatable {
     let search: String?
     /// The brand color, for when its icon hasn't loaded; nil for black-and-white brands.
     public let color: UInt32?
+    public let assistant: ChatAssistant?
+    public var action: String { assistant == nil ? "Search" : "Ask" }
 
-    public init(name: String, domain: String, search: String?, color: UInt32?) {
-        self.name = name; self.domain = domain; self.search = search; self.color = color
+    public init(name: String, domain: String, search: String?, color: UInt32?, assistant: ChatAssistant? = nil) {
+        self.name = name; self.domain = domain; self.search = search; self.color = color; self.assistant = assistant
     }
     public var homeURL: URL { URL(string: "https://" + domain)! }
     public var isSearchable: Bool { search != nil }
@@ -37,7 +39,8 @@ public enum PopularSites {
             self.name = name; self.domain = domain; self.search = search; self.color = color; self.regional = regional
         }
         func site(in region: String?) -> PopularSite {
-            PopularSite(name: name, domain: region.flatMap { regional[$0] } ?? domain, search: search, color: color)
+            PopularSite(name: name, domain: region.flatMap { regional[$0] } ?? domain, search: search, color: color,
+                        assistant: ChatAssistant.allCases.first { $0.domain == domain })
         }
         var domains: [String] { [domain] + regional.values.sorted() }
     }
@@ -75,6 +78,7 @@ public enum PopularSites {
         ]),
         Entry("Pinterest", "pinterest.com", "https://www.pinterest.com/search/pins/?q={q}", color: 0xE60023),
         Entry("Claude", "claude.ai", "https://claude.ai/new?q={q}", color: 0xD97757),
+        Entry("Gemini", "gemini.google.com", "https://gemini.google.com/app?prompt={q}", color: 0x4285F4),
         Entry("Spotify", "spotify.com", "https://open.spotify.com/search/{q}", color: 0x1DB954),
         Entry("Apple", "apple.com"),
         Entry("Microsoft", "microsoft.com", color: 0x00A4EF),
@@ -172,7 +176,8 @@ public enum PopularSites {
         guard !address.isEmpty else { return nil }
         for entry in entries {
             if let domain = entry.domains.first(where: { $0 == address }) {
-                return PopularSite(name: entry.name, domain: domain, search: entry.search, color: entry.color)
+                return PopularSite(name: entry.name, domain: domain, search: entry.search, color: entry.color,
+                                   assistant: ChatAssistant.allCases.first { $0.domain == domain })
             }
         }
         return nil

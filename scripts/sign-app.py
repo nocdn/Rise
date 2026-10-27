@@ -26,6 +26,9 @@ CHROME_DEVICES = {
     "com.apple.security.device.usb": True,
     "com.apple.security.personal-information.location": True,
     "com.apple.security.personal-information.photos-library": True,
+    # Not Chrome's: Rise's own Add to Calendar and Add to Reminders, which the hardened runtime
+    # otherwise denies without asking.
+    "com.apple.security.personal-information.calendars": True,
 }
 # Where profiles are looked for, Rise's own folder first.
 PROFILE_FOLDERS = [

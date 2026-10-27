@@ -44,6 +44,9 @@ import RiseCore
         return media
     }()
     var sharingPicker: NSSharingServicePicker?
+    var selectionItemReceipts: [SelectionItemReceipt] = []
+    var selectionItemExpiry: Timer?
+    var assistantSubmissions: [UUID: AssistantPromptSubmission] = [:]
     let errorSurface = Surface(color: NSColor(hex: 0xFDFCFC))
     let errorTitle = label("This page couldn’t be opened", size: 23, weight: .semibold)
     let errorMessage = label("", size: 13, color: .secondaryLabelColor)
@@ -303,7 +306,7 @@ import RiseCore
         }
         window.undoEvent = { [weak self] event in
             guard let self else { return false }
-            return self.handleTabOrderUndoKey(event) || self.palette.handleUndoKey(event, shortcuts: self.keyboardShortcuts) || self.handleSplitUndoKey(event) || self.handlePeekUndoKey(event)
+            return self.handleSelectionItemUndoKey(event) || self.handleTabOrderUndoKey(event) || self.palette.handleUndoKey(event, shortcuts: self.keyboardShortcuts) || self.handleSplitUndoKey(event) || self.handlePeekUndoKey(event)
         }
         window.smartRenameEvent = { [weak self] event in self?.handleSmartRenameKey(event) ?? false }
         window.extensionShortcutEvent = { [weak self] event in self?.runExtensionShortcut(event) ?? false }
@@ -865,6 +868,7 @@ import RiseCore
         if paletteLab != nil { palette.dismiss?(); return }
         hidePalette()
         if let command = suggestion?.command { runPaletteCommand(command); return }
+        if let request = suggestion?.assistantPrompt { submitAssistantPrompt(request); return }
         guard let url = suggestion?.url ?? AddressResolver.resolve(text, search: searchProvider.searchURL) else { return }
         // Typed or picked to go to, not searched for: what the address field learns most from.
         if url.host != searchProvider.searchURL(text)?.host { browsingHistory.recordTyped(url) }
@@ -887,6 +891,7 @@ import RiseCore
         let partner = splitGroups.first { $0.contains(id) }.map { $0.leftID == id ? $0.rightID : $0.leftID }
         splitGroups.removeAll { $0.contains(id) }
         let tab = tabs.remove(at: index); closedTabs.append(tab.saved)
+        assistantSubmissions.removeValue(forKey: id)?.cancel()
         pageFullscreen.setActive(false, in: tab.page.view)
         releaseHeldPages(of: tab)
         permissionCoordinator.cancel(for: tab.page.view)

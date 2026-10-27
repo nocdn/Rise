@@ -39,6 +39,10 @@ English titles or private selectors. No system classes or delegates are patched.
 If a future OS changes those identifiers or supplies an incomplete section, leave
 its actions intact rather than silently losing functionality.
 
+When the selection is an event (`SelectionEvents`, see [Selected events](SelectionEvents.md)), Rise's
+own actions fill in its title and place, so they're kept and the system's date section is removed
+instead, including a plain date's without a conversion heading.
+
 The compact time item can open its submenu directly. UIKit exposes only that
 submenu in this path, so it has its own complete set of working actions. Multiple
 converted times also retain their individual captured dates instead of borrowing

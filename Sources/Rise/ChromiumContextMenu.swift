@@ -6,9 +6,12 @@ import RiseChromium
 /// Peek", in place of CEF's own short one.
 @MainActor extension BrowserController {
     func showContextMenu(_ info: RCContextMenu, in page: ChromiumPage) {
+        // A request that arrives after its page has left the window, as one can once a menu's own
+        // item has opened another tab, has nowhere to show: AppKit raises rather than pops it up.
+        let view = page.view
+        guard view.window != nil else { return }
         let menu = contextMenu(for: info, in: page)
         guard !menu.items.isEmpty else { return }
-        let view = page.view
         presentContextMenu(menu, NSPoint(x: info.point.x, y: view.isFlipped ? info.point.y : view.bounds.height-info.point.y), view)
     }
 
@@ -28,8 +31,19 @@ import RiseChromium
         let opener = tabs.first { $0.page === page }
         func openInNewTab(_ url: URL) { addTab(url: url).returnsTo = opener?.id }
 
-        // A time selected in another zone heads the menu in the person's own (`SelectionTimes`).
-        let times = SelectionTimes.find(in: info.selectionText)
+        // An event in the selection heads the menu as its time, opening to Calendar, Reminders and
+        // Google Calendar, filled in (`SelectionEvents`); a time selected in another zone, in the
+        // person's own (`SelectionTimes`). An event that is one of those times takes its converted label.
+        let source = page.url.flatMap { ["http", "https"].contains($0.scheme?.lowercased() ?? "") ? $0 : nil }
+        let event = info.selectionText.isEmpty ? nil : SelectionEvents.find(in: info.selectionText, pageTitle: (opener ?? (page === peekTab?.page ? peekTab : nil))?.title)
+        var times = SelectionTimes.find(in: info.selectionText)
+        if let event {
+            let matched = times.firstIndex { !$0.isZoneOnly && $0.start == event.start }
+            let title = matched.map { SelectionTimes.label(times[$0], of: times.count) }
+            let view = page.view, point = NSPoint(x: info.point.x, y: view.isFlipped ? info.point.y : view.bounds.height-info.point.y)
+            menu.addItem(selectionEventItem(event, title: title, source: source, at: point, in: view) { openInNewTab($0) })
+            if let matched { times.remove(at: matched) }
+        }
         // A note about the selection, lighter than a section heading's semibold: weight 450 on the
         // system font's own scale, between regular (400) and medium (510), which named weights snap to.
         let small = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -39,7 +53,7 @@ import RiseChromium
             header.attributedTitle = NSAttributedString(string: title, attributes: [.font: note, .foregroundColor: NSColor.secondaryLabelColor])
             menu.addItem(header)
         }
-        if !times.isEmpty { menu.addItem(.separator()) }
+        if event != nil || !times.isEmpty { menu.addItem(.separator()) }
 
         // A misspelling: the spellchecker's suggestions, first.
         if info.editable, !info.misspelledWord.isEmpty {

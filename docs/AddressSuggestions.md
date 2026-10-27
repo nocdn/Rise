@@ -54,6 +54,21 @@ and suggestions, and keeps input focus. Its sole haptic comes from
 the bar's touch-down feedback. Compact site search follows keyboard height changes,
 including hardware keyboards. Normal search keeps its 73% panel height.
 
+ChatGPT, Claude and Gemini offer **Ask** instead of Search (on the Mac, **Ask ChatGPT [Tab]**,
+**Ask Claude [Tab]**, **Ask Gemini [Tab]**). Enter opens a fresh chat in the signed-in web
+account and submits the prompt through its composer. A prompt is passed as a script argument,
+never through a prefill query string; visiting a normal chat URL does not submit anything.
+Typing an assistant's name keeps this offer ahead of old prefill URLs and conversation history;
+an explicit conversation path can still be completed normally.
+
+`RiseCore/AssistantPrompt.swift` waits for the composer and its enabled send button to settle,
+including client hydration and editor replacement. It supports ChatGPT's textarea/ProseMirror,
+Claude's ProseMirror, Gemini's Quill, and Gemini's account-indexed URLs. Existing different drafts
+and new user input stop the pending action. Each request clicks Send once; an ambiguous result
+is never retried automatically. Navigation away, authentication screens and a 45-second timeout
+stop it, with a way to copy the prompt if sending was unavailable. Initial Chromium new-tab
+navigation is allowed to finish before the assistant's origin is checked.
+
 Rows retain their content positions and touch bounds while their pressed fill extends
 6 pt beyond each horizontal edge; the original colour, scale and release effect remain.
 
@@ -65,6 +80,12 @@ Learned templates and address learning sync through the existing private CloudKi
 for conflict merging, account switching, and production schema deployment.
 
 Validation:
+
+- `scripts/test.sh --filter 'AssistantPrompt|AddressSuggestion|PopularSites'`: Ask routing,
+  history precedence, origin and path checks, cancellation, and native field behavior.
+- `python3 scripts/test-chromium-live.py Tests/Live/ChromiumAssistantPromptChecks.swift`: real
+  Chromium fixtures for all three composers, delayed hydration, remounting, disabled Send,
+  existing drafts, multiline Unicode, repeated evaluation and unacknowledged submissions.
 
 - `swift test`: shared ranking, completion, persistence, learning, remote cancellation,
   favicon discovery, and desktop address UI regressions.

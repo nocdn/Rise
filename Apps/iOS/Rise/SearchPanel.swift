@@ -137,6 +137,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     private var opening = 0
     private var backgroundSelection: (text: String, range: NSRange)?
     var onOpen: @MainActor (URL) -> Void = { _ in }
+    var onAsk: @MainActor (AssistantPrompt) -> Void = { _ in }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -495,7 +496,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
             return
         }
         let font = field.font ?? Self.font
-        let title = NSMutableAttributedString(string: "Search in ", attributes: [.font: font, .foregroundColor: UIColor.placeholderText])
+        let title = NSMutableAttributedString(string: siteSearch.assistant == nil ? "Search in " : "Ask ", attributes: [.font: font, .foregroundColor: UIColor.placeholderText])
         let brand = brandColor(for: siteSearch, icon: image(for: siteSearch.homeURL))
         let muted = brand?.withAlphaComponent(0.45) ?? .placeholderText
         title.append(NSAttributedString(string: siteSearch.name, attributes: [.font: font, .foregroundColor: muted]))
@@ -556,7 +557,10 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         if let siteSearch {
             let terms = (field.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if !terms.isEmpty, let url = siteSearch.searchURL(for: terms) { open(url) }
+            if !terms.isEmpty, let assistant = siteSearch.assistant {
+                click.impactOccurred(intensity: 0.5)
+                onAsk(AssistantPrompt(service: assistant, text: terms))
+            } else if !terms.isEmpty, let url = siteSearch.searchURL(for: terms) { open(url) }
         } else if let completed = field.inlineCompletion {
             if let value = candidates.first(where: { $0.completion == completed }) { choose(value) }
             else if let url = Self.destination(for: completed) { open(url) }

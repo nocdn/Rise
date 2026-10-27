@@ -12,6 +12,7 @@ import AppKit
     let key = CALayer()
     private let keyText = CATextLayer()
     private(set) var siteName = ""
+    private(set) var action = "Search"
     /// Searching the site, after Tab.
     private(set) var isSearching = false
     private var muted = NSColor.secondaryLabelColor, siteColor = NSColor.labelColor
@@ -36,10 +37,11 @@ import AppKit
     }
     required init?(coder: NSCoder) { fatalError() }
     /// The site on offer, back at rest: "Search", its name in gray, and the keycap.
-    func configure(site name: String, color: NSColor, theme: RiseTheme) {
-        siteName = name; isSearching = false
+    func configure(site name: String, action: String = "Search", color: NSColor, theme: RiseTheme) {
+        siteName = name; self.action = action; isSearching = false
+        searchText.string = action+" "
         nameText.string = name
-        setAccessibilityLabel("Press Tab to search \(name)")
+        setAccessibilityLabel("Press Tab to \(action.lowercased()) \(name)")
         CATransaction.begin(); CATransaction.setDisableActions(true)
         [searchText, nameText, key].forEach { $0.removeAllAnimations() }
         searchText.opacity = 1; key.opacity = 1; key.transform = CATransform3DIdentity
@@ -66,7 +68,7 @@ import AppKit
     private func width(_ text: String, _ font: NSFont) -> CGFloat {
         ceil((text as NSString).size(withAttributes: [.font: font]).width)
     }
-    private var searchWidth: CGFloat { width("Search ", font) }
+    private var searchWidth: CGFloat { width(action+" ", font) }
     private var nameWidth: CGFloat { width(siteName, font)+2 }
     private var keyWidth: CGFloat { width("Tab", keyFont)+2*Self.keyPadding }
     var preferredWidth: CGFloat { searchWidth+nameWidth+Self.gap+keyWidth }
@@ -95,7 +97,7 @@ import AppKit
     func setSearching(_ searching: Bool, animated: Bool) {
         guard searching != isSearching else { return }
         isSearching = searching
-        setAccessibilityLabel(searching ? "Searching \(siteName)" : "Press Tab to search \(siteName)")
+        setAccessibilityLabel(searching ? "\(action == "Ask" ? "Asking" : "Searching") \(siteName)" : "Press Tab to \(action.lowercased()) \(siteName)")
         let animate = animated && window != nil && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let fromX = nameText.presentation()?.position.x ?? nameText.position.x
         let fromColor = nameText.presentation()?.foregroundColor ?? nameText.foregroundColor

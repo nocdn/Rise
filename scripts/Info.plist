@@ -19,6 +19,11 @@
 <key>NSLocationUsageDescription</key><string>Allow websites you choose to use your location.</string>
 <!-- Only fields marked for one-time codes are offered them; otherwise macOS checks every field focused, which flashes the first time. -->
 <key>NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac</key><true/>
+<key>NSCalendarsFullAccessUsageDescription</key><string>Add an event you selected on a web page to the calendar you choose.</string>
+<key>NSCalendarsWriteOnlyAccessUsageDescription</key><string>Add an event you selected on a web page to your calendar.</string>
+<key>NSCalendarsUsageDescription</key><string>Add an event you selected on a web page to the calendar you choose.</string>
+<key>NSRemindersFullAccessUsageDescription</key><string>Add a reminder for a date or time you selected on a web page.</string>
+<key>NSRemindersUsageDescription</key><string>Add a reminder for a date or time you selected on a web page.</string>
 <key>NSBluetoothAlwaysUsageDescription</key><string>Allow websites you choose to use passkeys from your phone and nearby security keys.</string>
 <key>CFBundleURLTypes</key><array><dict><key>CFBundleURLName</key><string>Web URLs</string><key>CFBundleURLSchemes</key><array><string>http</string><string>https</string></array></dict></array>
 </dict></plist>

@@ -88,4 +88,33 @@ final class SelectionTimeNativeMenuTests: XCTestCase {
         let input = root.replacingChildren([rise] + root.children.dropFirst())
         XCTAssertTrue(SelectionTimeNativeMenu.relocatingDateActions(in: input) === input)
     }
+
+    @MainActor func testAnEventKeepsRisesFilledInActionsAndDropsTheSystemsDateSection() throws {
+        let (root, _, _) = fixture()
+        let text = "Event details\nDate: Tuesday, November 3, 2026\nTime: 13:30 - 20:30\nLocation: Corner Corner, London"
+        let elements = SelectionTimeMenu.elements(for: text, in: nil)
+        let event = try XCTUnwrap(elements.first as? UIMenu)
+        XCTAssertEqual(event.identifier, SelectionTimeMenu.eventIdentifier)
+        XCTAssertEqual(event.children.map(\.title), ["Add to Calendar", "Add to Reminders", "Show in Calendar"])
+        let rise = UIMenu(identifier: SelectionTimeMenu.menuIdentifier, options: .displayInline, children: elements)
+        // A day without a zone: the system's section has no conversion heading.
+        let dates = try XCTUnwrap(root.children.last as? UIMenu)
+        let plain = dates.replacingChildren(dates.children.filter { !(($0 as? UIAction)?.identifier.rawValue.contains("Conversion") ?? false) })
+        let input = root.replacingChildren([rise, root.children[1], plain])
+        let result = SelectionTimeNativeMenu.relocatingDateActions(in: input)
+        XCTAssertTrue(result.children.first === rise, "Rise's actions, which fill in the place and title, are kept")
+        XCTAssertEqual(result.children.count, 2)
+        XCTAssertEqual((result.children.last as? UIMenu)?.children.map(\.title), ["Look Up"])
+        // Without Rise's event, a plain date's section is the system's own and stays.
+        let withoutEvent = root.replacingChildren([UIMenu(identifier: SelectionTimeMenu.menuIdentifier, children: []), root.children[1], plain])
+        XCTAssertTrue(SelectionTimeNativeMenu.relocatingDateActions(in: withoutEvent) === withoutEvent)
+    }
+
+    @MainActor func testATimeInAnotherZoneKeepsItsConvertedItemWithTheEventsActions() throws {
+        let menus = SelectionTimeMenu.elements(for: "Launch call, Wed 4 Nov 2026 9:00 AM – 10:00 AM PST", in: nil).compactMap { $0 as? UIMenu }
+        XCTAssertEqual(menus.count, 1)
+        XCTAssertEqual(menus.first?.identifier, SelectionTimeMenu.eventIdentifier)
+        XCTAssertTrue(menus.first?.children.first?.title.hasPrefix("Copy “") == true)
+        XCTAssertEqual(menus.first?.children.count, 4)
+    }
 }

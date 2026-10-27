@@ -16,6 +16,7 @@ struct AddressSuggestion {
     var isTypedAction = false
     /// Fills in the field (a well-known site) without a row of its own: the field already shows it.
     var isAutofill = false
+    var assistantPrompt: AssistantPrompt? = nil
 }
 @MainActor final class AddressPalette: Surface, NSTextFieldDelegate {
     let input = AddressInputField(frame: .zero)
@@ -592,9 +593,10 @@ struct AddressSuggestion {
             // An empty search, or the address left as it was, goes to the site itself.
             var words = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             if input.stringValue == addressBeforeSiteSearch?.text { words = "" }
-            let url = words.isEmpty ? site.homeURL : site.searchURL(for: words) ?? site.homeURL
-            submit?(input.stringValue, AddressSuggestion(title: "Search \(site.name)", subtitle: "", symbol: "magnifyingglass", url: url,
-                                                         tabID: nil, command: nil, isTypedAction: true))
+            let request = words.isEmpty ? nil : site.assistant.map { AssistantPrompt(service: $0, text: words) }
+            let url = request?.service.entryURL ?? (words.isEmpty ? site.homeURL : site.searchURL(for: words) ?? site.homeURL)
+            submit?(input.stringValue, AddressSuggestion(title: "\(site.action) \(site.name)", subtitle: "", symbol: "magnifyingglass", url: url,
+                                                         tabID: nil, command: nil, isTypedAction: true, assistantPrompt: request))
             return
         }
         submit?(input.stringValue, chosenSuggestion)
@@ -664,7 +666,7 @@ struct AddressSuggestion {
     // MARK: Site search
 
     private func applyPlaceholder() {
-        input.placeholderAttributedString = NSAttributedString(string: choice?.placeholder ?? siteSearch.map { "Search \($0.name)…" } ?? "Search or Enter URL…",
+        input.placeholderAttributedString = NSAttributedString(string: choice?.placeholder ?? siteSearch.map { "\($0.action) \($0.name)…" } ?? "Search or Enter URL…",
                                                                attributes: [.foregroundColor: isCentered ? CenteredPaletteStyle.placeholder(theme) : AddressAppearance.secondary(theme),
                                                                             .font: isCentered ? CenteredPaletteStyle.fieldFont : AddressAppearance.placeholderFont])
     }
@@ -673,7 +675,7 @@ struct AddressSuggestion {
         let site = siteSearch == nil && !isChoosing ? site(forAddress: input.stringValue).flatMap { $0.isSearchable ? $0 : nil } : nil
         guard site != offeredSite else { return }
         offeredSite = site
-        if let site { siteHint.configure(site: site.name, color: color(for: site), theme: theme) }
+        if let site { siteHint.configure(site: site.name, action: site.action, color: color(for: site), theme: theme) }
         siteHint.setAccessibilityElement(site != nil)
         fadeHint(to: site == nil ? 0 : 1)
         needsLayout = true
@@ -702,12 +704,12 @@ struct AddressSuggestion {
         addressBeforeSiteSearch = AddressState(text: address, query: query, selection: (input.currentEditor() as? NSTextView)?.selectedRange() ?? NSRange(location: address.utf16.count, length: 0),
                                                completionRange: completionRange, completionPrefix: completionPrefix, suggestions: suggestions, autofill: autofill)
         siteSearch = site; offeredSite = nil; completionRange = nil; suppressCompletion = false
-        if siteHint.siteName != site.name { siteHint.configure(site: site.name, color: color(for: site), theme: theme) }
+        if siteHint.siteName != site.name || siteHint.action != site.action { siteHint.configure(site: site.name, action: site.action, color: color(for: site), theme: theme) }
         siteHint.alphaValue = 1; siteHint.setAccessibilityElement(true)
         siteHint.setSearching(true, animated: true)
         updateLeadingIcon()
         setText("")
-        applyPlaceholder(); input.setAccessibilityLabel("Search \(site.name)")
+        applyPlaceholder(); input.setAccessibilityLabel("\(site.action) \(site.name)")
         suggestions = []; selectedIndex = -1; selectionBeforeHover = nil; render()
     }
     /// Back to the address as it was before Tab, selected as it was, with the same rows, and the

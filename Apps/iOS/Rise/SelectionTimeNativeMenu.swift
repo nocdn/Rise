@@ -63,20 +63,25 @@ import WebKit
     /// changes its identifiers, preserve the system menu instead of dropping actions.
     static func relocatingDateActions(in root: UIMenu) -> UIMenu {
         var riseSections: [UIMenu] = [], dateSections: [UIMenu] = []
+        func has(_ menu: UIMenu, _ prefix: String) -> Bool {
+            menu.children.contains { ($0 as? UIAction)?.identifier.rawValue.hasPrefix(prefix) == true }
+        }
         func collect(_ menu: UIMenu) {
             if menu.identifier == SelectionTimeMenu.menuIdentifier { riseSections.append(menu); return }
-            if menu.children.contains(where: { ($0 as? UIAction)?.identifier.rawValue.hasPrefix(conversion) == true }) {
-                dateSections.append(menu)
-            }
+            if has(menu, conversion) || has(menu, actionKinds[0]) { dateSections.append(menu) }
             menu.children.compactMap { $0 as? UIMenu }.forEach(collect)
         }
         collect(root)
+        // Rise's event, with its place and title, stands for any date the system found; without one,
+        // only a time converted from another zone is Rise's to take.
+        let hasEvent = riseSections.first?.children.contains { ($0 as? UIMenu)?.identifier == SelectionTimeMenu.eventIdentifier } ?? false
+        if !hasEvent { dateSections = dateSections.filter { has($0, conversion) } }
         guard riseSections.count == 1, !dateSections.isEmpty else { return root }
         let timeMenus = riseSections[0].children.compactMap { $0 as? UIMenu }
         guard !timeMenus.isEmpty, timeMenus.count == riseSections[0].children.count else { return root }
         // A zone-only selection offers a current-time snapshot and Copy. It does
         // not name a calendar date whose native actions could be relocated here.
-        guard timeMenus.allSatisfy({ $0.children.count > 1 }) else { return root }
+        guard hasEvent || timeMenus.allSatisfy({ $0.children.count > 1 }) else { return root }
         let nativeGroups = dateSections.map { section in
             let actions = section.children.compactMap { $0 as? UIAction }
             return actionKinds.compactMap { kind in actions.first { $0.identifier.rawValue.hasPrefix(kind) } }
@@ -85,7 +90,10 @@ import WebKit
         // A native action carries an opaque date payload. Reuse it for an unambiguous
         // single date; multiple dates keep their individual, fully functional actions.
         let replacement: UIMenu
-        if timeMenus.count == 1, nativeGroups.count == 1, let copy = timeMenus[0].children.first as? UIAction {
+        if hasEvent {
+            // Rise's own actions fill in what the system's leave out, so they're the ones kept.
+            replacement = riseSections[0]
+        } else if timeMenus.count == 1, nativeGroups.count == 1, let copy = timeMenus[0].children.first as? UIAction {
             replacement = riseSections[0].replacingChildren([timeMenus[0].replacingChildren([copy] + nativeGroups[0])])
         } else {
             guard timeMenus.allSatisfy({ $0.children.count == 4 }) else { return root }

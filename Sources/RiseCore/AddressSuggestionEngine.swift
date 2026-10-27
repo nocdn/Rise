@@ -60,6 +60,15 @@ public enum AddressSuggestionEngine {
             appendSite(title: openTab(for: url, in: tabs)?.title ?? entry.title, url: url, learned: true, typed: typed, completePath: completePath)
         }
         if editingCurrentAddress, let key = BrowsingHistory.key(currentURL) { seen.insert(key) }
+        // Typing an assistant's name offers Ask even if old prefill links or a frequently visited
+        // conversation dominate history. Explicit paths still complete to those conversations.
+        let popular = PopularSites.completion(for: query)
+        if let assistantSite = PopularSites.site(forAddress: query) ?? popular?.site, assistantSite.assistant != nil,
+           let key = BrowsingHistory.key(assistantSite.homeURL), seen.insert(key).inserted {
+            result.append(AddressCandidate(title: assistantSite.name, subtitle: assistantSite.homeURL.absoluteString,
+                url: assistantSite.homeURL, tabID: openTab(for: assistantSite.homeURL, in: tabs)?.id,
+                completion: popular?.completed ?? query, isTypedAction: true, isAutofill: true))
+        }
         // The site visited most across its pages, or its usual page (`BrowsingHistory.destination`).
         if !query.isEmpty, let destination = history.destination(for: query) {
             if let page = destination.page { appendHistory(page, typed: true, completePath: true) }

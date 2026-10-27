@@ -520,6 +520,26 @@ final class AddressSuggestionsTests: XCTestCase {
         editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
         XCTAssertEqual(destination, account)
     }
+    @MainActor func testAssistantOffersSayAskAndSubmitAnExplicitRequestInsteadOfAPrefillURL() throws {
+        let browser = browser(); defer { browser.hidePalette(); clean(browser) }
+        browser.showWindow(nil); browser.newTab()
+        let palette = browser.palette
+        for assistant in ChatAssistant.allCases {
+            palette.enterSiteSearch(try XCTUnwrap(PopularSites.site(forAddress: assistant.domain)))
+            XCTAssertEqual(palette.siteHint.action, "Ask")
+            XCTAssertEqual(palette.input.placeholderAttributedString?.string, "Ask \(assistant.name)…")
+            let editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
+            editor.insertText("hello & \"world\" 日本語", replacementRange: editor.selectedRange())
+            var submitted: AddressSuggestion?
+            palette.submit = { _, value in submitted = value }
+            editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+            XCTAssertEqual(submitted?.title, "Ask \(assistant.name)")
+            XCTAssertEqual(submitted?.url, assistant.entryURL)
+            XCTAssertEqual(submitted?.assistantPrompt?.text, "hello & \"world\" 日本語")
+            XCTAssertEqual(submitted?.assistantPrompt?.service, assistant)
+            editor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
+        }
+    }
     @MainActor func testAPopularSiteFillsInAndTabSearchesItThroughItsOwnSearch() throws {
         let region = PopularSites.region; PopularSites.region = "GB"; defer { PopularSites.region = region }
         let browser = browser(); defer { browser.hidePalette(); clean(browser) }
