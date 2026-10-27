@@ -215,11 +215,13 @@ final class PinnedTabsTests: XCTestCase {
                 try await Task.sleep(for: .milliseconds(16))
             }
             XCTAssertTrue(sidebar.pinnedDrag?.tile === tile, "Drag \(from) to \(to)")
+            XCTAssertEqual(tile.layer?.backgroundColor?.alpha, 1, "A tile in hand hides the tiles it crosses")
             browser.window!.sendEvent(event(.leftMouseUp, at: point, in: grid))
             try await Task.sleep(for: .milliseconds(80))
         }
         try await Task.sleep(for: .milliseconds(1200))
         XCTAssertEqual(settled(), [])
+        XCTAssertTrue(grid.tiles.values.filter { !$0.selected }.allSatisfy { ($0.layer?.backgroundColor?.alpha ?? 1) < 1 }, "At rest, the sidebar shows through")
     }
 
     /// Pin and Unpin from the menu carry the tab to its new place rather than jumping.

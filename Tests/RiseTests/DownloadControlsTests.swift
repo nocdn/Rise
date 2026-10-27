@@ -48,7 +48,9 @@ final class DownloadControlsTests: XCTestCase {
         XCTAssertEqual(row.menu(for: event)?.items.map(\.title), ["Reveal in Finder", "Smart Rename"])
         XCTAssertNil(try list.deleteFromDisk(id)); XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
         list.finish(id); row.update()
-        XCTAssertEqual(row.menu(for: event)?.items.map(\.title), ["Reveal in Finder", "Delete from disk", "Smart Rename"])
+        let finished = try XCTUnwrap(row.menu(for: event)?.items)
+        XCTAssertEqual(finished.prefix(3).map(\.title), ["Reveal in Finder", "Delete from disk", "Smart Rename"])
+        XCTAssertEqual(finished.count, 4); XCTAssertTrue(finished.last?.title.hasPrefix("Share") == true, "Share comes last: \(finished.last?.title ?? "")")
         var revealed: URL?
         row.reveal = { revealed = $0 }
         let menu = try XCTUnwrap(row.menu(for: event)); menu.performActionForItem(at: 0)

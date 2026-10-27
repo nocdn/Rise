@@ -1,0 +1,164 @@
+--- a/chrome/browser/rise/BUILD.gn
++++ b/chrome/browser/rise/BUILD.gn
+@@ -34,6 +34,7 @@
+     "//chrome/browser/ui/browser_window:create_browser_window",
+     "//chrome/browser/ui/tabs:tab_strip",
+     "//chrome/browser/content_settings:content_settings_factory",
++    "//chrome/browser/permissions/system",
+     "//chrome/browser/ui/browser_web_contents_delegate",
+     "//chrome/common/rise:mojom",
+     "//components/content_settings/core/browser",
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -106,6 +106,8 @@
+ #include "chrome/common/rise/rise_frame.mojom.h"
+ #include "components/content_settings/core/browser/host_content_settings_map.h"
+ #include "components/download/public/common/download_item.h"
++#include "chrome/browser/permissions/system/system_permission_settings.h"
++#include "components/permissions/embedded_permission_prompt_flow_model.h"
+ #include "components/permissions/permission_prompt.h"
+ #include "components/sessions/content/content_serialized_navigation_builder.h"
+ #include "components/sessions/core/serialized_navigation_entry.h"
+@@ -1107,10 +1109,30 @@
+ // A page's request for camera, microphone or location, asked in Rise's own
+ // prompt, which keeps its decisions itself: Chrome grants for the page only,
+ // and keeps no denial, so it asks again next time and Rise answers.
++//
++// A request from a page's own element (<usermedia>, <geolocation>) comes back
++// for its later steps once allowed, as Chrome's element prompt does: macOS's
++// own permission, or a note that it's already allowed or blocked. Those aren't
++// asked again, which would decide the requests a second time.
+ class RisePermissionPrompt : public permissions::PermissionPrompt {
+  public:
+   RisePermissionPrompt(content::WebContents* contents, Delegate* delegate)
+       : delegate_(delegate->GetWeakPtr()), view_(ViewOf(contents)) {
++    using Variant = permissions::EmbeddedPermissionPromptFlowModel::Variant;
++    permissions::EmbeddedPermissionPromptFlowModel* flow =
++        delegate->GetEmbeddedPromptFlowModel();
++    Variant step = flow ? flow->prompt_variant() : Variant::kUninitialized;
++    if (step != Variant::kUninitialized && step != Variant::kAsk &&
++        step != Variant::kPreviouslyDenied) {
++      decided_ = true;
++      // On a later turn: the request manager takes this prompt as its view
++      // once it's made.
++      base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++          FROM_HERE,
++          base::BindOnce(&RisePermissionPrompt::ContinueElementFlow,
++                         weak_factory_.GetWeakPtr(), step));
++      return;
++    }
+     RCPermission asked = 0;
+     bool others = false;
+     for (const auto& request : delegate->Requests()) {
+@@ -1175,6 +1197,84 @@
+   }
+ 
+  private:
++  // What macOS's own permission is asked as: camera, microphone or location.
++  static std::optional<ContentSettingsType> SystemType(
++      ContentSettingsType type) {
++    switch (type) {
++      case ContentSettingsType::MEDIASTREAM_CAMERA:
++      case ContentSettingsType::MEDIASTREAM_MIC:
++      case ContentSettingsType::GEOLOCATION:
++        return type;
++      case ContentSettingsType::GEOLOCATION_WITH_OPTIONS:
++        return ContentSettingsType::GEOLOCATION;
++      default:
++        return std::nullopt;
++    }
++  }
++
++  void ContinueElementFlow(
++      permissions::EmbeddedPermissionPromptFlowModel::Variant step) {
++    using Variant = permissions::EmbeddedPermissionPromptFlowModel::Variant;
++    Delegate* delegate = delegate_.get();
++    if (!delegate || delegate->Requests().empty()) {
++      return;
++    }
++    if (step == Variant::kPreviouslyGranted) {
++      // Already allowed: the flow ends, giving the page what it has.
++      delegate->AdvanceOrFinalizeEmbeddedPromptFlow();
++      return;
++    }
++    if (step != Variant::kOsPrompt) {
++      // Blocked in macOS's settings or set by an administrator: nothing to
++      // ask; the requests close without being decided again.
++      delegate->Dismiss(std::monostate());
++      return;
++    }
++    // Allowed by the user, macOS asks for itself; once it has an answer for
++    // each, the flow goes on to its end, or to the settings note if refused.
++    system_types_.clear();
++    for (const auto& request : delegate->Requests()) {
++      if (auto type = SystemType(request->GetContentSettingsType())) {
++        system_types_.push_back(*type);
++      }
++    }
++    if (system_types_.empty()) {
++      delegate->AdvanceOrFinalizeEmbeddedPromptFlow();
++      return;
++    }
++    for (ContentSettingsType type : system_types_) {
++      system_permission_settings::Request(
++          type, base::BindOnce(&RisePermissionPrompt::SystemAnswered,
++                               weak_factory_.GetWeakPtr()));
++    }
++  }
++  void SystemAnswered() {
++    Delegate* delegate = delegate_.get();
++    if (!delegate || advanced_) {
++      return;
++    }
++    for (ContentSettingsType type : system_types_) {
++      if (system_permission_settings::CanPrompt(type)) {
++        return;
++      }
++    }
++    advanced_ = true;
++    delegate->AdvanceOrFinalizeEmbeddedPromptFlow();
++  }
++  // Location reaches the page only once macOS allows Rise it, which Chrome
++  // asks from its address bar's location icon; Rise asks as the page is
++  // allowed.
++  static void AskSystemForLocation(const std::vector<ContentSettingsType>& types) {
++    for (ContentSettingsType type : types) {
++      if (SystemType(type) == ContentSettingsType::GEOLOCATION &&
++          system_permission_settings::CanPrompt(ContentSettingsType::GEOLOCATION)) {
++        system_permission_settings::Request(ContentSettingsType::GEOLOCATION,
++                                            base::DoNothing());
++        return;
++      }
++    }
++  }
++
+   void Decide(bool allowed) {
+     Delegate* delegate = delegate_.get();
+     if (!delegate || decided_ || delegate->Requests().empty()) {
+@@ -1189,7 +1289,16 @@
+                       GeolocationAccuracy::kPrecise})
+                 : PromptOptions(std::monostate());
+     if (allowed) {
++      std::vector<ContentSettingsType> allowed_types;
++      for (const auto& request : delegate->Requests()) {
++        allowed_types.push_back(request->GetContentSettingsType());
++      }
++      bool element = delegate->GetEmbeddedPromptFlowModel() != nullptr;
+       delegate->AcceptThisTime(prompt_options);
++      // An element's request asks macOS in its own next step.
++      if (!element) {
++        AskSystemForLocation(allowed_types);
++      }
+       return;
+     }
+     GURL origin = delegate->GetRequestingOrigin();
+@@ -1214,6 +1323,9 @@
+   base::WeakPtr<Delegate> delegate_;
+   __weak RCBrowserView* view_;
+   bool decided_ = false;
++  // An element's macOS step: the permissions asked, and whether it went on.
++  std::vector<ContentSettingsType> system_types_;
++  bool advanced_ = false;
+   base::WeakPtrFactory<RisePermissionPrompt> weak_factory_{this};
+ };
+ 

@@ -2,16 +2,23 @@ import AppKit
 
 /// Go to Open Tabs: clicking a link that's already open in another tab switches to that tab
 /// rather than opening it again. Only a plain click: ⌘-click still opens a new tab, as do Shift and
-/// Option for Peek. Each page's script knows the links open elsewhere, kept in its own world where
-/// the page can't see them, so it can stop the click before the page acts on it.
+/// Option for Peek. A pull or merge request counts as open from any of its pages, so a link to one
+/// open on its changes or pipelines goes to that tab as it is. Each page's script knows the links
+/// open elsewhere, kept in its own world where the page can't see them, so it can stop the click
+/// before the page acts on it.
 @MainActor final class OpenTabLinks {
     static let preferenceKey = "Rise.GoToOpenTabs"
     static let worldName = "Rise.OpenTabLinks"
     private let preferences: UserDefaults
-    /// The list each page was last given, so only a change is sent.
-    private let sent = NSMapTable<AnyObject, NSArray>.weakToStrongObjects()
-    /// The links open in tabs other than the page's.
-    var openLinks: ((WebPage) -> [String])?
+    /// What's open in tabs other than a page's: their addresses, and the requests among them by
+    /// their overview's address, which a link to any of their pages matches.
+    struct Open: Equatable {
+        var links: [String] = [], requests: [String] = []
+        var message: [String: [String]] { ["links": links, "requests": requests] }
+    }
+    /// What each page was last given, so only a change is sent.
+    private let sent = NSMapTable<AnyObject, NSDictionary>.weakToStrongObjects()
+    var openLinks: ((WebPage) -> Open)?
     var goTo: ((_ url: URL, _ from: WebPage) -> Void)?
 
     init(preferences: UserDefaults = .standard) { self.preferences = preferences }
@@ -23,9 +30,9 @@ import AppKit
         // A new document asks for the list as it starts; changes are sent to it after.
         page.addMessageHandler("riseOpenTabs", world: .named(Self.worldName), replying: { [weak self] message, reply in
             guard let self, message.frame.isMain, let page = message.page else { reply([String](), nil); return }
-            let links = self.links(for: page)
-            self.sent.setObject(links as NSArray, forKey: page)
-            reply(links, nil)
+            let open = self.open(for: page)
+            self.remember(open, for: page)
+            reply(open.message, nil)
         })
         page.addMessageHandler("riseOpenTabLink", world: .named(Self.worldName)) { [weak self] message in
             guard let self, self.enabled, message.frame.isMain, let page = message.page,
@@ -34,28 +41,31 @@ import AppKit
         }
         page.addUserScript(Self.script, world: .named(Self.worldName), mainFrameOnly: true, handlers: ["riseOpenTabs", "riseOpenTabLink"])
     }
-    private func links(for page: WebPage) -> [String] { enabled ? openLinks?(page) ?? [] : [] }
+    private func open(for page: WebPage) -> Open { enabled ? openLinks?(page) ?? Open() : Open() }
+    private func remember(_ open: Open, for page: WebPage) { sent.setObject(open.message as NSDictionary, forKey: page) }
     /// Brings the lists of `pages`, those on screen, up to date.
     func refresh(_ pages: [WebPage]) {
         for page in pages {
-            let links = links(for: page)
-            if let last = sent.object(forKey: page) as? [String], last == links { continue }
-            sent.setObject(links as NSArray, forKey: page)
-            page.evaluate("globalThis.riseOpenTabs?.(links)", arguments: ["links": links], in: nil, world: .named(Self.worldName)) { _ in }
+            let open = open(for: page)
+            if sent.object(forKey: page) == open.message as NSDictionary { continue }
+            remember(open, for: page)
+            page.evaluate("globalThis.riseOpenTabs?.(open)", arguments: ["open": open.message], in: nil, world: .named(Self.worldName)) { _ in }
         }
     }
 
     static let script = #"""
     (() => {
-      let open = new Set();
-      globalThis.riseOpenTabs = links => { open = new Set(links || []) };
+      let open = new Set(), requests = [];
+      globalThis.riseOpenTabs = given => { open = new Set(given?.links || []); requests = given?.requests || [] };
+      // A request's overview, or any page under it: its changes, commits, pipelines.
+      const isOpen = href => open.has(href) || requests.some(request => href === request || ['/', '?', '#'].some(next => href.startsWith(request + next)));
       riseHandlers.riseOpenTabs.postMessage(null).then(links => globalThis.riseOpenTabs(links), () => {});
       // Capturing on the window, before the page's own handlers, so a site that routes its links
       // itself doesn't act on the click first.
       addEventListener('click', event => {
-        if (!event.isTrusted || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || !open.size) return;
+        if (!event.isTrusted || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || !open.size && !requests.length) return;
         const link = event.composedPath().find(node => (node instanceof HTMLAnchorElement || node instanceof HTMLAreaElement) && node.href);
-        if (!link || link.hasAttribute('download') || !open.has(link.href)) return;
+        if (!link || link.hasAttribute('download') || !isOpen(link.href)) return;
         event.preventDefault(); event.stopImmediatePropagation();
         riseHandlers.riseOpenTabLink.postMessage(link.href);
       }, true);
@@ -64,20 +74,28 @@ import AppKit
 }
 
 @MainActor extension BrowserController {
-    /// Links open in tabs other than `page`'s, leaving out the address it's on: a link to the page
-    /// itself behaves as usual.
-    func linksOpenElsewhere(than page: WebPage) -> [String] {
-        let own = page.url?.absoluteString
-        var links: [String] = []
+    /// What's open in tabs other than `page`'s, leaving out the address it's on and, on a request,
+    /// the request's other pages: a link to the page itself, or between its request's own pages,
+    /// behaves as usual.
+    func linksOpenElsewhere(than page: WebPage) -> OpenTabLinks.Open {
+        let own = page.url?.absoluteString, ownRequest = PullRequest(url: page.url)
+        var open = OpenTabLinks.Open()
         for tab in tabs where tab.page !== page {
-            guard let link = tab.url?.absoluteString, link != own, !links.contains(link) else { continue }
-            links.append(link)
+            guard let url = tab.url, url.absoluteString != own else { continue }
+            let request = PullRequest(url: url)
+            if let request, request == ownRequest { continue }
+            if !open.links.contains(url.absoluteString) { open.links.append(url.absoluteString) }
+            if let overview = request?.overviewURL?.absoluteString, !open.requests.contains(overview) { open.requests.append(overview) }
         }
-        return links
+        return open
     }
-    /// The tab a clicked link is already open in, other than the one it was clicked in.
+    /// The tab a clicked link is already open in, other than the one it was clicked in: one on that
+    /// address, or else one on any page of the same request, left on that page.
     func goToOpenTab(_ url: URL, from page: WebPage) {
-        guard let tab = tabs.first(where: { $0.page !== page && $0.url?.absoluteString == url.absoluteString }) else { return }
+        let others = tabs.filter { $0.page !== page }
+        let request = PullRequest(url: url)
+        guard let tab = others.first(where: { $0.url?.absoluteString == url.absoluteString })
+                ?? request.flatMap({ request in others.first { PullRequest(url: $0.url) == request } }) else { return }
         select(tab.id)
     }
     /// Pages on screen: the selected tab's, the other half of a split, and a Peek's.

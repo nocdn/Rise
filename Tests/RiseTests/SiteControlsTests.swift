@@ -84,9 +84,14 @@ final class SiteControlsTests: XCTestCase {
         browser.permissionCoordinator.request(in: tab.page.view, origin: origin, capabilities: [.camera]) { replies.append($0) }
         XCTAssertTrue(browser.permissionCoordinator.popover.isShown)
         let prompt = try XCTUnwrap(browser.permissionCoordinator.popover.contentViewController as? PermissionPromptController)
-        XCTAssertEqual(prompt.message, "Allow example.com to use your camera?")
+        XCTAssertEqual(prompt.heading, "Camera permissions"); XCTAssertEqual(prompt.message, "Allow example.com to access your camera")
+        let bar = browser.selectedBar
+        let icon = bar.permissionButton, iconOnScreen = icon.window!.convertToScreen(icon.convert(icon.bounds, to: nil))
+        XCTAssertEqual(prompt.view.window!.frame.midX, iconOnScreen.midX, accuracy: 2, "It comes out of the camera icon in the bar")
+        XCTAssertFalse(bar.permissionButton.isHidden); XCTAssertTrue(bar.permissionButton.frame.maxX <= bar.settingsButton.frame.minX)
         prompt.notNowButton.performClick(nil)
         browser.permissionCoordinator.cancel()
+        XCTAssertNil(bar.requestedPermission, "Answered, its icon goes")
         XCTAssertEqual(replies, [false]); XCTAssertEqual(browser.sitePermissions.permission(.camera, origin: origin), .ask)
         browser.permissionCoordinator.request(in: tab.page.view, origin: origin, capabilities: [.camera]) { replies.append($0) }
         (browser.permissionCoordinator.popover.contentViewController as? PermissionPromptController)?.allowButton.performClick(nil)

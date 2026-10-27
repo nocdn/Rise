@@ -184,7 +184,23 @@ import RiseCore
     private let addressHost = ContentHost()
     let copyButton: SidebarCopyButton
     let settingsButton: SidebarHoverButton, zoomButton: SidebarHoverButton
+    /// What the page is asking to use, left of the site controls while it asks, or of developer
+    /// mode's buttons while its bar shows; its prompt comes out of it.
+    let permissionButton: SidebarHoverButton
+    /// Where developer mode's buttons start while its bar shows here.
+    var developerControlsMinX: CGFloat? { didSet { if developerControlsMinX != oldValue { needsLayout = true } } }
     var onOpenAddress: (() -> Void)?
+    /// The icon of what the page asks for, nil when it isn't asking.
+    var requestedPermission: (icon: String, title: String)? {
+        didSet {
+            guard requestedPermission?.icon != oldValue?.icon || requestedPermission?.title != oldValue?.title else { return }
+            if let requestedPermission {
+                permissionButton.image = TablerIcon.image(requestedPermission.icon, size: 16, description: requestedPermission.title)
+                permissionButton.setAccessibilityLabel(requestedPermission.title)
+            }
+            needsLayout = true; updateFieldControls(animated: true)
+        }
+    }
     /// Where its buttons sit, and how much sooner its address starts for fewer of them: a split's
     /// right page has no sidebar button, so its back, forward and reload move up a place.
     var navigationCentres = Metrics.navigationCentres
@@ -214,12 +230,13 @@ import RiseCore
     var pageZoom: CGFloat = 1 { didSet { if pageZoom != oldValue { needsLayout = true; updateFieldControls(animated: true) } } }
     var showsZoom: Bool { url != nil && !PageZoom.isActual(pageZoom) }
 
-    init(copy: @escaping () -> Void, settings: @escaping () -> Void, zoom: @escaping () -> Void) {
+    init(copy: @escaping () -> Void, settings: @escaping () -> Void, zoom: @escaping () -> Void, permission: @escaping () -> Void = {}) {
         copyButton = SidebarCopyButton(action: copy)
         settingsButton = SidebarHoverButton(symbol: "slider.horizontal.3", size: 14, title: "Site controls", action: settings)
         settingsButton.image = TablerIcon.image(TablerIcon.adjustments, size: 16, description: "Site controls")
         zoomButton = SidebarHoverButton(symbol: "plus.magnifyingglass", size: 14, title: "Zoom", action: zoom)
         zoomButton.image = TablerIcon.image(TablerIcon.zoomIn, size: 16, description: "Zoom")
+        permissionButton = SidebarHoverButton(symbol: "camera", size: 14, title: "Permission request", action: permission)
         super.init(frame: .zero)
         wantsLayer = true
         field.cornerRadius = Metrics.fieldRadius; field.cornerCurve = .continuous; field.opacity = 0
@@ -228,7 +245,9 @@ import RiseCore
         text.font = Metrics.font; text.lineBreakMode = .byTruncatingTail; text.cell?.usesSingleLineMode = true
         text.wantsLayer = true
         addSubview(text); addSubview(addressHost)
-        for button in [zoomButton, copyButton, settingsButton] as [SidebarHoverButton] { addressHost.addSubview(button); button.alphaValue = 0 }
+        for button in fieldControls { addressHost.addSubview(button); button.alphaValue = 0 }
+        // Over the field, so it stays while developer mode's bar takes the field's place.
+        addSubview(permissionButton); permissionButton.alphaValue = 0
         setColor(.white, animated: false)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -265,7 +284,7 @@ import RiseCore
         hairline.backgroundColor = ink.hairline.cgColor; field.backgroundColor = ink.field.cgColor
         CATransaction.commit()
         // The buttons that stay over developer mode's bar take its ink.
-        let staying: [ChromeButton] = navigation + extensionButtons, field: [ChromeButton] = [zoomButton, copyButton, settingsButton]
+        let staying: [ChromeButton] = navigation + extensionButtons + [permissionButton], field: [ChromeButton] = fieldControls
         for (buttons, ink) in [(staying, shownInk), (field, ink)] {
             for button in buttons {
                 if button.contentTintColor != ink.strong { button.contentTintColor = ink.strong }
@@ -311,7 +330,11 @@ import RiseCore
     var fieldRect: NSRect {
         NSRect(x: Metrics.fieldX-leadingRoom, y: Metrics.midY-Metrics.fieldHeight/2, width: max(0, fieldMaxX-Metrics.fieldX+leadingRoom), height: Metrics.fieldHeight)
     }
-    private var fieldButtons: [SidebarHoverButton] { (showsZoom ? [zoomButton] : []) + [settingsButton, copyButton] }
+    private var fieldControls: [SidebarHoverButton] { [zoomButton, copyButton, settingsButton] }
+    private var showsPermission: Bool { url != nil && requestedPermission != nil }
+    private var fieldButtons: [SidebarHoverButton] {
+        (showsZoom ? [zoomButton] : []) + (showsPermission ? [permissionButton] : []) + [settingsButton, copyButton]
+    }
 
     override func layout() {
         super.layout()
@@ -333,9 +356,12 @@ import RiseCore
             let centre = end-Metrics.fieldButtonStride*CGFloat(buttons.count-1-index)
             button.frame = NSRect(x: centre-13.5, y: mid-12, width: 27, height: 24)
         }
-        zoomButton.isHidden = !showsZoom
+        zoomButton.isHidden = !showsZoom; permissionButton.isHidden = !showsPermission
+        if developerProgress > 0.5, let start = developerControlsMinX {
+            permissionButton.frame = NSRect(x: start-8-27, y: mid-12, width: 27, height: 24)
+        }
         // The text runs to the field's buttons while they show, and to its end otherwise.
-        let textEnd = isHovered || showsZoom ? (buttons.first?.frame.minX ?? fieldRect.maxX)-4 : fieldRect.maxX-8
+        let textEnd = isHovered || showsZoom || showsPermission ? (buttons.first?.frame.minX ?? fieldRect.maxX)-4 : fieldRect.maxX-8
         let line = ceil(text.intrinsicContentSize.height)
         let textX = Metrics.textX-Metrics.textInset-leadingRoom
         text.frame = NSRect(x: textX, y: round((mid-line/2)*2)/2, width: max(0, textEnd-textX), height: line)
@@ -455,7 +481,7 @@ import RiseCore
     override func hitTest(_ point: NSPoint) -> NSView? {
         let hit = super.hitTest(point)
         guard developerProgress > 0 else { return hit }
-        return (navigation+extensionButtons).contains { hit?.isDescendant(of: $0) == true } ? hit : nil
+        return (navigation+extensionButtons+[permissionButton]).contains { hit?.isDescendant(of: $0) == true } ? hit : nil
     }
 
     // MARK: Hovering the address
@@ -477,8 +503,8 @@ import RiseCore
         updateText(); updateFieldControls(animated: true); needsLayout = true
     }
     private func updateFieldControls(animated: Bool) {
-        for button in [zoomButton, copyButton, settingsButton] as [SidebarHoverButton] {
-            let on = url != nil && (isHovered || (button === zoomButton && showsZoom))
+        for button in fieldControls + [permissionButton] {
+            let on = url != nil && (isHovered || (button === zoomButton && showsZoom) || (button === permissionButton && showsPermission))
             button.allowsInteraction = on
             let target: CGFloat = on ? 1 : 0
             guard button.alphaValue != target else { continue }

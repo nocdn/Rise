@@ -99,11 +99,13 @@ import RiseCore
             label.range(of: "^[a-z0-9-]+$", options: .regularExpression) != nil
         }
     }
-    func loadPageIcon(_ iconURL: URL, for pageURL: URL, dark: Bool = false) {
+    /// The icon a page declared. `throughPage` asks for it again with the page's own sign-in, for
+    /// a site that keeps even its icon behind one (Jira, anything behind Cloudflare Access).
+    func loadPageIcon(_ iconURL: URL, for pageURL: URL, dark: Bool = false, throughPage: ((URL) async -> Data?)? = nil) {
         guard ["http", "https"].contains(iconURL.scheme?.lowercased() ?? ""),
               iconURL.user == nil, iconURL.password == nil, let origin = SitePermissions.origin(pageURL),
               requested[Self.key(origin, dark: dark)] != iconURL else { return }
-        fetch(iconURL, origin: origin, dark: dark)
+        fetch(iconURL, origin: origin, dark: dark, throughPage: throughPage)
     }
     /// Background tab metadata uses the same decoding, appearance variants and persistent cache.
     @discardableResult func storePageIcon(_ bytes: Data, for pageURL: URL, dark: Bool = false) -> Bool {
@@ -115,7 +117,7 @@ import RiseCore
         }
         return true
     }
-    private func fetch(_ iconURL: URL, origin: String, discoverIfNeeded: Bool = false, dark: Bool = false) {
+    private func fetch(_ iconURL: URL, origin: String, discoverIfNeeded: Bool = false, dark: Bool = false, throughPage: ((URL) async -> Data?)? = nil) {
         let key = Self.key(origin, dark: dark)
         tasks[key]?.cancel(); requested[key] = iconURL
         var request = URLRequest(url: iconURL); request.timeoutInterval = 8
@@ -126,6 +128,11 @@ import RiseCore
                 if let bytes, (response as? HTTPURLResponse)?.statusCode == 200,
                    self.storePageIcon(bytes, for: URL(string: origin)!, dark: dark) {
                     return
+                } else if let throughPage {
+                    Task { @MainActor [weak self] in
+                        guard let bytes = await throughPage(iconURL), let self, self.requested[key] == iconURL else { return }
+                        self.storePageIcon(bytes, for: URL(string: origin)!, dark: dark)
+                    }
                 } else if discoverIfNeeded {
                     if let bytes, let declared = FaviconDiscovery.icon(in: bytes, baseURL: response?.url ?? iconURL), declared != iconURL {
                         self.fetch(declared, origin: origin)

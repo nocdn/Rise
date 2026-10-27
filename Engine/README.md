@@ -68,6 +68,8 @@ to change that limit. `./scripts/engine/build.sh -n` previews pending work.
 | `0020-authentication-diagnostics.patch` | Local macOS unified logs for passkey lifecycle/availability and native-host launch/disconnect outcomes, without credential or page data |
 | `0021-covered-pages-keep-their-tooltips.patch` | A page covered by a Peek sets aside only Chromium's mouse tracking, not AppKit's tooltip areas, which otherwise come back pointing at freed tooltips |
 | `0023-rise-keyboard-shortcuts.patch` | A Keyboard shortcuts section in Settings, using Chromium's shortcut recorder and controls with Rise's saved command registry |
+| `0024-element-permission-steps-and-macos-location.patch` | Rise's permission prompt follows a page element's (`<usermedia>`, `<geolocation>`) later steps as Chrome's element prompt does, asking macOS rather than deciding the requests again, which crashed; and asks macOS for location when a page is allowed it, which Chrome does from its address bar |
+| `0025-https-first-full-page-warning.patch` | Turns off `HttpsFirstDialogUi`, so HTTPS-First's fallback to http warns with Chrome's full-page interstitial rather than a dialog over Chrome's own window, which Rise's pages don't have and crashed |
 
 `0002` is exported from the fork's tree with `git diff HEAD` over `base` and `chrome`, less the
 paths the other patches and `brand.py` own (see `Engine/fork-plan.md`); new files are added

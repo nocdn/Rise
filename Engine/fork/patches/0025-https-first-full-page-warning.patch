@@ -1,0 +1,13 @@
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -1683,6 +1683,10 @@
+   arguments.push_back("--no-startup-window");
+   arguments.push_back("--no-first-run");
+   arguments.push_back("--no-default-browser-check");
++  // When HTTPS-First falls back to http, Chrome's newer prompt is a dialog over
++  // its own tab strip's window, which Rise's pages don't have; its full-page
++  // warning shows in the page itself.
++  arguments.push_back("--disable-features=HttpsFirstDialogUi");
+   if (!keychain) {
+     arguments.push_back("--use-mock-keychain");
+   }

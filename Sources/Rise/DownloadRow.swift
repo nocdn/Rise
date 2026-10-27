@@ -175,8 +175,16 @@ final class DownloadRow: NSView {
         }
         let rename = NSMenuItem(title: "Smart Rename", action: #selector(smartRename), keyEquivalent: "")
         rename.target = self; menu.addItem(rename)
+        // Last, macOS's own Share, as Finder offers it, once there's a file to share.
+        if isFinished, FileManager.default.fileExists(atPath: item.record.url.path) {
+            let picker = NSSharingServicePicker(items: [item.record.url])
+            sharingPicker = picker
+            menu.addItem(picker.standardShareMenuItem)
+        }
         return menu
     }
+    /// Kept while its Share item can still be chosen.
+    private var sharingPicker: NSSharingServicePicker?
     @objc private func revealFile() { reveal?(item.record.url) }
     @objc private func deleteFile() { performDeleteFromDisk() }
     @objc private func smartRename() { titleShimmer.startSmartRename() }

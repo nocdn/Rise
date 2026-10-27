@@ -6,8 +6,9 @@ import UserNotifications
 @MainActor final class PermissionCoordinator: NSObject, NSPopoverDelegate, UNUserNotificationCenterDelegate {
     weak var browser: BrowserController?
     let popover = NSPopover()
-    /// The page asking, as its view.
+    /// The page asking, as its view, and the bar over it, whose icon for what it asks shows meanwhile.
     private weak var requestingWebView: NSView?
+    private weak var requestingBar: PlainNavBar?
     private var reply: ((Bool) -> Void)?
     var requestNotificationAuthorization: (@escaping (Bool) -> Void) -> Void = { done in
         guard Bundle.main.bundleIdentifier != nil else { done(false); return }
@@ -41,7 +42,6 @@ import UserNotifications
         if decisions.allSatisfy({ $0 == .allow }) { completion(true); return }
         guard reply == nil else { completion(false); return }
         browser.siteControlsPopover.close(); browser.siteInfoPopover.close()
-        browser.showSidebarAtOnce()
         requestingWebView = web
         let documentURL = browser.page(showing: web)?.url
         reply = { [weak self, weak browser, weak web] allowed in
@@ -54,15 +54,25 @@ import UserNotifications
             if allowed && capabilities.contains(.notifications), let self { self.requestNotificationAuthorization(finish) }
             else { finish(allowed) }
         }
-        let controller = PermissionPromptController(host: url.host ?? origin, capabilities: capabilities) { [weak self] in self?.resolve($0) }
+        let controller = PermissionPromptController(host: url.host ?? origin, capabilities: capabilities, theme: browser.theme) { [weak self] in self?.resolve($0) }
         popover.appearance = browser.theme.appearance
         controller.view.appearance = browser.theme.appearance
         popover.contentViewController = controller; popover.contentSize = controller.view.frame.size
-        let anchor = browser.selectedBar.settingsButton
-        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
+        // It comes out of the icon for what's asked, in the bar over the asking page.
+        let bar = browser.pageBarTabs.first { $0.tab.page.view === web }?.bar ?? browser.selectedBar
+        requestingBar = bar
+        bar.requestedPermission = (capabilities.first?.tablerIcon ?? TablerIcon.camera, controller.heading)
+        browser.layoutChrome(); bar.layoutSubtreeIfNeeded()
+        showPrompt()
+    }
+    /// The prompt, again if it was put away, from its icon.
+    func showPrompt() {
+        guard reply != nil, !popover.isShown, let anchor = requestingBar?.permissionButton, anchor.window != nil else { return }
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
     }
     func resolve(_ allowed: Bool) {
         let completion = reply; reply = nil; requestingWebView = nil
+        requestingBar?.requestedPermission = nil; requestingBar = nil; browser?.layoutChrome()
         popover.close(); completion?(allowed)
     }
     func cancel(for web: NSView? = nil) {

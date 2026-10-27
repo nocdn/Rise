@@ -84,7 +84,9 @@ private final class DownloadsListView: NSView {
             row.remove = { [weak self] in self?.remove($0) }
             row.togglePause = { [weak self] in self?.list.togglePause($0) }
             row.cancel = { [weak self] in self?.list.cancel($0) }
-            row.reveal = { url in
+            row.reveal = { [weak self] url in
+                // Off to Finder: the list closes, and stays closed.
+                self?.dismiss?()
                 if FileManager.default.fileExists(atPath: url.path) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                 else { NSWorkspace.shared.open(url.deletingLastPathComponent()) }
             }

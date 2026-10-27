@@ -12,11 +12,11 @@ import RiseCore
     let pageEdge = PageEdge()
     /// The bar over the page, as Dia's.
     private(set) lazy var navBar = PlainNavBar(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() },
-                                               zoom: { [weak self] in self?.showZoomControls() })
+                                               zoom: { [weak self] in self?.showZoomControls() }, permission: { [weak self] in self?.permissionCoordinator.showPrompt() })
     var plainBarTimer: Timer?, plainBarColors: [UUID: NSColor] = [:], plainBarTabID: UUID?, plainBarSampling = false
     /// A split's right page's own bar (`SplitNavBar.swift`), its buttons, and the page it shows.
     private(set) lazy var splitBar = PlainNavBar(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() },
-                                                 zoom: { [weak self] in self?.showZoomControls() })
+                                                 zoom: { [weak self] in self?.showZoomControls() }, permission: { [weak self] in self?.permissionCoordinator.showPrompt() })
     var splitBarButtons: [ChromeButton] = [], splitBarTabID: UUID?
     let pageShadow = PageSurface(color: NSColor(hex: 0xFDFCFC), radius: PageAppearance.radius)
     let pageClip = PageSurface(color: NSColor(hex: 0xFDFCFC), radius: PageAppearance.radius)
@@ -117,11 +117,16 @@ import RiseCore
         hover.summaries.signedInPage = { [weak self] host in
             guard let self else { return nil }
             let pages = ([self.selectedTab].compactMap { $0 } + self.tabs + self.allPeekTabs).map(\.page)
-            return pages.first { $0 is ChromiumPage && $0.url?.host?.lowercased() == host.lowercased() }
+            if let open = pages.first(where: { $0 is ChromiumPage && $0.url?.host?.lowercased() == host.lowercased() && !$0.isLoading }) { return open }
+            // None open: one offscreen, with the same session.
+            self.signedInPages.host = self.root
+            return await self.signedInPages.page(for: host)
         }
         return hover
     }()
     let linkPullRequests = LinkPullRequestCards()
+    /// Private servers' pages kept offscreen, for their hover cards (`SignedInPages.swift`).
+    let signedInPages = SignedInPages()
     /// Option was held at the last change of the hovered link's modifiers.
     var hoveredWithOption = false
     lazy var calendarAgenda: CalendarAgenda = {
@@ -315,7 +320,7 @@ import RiseCore
             let preload = ChromiumPreload(url, size: page.view.bounds.size, done: done)
             return { preload.cancel() }
         }
-        openTabLinks.openLinks = { [weak self] page in self?.linksOpenElsewhere(than: page) ?? [] }
+        openTabLinks.openLinks = { [weak self] page in self?.linksOpenElsewhere(than: page) ?? OpenTabLinks.Open() }
         openTabLinks.goTo = { [weak self] url, page in self?.goToOpenTab(url, from: page) }
         linkPreloader.onComplete = { [weak self] url in
             guard let self, let hovered = self.linkStatus.url,
@@ -597,13 +602,16 @@ import RiseCore
             button.frame = NSRect(x: end-CGFloat(devButtons.count-i)*38+8, y: 6, width: 30, height: 28)
             button.alphaValue = DeveloperModeMotion.arriving(progress, delay: CGFloat(i)*0.04)
         }
+        bar.developerControlsMinX = progress > 0 ? devButtons.first?.frame.minX : nil
+        // A permission's icon, while a page asks, sits before them.
+        let addressEnd = (devButtons.first?.frame.minX ?? end)-(bar.requestedPermission == nil ? 0 : 35)
         // Where the page bar's address starts.
         let x = PlainNavBar.Metrics.textX-PlainNavBar.Metrics.textInset-bar.leadingRoom
         // As tall as the bar, its line centred in it.
-        developerAddress.frame = NSRect(x: x, y: 0, width: max(60, (devButtons.first?.frame.minX ?? end)-12-x), height: height)
+        developerAddress.frame = NSRect(x: x, y: 0, width: max(60, addressEnd-12-x), height: height)
     }
     func windowDidResize(_ notification: Notification) { layoutChrome() }
-    func windowWillClose(_ notification: Notification) { githubStarrer.tearDown(); linkPullRequests.summaries.tearDown(); plainBarTimer?.invalidate(); plainBarTimer = nil; tabPressed(); gmailInbox.tearDown(); protonMailInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); saveNow() }
+    func windowWillClose(_ notification: Notification) { githubStarrer.tearDown(); signedInPages.tearDown(); linkPullRequests.summaries.tearDown(); plainBarTimer?.invalidate(); plainBarTimer = nil; tabPressed(); gmailInbox.tearDown(); protonMailInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); saveNow() }
     func windowDidResignKey(_ notification: Notification) {
         pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch(); endSidebarPeek(); tabPressed()
         sidebar?.cancelTabInteractions()

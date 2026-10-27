@@ -439,8 +439,9 @@ enum PullRequestSummarizer {
         if case .gitlab = pr.forge { return "Couldn’t load this merge request." }
         return "Couldn’t load this pull request."
     }
-    /// An open page signed in to a server (by its host), to ask a private one through.
-    var signedInPage: (String) -> WebPage? = { _ in nil }
+    /// A page signed in to a server (by its host), to ask a private one through: an open one, or
+    /// one opened offscreen for it.
+    var signedInPage: (String) async -> WebPage? = { _ in nil }
     /// GitLab servers that only answered through a signed-in page: asked that way from then on.
     private var signedInHosts: Set<String> = []
     /// A pipeline and merge checks are checked again when the card shows, at most this often.
@@ -529,7 +530,7 @@ enum PullRequestSummarizer {
         if case .gitlab(let host) = pr.forge {
             if !signedInHosts.contains(host), let details = try? await GitLabAPI.details(pr) { return details }
             // A private server: through a page signed in to it, as its own pages ask.
-            guard let page = signedInPage(host), let details = try? await GitLabAPI.details(pr, fetch: GitLabAPI.fetch(through: page)) else { return nil }
+            guard let page = await signedInPage(host), let details = try? await GitLabAPI.details(pr, fetch: GitLabAPI.fetch(through: page)) else { return nil }
             signedInHosts.insert(host)
             return details
         }
@@ -578,16 +579,16 @@ enum PullRequestSummarizer {
               Date().timeIntervalSince(statusChecks[key] ?? .distantPast) > Self.statusRefresh else { return }
         statusChecks[key] = Date()
         Task { [weak self] in
-            guard let self, let status = try? await GitLabAPI.status(pr, fetch: self.gitLabFetch(pr)), var details = self.entries[key]?.details,
+            guard let self, let status = try? await GitLabAPI.status(pr, fetch: await self.gitLabFetch(pr)), var details = self.entries[key]?.details,
                   details.pipeline != status.pipeline || details.mergeCheck != status.mergeCheck else { return }
             details.pipeline = status.pipeline; details.mergeCheck = status.mergeCheck
             self.update(key) { $0.details = details }
             self.saved[key, default: Saved()].details = details; self.save()
         }
     }
-    /// Through a signed-in page for a server that needs one, if one's open; otherwise by itself.
-    private func gitLabFetch(_ pr: PullRequest) -> GitLabAPI.Fetch {
-        guard case .gitlab(let host) = pr.forge, signedInHosts.contains(host), let page = signedInPage(host) else { return GitLabAPI.fetch(.shared) }
+    /// Through a signed-in page for a server that needs one; otherwise by itself.
+    private func gitLabFetch(_ pr: PullRequest) async -> GitLabAPI.Fetch {
+        guard case .gitlab(let host) = pr.forge, signedInHosts.contains(host), let page = await signedInPage(host) else { return GitLabAPI.fetch(.shared) }
         return GitLabAPI.fetch(through: page)
     }
     private func update(_ key: String, _ change: (inout Entry) -> Void) {
