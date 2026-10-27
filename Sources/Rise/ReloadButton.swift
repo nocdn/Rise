@@ -109,6 +109,9 @@ final class ReloadButton: ChromeButton {
         draw()
     }
     private func stopAnimation() { link?.invalidate(); link = nil; queue = [] }
+    /// The middle of the glyph's ink, up and down, in the button's space: what the page bar's
+    /// notices centre their glyphs on.
+    var inkMidY: CGFloat { glyph.path.map { $0.boundingBoxOfPath.midY } ?? bounds.midY }
     private func draw() {
         let path = morph.path(at: shownFrame, center: CGPoint(x: bounds.midX, y: bounds.midY), flipped: isFlipped)
         CATransaction.begin(); CATransaction.setDisableActions(true)

@@ -554,12 +554,33 @@ import RiseCore
     }
     /// Where the glyph's ink starts in its 16 pt frame.
     static let inkStart: CGFloat = 3
-    /// How far below the words' middle a glyph sits, so it looks centred on them: the link and
-    /// the arrows draw high.
-    static func drop(_ image: NSImage) -> CGFloat {
-        image === linkImage ? 0.75 : image === fullScreenImage ? 0.5 : 0
+    /// The middle of an image's ink, up and down, from its top: glyphs draw off their frame's
+    /// middle, each by its own amount, so it's measured rather than set for each.
+    static func inkMidFromTop(_ image: NSImage) -> CGFloat {
+        let key = ObjectIdentifier(image)
+        if let known = inkMids[key] { return known }
+        let scale: CGFloat = 4, size = image.size
+        let width = max(1, Int(ceil(size.width*scale))), height = max(1, Int(ceil(size.height*scale)))
+        var mid = size.height/2
+        if let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: width, pixelsHigh: height, bitsPerSample: 8, samplesPerPixel: 4,
+                                      hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) {
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            image.draw(in: NSRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)))
+            NSGraphicsContext.restoreGraphicsState()
+            var top: Int?, bottom: Int?
+            if let data = rep.bitmapData {
+                for y in 0..<height where (0..<width).contains(where: { data[y*rep.bytesPerRow+$0*4+3] > 40 }) {
+                    if top == nil { top = y }; bottom = y
+                }
+            }
+            if let top, let bottom { mid = (CGFloat(top)+CGFloat(bottom)+1)/2/scale }
+        }
+        inkMids[key] = mid
+        return mid
     }
-    private let drop: CGFloat
+    private static var inkMids: [ObjectIdentifier: CGFloat] = [:]
+    private let image: NSImage
     static func text(_ words: String, link: Link?) -> String { link.map { "\(words) \($0.text)" } ?? words }
     private let icon = NSImageView()
     private var spinner: SpinnerView?
@@ -569,7 +590,7 @@ import RiseCore
     init(_ text: String, image: NSImage, link: Link? = nil) {
         words = PlainNavBarText(labelWithString: text)
         self.text = Self.text(text, link: link)
-        drop = Self.drop(image)
+        self.image = image
         super.init(frame: .zero)
         wantsLayer = true
         icon.imageScaling = .scaleNone
@@ -603,7 +624,20 @@ import RiseCore
     override func layout() {
         super.layout()
         let mid = PlainNavBar.Metrics.midY, line = ceil(words.intrinsicContentSize.height), y = round((mid-line/2)*2)/2
-        icon.frame = NSRect(x: 0, y: mid-8-1+drop, width: 16, height: 16)
+        // Level with the reload glyph's ink, whatever the glyph.
+        let level: CGFloat = {
+            guard let bar = superview as? PlainNavBar, let reload = bar.navigation.compactMap({ $0 as? ReloadButton }).first,
+                  reload.superview != nil else { return mid }
+            return convert(NSPoint(x: 0, y: reload.inkMidY), from: reload).y
+        }()
+        if spinner != nil {
+            icon.frame = NSRect(x: 0, y: level-8, width: 16, height: 16)
+        } else {
+            let height = image.size.height
+            // On a whole pixel, so the glyph stays crisp.
+            let scale = window?.backingScaleFactor ?? 2
+            icon.frame = NSRect(x: 0, y: round((level-Self.inkMidFromTop(image))*scale)/scale, width: 16, height: height)
+        }
         spinner?.frame = NSRect(x: 2, y: 2, width: 12, height: 12)
         words.frame = NSRect(x: wordsX, y: y, width: ceil(words.intrinsicContentSize.width), height: line)
         linkLabel?.frame = NSRect(x: linkX, y: y,
