@@ -8,6 +8,12 @@ public enum FaviconDiscovery {
     public static func lightIcon(for url: URL?) -> URL? {
         githubIcon(for: url, dark: false)
     }
+    /// The icon to show for one a page declares. Jira Server declares a grey placeholder, then
+    /// swaps in its product's logo from JavaScript on some pages; Jira Software's sits beside it.
+    public static func preferred(_ declared: URL) -> URL {
+        guard declared.lastPathComponent == "fav-generic.png", declared.path.contains("/images/logos/favicons/") else { return declared }
+        return declared.deletingLastPathComponent().appendingPathComponent("fav-jsw.png")
+    }
     private static func githubIcon(for url: URL?, dark: Bool) -> URL? {
         guard url?.host?.lowercased() == "github.com", ["http", "https"].contains(url?.scheme?.lowercased() ?? "") else { return nil }
         return URL(string: "https://github.githubassets.com/favicons/favicon\(dark ? "-dark" : "").png")
@@ -37,8 +43,8 @@ public enum FaviconDiscovery {
         if let icon = githubIcon(for: baseURL, dark: dark) { return icon }
         let themed = candidates.filter(\.themed)
         let eligible = themed.isEmpty ? candidates : themed
-        if dark { return eligible.first(where: \.svg)?.url ?? eligible.first?.url }
-        return eligible.first(where: { !$0.svg })?.url ?? eligible.first?.url
+        if dark { return (eligible.first(where: \.svg)?.url ?? eligible.first?.url).map(preferred) }
+        return (eligible.first(where: { !$0.svg })?.url ?? eligible.first?.url).map(preferred)
     }
     private static func matches(_ pattern: String, in text: String) -> [String] {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return [] }

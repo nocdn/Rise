@@ -1,0 +1,343 @@
+--- a/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.cc
++++ b/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.cc
+@@ -84,8 +84,6 @@
+ // The height of the controls bar at the top of the window: Rise's, a little
+ // taller than Chrome's 34 to fit its buttons.
+ constexpr int kTopControlsHeight = rise_pip::kTopBarHeight;
+-// The vertical margin for IconLabelBubbleView to have 24px height.
+-constexpr int KIconViewVerticalMargin = 5;
+ 
+ constexpr int kResizeBorder = 10;
+ constexpr int kResizeAreaCornerSize = 16;
+@@ -240,6 +238,9 @@
+   // animations.
+   button_container_view_ = top_bar_container_view_->AddChildView(
+       std::make_unique<views::FlexLayoutView>());
++  // Rise's: each button keeps its square, as the location button does, rather
++  // than stretching to the bar's height.
++  button_container_view_->SetCrossAxisAlignment(views::LayoutAlignment::kCenter);
+ 
+   // Creates the content setting models. Currently we only support camera and
+   // microphone settings.
+@@ -253,18 +254,10 @@
+   // Creates the content setting views based on the models.
+   for (auto& model : models) {
+     model->SetIconSize(kContentSettingIconSize);
+-    auto image_view = std::make_unique<ContentSettingImageView>(
++    // Rise's: the bar's button square and style, 2px from the next button.
++    auto image_view = std::make_unique<rise_pip::ContentSettingButton>(
+         std::move(model), this, this, browser_view->browser(), font_list);
+-
+-    // The ContentSettingImageView should have vertical margins set to keep the
+-    // hover-over highlight circular. Otherwise, the highlight will occupy the
+-    // full height of the top control.
+-    image_view->SetProperty(views::kMarginsKey,
+-                            gfx::Insets::VH(KIconViewVerticalMargin, 0));
+-    // Adjust internal padding on each side to 4px to ensure a min size of
+-    // 24x24, consistent with other icon views. The default paddings are
+-    // narrower.
+-    image_view->SetBorder(views::CreateEmptyBorder((gfx::Insets(4))));
++    image_view->SetProperty(views::kMarginsKey, gfx::Insets::TLBR(0, 0, 0, 2));
+ 
+     content_setting_views_.push_back(
+         button_container_view_->AddChildView(std::move(image_view)));
+--- a/chrome/browser/ui/views/frame/rise_pip_top_bar.cc
++++ b/chrome/browser/ui/views/frame/rise_pip_top_bar.cc
+@@ -210,6 +210,53 @@
+ BEGIN_METADATA(LocationButton)
+ END_METADATA
+ 
++ContentSettingButton::ContentSettingButton(
++    std::unique_ptr<ContentSettingImageModel> image_model,
++    IconLabelBubbleView::Delegate* parent_delegate,
++    ContentSettingImageViewDelegate* delegate,
++    BrowserWindowInterface* browser,
++    const gfx::FontList& font_list)
++    : ContentSettingImageView(std::move(image_model),
++                              parent_delegate,
++                              delegate,
++                              browser,
++                              font_list),
++      style_(*this, ButtonCorners(/*top_left=*/false, /*top_right=*/false)) {
++  UpdateBorder();
++}
++
++ContentSettingButton::~ContentSettingButton() = default;
++
++gfx::Size ContentSettingButton::CalculatePreferredSize(
++    const views::SizeBounds& available_size) const {
++  const int width =
++      ShouldShowLabel()
++          ? ContentSettingImageView::CalculatePreferredSize(available_size)
++                .width()
++          : kButtonSize;
++  return gfx::Size(std::max(width, kButtonSize), kButtonSize);
++}
++
++gfx::Size ContentSettingButton::GetMinimumSize() const {
++  return gfx::Size(kButtonSize, kButtonSize);
++}
++
++void ContentSettingButton::OnPaintBackground(gfx::Canvas* canvas) {
++  style_.PaintBackground(canvas);
++}
++
++void ContentSettingButton::UpdateBackground() {
++  SetBackground(nullptr);
++  views::InkDrop::Get(this)->SetMode(views::InkDropHost::InkDropMode::OFF);
++}
++
++void ContentSettingButton::UpdateBorder() {
++  SetBorder(views::CreateEmptyBorder(gfx::Insets((kButtonSize - 16) / 2)));
++}
++
++BEGIN_METADATA(ContentSettingButton)
++END_METADATA
++
+ GlyphButton::GlyphButton(Glyph glyph,
+                          const gfx::RoundedCornersF& corners,
+                          const std::u16string& title,
+--- a/chrome/browser/ui/views/frame/rise_pip_top_bar.h
++++ b/chrome/browser/ui/views/frame/rise_pip_top_bar.h
+@@ -10,6 +10,7 @@
+ #include "base/callback_list.h"
+ #include "base/functional/callback.h"
+ #include "base/memory/raw_ref.h"
++#include "chrome/browser/ui/views/location_bar/content_setting_image_view.h"
+ #include "chrome/browser/ui/views/location_bar/location_icon_view.h"
+ #include "ui/gfx/animation/animation_delegate.h"
+ #include "ui/gfx/animation/linear_animation.h"
+@@ -51,7 +52,8 @@
+   void Start(float target, bool spring, base::TimeDelta duration);
+   void AnimationProgressed(const gfx::Animation* animation) override;
+ 
+-  gfx::LinearAnimation animation_{this};
++  // Stepped at up to 120 Hz, the display's rate on ProMotion Macs.
++  gfx::LinearAnimation animation_{base::TimeDelta(), 120, this};
+   base::RepeatingClosure on_step_;
+   float from_ = 0, to_ = 0, value_ = 0;
+   bool spring_ = false;
+@@ -100,6 +102,31 @@
+   ButtonStyle style_;
+ };
+ 
++// The camera and microphone indicator: Chrome's content setting icon, in the
++// same square and style as the bar's other buttons.
++class ContentSettingButton : public ContentSettingImageView {
++  METADATA_HEADER(ContentSettingButton, ContentSettingImageView)
++
++ public:
++  ContentSettingButton(std::unique_ptr<ContentSettingImageModel> image_model,
++                       IconLabelBubbleView::Delegate* parent_delegate,
++                       ContentSettingImageViewDelegate* delegate,
++                       BrowserWindowInterface* browser,
++                       const gfx::FontList& font_list);
++  ~ContentSettingButton() override;
++
++  gfx::Size CalculatePreferredSize(
++      const views::SizeBounds& available_size) const override;
++  gfx::Size GetMinimumSize() const override;
++  void OnPaintBackground(gfx::Canvas* canvas) override;
++
++ private:
++  void UpdateBackground() override;
++  void UpdateBorder() override;
++
++  ButtonStyle style_;
++};
++
+ // The return and close buttons, with the floating video's arrows and cross.
+ class GlyphButton : public views::Button {
+   METADATA_HEADER(GlyphButton, views::Button)
+--- a/chrome/browser/ui/views/picture_in_picture/pip_top_bar_animation_controller.cc
++++ b/chrome/browser/ui/views/picture_in_picture/pip_top_bar_animation_controller.cc
+@@ -5,6 +5,7 @@
+ #include "chrome/browser/ui/views/picture_in_picture/pip_top_bar_animation_controller.h"
+ 
+ #include <array>
++#include <cmath>
+ #include <memory>
+ 
+ #include "base/check.h"
+@@ -30,9 +31,13 @@
+ // The animation durations for the top-right buttons, split into multiple parts
+ // because some transitions are delayed. Mirror
+ // PictureInPictureBrowserFrameView.
+-constexpr std::array<base::TimeDelta, 2>
+-    kMoveCameraButtonToRightAnimationDurations = {kAnimationDuration * 0.4,
+-                                                  kAnimationDuration * 0.6};
++// Rise's spring for the camera's slide: its usual response and a little bounce
++// (stiffness 500, damping ratio 0.7), simulated for long enough to settle.
++constexpr double kCameraSpringStiffness = 500, kCameraSpringDampingRatio = 0.7;
++constexpr base::TimeDelta kCameraSpringDuration = base::Milliseconds(480);
++// Going right, it waits while the close and back to tab buttons fade.
++constexpr base::TimeDelta kCameraSlideRightDelay = base::Milliseconds(70);
++constexpr int kCameraFrameRate = 120;
+ constexpr std::array<base::TimeDelta, 3>
+     kShowBackToTabButtonAnimationDurations = {kAnimationDuration * 0.4,
+                                               kAnimationDuration * 0.4,
+@@ -60,12 +65,13 @@
+       close_image_button_(CHECK_DEREF(close_button)),
+       content_setting_views_(std::move(content_setting_views)),
+       top_bar_color_animation_(this),
+-      move_camera_button_to_left_animation_(this),
+-      move_camera_button_to_right_animation_(gfx::MultiAnimation::Parts{
+-          {kMoveCameraButtonToRightAnimationDurations[0],
+-           gfx::Tween::Type::ZERO, 1.0, 1.0},
+-          {kMoveCameraButtonToRightAnimationDurations[1],
+-           gfx::Tween::Type::EASE_OUT, 1.0, 0.0}}),
++      move_camera_button_to_left_animation_(kCameraSpringDuration,
++                                            kCameraFrameRate,
++                                            this),
++      move_camera_button_to_right_animation_(
++          kCameraSlideRightDelay + kCameraSpringDuration,
++          kCameraFrameRate,
++          this),
+       show_back_to_tab_button_animation_(
+           gfx::MultiAnimation::Parts{{kShowBackToTabButtonAnimationDurations[0],
+                                       gfx::Tween::Type::ZERO, 0.0, 0.0},
+@@ -114,9 +120,6 @@
+   top_bar_color_animation_.SetTweenType(gfx::Tween::LINEAR);
+   top_bar_color_animation_.Reset(1.0);
+ 
+-  move_camera_button_to_left_animation_.SetSlideDuration(kAnimationDuration);
+-  move_camera_button_to_right_animation_.set_continuous(false);
+-  move_camera_button_to_right_animation_.set_delegate(this);
+ 
+   if (back_to_tab_button_) {
+     show_back_to_tab_button_animation_.set_continuous(false);
+@@ -170,7 +173,6 @@
+   // (so the camera can slide into the freed space) and together otherwise.
+   // Mirrors PictureInPictureBrowserFrameView::UpdateTopBarView.
+   if (top_bar_active_) {
+-    move_camera_button_to_right_animation_.Stop();
+     if (has_visible_content_setting_views) {
+       if (back_to_tab_button_) {
+         hide_back_to_tab_button_animation_.Stop();
+@@ -181,11 +183,8 @@
+     }
+ 
+     top_bar_color_animation_.Show();
++    StartCameraSlide(0);
+ 
+-    // SlideAnimation needs to be reset if only Show() is called.
+-    move_camera_button_to_left_animation_.Reset(0.0);
+-    move_camera_button_to_left_animation_.Show();
+-
+     if (has_visible_content_setting_views) {
+       if (back_to_tab_button_) {
+         show_back_to_tab_button_animation_.Start();
+@@ -195,8 +194,6 @@
+       show_all_buttons_animation_.Start();
+     }
+   } else {
+-    move_camera_button_to_left_animation_.Stop();
+-
+     if (has_visible_content_setting_views) {
+       if (back_to_tab_button_) {
+         show_back_to_tab_button_animation_.Stop();
+@@ -207,7 +204,7 @@
+     }
+ 
+     top_bar_color_animation_.Hide();
+-    move_camera_button_to_right_animation_.Start();
++    StartCameraSlide(1);
+     if (has_visible_content_setting_views) {
+       if (back_to_tab_button_) {
+         hide_back_to_tab_button_animation_.Start();
+@@ -216,9 +213,53 @@
+     } else {
+       hide_all_buttons_animation_.Start();
+     }
++  }
++}
++
++void PipTopBarAnimationController::StartCameraSlide(float target) {
++  move_camera_button_to_left_animation_.Stop();
++  move_camera_button_to_right_animation_.Stop();
++  camera_from_ = camera_offset_;
++  camera_to_ = target;
++  if (camera_from_ == camera_to_) {
++    return;
+   }
++  if (!gfx::Animation::ShouldRenderRichAnimation()) {
++    camera_offset_ = camera_to_;
++    AnimationProgressed(&move_camera_button_to_left_animation_);
++    return;
++  }
++  (target > 0 ? move_camera_button_to_right_animation_
++              : move_camera_button_to_left_animation_)
++      .Start();
+ }
+ 
++float PipTopBarAnimationController::CameraOffsetAt(
++    const gfx::Animation* animation) const {
++  const auto& linear = *static_cast<const gfx::LinearAnimation*>(animation);
++  const double progress = linear.GetCurrentValue();
++  if (progress >= 1) {
++    return camera_to_;
++  }
++  const base::TimeDelta delay = animation == &move_camera_button_to_right_animation_
++                                    ? kCameraSlideRightDelay
++                                    : base::TimeDelta();
++  const double t = progress * (delay + kCameraSpringDuration).InSecondsF() -
++                   delay.InSecondsF();
++  if (t <= 0) {
++    return camera_from_;
++  }
++  // The step response of an underdamped spring starting at rest.
++  const double omega = std::sqrt(kCameraSpringStiffness);
++  const double decay = kCameraSpringDampingRatio * omega;
++  const double damped =
++      omega * std::sqrt(1 - kCameraSpringDampingRatio * kCameraSpringDampingRatio);
++  const double remaining =
++      std::exp(-decay * t) *
++      (std::cos(damped * t) + decay / damped * std::sin(damped * t));
++  return camera_to_ + (camera_from_ - camera_to_) * remaining;
++}
++
+ bool PipTopBarAnimationController::HasAnyVisibleContentSettingViews() const {
+   for (ContentSettingImageView* view : content_setting_views_) {
+     if (view->GetVisible()) {
+@@ -289,15 +330,18 @@
+       animation == &move_camera_button_to_right_animation_) {
+     // Slide the content-setting icon(s) between their resting position (0) and
+     // the space occupied by the (now-hidden) window-control buttons.
++    if (animation->is_animating()) {
++      camera_offset_ = CameraOffsetAt(animation);
++    }
+     int close_and_back_to_tab_button_combined_widths =
+-        close_image_button_->width();
++        close_image_button_->width() + 2;
+     if (back_to_tab_button_) {
+       close_and_back_to_tab_button_combined_widths +=
+-          back_to_tab_button_->width();
++          back_to_tab_button_->width() + 2;
+     }
+     for (ContentSettingImageView* view : content_setting_views_) {
+-      view->SetX(animation->CurrentValueBetween(
+-          close_and_back_to_tab_button_combined_widths, 0));
++      view->SetX(std::round(camera_offset_ *
++                            close_and_back_to_tab_button_combined_widths));
+     }
+     return;
+   }
+--- a/chrome/browser/ui/views/picture_in_picture/pip_top_bar_animation_controller.h
++++ b/chrome/browser/ui/views/picture_in_picture/pip_top_bar_animation_controller.h
+@@ -127,8 +127,14 @@
+   // inactive foreground, the back-to-tab and close buttons fade in or out, and
+   // the camera icon slides left or right to fill the space the buttons vacate.
+   gfx::SlideAnimation top_bar_color_animation_;
+-  gfx::SlideAnimation move_camera_button_to_left_animation_;
+-  gfx::MultiAnimation move_camera_button_to_right_animation_;
++  // Rise's: the content-setting icon(s) spring between their resting place
++  // (offset 0) and the hidden buttons' space (offset 1), a little bouncy, at up
++  // to 120 Hz; to the right only once those buttons have mostly faded.
++  void StartCameraSlide(float target);
++  float CameraOffsetAt(const gfx::Animation* animation) const;
++  float camera_offset_ = 0, camera_from_ = 0, camera_to_ = 0;
++  gfx::LinearAnimation move_camera_button_to_left_animation_;
++  gfx::LinearAnimation move_camera_button_to_right_animation_;
+   gfx::MultiAnimation show_back_to_tab_button_animation_;
+   gfx::MultiAnimation hide_back_to_tab_button_animation_;
+   gfx::MultiAnimation show_close_button_animation_;

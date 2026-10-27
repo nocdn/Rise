@@ -49,7 +49,7 @@ import AppKit
         web.evaluate(script, arguments: [:], in: nil, world: .page) { [weak self, weak web] result in
             guard let self, let web, web.url == pageURL, (self.tabs + self.allPeekTabs).contains(where: { $0.page === web }),
                   let icons = (try? result.get()) as? [String: Any] else { return }
-            let declared = (icons["light"] as? String).flatMap(URL.init(string:))
+            let declared = (icons["light"] as? String).flatMap(URL.init(string:)).map(FaviconDiscovery.preferred)
             if declared == nil, !again {
                 DispatchQueue.main.asyncAfter(deadline: .now()+2) { [weak self, weak web] in
                     guard let self, let web, web.url == pageURL else { return }
@@ -58,7 +58,7 @@ import AppKit
             }
             // None declared: the site's /favicon.ico, as Chrome asks for it, with the page's sign-in.
             let light = FaviconDiscovery.lightIcon(for: pageURL) ?? declared ?? (again ? Self.siteIcon(pageURL) : nil)
-            let dark = FaviconDiscovery.darkIcon(for: pageURL) ?? (icons["dark"] as? String).flatMap(URL.init(string:))
+            let dark = FaviconDiscovery.darkIcon(for: pageURL) ?? (icons["dark"] as? String).flatMap(URL.init(string:)).map(FaviconDiscovery.preferred)
             let throughPage: (URL) async -> Data? = { [weak web] icon in
                 guard let web, web.url == pageURL else { return nil }
                 return await Self.pageIconBytes(icon, in: web)

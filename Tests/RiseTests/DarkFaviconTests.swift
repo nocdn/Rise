@@ -41,6 +41,9 @@ final class DarkFaviconTests: XCTestCase {
         let rewrittenLink = Data("<link rel='icon' href='https://github.githubassets.com/favicons/favicon-dark.svg'>".utf8)
         XCTAssertEqual(FaviconDiscovery.icon(in: rewrittenLink, baseURL: github)?.lastPathComponent, "favicon.png", "A site's live dark link must not overwrite its light icon")
         XCTAssertNil(FaviconDiscovery.darkIcon(for: URL(string: "https://github.com.example/repo")))
+        let jira = Data("<link rel='shortcut icon' href='/s/qkj09h/10030026/13vxuai/_/images/logos/favicons/fav-generic.png'>".utf8)
+        XCTAssertEqual(FaviconDiscovery.icon(in: jira, baseURL: URL(string: "https://jira.example/secure/RapidBoard.jspa")!)?.absoluteString,
+                       "https://jira.example/s/qkj09h/10030026/13vxuai/_/images/logos/favicons/fav-jsw.png", "Jira's grey placeholder gives way to its logo")
     }
     @MainActor func testSVGAppearanceRulesUseTheSitesColorsAndPersistAsTwoIndependentImages() throws {
         let light = try XCTUnwrap(FaviconImage.decode(Self.svg, dark: false))

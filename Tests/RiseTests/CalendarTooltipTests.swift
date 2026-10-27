@@ -81,6 +81,17 @@ final class CalendarTooltipTests: XCTestCase {
         XCTAssertEqual(CalendarSchedule.events([day], calendar: calendar).first?.color, 0xD50000)
     }
 
+    @MainActor func testEventTooltipShowsItsTimesAndTheStartOfItsDescription() {
+        let text = (1...8).map { "Line \($0)" }.joined(separator: "\n\n")
+        let day = CalendarDay(key: 29010, height: 1441, chips: [
+            CalendarDay.Chip(id: "a", title: "Stand-up", label: "", allDay: false, top: 60, height: 58,
+                             description: CalendarPageReader.firstLines(text, CalendarPageReader.descriptionLines))])
+        let event = try! XCTUnwrap(CalendarSchedule.events([day], calendar: calendar).first)
+        XCTAssertEqual(CalendarEventChip(event, time: "16:05 – 16:30").toolTip,
+                       "16:05 – 16:30\nLine 1\nLine 2\nLine 3\nLine 4\nLine 5\nLine 6…", "No title, and six lines of the description")
+        XCTAssertEqual(CalendarEventChip(CalendarEvent(id: "b", title: "OOO", start: Date(), end: Date(), allDay: true), time: nil).toolTip, "All day")
+    }
+
     func testLabelledEndsInOtherFormats() {
         XCTAssertEqual(CalendarSchedule.labelledEnd("15:00 bis 15:05, Kurz", after: 900, before: 915), 905)
         XCTAssertEqual(CalendarSchedule.labelledEnd("15.00–15.10, Lyhyt", after: 900, before: 915), 910)

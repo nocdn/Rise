@@ -16,7 +16,8 @@ final class CalendarEventChip: NSButton {
         title = ""; isBordered = false; target = self; action = #selector(open); wantsLayer = true
         name.stringValue = event.title; name.lineBreakMode = .byTruncatingTail; name.maximumNumberOfLines = 1
         addSubview(name)
-        toolTip = time.map { event.title+"\n"+$0 } ?? event.title
+        // Its exact times and the start of its description; the title is on the chip.
+        toolTip = ([time ?? "All day"]+(event.description.map { [$0] } ?? [])).joined(separator: "\n")
         setAccessibilityLabel(event.title); setAccessibilityValue(time ?? "All day")
     }
     required init?(coder: NSCoder) { fatalError() }

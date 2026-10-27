@@ -58,7 +58,7 @@ public enum PopularSites {
             "SG": "amazon.sg", "AE": "amazon.ae", "SA": "amazon.sa", "TR": "amazon.com.tr", "EG": "amazon.eg",
         ]),
         Entry("ChatGPT", "chatgpt.com", "https://chatgpt.com/?q={q}"),
-        Entry("Gmail", "gmail.com", color: 0xEA4335),
+        Entry("Gmail", "gmail.com", "https://mail.google.com/mail/u/0/#search/{q}", color: 0xEA4335),
         Entry("LinkedIn", "linkedin.com", "https://www.linkedin.com/search/results/all/?keywords={q}", color: 0x0A66C2),
         Entry("Netflix", "netflix.com", "https://www.netflix.com/search?q={q}", color: 0xE50914),
         Entry("WhatsApp", "web.whatsapp.com", color: 0x25D366),

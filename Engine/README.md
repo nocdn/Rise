@@ -70,6 +70,7 @@ to change that limit. `./scripts/engine/build.sh -n` previews pending work.
 | `0023-rise-keyboard-shortcuts.patch` | A Keyboard shortcuts section in Settings, using Chromium's shortcut recorder and controls with Rise's saved command registry |
 | `0024-element-permission-steps-and-macos-location.patch` | Rise's permission prompt follows a page element's (`<usermedia>`, `<geolocation>`) later steps as Chrome's element prompt does, asking macOS rather than deciding the requests again, which crashed; and asks macOS for location when a page is allowed it, which Chrome does from its address bar |
 | `0025-https-first-full-page-warning.patch` | Turns off `HttpsFirstDialogUi`, so HTTPS-First's fallback to http warns with Chrome's full-page interstitial rather than a dialog over Chrome's own window, which Rise's pages don't have and crashed |
+| `0026-rise-pip-buttons-and-camera-spring.patch` | Keeps a page picture-in-picture window's back to tab and close buttons in the bar's 28 pt square, gives the camera and microphone button the same Rise style, and springs it into the buttons' space at up to 120 Hz as they fade |
 
 `0002` is exported from the fork's tree with `git diff HEAD` over `base` and `chrome`, less the
 paths the other patches and `brand.py` own (see `Engine/fork-plan.md`); new files are added

@@ -102,6 +102,8 @@ import RiseCore
                 button.hoverHint?.appearance = theme.appearance
             }
             [archiveButton, cleanUpButton].forEach { $0.contentTintColor = theme.sidebarIcon }
+            // New Tab's plus keeps its own ink over the sidebar, whatever colour the page bar takes.
+            titlebarNewTab.contentTintColor = theme.newTabPlus
             for button in [archiveButton, cleanUpButton, titlebarNewTab] as [ChromeButton] {
                 button.hoverColor = theme.text.withAlphaComponent(0.07)
             }

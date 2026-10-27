@@ -201,10 +201,6 @@ import RiseCore
             needsLayout = true; updateFieldControls(animated: true)
         }
     }
-    /// Keeps titlebar controls in the same ink as the navigation glyphs, including Reload.
-    var onNavigationTintChanged: ((NSColor) -> Void)? {
-        didSet { onNavigationTintChanged?(shownInk.strong) }
-    }
     /// Where its buttons sit, and how much sooner its address starts for fewer of them: a split's
     /// right page has no sidebar button, so its back, forward and reload move up a place.
     var navigationCentres = Metrics.navigationCentres
@@ -296,7 +292,6 @@ import RiseCore
                 button.hoverColor = ink.hover
             }
         }
-        onNavigationTintChanged?(shownInk.strong)
         for case let notice as BarNotice in subviews { notice.tint(shownInk.strong) }
         updateText()
     }

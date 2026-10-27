@@ -434,7 +434,6 @@ import RiseCore
         }
         // The page bar's, drawn as Dia's: chevrons, and a smaller sidebar glyph.
         navBar.navigation = toolbarButtons
-        navBar.onNavigationTintChanged = { [weak self] in self?.sidebar.titlebarNewTab.contentTintColor = $0 }
         installSplitBar()
         developerAddress.font = IoskeleyMonoFont.regular(ofSize: 12)
         developerAddress.textColor = NSColor(hex: 0x393134); developerBar.addSubview(developerAddress)

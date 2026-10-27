@@ -32,6 +32,10 @@ final class TabOrganizationTests: XCTestCase {
         XCTAssertEqual(inWindow(plus).midX, inWindow(sidebar.archiveButton).midX)
         XCTAssertEqual(inWindow(plus).midY, lights.midY)
         XCTAssertEqual(row.convert(row.bounds, to: sidebar).minY, SidebarView.addresslessTop, "The tabs start where the row was")
+        for theme in [RiseTheme.neutral, .dark] {
+            browser.chooseTheme(theme); browser.navBar.setNeedsDisplay(browser.navBar.bounds)
+            XCTAssertEqual(plus.contentTintColor, theme.newTabPlus, "Its ink is the sidebar's own, not the page bar's")
+        }
         // The titlebar is over the sidebar there; the plus is in it, so a click reaches it.
         let middle = NSPoint(x: inWindow(plus).midX, y: inWindow(plus).midY)
         XCTAssertTrue(browser.window?.contentView?.superview?.hitTest(middle) === plus)

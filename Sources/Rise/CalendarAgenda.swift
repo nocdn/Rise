@@ -40,6 +40,8 @@ struct CalendarEvent: Equatable {
     let allDay: Bool
     /// The event's colour in Calendar, as 0xRRGGBB.
     var color: UInt32? = nil
+    /// Its description's first lines, from its details in Calendar.
+    var description: String? = nil
 }
 
 /// One day of Calendar's day view, as the page draws it.
@@ -56,6 +58,7 @@ struct CalendarDay: Decodable, Equatable {
         /// The chip's fill and border, as CSS colours.
         var fill: String? = nil
         var border: String? = nil
+        var description: String? = nil
     }
     /// Calendar's `data-datekey`: (year − 1970) << 9 | month << 5 | day.
     let key: Int
@@ -83,19 +86,21 @@ enum CalendarSchedule {
                 let event: CalendarEvent, color = Self.color(fill: chip.fill, border: chip.border)
                 if chip.allDay {
                     let next = calendar.date(byAdding: .day, value: 1, to: midnight) ?? midnight
-                    event = CalendarEvent(id: chip.id, title: chip.title, start: midnight, end: next, allDay: true, color: color)
+                    event = CalendarEvent(id: chip.id, title: chip.title, start: midnight, end: next, allDay: true, color: color,
+                                          description: chip.description)
                 } else {
                     let start = max(0, min(1440, Int((chip.top/perMinute).rounded())))
                     var end = max(start+1, min(1440, Int(((chip.top+chip.height+chipGap)/perMinute).rounded())))
                     if end-start <= shortestChip, let labelled = labelledEnd(chip.label, after: start, before: end) { end = labelled }
                     event = CalendarEvent(id: chip.id, title: chip.title, start: midnight.addingTimeInterval(Double(start*60)),
-                                          end: midnight.addingTimeInterval(Double(end*60)), allDay: false, color: color)
+                                          end: midnight.addingTimeInterval(Double(end*60)), allDay: false, color: color,
+                                          description: chip.description)
                 }
                 // An event across midnight has a chip on each day: together they're the event.
                 if let earlier = events[chip.id] {
                     events[chip.id] = CalendarEvent(id: chip.id, title: earlier.title, start: min(earlier.start, event.start),
                                                     end: max(earlier.end, event.end), allDay: earlier.allDay && event.allDay,
-                                                    color: earlier.color ?? event.color)
+                                                    color: earlier.color ?? event.color, description: earlier.description ?? event.description)
                 } else { events[chip.id] = event; order.append(chip.id) }
             }
         }
@@ -279,11 +284,62 @@ enum CalendarSchedule {
         if !(open ? (try? await run(Self.step(Self.todayButton), in: web)) as? Bool ?? false : false) {
             web.load(account.url(view: "day", day: today))
         }
-        let first = try await read(CalendarDay.key(today), in: web, account: account)
+        if !calendar.isDate(describedOn, inSameDayAs: Date()) { descriptions = [:]; describedOn = Date() }
+        let first = try await describe(read(CalendarDay.key(today), in: web, account: account), in: web)
         guard (try? await run(Self.step(Self.nextButton), in: web)) as? Bool == true else { return [first] }
-        let second = try? await read(CalendarDay.key(tomorrow), in: web, account: account)
+        var second = try? await read(CalendarDay.key(tomorrow), in: web, account: account)
+        if let day = second { second = try await describe(day, in: web) }
         return [first] + (second.map { [$0] } ?? [])
     }
+    /// Each event's description, read once a day from its details, which open and close
+    /// again in the companion as a click on its chip opens them. "" for none.
+    private var descriptions: [String: String] = [:], describedOn = Date.distantPast
+    static let descriptionLines = 6
+    private func describe(_ day: CalendarDay, in web: WebPage) async throws -> CalendarDay {
+        for chip in day.chips where descriptions[chip.id] == nil {
+            try Task.checkCancellation()
+            _ = try? await run(Self.closeDetails, in: web)
+            guard (try? await run(Self.open(chip.id), in: web)) as? Bool == true else { continue }
+            for _ in 0..<15 {
+                try await Task.sleep(for: .milliseconds(100))
+                if let text = try? await run(Self.details, in: web) as? String { descriptions[chip.id] = text; break }
+            }
+            _ = try? await run(Self.closeDetails, in: web)
+        }
+        let chips = day.chips.map { chip -> CalendarDay.Chip in
+            var chip = chip
+            chip.description = descriptions[chip.id].flatMap { Self.firstLines($0, Self.descriptionLines) }
+            return chip
+        }
+        return CalendarDay(key: day.key, height: day.height, chips: chips)
+    }
+    /// Its first `count` non-empty lines, ending in "…" when there's more; nil for none.
+    nonisolated static func firstLines(_ text: String, _ count: Int) -> String? {
+        let lines = text.components(separatedBy: .newlines).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return nil }
+        return lines.prefix(count).joined(separator: "\n")+(lines.count > count ? "…" : "")
+    }
+    /// The open details' description, "" without one, or nil until they show. Its first part
+    /// is a heading for screen readers.
+    static let details = #"""
+    (() => {
+      const dialog = document.getElementById('xDetDlg');
+      if (!dialog || !dialog.getClientRects().length) return null;
+      const description = document.getElementById('xDetDlgDesc');
+      if (!description) return '';
+      return [...description.children].filter(e => !e.classList.contains('XuJrye')).map(e => e.innerText).join('\n').trim();
+    })();
+    """#
+    static let closeDetails = """
+    (() => {
+      const dialog = document.getElementById('xDetDlg');
+      if (!dialog || !dialog.getClientRects().length) return false;
+      const close = dialog.querySelector('button[jsname="LgbsSe"]');
+      if (close) close.click();
+      else document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', keyCode: 27, bubbles: true}));
+      return true;
+    })();
+    """
     /// Waits for the day's column, then for its chips to stop changing as Calendar fills them in.
     private func read(_ key: Int, in web: WebPage, account: CalendarAccount) async throws -> CalendarDay {
         let deadline = Date().addingTimeInterval(25)

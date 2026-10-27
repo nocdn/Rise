@@ -17,6 +17,7 @@ enum RiseTheme: String, CaseIterable {
     var selectedText: NSColor { NSColor(hex: self == .dark ? 0xFEFEFE : 0x111111) }
     /// Sidebar chrome icons; the dark theme keeps its lighter muted tone for contrast.
     var sidebarIcon: NSColor { self == .dark ? muted : NSColor(hex: 0x717171) }
+    var newTabPlus: NSColor { NSColor(hex: self == .dark ? 0xD8D8DA : 0x303032) }
     var muted: NSColor { NSColor(hex: self == .dark ? 0xA0A1A0 : 0x888787) }
     var accent: NSColor { NSColor(hex: self == .dark ? 0x8D9BAA : 0xCA9D90) }
     var menuSelection: NSColor { self == .dark ? NSColor(hex: 0x515C68) : accent }
