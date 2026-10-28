@@ -399,16 +399,38 @@ enum PinnedLayout {
     /// A tile held out of the grid, whose slot the others close over.
     var held: UUID?
     var count: Int { order.filter { $0 != held }.count+(opening == nil ? 0 : 1) }
-    func set(order: [UUID], make: (UUID) -> PinnedTabTile) {
+    func set(order: [UUID], make: (UUID) -> PinnedTabTile, closed: (UUID) -> Bool = { _ in false }) {
         // A tile being dragged belongs to the drag until it lands.
         for id in tiles.keys where !order.contains(id) {
-            if let tile = tiles.removeValue(forKey: id), tile.superview === self { tile.removeFromSuperview() }
+            guard let tile = tiles.removeValue(forKey: id), tile.superview === self else { continue }
+            if closed(id) { leave(tile) } else { tile.removeFromSuperview() }
         }
         for id in order where tiles[id] == nil { let tile = make(id); tiles[id] = tile; addSubview(tile) }
         self.order = order
         updateTileHeight()
     }
     func setOpening(_ slot: Int?) { opening = slot }
+    /// A closed tab's tile shrinks into its middle as it fades, where it was, under the tiles
+    /// springing into its place, and takes no clicks or hover meanwhile.
+    private func leave(_ tile: PinnedTabTile) {
+        guard window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { tile.removeFromSuperview(); return }
+        tile.finishMotion(); tile.takesClicks = false; tile.onHover = nil; tile.onRest = nil
+        guard let layer = tile.layer else { tile.removeFromSuperview(); return }
+        let middle = CGPoint(x: tile.bounds.midX, y: tile.bounds.midY), scale = PinnedLayout.closeScale
+        let shrunk = CATransform3DTranslate(CATransform3DScale(CATransform3DMakeTranslation(middle.x, middle.y, 0), scale, scale, 1), -middle.x, -middle.y, 0)
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        addSubview(tile, positioned: .below, relativeTo: nil)
+        CATransaction.commit()
+        let fade = CABasicAnimation(keyPath: "opacity"); fade.fromValue = 1; fade.toValue = 0
+        let shrink = CABasicAnimation(keyPath: "transform"); shrink.fromValue = CATransform3DIdentity; shrink.toValue = shrunk
+        let group = CAAnimationGroup(); group.animations = [fade, shrink]
+        group.duration = PinnedLayout.closeDuration; group.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        group.fillMode = .forwards; group.isRemovedOnCompletion = false
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { MainActor.assumeIsolated { tile.removeFromSuperview() } }
+        layer.add(group, forKey: PinnedLayout.closeKey)
+        CATransaction.commit()
+    }
     // MARK: Height
     private var height = MotionSpring(PinnedLayout.compactHeight)
     private var link: CADisplayLink?, lastTick: CFTimeInterval?
@@ -506,6 +528,9 @@ extension PinnedLayout {
     static let response = 0.28, bounce = 0.3
     /// A landing row's held fill fades out over about as long as it takes to land.
     static let settleDuration = 0.24
+    /// A closed tab's tile shrinks to this as it fades, gone before the tiles closing over it land.
+    static let closeScale: CGFloat = 0.7, closeDuration = 0.2
+    static let closeKey = "Rise.PinnedClose"
 }
 
 /// A pinned tile held by the pointer, over the grid or down in the list.
@@ -536,7 +561,7 @@ extension PinnedLayout {
         pinnedView.tiles.values.forEach { $0.refreshHover() }
     }
     func updatePinned(_ pinned: [UUID], selected: BrowserTab?, theme: RiseTheme) {
-        pinnedView.set(order: pinned) { makeTile($0) }
+        pinnedView.set(order: pinned, make: { makeTile($0) }, closed: { tabsByID[$0] == nil })
         for id in pinned {
             guard let tab = tabsByID[id] else { continue }
             pinnedView.tiles[id]?.update(tab: tab, selected: id == selected?.id, theme: theme)

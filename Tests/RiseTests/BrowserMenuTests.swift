@@ -181,7 +181,9 @@ final class BrowserMenuTests: XCTestCase {
         XCTAssertTrue(browser.validateMenuItem(entry(#selector(BrowserController.goForward), in: "History")))
         let pin = entry(#selector(BrowserController.pinCurrentTab), in: "Tabs")
         browser.pinCurrentTab(); XCTAssertTrue(browser.validateMenuItem(pin)); XCTAssertEqual(pin.title, "Unpin Tab")
-        browser.closeCurrentTab()
+        // A pinned tab asks first: ⌘W again while the bar says so closes it.
+        browser.closeCurrentTab(); XCTAssertEqual(browser.tabs.map(\.id), [first.id]); XCTAssertEqual(browser.selectedBar.notice?.text, "Press ⌘W again to unpin tab")
+        browser.closeCurrentTab(); XCTAssertTrue(browser.tabs.isEmpty)
         for (action, title) in [(#selector(BrowserController.closeCurrentTab), "File"),
                                 (#selector(BrowserController.shareCurrentPage), "File"),
                                 (#selector(BrowserController.reload), "View"),

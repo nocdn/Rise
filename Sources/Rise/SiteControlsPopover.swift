@@ -206,70 +206,25 @@ final class SiteSettingRow: NSButton {
     }
 }
 
-/// A site asking to use something, as the capture popover looks: what it's for above, the
-/// question beside its icon in a light circle, then Not Now and Allow.
-final class PermissionPromptController: NSViewController {
-    let heading: String
-    let message: String
-    let icon: String
-    let theme: RiseTheme
-    let reply: (Bool) -> Void
-    private(set) var allowButton: NSButton!
-    private(set) var notNowButton: NSButton!
-    init(host: String, capabilities: [SiteCapability], theme: RiseTheme, reply: @escaping (Bool) -> Void) {
-        let (subject, use): (String, String)
-        if capabilities == [.notifications] { (subject, use) = ("Notification", "send you notifications") }
-        else if capabilities == [.location] { (subject, use) = ("Location", "access your location") }
-        else if Set(capabilities) == [.camera, .microphone] { (subject, use) = ("Camera and microphone", "access your camera and microphone") }
-        else if capabilities.first == .camera { (subject, use) = ("Camera", "access your camera") }
-        else { (subject, use) = ("Microphone", "access your microphone") }
-        heading = "\(subject) permissions"; message = "Allow \(host) to \(use)"
-        icon = capabilities.first?.tablerIcon ?? TablerIcon.camera; self.theme = theme; self.reply = reply
-        super.init(nibName: nil, bundle: nil)
-    }
-    required init?(coder: NSCoder) { fatalError() }
-    static let width: CGFloat = 264, inset: CGFloat = 12, circle: CGFloat = 32
-    override func loadView() {
-        let scale = SiteControlsLayout.scale, width = Self.width, inset = Self.inset, circle = Self.circle
-        let title = label(heading, size: 12, weight: .medium, color: theme.muted)
-        let textWidth = width-2*inset-circle-10
-        let text = NSTextField(wrappingLabelWithString: message)
-        text.font = .systemFont(ofSize: 13); text.textColor = theme.text; text.preferredMaxLayoutWidth = textWidth
-        let textHeight = ceil((message as NSString).boundingRect(with: NSSize(width: textWidth, height: 300),
-            options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: text.font!]).height)+2
-        let titleHeight = ceil(title.intrinsicContentSize.height)
-        let rowY = inset+titleHeight+8, rowHeight = max(circle, textHeight)
-        let buttonHeight = (34*scale).rounded(), buttonsY = rowY+rowHeight+12
-        view = PopoverContentView(frame: NSRect(x: 0, y: 0, width: width, height: buttonsY+buttonHeight+inset))
-        title.frame = NSRect(x: inset, y: inset, width: width-2*inset, height: titleHeight); view.addSubview(title)
-        let badge = NSView(frame: NSRect(x: inset, y: rowY+(rowHeight-circle)/2, width: circle, height: circle))
-        badge.wantsLayer = true; badge.layer?.cornerRadius = circle/2
-        badge.layer?.backgroundColor = (theme == .dark ? NSColor.white.withAlphaComponent(0.1) : NSColor.black.withAlphaComponent(0.06)).cgColor
-        let glyph = NSImageView(frame: badge.bounds.insetBy(dx: 8, dy: 8))
-        glyph.image = TablerIcon.image(icon, size: 16); glyph.contentTintColor = theme.text
-        badge.addSubview(glyph); view.addSubview(badge)
-        text.frame = NSRect(x: inset+circle+10, y: rowY+(rowHeight-textHeight)/2, width: textWidth, height: textHeight); view.addSubview(text)
-        let notNow = PopoverActionButton(label: "Not Now", scale: scale, title: "Don’t allow it now", theme: theme) { [weak self] in self?.reply(false) }
-        let allow = PopoverActionButton(label: "Allow", scale: scale, title: message, theme: theme) { [weak self] in self?.reply(true) }
-        let gap: CGFloat = 4, buttonWidth = ((width-2*inset-gap)/2).rounded(.down)
-        for (index, button) in [notNow, allow].enumerated() {
-            button.frame = NSRect(x: inset+CGFloat(index)*(buttonWidth+gap), y: buttonsY, width: buttonWidth, height: buttonHeight)
-            view.addSubview(button)
-        }
-        // Never assign Return to Allow: granting access requires choosing it.
-        notNow.keyEquivalent = "\u{1b}"
-        notNowButton = notNow; allowButton = allow
-    }
-}
-
 extension SiteCapability {
     /// Its icon in the address bar and the prompt.
     var tablerIcon: String {
         switch self {
-        case .notifications: return TablerIcon.bell
+        case .notifications: return TablerIcon.bellWithClapper
         case .camera: return TablerIcon.camera
         case .microphone: return TablerIcon.microphone
         case .location: return TablerIcon.mapPin
+        }
+    }
+    /// Its colour in the prompt, deeper on light and brighter on dark: the camera green and the
+    /// microphone orange, as macOS's own recording lights are, location blue and notifications red.
+    func accent(_ theme: RiseTheme) -> NSColor {
+        let dark = theme == .dark
+        switch self {
+        case .camera: return NSColor(hex: dark ? 0x4CD173 : 0x1A9E4B)
+        case .microphone: return NSColor(hex: dark ? 0xFFA23A : 0xE07800)
+        case .location: return NSColor(hex: dark ? 0x4DA3FF : 0x0A72E8)
+        case .notifications: return NSColor(hex: dark ? 0xFF6B6B : 0xE5383B)
         }
     }
 }

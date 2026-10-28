@@ -543,6 +543,18 @@ final class AddressSuggestionsTests: XCTestCase {
         editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
         XCTAssertEqual(destination, account)
     }
+    @MainActor func testAccountPathCompletesInTheNativeFieldDespiteMoreSignInRedirects() throws {
+        let browser = browser(); defer { browser.hidePalette(); clean(browser) }
+        let account = URL(string: "https://www.voxi.co.uk/account")!
+        for _ in 0..<22 { browser.browsingHistory.record(account, title: "Your account") }
+        for _ in 0..<30 { browser.browsingHistory.record(URL(string: "https://www.voxi.co.uk/sign-in?returnTo=account")!, title: "Sign in") }
+        browser.showWindow(nil); browser.newTab()
+        let palette = browser.palette, editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
+        for letter in "vox" { editor.insertText(String(letter), replacementRange: editor.selectedRange()) }
+        XCTAssertEqual(palette.input.stringValue, "voxi.co.uk/account")
+        XCTAssertEqual(editor.selectedRange(), NSRange(location: 3, length: "i.co.uk/account".utf16.count))
+        XCTAssertEqual(palette.chosenSuggestion?.url, account)
+    }
     @MainActor func testAssistantOffersSayAskAndSubmitAnExplicitRequestInsteadOfAPrefillURL() throws {
         let browser = browser(); defer { browser.hidePalette(); clean(browser) }
         browser.showWindow(nil); browser.newTab()

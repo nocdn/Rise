@@ -13,6 +13,7 @@ extension BrowserViewController {
         blocker(for: page).popups.noteNavigation("navigation.failed", in: page,
             details: ["errorDomain": diagnosticError.domain, "errorCode": String(diagnosticError.code)])
         guard let tab = tabs.first(where: { $0.webView === page }) else { return }
+        addressSuggestions.failed(page, error: error)
         let retry = tab.didFail(navigation, error: error)
         if retry {
             DispatchQueue.main.async { [weak self, weak tab] in

@@ -72,41 +72,69 @@ final class SiteControlsTests: XCTestCase {
         browser.siteControlsPopover.animates = false
         browser.siteMenu(); XCTAssertFalse(browser.siteControlsPopover.isShown)
     }
-    @MainActor func testPermissionPopoverDismissalReversalAndAllowCompleteOnlyOnce() throws {
+    @MainActor func testPermissionPanelDismissalReversalAndAllowCompleteOnlyOnce() throws {
         _ = NSApplication.shared
         let suite = "Rise.PromptTests.\(UUID())", defaults = UserDefaults(suiteName: suite)!
         let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), restore: false, preferences: defaults)
         defer { browser.permissionCoordinator.cancel(); browser.saveWork?.cancel(); browser.window?.orderOut(nil); defaults.removePersistentDomain(forName: suite) }
-        // Leave room for the popover on both sides of its anchor. An autosaved full-width window
-        // makes AppKit clamp the popover against the screen edge instead of centering it there.
         browser.window?.setContentSize(NSSize(width: 900, height: 650)); browser.window?.center()
         let tab = browser.addTab(); tab.requestedURL = URL(string: "https://example.com")
         browser.showWindow(nil); browser.update()
         let origin = SitePermissions.origin(tab.url)!
+        let coordinator = browser.permissionCoordinator, panel = coordinator.panel
         var replies: [Bool] = []
-        browser.permissionCoordinator.request(in: tab.page.view, origin: origin, capabilities: [.camera]) { replies.append($0) }
-        XCTAssertTrue(browser.permissionCoordinator.popover.isShown)
-        let prompt = try XCTUnwrap(browser.permissionCoordinator.popover.contentViewController as? PermissionPromptController)
-        XCTAssertEqual(prompt.heading, "Camera permissions"); XCTAssertEqual(prompt.message, "Allow example.com to access your camera")
+        func wait(_ done: () -> Bool) {
+            let end = Date().addingTimeInterval(2)
+            while !done(), Date() < end { RunLoop.main.run(until: Date().addingTimeInterval(0.02)) }
+        }
+        coordinator.request(in: tab.page.view, origin: origin, capabilities: [.camera]) { replies.append($0) }
+        // Its icon grows in, then Find's panel comes down from under the bar with the question.
+        wait { coordinator.isShowingPrompt }
+        XCTAssertTrue(coordinator.isShowingPrompt)
+        let question = try XCTUnwrap(panel.question)
+        XCTAssertEqual(question.heading, "Camera permissions"); XCTAssertEqual(question.message, "Let example.com use your camera?")
         let bar = browser.selectedBar
-        let icon = bar.permissionButton, iconOnScreen = icon.window!.convertToScreen(icon.convert(icon.bounds, to: nil))
-        XCTAssertEqual(prompt.view.window!.frame.midX, iconOnScreen.midX, accuracy: 2, "It comes out of the camera icon in the bar")
         XCTAssertFalse(bar.permissionButton.isHidden); XCTAssertTrue(bar.permissionButton.frame.maxX <= bar.settingsButton.frame.minX)
-        prompt.notNowButton.performClick(nil)
-        browser.permissionCoordinator.cancel()
-        XCTAssertNil(bar.requestedPermission, "Answered, its icon goes")
+        XCTAssertTrue(panel.superview === browser.root); XCTAssertEqual(panel.frame.maxX, browser.pageShadow.frame.maxX, accuracy: 1)
+        wait { !panel.isMoving }
+        XCTAssertEqual(panel.panel.frame.minY, PlainNavBar.Metrics.height+FindBar.top, accuracy: 1, "It rests where Find's does")
+        XCTAssertEqual(panel.panel.frame.height, FindBar.rowHeight)
+        // As Find's chevrons and close: 26 by 28, a point apart, 8 from the edge.
+        XCTAssertEqual(panel.allowButton.frame.size, NSSize(width: 26, height: 28)); XCTAssertEqual(panel.denyButton.frame.minX-panel.allowButton.frame.maxX, 1)
+        XCTAssertEqual(panel.panel.frame.width-panel.denyButton.frame.maxX, 8)
+        // Its icon puts it away unanswered, its icon staying, and brings it back.
+        coordinator.togglePrompt()
+        XCTAssertFalse(coordinator.isShowingPrompt); XCTAssertEqual(replies, []); XCTAssertNotNil(bar.requestedPermission)
+        wait { !panel.isLeaving }
+        coordinator.togglePrompt()
+        XCTAssertTrue(coordinator.isShowingPrompt); XCTAssertEqual(replies, [])
+        panel.denyButton.performClick(nil)
+        XCTAssertEqual(replies, [false], "The page hears at once")
+        coordinator.cancel()
+        wait { bar.requestedPermission == nil }
+        XCTAssertNil(bar.requestedPermission, "Answered, its icon goes once the panel has")
         XCTAssertEqual(replies, [false]); XCTAssertEqual(browser.sitePermissions.permission(.camera, origin: origin), .ask)
-        browser.permissionCoordinator.request(in: tab.page.view, origin: origin, capabilities: [.camera]) { replies.append($0) }
-        (browser.permissionCoordinator.popover.contentViewController as? PermissionPromptController)?.allowButton.performClick(nil)
+        coordinator.request(in: tab.page.view, origin: origin, capabilities: [.camera]) { replies.append($0) }
+        // Asked again while the last goes, it comes down once that one has gone.
+        wait { coordinator.isShowingPrompt }
+        panel.allowButton.performClick(nil)
         XCTAssertEqual(replies, [false, true]); XCTAssertEqual(browser.sitePermissions.permission(.camera, origin: origin), .allow)
-        browser.permissionCoordinator.request(in: tab.page.view, origin: origin, capabilities: [.camera, .microphone]) { replies.append($0) }
-        browser.permissionCoordinator.cancel(for: tab.page.view); browser.permissionCoordinator.resolve(true)
+        coordinator.request(in: tab.page.view, origin: origin, capabilities: [.camera, .microphone]) { replies.append($0) }
+        coordinator.cancel(for: tab.page.view); coordinator.resolve(true)
         XCTAssertEqual(replies, [false, true, false]); XCTAssertEqual(browser.sitePermissions.permission(.microphone, origin: origin), .ask)
         browser.sitePermissions.set(.block, for: .camera, origin: origin)
-        browser.permissionCoordinator.request(in: tab.page.view, origin: origin, capabilities: [.camera]) { replies.append($0) }
-        XCTAssertEqual(replies.last, false); XCTAssertFalse(browser.permissionCoordinator.popover.isShown)
+        coordinator.request(in: tab.page.view, origin: origin, capabilities: [.camera]) { replies.append($0) }
+        XCTAssertEqual(replies.last, false); XCTAssertFalse(coordinator.isShowingPrompt)
         let hidden = WKWebView()
-        browser.permissionCoordinator.request(in: hidden, origin: origin, capabilities: [.microphone]) { replies.append($0) }
+        coordinator.request(in: hidden, origin: origin, capabilities: [.microphone]) { replies.append($0) }
         XCTAssertEqual(replies.last, false)
+    }
+    @MainActor func testPermissionQuestionsAreShortQuestions() {
+        let cases: [([SiteCapability], String)] = [([.notifications], "Let a.com send notifications?"), ([.location], "Let a.com use your location?"),
+                                                   ([.camera, .microphone], "Let a.com use your camera and mic?"), ([.camera], "Let a.com use your camera?"),
+                                                   ([.microphone], "Let a.com use your microphone?")]
+        for (capabilities, message) in cases { XCTAssertEqual(PermissionQuestion(host: "a.com", capabilities: capabilities).message, message) }
+        let text = PermissionQuestion(host: "a.com", capabilities: [.camera]).text(theme: .neutral, font: .systemFont(ofSize: 13))
+        XCTAssertEqual(text.attribute(.foregroundColor, at: 4, effectiveRange: nil) as? NSColor, SiteCapability.camera.accent(.neutral), "The site is in the camera's colour")
     }
 }

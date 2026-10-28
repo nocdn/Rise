@@ -89,6 +89,55 @@ final class AddressSuggestionEngineTests: XCTestCase {
         XCTAssertEqual(AddressSuggestionEngine.suggestions(for: "shop.example/s", history: history, tabs: []).first?.completion,
                        "shop.example/search?q=lamps", "An explicitly typed path can still complete its full address")
     }
+    func testAccountCompletionDoesNotLoseItsPathToRepeatedLoginRedirects() throws {
+        let file = URL.temporaryDirectory.appendingPathComponent("RiseAccount-\(UUID())/history.json")
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let history = BrowsingHistory(storageURL: file)
+        let account = URL(string: "https://www.voxi.co.uk/account")!
+        let signIn = URL(string: "https://www.voxi.co.uk/sign-in?returnTo=account")!
+        let home = URL(string: "https://www.voxi.co.uk/")!
+        // The phone had 22 account visits and 19 sign-ins. A few more redirects must
+        // not flip the learned destination back to the host, or become the completion.
+        for _ in 0..<22 { history.record(account, title: "Your account") }
+        for _ in 0..<30 { history.record(signIn, title: "Sign in") }
+        for _ in 0..<3 { history.record(home, title: "VOXI") }
+        try history.save()
+        let restored = BrowsingHistory(storageURL: file)
+        let tab = AddressSuggestionTab(id: UUID(), title: "Your account", url: account)
+        for query in ["v", "vo", "vox", "voxi", "voxi.co.uk", "voxi.co.uk/", "www.vox", "https://www.vox"] {
+            let first = try XCTUnwrap(AddressSuggestionEngine.suggestions(for: query, history: restored, tabs: [tab]).first)
+            XCTAssertEqual(first.url, account, query)
+            XCTAssertEqual(first.completion, BrowsingHistory.completion(for: query, url: account, includePath: true), query)
+            XCTAssertEqual(first.tabID, tab.id)
+        }
+        XCTAssertEqual(AddressSuggestionEngine.suggestions(for: "voxi.co.uk/s", history: restored, tabs: []).first?.url, signIn,
+                       "An explicitly typed login path still completes normally")
+        for _ in 0..<60 { restored.record(home, title: "VOXI") }
+        XCTAssertEqual(AddressSuggestionEngine.suggestions(for: "vox", history: restored, tabs: []).first?.url, home,
+                       "A genuine change toward the homepage still changes the destination")
+    }
+    func testTypedAccountPreferenceSurvivesRedirectsAndDoesNotPromoteOneOffPaths() throws {
+        let file = URL.temporaryDirectory.appendingPathComponent("RiseTypedAccount-\(UUID())/history.json")
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let history = BrowsingHistory(storageURL: file)
+        let account = URL(string: "https://voxi.co.uk/account")!, home = URL(string: "https://voxi.co.uk/")!
+        let signIn = URL(string: "https://voxi.co.uk/sign-in?returnTo=account")!
+        history.recordTyped(account)
+        history.record(signIn, title: "Sign in")
+        XCTAssertEqual(AddressSuggestionEngine.suggestions(for: "vox", history: history, tabs: []).first?.url, home,
+                       "A single address choice is not a repeated habit")
+        for _ in 0..<5 { history.recordTyped(account); history.record(signIn, title: "Sign in") }
+        try history.save()
+        let restored = BrowsingHistory(storageURL: file)
+        XCTAssertEqual(AddressSuggestionEngine.suggestions(for: "vox", history: restored, tabs: []).first?.url, account,
+                       "Repeatedly asking for the account beats where authentication redirects")
+        for index in 0..<10 {
+            let article = URL(string: "https://news.example/article-\(index)")!
+            for _ in 0..<3 { restored.record(article, title: "Article") }
+        }
+        XCTAssertEqual(AddressSuggestionEngine.suggestions(for: "news", history: restored, tabs: []).first?.completion, "news.example",
+                       "Several equally used pages do not invent a preferred path")
+    }
     func testOpenTabsDeduplicateHistoryAndRequireExactQueryAndAnchor() {
         let history = BrowsingHistory(storageURL: URL.temporaryDirectory.appendingPathComponent(UUID().uuidString))
         let url = URL(string: "https://example.com/docs?q=one#intro")!

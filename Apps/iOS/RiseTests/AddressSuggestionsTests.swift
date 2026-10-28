@@ -3,6 +3,11 @@ import UIKit
 @testable import RiseiOS
 
 final class AddressSuggestionsTests: XCTestCase {
+    @MainActor func testAddressChoicesLearnOnOpenTabSwitchAndReturnButNotInPrivateOrSearches() throws {
+        let checks = try AddressSuggestionsAudit.selectionLearningChecks()
+        XCTAssertGreaterThanOrEqual(checks.count, 8)
+        for (name, passed) in checks { XCTAssertTrue(passed, name) }
+    }
     @MainActor func testNativeInputFaviconsLearningAndSiteSearch() async throws {
         let browser = AddressSuggestionsAudit.makeBrowser()
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)

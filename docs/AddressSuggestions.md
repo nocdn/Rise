@@ -16,6 +16,11 @@ not. Preview-only pages have their own delegates and never enter browsing histor
 The most frequent/recent literal URL match can complete a stable page path after repeat
 visits, so a regularly used `voxi.co.uk/account` can outrank `voxi.co.uk`. One-off deep
 links and query-bearing URLs still complete only the site until a path is typed.
+Login redirects and query-bearing search pages still count toward which site is preferred,
+but do not dilute a stable page's share when choosing its usual path. Both platforms give
+extra weight to an address chosen in the field, including switching to an already-open tab.
+One address choice alone does not establish a preferred path. Private choices and ordinary
+searches do not create typed-address evidence; never-loaded failed addresses lose it.
 This uses saved visit counts on both platforms without resetting existing learning.
 Learned literal addresses can complete from the first character, so repeated visits to
 `x.com` let `x` immediately fill `.com`. Literal prefixes outrank title/substring matches

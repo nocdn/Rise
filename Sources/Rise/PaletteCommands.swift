@@ -104,7 +104,7 @@ enum PageZoom {
         if command.hasPrefix("Capture:") { captureWholePage(command.hasSuffix("pdf") ? .pdf : .jpeg); return }
         if command.hasPrefix("Zoom:"), let zoom = Double(command.dropFirst("Zoom:".count)) { setPageZoom(CGFloat(zoom)); return }
         switch command {
-        case "Close Tab": closeCurrentTab()
+        case "Close Tab": closeSelectedTab(confirmingPinned: false)
         case "Reopen Closed Tab": reopenTab()
         case "Duplicate Tab": duplicateCurrentTab()
         case "Toggle Pin": pinCurrentTab()

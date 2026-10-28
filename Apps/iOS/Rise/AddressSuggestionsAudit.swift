@@ -10,6 +10,52 @@ import WebKit
             .appendingPathComponent("RiseAddressAudit-\(UUID())"))
     }
     struct Failure: Error { let check: String }
+    /// Also runnable in-app when Xcode's simulator XCTest service cannot attach.
+    static func selectionLearningChecks() throws -> [String: Bool] {
+        let folder = URL.temporaryDirectory.appendingPathComponent("RiseAddressChoices-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let source = MobileAddressSuggestions(directory: folder)
+        let panel = SearchPanel(frame: CGRect(x: 0, y: 0, width: 390, height: 400))
+        panel.source = source; panel.allowsRemoteSuggestions = false; panel.begin()
+        let home = URL(string: "https://voxi.co.uk/")!, account = URL(string: "https://voxi.co.uk/account")!
+        for _ in 0..<20 { source.history.record(home, title: "VOXI") }
+        let id = UUID()
+        panel.openTabs = { [AddressSuggestionTab(id: id, title: "Account", url: account)] }
+        var switched: [UUID] = []
+        panel.onSwitchToTab = { switched.append($0) }
+        for _ in 0..<3 { panel.choose(AddressCandidate(title: "Account", url: account, tabID: id)) }
+        for _ in 0..<3 { panel.field.text = account.absoluteString; _ = panel.textFieldShouldReturn(panel.field) }
+        source.save()
+        let restored = MobileAddressSuggestions(directory: folder)
+        var checks = [
+            "address-choices-switch-existing-tabs": switched == Array(repeating: id, count: 6),
+            "address-choice-learning-survives-relaunch": AddressSuggestionEngine.suggestions(for: "vox", history: restored.history, tabs: []).first?.url == account
+        ]
+        panel.begin()
+        for letter in "vox" { panel.field.insertText(String(letter)) }
+        checks["typed-prefix-fills-learned-account-path"] = panel.field.text == "vox" && panel.field.inlineCompletion == "voxi.co.uk/account"
+        checks["completed-account-keeps-exact-open-tab"] = panel.candidates.first?.tabID == id && panel.candidates.first?.url == account
+        panel.openTabs = { [] }
+        var opened: URL?
+        panel.onOpen = { opened = $0 }
+        let picked = URL(string: "https://picked.example/account")!
+        for _ in 0..<2 { panel.choose(AddressCandidate(title: "Picked", url: picked)) }
+        checks["opening-result-learns-its-path"] = opened == picked && source.history.destination(for: "pick")?.page?.url == picked.absoluteString
+        let search = SearchPanel.searchURL(for: "unrelated search")!
+        panel.choose(AddressCandidate(title: "Search", symbol: "magnifyingglass", url: search))
+        checks["searches-do-not-create-typed-address-evidence"] = source.history.destination(for: "www.google.com/search") == nil
+        panel.begin(privateBrowsing: true)
+        let secret = URL(string: "https://private.example/account")!
+        for _ in 0..<4 { panel.choose(AddressCandidate(title: "Private", url: secret)) }
+        checks["private-choices-do-not-change-learning"] = source.history.destination(for: "private") == nil
+        let bad = URL(string: "https://mistyped.example/account")!
+        source.selected(bad, privateBrowsing: false)
+        let page = WKWebView()
+        source.failed(page, error: URLError(.cannotFindHost, userInfo: [NSURLErrorFailingURLErrorKey: bad]))
+        checks["never-loaded-typed-address-is-forgotten"] = source.history.destination(for: "mistyped") == nil
+        source.save(); panel.end()
+        return checks
+    }
     static func exercise(_ browser: BrowserViewController, folder: URL) async throws -> [String: Bool] {
         var checks: [String: Bool] = [:]
         func check(_ name: String, _ condition: Bool) throws {
@@ -516,6 +562,7 @@ import WebKit
         try await Task.sleep(for: .milliseconds(150))
         try capture("single-line-fill-arrows-dark")
         browser.overrideUserInterfaceStyle = .light
+        for (name, passed) in try selectionLearningChecks() { try check(name, passed) }
         return checks
     }
     static func run(in browser: BrowserViewController) {

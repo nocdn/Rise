@@ -60,7 +60,7 @@ import AppKit
                 if let icon = suggestionFavicons.darkImage(for: tab.url) { tab.darkFavicon = icon }
             }
         }
-        (Array(findBars.values)+[tablessFindBar]).forEach { $0.applyTheme(theme) }
+        (Array(findBars.values)+[tablessFindBar]).forEach { $0.applyTheme(theme) }; permissionCoordinator.applyTheme(theme)
         if palette.theme != theme {
             palette.applyTheme(theme)
             for suggestion in palette.suggestions {

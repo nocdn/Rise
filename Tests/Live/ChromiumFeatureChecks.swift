@@ -444,7 +444,7 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         browser.permissionCoordinator.requestNotificationAuthorization = { $0(true) }
         let notifying = await open(try page("notify", "<h1>Notify</h1>"))
         _ = await value("Notification.requestPermission().then(answer => window.answer = answer); return 0", in: notifying.page)
-        if await waitUntil("Rise asks first", 10, { self.browser.permissionCoordinator.popover.isShown }) {
+        if await waitUntil("Rise asks first", 10, { self.browser.permissionCoordinator.isShowingPrompt }) {
             browser.permissionCoordinator.resolve(true)
             _ = await waitUntil("And the site may notify") { await self.value("return window.answer", in: notifying.page) as? String == "granted" }
         }
@@ -815,13 +815,13 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         _ = await value("""
             navigator.mediaDevices.getUserMedia({video: true}).then(s => window.camera = 'granted ' + s.getVideoTracks().length, e => window.camera = e.name)
             """, in: ask.page)
-        _ = await waitUntil("Rise asks before the site gets the camera") { browser.permissionCoordinator.popover.isShown }
+        _ = await waitUntil("Rise asks before the site gets the camera") { browser.permissionCoordinator.isShowingPrompt }
         browser.permissionCoordinator.resolve(true)
         _ = await waitUntil("Allowing gives the site the camera") { await value("return window.camera", in: ask.page) as? String == "granted 1" }
         _ = await value("""
             navigator.geolocation.getCurrentPosition(() => window.place = 'granted', e => window.place = 'denied ' + e.code)
             """, in: ask.page)
-        _ = await waitUntil("Rise asks before the site gets the location") { browser.permissionCoordinator.popover.isShown }
+        _ = await waitUntil("Rise asks before the site gets the location") { browser.permissionCoordinator.isShowingPrompt }
         browser.permissionCoordinator.resolve(false)
         _ = await waitUntil("Denying refuses it") { await value("return window.place", in: ask.page) as? String == "denied 1" }
 

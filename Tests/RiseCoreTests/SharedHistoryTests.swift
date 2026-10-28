@@ -18,6 +18,7 @@ final class SharedHistoryTests: XCTestCase {
         for _ in 0..<8 { a.record(account, title: "Account") }
         for _ in 0..<5 { b.record(account, title: "Your account") }
         for _ in 0..<3 { b.record(home, title: "VOXI") }
+        for _ in 0..<20 { b.record(URL(string: "https://voxi.co.uk/sign-in?returnTo=account")!, title: "Sign in") }
         exchange(a, b)
         XCTAssertEqual(a.snapshot, b.snapshot)
         XCTAssertEqual(a.entries.first { $0.url == account.absoluteString }?.visits, 13)

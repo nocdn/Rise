@@ -550,7 +550,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     }
     func choose(_ value: AddressCandidate) {
         guard let url = value.url else { return }
-        if let id = value.tabID { click.impactOccurred(intensity: 0.5); onSwitchToTab(id) }
+        if let id = value.tabID { remember(url); click.impactOccurred(intensity: 0.5); onSwitchToTab(id) }
         else { open(url) }
     }
     func choose(_ suggestion: String) { if let url = Self.searchURL(for: suggestion) { open(url) } }
@@ -566,16 +566,21 @@ final class SearchPanel: UIView, UITextFieldDelegate {
             else if let url = Self.destination(for: completed) { open(url) }
         }
         else if let url = Self.destination(for: field.text ?? "") {
-            if let tab = AddressSuggestionEngine.openTab(for: url, in: openTabs()), editingAddress == nil { onSwitchToTab(tab.id) }
+            if let tab = AddressSuggestionEngine.openTab(for: url, in: openTabs()), editingAddress == nil { remember(url); onSwitchToTab(tab.id) }
             else { open(url) }
         }
         return false
     }
     func textFieldShouldClear(_ textField: UITextField) -> Bool { click.impactOccurred(intensity: 0.5); return true }
     private func open(_ url: URL) {
+        remember(url)
         click.impactOccurred(intensity: 0.5)
         DispatchQueue.main.asyncAfter(deadline: .now()+0.07) { [click] in click.impactOccurred(intensity: 0.5) }
         onOpen(url)
+    }
+    private func remember(_ url: URL) {
+        guard url.host != Self.searchURL(for: query)?.host else { return }
+        source?.selected(url, privateBrowsing: isPrivateBrowsing)
     }
     static func searchURL(for query: String) -> URL? { SearchEngine.google.searchURL(for: query) }
     static func destination(for text: String) -> URL? {

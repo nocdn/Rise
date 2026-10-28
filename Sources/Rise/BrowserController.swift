@@ -12,11 +12,11 @@ import RiseCore
     let pageEdge = PageEdge()
     /// The bar over the page, as Dia's.
     private(set) lazy var navBar = PlainNavBar(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() },
-                                               zoom: { [weak self] in self?.showZoomControls() }, permission: { [weak self] in self?.permissionCoordinator.showPrompt() })
+                                               zoom: { [weak self] in self?.showZoomControls() }, permission: { [weak self] in self?.permissionCoordinator.togglePrompt() })
     var plainBarTimer: Timer?, plainBarColors: [UUID: NSColor] = [:], plainBarTabID: UUID?, plainBarSampling = false
     /// A split's right page's own bar (`SplitNavBar.swift`), its buttons, and the page it shows.
     private(set) lazy var splitBar = PlainNavBar(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() },
-                                                 zoom: { [weak self] in self?.showZoomControls() }, permission: { [weak self] in self?.permissionCoordinator.showPrompt() })
+                                                 zoom: { [weak self] in self?.showZoomControls() }, permission: { [weak self] in self?.permissionCoordinator.togglePrompt() })
     var splitBarButtons: [ChromeButton] = [], splitBarTabID: UUID?
     let pageShadow = PageSurface(color: NSColor(hex: 0xFDFCFC), radius: PageAppearance.radius)
     let pageClip = PageSurface(color: NSColor(hex: 0xFDFCFC), radius: PageAppearance.radius)
@@ -96,6 +96,8 @@ import RiseCore
     var extensionWarmer: (id: String, page: ChromiumPage, ends: DispatchWorkItem?)?
     var selectedTab: BrowserTab? { tabs.first { $0.id == selectedID } }
     var closedTabs: [SavedTab] = []
+    /// A pinned tab ⌘W was pressed in, and until when a second press closes it.
+    var pinnedCloseRequest: (id: UUID, until: Date)?
     let browsingHistory: BrowsingHistory
     let siteSearchLearner: SiteSearchLearner
     let suggestionFavicons: SuggestionFavicons
@@ -577,6 +579,7 @@ import RiseCore
         retryButton.frame = NSRect(x: body.width/2-55, y: body.height/2+55, width: 110, height: 32)
         // The panels come down from beneath the page bar and what's under it.
         selectedFindBar.frame = pageShadow.frame; selectedFindBar.topInset = barHeight; selectedFindBar.tuckedInset = barHeight
+        permissionCoordinator.layoutPanel()
         dismissArea.frame = b
         // The centred palette dims the window behind it.
         veil.frame = b
@@ -885,9 +888,13 @@ import RiseCore
         if paletteCreatesTab || selectedTab == nil { addTab(url: url) }
         else { errorWebView = nil; selectedTab?.load(url) }
     }
-    @objc func closeCurrentTab() {
+    @objc func closeCurrentTab() { closeSelectedTab(confirmingPinned: true) }
+    /// ⌘W in a pinned tab asks first (PinnedTabClosing); Close Tab picked in the palette doesn't.
+    func closeSelectedTab(confirmingPinned: Bool) {
         if peekTab != nil { closePeek(animated: true); return }
-        if let id = selectedID { closeTab(id) }
+        guard let id = selectedID else { return }
+        if confirmingPinned, asksBeforeClosingPinnedTab(id) { return }
+        closeTab(id)
     }
     func closeTab(_ id: UUID) {
         historySwipe.cancel()

@@ -34,6 +34,8 @@ enum TablerIcon {
     /// What a site asks to use, in its permission's icon in the address bar.
     static let camera = "M5 7h1a2 2 0 0 0 2-2a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1a2 2 0 0 0 2 2h1a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2M9 13a3 3 0 1 0 6 0a3 3 0 0 0-6 0"
     static let microphone = "M9 5a3 3 0 0 1 3-3a3 3 0 0 1 3 3v5a3 3 0 0 1-3 3a3 3 0 0 1-3-3zM5 10a7 7 0 0 0 14 0M8 21h8M12 17v4"
+    /// Tabler's outlined bell with its clapper, for notifications.
+    static let bellWithClapper = bell+"M9 17v1a3 3 0 0 0 6 0v-1"
     static let mapPin = "M9 11a3 3 0 1 0 6 0a3 3 0 0 0-6 0M17.657 16.657l-4.243 4.243a2 2 0 0 1-2.827 0l-4.244-4.243a8 8 0 1 1 11.314 0z"
     /// Tabler's clapper, lowered a unit so the filled bell keeps a gap above it.
     static let bellClapper = "M10 20h4a2 2 0 0 1-4 0"

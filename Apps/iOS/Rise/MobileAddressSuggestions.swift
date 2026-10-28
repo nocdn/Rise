@@ -44,6 +44,21 @@ import WebKit
         history.record(url, title: page.title ?? url.host ?? "")
         scheduleSave()
     }
+    /// Choosing an address is stronger evidence than a redirect or following a page link.
+    /// Use the same typed-address counters as desktop, including switching to an open tab.
+    func selected(_ url: URL, privateBrowsing: Bool) {
+        guard recordsBrowsing, !privateBrowsing else { return }
+        history.recordTyped(url)
+        scheduleSave()
+    }
+    func failed(_ page: WKWebView, error: Error) {
+        guard !isPrivate(page) else { return }
+        let error = error as NSError
+        guard error.code != NSURLErrorCancelled,
+              let url = (error.userInfo[NSURLErrorFailingURLErrorKey] as? URL) ?? page.url else { return }
+        history.forgetFailedTyping(url)
+        scheduleSave()
+    }
     func removeHistory(_ url: URL) {
         removeHistory([url])
     }

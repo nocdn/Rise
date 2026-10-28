@@ -198,8 +198,60 @@ import RiseCore
                 permissionButton.image = TablerIcon.image(requestedPermission.icon, size: 16, description: requestedPermission.title)
                 permissionButton.setAccessibilityLabel(requestedPermission.title)
             }
+            popsPermission = oldValue == nil && requestedPermission != nil
+            if requestedPermission != nil { stopPermissionLeaving() }
+            else if oldValue != nil { permissionLeaves() }
             needsLayout = true; updateFieldControls(animated: true)
         }
+    }
+    /// A newly asked-for icon grows into its place, once laid out there, as it fades in.
+    private var popsPermission = false
+    enum PermissionMotion {
+        /// From this size, on a quick spring that barely overshoots; the prompt comes out of it
+        /// `promptDelay` in, as it nears its size.
+        static let scale: CGFloat = 0.4, stiffness: CGFloat = 420, damping: CGFloat = 30, promptDelay = 0.12
+        /// Going, once its prompt has gone back into it, which looks to take `leaveLead`.
+        static let leaveDuration = 0.16, leaveLead = 0.15
+    }
+    /// Answered, the icon shrinks as it fades, quickly, and keeps its place until it's gone.
+    private var permissionLeaving = false
+    private static let leaveKey = "Rise.PermissionLeave"
+    private func permissionLeaves() {
+        let button = permissionButton
+        guard window != nil, !button.isHidden, button.alphaValue > 0, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+              let layer = button.layer else { return }
+        permissionLeaving = true
+        let middle = CGPoint(x: button.bounds.midX, y: button.bounds.midY), scale = PermissionMotion.scale
+        let shrink = CABasicAnimation(keyPath: "transform"); shrink.fromValue = CATransform3DIdentity
+        shrink.toValue = CATransform3DTranslate(CATransform3DScale(CATransform3DMakeTranslation(middle.x, middle.y, 0), scale, scale, 1), -middle.x, -middle.y, 0)
+        let fade = CABasicAnimation(keyPath: "opacity"); fade.fromValue = 1; fade.toValue = 0
+        let group = CAAnimationGroup(); group.animations = [shrink, fade]
+        group.duration = PermissionMotion.leaveDuration; group.timingFunction = CAMediaTimingFunction(controlPoints: 0.4, 0, 0.8, 0.6)
+        group.fillMode = .forwards; group.isRemovedOnCompletion = false
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.permissionLeaving else { return }
+                self.stopPermissionLeaving(); self.needsLayout = true; self.updateFieldControls(animated: false)
+            }
+        }
+        layer.add(group, forKey: Self.leaveKey)
+        CATransaction.commit()
+    }
+    private func stopPermissionLeaving() {
+        permissionLeaving = false
+        permissionButton.layer?.removeAnimation(forKey: Self.leaveKey)
+    }
+    private func popPermissionIn() {
+        let button = permissionButton
+        guard window != nil, !button.isHidden, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, let layer = button.layer else { return }
+        let middle = CGPoint(x: button.bounds.midX, y: button.bounds.midY), scale = PermissionMotion.scale
+        let grow = CASpringAnimation(keyPath: "transform")
+        grow.fromValue = CATransform3DTranslate(CATransform3DScale(CATransform3DMakeTranslation(middle.x, middle.y, 0), scale, scale, 1), -middle.x, -middle.y, 0)
+        grow.toValue = CATransform3DIdentity
+        grow.stiffness = PermissionMotion.stiffness; grow.damping = PermissionMotion.damping
+        grow.duration = grow.settlingDuration; grow.fillMode = .backwards
+        layer.add(grow, forKey: "Rise.PermissionPop")
     }
     /// Where its buttons sit, and how much sooner its address starts for fewer of them: a split's
     /// right page has no sidebar button, so its back, forward and reload move up a place.
@@ -332,7 +384,7 @@ import RiseCore
         NSRect(x: Metrics.fieldX-leadingRoom, y: Metrics.midY-Metrics.fieldHeight/2, width: max(0, fieldMaxX-Metrics.fieldX+leadingRoom), height: Metrics.fieldHeight)
     }
     private var fieldControls: [SidebarHoverButton] { [zoomButton, copyButton, settingsButton] }
-    private var showsPermission: Bool { url != nil && requestedPermission != nil }
+    private var showsPermission: Bool { url != nil && (requestedPermission != nil || permissionLeaving) }
     private var fieldButtons: [SidebarHoverButton] {
         (showsZoom ? [zoomButton] : []) + (showsPermission ? [permissionButton] : []) + [settingsButton, copyButton]
     }
@@ -361,6 +413,7 @@ import RiseCore
         if developerProgress > 0.5, let start = developerControlsMinX {
             permissionButton.frame = NSRect(x: start-8-27, y: mid-12, width: 27, height: 24)
         }
+        if popsPermission { popsPermission = false; popPermissionIn() }
         // The text runs to the field's buttons while they show, and to its end otherwise.
         let textEnd = isHovered || showsZoom || showsPermission ? (buttons.first?.frame.minX ?? fieldRect.maxX)-4 : fieldRect.maxX-8
         let line = ceil(text.intrinsicContentSize.height)
@@ -509,7 +562,8 @@ import RiseCore
     private func updateFieldControls(animated: Bool) {
         for button in fieldControls + [permissionButton] {
             let on = url != nil && (isHovered || (button === zoomButton && showsZoom) || (button === permissionButton && showsPermission))
-            button.allowsInteraction = on
+            // A leaving icon shows until it has gone, but can't be pressed.
+            button.allowsInteraction = on && !(button === permissionButton && permissionLeaving)
             let target: CGFloat = on ? 1 : 0
             guard button.alphaValue != target else { continue }
             if animated, window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
@@ -548,6 +602,7 @@ import RiseCore
     /// The arrows of the full screen notices, drawn as heavy as the link.
     static let fullScreenImage = symbol("arrow.up.left.and.arrow.down.right")
     static let starImage = TablerIcon.image(TablerIcon.star, size: 14, description: nil)
+    static let unpinImage = symbol("pin.slash")
     static let warningImage = TablerIcon.image(TablerIcon.alertTriangle, size: 14, description: nil)
     static let photoImage = symbol("photo"), documentImage = symbol("doc.richtext")
     static let calendarImage = symbol("calendar.badge.checkmark"), reminderImage = symbol("checklist.checked")

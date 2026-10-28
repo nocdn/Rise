@@ -1,11 +1,13 @@
 import AppKit
 import UserNotifications
 
-/// A single native prompt owns its completion. Dismissal, tab changes and
-/// navigation deny it once; a permission can only be saved by choosing Allow.
-@MainActor final class PermissionCoordinator: NSObject, NSPopoverDelegate, UNUserNotificationCenterDelegate {
+/// A single native prompt owns its completion. Its ✕, tab changes and navigation deny it once;
+/// a permission can only be saved by choosing its ✓. A click elsewhere leaves the prompt, and its
+/// icon in the bar puts it away unanswered and brings it back.
+@MainActor final class PermissionCoordinator: NSObject, UNUserNotificationCenterDelegate {
     weak var browser: BrowserController?
-    let popover = NSPopover()
+    /// The prompt: Find's panel, coming down from under the asking page's bar.
+    let panel = PermissionPanel()
     /// The page asking, as its view, and the bar over it, whose icon for what it asks shows meanwhile.
     private weak var requestingWebView: NSView?
     private weak var requestingBar: PlainNavBar?
@@ -18,7 +20,9 @@ import UserNotifications
     }
     init(browser: BrowserController) {
         self.browser = browser; super.init()
-        popover.behavior = .transient; popover.animates = false; popover.delegate = self
+        panel.applyTheme(browser.theme)
+        panel.answer = { [weak self] in self?.resolve($0) }
+        panel.onGone = { [weak self] in self?.panelGone() }
     }
     private let pages = NSHashTable<AnyObject>.weakObjects()
     func install(on page: WebPage) {
@@ -54,31 +58,82 @@ import UserNotifications
             if allowed && capabilities.contains(.notifications), let self { self.requestNotificationAuthorization(finish) }
             else { finish(allowed) }
         }
-        let controller = PermissionPromptController(host: url.host ?? origin, capabilities: capabilities, theme: browser.theme) { [weak self] in self?.resolve($0) }
-        popover.appearance = browser.theme.appearance
-        controller.view.appearance = browser.theme.appearance
-        popover.contentViewController = controller; popover.contentSize = controller.view.frame.size
-        // It comes out of the icon for what's asked, in the bar over the asking page.
+        question = PermissionQuestion(host: url.host ?? origin, capabilities: capabilities)
+        // Its icon shows in the bar over the asking page, and the prompt comes down under it.
         let bar = browser.pageBarTabs.first { $0.tab.page.view === web }?.bar ?? browser.selectedBar
         requestingBar = bar
-        bar.requestedPermission = (capabilities.first?.tablerIcon ?? TablerIcon.camera, controller.heading)
+        bar.requestedPermission = (capabilities.first?.tablerIcon ?? TablerIcon.camera, question?.heading ?? "")
         browser.layoutChrome(); bar.layoutSubtreeIfNeeded()
-        showPrompt()
+        // The icon grows in first, and the prompt comes down as it nears its size.
+        let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let show = DispatchWorkItem { [weak self] in self?.pendingShow = nil; self?.showPrompt() }
+        pendingShow = show
+        DispatchQueue.main.asyncAfter(deadline: .now()+(still ? 0 : PlainNavBar.PermissionMotion.promptDelay), execute: show)
     }
-    /// The prompt, again if it was put away, from its icon.
+    private var pendingShow: DispatchWorkItem?
+    /// What the request now asks, which the panel takes as it comes down.
+    private(set) var question: PermissionQuestion?
+    /// A bar whose answered prompt is going back up under it, whose icon goes once it has.
+    private weak var leavingBar: PlainNavBar?
+    var isShowingPrompt: Bool { panel.isPresented }
+    /// Its icon puts the prompt away unanswered, and brings it back.
+    func togglePrompt() {
+        guard reply != nil else { return }
+        if panel.isPresented { snoozed = true; panel.hide() } else { snoozed = false; showPrompt() }
+    }
+    /// Put away from its icon, it stays away until the icon brings it back.
+    private var snoozed = false
+    /// The prompt, again if it was put away; one going away from an earlier request finishes first.
     func showPrompt() {
-        guard reply != nil, !popover.isShown, let anchor = requestingBar?.permissionButton, anchor.window != nil else { return }
-        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+        guard reply != nil, let question, !panel.isPresented, !panel.isLeaving, let browser,
+              let web = requestingWebView, web.window === browser.window else { return }
+        snoozed = false
+        panel.ask(question)
+        layoutPanel()
+        panel.present()
     }
+    /// Over the asking page, under its bar, in front of the pages and behind Find, held below an open find panel.
+    func layoutPanel() {
+        guard let browser, let web = requestingWebView ?? (panel.isHidden ? nil : lastPageView) else { return }
+        lastPageView = web
+        let root = browser.root
+        let findBar = browser.selectedFindBar
+        if panel.superview !== root {
+            if findBar.superview === root { root.addSubview(panel, positioned: .below, relativeTo: findBar) }
+            else { root.addSubview(panel, positioned: .below, relativeTo: browser.linkStatus) }
+        }
+        let page = browser.pageShadow.frame, column = web.convert(web.bounds, to: root)
+        let left = max(page.minX, column.minX), right = min(page.maxX, column.maxX)
+        panel.frame = right-left > 100 ? NSRect(x: left, y: page.minY, width: right-left, height: page.height) : page
+        panel.topInset = PlainNavBar.Metrics.height
+        let findOpen = findBar.isPresented && findBar.superview === root && abs(findBar.frame.maxX-panel.frame.maxX) < 1
+        panel.stackOffset = findOpen ? findBar.panel.frame.height+FindBar.top : 0
+    }
+    private weak var lastPageView: NSView?
+    func applyTheme(_ theme: RiseTheme) { panel.applyTheme(theme) }
+    /// Answered, the page hears at once, and the prompt goes back up under the bar, its icon then going.
     func resolve(_ allowed: Bool) {
-        let completion = reply; reply = nil; requestingWebView = nil
-        requestingBar?.requestedPermission = nil; requestingBar = nil; browser?.layoutChrome()
-        popover.close(); completion?(allowed)
+        guard let completion = reply else { return }
+        reply = nil; requestingWebView = nil; snoozed = false
+        pendingShow?.cancel(); pendingShow = nil
+        let bar = requestingBar; requestingBar = nil
+        if panel.isPresented || panel.isLeaving { leavingBar = bar; panel.hide() } else { removeIcon(from: bar) }
+        completion(allowed)
+    }
+    private func removeIcon(from bar: PlainNavBar?) {
+        // A page asking again from the same bar meanwhile keeps its icon.
+        guard let bar, bar !== requestingBar else { return }
+        bar.requestedPermission = nil; browser?.layoutChrome()
     }
     func cancel(for web: NSView? = nil) {
         if web == nil || requestingWebView === web { resolve(false) }
     }
-    func popoverDidClose(_ notification: Notification) { resolve(false) }
+    /// A page that asked again while one went gets its prompt once it's gone, unless its icon
+    /// put the prompt away.
+    private func panelGone() {
+        removeIcon(from: leavingBar); leavingBar = nil
+        if reply != nil, !snoozed, pendingShow == nil { showPrompt() }
+    }
     /// A request from the site controls script in a page's main frame, as its view, from
     /// `origin`, which must still be the page's own.
     func receive(_ message: Any, origin: String?, host: String?, in web: NSView, reply: @escaping (Any?, String?) -> Void) {

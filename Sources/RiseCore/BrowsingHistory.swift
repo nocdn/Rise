@@ -143,8 +143,8 @@ public final class BrowsingHistory {
 
     /// Where typing `query` leads: of the sites whose address it starts, the one visited most across
     /// all its pages, so many pages of one site outweigh one page of another; and one of its pages
-    /// only as the site's usual destination (more than one visit, at least half the site's, and no
-    /// query), or once the address typed reaches past the site.
+    /// only as the site's usual stable destination (repeated visits or address-field selections,
+    /// at least half the site's query-free weight), or once the address typed reaches past the site.
     public func destination(for query: String, at date: Date = Date()) -> (site: URL, page: HistoryEntry?)? {
         // Each page's weight: its visits, and each time its address was typed counting for more. An
         // address typed but never kept, as one that sent the browser elsewhere, still counts.
@@ -173,11 +173,23 @@ public final class BrowsingHistory {
             return x != y ? x < y : a.site.absoluteString > b.site.absoluteString
         }) else { return nil }
         let pages = best.pages.sorted { score($0) != score($1) ? score($0) > score($1) : $0.entry.url < $1.entry.url }
-        guard let top = pages.first, let url = URL(string: top.entry.url) else { return (best.site, nil) }
-        if Self.completion(for: query, url: best.site) == nil { return (best.site, top.entry) }
-        let weight = pages.reduce(0) { $0+$1.weight }
-        let usual = top.weight > 1 && top.weight*2 >= weight && url.query == nil && Self.site(of: url) != url
-        return (best.site, usual ? top.entry : nil)
+        guard let top = pages.first else { return (best.site, nil) }
+        let siteForms = Self.forms(best.site.absoluteString, for: query).map { $0.lowercased() }
+        let atSite = siteForms.contains(query.lowercased())
+        let atPathStart = siteForms.contains { query.lowercased() == $0+"/" }
+        if Self.completion(for: query, url: best.site) == nil, !atSite, !atPathStart { return (best.site, top.entry) }
+        // Login redirects and search-result URLs still help choose the site, but are not
+        // competing destinations for a bare host prefix. Otherwise a login on every visit
+        // can keep a well-learned account page just below the site's majority forever.
+        let stable = pages.filter { URL(string: $0.entry.url)?.query == nil }
+        // Typing the slash explicitly can complete even a one-off path. A learned
+        // usual page still comes first there, rather than a busier sign-in URL.
+        let fallback = atPathStart ? top.entry : nil
+        guard let usual = stable.first, let usualURL = URL(string: usual.entry.url) else { return (best.site, fallback) }
+        let weight = stable.reduce(0) { $0+$1.weight }
+        let repeated = usual.entry.visits > 1 || (storage.typed?[usual.entry.url]?.count ?? 0) > 1
+        let preferred = repeated && usual.weight*2 >= weight && Self.site(of: usualURL) != usualURL
+        return (best.site, preferred ? usual.entry : fallback)
     }
 
     /// Only complete a literal URL prefix, never a title/search substring.
