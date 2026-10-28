@@ -1,0 +1,83 @@
+--- a/components/os_crypt/common/keychain_password_mac.mm
++++ b/components/os_crypt/common/keychain_password_mac.mm
+@@ -9,6 +9,7 @@
+ #include "base/apple/osstatus_logging.h"
+ #include "base/apple/scoped_cftyperef.h"
+ #include "base/base64.h"
++#include "base/command_line.h"
+ #include "base/containers/span.h"
+ #include "base/metrics/histogram_functions.h"
+ #include "base/no_destructor.h"
+@@ -39,6 +40,17 @@
+ const char kDefaultAccountName[] = "Chromium";
+ #endif
+ 
++// Rise: its own item's names, given on the command line once Rise has moved its key
++// there; otherwise Chromium's, as for an older build or a test's throwaway profile.
++std::string RiseKeychainName(const char* name_switch, const char* fallback) {
++  if (!base::CommandLine::InitializedForCurrentProcess()) {
++    return fallback;
++  }
++  std::string name =
++      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(name_switch);
++  return name.empty() ? std::string(fallback) : name;
++}
++
+ // These values are persisted to logs. Entries should not be renumbered and
+ // numeric values should never be reused.
+ enum class FindGenericPasswordResult {
+@@ -73,13 +85,15 @@
+ 
+ // static
+ KeychainPassword::KeychainNameType& KeychainPassword::GetServiceName() {
+-  static KeychainNameContainerType service_name(kDefaultServiceName);
++  static KeychainNameContainerType service_name(
++      RiseKeychainName("rise-keychain-service", kDefaultServiceName));
+   return *service_name;
+ }
+ 
+ // static
+ KeychainPassword::KeychainNameType& KeychainPassword::GetAccountName() {
+-  static KeychainNameContainerType account_name(kDefaultAccountName);
++  static KeychainNameContainerType account_name(
++      RiseKeychainName("rise-keychain-account", kDefaultAccountName));
+   return *account_name;
+ }
+ 
+--- a/chrome/browser/rise/RiseChromium.h
++++ b/chrome/browser/rise/RiseChromium.h
+@@ -33,10 +33,14 @@
+ /// `cachePath`. Call on the main thread after `RCApplication.sharedApplication`, before the
+ /// run loop starts. Returns NO if Chromium couldn't start.
+ ///
+-/// Chromium encrypts cookies and saved data with a key it keeps in the Keychain, in Rise's own
+-/// item ("Rise Safe Storage"). A throwaway profile, such as a test's, passes `keychain` NO: its
+-/// key is made up in memory and the Keychain is never asked, so it can't prompt for a password.
++/// Chromium encrypts cookies and saved data with a key it keeps in the Keychain: in Chromium's
++/// item ("Chromium Safe Storage"), or the one set with `setKeychainService:account:`. A throwaway
++/// profile, such as a test's, passes `keychain` NO: its key is made up in memory and the
++/// Keychain is never asked, so it can't prompt for a password.
+ + (BOOL)startWithCachePath:(NSString *)cachePath keychain:(BOOL)keychain;
++/// The Keychain item to keep that key in, as Chrome keeps its in "Chrome Safe Storage". Call
++/// before `startWithCachePath:keychain:`.
+++ (void)setKeychainService:(NSString *)service account:(NSString *)account;
+ @property (class, readonly) BOOL isRunning;
+ /// Stops Chromium; call as the app terminates.
+ + (void)shutdown;
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -1691,6 +1691,14 @@
+     arguments.push_back("--use-mock-keychain");
+   }
+   return YES;
++}
++
+++ (void)setKeychainService:(NSString*)service account:(NSString*)account {
++  std::vector<std::string>& arguments = Arguments();
++  arguments.push_back("--rise-keychain-service=" +
++                      base::SysNSStringToUTF8(service));
++  arguments.push_back("--rise-keychain-account=" +
++                      base::SysNSStringToUTF8(account));
+ }
+ 
+ + (BOOL)isRunning {

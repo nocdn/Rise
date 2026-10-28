@@ -33,10 +33,14 @@ RC_EXPORT @interface RCEngine : NSObject
 /// `cachePath`. Call on the main thread after `RCApplication.sharedApplication`, before the
 /// run loop starts. Returns NO if Chromium couldn't start.
 ///
-/// Chromium encrypts cookies and saved data with a key it keeps in the Keychain, in Rise's own
-/// item ("Rise Safe Storage"). A throwaway profile, such as a test's, passes `keychain` NO: its
-/// key is made up in memory and the Keychain is never asked, so it can't prompt for a password.
+/// Chromium encrypts cookies and saved data with a key it keeps in the Keychain: in Chromium's
+/// item ("Chromium Safe Storage"), or the one set with `setKeychainService:account:`. A throwaway
+/// profile, such as a test's, passes `keychain` NO: its key is made up in memory and the
+/// Keychain is never asked, so it can't prompt for a password.
 + (BOOL)startWithCachePath:(NSString *)cachePath keychain:(BOOL)keychain;
+/// The Keychain item to keep that key in, as Chrome keeps its in "Chrome Safe Storage". Call
+/// before `startWithCachePath:keychain:`.
++ (void)setKeychainService:(NSString *)service account:(NSString *)account;
 @property (class, readonly) BOOL isRunning;
 /// Stops Chromium; call as the app terminates.
 + (void)shutdown;

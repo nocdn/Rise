@@ -52,6 +52,13 @@ enum RisePages {
         AuthenticationDiagnostics.startup(isolated: RiseProfile.directory != nil, packaged: packaged)
         // Extensions reach the desktop apps they unlock with, as they do in Chrome.
         if RiseProfile.directory == nil { NativeMessagingHosts.link(into: profile.appendingPathComponent("NativeMessagingHosts")) }
+        // Rise's own Keychain item for its key, as Chrome has its own, once it holds the key.
+        // An engine built before it could name the item (patch 0027) keeps Chromium's.
+        if RiseProfile.directory == nil, (RCEngine.self as AnyObject).responds(to: #selector(RCEngine.setKeychainService(_:account:))) {
+            let own = ChromiumKeychainKey.prepareRiseItem(in: ChromiumKeychainKey.LoginKeychain())
+            if own { RCEngine.setKeychainService(ChromiumKeychainKey.rise.service, account: ChromiumKeychainKey.rise.account) }
+            AuthenticationDiagnostics.engine.notice("Chromium key in \(own ? ChromiumKeychainKey.rise.service : ChromiumKeychainKey.chromium.service, privacy: .public)")
+        }
         // A test profile is thrown away, so its key needn't outlive it in the Keychain.
         guard packaged, RCEngine.start(withCachePath: profile.path, keychain: RiseProfile.directory == nil) else {
             AuthenticationDiagnostics.engine.error("Chromium startup failed framework=\(packaged)")
