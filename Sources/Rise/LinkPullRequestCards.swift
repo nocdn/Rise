@@ -15,14 +15,20 @@ import AppKit
         static func == (a: Subject, b: Subject) -> Bool { a.key == b.key }
         /// A pull request's link, or with Option held any page's, unless it leads back to the
         /// `page` it's on: a merge request's own tabs and heading anchors, or a page's own sections.
-        init?(url: URL?, option: Bool, on page: URL? = nil) {
+        /// With `gitHubNeedsOption`, a GitHub pull request on GitHub, which shows its own card, needs Option too.
+        init?(url: URL?, option: Bool, on page: URL? = nil, gitHubNeedsOption: Bool = false) {
             if let pr = PullRequest(url: url) {
                 guard pr != PullRequest(url: page) else { return nil }
+                if gitHubNeedsOption, !option, Self.isGitHubOnGitHub(pr, page: page) { return nil }
                 self = .pullRequest(pr)
             } else if option, let url, LinkSummaries.summarizes(url) {
                 guard page.map(LinkSummaries.key) != LinkSummaries.key(url) else { return nil }
                 self = .summary(url)
             } else { return nil }
+        }
+        static func isGitHubOnGitHub(_ pr: PullRequest, page: URL?) -> Bool {
+            guard pr.forge == .github, let host = page?.host?.lowercased() else { return false }
+            return host == "github.com" || host.hasSuffix(".github.com")
         }
         /// The link's address, as the page reports it under the pointer, still points at it.
         func matches(_ url: URL?) -> Bool {
@@ -68,10 +74,12 @@ import AppKit
     /// pressed or let go over it.
     func linkHoverChanged(_ url: URL?, in web: NSView, modifiers: NSEvent.ModifierFlags = NSEvent.modifierFlags) {
         let links = linkPullRequests
-        // Letting Option go leaves a summary where it is.
-        if !modifiers.contains(.option), case .summary = links.shown, links.shown?.matches(url) == true, links.shownWeb === web { return }
+        let pageURL = page(showing: web)?.url, gated = gitHubLinkCardsNeedOption
+        // Letting Option go leaves a card Option brought where it is.
+        if !modifiers.contains(.option), let shown = links.shown, shown.matches(url), links.shownWeb === web,
+           shown.pullRequest.map({ gated && LinkPullRequestCards.Subject.isGitHubOnGitHub($0, page: pageURL) }) ?? true { return }
         links.timer?.invalidate(); links.timer = nil
-        let pr = LinkPullRequestCards.Subject(url: url, option: modifiers.contains(.option), on: page(showing: web)?.url)
+        let pr = LinkPullRequestCards.Subject(url: url, option: modifiers.contains(.option), on: pageURL, gitHubNeedsOption: gated)
         // Heading up from the link into its card crosses the page under the card, whose
         // links (on a list, other pull requests) report hovers of their own. They don't count.
         if let shown = links.shown, let point = pointerInRoot, linkCardZone.contains(point) {
@@ -91,7 +99,9 @@ import AppKit
         lightLink(.pulsing, for: pr, in: web)
         // Going from one card's link to the next shows the next at once.
         let warm = links.shown != nil || CACurrentMediaTime()-links.hiddenAt < LinkPullRequestCards.grace
-        let delay = if case .summary = pr { LinkPullRequestCards.summaryDelay } else { LinkPullRequestCards.delay }
+        // Asked for with Option, a card comes as soon as a summary does.
+        let asked = pr.pullRequest.map { gated && LinkPullRequestCards.Subject.isGitHubOnGitHub($0, page: pageURL) } ?? true
+        let delay = asked ? LinkPullRequestCards.summaryDelay : LinkPullRequestCards.delay
         links.timer = Timer.scheduledTimer(withTimeInterval: warm ? 0 : delay, repeats: false) { [weak self, weak web] _ in
             MainActor.assumeIsolated { if let web { self?.showLinkCard(pr, in: web) } }
         }

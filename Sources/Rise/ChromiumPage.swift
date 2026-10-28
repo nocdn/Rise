@@ -43,9 +43,11 @@ enum RisePages {
     /// Starts Chromium, packaged with the app; Rise can't run without it.
     static func start() {
         let framework = Bundle.main.bundleURL.appendingPathComponent("Contents/Frameworks/Chromium Framework.framework")
-        let profile = (RiseProfile.directory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Rise"))
-            .appendingPathComponent("Chromium")
+        // Chromium's data directly in Rise's folder, as Chrome's is in its own.
+        let profile = ChromiumProfileLayout.prepare(RiseProfile.directory
+            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Rise"))
         try? FileManager.default.createDirectory(at: profile, withIntermediateDirectories: true)
+        AuthenticationDiagnostics.engine.notice("Chromium profile at \(profile.lastPathComponent, privacy: .public)")
         let packaged = FileManager.default.fileExists(atPath: framework.path)
         AuthenticationDiagnostics.startup(isolated: RiseProfile.directory != nil, packaged: packaged)
         // Extensions reach the desktop apps they unlock with, as they do in Chrome.

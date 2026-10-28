@@ -54,6 +54,17 @@ final class LinkPullRequestCardsTests: XCTestCase {
         XCTAssertNil(card.key, "The link's press closes it")
         XCTAssertNotNil(card.layer?.animation(forKey: "card.exit.opacity"), "with its way out")
     }
+    func testOnGitHubItsOwnPullRequestLinksCanWaitForOption() {
+        let link = URL(string: "https://github.com/anomalyco/rift/pull/52"), github = URL(string: "https://github.com/anomalyco/rift/commits/main")
+        XCTAssertNotNil(LinkPullRequestCards.Subject(url: link, option: false, on: github), "Off by default: the card comes as ever")
+        XCTAssertNil(LinkPullRequestCards.Subject(url: link, option: false, on: github, gitHubNeedsOption: true), "GitHub's own card shows instead")
+        XCTAssertEqual(LinkPullRequestCards.Subject(url: link, option: true, on: github, gitHubNeedsOption: true)?.pullRequest?.number, 52,
+                       "Option brings Rise's card, not a summary")
+        XCTAssertNotNil(LinkPullRequestCards.Subject(url: link, option: false, on: URL(string: "https://example.com/notes"), gitHubNeedsOption: true),
+                        "Elsewhere, GitHub's links get the card as ever")
+        XCTAssertNotNil(LinkPullRequestCards.Subject(url: URL(string: "https://gitlab.example.com/fe/app/-/merge_requests/9"), option: false, on: github,
+                                                     gitHubNeedsOption: true), "Only GitHub's own links wait")
+    }
     func testTheLinkNamesTheCardUntilTheDetailsArrive() {
         let pr = PullRequest(url: URL(string: "https://github.com/rise/app/pull/12"))!
         XCTAssertEqual(LinkPullRequestCards.title(fromLink: "Fix the sidebar\n#12 opened by someone", pr), "Fix the sidebar")

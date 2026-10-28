@@ -26,6 +26,7 @@ import RiseChromium
                 toggle("animateDevTools", "Animate developer tools", "DevTools slide in and out from the right", animatesDevTools),
                 toggle("highlightSummaryLinks", "Highlight links you summarise", "A soft grey breathes behind a link you hold ⌥ over while its summary comes", highlightsSummaryLinks),
                 toggle("highlightPullRequestLinks", "Highlight pull request links", "A soft grey breathes behind a pull or merge request link while its card opens", highlightsPullRequestLinks),
+                toggle("gitHubCardsNeedOption", "Hold ⌥ for pull request cards on GitHub", "GitHub shows its own card for its links, so Rise’s waits until you hold ⌥", gitHubLinkCardsNeedOption),
                 toggle("hideAddressScheme", "Hide https:// in addresses", "Leave http:// and https:// off addresses in the address panel and link previews", hidesAddressScheme),
                 toggle("hideAddressWWW", "Hide www. in addresses", "Show www.youtube.com as youtube.com. Pages still open at their own address", hidesAddressWWW),
             ]
@@ -97,6 +98,7 @@ import RiseChromium
         case "animateDevTools": setAnimatesDevTools(on)
         case "highlightSummaryLinks": setHighlightsSummaryLinks(on)
         case "highlightPullRequestLinks": setHighlightsPullRequestLinks(on)
+        case "gitHubCardsNeedOption": setGitHubLinkCardsNeedOption(on)
         case "hideAddressScheme": setHidesAddressScheme(on)
         case "hideAddressWWW": setHidesAddressWWW(on)
         case "minimalNewTab": setMinimalNewTab(on)

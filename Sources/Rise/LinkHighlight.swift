@@ -106,6 +106,11 @@ struct LinkPulse: Equatable {
     var highlightsPullRequestLinks: Bool { preferences.object(forKey: Self.highlightsPullRequestLinksKey) as? Bool ?? true }
     func setHighlightsSummaryLinks(_ value: Bool) { preferences.set(value, forKey: Self.highlightsSummaryLinksKey) }
     func setHighlightsPullRequestLinks(_ value: Bool) { preferences.set(value, forKey: Self.highlightsPullRequestLinksKey) }
+    /// Settings ▸ Appearance: GitHub shows its own card for its pull requests' links, so Rise's
+    /// can wait for Option there. Off unless chosen.
+    static let gitHubLinkCardsNeedOptionKey = "Rise.GitHubLinkCardsNeedOption"
+    var gitHubLinkCardsNeedOption: Bool { preferences.bool(forKey: Self.gitHubLinkCardsNeedOptionKey) }
+    func setGitHubLinkCardsNeedOption(_ value: Bool) { preferences.set(value, forKey: Self.gitHubLinkCardsNeedOptionKey) }
     func highlightsLink(for subject: LinkPullRequestCards.Subject) -> Bool {
         subject.pullRequest == nil ? highlightsSummaryLinks : highlightsPullRequestLinks
     }
