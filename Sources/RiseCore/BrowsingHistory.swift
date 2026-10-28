@@ -93,8 +93,16 @@ public final class BrowsingHistory {
         let id = SharedHistoryRecord.id(for: key)
         guard var record = storage.snapshot.records[id], record.visits > 0 else { return false }
         record.generation = nextVersion(); record.counts = [:]; storage.snapshot.records[id] = record
+        if storage.typed?[key] != nil { storage.typed?[key] = nil }
         entries = storage.snapshot.entries; dirty = true; onChange?()
         return true
+    }
+    /// An address typed that didn't load, such as a mistyped site: typing no longer suggests it,
+    /// unless it has loaded before and only failed this time.
+    public func forgetFailedTyping(_ url: URL) {
+        guard let key = Self.key(url), storage.typed?[key] != nil else { return }
+        if let record = storage.snapshot.records[SharedHistoryRecord.id(for: key)], record.visits > 0 { return }
+        storage.typed?[key] = nil; dirty = true; onChange?()
     }
 
     private func nextVersion() -> TabSyncVersion {

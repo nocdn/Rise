@@ -55,11 +55,14 @@ import RiseCore
     func pageFinishedLoading(_ webView: NSView) {
         if let tab = tabs.first(where: { $0.page.view === webView }), let url = tab.url, url.absoluteString != "about:blank" {
             tab.captureThumbnail()
-            // A visit is going somewhere: the same page again, reloaded or back at launch, only renames it.
-            let title = historyTitle(tab.page.title ?? tab.title, url: url), address = BrowsingHistory.key(url)
-            if tab.visitedAddress != address { tab.visitedAddress = address; browsingHistory.record(url, title: title) }
-            else { browsingHistory.updateTitle(title, for: url) }
-            discoverPageFavicon(tab.page)
+            // A page that didn't load, its error page in its place, isn't a visit.
+            if errorWebView !== webView {
+                // A visit is going somewhere: the same page again, reloaded or back at launch, only renames it.
+                let title = historyTitle(tab.page.title ?? tab.title, url: url), address = BrowsingHistory.key(url)
+                if tab.visitedAddress != address { tab.visitedAddress = address; browsingHistory.record(url, title: title) }
+                else { browsingHistory.updateTitle(title, for: url) }
+                discoverPageFavicon(tab.page)
+            }
         } else if let peek = allPeekTabs.first(where: { $0.page.view === webView }) {
             discoverPageFavicon(peek.page)
         }; update()
@@ -70,6 +73,9 @@ import RiseCore
         showNavigationError(error.localizedDescription, in: webView)
     }
     func showNavigationError(_ message: String, in webView: NSView) {
+        if let tab = tabs.first(where: { $0.page.view === webView }), let url = tab.page.url ?? tab.requestedURL {
+            browsingHistory.forgetFailedTyping(url)
+        }
         errorWebView = webView; errorMessage.stringValue = message; update()
     }
     /// A page's process ended, taking its media; it loads again.

@@ -4,6 +4,29 @@ import RiseCore
 @testable import Rise
 
 final class AddressSuggestionsTests: XCTestCase {
+    @MainActor func testALongSearchUsesTheRowsWidthWhileAPageLeavesRoomForItsAddress() throws {
+        let browser = browser(); defer { browser.hidePalette(); clean(browser) }
+        browser.showWindow(nil); browser.newTab()
+        let long = "cloudflare please wait while your request is being verified by the security service"
+        browser.palette.replaceSuggestions([
+            AddressSuggestion(title: long, subtitle: "", symbol: "magnifyingglass", url: URL(string: "https://www.google.com/search?q=x"), tabID: nil, command: nil),
+            AddressSuggestion(title: long, subtitle: "https://example.com/page", symbol: "globe", url: URL(string: "https://example.com/page"), tabID: nil, command: nil)])
+        browser.palette.layoutSubtreeIfNeeded()
+        let titles = browser.palette.subviews.compactMap { row in row.subviews.first { ($0 as? NSTextField)?.identifier == AddressPalette.titleID } }
+        XCTAssertEqual(titles.count, 2)
+        XCTAssertGreaterThan(titles[0].frame.width, CenteredPaletteStyle.titleMaximumWidth+100, "A search isn't cut short with room to spare")
+        XCTAssertLessThanOrEqual(titles[1].frame.width, CenteredPaletteStyle.titleMaximumWidth, "A page's title leaves room for its address")
+    }
+    @MainActor func testATitleThatIsAnAddressReadsAsOneWithoutRepeatingIt() {
+        func row(_ title: String, _ address: String) -> AddressSuggestion {
+            AddressSuggestion(title: title, subtitle: address, symbol: "globe", url: URL(string: address), tabID: nil, command: nil)
+        }
+        let bare = row("https://remotedesktop.google.com/", "https://remotedesktop.google.com/")
+        XCTAssertEqual(AddressPalette.shownTitle(bare), "remotedesktop.google.com/", "https:// is hidden, as it is for addresses")
+        XCTAssertFalse(AddressPalette.showsAddress(row("remotedesktop.google.com/access", "https://remotedesktop.google.com/access")))
+        XCTAssertTrue(AddressPalette.showsAddress(row("Remote Access", "https://remotedesktop.google.com/access")))
+        XCTAssertEqual(AddressPalette.shownTitle(row("Remote Access", "https://remotedesktop.google.com/access")), "Remote Access")
+    }
     @MainActor func testCollapsedSidebarCentersPaletteAndTogglingDismissesBothModes() {
         let browser = browser(); defer { browser.hidePalette(); clean(browser) }
         browser.showWindow(nil)

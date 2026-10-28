@@ -19,6 +19,18 @@ final class BrowsingHistoryTests: XCTestCase {
         try restored.clear()
         XCTAssertTrue(BrowsingHistory(storageURL: file).entries.isEmpty)
     }
+    func testAMistypedAddressThatNeverLoadedStopsBeingSuggested() {
+        let file = storage(); defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let history = BrowsingHistory(storageURL: file)
+        let typo = URL(string: "https://remotedesktop.google.come/access")!, real = URL(string: "https://remotedesktop.google.com/access")!
+        history.recordTyped(typo); history.recordTyped(real); history.record(real, title: "Remote Access")
+        XCTAssertEqual(history.destination(for: "remotedesktop.google.come")?.site.host, "remotedesktop.google.come")
+        history.forgetFailedTyping(typo)
+        history.forgetFailedTyping(real)
+        XCTAssertNil(history.destination(for: "remotedesktop.google.come"), "The typo no longer fills in")
+        XCTAssertEqual(history.destination(for: "remotedesktop.google.com/a")?.page?.url, real.absoluteString,
+                       "A page that has loaded before stays through a failure, such as being offline")
+    }
     func testIndividualRemovalCanonicalizesAndPersistsWithoutRemovingOtherVisits() throws {
         let file = storage(); defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
         let history = BrowsingHistory(storageURL: file)

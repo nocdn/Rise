@@ -250,12 +250,11 @@ struct AddressSuggestion {
             let text = label(suggestion.title, size: AddressAppearance.textSize, weight: AddressAppearance.textWeight, color: AddressAppearance.textColor(theme))
             text.font = AddressAppearance.rowFont
             let truncating = NSMutableParagraphStyle(); truncating.lineBreakMode = .byTruncatingTail
-            text.attributedStringValue = NSAttributedString(string: suggestion.title, attributes: [.font: AddressAppearance.rowFont, .foregroundColor: AddressAppearance.textColor(theme),
+            text.attributedStringValue = NSAttributedString(string: Self.shownTitle(suggestion), attributes: [.font: AddressAppearance.rowFont, .foregroundColor: AddressAppearance.textColor(theme),
                                                                                                   .kern: AddressAppearance.rowKern, .paragraphStyle: truncating])
-            if suggestion.symbol == "globe", suggestion.fetchFavicon, !suggestion.subtitle.isEmpty,
-               suggestion.title != suggestion.subtitle {
+            if Self.showsAddress(suggestion) {
                 let address = AddressDisplay.text(suggestion.subtitle)
-                let title = NSMutableAttributedString(string: suggestion.title, attributes: [.font: AddressAppearance.rowFont, .foregroundColor: AddressAppearance.textColor(theme), .kern: AddressAppearance.rowKern])
+                let title = NSMutableAttributedString(string: Self.shownTitle(suggestion), attributes: [.font: AddressAppearance.rowFont, .foregroundColor: AddressAppearance.textColor(theme), .kern: AddressAppearance.rowKern])
                 title.append(NSAttributedString(string: " ", attributes: [.font: AddressAppearance.rowFont, .kern: AddressAppearance.tuning.addressGap]))
                 title.append(NSAttributedString(string: address, attributes: [.font: AddressAppearance.addressFont, .kern: AddressAppearance.rowKern, .foregroundColor: AddressAppearance.secondary(theme)]))
                 let paragraph = NSMutableParagraphStyle(); paragraph.lineBreakMode = .byTruncatingTail
@@ -271,6 +270,22 @@ struct AddressSuggestion {
             : headerHeight + AddressAppearance.tuning.rowsTop + count*AddressAppearance.rowHeight + max(0, count-1)*AddressAppearance.rowSpacing + AddressAppearance.inset
         updateSelection()
         applyPresentation()
+    }
+    /// A title that is an address, as a page without one has, reads as addresses do: without
+    /// `https://` and `www.` when those are hidden.
+    static func shownTitle(_ suggestion: AddressSuggestion) -> String {
+        suggestion.title.range(of: "^https?://", options: [.regularExpression, .caseInsensitive]) == nil
+            ? suggestion.title : AddressDisplay.text(suggestion.title)
+    }
+    /// A page's address beside its title, unless the title already says it.
+    static func showsAddress(_ suggestion: AddressSuggestion) -> Bool {
+        guard suggestion.symbol == "globe", suggestion.fetchFavicon, !suggestion.subtitle.isEmpty else { return false }
+        func bare(_ text: String) -> String {
+            var text = text.lowercased().replacingOccurrences(of: "^https?://(www\\.)?", with: "", options: .regularExpression)
+            while text.hasSuffix("/") { text.removeLast() }
+            return text
+        }
+        return bare(suggestion.title) != bare(suggestion.subtitle)
     }
     /// Kero's rows: a symbol or the site's icon, the title, and its address beside it, fainter.
     private func renderCentered() {
@@ -290,10 +305,10 @@ struct AddressSuggestion {
                 imageView.showEmptyPlaceholder(theme: theme)
             }
             button.addSubview(imageView)
-            let title = NSTextField(labelWithString: suggestion.title)
+            let title = NSTextField(labelWithString: Self.shownTitle(suggestion))
             title.font = style.titleFont; title.textColor = style.title(theme); title.lineBreakMode = .byTruncatingTail
             title.identifier = Self.titleID; button.addSubview(title)
-            if suggestion.symbol == "globe", suggestion.fetchFavicon, !suggestion.subtitle.isEmpty, suggestion.title != suggestion.subtitle {
+            if Self.showsAddress(suggestion) {
                 let address = NSTextField(labelWithString: AddressDisplay.text(suggestion.subtitle))
                 address.font = style.detailFont; address.textColor = style.detail(theme); address.lineBreakMode = .byTruncatingTail
                 address.identifier = Self.detailID; button.addSubview(address)
@@ -348,7 +363,7 @@ struct AddressSuggestion {
         if url.path.isEmpty || url.path == "/", url.query == nil, url.fragment == nil, address.hasSuffix("/") { address.removeLast() }
         return address
     }
-    private static let titleID = NSUserInterfaceItemIdentifier("title"), detailID = NSUserInterfaceItemIdentifier("detail")
+    static let titleID = NSUserInterfaceItemIdentifier("title"), detailID = NSUserInterfaceItemIdentifier("detail")
     /// Picks a row, or with -1 none, back to the typed text.
     func selectResult(_ index: Int) {
         guard isPresented, index == -1 || suggestions.indices.contains(index) else { return }
@@ -487,11 +502,13 @@ struct AddressSuggestion {
             button.subviews.first { $0 is NSImageView }?.frame = NSRect(x: style.rowPadding, y: (inner.height-rowIcon)/2, width: rowIcon, height: rowIcon)
             var x = style.rowPadding+rowIcon+style.gap
             let end = inner.width-style.rowPadding
+            // A title leaves room for the address beside it; alone, as a search's is, it takes the row.
+            let hasAddress = button.subviews.contains { ($0 as? NSTextField)?.identifier == Self.detailID }
             for case let text as NSTextField in button.subviews {
                 let size = text.intrinsicContentSize
                 // Measured from the text itself: a truncating label's own measure falls short.
                 let natural = ceil(text.attributedStringValue.size().width)+4
-                let width = text.identifier == Self.titleID ? min(natural, style.titleMaximumWidth, end-x) : end-x
+                let width = text.identifier == Self.titleID && hasAddress ? min(natural, style.titleMaximumWidth, end-x) : end-x
                 text.frame = NSRect(x: x, y: (inner.height-size.height)/2, width: max(0, width), height: size.height)
                 x += width+style.gap
             }
