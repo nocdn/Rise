@@ -32,6 +32,28 @@ final class LinkPullRequestCardsTests: XCTestCase {
         XCTAssertNil(browser.linkPullRequests.card.key, "A page change still closes it")
     }
 
+    /// Clicking the link closes its card at once, with its motion, not when the page starts loading.
+    @MainActor func testClickingTheLinkClosesItsCardAtOnce() throws {
+        let browser = browser(); defer { clean(browser) }
+        browser.addTab()
+        let page = try XCTUnwrap(browser.selectedTab?.page), web = page.view
+        let url = try XCTUnwrap(URL(string: "https://github.com/rise-tests/none/pull/1"))
+        let pr = try XCTUnwrap(PullRequest(url: url))
+        let frame = web.convert(web.bounds, to: browser.root), link = NSRect(x: frame.minX+80, y: frame.minY+400, width: 420, height: 20)
+        browser.showHoveredLink(url, in: web)
+        browser.presentLinkCard(.pullRequest(pr), title: "Fix the sidebar", link: link, in: web, page: page)
+        func press(at point: NSPoint) {
+            let window = try! XCTUnwrap(browser.window)
+            browser.linkCardPagePressed(NSEvent.mouseEvent(with: .leftMouseDown, location: browser.root.convert(point, to: nil), modifierFlags: [],
+                                                           timestamp: 0, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1)!)
+        }
+        let card = browser.linkPullRequests.card
+        press(at: NSPoint(x: card.frame.midX, y: card.frame.midY))
+        XCTAssertEqual(card.key, pr.key, "A press in the card leaves it")
+        press(at: NSPoint(x: link.midX, y: link.midY))
+        XCTAssertNil(card.key, "The link's press closes it")
+        XCTAssertNotNil(card.layer?.animation(forKey: "card.exit.opacity"), "with its way out")
+    }
     func testTheLinkNamesTheCardUntilTheDetailsArrive() {
         let pr = PullRequest(url: URL(string: "https://github.com/rise/app/pull/12"))!
         XCTAssertEqual(LinkPullRequestCards.title(fromLink: "Fix the sidebar\n#12 opened by someone", pr), "Fix the sidebar")

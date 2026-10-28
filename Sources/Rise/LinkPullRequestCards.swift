@@ -171,6 +171,16 @@ import AppKit
             return PullRequestTooltip.Content(title: "", reference: "", details: nil, summary: entry.summary, phase: entry.phase, inputTokens: entry.inputTokens)
         }
     }
+    /// A press on the page, outside the card: the card's link is being followed (or the page
+    /// clicked elsewhere), so the card goes now, with its motion, rather than when the page
+    /// starts to load, which a site like GitHub can take a second to do.
+    func linkCardPagePressed(_ event: NSEvent) {
+        let links = linkPullRequests
+        guard links.shown != nil || links.timer != nil || links.hovered != nil else { return }
+        let point = root.convert(event.locationInWindow, from: nil)
+        if links.shown != nil, links.card.frame.contains(point) { return }
+        hideLinkCard()
+    }
     /// The page went away, changed or lost its hover: no card, and none on the way.
     func hideLinkCard(fades: Bool = true) {
         let links = linkPullRequests

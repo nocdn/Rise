@@ -310,8 +310,15 @@ import RiseCore
         }
         window.smartRenameEvent = { [weak self] event in self?.handleSmartRenameKey(event) ?? false }
         window.extensionShortcutEvent = { [weak self] event in self?.runExtensionShortcut(event) ?? false }
-        window.pageMouseDown = { [weak self] event in self?.focusSplitPage(at: event) }
-        window.linkClickEvent = { [weak self] event in self?.takeLinkClick(event) ?? false }
+        window.pageMouseDown = { [weak self] event in
+            if event.type == .rightMouseDown { self?.linkCardPagePressed(event) }
+            self?.focusSplitPage(at: event)
+        }
+        // Any press, even one Rise takes for a Peek or a copy, closes a link's card first.
+        window.linkClickEvent = { [weak self] event in
+            if event.type == .leftMouseDown { self?.linkCardPagePressed(event) }
+            return self?.takeLinkClick(event) ?? false
+        }
         window.historyScrollEvent = { [weak self] event in self?.historySwipe.handle(event) ?? false }
         window.otherMouseEvent = { [weak self] event in self?.handleMiddleTabClick(event) ?? false }
         window.modifiersChanged = { [weak self] flags in self?.updateHoveredLinkModifiers(flags); self?.sidebarPeekModifiersChanged(flags) }

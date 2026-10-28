@@ -20,10 +20,23 @@ import AppKit
             """, arguments: ["url": icon.absoluteString], world: nil) as? String
         return encoded.flatMap { Data(base64Encoded: $0) }
     }
+    /// A tab arriving on a site whose icon is already known takes it at once: the icon is
+    /// fetched only once per site and handed to the tabs there then, and a site's own
+    /// /favicon.ico may be behind its sign-in, as Jira's is.
+    func adoptKnownFavicon(for web: WebPage, at pageURL: URL) {
+        guard let tab = (tabs + allPeekTabs).first(where: { $0.page === web }), let origin = SitePermissions.origin(pageURL) else { return }
+        var changed = false
+        if tab.favicon == nil || tab.iconOrigin != origin, let known = suggestionFavicons.image(for: pageURL, fetch: false) {
+            tab.iconTask?.cancel(); tab.iconTask = nil; tab.iconOrigin = origin; tab.favicon = known; changed = true
+        }
+        if tab.darkFavicon == nil, let dark = suggestionFavicons.cachedDarkImage(for: pageURL) { tab.darkFavicon = dark; changed = true }
+        if changed { update() }
+    }
     /// `again` is the second look, a moment after loading, for an app that adds its icon in
     /// JavaScript once it has started.
     func discoverPageFavicon(_ web: WebPage, again: Bool = false) {
         guard let pageURL = web.url else { return }
+        adoptKnownFavicon(for: web, at: pageURL)
         // Read the real page's declared icon, including icons hosted on a CDN.
         // Keep both appearances; an icon can use media links or SVG media rules.
         let script = """

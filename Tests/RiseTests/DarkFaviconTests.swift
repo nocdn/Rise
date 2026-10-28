@@ -83,6 +83,19 @@ final class DarkFaviconTests: XCTestCase {
         row.update(tab: tab, selected: true, theme: .dark, configuration: .forTab(tab, theme: .dark))
         XCTAssertTrue(row.icon.image === tab.favicon, "Sites with no variant keep their original favicon")
     }
+    @MainActor func testATabArrivingOnASiteWithAKnownIconTakesIt() throws {
+        _ = NSApplication.shared
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let browser = BrowserController(sessionURL: folder.appendingPathComponent("session.json"), restore: false)
+        defer { browser.saveWork?.cancel(); browser.tabs.forEach { $0.cancelLoad() }; try? FileManager.default.removeItem(at: folder) }
+        let board = try XCTUnwrap(URL(string: "https://jira.example/secure/RapidBoard.jspa"))
+        XCTAssertTrue(browser.suggestionFavicons.storePageIcon(Self.svg, for: URL(string: "https://jira.example/browse/UI-1")!))
+        // Arrived after the site's icon was fetched, its own /favicon.ico behind the sign-in.
+        let tab = browser.addTab(); tab.favicon = nil
+        browser.adoptKnownFavicon(for: tab.page, at: board)
+        XCTAssertNotNil(tab.favicon, "It takes the icon already known for its site")
+        XCTAssertEqual(tab.iconOrigin, SitePermissions.origin(board))
+    }
     @MainActor func testOneAdaptiveSVGDownloadProducesBothAppearancesWithoutOverwritingLight() async throws {
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [AdaptiveIconProtocol.self]
         let session = URLSession(configuration: configuration); defer { session.invalidateAndCancel() }
