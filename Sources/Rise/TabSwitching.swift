@@ -55,7 +55,8 @@ import AppKit
     }
     func advanceTabSwitch(_ direction: Int) {
         guard tabs.count > 1 else { return }
-        if !isSwitchingTabs {
+        let starting = !isSwitchingTabs
+        if starting {
             hidePalette(); hideLinkStatus()
             tabSwitchOrder = switcherTabIDs
             tabSwitchIndex = 0
@@ -69,10 +70,15 @@ import AppKit
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.tabSwitcherDelay, execute: work)
         }
         tabSwitchIndex = (tabSwitchIndex + direction + tabSwitchOrder.count) % tabSwitchOrder.count
-        refreshTabSwitcher()
+        // Pressed again before it shows, the switcher is wanted: it shows at once.
+        if !starting, let work = tabSwitchWork {
+            work.cancel(); revealTabSwitcher()
+        } else {
+            refreshTabSwitcher()
+        }
     }
     /// How long Control-Tab waits before showing the switcher: a quick press and release switches
-    /// without it.
+    /// without it, and a second Tab shows it at once.
     static let tabSwitcherDelay: TimeInterval = 0.08
     /// The pointer moving over a card picks it, as Tab does; letting go of Control switches to it.
     func pickTabSwitchCard(_ id: UUID) {

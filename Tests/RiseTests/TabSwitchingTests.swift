@@ -41,6 +41,11 @@ final class TabSwitchingTests: XCTestCase {
         releaseControl(browser)
         XCTAssertEqual(browser.selectedID, first.id)
         XCTAssertEqual(browser.tabs.map(\.id), [third.id, second.id, first.id])
+        // A second Tab before it shows asks for the switcher, which shows at once.
+        XCTAssertTrue(browser.window!.performKeyEquivalent(with: key(browser)))
+        XCTAssertTrue(browser.tabSwitcher.isHidden)
+        XCTAssertTrue(browser.window!.performKeyEquivalent(with: key(browser)))
+        XCTAssertFalse(browser.tabSwitcher.isHidden, "Pressed twice, it shows without waiting")
     }
     @MainActor func testHeldControlShowsCardsAndShiftCyclesFrozenOrderBeforeCommit() async throws {
         let browser = makeBrowser(); defer { clean(browser) }

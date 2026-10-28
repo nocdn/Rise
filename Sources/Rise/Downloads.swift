@@ -16,6 +16,8 @@ private final class DownloadsListView: NSView {
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseMoved, .activeAlways, .inVisibleRect], owner: self))
     }
     override func mouseMoved(with event: NSEvent) { moved?() }
+    var modifiers: ((NSEvent.ModifierFlags) -> Void)?
+    override func flagsChanged(with event: NSEvent) { modifiers?(event.modifierFlags); super.flagsChanged(with: event) }
 }
 
 /// The archive popover: just the list of downloads. One row at a time is highlighted,
@@ -28,6 +30,10 @@ private final class DownloadsListView: NSView {
     private(set) var rows: [DownloadRow] = []
     private(set) var highlightedID: UUID? { didSet { applyHighlight() } }
     private(set) var usesKeyboard = false
+    /// The popover it's shown in, whose size follows its rows.
+    weak var popover: NSPopover?
+    /// Shift turns finished rows' X into a bin that deletes the file.
+    private var shiftHeld = false { didSet { if shiftHeld != oldValue { rows.forEach { $0.deletesFromDisk = shiftHeld } } } }
     /// Where the pointer was when the keyboard took over, so only a real move hands back.
     private var keyboardPointer = NSPoint.zero
     var open: ((URL) -> Void)?, preview: ((URL) -> Void)?, dismiss: (() -> Void)?
@@ -39,6 +45,11 @@ private final class DownloadsListView: NSView {
     init(list: DownloadList) { self.list = list; super.init(nibName: nil, bundle: nil) }
     required init?(coder: NSCoder) { fatalError() }
     func popoverDidClose(_ notification: Notification) {
+        if let closed = notification.object as? NSPopover, closed === errorPopover {
+            errorPopover = nil
+            rows.forEach { $0.holdsControls = false; $0.deletesFromDisk = shiftHeld }
+            return
+        }
         let completion = afterClose
         afterClose = nil
         completion?()
@@ -47,6 +58,7 @@ private final class DownloadsListView: NSView {
         listView.frame = NSRect(x: 0, y: 0, width: Self.width, height: DownloadRow.height+2*Self.inset)
         listView.key = { [weak self] in self?.handle($0) ?? false }
         listView.moved = { [weak self] in self?.pointerMoved(to: NSEvent.mouseLocation) }
+        listView.modifiers = { [weak self] in self?.shiftHeld = $0.contains(.shift) }
         view = listView
         scroll.drawsBackground = false; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
         scroll.scrollerStyle = .overlay; scroll.documentView = stack
@@ -56,6 +68,7 @@ private final class DownloadsListView: NSView {
     override func viewDidAppear() {
         super.viewDidAppear()
         view.window?.makeKey(); view.window?.makeFirstResponder(listView)
+        shiftHeld = NSEvent.modifierFlags.contains(.shift)
         // Only now is the popover in place, so only now can a row be under the pointer.
         if usesKeyboard { reveal() } else { highlightRowUnderPointer() }
     }
@@ -90,12 +103,9 @@ private final class DownloadsListView: NSView {
                 if FileManager.default.fileExists(atPath: url.path) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                 else { NSWorkspace.shared.open(url.deletingLastPathComponent()) }
             }
-            row.deleteFromDisk = { [weak self] id in
-                guard let self else { return }
-                do { try self.list.deleteFromDisk(id); self.reload() }
-                catch { NSAlert(error: error).runModal() }
-            }
+            row.deleteFromDisk = { [weak self] in self?.remove($0, fromDisk: true) }
             row.pointer = { [weak self] in self?.pointer($0, $1) }
+            row.deletesFromDisk = shiftHeld
             return row
         }
         rows.forEach(stack.addSubview)
@@ -111,7 +121,15 @@ private final class DownloadsListView: NSView {
         // Padding sits outside the scrolling viewport so exactly five rows fit,
         // without a sliver of a sixth showing through the bottom inset.
         scroll.frame = NSRect(x: 0, y: inset, width: Self.width, height: height)
-        preferredContentSize = NSSize(width: Self.width, height: height+2*inset)
+        let size = NSSize(width: Self.width, height: height+2*inset)
+        if let popover, popover.isShown, popover.contentSize != size, NSEvent.modifierFlags.contains(.shift) {
+            // AppKit plays a popover's resize in slow motion while Shift is down, a debugging aid
+            // that left a ghost of the taller popover behind the bin, which is pressed with Shift.
+            // Then the new size applies at once.
+            let animates = popover.animates
+            popover.animates = false; popover.contentSize = size; popover.animates = animates
+        }
+        preferredContentSize = size
         if !rows.contains(where: { $0.item.record.id == highlightedID }) { highlightedID = nil }
         applyHighlight()
         if rows.isEmpty {
@@ -145,11 +163,70 @@ private final class DownloadsListView: NSView {
         guard clip.bounds.contains(clip.convert(point, from: nil)) else { highlightedID = nil; return }
         highlightedID = rows.first { $0.frame.contains(stack.convert(point, from: nil)) }?.item.record.id
     }
-    private func remove(_ id: UUID) {
+    /// The row goes at once, deleting its file from disk too behind it when asked.
+    private func remove(_ id: UUID, fromDisk: Bool = false) {
         let index = rows.firstIndex { $0.item.record.id == id }
-        list.remove(id)
+        if fromDisk { list.deleteFromDisk(id) { [weak self] error in if let error { self?.showDeleteError(error, for: id) } } }
+        else { list.remove(id) }
         if usesKeyboard, let index, !rows.isEmpty { highlightedID = rows[min(index, rows.count-1)].item.record.id; reveal() }
         else if !usesKeyboard { highlightRowUnderPointer() }
+    }
+    /// The popover out of a download's bin when its file couldn't go to the Bin, whose row is back.
+    private(set) var errorPopover: NSPopover?
+    private func showDeleteError(_ error: Error, for id: UUID) {
+        guard view.window?.isVisible == true, let row = rows.first(where: { $0.item.record.id == id }) else { return }
+        errorPopover?.close()
+        highlightedID = id; row.holdsControls = true; row.deletesFromDisk = true
+        // The list has grown back for the row: the popover takes its size now, so the message
+        // comes out of the bin where it ends up, not where it was.
+        if let popover, popover.contentSize != preferredContentSize {
+            let animates = popover.animates
+            popover.animates = false; popover.contentSize = preferredContentSize; popover.animates = animates
+        }
+        stack.scrollToVisible(row.frame); view.layoutSubtreeIfNeeded()
+        DispatchQueue.main.async { [weak self, weak row] in
+            guard let self, let row, row.superview != nil, self.view.window?.isVisible == true else { return }
+            self.presentDeleteError(error, from: row)
+        }
+    }
+    private func presentDeleteError(_ error: Error, from row: DownloadRow) {
+        let label = NSTextField(wrappingLabelWithString: Self.deleteFailure(error))
+        label.font = .systemFont(ofSize: NSFont.systemFontSize); label.textColor = Self.errorRed
+        label.preferredMaxLayoutWidth = 240
+        let size = label.sizeThatFits(NSSize(width: 240, height: 200))
+        let content = NSView(frame: NSRect(x: 0, y: 0, width: ceil(size.width)+24, height: ceil(size.height)+16))
+        label.frame = NSRect(x: 12, y: 8, width: ceil(size.width), height: ceil(size.height)); content.addSubview(label)
+        let controller = NSViewController(); controller.view = content
+        let popover = NSPopover()
+        popover.behavior = .transient; popover.delegate = self
+        popover.contentViewController = controller; popover.contentSize = content.frame.size
+        popover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        errorPopover = popover
+        let button = row.removeButton!
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: button.isFlipped ? .maxY : .minY)
+        DispatchQueue.main.asyncAfter(deadline: .now()+Self.errorDuration) { [weak popover] in popover?.close() }
+    }
+    static let errorDuration: TimeInterval = 6
+    /// The system's red in Light; in Dark, a lighter coral that reads clearly on the dark popover.
+    static let errorRed = NSColor(name: "RiseDownloadError") { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? NSColor(srgbRed: 1, green: 0.50, blue: 0.47, alpha: 1) : .systemRed
+    }
+    /// What went wrong, in a line: why the file couldn't go to the Bin.
+    static func deleteFailure(_ error: Error) -> String {
+        let error = error as NSError, underlying = error.userInfo[NSUnderlyingErrorKey] as? NSError
+        let posix = underlying?.domain == NSPOSIXErrorDomain ? underlying?.code : error.domain == NSPOSIXErrorDomain ? error.code : nil
+        let reason: String
+        if [NSFileWriteNoPermissionError, NSFileReadNoPermissionError].contains(error.code) && error.domain == NSCocoaErrorDomain
+            || posix == Int(EACCES) || posix == Int(EPERM) {
+            reason = "Rise isn’t allowed to move it."
+        } else if error.domain == NSCocoaErrorDomain && error.code == NSFileWriteVolumeReadOnlyError || posix == Int(EROFS) {
+            reason = "Its disk is read-only."
+        } else if error.domain == NSCocoaErrorDomain && [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(error.code) {
+            reason = "It’s no longer there."
+        } else {
+            reason = error.localizedFailureReason ?? error.localizedDescription
+        }
+        return "Couldn’t move it to the Bin. "+reason
     }
     private func move(by step: Int) {
         guard !rows.isEmpty else { return }
@@ -196,7 +273,7 @@ private final class DownloadsListView: NSView {
         controller.preview = { [weak self] url in self?.quickLook(url) }
         controller.dismiss = { [weak self] in self?.downloadsPopover.performClose(nil) }
         reloadDownloadsList = { [weak controller] in controller?.reload() }
-        downloadsPopover.contentViewController = controller
+        downloadsPopover.contentViewController = controller; controller.popover = downloadsPopover
         downloadsPopover.delegate = controller
         if let id { controller.focus(id) }
         let button = sidebar.archiveButton

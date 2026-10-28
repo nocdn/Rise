@@ -201,6 +201,19 @@ final class PinnedTabsTests: XCTestCase {
             XCTAssertEqual(browser.sidebar.newTab.frame.minY, newTab, "What's below stays put")
         }
     }
+    @MainActor func testTilesKeepUpWithTheSidebarWideningForControlCommand() async throws {
+        let browser = browser(); defer { browser.endSidebarPeek(); clean(browser) }
+        let tabs = (0..<3).map { _ in browser.addTab() }
+        tabs.forEach { browser.pinTab($0.id) }; browser.root.layoutSubtreeIfNeeded()
+        let grid = browser.sidebar.pinnedView
+        func lag() -> CGFloat { grid.bounds.width-PinnedLayout.sideInset-(tabs.compactMap { grid.tiles[$0.id]?.frame.maxX }.max() ?? 0) }
+        browser.beginSidebarPeek()
+        var worst: CGFloat = 0
+        let start = Date()
+        while Date().timeIntervalSince(start) < 0.4 { worst = max(worst, abs(lag())); try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertGreaterThan(browser.sidebar.bounds.width, SidebarWidth.ideal+20, "The sidebar widened")
+        XCTAssertLessThan(worst, 2, "The tiles follow its width, rather than springing after it")
+    }
     @MainActor func testTilesSettleInTheirSlotsAfterReordering() async throws {
         let browser = browser(); defer { clean(browser) }
         let tabs = (0..<5).map { _ in browser.addTab() }

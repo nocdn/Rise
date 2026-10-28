@@ -97,7 +97,9 @@ enum SidebarWidth {
     }
     private func layoutSidebarPeek() {
         CATransaction.begin(); CATransaction.setDisableActions(true)
+        sidebar.followsWidth = true
         layoutChrome(); root.layoutSubtreeIfNeeded()
+        sidebar.followsWidth = false
         CATransaction.commit()
     }
 }

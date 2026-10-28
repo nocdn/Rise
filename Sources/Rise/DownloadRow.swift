@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 /// One download: the file's thumbnail or icon beside its name, with its size (or progress) below.
 /// Clicking a finished download opens it in its default app. While highlighted (by the
 /// pointer or the arrow keys), an eye previews it in Quick Look, for files Quick Look can
-/// show, and an X clears it from the list.
+/// show, and an X clears it from the list; with Shift held, a bin deletes its file instead.
 final class DownloadRow: NSView {
     enum Pointer { case entered, exited, pressed }
     let item: DownloadList.Item
@@ -24,6 +24,12 @@ final class DownloadRow: NSView {
     var togglePause: ((UUID) -> Void)?, cancel: ((UUID) -> Void)?
     var reveal: ((URL) -> Void)?, deleteFromDisk: ((UUID) -> Void)?
     var pointer: ((DownloadRow, Pointer) -> Void)?
+    /// Shift is held: a finished download's X is a bin, which deletes its file.
+    var deletesFromDisk = false { didSet { if deletesFromDisk != oldValue { updateRemoveButton() } } }
+    /// Its controls stay out, as while highlighted, for a message coming out of one.
+    var holdsControls = false { didSet { if holdsControls != oldValue { restyle() } } }
+    private var removeGlyph: NSImage?
+    private lazy var binGlyph = TablerIcon.image(TablerIcon.bin, size: 20, strokeWidth: 1.5, description: "Delete from disk")
     static let height: CGFloat = 44, buttonSize: CGFloat = 28
 
     init(item: DownloadList.Item) {
@@ -34,6 +40,11 @@ final class DownloadRow: NSView {
         pauseButton.pointSize = 13; pauseButton.weight = .regular
         pauseButton.action = { [weak self] in self?.performPause() }
         removeButton = ChromeButton(symbol: "xmark", size: 15, title: "Remove from List") { [weak self] in self?.performRemove() }
+        // Drawn rather than SF Symbols' xmark, whose image pads it unevenly: as big as a 14.5 pt
+        // medium xmark, round-ended, and exactly in the middle.
+        removeButton.image = TablerIcon.image(TablerIcon.cross, size: 18, strokeWidth: 1.75, description: "Remove from List")
+        removeGlyph = removeButton.image
+        previewButton.setHoverHint("Quick Look")
         for button in [previewButton!, removeButton!, pauseButton] as [NSView] { button.layer?.cornerRadius = 7; button.layer?.cornerCurve = .continuous }
         icon.imageScaling = .scaleProportionallyUpOrDown
         title.font = .systemFont(ofSize: 13); title.textColor = .labelColor; title.lineBreakMode = .byTruncatingMiddle
@@ -57,7 +68,14 @@ final class DownloadRow: NSView {
         return previewable.contains { type.conforms(to: $0) } || documents.contains { UTType($0).map(type.conforms) ?? false }
     }
     func performPreview() { if canPreview { preview?(item.record.url) } }
-    func performRemove() { if isFinished { remove?(item.record.id) } else { cancel?(item.record.id) } }
+    func performRemove() {
+        if !isFinished { cancel?(item.record.id) } else if deletesFromDisk { performDeleteFromDisk() } else { remove?(item.record.id) }
+    }
+    private func updateRemoveButton() {
+        let deletes = deletesFromDisk && isFinished
+        if removeButton.image !== (deletes ? binGlyph : removeGlyph) { removeButton.image = deletes ? binGlyph : removeGlyph }
+        removeButton.setHoverHint(deletes ? "Delete from disk" : isFinished ? "Remove from List" : "Cancel Download")
+    }
     func performDeleteFromDisk() { if isFinished { deleteFromDisk?(item.record.id) } }
     func performPause() { if item.canTogglePause { togglePause?(item.record.id) } }
     func performOpen() { if isFinished { open?(item.record.url) } }
@@ -84,8 +102,7 @@ final class DownloadRow: NSView {
         pauseButton.toolTip = item.showsResume ? "Resume Download" : "Pause Download"
         pauseButton.setAccessibilityLabel(pauseButton.toolTip)
         pauseButton.isEnabled = item.canTogglePause
-        let removeTitle = isFinished ? "Remove from List" : "Cancel Download"
-        removeButton.toolTip = removeTitle; removeButton.setAccessibilityLabel(removeTitle)
+        updateRemoveButton()
         removeButton.isEnabled = item.state != .cancelling
         setAccessibilityLabel("\(title.stringValue), \(detail.stringValue)")
         var actions: [NSAccessibilityCustomAction] = []
@@ -155,7 +172,7 @@ final class DownloadRow: NSView {
         }
         pauseButton.color = .secondaryLabelColor
         pauseButton.hoverColor = buttonHover.flatMap(NSColor.init(cgColor:))
-        let showsControls = isHighlighted || (!isFinished && item.showsResume)
+        let showsControls = isHighlighted || holdsControls || (!isFinished && item.showsResume)
         removeButton.isHidden = !showsControls
         previewButton.isHidden = !isFinished || removeButton.isHidden || !canPreview
         pauseButton.isHidden = isFinished || !showsControls

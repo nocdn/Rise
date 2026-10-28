@@ -102,13 +102,24 @@ struct DownloadRecord: Codable, Equatable {
         guard let item = items.first(where: { $0.record.id == id }), item.isFinished else { return }
         items.removeAll { $0.record.id == id }; save(); changed()
     }
-    @discardableResult func deleteFromDisk(_ id: UUID) throws -> URL? {
-        guard let item = items.first(where: { $0.record.id == id }), item.isFinished else { return nil }
-        var trashed: NSURL?
-        if FileManager.default.fileExists(atPath: item.record.path) {
-            try FileManager.default.trashItem(at: item.record.url, resultingItemURL: &trashed)
+    /// Takes the entry off the list at once, as `remove` does, and moves its file to the Trash
+    /// behind it; if that fails, the entry comes back where it was and `completion` has the error.
+    func deleteFromDisk(_ id: UUID, completion: ((Error?) -> Void)? = nil) {
+        guard let index = items.firstIndex(where: { $0.record.id == id }), items[index].isFinished else { return }
+        let item = items[index], url = item.record.url
+        items.remove(at: index); save(); changed()
+        Task { [weak self] in
+            let failure = await Self.trash(url)
+            if let failure, let self, !self.items.contains(where: { $0.record.id == id }) {
+                self.items.insert(item, at: min(index, self.items.count)); self.save(); self.changed()
+            }
+            completion?(failure)
         }
-        remove(id); return trashed as URL?
+    }
+    /// Off the main thread, where moving a file to the Trash can take a moment.
+    private nonisolated static func trash(_ url: URL) async -> Error? {
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        do { try FileManager.default.trashItem(at: url, resultingItemURL: nil); return nil } catch { return error }
     }
     func fail(_ id: UUID) {
         transfers[id] = nil; items.removeAll { $0.record.id == id }; changed()
