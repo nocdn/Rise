@@ -166,7 +166,11 @@ enum RisePages {
                 self.dialog = nil
                 completion(accepted, text)
             }
-            guard let onDialog else { finish(false, nil); return }
+            // A page no one sees, such as a card's companion, can't be asked to stay: it would
+            // keep Rise from quitting, as Chrome waits for every page to agree to leave.
+            guard let onDialog else {
+                finish(kind == .leave || kind == .reload, nil); return
+            }
             let sheet = onDialog(PageDialog(kind: kind, message: message, defaultText: defaultText), finish)
             if dialog?.token == token { dialog?.sheet = sheet }
         }

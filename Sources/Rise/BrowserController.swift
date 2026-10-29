@@ -29,6 +29,10 @@ import RiseCore
     lazy var developerMotion = DeveloperModeMotion { [weak self] in self?.layoutChrome() }
     let siteInfoPopover = NSPopover()
     let siteControlsPopover = NSPopover()
+    /// The page bar the site controls opened from, kept looking hovered while they show.
+    weak var siteControlsBar: PlainNavBar?
+    /// A reload switching a setting in the site controls asked for, which leaves them open.
+    var siteControlsReload: (tab: UUID, url: URL, until: Date)?
     /// The sidebar zoom button's: smaller, larger and back to 100%.
     let zoomPopover = NSPopover()
     /// The camera button's JPEG and PDF.
@@ -136,6 +140,7 @@ import RiseCore
     lazy var calendarAgenda: CalendarAgenda = {
         let agenda = CalendarAgenda()
         agenda.onChange = { [weak self] in self?.calendarAgendaChanged() }
+        agenda.onAnswerFailed = { [weak self] event, _ in self?.calendarAnswerFailed(event) }
         return agenda
     }()
     lazy var gmailInbox: GmailInbox = {
@@ -453,7 +458,7 @@ import RiseCore
         developerAddress.onCancel = { [weak self] in self?.window?.makeFirstResponder(self?.selectedTab?.page.view) }
         siteInfoPopover.behavior = .transient
         downloadsPopover.behavior = .transient
-        siteControlsPopover.behavior = .transient
+        siteControlsPopover.behavior = .transient; siteControlsPopover.delegate = self
         let devActions: [(String, String, () -> Void)] = [
             ("link", "Copy URL", { [weak self] in self?.copyURL() }),
             ("camera", "Capture whole page", { [weak self] in if let self { self.showCaptureChoices(from: self.devButtons[1]) } }),

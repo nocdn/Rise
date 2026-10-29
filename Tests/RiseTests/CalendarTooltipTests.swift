@@ -111,6 +111,112 @@ final class CalendarTooltipTests: XCTestCase {
         XCTAssertNil(CalendarSchedule.badge([event("a", time(18, 0), time(19, 0), allDay: true)], now: now))
     }
 
+    func testAnswersComeFromTheChipAndADeclinedOrHiddenEventDoesNotCountDown() {
+        func answer(invited: Bool? = true, fill: String = "rgb(3, 155, 229)", declined: Bool = false, striped: Bool = false) -> CalendarAnswer? {
+            var chip = chip("a", top: 0, height: 60); chip.fill = fill; chip.declined = declined; chip.striped = striped; chip.invited = invited
+            return CalendarSchedule.answer(chip)
+        }
+        XCTAssertEqual(answer(), .yes)
+        XCTAssertNil(answer(fill: "rgb(255, 255, 255)"), "White inside its border: not answered yet")
+        XCTAssertEqual(answer(fill: "rgb(255, 255, 255)", declined: true), .no)
+        XCTAssertEqual(answer(striped: true), .maybe)
+        XCTAssertNil(answer(invited: false), "Your own event has no invitation to answer")
+        XCTAssertEqual(answer(invited: nil, striped: true), .maybe, "Stripes are an answer before its details are read")
+        XCTAssertNil(answer(invited: nil), "Filled could be your own event")
+
+        // A meeting of a repeating series, and one that doesn't repeat, as Calendar's chips name them.
+        let id = { (event: String) in Data("\(event) me@example.com".utf8).base64EncodedString().replacingOccurrences(of: "=", with: "") }
+        let now = time(29, 16)
+        let beer = CalendarEvent(id: id("3t6j83_20261030T001500Z"), title: "Beer", start: time(29, 16, 15), end: time(29, 17), allDay: false)
+        let nextBeer = CalendarEvent(id: id("3t6j83_20261106T001500Z"), title: "Beer", start: time(29, 16, 30), end: time(29, 17), allDay: false)
+        let demo = CalendarEvent(id: id("pdp1gn"), title: "Demo", start: time(29, 16, 40), end: time(29, 17), allDay: false)
+        XCTAssertEqual(beer.series, "3t6j83 me@example.com"); XCTAssertNil(demo.series)
+        var declined = beer; declined.answer = .no
+        XCTAssertEqual(CalendarSchedule.badge([declined, demo], now: now), "in 40m", "A declined event has nothing to count down to")
+
+        var hiding = CalendarCountdownHiding()
+        let counted = { [beer, nextBeer, demo].filter { hiding.scope(of: $0) == nil }.map(\.start) }
+        hiding.set(.event, for: beer, now: now)
+        XCTAssertEqual(counted(), [nextBeer.start, demo.start], "This event: only that meeting")
+        hiding.set(.series, for: beer, now: now)
+        XCTAssertEqual(hiding.scope(of: nextBeer), .series); XCTAssertEqual(counted(), [demo.start], "All events: every meeting of the series")
+        hiding.set(.series, for: demo, now: now)
+        XCTAssertEqual(hiding.scope(of: demo), .event, "One that doesn't repeat is hidden on its own")
+        hiding.set(nil, for: nextBeer, now: now)
+        XCTAssertEqual(counted(), [beer.start, nextBeer.start], "Showing it again clears the series")
+        hiding.set(.event, for: beer, now: now)
+        hiding.set(nil, for: demo, now: time(29, 16).addingTimeInterval(8*24*3600))
+        XCTAssertTrue(hiding.entries.isEmpty, "A hidden meeting is forgotten a week after it ends")
+    }
+
+    @MainActor func testTheMenuAnswersAndHides() {
+        var answered: CalendarAnswer?, hidden: [CalendarCountdownHiding.Scope?] = []
+        func menu(answer: CalendarAnswer? = nil, canAnswer: Bool = true, hiding: CalendarCountdownHiding.Scope? = nil, repeats: Bool = true) -> NSMenu {
+            CalendarEventMenu.make(answer: answer, canAnswer: canAnswer, hiding: hiding, repeats: repeats, countsDown: true,
+                                   onAnswer: { answered = $0 }, onHide: { hidden.append($0) })
+        }
+        func choose(_ item: NSMenuItem?) { _ = (item?.target as? NSObject)?.perform(item?.action) }
+        let shown = menu(answer: .maybe)
+        XCTAssertEqual(shown.items.map(\.title), ["Respond", "Hide from tab tooltip"])
+        let respond = shown.items[0].submenu!
+        XCTAssertEqual(respond.items.map(\.title), ["Yes", "No", "Maybe"]); XCTAssertEqual(respond.items[2].state, .on)
+        choose(respond.items[0]); XCTAssertEqual(answered, .yes)
+        XCTAssertFalse(menu(canAnswer: false).items[0].isEnabled, "Nothing to answer without an invitation")
+        choose(shown.items[1]); XCTAssertEqual(hidden.last, .event)
+
+        let hiding = menu(hiding: .series)
+        XCTAssertEqual(hiding.items.map(\.title), ["Respond", "Hide from tab tooltip", "Hiding from tooltip"])
+        XCTAssertEqual(hiding.items[1].state, .on)
+        let scopes = hiding.items[2].submenu!
+        XCTAssertEqual(scopes.items.map(\.title), ["This event", "All events"]); XCTAssertEqual(scopes.items[1].state, .on)
+        choose(scopes.items[0]); XCTAssertEqual(hidden.last, .event)
+        choose(hiding.items[1]); XCTAssertEqual(hidden.last, .some(nil), "Unchecking shows it again")
+        XCTAssertFalse(menu(hiding: .event, repeats: false).items[2].submenu!.items[1].isEnabled, "Only a repeating event has others")
+    }
+
+    @MainActor func testAnAnswerShowsAtOnceAndOneCalendarDoesNotTakeIsUndone() async throws {
+        let agenda = CalendarAgenda()
+        defer { agenda.tearDown() }
+        var loads = 0, failNext = true, failed: CalendarEvent?
+        agenda.load = { _ in
+            loads += 1
+            var chip = CalendarDay.Chip(id: "a", title: "Beer", label: "", allDay: false, top: 600, height: 58)
+            chip.invited = true; chip.fill = "rgb(255, 255, 255)"
+            return [CalendarDay(key: CalendarDay.key(Calendar.current.dateComponents([.year, .month, .day], from: Date())), height: 1440, chips: [chip])]
+        }
+        agenda.answerer = { _, _, _ in
+            try await Task.sleep(for: .milliseconds(50))
+            if failNext { failNext = false; throw CalendarPageReader.AnswerFailure.unconfirmed }
+        }
+        agenda.onAnswerFailed = { event, _ in failed = event }
+        agenda.show(CalendarAccount(url: URL(string: "https://calendar.google.com/calendar/u/0/r"))!)
+        func wait(_ done: () -> Bool) async throws {
+            let deadline = Date().addingTimeInterval(5)
+            while !done(), Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        }
+        try await wait { agenda.hasLoaded }
+        XCTAssertNil(agenda.events[0].answer)
+        agenda.respond(.no, to: agenda.events[0])
+        XCTAssertEqual(agenda.events[0].answer, .no, "Shown at once")
+        try await wait { failed != nil }
+        XCTAssertNil(agenda.events[0].answer, "Calendar didn't take it: the earlier answer is back")
+        try await wait { !agenda.isLoading }
+        agenda.respond(.yes, to: agenda.events[0])
+        let before = loads
+        try await wait { loads > before }
+        XCTAssertGreaterThan(loads, before, "Once taken, the events are read again from Calendar")
+    }
+
+    @MainActor func testTheLoadingShimmerSitsOverItsCentredText() {
+        let message = NSTextField(labelWithString: "Loading events"), shimmer = InputShimmer()
+        message.font = .systemFont(ofSize: 12); message.alignment = .center
+        message.frame = NSRect(x: 0, y: 0, width: 216, height: 16)
+        shimmer.configureForSmartRename(field: message); shimmer.frame = message.bounds
+        let width = message.attributedStringValue.size().width
+        let origin = shimmer.baseline(of: message, font: message.font!, width: width)
+        XCTAssertEqual(origin.x+width/2, message.bounds.midX, accuracy: 1, "Centred over the text, not drawn from the left")
+    }
+
     func testOverlappingEventsShareTheWidth() {
         let placed = CalendarSchedule.columns([
             event("a", time(18, 12), time(18, 13)), event("b", time(18, 12, 30), time(18, 13, 45)),

@@ -77,6 +77,8 @@ class ChromeButton: NSButton {
     private(set) var hoverHint: ButtonHoverHint?
     var baseColor = NSColor.clear
     var hover = false
+    /// Lit as if hovered, as while the popover it opened shows, without its hint.
+    var holdsHover = false { didSet { if holdsHover != oldValue { refreshHoverState() } } }
     var hoverColor = NSColor.black.withAlphaComponent(0.05) {
         didSet { if hover { layer?.backgroundColor = hoverColor.cgColor } }
     }
@@ -114,8 +116,8 @@ class ChromeButton: NSButton {
             let point = point ?? window.mouseLocationOutsideOfEventStream
             hover = hoverRect.contains(convert(point, from: nil)) && isFrontmost(at: point)
         } else { hover = false }
-        hoverHint?.setHovered(hover)
-        let color = (hover ? hoverColor : baseColor).cgColor
+        hoverHint?.setHovered(hover && !holdsHover)
+        let color = (hover || holdsHover ? hoverColor : baseColor).cgColor
         guard layer?.backgroundColor != color else { return }
         CATransaction.begin(); CATransaction.setDisableActions(true)
         layer?.backgroundColor = color

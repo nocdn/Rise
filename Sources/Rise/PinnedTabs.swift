@@ -324,6 +324,8 @@ enum PinnedLayout {
         // Chosen, a border in the favicon's colour; at rest, a faint one in it.
         layer?.borderWidth = (selected ? PinnedLayout.border : PinnedLayout.restingBorder)*(1-r)
         layer?.borderColor = (selected ? borderColor : PinnedLayout.edge(accent, theme: theme)).cgColor
+        // The countdown's pill in the tile's own colour, as deep as a chosen tile's wash.
+        badge.setFill(PinnedLayout.tint(accent, theme: theme, selected: true, hovered: false))
         CATransaction.commit()
     }
     /// Everything inside follows the tile's frame each step, from the centre of a tile to a

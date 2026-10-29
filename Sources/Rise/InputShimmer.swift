@@ -160,7 +160,7 @@ import CoreText
               let context = NSGraphicsContext.current?.cgContext else { return }
         let attributes: [NSAttributedString.Key: Any] = [.font: font, NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true]
         let line = CTLineCreateWithAttributedString(NSAttributedString(string: field.stringValue, attributes: attributes))
-        let origin = baseline(of: field, font: font)
+        let origin = baseline(of: field, font: font, width: CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)))
         // A long question runs past the field; only its visible part shimmers, so the band
         // never draws over the badge beside the field.
         let visible = convert(field.cell?.titleRect(forBounds: field.bounds) ?? field.bounds, from: field)
@@ -191,7 +191,8 @@ import CoreText
         context.restoreGState()
     }
     /// Where the field editor puts the first glyph's baseline, following its horizontal scroll.
-    private func baseline(of field: NSTextField, font: NSFont) -> CGPoint {
+    /// `width` is the text's, which a centred or right-aligned field moves in from the left.
+    func baseline(of field: NSTextField, font: NSFont, width: CGFloat) -> CGPoint {
         if let editor = field.currentEditor() as? NSTextView, let manager = editor.layoutManager, manager.numberOfGlyphs > 0 {
             let fragment = manager.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil), glyph = manager.location(forGlyphAt: 0)
             let point = NSPoint(x: editor.textContainerOrigin.x+fragment.minX+glyph.x, y: editor.textContainerOrigin.y+fragment.minY+glyph.y)
@@ -200,6 +201,13 @@ import CoreText
         // Unfocused (as after sending), the cell draws the text where the editor would: its line's
         // baseline offset below the title rect's top, past the 2 pt line fragment padding.
         let title = convert(field.cell?.titleRect(forBounds: field.bounds) ?? field.bounds, from: field)
-        return CGPoint(x: title.minX+2, y: title.minY+NSLayoutManager().defaultBaselineOffset(for: font))
+        let room = title.width-4, rightToLeft = field.userInterfaceLayoutDirection == .rightToLeft
+        let inset: CGFloat = switch field.alignment {
+        case .center: max(0, (room-width)/2)
+        case .right: max(0, room-width)
+        case .natural where rightToLeft: max(0, room-width)
+        default: 0
+        }
+        return CGPoint(x: title.minX+2+inset, y: title.minY+NSLayoutManager().defaultBaselineOffset(for: font))
     }
 }

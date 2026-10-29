@@ -97,9 +97,97 @@ final class SiteSettingRow: NSButton {
     }
 }
 
+/// A setting in the site controls' list, as System Settings lists them: its icon, its name over
+/// a few words on what it does, and a native switch, or for a permission its value, which opens
+/// a menu. The whole row takes a
+/// click, as its switch does.
+final class SiteOptionRow: NSButton {
+    enum Accessory { case toggle(Bool), value(String) }
+    static let height: CGFloat = 40, iconSize: CGFloat = 18
+    /// The mini switch draws only this much of its frame, at its trailing edge; the name can run
+    /// into the rest.
+    static let switchInk: CGFloat = 36
+    /// The name sits a little in from the row's start, the icon a touch closer to it, and the
+    /// switch a little in from the row's end.
+    static let leading: CGFloat = 3, iconLeading: CGFloat = 5, trailing: CGFloat = 4
+    /// Every row's icon is the same Tabler-style line, as wide and as heavy.
+    static func icon(_ path: String) -> NSImage { TablerIcon.image(path, size: iconSize, strokeWidth: 1.5) }
+    let name: NSTextField
+    let detail: NSTextField
+    let icon = NSImageView()
+    let toggle = NSSwitch()
+    let value: NSTextField
+    private let chevron = NSImageView()
+    private let perform: () -> Void
+    private let isToggle: Bool
+    override var isFlipped: Bool { true }
+    init(title: String, subtitle: String, image: NSImage, accessory: Accessory, theme: RiseTheme, action: @escaping () -> Void) {
+        perform = action
+        name = label(title, size: 13, color: theme.text)
+        detail = label(subtitle, size: 11, color: theme.muted)
+        value = label("", size: 12.5, color: theme.muted)
+        if case .toggle = accessory { isToggle = true } else { isToggle = false }
+        super.init(frame: .zero)
+        isBordered = false; self.title = ""; target = self; self.action = #selector(invoke)
+        icon.image = image; icon.imageScaling = .scaleNone; icon.contentTintColor = theme.text
+        name.lineBreakMode = .byTruncatingTail; detail.lineBreakMode = .byTruncatingTail
+        toggle.controlSize = .mini; toggle.target = self; toggle.action = #selector(switched)
+        toggle.setAccessibilityLabel(title)
+        value.alignment = .right
+        chevron.image = NSImage(systemSymbolName: "chevron.up.chevron.down", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
+        chevron.contentTintColor = theme.muted
+        [icon, name, detail].forEach(addSubview)
+        switch accessory {
+        case .toggle(let on): toggle.state = on ? .on : .off; state = toggle.state; addSubview(toggle)
+        case .value(let text): value.stringValue = text; [value, chevron].forEach(addSubview)
+        }
+        setAccessibilityLabel(title); setAccessibilityHelp(subtitle)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override var isEnabled: Bool {
+        didSet { toggle.isEnabled = isEnabled; [icon, name, detail, value, chevron].forEach { $0.alphaValue = isEnabled ? 1 : 0.4 } }
+    }
+    /// A click on the row flips its switch, sliding as a click on the switch would.
+    @objc func invoke() { if isToggle { toggle.performClick(nil) } else { perform() } }
+    @objc private func switched() { state = toggle.state; perform() }
+    /// A fresh row's state, taken without rebuilding, so a switch just flipped finishes its slide.
+    func take(_ other: SiteOptionRow) {
+        if toggle.state != other.toggle.state { toggle.state = other.toggle.state }
+        state = other.state; value.stringValue = other.value.stringValue; isEnabled = other.isEnabled; toolTip = other.toolTip
+    }
+    override func layout() {
+        super.layout()
+        let size = Self.iconSize
+        icon.frame = NSRect(x: Self.iconLeading, y: ((bounds.height-size)/2).rounded(), width: size, height: size)
+        var end = bounds.width-Self.trailing
+        if toggle.superview != nil {
+            let fit = toggle.fittingSize
+            toggle.frame = NSRect(x: end-fit.width, y: ((bounds.height-fit.height)/2).rounded(), width: fit.width, height: fit.height)
+            end = toggle.frame.maxX-min(fit.width, Self.switchInk)-8
+        } else {
+            chevron.frame = NSRect(x: end-10, y: ((bounds.height-12)/2).rounded(), width: 10, height: 12)
+            let width = ceil(value.intrinsicContentSize.width), line = ceil(value.intrinsicContentSize.height)
+            value.frame = NSRect(x: chevron.frame.minX-4-width, y: ((bounds.height-line)/2).rounded(), width: width, height: line)
+            end = value.frame.minX-8
+        }
+        // The name and the words under it, together in the middle of the row.
+        let line = ceil(name.intrinsicContentSize.height), small = ceil(detail.intrinsicContentSize.height), textX = Self.leading+size+10
+        let top = ((bounds.height-line-small)/2).rounded()
+        name.frame = NSRect(x: textX, y: top, width: max(0, end-textX), height: line)
+        detail.frame = NSRect(x: textX, y: top+line, width: max(0, end-textX), height: small)
+    }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard !isHidden, bounds.contains(convert(point, from: superview)) else { return nil }
+        return toggle.superview != nil && toggle.frame.contains(convert(point, from: superview)) ? toggle : self
+    }
+}
+
 @MainActor final class SiteControlsController: NSViewController {
     weak var browser: BrowserController?
-    private(set) var rows: [String: SiteSettingRow] = [:]
+    private(set) var rows: [String: SiteOptionRow] = [:]
+    /// What the popover is laid out from; a refresh that keeps it only updates the rows.
+    private(set) var layoutKey: [String] = []
     private(set) var quickActions: [NSButton] = []
     private(set) var extensionsButton: PopoverActionButton!
     init(browser: BrowserController) { self.browser = browser; super.init(nibName: nil, bundle: nil) }
@@ -130,27 +218,45 @@ final class SiteSettingRow: NSButton {
         var y = layOutExtensions(in: view, theme: theme, scale: scale)
         heading("Settings", y: y)
         y += 26
-        func row(_ title: String, subtitle: String, symbol: String, image: NSImage? = nil, active: Bool, checked: Bool? = nil, action: @escaping () -> Void) {
-            let row = SiteSettingRow(title: title, subtitle: subtitle, symbol: symbol, image: image, active: active, checked: checked, theme: theme, action: action)
-            row.frame = NSRect(x: 14, y: y, width: 216, height: 43); view.addSubview(row); rows[title] = row; y += 43
+        func row(_ title: String, _ subtitle: String, _ icon: String, _ accessory: SiteOptionRow.Accessory, action: @escaping () -> Void) {
+            let row = SiteOptionRow(title: title, subtitle: subtitle, image: SiteOptionRow.icon(icon), accessory: accessory, theme: theme, action: action)
+            // As wide as the buttons above.
+            row.frame = NSRect(x: 11, y: y, width: 218, height: SiteOptionRow.height); view.addSubview(row); rows[title] = row
+            y += SiteOptionRow.height
         }
         let origin = SitePermissions.origin(browser.selectedTab?.url)
-        row("Developer Mode", subtitle: browser.selectedTab?.developer == true ? "On" : "Off", symbol: "hammer.fill", image: SiteSettingRow.hammer, active: browser.selectedTab?.developer == true) { [weak browser] in browser?.toggleDeveloper(); browser?.refreshSiteControls() }
-        let cookies = browser.cookieConsent.isEnabled(for: browser.selectedTab?.url)
-        row("Dismiss Cookie Dialogs", subtitle: cookies ? "On" : "Off", symbol: "", image: TablerIcon.image(TablerIcon.cookie, size: 17*scale), active: cookies, checked: cookies) { [weak browser] in browser?.toggleCookieConsent() }
-        rows["Dismiss Cookie Dialogs"]?.isEnabled = SitePermissions.origin(browser.selectedTab?.url) != nil
-        row("Block Ads", subtitle: browser.adBlocker.enabled ? "On" : "Off", symbol: "shield.fill", active: browser.adBlocker.enabled, checked: browser.adBlocker.enabled) { [weak browser] in browser?.toggleAdBlocking(); browser?.refreshSiteControls() }
-        let pip = browser.sitePermissions.automaticPictureInPicture(origin: origin)
-        row("Automatic Picture-In-Picture", subtitle: pip ? "Allowed" : "Blocked", symbol: "gearshape.fill", active: pip) { [weak browser] in browser?.toggleAutomaticPictureInPicture(); browser?.refreshSiteControls() }
-        row("Preload Links", subtitle: browser.linkPreloader.enabled ? "On · Experimental" : "Off · Experimental", symbol: "bolt.fill", active: browser.linkPreloader.enabled, checked: browser.linkPreloader.enabled) { [weak browser] in
-            guard let browser else { return }; browser.linkPreloader.setEnabled(!browser.linkPreloader.enabled); browser.refreshSiteControls()
+        // Each switch shows its new state as it slides; the popover isn't rebuilt under it. Only
+        // developer mode closes it, as the page bar it hangs from gives way to developer mode's.
+        row("Developer Mode", "Tools for building sites", LucideIcon.hammer, .toggle(browser.selectedTab?.developer == true)) { [weak browser] in
+            browser?.siteControlsPopover.close(); browser?.toggleDeveloper()
         }
-        rows["Preload Links"]?.toolTip = "Preload a link after hovering for 150 ms."
+        row("Dismiss Cookies", "Closes cookie banners", TablerIcon.cookie, .toggle(browser.cookieConsent.isEnabled(for: browser.selectedTab?.url))) { [weak browser] in
+            browser?.toggleCookieConsent()
+        }
+        rows["Dismiss Cookies"]?.isEnabled = origin != nil
+        row("Picture in Picture", "Floats videos you leave", TablerIcon.pictureInPicture, .toggle(browser.sitePermissions.automaticPictureInPicture(origin: origin))) { [weak browser] in
+            browser?.toggleAutomaticPictureInPicture()
+        }
+        rows["Picture in Picture"]?.toolTip = "Videos on this site float in their own window when you switch away."
+        rows["Picture in Picture"]?.isEnabled = origin != nil
+        row("Preload Links", "Loads links on hover", TablerIcon.bolt, .toggle(browser.linkPreloader.enabled)) { [weak browser] in
+            guard let browser else { return }; browser.linkPreloader.setEnabled(!browser.linkPreloader.enabled)
+        }
+        rows["Preload Links"]?.toolTip = "Experimental: preload a link after hovering for 150 ms."
         for capability in [SiteCapability.camera, .microphone, .location] where browser.sitePermissions.hasDecision(capability, origin: origin) {
             let permission = browser.sitePermissions.permission(capability, origin: origin)
-            row(capability.title, subtitle: permission.subtitle, symbol: capability.symbol, active: permission == .allow) { [weak browser] in browser?.permissionSettingMenu(capability) }
+            row(capability.title, "Access for this site", capability.tablerIcon, .value(permission.subtitle)) { [weak browser] in browser?.permissionSettingMenu(capability) }
         }
+        layoutKey = [theme == .dark ? "dark" : "light"] + view.subviews.compactMap { ($0 as? NSButton)?.toolTip ?? ($0 as? SiteOptionRow)?.name.stringValue }
+            + rows.keys.sorted() + ["\(y)"]
         view.setFrameSize(NSSize(width: 240, height: y+8))
+    }
+    /// Only the rows' states changed: this popover takes them from a fresh one.
+    func take(_ fresh: SiteControlsController) -> Bool {
+        fresh.loadViewIfNeeded()
+        guard fresh.layoutKey == layoutKey else { return false }
+        for (title, row) in fresh.rows { rows[title]?.take(row) }
+        return true
     }
 }
 
@@ -199,7 +305,7 @@ final class SiteSettingRow: NSButton {
             let name = (browser.selectedTab?.title ?? "").replacingOccurrences(of: " - Chrome Web Store", with: "")
             let row = SiteSettingRow(title: "Add to Rise", subtitle: name.isEmpty ? "From the Chrome Web Store" : name, symbol: "plus",
                                      active: true, theme: theme) { [weak browser] in browser?.addFromWebStore(id) }
-            row.frame = NSRect(x: 14, y: y-4, width: 216, height: 43); view.addSubview(row); rows["Add to Rise"] = row
+            row.frame = NSRect(x: 14, y: y-4, width: 216, height: 43); view.addSubview(row); row.toolTip = "Add to Rise"
             y += 45
         }
         return y

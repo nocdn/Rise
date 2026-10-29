@@ -45,7 +45,10 @@ import RiseCore
     func pageStartedLoading(_ webView: NSView) {
         pictureInPicture.navigationStarted(in: webView)
         permissionCoordinator.cancel(for: webView)
-        if selectedTab?.page.view === webView { siteControlsPopover.close() }
+        if let tab = selectedTab, tab.page.view === webView {
+            // A reload the site controls asked for keeps them open; going anywhere else closes them.
+            if let reload = siteControlsReload, reload.tab == tab.id, reload.url == tab.page.url, reload.until > Date() {} else { siteControlsPopover.close() }
+        }
         if let page = page(showing: webView) { historySwipe.cancel(for: page) }
         if hoveredWebView === webView { hideLinkStatus() }
         if errorWebView === webView { errorWebView = nil }; update()

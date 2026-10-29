@@ -6,6 +6,7 @@ import Vision
         guard siteControlsPopover.isShown else { return }
         siteControlsPopover.appearance = theme.appearance
         let controller = SiteControlsController(browser: self)
+        if let shown = siteControlsPopover.contentViewController as? SiteControlsController, shown.take(controller) { return }
         siteControlsPopover.contentViewController = controller
         siteControlsPopover.contentSize = controller.view.frame.size
     }

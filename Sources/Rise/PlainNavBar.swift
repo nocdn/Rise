@@ -552,8 +552,24 @@ import RiseCore
     }
     override func mouseEntered(with event: NSEvent) { mouseMoved(with: event) }
     override func mouseExited(with event: NSEvent) { setHovered(false) }
+    /// While the site controls are open from it, the address stays as if hovered, its buttons
+    /// showing and the settings button lit, wherever the pointer goes.
+    var holdsHover = false {
+        didSet {
+            guard holdsHover != oldValue else { return }
+            settingsButton.holdsHover = holdsHover
+            // The pointer may have left while the popover covered the bar.
+            if !holdsHover, let window {
+                let point = window.mouseLocationOutsideOfEventStream
+                pointerHovered = fieldRect.contains(convert(point, from: nil)) && isFrontmost(at: point)
+            }
+            setHovered(pointerHovered)
+        }
+    }
+    private var pointerHovered = false
     func setHovered(_ hovered: Bool) {
-        let hovered = hovered && url != nil && developerProgress == 0
+        pointerHovered = hovered
+        let hovered = (hovered || holdsHover) && url != nil && developerProgress == 0
         guard hovered != isHovered else { return }
         isHovered = hovered
         fade(field, to: hovered ? 1 : 0)

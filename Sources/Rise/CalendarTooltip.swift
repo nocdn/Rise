@@ -1,11 +1,15 @@
 import AppKit
 
 /// An event on the card's timeline, or an all-day event above it, in a light wash of its own
-/// colour inside a deeper border.
+/// colour inside a deeper border. As in Calendar, an invitation not yet answered is only
+/// outlined, a declined one is also struck through, and one answered Maybe is striped.
 final class CalendarEventChip: NSButton {
     let event: CalendarEvent
     private let name = NSTextField(labelWithString: "")
     var onOpen: (() -> Void)?
+    /// A right click's menu.
+    var onMenu: (() -> NSMenu?)?
+    private var outlined: Bool { event.answer == .no || event.invited == true && event.answer == nil }
     var isHovered = false { didSet { if isHovered != oldValue { needsDisplay = true } } }
     var isPast = false { didSet { if isPast != oldValue { alphaValue = isPast ? 0.55 : 1 } } }
     private var theme = RiseTheme.neutral, panel = NSColor.white
@@ -14,7 +18,7 @@ final class CalendarEventChip: NSButton {
         self.event = event
         super.init(frame: .zero)
         title = ""; isBordered = false; target = self; action = #selector(open); wantsLayer = true
-        name.stringValue = event.title; name.lineBreakMode = .byTruncatingTail; name.maximumNumberOfLines = 1
+        name.lineBreakMode = .byTruncatingTail; name.maximumNumberOfLines = 1
         addSubview(name)
         // Its exact times and the start of its description; the title is on the chip.
         toolTip = ([time ?? "All day"]+(event.description.map { [$0] } ?? [])).joined(separator: "\n")
@@ -31,12 +35,27 @@ final class CalendarEventChip: NSButton {
     }
     func applyTheme(_ theme: RiseTheme, panel: NSColor) {
         self.theme = theme; self.panel = panel
-        name.textColor = Self.colors(theme, panel: panel, color: event.color).text; needsDisplay = true
+        let text = Self.colors(theme, panel: panel, color: event.color).text
+        name.attributedStringValue = NSAttributedString(string: event.title, attributes: [
+            .foregroundColor: event.answer == .no ? text.withAlphaComponent(0.6) : text,
+            .strikethroughStyle: event.answer == .no ? NSUnderlineStyle.single.rawValue : 0,
+        ].merging(name.font.map { [.font: $0] } ?? [:]) { a, _ in a })
+        needsDisplay = true
+    }
+    override func menu(for event: NSEvent) -> NSMenu? { onMenu?() }
+    /// A quick side-to-side shake, for an answer Calendar didn't take.
+    func shake() {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, let layer else { return }
+        let shake = CAKeyframeAnimation(keyPath: "transform.translation.x")
+        shake.values = [0, -5, 5, -4, 4, -2, 2, 0]; shake.duration = 0.32
+        shake.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        layer.add(shake, forKey: "shake")
     }
     override func layout() {
         super.layout()
         let compact = bounds.height < 22
-        name.font = .systemFont(ofSize: compact ? 11 : 12.5, weight: .medium)
+        let font = NSFont.systemFont(ofSize: compact ? 11 : 12.5, weight: .medium)
+        if name.font != font { name.font = font; applyTheme(theme, panel: panel) }
         let line = ceil(NSLayoutManager().defaultLineHeight(for: name.font!))
         let y = compact ? max(0, (bounds.height-line)/2) : 4
         name.frame = NSRect(x: 6, y: y, width: max(0, bounds.width-10), height: min(line, bounds.height))
@@ -47,7 +66,15 @@ final class CalendarEventChip: NSButton {
         // Continuous corners, like the card around it.
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         let path = PageOutline.path(in: bounds.insetBy(dx: 0.5, dy: 0.5), radius: 4.5, continuous: true)
-        context.addPath(path); context.setFillColor(colors.fill.cgColor); context.fillPath()
+        let fill = outlined ? (panel.blended(withFraction: isHovered ? 0.08 : 0, of: colors.border) ?? panel) : colors.fill
+        context.addPath(path); context.setFillColor(fill.cgColor); context.fillPath()
+        if event.answer == .maybe {
+            context.saveGState(); context.addPath(path); context.clip()
+            context.setStrokeColor(colors.border.withAlphaComponent(0.55).cgColor); context.setLineWidth(2)
+            var x = -bounds.height
+            while x < bounds.width { context.move(to: CGPoint(x: x, y: bounds.height)); context.addLine(to: CGPoint(x: x+bounds.height, y: 0)); x += 8 }
+            context.strokePath(); context.restoreGState()
+        }
         context.addPath(path); context.setStrokeColor(colors.border.cgColor); context.setLineWidth(1); context.strokePath()
     }
     override func hitTest(_ point: NSPoint) -> NSView? { bounds.contains(convert(point, from: superview)) ? self : nil }
@@ -102,7 +129,7 @@ final class CalendarTimeline: FlippedView {
 
 /// The same surface and positioning springs as the Gmail card, over today's timeline, which
 /// opens at the hour now.
-@MainActor final class CalendarTooltip: FlippedView {
+@MainActor final class CalendarTooltip: FlippedView, NSMenuDelegate {
     static let width: CGFloat = 264, preferredHeight: CGFloat = 268
     static let allDayHeight: CGFloat = 22, allDayGap: CGFloat = 4
     let scroll = CardScrollView()
@@ -124,6 +151,10 @@ final class CalendarTimeline: FlippedView {
     var onPointer: ((Bool) -> Void)?
     var onRetry: (() -> Void)?
     var onOpen: ((CalendarEvent) -> Void)?
+    /// An event's right-click menu.
+    var menuFor: ((CalendarEvent) -> NSMenu?)?
+    /// While an event's menu is open, the card stays, with the event highlighted.
+    private var menuEvent: String?
     private var background: NSColor { theme == .dark ? theme.popup : TabAppearance.selectedFill(theme) }
 
     init() {
@@ -161,13 +192,25 @@ final class CalendarTimeline: FlippedView {
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self))
     }
     override func mouseEntered(with event: NSEvent) { onPointer?(true); updateHover() }
-    override func mouseExited(with event: NSEvent) { onPointer?(false); updateHover() }
+    override func mouseExited(with event: NSEvent) { if menuEvent == nil { onPointer?(false) }; updateHover() }
     override func mouseMoved(with event: NSEvent) { updateHover() }
     /// Only the event under the pointer is highlighted, including after the timeline scrolls under it.
     func updateHover() {
         let inside = !isHidden && window.map { bounds.contains(convert($0.mouseLocationOutsideOfEventStream, from: nil)) } == true
         let hit = inside ? window.flatMap { window in hitTest(superview?.convert(window.mouseLocationOutsideOfEventStream, from: nil) ?? .zero) } : nil
-        for chip in chips + allDayChips { chip.isHovered = chip === hit }
+        for chip in chips + allDayChips { chip.isHovered = menuEvent.map { chip.event.id == $0 } ?? (chip === hit) }
+    }
+    func menuWillOpen(_ menu: NSMenu) {}
+    func menuDidClose(_ menu: NSMenu) {
+        menuEvent = nil; updateHover()
+        // Choosing an item outside the card leaves it, as moving there would have.
+        guard key != nil, let window, !bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) else { return }
+        onPointer?(false)
+    }
+    /// The event's chip shakes when Calendar didn't take an answer to it.
+    func answerFailed(_ event: CalendarEvent) {
+        NSSound.beep()
+        (chips + allDayChips).first { $0.event.id == event.id }?.shake()
     }
 
     /// `growsFrom` is where it comes out of its tab, in the superview, when that isn't beside the tab's middle.
@@ -249,6 +292,10 @@ final class CalendarTimeline: FlippedView {
         func chip(_ event: CalendarEvent, time: String?) -> CalendarEventChip {
             let chip = CalendarEventChip(event, time: time)
             chip.onOpen = { [weak self] in self?.onOpen?(event) }
+            chip.onMenu = { [weak self] in
+                guard let self, let menu = menuFor?(event) else { return nil }
+                menu.delegate = self; menuEvent = event.id; updateHover(); return menu
+            }
             chip.applyTheme(theme, panel: background); return chip
         }
         chips = timed.map { chip($0, time: timeText($0)) }

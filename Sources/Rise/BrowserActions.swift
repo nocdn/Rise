@@ -33,6 +33,11 @@ import RiseCore
         siteControlsPopover.contentViewController = controller
         siteControlsPopover.contentSize = controller.view.frame.size
         siteControlsPopover.show(relativeTo: selectedBar.settingsButton.bounds, of: selectedBar.settingsButton, preferredEdge: .maxY)
+        let bar = selectedBar; bar.holdsHover = true; siteControlsBar = bar
+    }
+    func popoverDidClose(_ notification: Notification) {
+        guard notification.object as? NSPopover === siteControlsPopover else { return }
+        siteControlsBar?.holdsHover = false; siteControlsBar = nil; siteControlsReload = nil
     }
     func makeSiteMenu() -> NSMenu {
         let menu = NSMenu()

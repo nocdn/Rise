@@ -554,6 +554,7 @@ import AppKit
             hover.calendarCard.onPointer = { [weak self] in self?.cardPointerChanged($0) }
             hover.calendarCard.onRetry = { [weak self] in self?.calendarAgenda.retry() }
             hover.calendarCard.onOpen = { [weak self] event in self?.openCalendarEvent(event) }
+            hover.calendarCard.menuFor = { [weak self] event in self?.calendarEventMenu(for: event) }
         }
         raiseHoverCard(hover.calendarCard)
         trackPointer(true)
@@ -562,6 +563,10 @@ import AppKit
         hover.calendarCard.present(key: account.baseURL.absoluteString, agenda: calendarAgenda,
                                    left: sidebar.frame.maxX+6, anchorTop: anchor.top, maxBottom: root.bounds.height-8,
                                    theme: theme, growsFrom: anchor.growsFrom)
+    }
+    func calendarAnswerFailed(_ event: CalendarEvent) {
+        guard tabHoverCards.kind == .calendar, tabHoverCards.shownID != nil else { return }
+        tabHoverCards.calendarCard.answerFailed(event)
     }
     func calendarAgendaChanged() {
         refreshCalendarBadges()

@@ -42,6 +42,37 @@ struct CalendarEvent: Equatable {
     var color: UInt32? = nil
     /// Its description's first lines, from its details in Calendar.
     var description: String? = nil
+    /// How you've answered its invitation; nil when it has none, or it isn't answered yet.
+    var answer: CalendarAnswer? = nil
+    /// Whether Calendar asks you Going? about it; nil until its details have been read.
+    var invited: Bool? = nil
+
+    /// Calendar's own id for the event and the calendar it's on, which its chip's id encodes:
+    /// "3t6j…_20261030T001500Z bartek@example.com" for one meeting of a repeating series.
+    static func decoded(_ id: String) -> (event: String, calendar: String)? {
+        var base64 = id.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
+        guard let data = Data(base64Encoded: base64), let text = String(data: data, encoding: .utf8) else { return nil }
+        let parts = text.split(separator: " ", maxSplits: 1).map(String.init)
+        guard parts.count == 2, !parts[0].isEmpty else { return nil }
+        return (parts[0], parts[1])
+    }
+    /// The same for every meeting of a repeating series, which Calendar names as the series
+    /// followed by when the meeting was first set for; nil for an event that doesn't repeat.
+    var series: String? {
+        guard let decoded = Self.decoded(id), let underscore = decoded.event.lastIndex(of: "_") else { return nil }
+        let start = decoded.event[decoded.event.index(after: underscore)...]
+        guard start.range(of: #"^\d{8}(T\d{6}Z?)?$"#, options: .regularExpression) != nil else { return nil }
+        return "\(decoded.event[..<underscore]) \(decoded.calendar)"
+    }
+}
+
+/// An answer to an invitation, as Calendar's Going? buttons give it.
+enum CalendarAnswer: String, Decodable, CaseIterable {
+    case yes, no, maybe
+    var title: String { switch self { case .yes: "Yes"; case .no: "No"; case .maybe: "Maybe" } }
+    /// Its button in an event's details in Calendar.
+    var button: String { switch self { case .yes: "xRsvpYesBu"; case .no: "xRsvpNoBu"; case .maybe: "xRsvpMaybeBu" } }
 }
 
 /// One day of Calendar's day view, as the page draws it.
@@ -59,6 +90,11 @@ struct CalendarDay: Decodable, Equatable {
         var fill: String? = nil
         var border: String? = nil
         var description: String? = nil
+        /// Calendar strikes through a declined event's title and stripes one answered Maybe.
+        var declined: Bool? = nil
+        var striped: Bool? = nil
+        /// Whether its details ask Going?, once they've been read.
+        var invited: Bool? = nil
     }
     /// Calendar's `data-datekey`: (year − 1970) << 9 | month << 5 | day.
     let key: Int
@@ -83,7 +119,7 @@ enum CalendarSchedule {
             // The column has a border beyond its 24 hours: 1,441 points for 60-point hours.
             let perMinute = max(1, (day.height/24).rounded())/60
             for chip in day.chips {
-                let event: CalendarEvent, color = Self.color(fill: chip.fill, border: chip.border)
+                var event: CalendarEvent, color = Self.color(fill: chip.fill, border: chip.border)
                 if chip.allDay {
                     let next = calendar.date(byAdding: .day, value: 1, to: midnight) ?? midnight
                     event = CalendarEvent(id: chip.id, title: chip.title, start: midnight, end: next, allDay: true, color: color,
@@ -96,11 +132,13 @@ enum CalendarSchedule {
                                           end: midnight.addingTimeInterval(Double(end*60)), allDay: false, color: color,
                                           description: chip.description)
                 }
+                event.answer = answer(chip); event.invited = chip.invited
                 // An event across midnight has a chip on each day: together they're the event.
                 if let earlier = events[chip.id] {
                     events[chip.id] = CalendarEvent(id: chip.id, title: earlier.title, start: min(earlier.start, event.start),
                                                     end: max(earlier.end, event.end), allDay: earlier.allDay && event.allDay,
-                                                    color: earlier.color ?? event.color, description: earlier.description ?? event.description)
+                                                    color: earlier.color ?? event.color, description: earlier.description ?? event.description,
+                                                    answer: earlier.answer ?? event.answer, invited: earlier.invited ?? event.invited)
                 } else { events[chip.id] = event; order.append(chip.id) }
             }
         }
@@ -123,6 +161,16 @@ enum CalendarSchedule {
         guard let border, fill != border else { return hex(fill) }
         if zip(fill, border).allSatisfy({ abs($0 - ($1 + (255-$1)*0.4)) <= 6 }) { return hex(border.map { 2*$0 - 255 }) }
         return hex(fill)
+    }
+
+    /// How the chip shows you've answered: struck through for No, striped for Maybe, white inside
+    /// its border while unanswered, and filled for Yes. Only an invitation has an answer, and
+    /// only its details tell a filled one from an event of your own.
+    static func answer(_ chip: CalendarDay.Chip) -> CalendarAnswer? {
+        guard chip.invited != false else { return nil }
+        if chip.declined == true { return .no }
+        if chip.striped == true { return .maybe }
+        return chip.invited == true && color(fill: chip.fill, border: nil) != nil ? .yes : nil
     }
 
     /// The earliest time in the label after `start` and no later than `end`, in minutes of the
@@ -155,8 +203,9 @@ enum CalendarSchedule {
 
     /// "now" for an event that began in the last five minutes, else "in 17m" for one starting
     /// within the hour. All-day events have no time to count down to.
+    /// An event you've declined has nothing to count down to.
     static func badge(_ events: [CalendarEvent], now: Date = Date()) -> String? {
-        let timed = events.filter { !$0.allDay && $0.end > now }
+        let timed = events.filter { !$0.allDay && $0.end > now && $0.answer != .no }
         if timed.contains(where: { $0.start <= now && now.timeIntervalSince($0.start) < 5*60 }) { return "now" }
         guard let next = timed.filter({ $0.start > now }).map(\.start).min() else { return nil }
         let minutes = Int((next.timeIntervalSince(now)/60).rounded(.up))
@@ -189,6 +238,7 @@ enum CalendarSchedule {
 /// Today's and tomorrow's events of one account, held in memory only.
 @MainActor final class CalendarAgenda {
     typealias Loader = (CalendarAccount) async throws -> [CalendarDay]
+    typealias Answerer = (CalendarAnswer, CalendarEvent, CalendarAccount) async throws -> Void
     private(set) var account: CalendarAccount?
     private(set) var events: [CalendarEvent] = []
     private(set) var isLoading = false
@@ -197,8 +247,13 @@ enum CalendarSchedule {
     private var task: Task<Void, Never>?
     private var generation = 0
     var onChange: (() -> Void)?
+    /// An answer Calendar didn't take; the event has its earlier answer back.
+    var onAnswerFailed: ((CalendarEvent, Error) -> Void)?
     private let reader = CalendarPageReader()
+    /// Answers take the companion one at a time, and refreshes wait for them.
+    private var answering: Task<Void, Never>?, answersWaiting = 0
     var load: Loader?
+    var answerer: Answerer?
     /// Moves the tabs' countdowns on; the browser owns it.
     var clock: Timer?
     /// Whether events have been read since the account was chosen.
@@ -221,8 +276,31 @@ enum CalendarSchedule {
         refresh()
     }
     func retry() { guard account != nil, !isLoading else { return }; refresh() }
+    /// Shows the answer at once and gives it to Calendar; an answer it doesn't take is undone.
+    func respond(_ answer: CalendarAnswer, to event: CalendarEvent) {
+        guard let account, let index = events.firstIndex(where: { $0.id == event.id }), events[index].answer != answer else { return }
+        let earlierAnswer = events[index].answer, shown = events[index]
+        events[index].answer = answer; onChange?()
+        answersWaiting += 1
+        let before = answering
+        answering = Task { [weak self] in
+            await before?.value
+            guard let self, !Task.isCancelled else { return }
+            // A refresh would move the companion away from the event.
+            cancel()
+            var failure: Error?
+            do { try await (answerer ?? reader.respond)(answer, shown, account) } catch { failure = error }
+            guard !Task.isCancelled else { return }
+            answersWaiting -= 1
+            if let failure, self.account == account {
+                if let index = events.firstIndex(where: { $0.id == shown.id }), events[index].answer == answer { events[index].answer = earlierAnswer }
+                onChange?(); onAnswerFailed?(shown, failure)
+            }
+            if answersWaiting == 0 { answering = nil; if self.account == account { refresh() } }
+        }
+    }
     private func refresh() {
-        guard let account else { return }
+        guard let account, answersWaiting == 0 else { return }
         cancel(); isLoading = true
         if !hasLoaded { error = nil }
         onChange?()
@@ -243,8 +321,11 @@ enum CalendarSchedule {
         }
     }
     func cancel() { generation += 1; task?.cancel(); task = nil; isLoading = false; reader.cancel() }
-    func tearDown() { cancel(); reader.tearDown(); events = []; account = nil; loadedAt = .distantPast; error = nil }
-    deinit { task?.cancel(); clock?.invalidate() }
+    func tearDown() {
+        answering?.cancel(); answering = nil; answersWaiting = 0
+        cancel(); reader.tearDown(); events = []; account = nil; loadedAt = .distantPast; error = nil
+    }
+    deinit { task?.cancel(); answering?.cancel(); clock?.invalidate() }
 }
 
 /// A companion Calendar page, of the tab's own engine, shares the tab's session. It reads the
@@ -284,7 +365,7 @@ enum CalendarSchedule {
         if !(open ? (try? await run(Self.step(Self.todayButton), in: web)) as? Bool ?? false : false) {
             web.load(account.url(view: "day", day: today))
         }
-        if !calendar.isDate(describedOn, inSameDayAs: Date()) { descriptions = [:]; describedOn = Date() }
+        if !calendar.isDate(describedOn, inSameDayAs: Date()) { descriptions = [:]; invitations = [:]; describedOn = Date() }
         let first = try await describe(read(CalendarDay.key(today), in: web, account: account), in: web)
         guard (try? await run(Self.step(Self.nextButton), in: web)) as? Bool == true else { return [first] }
         var second = try? await read(CalendarDay.key(tomorrow), in: web, account: account)
@@ -293,22 +374,29 @@ enum CalendarSchedule {
     }
     /// Each event's description, read once a day from its details, which open and close
     /// again in the companion as a click on its chip opens them. "" for none.
-    private var descriptions: [String: String] = [:], describedOn = Date.distantPast
+    private var descriptions: [String: String] = [:], invitations: [String: Bool] = [:], describedOn = Date.distantPast
     static let descriptionLines = 6
     private func describe(_ day: CalendarDay, in web: WebPage) async throws -> CalendarDay {
         for chip in day.chips where descriptions[chip.id] == nil {
             try Task.checkCancellation()
-            _ = try? await run(Self.closeDetails, in: web)
-            guard (try? await run(Self.open(chip.id), in: web)) as? Bool == true else { continue }
+            // A click while the last event's details are still closing doesn't open the next's.
             for _ in 0..<15 {
+                guard (try? await run(Self.closeDetails, in: web)) as? Bool == true else { break }
                 try await Task.sleep(for: .milliseconds(100))
-                if let text = try? await run(Self.details, in: web) as? String { descriptions[chip.id] = text; break }
+            }
+            guard (try? await run(Self.open(chip.id), in: web)) as? Bool == true else { continue }
+            for _ in 0..<30 {
+                try await Task.sleep(for: .milliseconds(100))
+                if let shown = try? await run(Self.details, in: web) as? [String: Any], let text = shown["text"] as? String {
+                    descriptions[chip.id] = text; invitations[chip.id] = shown["invited"] as? Bool; break
+                }
             }
             _ = try? await run(Self.closeDetails, in: web)
         }
         let chips = day.chips.map { chip -> CalendarDay.Chip in
             var chip = chip
             chip.description = descriptions[chip.id].flatMap { Self.firstLines($0, Self.descriptionLines) }
+            chip.invited = invitations[chip.id]
             return chip
         }
         return CalendarDay(key: day.key, height: day.height, chips: chips)
@@ -319,15 +407,16 @@ enum CalendarSchedule {
         guard !lines.isEmpty else { return nil }
         return lines.prefix(count).joined(separator: "\n")+(lines.count > count ? "…" : "")
     }
-    /// The open details' description, "" without one, or nil until they show. Its first part
-    /// is a heading for screen readers.
+    /// The open details' description, "" without one, and whether they ask Going?; nil until
+    /// they show. The description's first part is a heading for screen readers.
     static let details = #"""
     (() => {
       const dialog = document.getElementById('xDetDlg');
       if (!dialog || !dialog.getClientRects().length) return null;
+      const invited = !!dialog.querySelector('#xRsvpYesBu');
       const description = document.getElementById('xDetDlgDesc');
-      if (!description) return '';
-      return [...description.children].filter(e => !e.classList.contains('XuJrye')).map(e => e.innerText).join('\n').trim();
+      if (!description) return {text: '', invited};
+      return {text: [...description.children].filter(e => !e.classList.contains('XuJrye')).map(e => e.innerText).join('\n').trim(), invited};
     })();
     """#
     static let closeDetails = """
@@ -360,6 +449,99 @@ enum CalendarSchedule {
         }
         throw Failure.unavailable
     }
+    /// Why an answer didn't go through.
+    enum AnswerFailure: Error, Equatable {
+        /// The event isn't on its day in Calendar any more.
+        case missing
+        /// Calendar has no Going? for it, as for an event with no guests.
+        case unavailable
+        /// Calendar didn't show the answer taken.
+        case unconfirmed
+    }
+    /// Answers the event's invitation in the companion, as its details' Going? buttons do. Yes is
+    /// Calendar's own Yes, joining as it chooses from your working location. A meeting of a
+    /// repeating series is answered on its own, as "This event".
+    func respond(_ answer: CalendarAnswer, to event: CalendarEvent, account: CalendarAccount) async throws {
+        guard let web = companion else { throw Failure.unavailable }
+        guard let decoded = CalendarEvent.decoded(event.id) else { throw AnswerFailure.missing }
+        func shows() async -> Bool {
+            (try? await web.evaluate(Self.showsChip, arguments: ["id": event.id], in: nil, world: .named(Self.world))) as? Bool == true
+        }
+        if !(await shows()) {
+            web.load(account.url(view: "day", day: Calendar.current.dateComponents([.year, .month, .day], from: event.start)))
+            let deadline = Date().addingTimeInterval(20)
+            while true {
+                try Task.checkCancellation()
+                if let host = web.url?.host, host == "accounts.google.com" || host.hasSuffix("workspace.google.com") { throw Failure.signedOut }
+                if !web.isLoading, CalendarAccount(url: web.url) == account, await shows() { break }
+                guard Date() < deadline else { throw AnswerFailure.missing }
+                try await Task.sleep(for: .milliseconds(200))
+            }
+        }
+        try Task.checkCancellation()
+        let result = try await web.evaluate(Self.answer, arguments: ["id": event.id, "event": decoded.event, "button": answer.button],
+                                            in: nil, world: .named(Self.world)) as? String
+        switch result {
+        case "answered", "already": return
+        case "unavailable": throw AnswerFailure.unavailable
+        case "missing", "mismatch": throw AnswerFailure.missing
+        default: throw AnswerFailure.unconfirmed
+        }
+    }
+    static let showsChip = """
+    return [...document.querySelectorAll('[data-eventchip][data-eventid]')].some(c => c.getClientRects().length && c.getAttribute('data-eventid') === id);
+    """
+    /// With `id`, the chip's id, `event`, Calendar's id for the event, and `button`, the Going?
+    /// button's id: opens the event's details, checks they're its, and presses the button.
+    /// A repeating event's question of which meetings to answer gets "This event" (`Woal0c`).
+    /// The answer has taken once the button shows it chosen or the chip's label changes.
+    static let answer = #"""
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+    const visible = e => !!e && e.getClientRects().length > 0;
+    const details = () => { const d = document.getElementById('xDetDlg'); return visible(d) ? d : null; };
+    const close = () => { const d = details(); if (d) (d.querySelector('#xDetDlgCloseBu') || d.querySelector('button[jsname="LgbsSe"]'))?.click(); };
+    const scope = () => [...document.querySelectorAll('[role="dialog"]')].find(d => visible(d) && d.querySelector('input[type="radio"][value="Woal0c"]'));
+    const chipNow = () => [...document.querySelectorAll('[data-eventchip][data-eventid]')].find(c => visible(c) && c.getAttribute('data-eventid') === id);
+    const label = c => c ? (c.getAttribute('aria-label') || '') + '|' + (c.querySelector('.XuJrye')?.textContent || '') : '';
+    const chosen = b => !!b && [b, b.parentElement, b.closest('.XsYse')].some(e => e && e.classList.contains('KKjvXb'));
+    return (async () => {
+      scope()?.querySelector('button[data-mdc-dialog-action="cancel"]')?.click();
+      for (let i = 0; i < 20 && details(); i++) { close(); await sleep(100); }
+      const chip = chipNow();
+      if (!chip) return 'missing';
+      chip.scrollIntoView({block: 'center'});
+      (chip.matches('[role="button"]') ? chip : chip.querySelector('[role="button"]') || chip).click();
+      let target = null, opened = false;
+      for (let i = 0; i < 40 && !target; i++) {
+        await sleep(100);
+        const d = details();
+        opened = opened || !!d;
+        target = d?.querySelector('#' + button) || null;
+        if (target && !d.outerHTML.includes(event)) { close(); return 'mismatch'; }
+      }
+      if (!target) { close(); return opened ? 'unavailable' : 'missing'; }
+      if (chosen(target)) { close(); return 'already'; }
+      const before = label(chip);
+      let asked = false;
+      target.click();
+      for (let i = 0; i < 80; i++) {
+        await sleep(100);
+        const question = scope();
+        if (question) {
+          if (!asked) {
+            asked = true;
+            const only = question.querySelector('input[type="radio"][value="Woal0c"]');
+            if (!only.checked) only.click();
+            question.querySelector('button[data-mdc-dialog-action="ok"]')?.click();
+          }
+          continue;
+        }
+        if (chosen(details()?.querySelector('#' + button)) || label(chipNow()) !== before && chipNow()) { close(); return 'answered'; }
+      }
+      close();
+      return 'unconfirmed';
+    })();
+    """#
     func cancel() { companion?.stopLoading() }
     func tearDown() {
         companion?.view.superview?.removeFromSuperview()
@@ -401,9 +583,15 @@ enum CalendarSchedule {
         const timed = column.contains(chip), rect = chip.getBoundingClientRect();
         // All-day chips are filled on their button and bordered around it.
         const painted = chip.matches('[role="button"]') ? chip : chip.querySelector('[role="button"]') || chip;
+        // A declined event's title is struck through; one answered Maybe is striped.
+        let declined = false;
+        for (let e = chip.querySelector('.I0UMhf, .WBi6vc'); e && e !== chip.parentElement; e = e.parentElement) {
+          if (getComputedStyle(e).textDecorationLine.includes('line-through')) { declined = true; break; }
+        }
+        const striped = [chip, painted].some(e => getComputedStyle(e).backgroundImage.includes('gradient'));
         chips.push({id, title: title || '(No title)', label, allDay: !timed,
                     top: timed ? rect.top - box.top : 0, height: timed ? rect.height : 0,
-                    fill: getComputedStyle(painted).backgroundColor, border: getComputedStyle(chip).borderTopColor});
+                    fill: getComputedStyle(painted).backgroundColor, border: getComputedStyle(chip).borderTopColor, declined, striped});
       }
       return {ready: true, key, height: box.height, chips: chips.filter(chip => chip.id)};
     })();

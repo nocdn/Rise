@@ -439,6 +439,8 @@ final class TabBadge: FlippedView {
         color = TabAppearance.text(theme, selected: selected).withAlphaComponent(theme == .dark ? 0.8 : 0.72)
         needsDisplay = true
     }
+    /// A fill of its own in place of the grey, as a pinned tile's wash of its favicon's colour.
+    func setFill(_ fill: NSColor) { layer?.backgroundColor = fill.cgColor }
     /// Centred on the glyphs' cap height, not the line's box, which sits low in a short pill.
     override func draw(_ dirtyRect: NSRect) {
         let font = Self.font, string = attributed
