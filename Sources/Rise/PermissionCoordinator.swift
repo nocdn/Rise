@@ -44,16 +44,25 @@ import UserNotifications
         let decisions = capabilities.map { browser.sitePermissions.permission($0, origin: origin) }
         guard !decisions.contains(.block) else { completion(false); return }
         if decisions.allSatisfy({ $0 == .allow }) { completion(true); return }
+        // The page asking the same again while it waits brings a prompt put away back down, and
+        // is answered with it.
+        if reply != nil, let waiting, requestingWebView === web, waiting.origin == origin, waiting.capabilities == capabilities {
+            waiting.completions.append(completion)
+            if !panel.isPresented { snoozed = false; showPrompt() }
+            return
+        }
         guard reply == nil else { completion(false); return }
         browser.siteControlsPopover.close(); browser.siteInfoPopover.close()
         requestingWebView = web
         let documentURL = browser.page(showing: web)?.url
+        let waiting = Waiting(origin: origin, capabilities: capabilities, completion: completion)
+        self.waiting = waiting
         reply = { [weak self, weak browser, weak web] allowed in
-            guard let browser, let web, web.window === browser.window else { completion(false); return }
+            guard let browser, let web, web.window === browser.window else { waiting.answer(false); return }
             let finish: (Bool) -> Void = { [weak web, weak browser] granted in
-                guard let browser, let web, browser.page(showing: web)?.url == documentURL, web.window === browser.window else { completion(false); return }
+                guard let browser, let web, browser.page(showing: web)?.url == documentURL, web.window === browser.window else { waiting.answer(false); return }
                 if granted { capabilities.forEach { browser.sitePermissions.set(.allow, for: $0, origin: origin) } }
-                completion(granted)
+                waiting.answer(granted)
             }
             if allowed && capabilities.contains(.notifications), let self { self.requestNotificationAuthorization(finish) }
             else { finish(allowed) }
@@ -71,6 +80,16 @@ import UserNotifications
         DispatchQueue.main.asyncAfter(deadline: .now()+(still ? 0 : PlainNavBar.PermissionMotion.promptDelay), execute: show)
     }
     private var pendingShow: DispatchWorkItem?
+    /// What the page now waiting asked for, and everyone waiting on the answer: it may ask again.
+    private final class Waiting {
+        let origin: String, capabilities: [SiteCapability]
+        var completions: [(Bool) -> Void]
+        init(origin: String, capabilities: [SiteCapability], completion: @escaping (Bool) -> Void) {
+            self.origin = origin; self.capabilities = capabilities; completions = [completion]
+        }
+        func answer(_ granted: Bool) { let all = completions; completions = []; all.forEach { $0(granted) } }
+    }
+    private var waiting: Waiting?
     /// What the request now asks, which the panel takes as it comes down.
     private(set) var question: PermissionQuestion?
     /// A bar whose answered prompt is going back up under it, whose icon goes once it has.
@@ -114,7 +133,7 @@ import UserNotifications
     /// Answered, the page hears at once, and the prompt goes back up under the bar, its icon then going.
     func resolve(_ allowed: Bool) {
         guard let completion = reply else { return }
-        reply = nil; requestingWebView = nil; snoozed = false
+        reply = nil; requestingWebView = nil; waiting = nil; snoozed = false
         pendingShow?.cancel(); pendingShow = nil
         let bar = requestingBar; requestingBar = nil
         if panel.isPresented || panel.isLeaving { leavingBar = bar; panel.hide() } else { removeIcon(from: bar) }

@@ -1,5 +1,4 @@
 import UIKit
-import ImageIO
 
 /// Bounded, persistent first-party icons. No third-party favicon service receives typed URLs.
 @MainActor final class MobileSuggestionFavicons {
@@ -7,7 +6,7 @@ import ImageIO
     private let allowsNetwork: Bool
     private let session: URLSession
     private var images: [String: UIImage] = [:]
-    private var bytes: [String: Data] = [:]
+    private var bytes: [String: MobileFavicon.Saved] = [:]
     private var tasks: [String: Task<Void, Never>] = [:]
     private var attempted = Set<String>()
     private var preview: Task<Void, Never>?
@@ -21,10 +20,19 @@ import ImageIO
         config.httpCookieStorage = nil; config.httpShouldSetCookies = false
         config.timeoutIntervalForRequest = 4; config.timeoutIntervalForResource = 6
         self.session = session ?? URLSession(configuration: config)
-        if let storageURL, let data = try? Data(contentsOf: storageURL), data.count <= 8_000_000,
-           let saved = try? JSONDecoder().decode([String: Data].self, from: data) {
-            for (key, value) in saved.sorted(by: { $0.key < $1.key }).prefix(128) {
-                if let image = Self.decode(value) { bytes[key] = value; images[key] = image }
+        if let storageURL, let data = try? Data(contentsOf: storageURL), data.count <= 16_000_000 {
+            if let saved = try? JSONDecoder().decode([String: MobileFavicon.Saved].self, from: data) {
+                for (key, value) in saved.sorted(by: { $0.key < $1.key }).prefix(128) {
+                    if let image = value.image {
+                        bytes[key] = value; images[key] = image
+                        if value.dark != nil { attempted.insert(key) }
+                    }
+                }
+            } else if let saved = try? JSONDecoder().decode([String: Data].self, from: data) {
+                // Old single-image caches remain usable while their appearance variants load.
+                for (key, value) in saved.sorted(by: { $0.key < $1.key }).prefix(128) {
+                    remember(MobileFavicon.decode(value), for: URL(string: key))
+                }
             }
         }
     }
@@ -33,8 +41,14 @@ import ImageIO
         return site.absoluteString
     }
     func remember(_ image: UIImage?, for url: URL?) {
-        guard let image, let origin = Self.origin(url), let data = image.pngData(), data.count <= 100_000 else { return }
-        images[origin] = image; bytes[origin] = data
+        guard let image, let origin = Self.origin(url), let saved = MobileFavicon.Saved(image) else { return }
+        // A restored tab may still have a single icon; keep any dark artwork already learned.
+        if saved.dark == nil, let dark = bytes[origin]?.dark.flatMap(MobileFavicon.decode) {
+            let combined = MobileFavicon.adaptive(light: image, dark: dark)
+            images[origin] = combined; bytes[origin] = MobileFavicon.Saved(combined)
+        } else {
+            images[origin] = image; bytes[origin] = saved
+        }
         while images.count > 128, let oldest = images.keys.sorted().first { images[oldest] = nil; bytes[oldest] = nil }
     }
     /// Typing a literal address waits for a quiet moment before fetching its public site's icon.
@@ -51,23 +65,42 @@ import ImageIO
     }
     func image(for url: URL?, fetch: Bool = true) -> UIImage? {
         guard let url, let origin = Self.origin(url) else { return nil }
-        if let image = images[origin] { return image }
         // Only complete public domains are fetched. In-progress/local addresses keep the placeholder.
         guard fetch, allowsNetwork, !AddressResolver.isLocal(url), let host = url.host, host.contains("."),
               !host.hasSuffix(".test"), !host.hasSuffix(".example"), !host.hasSuffix(".invalid"),
-              attempted.insert(origin).inserted else { return nil }
+              attempted.insert(origin).inserted else { return images[origin] }
         tasks[origin] = Task { [weak self] in
             guard let self else { return }
             defer { tasks[origin] = nil }
             let root = URL(string: origin)!
-            let candidates = [FaviconDiscovery.lightIcon(for: root), URL(string: "/favicon.ico", relativeTo: root)?.absoluteURL].compactMap { $0 }
-            for icon in candidates {
-                if let data = await data(from: icon), let image = Self.decode(data) { store(image, origin: origin); return }
+            if let lightURL = FaviconDiscovery.lightIcon(for: root), let darkURL = FaviconDiscovery.darkIcon(for: root) {
+                async let light = load(lightURL)
+                async let dark = load(darkURL)
+                let pair = await (light, dark)
+                if let light = pair.0 ?? pair.1 {
+                    store(MobileFavicon.adaptive(light: light, dark: pair.1), origin: origin); return
+                }
             }
-            if let html = await data(from: root), let declared = FaviconDiscovery.icon(in: html, baseURL: root),
-               let data = await data(from: declared), let image = Self.decode(data) { store(image, origin: origin) }
+            var light = images[origin]
+            if light == nil, let fallback = URL(string: "/favicon.ico", relativeTo: root)?.absoluteURL {
+                light = await load(fallback)
+                if let light { remember(light, for: root); onLoad?() }
+            }
+            // Even when favicon.ico loads, metadata can declare a separate dark icon.
+            var dark: UIImage?
+            if let html = await data(from: root) {
+                let lightURL = FaviconDiscovery.icon(in: html, baseURL: root)
+                let darkURL = FaviconDiscovery.icon(in: html, baseURL: root, dark: true)
+                if let lightURL, let declared = await load(lightURL) { light = declared }
+                if let darkURL, darkURL != lightURL { dark = await load(darkURL) }
+            }
+            if let light = light ?? dark { store(MobileFavicon.adaptive(light: light, dark: dark), origin: origin) }
         }
-        return nil
+        return images[origin]
+    }
+    private func load(_ url: URL) async -> UIImage? {
+        guard let data = await data(from: url) else { return nil }
+        return MobileFavicon.decode(data)
     }
     private func data(from url: URL) async -> Data? {
         guard ["http", "https"].contains(url.scheme ?? ""), url.user == nil, url.password == nil else { return nil }
@@ -75,12 +108,6 @@ import ImageIO
         guard let (data, response) = try? await session.data(for: request), !Task.isCancelled,
               (response as? HTTPURLResponse)?.statusCode == 200, data.count <= 1_000_000 else { return nil }
         return data
-    }
-    private static func decode(_ data: Data) -> UIImage? {
-        guard data.count <= 1_000_000, let source = CGImageSourceCreateWithData(data as CFData, nil),
-              let image = CGImageSourceCreateThumbnailAtIndex(source, 0,
-                [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 64] as CFDictionary) else { return nil }
-        return UIImage(cgImage: image)
     }
     private func store(_ image: UIImage, origin: String) {
         remember(image, for: URL(string: origin))

@@ -36,7 +36,7 @@ final class PermissionChoiceButton: ChromeButton {
 /// Find's chevrons and close are. Only they answer it; its icon in the bar puts it away and
 /// brings it back. Covers the asking page and clips to it; only the panel takes clicks.
 @MainActor final class PermissionPanel: FlippedView {
-    static let iconSize: CGFloat = 16, textX: CGFloat = 12+16+8, buttonsWidth: CGFloat = 2*26+1
+    static let iconSize: CGFloat = 16, textX: CGFloat = 12+16+7, buttonsWidth: CGFloat = 2*26+1
     static let font = NSFont.systemFont(ofSize: 13)
     let panel = Surface(radius: FindBar.radius)
     private let content = FlippedView()
@@ -68,6 +68,8 @@ final class PermissionChoiceButton: ChromeButton {
         FindBar.stylePanel(panel, content: content)
         icon.imageScaling = .scaleNone
         text.lineBreakMode = .byTruncatingTail; text.cell?.usesSingleLineMode = true
+        // The toolbar's own hover hints, not the system's tooltip.
+        allowButton.setHoverHint("Allow"); denyButton.setHoverHint("Don’t allow")
         allowButton.actionBlock = { [weak self] in self?.answer?(true) }
         denyButton.actionBlock = { [weak self] in self?.answer?(false) }
         [icon, text, allowButton, denyButton].forEach(content.addSubview)
@@ -83,7 +85,10 @@ final class PermissionChoiceButton: ChromeButton {
     func applyTheme(_ theme: RiseTheme) {
         self.theme = theme
         FindBar.applyPanelTheme(panel, theme: theme)
-        for button in [allowButton, denyButton] { button.restingTint = theme.muted; button.hoverColor = theme.text.withAlphaComponent(0.07) }
+        for button in [allowButton, denyButton] {
+            button.restingTint = theme.muted; button.hoverColor = theme.text.withAlphaComponent(0.07)
+            button.hoverHint?.appearance = theme.appearance
+        }
         allowButton.hoverTint = SiteCapability.camera.accent(theme); denyButton.hoverTint = SiteCapability.notifications.accent(theme)
         fill()
     }

@@ -48,17 +48,36 @@ import RiseChromium
                 context: nil, characters: character, charactersIgnoringModifiers: character, isARepeat: false, keyCode: code)!)
         }
     }
-    func record(_ id: String, index: Int = 0) async {
+    struct Failure: Error {}
+    func record(_ id: String, replacing: Bool = false) async throws {
+        if replacing {
+            for remaining in stride(from: browser.keyboardShortcuts.bindings(id).count, to: 0, by: -1) {
+                await click("[data-command=\"\(id)\"] .remove")
+                guard await wait("Remove the previous \(id) binding", { self.browser.keyboardShortcuts.bindings(id).count == remaining-1 }) else { throw Failure() }
+            }
+        }
         browser.window?.makeFirstResponder(settings.page.view)
-        let source = """
-        const row = editor.shadowRoot.querySelector('[data-command="\(id)"].command');
-        row.querySelectorAll('cr-shortcut-input')[\(index)].shadowRoot.querySelector('#edit').click(); return true;
-        """
-        check(await js(source) as? Bool == true, "Open the native \(id) recorder")
-        await wait("The recorder is ready") { self.browser.shortcutRecordingID == id && self.browser.shortcutRecordingIndex == index }
+        await click("[data-command=\"\(id)\"] .add")
+        guard await wait("The \(id) recording dialog is ready", { self.browser.shortcutRecordingID == id }) else { throw Failure() }
+    }
+    func save() async throws {
+        await click("#saveShortcut")
+        guard await wait("Save closes the recorder", { self.browser.shortcutRecordingID == nil }) else { throw Failure() }
+    }
+    func filter(_ value: String) async {
+        let encoded = String(data: try! JSONSerialization.data(withJSONObject: [value]), encoding: .utf8)!
+        _ = await js("find(editor.shadowRoot, 'cr-search-field').setValue(\(encoded)[0]); return true")
     }
     func click(_ selector: String) async {
         check(await js("const button = editor.shadowRoot.querySelector('\(selector)'); button?.click(); return !!button") as? Bool == true, "Settings control: \(selector)")
+    }
+    func capture(_ name: String) async {
+        try? await Task.sleep(for: .milliseconds(150))
+        if let image = await settings.page.snapshot(width: nil), let tiff = image.tiffRepresentation,
+           let bytes = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+            do { try bytes.write(to: folder.appendingPathComponent(name+".png")) }
+            catch { check(false, "Save visual capture: \(error)") }
+        } else { check(false, "Capture the rendered shortcut editor") }
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
         Task {
@@ -73,111 +92,132 @@ import RiseChromium
         browser.showWindow(nil); browser.window?.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         menus = AppDelegate(); menus.browser = browser; menus.buildMenu()
         settings = browser.addTab(url: URL(string: "rise://settings/keyboardShortcuts")!)
-        let loaded = await wait("The Keyboard shortcuts settings page loads") {
-            await self.js("return !!editor?.shadowRoot?.querySelector('cr-shortcut-input')") as? Bool == true
-        }
-        guard loaded else { return }
-        check(await js("return find(document, '#riseShortcuts')?.textContent.includes('Keyboard shortcuts')") as? Bool == true, "Keyboard shortcuts appears in the settings sidebar")
-        let count = await js("return editor.shadowRoot.querySelectorAll('.command').length") as? Int ?? 0
-        check(count > 65, "All app menu commands and contextual shortcuts are editable (\(count) commands)")
+        guard await wait("Helium's shortcut editor loads", {
+            await self.js("return !!editor?.shadowRoot?.querySelector('.shortcut-chip')") as? Bool == true
+        }) else { return }
+        check(await js("return find(document, '#riseShortcuts')?.textContent.includes('Keyboard shortcuts')") as? Bool == true, "Keyboard shortcuts remains in Rise's sidebar")
+        check((await js("return editor.shadowRoot.querySelectorAll('.command-row[data-command]').length") as? Int ?? 0) > 65, "All Rise actions remain available")
+        check(await js("return editor.shadowRoot.querySelector('#resetAllButton').disabled") as? Bool == true, "Reset all to defaults starts disabled")
+        check(await js("return !editor.shadowRoot.querySelector('cr-shortcut-input') && !!editor.shadowRoot.querySelector('.shortcut-label')") as? Bool == true, "Compact shortcut chips replace the old input rows")
+        await filter("new tab")
+        guard await wait("Search finds an action by name", { await self.js("return editor.shadowRoot.querySelectorAll('.command-row[data-command]').length === 1 && !!editor.shadowRoot.querySelector('[data-command=newTab]')") as? Bool == true }) else { throw Failure() }
+        await filter("⌘T")
+        await wait("Search also finds shortcut key symbols") { await self.js("return editor.shadowRoot.querySelector('.command-row[data-command]')?.dataset.command === 'newTab'") as? Bool == true }
+        await filter("Command+T")
+        await wait("Search also finds serialized key names") { await self.js("return editor.shadowRoot.querySelector('.command-row[data-command]')?.dataset.command === 'newTab'") as? Bool == true }
+        await filter("no such shortcut")
+        await wait("An unmatched search explains that there are no results") { await self.js("return !!editor.shadowRoot.querySelector('#noResults')") as? Bool == true }
+        await filter("")
+        await wait("Clearing search restores all actions") { await self.js("return editor.shadowRoot.querySelectorAll('.command-row[data-command]').length > 65") as? Bool == true }
+        await capture("helium-shortcuts-light")
 
-        await record("newTab")
+        try await record("newTab", replacing: true)
+        check(await js("return editor.shadowRoot.querySelector('#saveShortcut').disabled") as? Bool == true, "Save requires a captured shortcut")
+        key("a", [], code: 0)
+        await wait("An unmodified letter shows validation") { await self.js("return editor.shadowRoot.querySelector('.warning')?.textContent.includes('Include Command')") as? Bool == true }
         key("y", [.command, .control, .option, .shift], code: 16)
-        await wait("Record all four modifiers with Chromium's own input") { self.browser.keyboardShortcuts.bindings("newTab") == [KeyboardShortcut("Command+Ctrl+Alt+Shift+Y")!] }
-        await wait("Recording ends after saving") { self.browser.shortcutRecordingID == nil }
+        await wait("Recording previews every modifier") { await self.js("return editor.shadowRoot.querySelector('#captureTarget')?.textContent.includes('⌘⌃⌥⇧Y')") as? Bool == true }
+        await capture("helium-shortcuts-recorder")
+        check(browser.keyboardShortcuts.bindings("newTab").isEmpty, "Preview does not save or execute the shortcut")
+        await click("#captureDialog .cancel-button")
+        await wait("Cancel stops native recording") { self.browser.shortcutRecordingID == nil }
+        check(browser.keyboardShortcuts.bindings("newTab").isEmpty, "Cancel leaves bindings untouched")
+
+        try await record("newTab")
+        key("y", [.command, .control, .option, .shift], code: 16)
+        await wait("A valid preview enables Save") { await self.js("return editor.shadowRoot.querySelector('#saveShortcut')?.disabled === false") as? Bool == true }
+        key("\r", [], code: 36)
+        guard await wait("Enter saves the preview and closes recording", { self.browser.shortcutRecordingID == nil && self.browser.keyboardShortcuts.bindings("newTab") == [KeyboardShortcut("Command+Ctrl+Alt+Shift+Y")!] }) else { throw Failure() }
         check(!browser.palette.isPresented, "Recording did not execute New Tab")
-        let item = browser.keyboardShortcuts.commands.first { $0.id == "newTab" }!.items[0]
-        check(item.keyEquivalentModifierMask == [.command, .control, .option, .shift], "The menu shortcut updates immediately")
-        _ = await js("document.documentElement.dataset.shortcutCheckDocument = 'before-reload'; return true")
+        check(browser.keyboardShortcuts.commands.first { $0.id == "newTab" }!.items[0].keyEquivalentModifierMask == [.command, .control, .option, .shift], "Native menus update after Save")
+        _ = await js("document.documentElement.dataset.shortcutDocument = 'before'; return true")
         settings.page.reload()
-        await wait("The saved shortcut survives reloading Settings") {
-            await self.js("return document.documentElement.dataset.shortcutCheckDocument !== 'before-reload' && !!editor?.shadowRoot.querySelector('[data-command=newTab].command .add') && editor.shadowRoot.querySelector('[data-command=newTab].command cr-shortcut-input')?.shortcut === 'Command+Ctrl+Alt+Shift+Y'") as? Bool == true
-        }
+        guard await wait("The saved shortcut survives reloading Settings", { await self.js("return document.documentElement.dataset.shortcutDocument !== 'before' && editor?.shadowRoot.querySelector('[data-command=newTab] .shortcut-label')?.textContent.includes('⌘⌃⌥⇧Y')") as? Bool == true }) else { throw Failure() }
 
-        check(await js("""
-        const row = editor.shadowRoot.querySelector('[data-command=newTab].command');
-        const input = row.querySelector('cr-shortcut-input').getBoundingClientRect();
-        return Math.abs(row.querySelector('.label').getBoundingClientRect().top - input.top) < 1 &&
-            Math.abs(row.querySelector('.add').getBoundingClientRect().left - input.left) < 1;
-        """) as? Bool == true, "Action labels align with the first field and Add shortcut aligns with its left edge")
-
-        for leaveRecording in [true, false] {
-            await click("[data-command=newTab].command .add")
-            await wait("An empty additional shortcut starts recording") { self.browser.shortcutRecordingID == "newTab" && self.browser.shortcutRecordingIndex == 1 }
-            if leaveRecording {
-                _ = await js("editor.shadowRoot.querySelector('[data-command=newTab].command').querySelectorAll('cr-shortcut-input')[1].$.input.blur(); return true")
-                await wait("An unset shortcut can be left without recording keys") { self.browser.shortcutRecordingID == nil }
-            }
-            check(await js("""
-            const input = editor.shadowRoot.querySelector('[data-command=newTab].command').querySelectorAll('cr-shortcut-input')[1];
-            return input.shortcut === '' && !input.$.clear.disabled;
-            """) as? Bool == true, "The empty shortcut has an enabled remove button")
-            _ = await js("editor.shadowRoot.querySelector('[data-command=newTab].command').querySelectorAll('cr-shortcut-input')[1].$.clear.click(); return true")
-            await wait("Removing an unset shortcut removes its row and stops recording") {
-                let oneInput = await self.js("return editor.shadowRoot.querySelector('[data-command=newTab].command').querySelectorAll('cr-shortcut-input').length === 1") as? Bool == true
-                return oneInput && self.browser.shortcutRecordingID == nil
-            }
-            check(browser.keyboardShortcuts.bindings("newTab") == [KeyboardShortcut("Command+Ctrl+Alt+Shift+Y")!], "Removing an empty slot preserves the saved shortcut")
-        }
-
-        await click("[data-command=newTab].command .add")
-        await wait("Add shortcut starts another native recorder") { self.browser.shortcutRecordingID == "newTab" && self.browser.shortcutRecordingIndex == 1 }
+        try await record("newTab")
         key("\u{F709}", [], code: 97)
-        await wait("Function keys can be added as a second shortcut") { self.browser.keyboardShortcuts.bindings("newTab").count == 2 }
-        await wait("Both recorded shortcuts appear in the UI") {
-            await self.js("return editor.shadowRoot.querySelector('[data-command=newTab].command').querySelectorAll('cr-shortcut-input')[1]?.shortcut === 'F6'") as? Bool == true
-        }
+        await wait("Function keys can be previewed") { self.browser.shortcutRecordingCandidate == KeyboardShortcut("F6") }
+        try await save()
+        await wait("Add preserves existing bindings and adds the second shortcut") { self.browser.keyboardShortcuts.bindings("newTab").count == 2 }
         check(KeyboardShortcuts(preferences: prefs).bindings("newTab").count == 2, "Both shortcuts are persisted")
-        _ = await js("editor.shadowRoot.querySelector('[data-command=newTab].command').querySelectorAll('cr-shortcut-input')[1].shadowRoot.querySelector('#clear').click(); return true")
-        await wait("The native clear button removes only that binding") { self.browser.keyboardShortcuts.bindings("newTab").count == 1 }
+        await click("[data-command=newTab] [data-shortcut=F6]")
+        await wait("The chip's remove control removes only that shortcut") { self.browser.keyboardShortcuts.bindings("newTab").count == 1 }
 
-        await record("searchTabs")
+        try await record("searchTabs", replacing: true)
         let tabCount = browser.tabs.count
-        key("w", .command, code: 13)
-        await wait("Conflicting shortcuts show an explanation") { await self.js("return editor.shadowRoot.textContent.includes('Already assigned')") as? Bool == true }
-        check(browser.tabs.count == tabCount && browser.shortcutRecordingID == "searchTabs", "Recording ⌘W neither closes the page nor overwrites another command")
+        key("q", .command, code: 12)
+        await wait("Conflicts explain which command will lose its shortcut") { await self.js("return editor.shadowRoot.querySelector('.warning')?.textContent.includes('Saving will remove')") as? Bool == true }
+        check(browser.tabs.count == tabCount && browser.shortcutRecordingID == "searchTabs", "Previewing ⌘Q never quits or changes a binding")
         key("\u{1B}", [], code: 53)
-        await wait("Escape cancels recording") { self.browser.shortcutRecordingID == nil }
+        await wait("Escape closes the dialog and stops native recording") { self.browser.shortcutRecordingID == nil }
 
-        await record("searchTabs")
+        try await record("searchTabs")
         key("s", [.command, .control, .shift], code: 1)
-        await wait("Search Tabs accepts a custom binding") { self.browser.keyboardShortcuts.bindings("searchTabs") == [KeyboardShortcut("Command+Ctrl+Shift+S")!] }
-        browser.window?.makeFirstResponder(settings.page.view)
+        await wait("Search Tabs has a preview") { self.browser.shortcutRecordingCandidate == KeyboardShortcut("Command+Ctrl+Shift+S") }
+        try await save()
         key("s", [.command, .control, .shift], code: 1)
-        check(browser.sidebar.isSearchingTabs, "The custom shortcut runs with a Chromium page focused")
+        check(browser.sidebar.isSearchingTabs, "The saved shortcut runs with Chromium focused")
         browser.sidebar.endTabSearch(); browser.window?.makeFirstResponder(settings.page.view)
         key("a", [.command, .shift], code: 0)
-        check(!browser.sidebar.isSearchingTabs, "The removed default no longer runs")
+        check(!browser.sidebar.isSearchingTabs, "The removed default stays disabled")
 
-        await record("moveCurrentTabToTop")
-        key("m", [.command, .option, .shift], code: 46)
-        await wait("The jump-to-top shortcut can be customized") { self.browser.keyboardShortcuts.bindings("moveCurrentTabToTop") == [KeyboardShortcut("Command+Alt+Shift+M")!] }
-        await record("undo:")
-        key("z", [.control, .option], code: 6)
-        await wait("Undo can be customized") { self.browser.keyboardShortcuts.bindings("undo:") == [KeyboardShortcut("Ctrl+Alt+Z")!] }
+        let closeID = browser.keyboardShortcuts.commands.first { browser.keyboardShortcuts.bindings($0.id).contains(KeyboardShortcut("Command+W")!) }!.id
+        try await record("pinCurrentTab")
+        key("w", .command, code: 13)
+        await wait("A conflicting chord is previewed safely") { self.browser.shortcutRecordingCandidate == KeyboardShortcut("Command+W") }
+        try await save()
+        check(browser.tabs.count == tabCount && browser.keyboardShortcuts.bindings(closeID).isEmpty
+              && browser.keyboardShortcuts.bindings("pinCurrentTab") == [KeyboardShortcut("Command+W")!], "Explicit Save moves a conflicting shortcut, just like Helium")
+        await click("[data-command=\"\(closeID)\"] .reset")
+        await wait("Per-command Reset restores defaults and reclaims their shortcut") { self.browser.keyboardShortcuts.bindings(closeID).contains(KeyboardShortcut("Command+W")!) && self.browser.keyboardShortcuts.bindings("pinCurrentTab").isEmpty }
+
+        for (id, character, flags, code) in [
+            ("moveCurrentTabToTop", "m", [.command, .option, .shift] as NSEvent.ModifierFlags, UInt16(46)),
+            ("undo:", "z", [.control, .option] as NSEvent.ModifierFlags, UInt16(6))
+        ] {
+            try await record(id, replacing: true)
+            key(character, flags, code: code)
+            await wait("Preview \(id)") { self.browser.shortcutRecordingCandidate != nil }
+            try await save()
+        }
         _ = browser.addTab(); _ = browser.addTab(); browser.select(settings.id)
         let before = browser.tabs.map(\.id)
         key("m", [.command, .option, .shift], code: 46)
-        check(browser.tabs.first?.id == settings.id, "The custom jump-to-top shortcut moves the current tab")
+        check(browser.tabs.first?.id == settings.id, "The customized jump-to-top shortcut works")
         key("z", [.control, .option], code: 6)
-        check(browser.tabs.map(\.id) == before, "Custom Undo restores its previous position")
-
-        await click("[data-command=newTab].command .reset")
-        await wait("Per-command Reset restores New Tab's default") { self.browser.keyboardShortcuts.bindings("newTab") == [KeyboardShortcut("Command+T")!] }
-        _ = await js("editor.shadowRoot.querySelector('#filter').shadowRoot.querySelector('input').focus(); return true")
+        check(browser.tabs.map(\.id) == before, "Customized Undo restores tab order")
+        _ = await js("find(editor.shadowRoot, 'cr-search-field').getSearchInput().focus(); return true")
         key("a", [], code: 0)
-        await wait("Settings accepts text after recording") { await self.js("return editor.shadowRoot.querySelector('#filter').value === 'a'") as? Bool == true }
+        await wait("Text input works after leaving the recorder") { await self.js("return editor.searchTerm_ === 'a'") as? Bool == true }
         key("z", [.control, .option], code: 6)
-        await wait("Custom Undo also undoes text in Chromium's focused field") { await self.js("return editor.shadowRoot.querySelector('#filter').value === ''") as? Bool == true }
-        await click("#resetAll")
-        await wait("Reset all restores every shortcut") {
+        await wait("Customized Undo still works in Chromium's search field") { await self.js("return editor.searchTerm_ === ''") as? Bool == true }
+
+        await click("#resetAllButton")
+        await wait("Reset all opens Helium's confirmation dialog") { await self.js("return !!editor.shadowRoot.querySelector('#resetDialog')") as? Bool == true }
+        await click("#resetDialog .cancel-button")
+        check(browser.keyboardShortcuts.bindings("newTab") != [KeyboardShortcut("Command+T")!], "Cancelling Reset all preserves custom shortcuts")
+        await click("#resetAllButton"); await click("#confirmReset")
+        await wait("Confirming Reset all restores every default") {
+            self.browser.keyboardShortcuts.bindings("newTab") == [KeyboardShortcut("Command+T")!] &&
             self.browser.keyboardShortcuts.bindings("searchTabs") == [KeyboardShortcut("Command+Shift+A")!] &&
-            self.browser.keyboardShortcuts.bindings("undo:") == [KeyboardShortcut("Command+Z")!] &&
-            self.browser.keyboardShortcuts.bindings("moveCurrentTabToTop") == [KeyboardShortcut("Command+Ctrl+Alt+Up")!]
+            self.browser.keyboardShortcuts.bindings("undo:") == [KeyboardShortcut("Command+Z")!]
         }
-        _ = await js("editor.shadowRoot.querySelector('#filter').value = 'move tab'; return true")
-        await wait("The shortcut list can be searched") {
-            await self.js("return editor.shadowRoot.querySelectorAll('.command').length === 3") as? Bool == true
-        }
+        await filter("move tab")
+        await wait("The complete list can still be filtered after resetting") { await self.js("return editor.shadowRoot.querySelectorAll('.command-row[data-command]').length === 3") as? Bool == true }
+        await filter("")
+        try await record("newTab")
+        _ = await js("document.documentElement.dataset.shortcutDocument = 'before'; return true")
+        settings.page.reload()
+        await wait("Reloading the document stops its old native recorder") { self.browser.shortcutRecordingID == nil }
+        guard await wait("The editor is ready after cancelling by reload", { await self.js("return document.documentElement.dataset.shortcutDocument !== 'before' && !!editor?.shadowRoot.querySelector('.shortcut-chip')") as? Bool == true }) else { throw Failure() }
+        try await record("newTab")
+        let other = browser.addTab()
+        check(browser.shortcutRecordingID == nil, "Leaving Settings cancels the native recorder")
+        browser.select(settings.id)
+        await wait("Returning to Settings has no stale recording dialog") { await self.js("return !editor.shadowRoot.querySelector('#captureDialog')") as? Bool == true }
+        browser.closeTab(other.id)
+        browser.chooseTheme(.dark)
+        await wait("The editor follows Rise's dark appearance") { await self.js("return matchMedia('(prefers-color-scheme: dark)').matches") as? Bool == true }
+        await capture("helium-shortcuts-dark")
     }
 }

@@ -8,6 +8,12 @@ final class TabPreviewCache: Sendable {
         let url: URL
         let picture: Data?
         let favicon: Data?
+        let darkFavicon: Data?
+
+        var faviconImage: UIImage? {
+            guard let light = favicon.flatMap(MobileFavicon.decode) else { return nil }
+            return MobileFavicon.adaptive(light: light, dark: darkFavicon.flatMap(MobileFavicon.decode))
+        }
     }
     private let folder: URL
     private let writer = DispatchQueue(label: "Rise.iOS.TabPreviews", qos: .utility)
@@ -27,8 +33,10 @@ final class TabPreviewCache: Sendable {
         let folder = folder
         writer.async {
             let data = picture?.jpegData(compressionQuality: 0.82)
+            let icon = favicon.flatMap(MobileFavicon.Saved.init)
             guard data != nil || favicon != nil,
-                  let entry = try? JSONEncoder().encode(Entry(version: Self.formatVersion, url: url, picture: data, favicon: favicon?.pngData())) else { return }
+                  let entry = try? JSONEncoder().encode(Entry(version: Self.formatVersion, url: url, picture: data,
+                                                            favicon: icon?.light, darkFavicon: icon?.dark)) else { return }
             do {
                 try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
                 try entry.write(to: folder.appendingPathComponent(id.uuidString+".json"),

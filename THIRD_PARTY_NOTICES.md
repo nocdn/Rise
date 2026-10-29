@@ -1,5 +1,16 @@
 # Third-party notices
 
+## Helium keyboard shortcut editor
+
+The desktop shortcut editor's layout, styles, dialogs and search ranking adapt
+Helium's `custom-keyboard-shortcuts-page.patch`, copyright 2026 The Helium Authors,
+at revision `58261a24341935be831fa3b97d31c46232c81b59`.
+Source: https://github.com/imputnet/helium/blob/58261a24341935be831fa3b97d31c46232c81b59/patches/helium/settings/custom-keyboard-shortcuts-page.patch
+
+Licensed under GPL-3.0. The original source and license are retained in
+`Engine/third_party/helium`; the complete license ships in
+`Contents/Resources/Licenses/Helium-GPL-3.0.txt`.
+
 ## Cookie consent automation
 
 Desktop and iOS bundle DuckDuckGo Autoconsent 16.52.0 (MPL-2.0), along with

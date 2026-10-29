@@ -409,7 +409,10 @@ final class SearchPanel: UIView, UITextFieldDelegate {
     private func image(for url: URL?, fetch: Bool = true) -> UIImage? {
         guard let url else { return nil }
         if let image = tabIcon(url) {
-            if !isPrivateBrowsing { source?.icons.remember(image, for: url) }
+            if !isPrivateBrowsing {
+                source?.icons.remember(image, for: url)
+                return source?.icons.image(for: url, fetch: fetch) ?? image
+            }
             return image
         }
         return source?.icons.image(for: url, fetch: fetch && !isPrivateBrowsing)

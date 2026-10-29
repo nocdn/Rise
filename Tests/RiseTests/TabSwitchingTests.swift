@@ -64,7 +64,7 @@ final class TabSwitchingTests: XCTestCase {
         releaseControl(browser)
         XCTAssertEqual(browser.selectedID, third.id)
         XCTAssertTrue(browser.tabSwitcher.isHidden)
-        XCTAssertTrue(browser.tabSwitchBackdrop.isHidden)
+        XCTAssertTrue(browser.veil.isHidden)
     }
     @MainActor func testEscapeAndDeactivationCancelWithoutSelectingCandidate() async throws {
         let browser = makeBrowser(); defer { clean(browser) }

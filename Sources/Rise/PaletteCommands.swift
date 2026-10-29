@@ -1,22 +1,51 @@
 import AppKit
 
-/// What the address palette can do besides open pages: a row each, offered as their words are
-/// typed, and only while they'd do something.
+/// Browser actions offered after `/`, and only while they'd do something.
 struct PaletteCommand {
     /// What runs it, the same whatever its title says now.
     let id: String
     let title: String
     let symbol: String
-    /// More words it answers to, beside its title's.
+    /// Hidden search aliases; the row keeps its normal title.
     var keywords: [String] = []
+
+    /// A leading slash switches the address palette to browser commands.
+    static func query(in text: String) -> String? {
+        let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.hasPrefix("/") else { return nil }
+        return String(text.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     /// Every word typed starts a word of its title or keywords: "close" finds Close Tab, "url"
     /// Copy Link.
     func matches(_ query: String) -> Bool {
-        let typed = query.lowercased().split(whereSeparator: \.isWhitespace)
+        let typed = query.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })
         guard !typed.isEmpty else { return false }
         let words = ([title]+keywords).flatMap { $0.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }) }
         return typed.allSatisfy { part in words.contains { $0.hasPrefix(part) } }
+    }
+}
+
+/// Local command counts live beside the session and survive app restarts.
+@MainActor final class PaletteCommandUsage {
+    private let storageURL: URL
+    private var counts: [String: Int] = [:]
+
+    init(storageURL: URL) {
+        self.storageURL = storageURL
+        if let data = try? Data(contentsOf: storageURL), data.count <= 64_000,
+           let saved = try? JSONDecoder().decode([String: Int].self, from: data) {
+            counts = Dictionary(uniqueKeysWithValues: saved.filter { $0.key.count <= 128 && $0.value > 0 }
+                .sorted { $0.key < $1.key }.prefix(128).map { ($0.key, $0.value) })
+        }
+    }
+    func count(for command: String) -> Int { counts[command, default: 0] }
+    func record(_ command: String) {
+        counts[command] = min(count(for: command), Int.max-1)+1
+        do {
+            try FileManager.default.createDirectory(at: storageURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try JSONEncoder().encode(counts).write(to: storageURL, options: .atomic)
+        } catch { NSLog("Rise command usage couldn't be saved: %@", error.localizedDescription) }
     }
 }
 
@@ -35,44 +64,61 @@ enum PageZoom {
     var paletteCommands: [PaletteCommand] {
         let tab = selectedTab, hasPage = tab?.url != nil
         var commands: [PaletteCommand?] = [
-            tab != nil ? PaletteCommand(id: "Close Tab", title: "Close Tab", symbol: "xmark") : nil,
-            !closedTabs.isEmpty ? PaletteCommand(id: "Reopen Closed Tab", title: "Reopen Closed Tab", symbol: "arrow.uturn.backward", keywords: ["undo", "restore"]) : nil,
-            hasPage ? PaletteCommand(id: "Duplicate Tab", title: "Duplicate Tab", symbol: "plus.square.on.square", keywords: ["copy"]) : nil,
+            tab != nil ? PaletteCommand(id: "Close Tab", title: "Close Tab", symbol: "xmark", keywords: ["dismiss", "remove tab"]) : nil,
+            !closedTabs.isEmpty ? PaletteCommand(id: "Reopen Closed Tab", title: "Reopen Closed Tab", symbol: "arrow.uturn.backward",
+                                                keywords: ["undo", "restore", "recover", "bring back"]) : nil,
+            hasPage ? PaletteCommand(id: "Duplicate Tab", title: "Duplicate Tab", symbol: "plus.square.on.square", keywords: ["copy", "clone"]) : nil,
             tab.flatMap { tab in tab.pinned || canPinTab && !splitGroups.contains { $0.contains(tab.id) }
-                ? PaletteCommand(id: "Toggle Pin", title: tab.pinned ? "Unpin Tab" : "Pin Tab", symbol: tab.pinned ? "pin.slash" : "pin") : nil },
+                ? PaletteCommand(id: "Toggle Pin", title: tab.pinned ? "Unpin Tab" : "Pin Tab", symbol: tab.pinned ? "pin.slash" : "pin",
+                                 keywords: tab.pinned ? ["release tab"] : ["keep open", "sticky tab"]) : nil },
             tab.map { PaletteCommand(id: "Toggle Mute", title: $0.isAudioMuted ? "Unmute Tab" : "Mute Tab", symbol: $0.isAudioMuted ? "speaker.wave.2" : "speaker.slash",
-                                     keywords: ["sound", "audio"]) },
-            !closableTabsBelow.isEmpty ? PaletteCommand(id: "Close Tabs Below", title: "Close Tabs Below", symbol: "arrow.down.to.line") : nil,
-            !closableTabsAbove.isEmpty ? PaletteCommand(id: "Close Tabs Above", title: "Close Tabs Above", symbol: "arrow.up.to.line") : nil,
-            tabs.count > 1 ? PaletteCommand(id: "Sort Tabs by Domain", title: "Sort Tabs by Domain", symbol: "arrow.up.arrow.down", keywords: ["clean", "organise", "organize"]) : nil,
-            PaletteCommand(id: "Split View", title: "Split View", symbol: "rectangle.split.2x1"),
-            activeSplitGroup != nil ? PaletteCommand(id: "Swap Sides", title: "Swap Sides", symbol: "arrow.left.arrow.right", keywords: ["split"]) : nil,
-            tab != nil ? PaletteCommand(id: "Reload", title: "Reload", symbol: "arrow.clockwise", keywords: ["refresh"]) : nil,
-            hasPage ? PaletteCommand(id: "Copy Link", title: "Copy Link", symbol: "link", keywords: ["url", "address"]) : nil,
-            tab != nil ? PaletteCommand(id: "Find in Page", title: "Find in Page", symbol: "text.magnifyingglass", keywords: ["search"]) : nil,
-            hasPage ? PaletteCommand(id: "Capture Page", title: "Capture Page", symbol: "camera", keywords: ["screenshot", "jpeg", "pdf"]) : nil,
-            tab != nil ? PaletteCommand(id: "Zoom", title: "Zoom", symbol: "plus.magnifyingglass", keywords: ["in", "out", "bigger", "smaller"]) : nil,
-            tab.flatMap { PageZoom.isActual($0.page.zoom) ? nil : PaletteCommand(id: "Actual Size", title: "Actual Size", symbol: "1.magnifyingglass", keywords: ["zoom", "reset"]) },
-            PaletteCommand(id: "Change Theme", title: "Change Theme", symbol: "paintbrush", keywords: ["appearance", "dark", "light"]),
-            PaletteCommand(id: "Toggle Sidebar", title: "Toggle Sidebar", symbol: "sidebar.left"),
-            PaletteCommand(id: "Open Settings", title: "Open Settings", symbol: "gearshape", keywords: ["preferences"]),
-            PaletteCommand(id: "Extensions", title: "Extensions", symbol: "puzzlepiece.extension"),
-            PaletteCommand(id: "Downloads", title: "Downloads", symbol: "arrow.down.circle"),
+                                     keywords: ["sound", "audio"] + ($0.isAudioMuted ? ["enable sound", "turn on sound", "unsilence"] : ["silence", "quiet", "turn off sound"])) },
+            !closableTabsBelow.isEmpty ? PaletteCommand(id: "Close Tabs Below", title: "Close Tabs Below", symbol: "arrow.down.to.line",
+                                                       keywords: ["close tabs after", "close following tabs"]) : nil,
+            !closableTabsAbove.isEmpty ? PaletteCommand(id: "Close Tabs Above", title: "Close Tabs Above", symbol: "arrow.up.to.line",
+                                                       keywords: ["close tabs before", "close previous tabs"]) : nil,
+            tabs.count > 1 ? PaletteCommand(id: "Sort Tabs by Domain", title: "Sort Tabs by Domain", symbol: "arrow.up.arrow.down",
+                                           keywords: ["clean", "organise", "organize", "tidy", "group by site", "group websites"]) : nil,
+            PaletteCommand(id: "Split View", title: "Split View", symbol: "rectangle.split.2x1",
+                           keywords: ["side by side", "split screen", "compare pages", "two panes"]
+                            + (activeSplitGroup != nil ? ["unsplit", "single pane", "exit split"] : [])),
+            activeSplitGroup != nil ? PaletteCommand(id: "Swap Sides", title: "Swap Sides", symbol: "arrow.left.arrow.right",
+                                                     keywords: ["split", "switch panes", "reverse sides", "flip sides"]) : nil,
+            tab != nil ? PaletteCommand(id: "Reload", title: "Reload", symbol: "arrow.clockwise", keywords: ["refresh", "update page"]) : nil,
+            hasPage ? PaletteCommand(id: "Copy Link", title: "Copy Link", symbol: "link", keywords: ["url", "address", "clipboard"]) : nil,
+            tab != nil ? PaletteCommand(id: "Find in Page", title: "Find in Page", symbol: "text.magnifyingglass", keywords: ["search", "text", "locate"]) : nil,
+            hasPage ? PaletteCommand(id: "Capture Page", title: "Capture Page", symbol: "camera",
+                                     keywords: ["screenshot", "screen shot", "snapshot", "save page", "export page", "image", "jpeg", "pdf"]) : nil,
+            tab != nil ? PaletteCommand(id: "Zoom", title: "Zoom", symbol: "plus.magnifyingglass",
+                                        keywords: ["in", "out", "bigger", "smaller", "magnify", "enlarge", "shrink", "scale", "text size"]) : nil,
+            tab.flatMap { PageZoom.isActual($0.page.zoom) ? nil : PaletteCommand(id: "Actual Size", title: "Actual Size", symbol: "1.magnifyingglass",
+                                                                             keywords: ["zoom", "reset", "normal size", "default size", "100%", "100 percent"]) },
+            PaletteCommand(id: "Change Theme", title: "Change Theme", symbol: "paintbrush",
+                           keywords: ["appearance", "dark", "light", "night mode", "day mode", "colour", "color", "automatic"]),
+            PaletteCommand(id: "Toggle Sidebar", title: "Toggle Sidebar", symbol: "sidebar.left",
+                           keywords: ["tab list", "tabs panel"] + (sidebarVisible ? ["hide", "collapse"] : ["show", "expand"])),
+            PaletteCommand(id: "Open Settings", title: "Open Settings", symbol: "gearshape",
+                           keywords: ["preferences", "options", "configure", "configuration", "customise", "customize"]),
+            PaletteCommand(id: "Extensions", title: "Extensions", symbol: "puzzlepiece.extension", keywords: ["add ons", "addons", "plugins", "plug ins"]),
+            PaletteCommand(id: "Downloads", title: "Downloads", symbol: "arrow.down.circle", keywords: ["files", "downloaded files", "transfers"]),
         ]
         if let tab {
             commands.append(PaletteCommand(id: "Toggle Developer Mode", title: tab.developer ? "Disable Developer Mode" : "Enable Developer Mode",
-                                           symbol: "hammer", keywords: ["develop", "devtools", "toggle"]))
+                                           symbol: "hammer", keywords: ["develop", "devtools", "toggle", "advanced controls", "developer toolbar"]))
         }
         return commands.compactMap { $0 }
     }
-    /// The commands answering to `query`, those whose title starts with it first.
+    /// Matching actions ordered by use count, then title prefix and catalog order.
     func paletteCommands(matching query: String) -> [PaletteCommand] {
-        let matches = paletteCommands.filter { $0.matches(query) }
-        let lead = matches.filter { $0.title.lowercased().hasPrefix(query.lowercased()) }
-        return Array((lead+matches.filter { lead.map(\.id).contains($0.id) == false }).prefix(Self.paletteCommandLimit))
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return paletteCommands.enumerated().filter { query.isEmpty || $0.element.matches(query) }.sorted { left, right in
+            let a = paletteCommandUsage.count(for: left.element.id), b = paletteCommandUsage.count(for: right.element.id)
+            if a != b { return a > b }
+            let aStarts = left.element.title.lowercased().hasPrefix(query), bStarts = right.element.title.lowercased().hasPrefix(query)
+            if aStarts != bStarts { return aStarts }
+            return left.offset < right.offset
+        }.map(\.element)
     }
-    /// So the pages and searches typed for still show beside them.
-    static let paletteCommandLimit = 4
 
     /// The lists some commands open in place of running: the themes, capture formats and zooms.
     func paletteChoice(for command: String) -> AddressPalette.Choice? {
@@ -97,6 +143,11 @@ enum PageZoom {
     }
 
     func runPaletteCommand(_ command: String) {
+        // Count a completed choice under its parent action; opening and cancelling a
+        // submenu doesn't count as using it.
+        let action = command.hasPrefix(AddressPalette.themeCommandPrefix) ? "Change Theme"
+            : command.hasPrefix("Capture:") ? "Capture Page" : command.hasPrefix("Zoom:") ? "Zoom" : command
+        if paletteCommands.contains(where: { $0.id == action }) { paletteCommandUsage.record(action) }
         if command.hasPrefix(AddressPalette.themeCommandPrefix) {
             let choice = String(command.dropFirst(AddressPalette.themeCommandPrefix.count))
             chooseTheme(choice == "automatic" ? nil : RiseTheme(rawValue: choice) ?? theme); return

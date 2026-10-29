@@ -1,4 +1,3 @@
-import ImageIO
 import UIKit
 import WebKit
 
@@ -313,13 +312,26 @@ import WebKit
     (() => {
       const links = Array.from(document.querySelectorAll('link[rel][href]'));
       const rels = link => link.rel.toLowerCase().split(/\\s+/);
-      const usable = link => !/svg/i.test(link.type) && !/\\.svg([?#]|$)/i.test(link.href)
-        && (!link.media || matchMedia(link.media).matches);
-      const icons = links.filter(link => rels(link).includes('icon') && usable(link));
-      const touch = links.filter(link => rels(link).some(rel => rel.startsWith('apple-touch-icon')) && usable(link));
-      return icons.concat(touch).map(link => link.href);
+      const scheme = link => link.media.match(/\\(\\s*prefers-color-scheme\\s*:\\s*(dark|light)\\s*\\)/i);
+      const candidates = dark => {
+        const usable = link => {
+          if (/svg/i.test(link.type) || /\\.svg([?#]|$)/i.test(link.href)) return false;
+          const appearance = scheme(link);
+          return appearance ? (appearance[1].toLowerCase() === 'dark') === dark
+            : (!link.media || matchMedia(link.media).matches);
+        };
+        const icons = links.filter(link => rels(link).includes('icon') && usable(link));
+        const touch = links.filter(link => rels(link).some(rel => rel.startsWith('apple-touch-icon')) && usable(link));
+        return icons.concat(touch).sort((a, b) => Number(!!scheme(b))-Number(!!scheme(a))).map(link => link.href);
+      };
+      return { light: candidates(false), dark: candidates(true) };
     })()
     """
+
+    struct IconCandidates: Equatable {
+        let light: [URL]
+        let dark: [URL]
+    }
 
     /// Looks up the page's icon: the first it declares that loads, else the site's favicon.ico.
     func loadFavicon() {
@@ -338,7 +350,9 @@ import WebKit
     static func favicon(for page: URL) async -> UIImage? {
         guard MobileBrowserSession.canRestore(page),
               let fallback = URL(string: "/favicon.ico", relativeTo: page)?.absoluteURL else { return nil }
-        return await icon(at: fallback)
+        return await favicon(at: IconCandidates(
+            light: [FaviconDiscovery.lightIcon(for: page), fallback].compactMap { $0 },
+            dark: [FaviconDiscovery.darkIcon(for: page), fallback].compactMap { $0 }))
     }
 
     /// Used by the temporary preview page too, without changing a real tab's address/history.
@@ -346,18 +360,30 @@ import WebKit
         await favicon(at: faviconCandidates(for: web))
     }
 
-    static func faviconCandidates(for web: WKWebView) async -> [URL] {
+    static func faviconCandidates(for web: WKWebView) async -> IconCandidates {
         guard web.configuration.websiteDataStore.isPersistent,
-              let page = web.url, MobileBrowserSession.canRestore(page) else { return [] }
-        let result = try? await web.evaluateJavaScript(iconScript)
-        var candidates = ((result as? [String]) ?? []).compactMap(URL.init(string:))
-            .filter { ["http", "https", "data"].contains($0.scheme?.lowercased() ?? "") }
-        candidates = Array(candidates.prefix(4))
-        if let fallback = URL(string: "/favicon.ico", relativeTo: page)?.absoluteURL { candidates.append(fallback) }
-        return candidates
+              let page = web.url, MobileBrowserSession.canRestore(page) else { return IconCandidates(light: [], dark: []) }
+        let result = (try? await web.evaluateJavaScript(iconScript)) as? [String: [String]]
+        func candidates(dark: Bool) -> [URL] {
+            var urls = (result?[dark ? "dark" : "light"] ?? []).compactMap(URL.init(string:))
+                .filter { ["http", "https", "data"].contains($0.scheme?.lowercased() ?? "") }
+            urls = Array(urls.prefix(4))
+            let known = dark ? FaviconDiscovery.darkIcon(for: page) : FaviconDiscovery.lightIcon(for: page)
+            if let known { urls.insert(known, at: 0) }
+            if let fallback = URL(string: "/favicon.ico", relativeTo: page)?.absoluteURL { urls.append(fallback) }
+            return urls
+        }
+        return IconCandidates(light: candidates(dark: false), dark: candidates(dark: true))
     }
 
-    static func favicon(at candidates: [URL]) async -> UIImage? {
+    static func favicon(at candidates: IconCandidates) async -> UIImage? {
+        let light = await firstIcon(at: candidates.light)
+        let dark = candidates.dark == candidates.light ? nil : await firstIcon(at: candidates.dark)
+        guard let light = light ?? dark else { return nil }
+        return MobileFavicon.adaptive(light: light, dark: dark)
+    }
+
+    private static func firstIcon(at candidates: [URL]) async -> UIImage? {
         for url in candidates {
             guard !Task.isCancelled else { return nil }
             if let image = await icon(at: url) { return image }
@@ -369,18 +395,11 @@ import WebKit
         if let icon = icons[url] { return icon }
         guard let loaded = try? await URLSession.shared.data(for: URLRequest(url: url, timeoutInterval: 5)),
               (loaded.1 as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true,
-              let icon = decode(loaded.0) else { return nil }
+              let icon = MobileFavicon.decode(loaded.0) else { return nil }
         icons[url] = icon
         return icon
     }
 
-    /// The largest of the icon's sizes, as a .ico holds several.
-    private static func decode(_ data: Data) -> UIImage? {
-        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
-        let largest = (0..<CGImageSourceGetCount(source)).compactMap { CGImageSourceCreateImageAtIndex(source, $0, nil) }
-            .max { $0.width < $1.width }
-        return largest.map { UIImage(cgImage: $0) }
-    }
 }
 
 /// A page's icon, its corners clipped a little as the Mac app's are, so square icons round off and

@@ -89,10 +89,12 @@ import AppKit
     private func revealTabSwitcher() {
         guard isSwitchingTabs else { return }
         tabSwitchWork = nil
-        tabSwitchBackdrop.frame = root.bounds; tabSwitchBackdrop.isHidden = false
-        root.addSubview(tabSwitchBackdrop, positioned: .above, relativeTo: nil)
+        veil.frame = root.bounds
+        veil.dismiss = { [weak self] in self?.cancelTabSwitch() }
+        root.addSubview(veil, positioned: .above, relativeTo: nil)
+        veil.show(theme: theme)
         tabSwitcher.isHidden = false
-        root.addSubview(tabSwitcher, positioned: .above, relativeTo: tabSwitchBackdrop)
+        root.addSubview(tabSwitcher, positioned: .above, relativeTo: veil)
         refreshTabSwitcher(); selectedTab?.captureThumbnail()
         tabSwitcher.noteShown()
         window?.makeFirstResponder(tabSwitcher)
@@ -112,7 +114,7 @@ import AppKit
         guard isSwitchingTabs else { return }
         tabSwitchGeneration += 1; tabSwitchWork?.cancel(); tabSwitchWork = nil
         tabSwitchOrder = []; tabSwitchIndex = 0
-        tabSwitcher.dismiss(); tabSwitchBackdrop.isHidden = true
+        tabSwitcher.dismiss(); veil.hide()
         window?.makeFirstResponder(peekTab?.page.view ?? selectedTab?.page.view)
     }
 }

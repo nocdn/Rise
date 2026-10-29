@@ -38,10 +38,6 @@ import AppKit
 
     private static func dark(_ theme: RiseTheme) -> Bool { theme == .dark }
     static func background(_ theme: RiseTheme) -> NSColor { NSColor(hex: dark(theme) ? 0x232327 : 0xFFFFFF) }
-    /// Over the whole window, behind the palette.
-    static func veil(_ theme: RiseTheme) -> NSColor {
-        dark(theme) ? NSColor.black.withAlphaComponent(0.35) : NSColor(srgbRed: 10/255, green: 10/255, blue: 30/255, alpha: 0.12)
-    }
     static func accent(_ theme: RiseTheme) -> NSColor { NSColor(hex: dark(theme) ? 0x6B93FF : 0x3B6CF6) }
     static func selection(_ theme: RiseTheme) -> NSColor { accent(theme).withAlphaComponent(0.12) }
     static func hover(_ theme: RiseTheme) -> NSColor { (dark(theme) ? NSColor.white : .black).withAlphaComponent(dark(theme) ? 0.05 : 0.04) }

@@ -9,6 +9,27 @@ search engine chosen in Chrome's settings.
 `BrowsingHistory`, `PopularSites`, `GoogleSearchSuggestions`, `FaviconDiscovery`, and
 `SiteSearchLearner` are also shared sources, directly referenced by the iOS target.
 
+On desktop, browser commands appear only after a leading `/`. Typing `/` lists available
+actions by how often they have been used; `/zoom` or `/settings` filters that list by
+title and keywords. Removing the slash immediately restores ordinary address and search
+suggestions. Command mode cancels remote search suggestions and never searches the web
+for an unmatched command. Zoom, theme and capture choices keep their existing submenus;
+only executing an action or choosing a submenu option counts toward its ranking.
+Counts are saved locally in `command-usage.json` beside the desktop session.
+Hidden aliases cover everyday descriptions, such as `/side-by-side` for Split View,
+`/night mode` for Change Theme, `/snapshot` for Capture Page and `/add-ons` for Extensions.
+Aliases ignore case and punctuation, keep the normal action titles and usage ranking,
+and follow toggle state (for example, `hide sidebar` versus `show sidebar`).
+The command list includes every available action and scrolls within the bounded panel.
+Filtering starts at the top, shrinks the panel to fit the matches, and explains when no
+commands match. `⌘↑` selects and reveals the first option in commands, their submenus,
+and ordinary address/search suggestions.
+
+The desktop address palette and tab switcher share one `PanelVeil` view: the same
+light/dark dim and the palette's existing 150 ms entry and 60 ms exit fades. Dismissal
+releases pointer handling immediately; reopening or moving between panels cancels a
+pending exit without stacking overlays. Reduce Motion skips both animations.
+
 Mobile saves bounded history and learned searches beside its browser session. Only
 actual foreground-tab navigation/SPA URL changes count as visits; title changes do
 not. Preview-only pages have their own delegates and never enter browsing history.
@@ -80,6 +101,10 @@ Rows retain their content positions and touch bounds while their pressed fill ex
 Favicon fetches go directly to site origins, without browser cookies or a third-party
 favicon service. In-progress literal addresses wait 300 ms before fetching. Icons
 are downsampled and cached locally; local/reserved test domains are never fetched.
+On iOS, light and dark artwork is kept in a native image asset, so visible suggestion,
+history and tab icons follow their view's appearance, including private panels. Both
+variants survive relaunch; existing suggestion caches upgrade when next displayed.
+Legacy GitHub tab previews reload their icons while retaining their cached pictures.
 
 Learned templates and address learning sync through the existing private CloudKit zone. See `TabSync.md`
 for conflict merging, account switching, and production schema deployment.
@@ -98,6 +123,9 @@ Validation:
   the real UIKit field and WebKit bridge. The equivalent isolated debug audit can run
   with `-RiseAddressSuggestionsAudit` when the beta simulator cannot launch XCTest.
   Results and light/dark captures are in `Library/Caches/AddressSuggestionsAudit`.
+- `MobileFaviconTests` covers appearance switching, declared media variants and cache
+  migration. `-RiseMobileFaviconAudit` runs the same checks without XCTest and captures
+  GitHub's published light/dark icons in `Library/Caches/MobileFaviconAudit`.
 - The signed `RiseSigning --test-tab-sync` helper exercises two real CloudKit clients
   in a disposable private zone: concurrent learning, clearing during offline edits,
   and new learning after a clear, alongside existing tab-sync checks.

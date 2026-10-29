@@ -15,6 +15,12 @@ import RiseCore
     }
     func suggestions(for text: String) -> [AddressSuggestion] {
         let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let commandQuery = PaletteCommand.query(in: query) {
+            googleSearchSuggestions.cancel(); suggestionFavicons.cancelPreview()
+            return paletteCommands(matching: commandQuery).map {
+                AddressSuggestion(title: $0.title, subtitle: "", symbol: $0.symbol, url: nil, tabID: nil, command: $0.id)
+            }
+        }
         let candidates = AddressSuggestionEngine.suggestions(for: query, history: browsingHistory,
             tabs: tabs.map { AddressSuggestionTab(id: $0.id, title: $0.title, url: $0.url) },
             currentURL: selectedTab?.url, editingCurrentAddress: isEditingCurrentAddress(query),
@@ -36,15 +42,6 @@ import RiseCore
                     AddressSuggestion(title: value.title, subtitle: value.subtitle, symbol: value.symbol, url: value.url, tabID: value.tabID, command: nil)
             }
         } else { googleSearchSuggestions.cancel() }
-        if !query.isEmpty {
-            // Room is kept for every command that answers, however many pages and searches do.
-            let commands = paletteCommands(matching: query).map {
-                AddressSuggestion(title: $0.title, subtitle: "", symbol: $0.symbol, url: nil, tabID: nil, command: $0.id)
-            }
-            result = Array(result.prefix(AddressAppearance.maximumSuggestions-commands.count))
-            // A completion stays first, as the field shows it.
-            result.insert(contentsOf: commands, at: result.first?.completion != nil ? 1 : 0)
-        }
         let typedURL = candidates.first { $0.isTypedAction && !$0.fetchFavicon }?.url
         suggestionFavicons.preview(typedURL)
         return result.prefix(AddressAppearance.maximumSuggestions).map { suggestion in

@@ -36,6 +36,34 @@ final class GoogleSearchSuggestionsTests: XCTestCase {
         let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [SearchProtocol.self]
         return URLSession(configuration: config)
     }
+    @MainActor func testSlashCommandsCancelPendingRemoteSuggestionsAndRemovingSlashResumesThem() async throws {
+        _ = NSApplication.shared
+        let session = session(); defer { session.invalidateAndCancel() }
+        let provider = GoogleSearchSuggestions(session: session, delay: 0.005)
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json")
+        let browser = BrowserController(sessionURL: file, restore: false, searchSuggestions: provider)
+        defer {
+            browser.hidePalette(); browser.suggestionFavicons.cancel(); browser.saveWork?.cancel(); browser.window?.orderOut(nil)
+            try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+        }
+        _ = browser.addTab()
+        browser.showWindow(nil); browser.newTab()
+        let palette = browser.palette, editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
+        editor.insertText("old query", replacementRange: editor.selectedRange())
+        try await Task.sleep(for: .milliseconds(30))
+        editor.selectAll(nil); editor.insertText("/zoom", replacementRange: editor.selectedRange())
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertTrue(palette.isCommandMode)
+        XCTAssertTrue(palette.suggestions.allSatisfy { $0.command != nil })
+        XCTAssertFalse(SearchProtocol.snapshot().contains { request in
+            URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "q" }?.value?.hasPrefix("/") == true
+        })
+        editor.selectAll(nil); editor.insertText("coffee", replacementRange: editor.selectedRange())
+        try await Task.sleep(for: .milliseconds(160))
+        XCTAssertFalse(palette.isCommandMode)
+        XCTAssertTrue(palette.suggestions.allSatisfy { $0.command == nil })
+        XCTAssertTrue(palette.suggestions.contains { $0.title == "coffee beans" })
+    }
     @MainActor func testDebounceCachingURLExclusionAndCorrectQueryEncoding() async throws {
         let session = session(); defer { session.invalidateAndCancel() }
         let provider = GoogleSearchSuggestions(session: session, delay: 0.08); defer { provider.cancel() }

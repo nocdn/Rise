@@ -25,7 +25,7 @@ import WebKit
     private var cached = Set<Key>()
     private var failures: [Key: Retry] = [:]
     private var iconFailures: [Key: Retry] = [:]
-    private var declaredIcons: [Key: [URL]] = [:]
+    private var declaredIcons: [Key: BrowserTab.IconCandidates] = [:]
     private var openIDs = Set<UUID>()
     private struct Key: Hashable { let id: UUID; let url: URL }
     private struct Retry {
@@ -147,7 +147,11 @@ import WebKit
                !TabPreviewRenderer.isBlank(picture, topInset: stripHeight) {
                 tab.snapshot = picture
             }
-            tab.restoreFavicon(entry.favicon.flatMap(UIImage.init(data:)))
+            // Old GitHub previews only saved the black icon. Keep the picture and let the
+            // independent icon worker upgrade it to the site's light/dark pair.
+            if entry.darkFavicon != nil || FaviconDiscovery.darkIcon(for: key.url) == nil {
+                tab.restoreFavicon(entry.faviconImage)
+            }
         }
     }
 

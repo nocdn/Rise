@@ -82,12 +82,29 @@ import AppKit
     }
     @discardableResult func reset(_ id: String) -> String? {
         guard let command = commands.first(where: { $0.id == id }) else { return "Unknown command." }
-        for binding in command.defaults {
-            if let conflict = commands.first(where: { $0.id != id && bindings($0.id).contains(binding) }) {
-                return "The default shortcut is assigned to “\(conflict.title)”. Remove it there first, or reset all shortcuts."
-            }
-        }
+        for binding in command.defaults { removeConflicts(binding, except: id) }
         overrides.removeValue(forKey: id); save(); return nil
+    }
+    /// Helium's explicit Save action moves a conflicting binding to the chosen command.
+    @discardableResult func assign(_ value: String, to id: String) -> String? {
+        guard commands.contains(where: { $0.id == id }) else { return "Unknown command." }
+        guard let binding = KeyboardShortcut(value) else { return "Include Command, Control or Option, or use a function key." }
+        removeConflicts(binding, except: id)
+        var current = bindings(id)
+        if !current.contains(binding) { current.append(binding) }
+        overrides[id] = current.map(\.rawValue)
+        save(); return nil
+    }
+    @discardableResult func remove(_ value: String, from id: String) -> String? {
+        guard commands.contains(where: { $0.id == id }), let binding = KeyboardShortcut(value) else { return "Invalid shortcut." }
+        overrides[id] = bindings(id).filter { $0 != binding }.map(\.rawValue)
+        save(); return nil
+    }
+    private func removeConflicts(_ binding: KeyboardShortcut, except id: String) {
+        for command in commands where command.id != id {
+            let current = bindings(command.id)
+            if current.contains(binding) { overrides[command.id] = current.filter { $0 != binding }.map(\.rawValue) }
+        }
     }
     func resetAll() { overrides.removeAll(); save() }
     func applyToMenus() {
@@ -103,6 +120,7 @@ import AppKit
         commands.map { command in
             ["id": command.id, "title": command.title, "group": command.group,
              "bindings": bindings(command.id).map(\.rawValue), "defaults": command.defaults.map(\.rawValue),
+             "displayBindings": bindings(command.id).map(\.display),
              "modified": bindings(command.id) != command.defaults]
         }
     }

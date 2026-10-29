@@ -108,8 +108,13 @@ final class SiteControlsTests: XCTestCase {
         wait { !panel.isLeaving }
         coordinator.togglePrompt()
         XCTAssertTrue(coordinator.isShowingPrompt); XCTAssertEqual(replies, [])
+        // Put away, the page asking the same again brings it back down, and both hear the answer.
+        coordinator.togglePrompt(); wait { !panel.isLeaving }
+        coordinator.request(in: tab.page.view, origin: origin, capabilities: [.camera]) { replies.append($0) }
+        XCTAssertTrue(coordinator.isShowingPrompt); XCTAssertEqual(replies, [])
         panel.denyButton.performClick(nil)
-        XCTAssertEqual(replies, [false], "The page hears at once")
+        XCTAssertEqual(replies, [false, false], "The page hears at once")
+        replies = [false]
         coordinator.cancel()
         wait { bar.requestedPermission == nil }
         XCTAssertNil(bar.requestedPermission, "Answered, its icon goes once the panel has")
@@ -133,6 +138,16 @@ final class SiteControlsTests: XCTestCase {
         let cases: [([SiteCapability], String)] = [([.notifications], "Let a.com send notifications?"), ([.location], "Let a.com use your location?"),
                                                    ([.camera, .microphone], "Let a.com use your camera and mic?"), ([.camera], "Let a.com use your camera?"),
                                                    ([.microphone], "Let a.com use your microphone?")]
+        let suite = "Rise.ResetTests.\(UUID())", defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let permissions = SitePermissions(preferences: defaults), origin = "https://a.com:443"
+        permissions.set(.allow, for: .camera, origin: origin); permissions.set(.block, for: .location, origin: origin)
+        permissions.setAutomaticPictureInPicture(false, origin: origin); permissions.set(.allow, for: .camera, origin: "https://b.com:443")
+        permissions.reset(origin: origin)
+        XCTAssertEqual(permissions.permission(.camera, origin: origin), .ask); XCTAssertEqual(permissions.permission(.location, origin: origin), .ask)
+        XCTAssertFalse(permissions.automaticPictureInPicture(origin: origin), "Its other settings stay")
+        XCTAssertEqual(permissions.permission(.camera, origin: "https://b.com:443"), .allow, "Other sites keep theirs")
+        XCTAssertEqual(SitePermissions(preferences: defaults).permission(.camera, origin: origin), .ask, "And it's saved")
         for (capabilities, message) in cases { XCTAssertEqual(PermissionQuestion(host: "a.com", capabilities: capabilities).message, message) }
         let text = PermissionQuestion(host: "a.com", capabilities: [.camera]).text(theme: .neutral, font: .systemFont(ofSize: 13))
         XCTAssertEqual(text.attribute(.foregroundColor, at: 4, effectiveRange: nil) as? NSColor, SiteCapability.camera.accent(.neutral), "The site is in the camera's colour")

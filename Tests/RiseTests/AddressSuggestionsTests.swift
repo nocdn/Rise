@@ -216,11 +216,11 @@ final class AddressSuggestionsTests: XCTestCase {
         // The veil fades in quickly, while the palette shows at once, and out a little quicker,
         // while the next click already goes where it's aimed.
         if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
-            XCTAssertEqual(browser.veil.layer?.animation(forKey: "veil.fade")?.duration, BrowserController.veilFadeDuration)
+            XCTAssertEqual(browser.veil.layer?.animation(forKey: PanelVeil.animationKey)?.duration, PanelVeil.fadeInDuration)
             browser.hidePalette()
             XCTAssertTrue(browser.dismissArea.isHidden); XCTAssertFalse(browser.veil.isHidden)
             XCTAssertNil(browser.veil.hitTest(NSPoint(x: 10, y: 10)))
-            XCTAssertEqual(browser.veil.layer?.animation(forKey: "veil.fade")?.duration, BrowserController.veilFadeOutDuration)
+            XCTAssertEqual(browser.veil.layer?.animation(forKey: PanelVeil.animationKey)?.duration, PanelVeil.fadeOutDuration)
             browser.newTab()
         }
         XCTAssertNil(palette.layer?.animationKeys(), "The palette itself doesn't animate in")
@@ -275,12 +275,13 @@ final class AddressSuggestionsTests: XCTestCase {
         browser.showWindow(nil); browser.focusAddress()
         let palette = browser.palette, editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
         let favicon = NSImage(size: NSSize(width: 16, height: 16)); palette.siteFavicon = { _ in favicon }
-        editor.selectAll(nil); editor.insertText("zoom", replacementRange: editor.selectedRange())
-        XCTAssertEqual(editor.string, "zoom.us")
+        editor.selectAll(nil); editor.insertText("/zoom", replacementRange: editor.selectedRange())
+        XCTAssertEqual(editor.string, "/zoom")
         let zoom = try XCTUnwrap(palette.suggestions.firstIndex { $0.command == "Zoom" })
+        palette.selectResult(-1)
         for _ in 0...zoom { editor.doCommand(by: #selector(NSResponder.moveDown(_:))) }
         XCTAssertEqual(palette.selectedIndex, zoom)
-        XCTAssertEqual(editor.string, "zoom", "What was typed, not the address filling in")
+        XCTAssertEqual(editor.string, "/zoom", "Arrow keys keep the slash query intact")
         XCTAssertFalse(palette.leadingIcon.image === favicon); XCTAssertFalse(palette.leadingIcon.image === CenteredPaletteStyle.searchIcon)
         XCTAssertEqual(palette.leadingIcon.contentTintColor, CenteredPaletteStyle.fieldIcon(browser.theme), "The command's own glyph")
     }
@@ -318,7 +319,7 @@ final class AddressSuggestionsTests: XCTestCase {
         let browser = browser(); defer { browser.hidePalette(); clean(browser) }
         browser.theme = .neutral; browser.automaticTheme = false; browser.showWindow(nil); browser.newTab()
         let palette = browser.palette, editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
-        editor.insertText("theme", replacementRange: editor.selectedRange())
+        editor.insertText("/theme", replacementRange: editor.selectedRange())
         let rows = palette.suggestions.map(\.title)
         palette.selectResult(try XCTUnwrap(palette.suggestions.firstIndex { $0.command == "Change Theme" }))
         editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
@@ -328,13 +329,15 @@ final class AddressSuggestionsTests: XCTestCase {
         editor.insertText("da", replacementRange: editor.selectedRange())
         XCTAssertEqual(palette.suggestions.map(\.title), ["Dark"])
         editor.doCommand(by: #selector(NSResponder.cancelOperation(_:)))
-        XCTAssertFalse(palette.isChoosing); XCTAssertEqual(editor.string, "theme", "Escape goes back to what was typed")
+        XCTAssertFalse(palette.isChoosing); XCTAssertEqual(editor.string, "/theme", "Escape goes back to what was typed")
         XCTAssertEqual(palette.suggestions.map(\.title), rows)
+        XCTAssertEqual(browser.paletteCommandUsage.count(for: "Change Theme"), 0, "Cancelling the submenu isn't a use")
         palette.selectResult(try XCTUnwrap(palette.suggestions.firstIndex { $0.command == "Change Theme" }))
         editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
         editor.doCommand(by: #selector(NSResponder.moveDown(_:)))
         editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
         XCTAssertEqual(browser.theme, .dark); XCTAssertFalse(browser.automaticTheme); XCTAssertFalse(palette.isPresented)
+        XCTAssertEqual(browser.paletteCommandUsage.count(for: "Change Theme"), 1)
     }
     @MainActor func testALongListScrollsInsideThePanelToKeepThePickedRowInView() throws {
         let browser = browser(); defer { browser.hidePalette(); clean(browser) }
@@ -352,6 +355,84 @@ final class AddressSuggestionsTests: XCTestCase {
         XCTAssertTrue(palette.buttons.filter { !$0.isHidden }.allSatisfy { palette.bounds.contains($0.frame) })
         for _ in 0..<palette.selectedIndex { editor.doCommand(by: #selector(NSResponder.moveUp(_:))) }
         XCTAssertEqual(palette.selectedIndex, 0); XCTAssertEqual(shown().first, 0, "↑ scrolls back up")
+        for _ in 1..<palette.suggestions.count { editor.doCommand(by: #selector(NSResponder.moveDown(_:))) }
+        XCTAssertGreaterThan(palette.firstRow, 0)
+        XCTAssertTrue(browser.window!.performKeyEquivalent(with: try commandUp(in: browser)))
+        XCTAssertEqual(palette.selectedIndex, 0); XCTAssertEqual(palette.firstRow, 0)
+        XCTAssertEqual(palette.chosenSuggestion?.title, "25%", "⌘↑ also works inside command choices")
+    }
+    @MainActor func testSlashListsEveryCommandScrollsToTheLastAndFilteringResetsTheViewport() throws {
+        let browser = browser(); defer { browser.hidePalette(); clean(browser) }
+        for index in 0..<3 { let tab = browser.addTab(); tab.requestedURL = URL(string: "https://example.com/\(index)") }
+        browser.select(browser.tabs[1].id); browser.showWindow(nil); browser.newTab()
+        let palette = browser.palette, editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
+        editor.insertText("/", replacementRange: editor.selectedRange())
+        let commands = browser.paletteCommands(matching: "").map(\.id)
+        XCTAssertGreaterThan(commands.count, CenteredPaletteStyle.visibleRows)
+        XCTAssertEqual(palette.suggestions.compactMap(\.command), commands, "Every command remains reachable in usage order")
+        for index in commands.indices.dropFirst() {
+            editor.doCommand(by: #selector(NSResponder.moveDown(_:)))
+            XCTAssertEqual(palette.selectedIndex, index)
+            XCTAssertFalse(palette.buttons[index].isHidden)
+            XCTAssertTrue(palette.bounds.contains(palette.buttons[index].frame))
+        }
+        XCTAssertEqual(palette.selectedIndex, commands.count-1)
+        XCTAssertGreaterThan(palette.firstRow, 0)
+        XCTAssertLessThanOrEqual(palette.frame.height, CenteredPaletteStyle.maximumHeight)
+        XCTAssertEqual(editor.string, "/", "Browsing commands preserves the editable filter")
+        XCTAssertTrue(browser.window!.performKeyEquivalent(with: try commandUp(in: browser)))
+        XCTAssertEqual(palette.selectedIndex, 0); XCTAssertEqual(palette.firstRow, 0)
+        XCTAssertEqual(editor.string, "/")
+        for _ in commands.indices.dropFirst() { editor.doCommand(by: #selector(NSResponder.moveDown(_:))) }
+        let fullHeight = palette.frame.height
+        editor.insertText("settings", replacementRange: editor.selectedRange())
+        XCTAssertEqual(palette.suggestions.compactMap(\.command), ["Open Settings"])
+        XCTAssertEqual(palette.firstRow, 0); XCTAssertEqual(palette.selectedIndex, 0)
+        XCTAssertLessThan(palette.frame.height, fullHeight, "The panel shrinks around the matching results")
+        editor.selectAll(nil); editor.insertText("/not-a-browser-command", replacementRange: editor.selectedRange())
+        XCTAssertTrue(palette.suggestions.isEmpty)
+        let message = try XCTUnwrap(palette.subviews.compactMap { $0 as? NSTextField }.first { $0.stringValue == "No matching commands" })
+        XCTAssertFalse(message.isHidden); XCTAssertTrue(palette.bounds.contains(message.frame))
+        XCTAssertTrue(browser.window!.performKeyEquivalent(with: try commandUp(in: browser)))
+        XCTAssertEqual(palette.selectedIndex, -1, "An empty list has no selectable result")
+        editor.selectAll(nil); editor.insertText("/", replacementRange: editor.selectedRange())
+        XCTAssertTrue(message.isHidden)
+        XCTAssertEqual(palette.suggestions.compactMap(\.command), commands)
+        XCTAssertEqual(palette.firstRow, 0)
+    }
+
+    @MainActor func testCommandUpSelectsTheFirstNormalSuggestionAndKeepsKeyboardOwnershipAfterHover() throws {
+        let browser = browser(); defer { browser.hidePalette(); clean(browser) }
+        for index in 0..<8 { browser.browsingHistory.record(URL(string: "https://example.com/\(index)")!, title: "Document \(index)") }
+        browser.showWindow(nil); browser.newTab()
+        let palette = browser.palette, editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
+        XCTAssertGreaterThan(palette.suggestions.count, 1)
+        for _ in palette.suggestions.indices { editor.doCommand(by: #selector(NSResponder.moveDown(_:))) }
+        XCTAssertEqual(palette.selectedIndex, palette.suggestions.count-1)
+        let jump = try commandUp(in: browser)
+        XCTAssertTrue(browser.window!.performKeyEquivalent(with: jump))
+        XCTAssertEqual(palette.selectedIndex, 0)
+        XCTAssertEqual(editor.string, AddressPalette.fieldText(for: palette.suggestions[0]))
+        editor.doCommand(by: #selector(NSResponder.moveDown(_:)))
+        editor.doCommand(by: #selector(NSResponder.moveToBeginningOfDocument(_:)))
+        XCTAssertEqual(palette.selectedIndex, 0, "The native text command uses the same jump")
+        let last = try XCTUnwrap(palette.buttons.last)
+        let point = palette.convert(NSPoint(x: last.frame.midX, y: last.frame.midY), to: nil)
+        let mouse = try XCTUnwrap(NSEvent.mouseEvent(with: .mouseMoved, location: point, modifierFlags: [], timestamp: 0,
+            windowNumber: browser.window!.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0))
+        palette.mouseMoved(with: mouse)
+        XCTAssertEqual(palette.selectedIndex, palette.suggestions.count-1)
+        XCTAssertTrue(browser.window!.performKeyEquivalent(with: jump))
+        palette.mouseExited(with: mouse)
+        XCTAssertEqual(palette.selectedIndex, 0, "Leaving the pointer doesn't restore an old selection after ⌘↑")
+        browser.hidePalette()
+        XCTAssertFalse(palette.handleKeyEquivalent(jump), "The shortcut stays within the open palette")
+    }
+
+    @MainActor private func commandUp(in browser: BrowserController) throws -> NSEvent {
+        let arrow = String(UnicodeScalar(NSUpArrowFunctionKey)!)
+        return try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [.command, .numericPad, .function], timestamp: 0,
+            windowNumber: browser.window!.windowNumber, context: nil, characters: arrow, charactersIgnoringModifiers: arrow, isARepeat: false, keyCode: 126))
     }
     @MainActor func testSplitViewSplitsWithTheTabBeforeThisOne() {
         let browser = browser(); defer { clean(browser) }
@@ -385,18 +466,150 @@ final class AddressSuggestionsTests: XCTestCase {
         XCTAssertEqual(browser.paletteChoice(for: "Capture Page")?.rows.map(\.title), ["JPEG", "PDF"])
         _ = tabs
     }
-    @MainActor func testEveryCommandShowsForItsNameEvenWithAFullListAndAnAddressCompletion() {
+    @MainActor func testHiddenAliasesFindActionsFromCommonDescriptionsAndPunctuation() {
+        let browser = browser(); defer { clean(browser) }
+        for index in 0..<3 { let tab = browser.addTab(); tab.requestedURL = URL(string: "https://example.com/\(index)") }
+        let closed = browser.addTab(); closed.requestedURL = URL(string: "https://closed.example/")
+        browser.closeTab(closed.id); browser.select(browser.tabs[1].id)
+        browser.setSidebarVisible(true); browser.setPageZoom(1.5)
+        let titles = Dictionary(uniqueKeysWithValues: browser.paletteCommands.map { ($0.id, $0.title) })
+        let queries: [(String, String)] = [
+            ("dismiss", "Close Tab"), ("bring back", "Reopen Closed Tab"), ("clone", "Duplicate Tab"),
+            ("keep open", "Toggle Pin"), ("quiet", "Toggle Mute"),
+            ("close tabs after", "Close Tabs Below"), ("close tabs before", "Close Tabs Above"),
+            ("tidy", "Sort Tabs by Domain"), ("group by site", "Sort Tabs by Domain"),
+            ("side-by-side", "Split View"), ("compare pages", "Split View"), ("update page", "Reload"),
+            ("clipboard", "Copy Link"), ("locate", "Find in Page"), ("screen-shot", "Capture Page"),
+            ("snapshot", "Capture Page"), ("export page", "Capture Page"), ("magnify", "Zoom"),
+            ("text size", "Zoom"), ("default size", "Actual Size"), ("100%", "Actual Size"),
+            ("NIGHT MODE", "Change Theme"), ("color", "Change Theme"), ("colour", "Change Theme"),
+            ("collapse sidebar", "Toggle Sidebar"), ("options", "Open Settings"), ("config", "Open Settings"),
+            ("customise", "Open Settings"), ("customize", "Open Settings"), ("add-ons", "Extensions"),
+            ("plug-in", "Extensions"), ("addons", "Extensions"), ("files", "Downloads"),
+            ("transfer", "Downloads"), ("advanced controls", "Toggle Developer Mode")
+        ]
+        for (query, command) in queries {
+            let match = browser.suggestions(for: "/"+query).first { $0.command == command }
+            XCTAssertNotNil(match, "\(query) should find \(command)")
+            XCTAssertEqual(match?.title, titles[command], "Aliases never replace the displayed title")
+            XCTAssertEqual(browser.paletteCommandUsage.count(for: command), 0, "Searching is not executing a command")
+        }
+        XCTAssertTrue(browser.suggestions(for: "side-by-side").allSatisfy { $0.command == nil })
+        XCTAssertTrue(browser.suggestions(for: "/---").isEmpty, "Punctuation alone doesn't match everything")
+    }
+
+    @MainActor func testDirectionalAliasesFollowToggleStateAndActionAvailability() {
+        let browser = browser(); defer { clean(browser) }
+        let tab = browser.addTab(); tab.requestedURL = URL(string: "https://example.com/")
+        func has(_ query: String, _ command: String) -> Bool {
+            browser.suggestions(for: "/"+query).contains { $0.command == command }
+        }
+        XCTAssertFalse(has("bring back", "Reopen Closed Tab"))
+        XCTAssertFalse(has("flip sides", "Swap Sides"))
+        XCTAssertFalse(has("unsplit", "Split View"))
+        XCTAssertTrue(has("turn off sound", "Toggle Mute"))
+        XCTAssertFalse(has("turn on sound", "Toggle Mute"))
+        browser.runPaletteCommand("Toggle Mute")
+        XCTAssertTrue(has("turn on sound", "Toggle Mute"))
+        XCTAssertFalse(has("turn off sound", "Toggle Mute"))
+        XCTAssertTrue(has("keep open", "Toggle Pin"))
+        browser.pinCurrentTab()
+        XCTAssertTrue(has("release tab", "Toggle Pin"))
+        XCTAssertFalse(has("keep open", "Toggle Pin"))
+        browser.pinCurrentTab()
+        browser.setSidebarVisible(true)
+        XCTAssertTrue(has("hide sidebar", "Toggle Sidebar")); XCTAssertFalse(has("show sidebar", "Toggle Sidebar"))
+        browser.toggleSidebar()
+        XCTAssertTrue(has("show sidebar", "Toggle Sidebar")); XCTAssertFalse(has("hide sidebar", "Toggle Sidebar"))
+        let other = browser.addTab(); other.requestedURL = URL(string: "https://other.example/")
+        browser.toggleSplit()
+        XCTAssertTrue(has("unsplit", "Split View")); XCTAssertTrue(has("flip sides", "Swap Sides"))
+    }
+
+    @MainActor func testAliasResultsKeepUsageRanking() {
+        let browser = browser(); defer { clean(browser) }
+        _ = browser.addTab()
+        browser.runPaletteCommand("Zoom:1.5")
+        XCTAssertEqual(browser.suggestions(for: "/size").first?.command, "Zoom")
+        for _ in 0..<3 { browser.setPageZoom(1.5); browser.runPaletteCommand("Actual Size") }
+        browser.setPageZoom(1.5)
+        XCTAssertEqual(browser.suggestions(for: "/size").first?.command, "Actual Size")
+    }
+    @MainActor func testBrowserCommandsOnlyAppearAfterASlashEvenWithMatchingHistory() {
         let browser = browser(); defer { clean(browser) }
         for index in 0..<2 { let tab = browser.addTab(); tab.requestedURL = URL(string: "https://example.com/\(index)") }
         browser.setPageZoom(1.5)
         for command in browser.paletteCommands {
             let word = command.title.split(separator: " ")[0].lowercased()
             for page in 0..<10 { browser.browsingHistory.record(URL(string: "https://\(word).com/\(page)")!, title: "\(word) \(page)") }
-            let rows = browser.suggestions(for: word)
+            XCTAssertTrue(browser.suggestions(for: word).allSatisfy { $0.command == nil })
+            let rows = browser.suggestions(for: "/"+word)
             XCTAssertTrue(rows.contains { $0.command == command.id }, "\(command.title) missing for “\(word)”: \(rows.map(\.title))")
-            XCTAssertLessThanOrEqual(rows.count, AddressAppearance.maximumSuggestions)
+            XCTAssertTrue(rows.allSatisfy { $0.command != nil && $0.url == nil && $0.completion == nil })
+            XCTAssertEqual(rows.compactMap(\.command), browser.paletteCommands(matching: word).map(\.id))
         }
         XCTAssertNotNil(browser.suggestions(for: "zoom").first?.completion, "The completion still leads")
+        XCTAssertFalse(browser.suggestions(for: "/").isEmpty)
+        XCTAssertTrue(browser.suggestions(for: "/").allSatisfy { $0.command != nil })
+        for query in ["", "settings", "some /zoom", "https://example.com/zoom"] {
+            XCTAssertTrue(browser.suggestions(for: query).allSatisfy { $0.command == nil })
+        }
+    }
+
+    @MainActor func testDeletingSlashImmediatelyRestoresNormalSuggestionsAndUnknownCommandsDoNotNavigate() throws {
+        let browser = browser(); defer { browser.hidePalette(); clean(browser) }
+        _ = browser.addTab()
+        browser.browsingHistory.record(URL(string: "https://zoom.us/")!, title: "Zoom")
+        browser.showWindow(nil); browser.newTab()
+        let palette = browser.palette, editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
+        editor.insertText("/", replacementRange: editor.selectedRange())
+        XCTAssertTrue(palette.isCommandMode); XCTAssertNil(palette.offeredSite); XCTAssertNil(palette.autofill)
+        XCTAssertEqual(palette.selectedIndex, 0)
+        editor.insertText("zoom", replacementRange: editor.selectedRange())
+        XCTAssertEqual(palette.chosenSuggestion?.command, "Zoom")
+        XCTAssertEqual(editor.string, "/zoom")
+        editor.setSelectedRange(NSRange(location: 0, length: 1)); editor.deleteBackward(nil)
+        XCTAssertFalse(palette.isCommandMode)
+        XCTAssertEqual(editor.string, "zoom")
+        XCTAssertTrue(palette.suggestions.allSatisfy { $0.command == nil })
+        XCTAssertEqual(palette.selectedIndex, -1)
+        editor.selectAll(nil); editor.insertText("/", replacementRange: editor.selectedRange())
+        editor.doCommand(by: #selector(NSResponder.deleteBackward(_:)))
+        XCTAssertEqual(editor.string, ""); XCTAssertFalse(palette.isCommandMode)
+        XCTAssertTrue(palette.suggestions.allSatisfy { $0.command == nil })
+        editor.insertText("/no-such-browser-command", replacementRange: editor.selectedRange())
+        XCTAssertTrue(palette.suggestions.isEmpty)
+        var submitted = false
+        palette.submit = { _, _ in submitted = true }
+        editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
+        XCTAssertFalse(submitted); XCTAssertTrue(palette.isPresented)
+        browser.submitAddress(editor.string, suggestion: nil)
+        XCTAssertTrue(palette.isPresented)
+    }
+
+    @MainActor func testCommandRankingCountsExecutedActionsAndSubmenuChoicesAndSurvivesRelaunch() throws {
+        let browser = browser(); defer { browser.hidePalette(); clean(browser) }
+        let tab = browser.addTab(); tab.requestedURL = URL(string: "https://example.com/")
+        let original = browser.suggestions(for: "/").compactMap(\.command)
+        XCTAssertEqual(original, browser.suggestions(for: "/").compactMap(\.command), "Unused commands keep a stable order")
+        _ = browser.paletteChoice(for: "Change Theme")
+        XCTAssertEqual(browser.paletteCommandUsage.count(for: "Change Theme"), 0, "Opening a submenu does not count")
+        browser.runPaletteCommand("Zoom:1.25")
+        browser.runPaletteCommand("Zoom:1.5")
+        browser.runPaletteCommand("Actual Size")
+        XCTAssertEqual(browser.suggestions(for: "/").first?.command, "Zoom")
+        XCTAssertEqual(browser.suggestions(for: "/zoom").map(\.command), ["Zoom"])
+        browser.runPaletteCommand("Zoom:1.25")
+        XCTAssertEqual(browser.suggestions(for: "/zoom").map(\.command), ["Zoom", "Actual Size"])
+        XCTAssertEqual(browser.paletteCommandUsage.count(for: "Zoom"), 3)
+        browser.runPaletteCommand("not a command")
+        XCTAssertEqual(browser.paletteCommandUsage.count(for: "not a command"), 0)
+        browser.saveNow()
+        let restored = BrowserController(sessionURL: browser.sessionURL)
+        defer { restored.saveWork?.cancel(); restored.suggestionFavicons.cancel(); restored.window?.orderOut(nil); restored.tabs.forEach { $0.cancelLoad() } }
+        XCTAssertEqual(restored.paletteCommandUsage.count(for: "Zoom"), 3)
+        XCTAssertEqual(restored.suggestions(for: "/").first?.command, "Zoom")
+        XCTAssertEqual(browser.suggestions(for: "/open settings").map(\.command), ["Open Settings"])
     }
     @MainActor func testZoomPicksALevelAndThePageBarButtonShowsWhileThePageIsZoomed() {
         let browser = browser(); defer { clean(browser) }
@@ -669,10 +882,10 @@ final class AddressSuggestionsTests: XCTestCase {
         palette.chooseSelected()
         XCTAssertNil(submitted?.1, "With nothing picked, Enter opens the field's own text, the page it's already on")
         palette.submit = original
-        // Typing a command's name and pressing Enter searches for it; the command needs picking.
+        // Without the slash, a command's name remains an ordinary web search.
         palette.input.currentEditor()?.selectAll(nil)
         (palette.input.currentEditor() as? NSTextView)?.insertText("split", replacementRange: NSRange(location: 0, length: palette.input.stringValue.utf16.count))
-        XCTAssertTrue(palette.suggestions.contains { $0.command == "Split View" })
+        XCTAssertFalse(palette.suggestions.contains { $0.command != nil })
         XCTAssertNotEqual(palette.leadingIcon.image, tab.favicon, "Changed, it's a search or address again")
         palette.submit = { submitted = ($0, $1) }
         palette.chooseSelected()

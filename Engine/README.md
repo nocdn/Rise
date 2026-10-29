@@ -76,6 +76,7 @@ run without a Chromium checkout: `python3 -m unittest discover -s scripts/engine
 | `0025-https-first-full-page-warning.patch` | Turns off `HttpsFirstDialogUi`, so HTTPS-First's fallback to http warns with Chrome's full-page interstitial rather than a dialog over Chrome's own window, which Rise's pages don't have and crashed |
 | `0026-rise-pip-buttons-and-camera-spring.patch` | Keeps a page picture-in-picture window's back to tab and close buttons in the bar's 28 pt square, gives the camera and microphone button the same Rise style, and springs it into the buttons' space at up to 120 Hz as they fade |
 | `0027-rise-keychain-item.patch` | Lets Rise name the Keychain item its cookie and password key is kept in (`setKeychainService:account:`), so it keeps it in "Rise Safe Storage" as Chrome keeps its in "Chrome Safe Storage"; without it, Chromium's own item as before |
+| `0028-helium-shortcut-editor.patch` | Helium's shortcut editor, adapted to Rise's registry: shortcut chips, ranked search, explicit recording/Save/Cancel, per-command reset and reset-all confirmation. Upstream source and GPL-3.0 license are in `Engine/third_party/helium` |
 
 `0002` is exported from the fork's tree with `git diff HEAD` over `base` and `chrome`, less the
 paths the other patches and `brand.py` own (see `Engine/fork-plan.md`); new files are added

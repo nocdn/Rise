@@ -132,6 +132,7 @@ import AppKit
         develop.addItem(.separator())
         item(develop, "Manage Extensions", #selector(BrowserController.manageExtensions), target: browser)
         item(develop, "Site Information", #selector(BrowserController.showSiteInformation), target: browser)
+        item(develop, "Reset Site Permissions", #selector(BrowserController.resetSitePermissions), target: browser)
         develop.addItem(.separator())
         item(develop, "Card Motion Tester", #selector(BrowserController.toggleCardMotionTester), target: browser)
         item(develop, "Link Pulse Tester", #selector(BrowserController.toggleLinkPulseTester), target: browser)

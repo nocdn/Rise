@@ -67,7 +67,9 @@ final class KeyboardShortcutsTests: XCTestCase {
             XCTAssertNotNil(shortcuts.set("searchTabs", at: 0, to: "Command+T"))
             XCTAssertNil(shortcuts.set("newTab", at: 0, to: ""))
             XCTAssertNil(shortcuts.set("searchTabs", at: 0, to: "Command+T"))
-            XCTAssertNotNil(shortcuts.reset("newTab"), "Resetting must not silently create a conflict")
+            XCTAssertNil(shortcuts.reset("newTab"), "Reset restores the default and reclaims its binding, as Helium does")
+            XCTAssertTrue(shortcuts.bindings("searchTabs").isEmpty)
+            XCTAssertNil(shortcuts.set("searchTabs", at: 0, to: "Command+Ctrl+K"))
             XCTAssertNil(shortcuts.set("searchTabs", at: 1, to: "Command+Alt+Y"))
             XCTAssertEqual(shortcuts.bindings("searchTabs").count, 2)
             browser.addTab()
@@ -101,9 +103,49 @@ final class KeyboardShortcutsTests: XCTestCase {
             XCTAssertTrue(browser.handleKeyboardShortcut(key("q", .command, code: 12, in: browser)), "Recording ⌘Q never quits Rise")
             XCTAssertEqual(browser.shortcutRecordingID, "newTab", "A conflicting shortcut keeps listening")
             XCTAssertTrue(browser.handleKeyboardShortcut(key("n", [.command, .option], code: 45, in: browser)))
-            XCTAssertNil(browser.shortcutRecordingID)
-            XCTAssertEqual(browser.keyboardShortcuts.bindings("newTab"), [KeyboardShortcut("Command+Alt+N")!])
+            XCTAssertEqual(browser.shortcutRecordingID, "newTab")
+            XCTAssertEqual(browser.shortcutRecordingCandidate, KeyboardShortcut("Command+Alt+N"))
+            XCTAssertEqual(browser.keyboardShortcuts.bindings("newTab"), [KeyboardShortcut("Command+T")!], "Recording is a preview until Save")
+            browser.handleKeyboardShortcutsRequest(["action": "assign", "id": "newTab", "shortcut": "Command+Alt+N"], from: tab.page) { _, error in XCTAssertNil(error) }
+            XCTAssertEqual(browser.keyboardShortcuts.bindings("newTab"), [KeyboardShortcut("Command+T")!, KeyboardShortcut("Command+Alt+N")!])
             XCTAssertFalse(browser.palette.isPresented, "Recording never executes the chosen command")
+        }
+    }
+    @MainActor func testExplicitAssignmentMovesOnlyTheChosenShortcutAndPersistsBothCommands() {
+        withBrowser { browser, preferences in
+            let shortcuts = browser.keyboardShortcuts
+            XCTAssertNil(shortcuts.assign("Command+T", to: "searchTabs"))
+            XCTAssertTrue(shortcuts.bindings("newTab").isEmpty)
+            XCTAssertEqual(shortcuts.bindings("searchTabs"), [KeyboardShortcut("Command+Shift+A")!, KeyboardShortcut("Command+T")!])
+            XCTAssertEqual(KeyboardShortcuts(preferences: preferences).bindings("newTab"), [])
+            XCTAssertNil(shortcuts.assign("Command+T", to: "searchTabs"))
+            XCTAssertEqual(shortcuts.bindings("searchTabs").count, 2, "Saving the same chord twice doesn't duplicate it")
+            XCTAssertNotNil(shortcuts.assign("A", to: "newTab"))
+            XCTAssertTrue(shortcuts.bindings("newTab").isEmpty, "Invalid assignments leave every binding intact")
+            XCTAssertNil(shortcuts.remove("Command+T", from: "searchTabs"))
+            XCTAssertEqual(shortcuts.bindings("searchTabs"), [KeyboardShortcut("Command+Shift+A")!])
+            XCTAssertNil(shortcuts.reset("newTab"))
+            XCTAssertEqual(shortcuts.bindings("newTab"), [KeyboardShortcut("Command+T")!])
+        }
+    }
+    @MainActor func testCancellingPreviewAndModifierReleaseNeverChangeBindings() {
+        withBrowser { browser, _ in
+            let tab = browser.addTab(); tab.requestedURL = URL(string: "rise://settings/keyboardShortcuts")!
+            browser.handleKeyboardShortcutsRequest(["action": "capture", "id": "newTab", "index": 1, "capturing": true], from: tab.page) { _, error in XCTAssertNil(error) }
+            XCTAssertTrue(browser.handleKeyboardShortcut(key("y", [.command, .control], code: 16, in: browser)))
+            let release = NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: browser.window!.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 55)!
+            XCTAssertTrue(browser.handleKeyboardShortcut(release))
+            XCTAssertEqual(browser.shortcutRecordingCandidate, KeyboardShortcut("Command+Ctrl+Y"))
+            XCTAssertTrue(browser.handleKeyboardShortcut(key("\u{1B}", [], code: 53, in: browser)))
+            XCTAssertNil(browser.shortcutRecordingID); XCTAssertNil(browser.shortcutRecordingCandidate)
+            XCTAssertEqual(browser.keyboardShortcuts.bindings("newTab"), [KeyboardShortcut("Command+T")!])
+            browser.handleKeyboardShortcutsRequest(["action": "capture", "id": "newTab", "index": 1, "capturing": true], from: tab.page) { _, error in XCTAssertNil(error) }
+            browser.handleKeyboardShortcutsRequest(["action": "list", "resetCapture": true], from: tab.page) { _, error in XCTAssertNil(error) }
+            XCTAssertNil(browser.shortcutRecordingID, "A newly loaded editor cancels the old document's recorder")
+            browser.handleKeyboardShortcutsRequest(["action": "capture", "id": "newTab", "index": 1, "capturing": true], from: tab.page) { _, error in XCTAssertNil(error) }
+            _ = browser.addTab()
+            XCTAssertNil(browser.shortcutRecordingID, "Switching tabs cancels the settings recorder")
         }
     }
     @MainActor func testButtonHintsFollowRemappedAndRemovedShortcutsInBothPageBars() throws {

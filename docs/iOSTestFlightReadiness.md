@@ -130,15 +130,39 @@ collection. [Apple's privacy-label guidance](https://developer.apple.com/app-sto
   offers search, and incoming web URLs load their destinations. The audit found
   none of Apple's prohibited broad photo/always-location/HomeKit/Bluetooth/Health
   permission keys. These support the basic application criteria.
-- `Rise.entitlements` currently contains CloudKit/APNs only. Apple must approve
-  `com.apple.developer.web-browser`, it must be enabled on the iOS App ID, and the
-  matching provisioning profile must be regenerated before default-browser
-  selection can work.
+- Apple approved Default Web Browser for `dev.bartosz.Rise.iOS` (request
+  `ZB7YA3H958`). On 2026-10-28 the capability was enabled on the App ID and
+  `com.apple.developer.web-browser = true` was added to `Rise.entitlements`.
+  A Release build with Xcode 27.1 was installed on the paired iPhone 14 Pro.
+  Its signature and refreshed development profile both contain the entitlement;
+  strict signature verification passed. Distribution profiles must also be
+  regenerated when exporting the next TestFlight build.
 - Apple's iOS 16.4 release notes state that the browser entitlement enables
   WKWebView passkey AutoFill without code changes. WKWebView handles website
-  WebAuthn. After approval/provisioning, test passkey creation, modal sign-in,
-  AutoFill, third-party credential providers and hardware security keys on a real
-  iPhone. None of those flows is established by this source audit.
+  WebAuthn. Device checks on 2026-10-28/29 found Rise in Settings > Default Apps >
+  Browser App on the iPhone 14 Pro (iOS 27.2); its selected checkmark was visually
+  verified on 2026-10-29. WebAuthn.io reports a secure context,
+  `isUserVerifyingPlatformAuthenticatorAvailable() = true` and
+  `isConditionalMediationAvailable() = true`. Registration reaches
+  `navigator.credentials.create()` initially appeared to remain pending without
+  a credential sheet. Subsequent testing found Device Hub's remote clicks were
+  unreliable: on 2026-10-29 a direct physical tap in the same-signed Debug app's
+  plain WKWebView diagnostic opened the native prompt, the owner saved to Apple
+  Passwords, and WebAuthn.io reported successful registration. The owner also
+  confirmed successful passkey sign-in in that plain view. System logs also
+  explicitly allow Rise's browser requests. The earlier remote-input observation
+  must not be treated as proof of a WebKit or Rise bug. A same-device Safari
+  comparison also reached the native save sheet and was cancelled without
+  creating a credential. In the normal Debug browser the owner then registered
+  another test username in Apple Passwords and authenticated successfully;
+  the logged-in page was visually verified. The Release build was subsequently
+  installed on the same phone and the owner confirmed that both Apple Passwords
+  and 1Password completed registration/sign-in checks in normal Rise. Browser
+  entitlement/profile checks and strict signature verification passed for that
+  Release build. Conditional AutoFill, cancellation/retry and external security
+  keys have not been separately verified in this iOS pass.
+  Temporary debugger instrumentation was removed and the debugger detached;
+  no credential contents were logged.
 - The macOS/Mac Catalyst public-key-credential entitlement and its organization
   Account Holder requirement are separate. Do not treat Individual membership as
   an established disqualifier for the iOS default-browser application.
@@ -149,6 +173,21 @@ Sources: [Default-browser criteria](https://developer.apple.com/documentation/xc
 [iOS 16.4 release notes](https://developer.apple.com/documentation/ios-ipados-release-notes/ios-ipados-16_4-release-notes),
 [Web browser passkeys](https://developer.apple.com/documentation/authenticationservices/passkey-use-in-web-browsers),
 [macOS credential entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.web-browser.public-key-credential).
+
+### Same-signature iPhone diagnostic (Debug only)
+
+Build/install using `scripts/restart.sh --ios --device <UDID> --configuration Debug`,
+then launch `dev.bartosz.Rise.iOS` with `-RisePasskeyDiagnostic` to show a plain
+WKWebView at WebAuthn.io. It has no Rise browser integrations or injected scripts.
+The `PasskeyDiagnostic` OSLog category records loading and feature availability,
+never request options or credential responses. Use physical taps for ceremonies;
+the owner must complete credential saving and biometrics.
+
+The diagnostic disables the idle timer only while the scene is active. Normal
+Debug browsing can opt in with `-RiseKeepAwake`; foreground/background transitions
+enable/restore the timer respectively. A normal relaunch without either argument
+restores ordinary behaviour. These controls and the diagnostic screen are excluded
+from Release builds.
 
 ## Release preparation still unverified
 

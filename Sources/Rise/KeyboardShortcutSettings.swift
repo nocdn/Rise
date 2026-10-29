@@ -5,10 +5,16 @@ import AppKit
         let id = body["id"] as? String ?? ""
         var error: String?
         switch body["action"] as? String {
-        case "list": break
+        case "list":
+            if body["resetCapture"] as? Bool == true, shortcutRecordingPage === page {
+                shortcutRecordingPage = nil; shortcutRecordingID = nil; shortcutRecordingCandidate = nil
+            }
         case "set":
             guard let index = body["index"] as? Int, let value = body["shortcut"] as? String else { reply(nil, "Invalid shortcut"); return }
             error = keyboardShortcuts.set(id, at: index, to: value)
+        case "assign", "remove":
+            guard let value = body["shortcut"] as? String else { reply(nil, "Invalid shortcut"); return }
+            error = body["action"] as? String == "assign" ? keyboardShortcuts.assign(value, to: id) : keyboardShortcuts.remove(value, from: id)
         case "reset": error = keyboardShortcuts.reset(id)
         case "resetAll": keyboardShortcuts.resetAll()
         case "capture":
@@ -17,10 +23,12 @@ import AppKit
                       keyboardShortcuts.commands.contains(where: { $0.id == id }),
                       (0...keyboardShortcuts.bindings(id).count).contains(index) else { reply(nil, "Invalid recorder"); return }
                 shortcutRecordingPage = page; shortcutRecordingID = id; shortcutRecordingIndex = index
-                shortcutRecordedKeyCode = nil
+                shortcutRecordedKeyCode = nil; shortcutRecordingCandidate = nil; shortcutRecordingModifiers = []
             } else if shortcutRecordingID == id, shortcutRecordingIndex == body["index"] as? Int {
-                shortcutRecordingPage = nil; shortcutRecordingID = nil
+                shortcutRecordingPage = nil; shortcutRecordingID = nil; shortcutRecordingCandidate = nil
             }
+        case "openSystemSettings":
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.keyboard?Shortcuts") { NSWorkspace.shared.open(url) }
         default: reply(nil, "Unknown request"); return
         }
         reply(["commands": keyboardShortcuts.settings, "error": error ?? ""], nil)
@@ -45,8 +53,17 @@ import AppKit
         }
     }
 
+    /// A recorder belongs to the settings document that opened it, not the next tab/window.
+    func cancelShortcutRecording() {
+        guard let id = shortcutRecordingID else { return }
+        let page = shortcutRecordingPage
+        let detail: [String: Any] = ["id": id, "index": shortcutRecordingIndex, "cancelled": true]
+        shortcutRecordingID = nil; shortcutRecordingPage = nil; shortcutRecordingCandidate = nil
+        page?.evaluate("dispatchEvent(new CustomEvent('rise-shortcut-recorded', {detail: payload}))", arguments: ["payload": detail], in: nil, world: .page) { _ in }
+    }
+
     /// Recording happens before AppKit's menu and Chromium shortcuts, so even ⌘W or ⌘Q
-    /// can be recorded safely. The UI is Chromium's own cr-shortcut-input control.
+    /// can be previewed safely. Only the editor's explicit Save action changes a binding.
     func handleKeyboardShortcut(_ event: NSEvent) -> Bool {
         if event.type == .keyDown || event.type == .keyUp, event.keyCode == shortcutRecordedKeyCode {
             if event.type == .keyUp { shortcutRecordedKeyCode = nil }
@@ -56,24 +73,33 @@ import AppKit
             if selectedTab?.page === page, selectedTab?.url?.host == "settings",
                ["rise", "chrome"].contains(selectedTab?.url?.scheme ?? "") {
                 guard event.type == .keyDown || event.type == .keyUp || event.type == .flagsChanged else { return false }
-                guard event.type == .keyDown else { return true }
                 var detail: [String: Any] = ["id": id, "index": shortcutRecordingIndex]
-                if event.keyCode == 53 {
+                if event.type == .flagsChanged {
+                    let modifiers = event.modifierFlags.intersection(KeyboardShortcut.modifierMask)
+                    let added = modifiers.subtracting(shortcutRecordingModifiers)
+                    shortcutRecordingModifiers = modifiers
+                    guard !added.isEmpty else { return true }
+                    shortcutRecordingCandidate = nil
+                    detail["error"] = "Include a key that is not a modifier."
+                } else if event.type != .keyDown { return true }
+                else if event.keyCode == 53 {
                     shortcutRecordedKeyCode = event.keyCode
                     detail["cancelled"] = true
-                    shortcutRecordingID = nil; shortcutRecordingPage = nil
+                    shortcutRecordingID = nil; shortcutRecordingPage = nil; shortcutRecordingCandidate = nil
+                } else if (event.keyCode == 36 || event.keyCode == 76), event.modifierFlags.intersection(KeyboardShortcut.modifierMask).isEmpty,
+                          shortcutRecordingCandidate != nil {
+                    shortcutRecordedKeyCode = event.keyCode; detail["commit"] = true
                 } else if let binding = KeyboardShortcut(event: event), binding.isAssignable {
-                    if let error = keyboardShortcuts.set(id, at: shortcutRecordingIndex, to: binding.rawValue) { detail["error"] = error }
-                    else {
-                        shortcutRecordedKeyCode = event.keyCode
-                        detail["shortcut"] = binding.rawValue
-                        shortcutRecordingID = nil; shortcutRecordingPage = nil
-                    }
-                } else { detail["error"] = "Include Command, Control or Option, or use a function key. Escape cancels." }
+                    shortcutRecordingCandidate = binding; shortcutRecordedKeyCode = event.keyCode
+                    detail["shortcut"] = binding.rawValue; detail["display"] = binding.display
+                } else {
+                    shortcutRecordingCandidate = nil
+                    detail["error"] = "Include Command, Control or Option, or use a function key. Escape cancels."
+                }
                 page.evaluate("dispatchEvent(new CustomEvent('rise-shortcut-recorded', {detail: payload}))", arguments: ["payload": detail], in: nil, world: .page) { _ in }
                 return true
             }
-            shortcutRecordingPage = nil; shortcutRecordingID = nil
+            cancelShortcutRecording()
         }
         guard event.type == .keyDown else { return false }
         if let command = keyboardShortcuts.command(for: event) {

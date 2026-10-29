@@ -52,10 +52,8 @@ import RiseCore
     let errorMessage = label("", size: 13, color: .secondaryLabelColor)
     var retryButton: NSButton!
     let dismissArea = DismissView()
-    /// The centred palette's dim over the window, under `dismissArea`. It takes no clicks, so it
-    /// can fade out after the palette closes while the next click goes where it's aimed.
-    let veil = PassThroughView()
-    private var veilExits = 0
+    /// Shared dimming and motion for the address palette and tab switcher.
+    let veil = PanelVeil(frame: .zero)
     let palette = AddressPalette()
     let grip = SidebarGrip()
     /// One find bar per tab, so a search or question stays with the page it was made on.
@@ -102,6 +100,7 @@ import RiseCore
     let siteSearchLearner: SiteSearchLearner
     let suggestionFavicons: SuggestionFavicons
     let googleSearchSuggestions: GoogleSearchSuggestions
+    let paletteCommandUsage: PaletteCommandUsage
     var theme: RiseTheme = .neutral
     /// The palette lab's panel, in its build (`PaletteLab`).
     var paletteLab: PaletteLabPanel?
@@ -164,6 +163,8 @@ import RiseCore
     weak var shortcutRecordingPage: WebPage?
     var shortcutRecordingID: String?
     var shortcutRecordingIndex = 0
+    var shortcutRecordingCandidate: KeyboardShortcut?
+    var shortcutRecordingModifiers: NSEvent.ModifierFlags = []
     var shortcutRecordedKeyCode: UInt16?
     var tabMoveHeldModifiers: NSEvent.ModifierFlags = [.command, .option]
     var tabSwitchHeldModifiers: NSEvent.ModifierFlags = .control
@@ -252,7 +253,6 @@ import RiseCore
     /// The docked sidebar's state before the visible page entered simulated fullscreen.
     var fullscreenSidebarWasVisible: Bool?
     let tabSwitcher = TabSwitcherView()
-    let tabSwitchBackdrop = PeekBackdrop(color: NSColor.black.withAlphaComponent(0.08))
     var recentTabIDs: [UUID] = []
     var tabSwitchOrder: [UUID] = []
     var tabSwitchIndex = 0
@@ -275,6 +275,7 @@ import RiseCore
         pageFullscreen = PageFullscreen(preferences: preferences)
         let sessionURL = sessionURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Rise/session.json")
         self.sessionURL = sessionURL
+        paletteCommandUsage = PaletteCommandUsage(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("command-usage.json"))
         browsingHistory = BrowsingHistory(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("history.json"))
         siteSearchLearner = SiteSearchLearner(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("searches.json"))
         suggestionFavicons = SuggestionFavicons(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("suggestion-icons.json"))
@@ -330,8 +331,6 @@ import RiseCore
         }
         tabSwitcher.choose = { [weak self] id in self?.commitTabSwitch(id) }
         tabSwitcher.hover = { [weak self] id in self?.pickTabSwitchCard(id) }
-        tabSwitchBackdrop.dismiss = { [weak self] in self?.cancelTabSwitch() }
-        tabSwitchBackdrop.isHidden = true
         linkPreloader.loadPage = { url, page, done in
             guard page is ChromiumPage else { return nil }
             let preload = ChromiumPreload(url, size: page.view.bounds.size, done: done)
@@ -475,7 +474,6 @@ import RiseCore
         pageClip.addSubview(errorSurface)
         dismissArea.protectedView = palette
         dismissArea.dismiss = { [weak self] in self?.hidePalette() }; dismissArea.isHidden = true
-        veil.wantsLayer = true; veil.isHidden = true
         root.addSubview(linkStatus); root.addSubview(veil); root.addSubview(dismissArea); root.addSubview(palette)
         palette.dismiss = { [weak self] in self?.hidePalette() }
         loadAddressDisplay()
@@ -581,10 +579,9 @@ import RiseCore
         selectedFindBar.frame = pageShadow.frame; selectedFindBar.topInset = barHeight; selectedFindBar.tuckedInset = barHeight
         permissionCoordinator.layoutPanel()
         dismissArea.frame = b
-        // The centred palette dims the window behind it.
+        // Both centred panels share the same window-wide dim.
         veil.frame = b
-        let dim = (palette.isCentered ? CenteredPaletteStyle.veil(theme) : .clear).cgColor
-        if veil.layer?.backgroundColor != dim { veil.layer?.backgroundColor = dim }
+        veil.applyTheme(theme)
         let paletteWidth = paletteCreatesTab ? AddressAppearance.tuning.newTabWidth : AddressAppearance.tuning.addressWidth
         if palette.isCentered {
             // Placed where, at its tallest, it's centred in the window, and grows down from there.
@@ -600,7 +597,6 @@ import RiseCore
         }
         layoutPeek()
         layoutLinkStatus()
-        tabSwitchBackdrop.frame = b
         if !tabSwitcher.isHidden { tabSwitcher.place(in: b) }
     }
     /// Developer mode's bar is under the selected page's bar, in its place, and the bar becomes
@@ -632,6 +628,7 @@ import RiseCore
     func windowDidResize(_ notification: Notification) { layoutChrome() }
     func windowWillClose(_ notification: Notification) { githubStarrer.tearDown(); signedInPages.tearDown(); linkPullRequests.summaries.tearDown(); plainBarTimer?.invalidate(); plainBarTimer = nil; tabPressed(); gmailInbox.tearDown(); protonMailInbox.tearDown(); chatInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); saveNow() }
     func windowDidResignKey(_ notification: Notification) {
+        cancelShortcutRecording()
         pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch(); endSidebarPeek(); tabPressed()
         sidebar?.cancelTabInteractions()
         DispatchQueue.main.async { [weak self] in
@@ -766,6 +763,7 @@ import RiseCore
         if let url { tab.load(url) }; return tab
     }
     func select(_ id: UUID) {
+        if selectedID != id { cancelShortcutRecording() }
         let wasSelecting = isSelectingTab
         isSelectingTab = true
         defer {
@@ -829,53 +827,36 @@ import RiseCore
         sidebar.beginTabSearch()
     }
     @objc func focusAddress() { paletteCreatesTab = false; showPalette(text: selectedTab?.url?.absoluteString == "about:blank" ? "" : selectedTab?.url?.absoluteString ?? "") }
-    func showPalette(text: String) { sidebar.endTabSearch(); if searchProvider.isGoogle { googleSearchSuggestions.warmUp() }; historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus(); siteControlsPopover.close(); extensionPopup?.close(); permissionCoordinator.cancel(); let veilWasHidden = dismissArea.isHidden; dismissArea.isHidden = false; palette.currentPage = selectedTab.flatMap { tab in tab.url.map { ($0.absoluteString, tab.favicon(for: theme)) } }; palette.show(text: text, theme: theme, createsTab: paletteCreatesTab, centered: paletteLab == nil); layoutChrome(); if veilWasHidden { fadeInVeil() } }
-    /// The centred palette's veil comes in quickly but not at once: Material's fast effects
-    /// (150 ms, decelerating), so it starts at the keypress and settles softly. The palette itself
-    /// shows at once. Coming back while it fades out, it turns from where it got to.
-    private func fadeInVeil() {
-        veilExits += 1
-        guard palette.isCentered else { veil.isHidden = true; return }
-        let reached = veil.isHidden ? 0 : veil.layer?.presentation()?.opacity ?? 1
-        veil.isHidden = false
-        guard let layer = veil.layer else { return }
-        layer.removeAnimation(forKey: "veil.fade")
-        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, reached < 1 else { return }
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = reached; fade.toValue = 1; fade.duration = Self.veilFadeDuration*Double(1-reached)
-        fade.timingFunction = CAMediaTimingFunction(controlPoints: 0.31, 0.94, 0.34, 1)
-        layer.add(fade, forKey: "veil.fade")
-    }
-    /// Out much quicker than in (60 ms), lightening from the first frame, so it never lingers.
-    private func fadeOutVeil() {
-        veilExits += 1
-        guard !veil.isHidden, let layer = veil.layer, window?.isVisible == true,
-              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { veil.isHidden = true; return }
-        let exit = veilExits
-        CATransaction.begin()
-        CATransaction.setCompletionBlock { [weak self] in
-            guard let self, self.veilExits == exit else { return }
-            self.veil.isHidden = true; layer.removeAnimation(forKey: "veil.fade")
+    func showPalette(text: String) {
+        sidebar.endTabSearch()
+        if searchProvider.isGoogle { googleSearchSuggestions.warmUp() }
+        historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus()
+        siteControlsPopover.close(); extensionPopup?.close(); permissionCoordinator.cancel()
+        let veilWasHidden = dismissArea.isHidden
+        dismissArea.isHidden = false
+        veil.dismiss = nil
+        root.addSubview(veil, positioned: .below, relativeTo: dismissArea)
+        palette.currentPage = selectedTab.flatMap { tab in tab.url.map { ($0.absoluteString, tab.favicon(for: theme)) } }
+        palette.show(text: text, theme: theme, createsTab: paletteCreatesTab, centered: paletteLab == nil)
+        layoutChrome()
+        if veilWasHidden {
+            if palette.isCentered { veil.show(theme: theme) }
+            else { veil.hide(animated: false) }
         }
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = layer.presentation()?.opacity ?? 1; fade.toValue = 0; fade.duration = Self.veilFadeOutDuration
-        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        fade.fillMode = .forwards; fade.isRemovedOnCompletion = false
-        layer.add(fade, forKey: "veil.fade")
-        CATransaction.commit()
     }
-    static let veilFadeDuration: CFTimeInterval = 0.15, veilFadeOutDuration: CFTimeInterval = 0.06
     func hidePalette() {
         // The palette lab's palette stays open, whatever's clicked.
         guard paletteLab == nil else { return }
         googleSearchSuggestions.cancel(); suggestionFavicons.cancelPreview()
         guard palette.isPresented else { return }
-        palette.hide(); dismissArea.isHidden = true; fadeOutVeil(); window?.makeFirstResponder(selectedTab?.page.view)
+        palette.hide(); dismissArea.isHidden = true; veil.hide(); window?.makeFirstResponder(selectedTab?.page.view)
         DispatchQueue.main.async { [weak self] in self?.applyPendingSharedTabs() }
     }
     func submitAddress(_ text: String, suggestion: AddressSuggestion?) {
         // The palette lab opens nothing: Enter starts the palette over.
         if paletteLab != nil { palette.dismiss?(); return }
+        // An unmatched command stays in the palette rather than becoming a web search.
+        if PaletteCommand.query(in: text) != nil, suggestion == nil { return }
         hidePalette()
         if let command = suggestion?.command { runPaletteCommand(command); return }
         if let request = suggestion?.assistantPrompt { submitAssistantPrompt(request); return }

@@ -53,6 +53,13 @@ enum SitePermission: String, CaseIterable {
         decisions[origin, default: [:]][capability.rawValue] = value.rawValue
         preferences.set(decisions, forKey: Self.preferenceKey)
     }
+    /// Forgets what the site was allowed or refused, so it's asked again; its other settings stay.
+    func reset(origin: String) {
+        guard var site = decisions[origin] else { return }
+        SiteCapability.allCases.forEach { site.removeValue(forKey: $0.rawValue) }
+        decisions[origin] = site.isEmpty ? nil : site
+        preferences.set(decisions, forKey: Self.preferenceKey)
+    }
     /// Every site's decision for each capability, by site.
     var decidedSites: [(origin: String, capability: SiteCapability, permission: SitePermission)] {
         decisions.keys.sorted().flatMap { origin in

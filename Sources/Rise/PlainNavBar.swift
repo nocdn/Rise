@@ -602,7 +602,7 @@ import RiseCore
     /// The arrows of the full screen notices, drawn as heavy as the link.
     static let fullScreenImage = symbol("arrow.up.left.and.arrow.down.right")
     static let starImage = TablerIcon.image(TablerIcon.star, size: 14, description: nil)
-    static let unpinImage = symbol("pin.slash")
+    static let unpinImage = symbol("pin.slash"), resetImage = symbol("arrow.counterclockwise")
     static let warningImage = TablerIcon.image(TablerIcon.alertTriangle, size: 14, description: nil)
     static let photoImage = symbol("photo"), documentImage = symbol("doc.richtext")
     static let calendarImage = symbol("calendar.badge.checkmark"), reminderImage = symbol("checklist.checked")

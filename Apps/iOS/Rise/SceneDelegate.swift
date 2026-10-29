@@ -8,6 +8,12 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let scene = scene as? UIWindowScene else { return }
         let window = RiseWindow(windowScene: scene)
         #if DEBUG
+        if PasskeyDiagnostic.requested {
+            window.rootViewController = PasskeyDiagnostic()
+            self.window = window
+            window.makeKeyAndVisible()
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains(PopupBlockingAudit.argument) {
             let controller = BrowserViewController(startURL: nil, adBlocker: MobileAdBlocker(preferences: nil),
                 isPrivateBrowsing: ProcessInfo.processInfo.arguments.contains("-RisePopupPrivate"), websiteDataStore: .nonPersistent())
@@ -155,6 +161,12 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             AddressSuggestionsAudit.run(in: controller)
             return
         }
+        if ProcessInfo.processInfo.arguments.contains(MobileFaviconAudit.argument) {
+            let controller = AddressSuggestionsAudit.makeBrowser()
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            MobileFaviconAudit.run(in: controller)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains(InteractionAudit.argument) {
             let controller = InteractionAudit.makeBrowser()
             window.rootViewController = controller
@@ -232,6 +244,9 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
 
     func sceneWillResignActive(_ scene: UIScene) {
+        #if DEBUG
+        if PasskeyDiagnostic.keepsAwake { UIApplication.shared.isIdleTimerDisabled = false }
+        #endif
         (window?.rootViewController as? BrowserViewController)?.prepareForInactivity()
         (window?.rootViewController as? BrowserViewController)?.cancelListening()
         if let window { (window.rootViewController as? BrowserViewController)?.quickActions.setActive(false, in: window) }
@@ -246,6 +261,9 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     }
     func sceneDidDisconnect(_ scene: UIScene) { saveSession() }
     func sceneDidBecomeActive(_ scene: UIScene) {
+        #if DEBUG
+        if PasskeyDiagnostic.keepsAwake { UIApplication.shared.isIdleTimerDisabled = true }
+        #endif
         let browser = window?.rootViewController as? BrowserViewController
         if let window { browser?.quickActions.setActive(true, in: window) }
         browser?.applyPendingChanges()

@@ -28,6 +28,13 @@ import AppKit
     @objc func capturePagePDF() { captureWholePage(.pdf) }
     @objc func showPageSource() { viewSource() }
     @objc func showSiteInformation() { siteInformation() }
+    /// The page's site is asked again for its camera, microphone, location and notifications, at
+    /// once, as if it had never asked; the page bar says so.
+    @objc func resetSitePermissions() {
+        guard let url = (peekTab ?? selectedTab)?.url, let origin = SitePermissions.origin(url) else { return }
+        sitePermissions.reset(origin: origin)
+        selectedBar.showNotice("Reset Permissions for \(url.host ?? origin)", image: BarNotice.resetImage)
+    }
     @objc func manageExtensions() { showExtensions() }
     @objc func showProject() { addTab(url: URL(string: "https://github.com/nocdn/Rise")!) }
     @objc func reportIssue() { addTab(url: URL(string: "https://github.com/nocdn/Rise/issues")!) }
@@ -86,6 +93,7 @@ extension BrowserController: NSMenuItemValidation {
         case #selector(reload), #selector(hardReload),
              #selector(peekCurrentPage), #selector(savePageScreenshot), #selector(capturePageImage), #selector(capturePagePDF),
              #selector(showSiteInformation): return hasPage
+        case #selector(resetSitePermissions): return SitePermissions.origin((peekTab ?? selectedTab)?.url) != nil
         case #selector(toggleCardMotionTester):
             item.state = CardMotionTester.shared.isOn ? .on : .off; return true
         case #selector(toggleLinkPulseTester):
