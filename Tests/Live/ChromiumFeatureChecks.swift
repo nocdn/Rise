@@ -133,15 +133,17 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         }
         browser.pageFullscreen.setSimulated(false, in: browser.tabs.map(\.page))
 
-        // Ad blocking: requests the lists block don't go out, and ad slots are hidden, also ones
-        // added later, by EasyList's rules and Rise's own; turning it off lets them through.
-        try "ok".write(to: folder.appendingPathComponent("x_ads_banner_1.txt"), atomically: true, encoding: .utf8)
-        _ = try page("ads", "<div class=ADBAR id=slot>Ad</div><div class=adsbox id=own>Ad</div><p id=text>Text</p>")
+        // Ad blocking (uBlock Origin, with its own lists): an ad network's script doesn't load, and ad
+        // slots are hidden, also ones added later; turning it off lets them through. The ad network's
+        // host is this server (scripts/test-chromium-live.py maps it).
+        try "window.riseAdRan = true".write(to: folder.appendingPathComponent("adsbygoogle.js"), atomically: true, encoding: .utf8)
+        _ = try page("ads", "<div class=ADBAR id=slot>Ad</div><div id=ad_banner>Ad</div><p id=text>Text</p>")
         let ads = await open(URL(string: "http://rise-check.test:\(ports[0])/ads.html")!)
-        let fetches = "return fetch('x_ads_banner_1.txt').then(r => r.ok, () => 'blocked')"
-        let hidden = "const add = document.createElement('div'); add.className = 'ADBox'; add.id = 'later'; document.body.append(add);" +
-            "await new Promise(r => setTimeout(r, 400)); return ['slot', 'own', 'later', 'text'].map(id => getComputedStyle(document.getElementById(id)).display)"
-        check(await value(fetches, in: ads.page) as? String == "blocked", "A blocked request doesn't go out")
+        let fetches = "return new Promise(r => { const s = document.createElement('script'); s.src = 'http://pagead2.googlesyndication.com:\(ports[0])/adsbygoogle.js?' + Math.random();" +
+            "s.onload = () => r(true); s.onerror = () => r('blocked'); document.head.append(s); })"
+        let hidden = "const add = document.createElement('div'); add.className = 'ADBAR'; add.id = 'later'; document.body.append(add);" +
+            "await new Promise(r => setTimeout(r, 400)); return ['slot', 'ad_banner', 'later', 'text'].map(id => getComputedStyle(document.getElementById(id)).display)"
+        _ = await waitUntil("A blocked request doesn't go out") { await self.value(fetches, in: ads.page) as? String == "blocked" }
         _ = await waitUntil("Ad slots are hidden, and only them") { await self.value(hidden, in: ads.page) as? [String] == ["none", "none", "none", "block"] }
         browser.toggleAdBlocking()
         _ = await waitUntil("Turned off, the request goes out") { await self.value(fetches, in: ads.page) as? Bool == true }

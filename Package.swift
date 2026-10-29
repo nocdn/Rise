@@ -6,16 +6,13 @@ import PackageDescription
 // beside the repo by scripts/engine/build.sh; Rise only takes its interface's header.
 let engineRoot = ProcessInfo.processInfo.environment["RISE_CHROMIUM_ROOT"]
     ?? URL(fileURLWithPath: Context.packageDirectory).deletingLastPathComponent().appendingPathComponent("rise-chromium").path
-let frameworks = engineRoot + "/fork/src/out/Release/Chromium.app/Contents/Frameworks"
-// Ad blocking for pages, built from Engine/adblock by scripts/build.sh where cargo is.
-let adBlock = engineRoot + "/adblock-build/release/librise_adblock.a"
-let hasAdBlock = FileManager.default.fileExists(atPath: adBlock)
+let frameworks = engineRoot + "/fork/src/out/Official/Chromium.app/Contents/Frameworks"
 
 let package = Package(name: "Rise", platforms: [.macOS(.v14)], products: [.executable(name: "Rise", targets: ["Rise"])], targets: [
     .target(name: "RiseCore"),
-    .target(name: "RiseChromium", cSettings: hasAdBlock ? [.define("RISE_ADBLOCK")] : [],
+    .target(name: "RiseChromium",
             linkerSettings: [.unsafeFlags(["-F", frameworks, "-framework", "Chromium Framework",
-                                           "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"] + (hasAdBlock ? [adBlock] : []))]),
+                                           "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]),
     .executableTarget(name: "Rise", dependencies: ["RiseCore", "RiseChromium"]),
     .testTarget(name: "RiseCoreTests", dependencies: ["RiseCore"], resources: [.copy("Resources")]),
     // Run with scripts/test.sh, which finds the engine's framework for them; they don't start it.

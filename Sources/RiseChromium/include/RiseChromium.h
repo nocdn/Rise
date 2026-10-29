@@ -7,23 +7,16 @@ NS_ASSUME_NONNULL_BEGIN
 #define RC_EXPORT
 #endif
 
-/// Chromium's browser process inside Rise: started once, before any page.
-/// Ad blocking for every Chromium page, from Brave's adblock engine built with the
-/// filter lists WebKit's rules come from. Requests go out unchecked until the lists are loaded.
+/// Ad blocking for every Chromium page: uBlock Origin, which Rise carries in its Resources and
+/// Chrome loads as one of its own extensions.
 RC_EXPORT @interface RCAdBlock : NSObject
-/// Whether this build has it.
-@property (class, readonly) BOOL available;
-/// Whether requests are checked; off lets everything through.
+/// Whether uBlock Origin is loaded; off unloads it, and every page's requests go through.
 @property (class) BOOL enabled;
-/// Loads the lists, off the main thread.
-+ (void)load;
-/// Selectors to hide on a document at `url`; given the class and id names the document uses,
-/// the general selectors for those names instead.
-+ (NSArray<NSString *> *)hiddenSelectorsForURL:(NSURL *)url
-                                       classes:(nullable NSArray<NSString *> *)classes
-                                           ids:(nullable NSArray<NSString *> *)ids;
+/// Sets `enabled`; `completion` once uBlock Origin is loaded or unloaded to match, on the main thread.
++ (void)setEnabled:(BOOL)enabled completion:(nullable void (^)(void))completion;
 @end
 
+/// Chromium's browser process inside Rise: started once, before any page.
 RC_EXPORT @interface RCEngine : NSObject
 /// The default search engine chosen in Chrome's settings (rise://settings), by name; nil if none.
 + (nullable NSString *)defaultSearchName;

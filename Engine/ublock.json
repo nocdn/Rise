@@ -1,0 +1,10 @@
+{
+  "version": "1.75.0",
+  "url": "https://github.com/gorhill/uBlock/releases/download/1.75.0/uBlock0_1.75.0.chromium.zip",
+  "sha256": "393cf95709d1074d4022970e9014e434395c53a822387f1e25f43be97cf4b582",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAw63qUWvOjv6vzEXD6kXS/5RzMauArtqusbEMC5sCUvH8DWf2gJE+HErm8QwWPSR34ptQxeWt5/55a5sY27ZzEeGZAHorYB76XC0nPN6+7X52J+8VB5JyKrOqh91ZU6FoOLpb7S4Um+dF8rOBCGIocnpguHyTMAME2QBM+fb/pC3qZcjxPDwbtnxuE4d50qlNFX3Z3eEFM7mJBWv/wy2pXvMCZPZRbyCxq5zNpuJ4dHT+nR3Jw8SUHtV4JYUujSYHZblW1mAyzkhtIM7hdEwQlwjEMxM36AbpyKNPgN1V4kfDO90dz7K8T136hzJZxVJhJip2d8sx72cr+e1c/GshgQIDAQAB",
+  "off": [
+    "easyprivacy",
+    "ublock-privacy"
+  ]
+}

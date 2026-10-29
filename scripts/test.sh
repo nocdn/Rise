@@ -5,5 +5,5 @@
 set -euo pipefail
 builtin cd "${0:A:h:h}"
 ENGINE_ROOT="${RISE_CHROMIUM_ROOT:-${PWD:h}/rise-chromium}"
-export DYLD_FRAMEWORK_PATH="$ENGINE_ROOT/fork/src/out/Release/Chromium.app/Contents/Frameworks"
+export DYLD_FRAMEWORK_PATH="$ENGINE_ROOT/fork/src/out/Official/Chromium.app/Contents/Frameworks"
 exec "$(xcrun -f swift)" test "$@"

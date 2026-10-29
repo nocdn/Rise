@@ -26,9 +26,9 @@ import RiseCore
            let saved = try? JSONDecoder().decode([String: Data].self, from: bytes) {
             for (key, png) in saved.sorted(by: { $0.key < $1.key }).prefix(Self.limit*2) {
                 let origin = key.hasSuffix("|dark") ? String(key.dropLast(5)) : key
-                guard SitePermissions.origin(URL(string: origin)) == origin, png.count <= FaviconSnapshot.maximumBytes,
+                guard SitePermissions.origin(URL(string: origin)) == origin,
                       order.contains(origin) || order.count < Self.limit,
-                      let image = NSImage(data: png), image.isValid else { continue }
+                      let image = FaviconSnapshot.decode(png) else { continue }
                 images[key] = image; data[key] = png
                 if !order.contains(origin) { order.append(origin) }
             }

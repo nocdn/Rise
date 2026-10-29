@@ -52,17 +52,28 @@ export function consentContainer(button) {
     return null;
 }
 
-export function createFallback(state, click, send) {
+export function createFallback(state, click, send, dismissed) {
     const queued = new Set(), roots = new WeakSet(), observers = [], walkers = [], candidates = new Set();
     const retries = new WeakMap();
     const containers = new WeakMap();
     let timer, stopped = false, slices = 0, maxSlice = 0, visited = 0, attempts = 0;
     let overflow = false;
+    // A page that changes constantly (an app, an animation) is looked over once a second
+    // instead of on every change, as Brave's cosmetic filtering does.
+    let changes = 0, window_ = performance.now(), polling = 0;
+    const busy = count => {
+        const now = performance.now();
+        if (now-window_ > 1000) { window_ = now; changes = 0; }
+        if ((changes += count) < 400 || polling) return false;
+        observers.forEach(o=>o.disconnect());
+        polling = setInterval(() => { if (state.active && !document.hidden) { enqueue(document.documentElement); schedule(); } }, 1000);
+        return true;
+    };
     const observe = root => {
-        if (roots.has(root)) return;
+        if (roots.has(root) || polling) return;
         roots.add(root);
         const observer = new MutationObserver(records => {
-            if (!state.active) return;
+            if (!state.active || busy(records.length)) return;
             for (const record of records) {
                 if (record.type === 'childList') for (const n of record.addedNodes) if (n.nodeType === 1) enqueue(n);
                 if (record.type !== 'childList' || record.removedNodes.length) {
@@ -125,9 +136,13 @@ export function createFallback(state, click, send) {
         if (click(button, 'fallback')) {
             attempts++;
             send({ type: 'action', source: 'fallback', action: 'accept', label: text.slice(0,80) });
-            // A premature click may precede a late event handler. Retry only while still visible.
+            // A premature click may precede a late event handler. Retry only while still visible;
+            // once the banner has gone, consent is given.
             const retry = retries.get(button) || 0; retries.set(button,retry+1);
-            setTimeout(() => { if (state.active && visible(button)) { queued.add(button); schedule(); } }, Math.min(8000,1100*2**retry));
+            setTimeout(() => {
+                if (!state.active) return;
+                if (visible(button)) { queued.add(button); schedule(); } else if (!visible(container)) dismissed();
+            }, Math.min(8000,1100*2**retry));
         }
     }
     function pump() {
@@ -156,7 +171,8 @@ export function createFallback(state, click, send) {
         const node = event.composedPath?.()[0] || event.target;
         const button = node.closest?.(controls);
         const settings = button && /(?:cookie|privacy).{0,30}(?:settings|preferences)|manage.{0,30}(?:cookie|consent)/i.test(textOf(button));
-        if (settings || consentContainer(node)) { state.manual = true; send({ type:'manual' }); }
+        // The person answers it themselves; there's nothing left to look for.
+        if (settings || consentContainer(node)) { state.manual = true; send({ type:'manual' }); dismissed(); }
     };
     document.addEventListener('pointerdown',trusted,true);
     document.addEventListener('keydown',trusted,true);
@@ -168,10 +184,10 @@ export function createFallback(state, click, send) {
     for (const delay of [1500,4000]) setTimeout(() => { if (state.active) { enqueue(document.documentElement); schedule(); } },delay);
     return {
         stop() {
-            stopped = true; clearTimeout(timer); observers.forEach(o=>o.disconnect()); queued.clear(); walkers.length=0; candidates.clear();
+            stopped = true; clearTimeout(timer); clearInterval(polling); observers.forEach(o=>o.disconnect()); queued.clear(); walkers.length=0; candidates.clear();
             document.removeEventListener('pointerdown',trusted,true); document.removeEventListener('keydown',trusted,true); document.removeEventListener('visibilitychange',visibility);
         },
-        stats() { return { slices, maxSlice, visited, attempts, queued: queued.size, walkers: walkers.length }; },
+        stats() { return { slices, maxSlice, visited, attempts, polling: !!polling, queued: queued.size, walkers: walkers.length }; },
         pending() { return [...candidates].some(b=>visible(b)); },
         inspect() {
             const panels = new Set();

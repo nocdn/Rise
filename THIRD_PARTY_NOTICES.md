@@ -91,7 +91,9 @@ The Rise theme's Mist wash (Sources/Rise/Chrome.swift), the Plain light theme's 
 
 ## Blocking filter data
 
-EasyList: The EasyList authors (https://easylist.to/). The filter data is distributed under GPL-3.0; its complete license is in Filters/LICENSES/GPL-3.0.txt. The original source snapshot is included in Filters/Sources/.
+uBlock Origin: Copyright (C) Raymond Hill and contributors (https://github.com/gorhill/uBlock). The Mac app carries a release pinned in Engine/ublock.json, changed only by scripts/ublock.py: its manifest gains a key, and its tracker lists start off under GPL-3.0; its license is in the app at Contents/Resources/uBlock0.chromium/LICENSE.txt and in Filters/LICENSES/GPL-3.0.txt. Its filter lists keep their own licenses.
+
+EasyList: The EasyList authors (https://easylist.to/). The filter data is distributed under GPL-3.0; its complete license is in Filters/LICENSES/GPL-3.0.txt. The iPhone app's original source snapshots, which include it, are in Filters/iOS/Sources/.
 
 AdGuard SafariConverterLib 4.3.0 is used as a build-time conversion tool for the iPhone app's rules (GPL-3.0, https://github.com/AdguardTeam/SafariConverterLib); its binary is not bundled or linked into Rise.
 

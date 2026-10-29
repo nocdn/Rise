@@ -11,7 +11,7 @@ touch "$ENGINE_ROOT/.metadata_never_index"
 cd "$FORK_ROOT"
 cat > .gclient <<GCLIENT
 solutions = [{'managed': False, 'name': 'src', 'url': 'https://chromium.googlesource.com/chromium/src.git@$(pin chromium)',
-              'custom_vars': {'checkout_pgo_profiles': False}, 'custom_deps': {}, 'deps_file': 'DEPS'}]
+              'custom_vars': {'checkout_pgo_profiles': True}, 'custom_deps': {}, 'deps_file': 'DEPS'}]
 GCLIENT
 gclient sync --no-history --shallow --revision "src@refs/tags/$(pin chromium)"
 

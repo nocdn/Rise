@@ -70,12 +70,11 @@ import RiseCore
         if let saved, let history = saved.navigationHistory?.validated(for: saved.url) { restoredHistory = (saved.url, history) }
         self.page = page ?? Self.makePage()
         super.init()
-        if let data = saved?.faviconData, data.count <= FaviconSnapshot.maximumBytes,
+        if let data = saved?.faviconData,
            let origin = saved?.faviconOrigin, origin == SitePermissions.origin(requestedURL),
-           let image = NSImage(data: data), image.isValid {
+           let image = FaviconSnapshot.decode(data) {
             iconOrigin = origin; favicon = image; faviconData = data
-            if let darkData = saved?.darkFaviconData, darkData.count <= FaviconSnapshot.maximumBytes,
-               let darkImage = NSImage(data: darkData), darkImage.isValid {
+            if let darkData = saved?.darkFaviconData, let darkImage = FaviconSnapshot.decode(darkData) {
                 darkFavicon = darkImage; darkFaviconData = darkData
             }
         }
@@ -154,6 +153,27 @@ import RiseCore
         if let state, state.url == url.absoluteString, page.restoreSession(state.data, fallback: url) { return }
         if let history, history.url == url.absoluteString, page.restoreNavigationHistory(history.history, fallback: url) { return }
         page.load(url)
+    }
+    /// When the tab was last on screen, for letting it sleep.
+    var lastSeen = Date()
+    /// Whether `sleep()` can let the page go and bring it back as it was: it has loaded, holds no
+    /// earlier pages, and the engine can give its history.
+    var canSleep: Bool {
+        page.url != nil && backPages.isEmpty && forwardPages.isEmpty && archivedBackEntries.isEmpty && sessionState != nil
+    }
+    /// Lets the page go, keeping its history, title, icon and picture; shown again, it comes back
+    /// from its history as a tab restored at launch does. Returns the page let go.
+    func sleep() -> WebPage? {
+        guard canSleep, let state = sessionState, let url = page.url else { return nil }
+        let old = page
+        restoredState = (url.absoluteString, state); restoredHistory = navigationHistory.map { (url.absoluteString, $0) }
+        requestedURL = url; hasAttemptedNavigation = false
+        backgroundPictureURL = nil; heldSinceBackgroundPicture = false
+        old.onChange = nil; old.stopLoading(); old.view.removeFromSuperview()
+        page = Self.makePage()
+        if isAudioMuted { page.setAudioMuted(true) }
+        observePage()
+        return old
     }
     func setAudioMuted(_ muted: Bool) {
         guard page.setAudioMuted(muted) else { return }

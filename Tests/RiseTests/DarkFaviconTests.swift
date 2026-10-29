@@ -60,6 +60,48 @@ final class DarkFaviconTests: XCTestCase {
         restored.requestedURL = URL(string: "about:blank"); restored.updateIcon()
         XCTAssertNil(restored.darkFavicon); XCTAssertNil(restored.saved.darkFaviconData)
     }
+    @MainActor func testRootPresentationOverridesNoneForEachAppearanceWithoutRecoloringChildren() throws {
+        let svg = Data("""
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" fill="none">
+            <style>:root { fill: #111; }
+            @media (prefers-color-scheme: dark) { :root { fill: #fff; } }
+            </style><rect width="32" height="32"/><rect width="8" height="8" fill="#ff0000"/></svg>
+            """.utf8)
+        let light = try XCTUnwrap(FaviconImage.decode(svg, dark: false))
+        let dark = try XCTUnwrap(FaviconImage.decode(svg, dark: true))
+        XCTAssertLessThan(try color(light).redComponent, 0.1)
+        XCTAssertGreaterThan(try color(dark).redComponent, 0.95)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: XCTUnwrap(FaviconSnapshot.encode(dark))))
+        let red = try XCTUnwrap(bitmap.colorAt(x: 4, y: 4)?.usingColorSpace(.deviceRGB))
+        XCTAssertGreaterThan(red.redComponent, 0.95)
+        XCTAssertLessThan(red.greenComponent, 0.25, "Root color must not replace a child's explicit color")
+    }
+    @MainActor func testTransparentVariantsAreRejectedAndOldCachesAndSessionsFallBackToVisibleIcons() throws {
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 32, pixelsHigh: 32,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+            bytesPerRow: 0, bitsPerPixel: 0))
+        try XCTUnwrap(bitmap.bitmapData).initialize(repeating: 0, count: bitmap.bytesPerRow*bitmap.pixelsHigh)
+        let blank = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        XCTAssertNil(FaviconSnapshot.encode(NSImage(data: blank)))
+        let light = try XCTUnwrap(FaviconSnapshot.encode(FaviconImage.decode(Self.svg, dark: false)))
+        let page = URL(string: "https://example.com/page")!
+        let origin = try XCTUnwrap(SitePermissions.origin(page))
+        let tab = BrowserTab(saved: SavedTab(url: page.absoluteString, title: "Saved", faviconData: light,
+            darkFaviconData: blank, faviconOrigin: origin))
+        XCTAssertNil(tab.darkFavicon)
+        XCTAssertNil(tab.saved.darkFaviconData)
+        XCTAssertTrue(tab.favicon(for: .dark) === tab.favicon)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = directory.appendingPathComponent("icons.json")
+        try JSONEncoder().encode([origin: light, origin+"|dark": blank]).write(to: file)
+        let cache = SuggestionFavicons(storageURL: file); defer { cache.cancel() }
+        XCTAssertNil(cache.cachedDarkImage(for: page))
+        XCTAssertLessThan(try color(XCTUnwrap(cache.image(for: page, fetch: false, dark: true))).redComponent, 0.2)
+        XCTAssertFalse(cache.storePageIcon(blank, for: page, dark: true))
+        XCTAssertLessThan(try color(XCTUnwrap(cache.image(for: page, fetch: false, dark: true))).redComponent, 0.2)
+    }
     @MainActor func testSuggestionCacheRestoresBothVariantsWithoutRefetchAndSidebarFollowsTheme() throws {
         _ = NSApplication.shared
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

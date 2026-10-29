@@ -289,7 +289,10 @@ enum CalendarSchedule {
             // A refresh would move the companion away from the event.
             cancel()
             var failure: Error?
-            do { try await (answerer ?? reader.respond)(answer, shown, account) } catch { failure = error }
+            // Shown while it answers, as for a read: resting, Chrome may have frozen it.
+            do {
+                try await HiddenAccessibilityView.reading(reader.companion) { try await (self.answerer ?? self.reader.respond)(answer, shown, account) }
+            } catch { failure = error }
             guard !Task.isCancelled else { return }
             answersWaiting -= 1
             if let failure, self.account == account {
@@ -308,7 +311,7 @@ enum CalendarSchedule {
         task = Task { [weak self] in
             guard let self else { return }
             do {
-                let days = try await (load ?? reader.load)(account)
+                let days = try await HiddenAccessibilityView.reading(reader.companion) { try await (self.load ?? self.reader.load)(account) }
                 guard !Task.isCancelled, token == generation, self.account == account else { return }
                 events = CalendarSchedule.events(days); loadedAt = Date(); error = nil
             } catch {
@@ -350,6 +353,7 @@ enum CalendarSchedule {
         web.view.frame = container.bounds
         container.addSubview(web.view)
         host.addSubview(container, positioned: .below, relativeTo: host.subviews.first)
+        container.restsBetweenReads()
         companion = web
     }
     private func run(_ script: String, in web: WebPage) async throws -> Any? {

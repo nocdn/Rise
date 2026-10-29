@@ -44,7 +44,6 @@ if check not in checks and not check.endswith(".swift"):
     raise SystemExit(f"Unknown check {check}; choose from {', '.join(checks)}.")
 
 root = Path(__file__).resolve().parents[1]
-engine = Path(os.environ.get("RISE_CHROMIUM_ROOT", root.parent / "rise-chromium"))
 app = root / "build/Rise.app"
 if not (app / "Contents/Frameworks/Chromium Framework.framework").exists():
     raise SystemExit(f"{app.name} has no Chromium; build the engine and run ./scripts/build.sh first.")
@@ -63,9 +62,8 @@ objects += [str(path) for path in (debug / "RiseCore.build").glob("*.o")]
 engine_sources = {path.name for path in (root / "Sources/RiseChromium").glob("*.m")}
 objects += [str(path) for path in (debug / "RiseChromium.build").glob("*.o") if path.name[:-2] in engine_sources]
 # The engine itself: the fork's framework, as the app has it.
-ad_block = [str(engine / "adblock-build/release/librise_adblock.a")] if (engine / "adblock-build/release/librise_adblock.a").exists() else []
 engine_linking = ["-F", str(app / "Contents/Frameworks"), "-framework", "Chromium Framework",
-                   "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks", *ad_block]
+                   "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]
 
 keep = os.environ.get("RISE_PEEK_OUT")
 folder = Path(keep) if keep else Path(tempfile.mkdtemp(prefix="rise-chromium-peek-"))
@@ -113,7 +111,7 @@ if check == "features" or check.endswith(".swift"):
     # Media plays without a click, and the camera is Chromium's made-up one, so no real camera is asked for.
     # rise-check.test is an ordinary site to the filter lists, which leave local addresses alone.
     arguments = ["--autoplay-policy=no-user-gesture-required", "--use-fake-device-for-media-stream",
-                 "--host-resolver-rules=MAP rise-check.test 127.0.0.1"]
+                 "--host-resolver-rules=MAP rise-check.test 127.0.0.1, MAP pagead2.googlesyndication.com 127.0.0.1"]
 if fixtures:
     # One HTTPS server for every fixture address, with a certificate made for the run.
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2", "-subj", "/CN=rise-check",

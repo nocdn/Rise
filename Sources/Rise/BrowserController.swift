@@ -14,6 +14,8 @@ import RiseCore
     private(set) lazy var navBar = PlainNavBar(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() },
                                                zoom: { [weak self] in self?.showZoomControls() }, permission: { [weak self] in self?.permissionCoordinator.togglePrompt() })
     var plainBarTimer: Timer?, plainBarColors: [UUID: NSColor] = [:], plainBarTabID: UUID?, plainBarSampling = false
+    /// When the page bar's colour was last seen changing, by what (`PlainNavBarController.swift`).
+    var plainBarWatchedUntil = Date.distantPast, plainBarPages = "", plainBarMonitor: Any?
     /// A split's right page's own bar (`SplitNavBar.swift`), its buttons, and the page it shows.
     private(set) lazy var splitBar = PlainNavBar(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() },
                                                  zoom: { [weak self] in self?.showZoomControls() }, permission: { [weak self] in self?.permissionCoordinator.togglePrompt() })
@@ -103,6 +105,8 @@ import RiseCore
     let browsingHistory: BrowsingHistory
     let siteSearchLearner: SiteSearchLearner
     let suggestionFavicons: SuggestionFavicons
+    /// Control-Tab's card pictures, kept across launches.
+    let tabPictures: TabPictureStore
     let googleSearchSuggestions: GoogleSearchSuggestions
     let paletteCommandUsage: PaletteCommandUsage
     var theme: RiseTheme = .neutral
@@ -266,6 +270,9 @@ import RiseCore
     let switcherPictureHost = PeekStandbyView()
     var switcherPictureWork: DispatchWorkItem?
     var switcherPictureTask: Task<Void, Never>?
+    var tabSleepTimer: Timer?
+    /// Tabs whose pages are being asked whether a form is part-filled before they sleep.
+    var tabsAskedToSleep: Set<UUID> = []
     var pendingMiddleTabID: UUID?
 
     init(sessionURL: URL? = nil, restore: Bool = true, preferences: UserDefaults = .standard, searchSuggestions: GoogleSearchSuggestions? = nil) {
@@ -284,6 +291,7 @@ import RiseCore
         browsingHistory = BrowsingHistory(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("history.json"))
         siteSearchLearner = SiteSearchLearner(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("searches.json"))
         suggestionFavicons = SuggestionFavicons(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("suggestion-icons.json"))
+        tabPictures = TabPictureStore(folder: sessionURL.deletingLastPathComponent().appendingPathComponent("Tab Pictures"))
         let window = BrowserWindow(contentRect: NSRect(x: 0, y: 0, width: 1496, height: 944), styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         super.init(window: window)
         if ChromiumEngine.isRunning {
@@ -390,6 +398,9 @@ import RiseCore
             sidebarWidth = SidebarWidth.previousIdeals.contains(saved.sidebarWidth) ? SidebarWidth.ideal
                 : min(SidebarWidth.range.upperBound, max(SidebarWidth.range.lowerBound, saved.sidebarWidth))
             tabs = saved.tabs.map { configure(BrowserTab(saved: $0)) }
+            // Each tab's card picture from last time, so Control-Tab needn't load its page for one.
+            for tab in tabs { tab.thumbnail = tabPictures.picture(for: tab) }
+            tabPictures.keepOnly(Set(tabs.map(\.id)))
             // The metadata queue fills dormant pages' missing titles and icons in bounded batches.
             splitGroups = saved.splitGroups
             selectedID = saved.selectedID.flatMap { id in tabs.contains { $0.id == id } ? id : nil } ?? tabs.first?.id
@@ -397,6 +408,7 @@ import RiseCore
         if let selectedID { select(selectedID) }
         update(); layoutChrome()
         if syncTabs { startTabSync() }
+        startTabSleep()
     }
     required init?(coder: NSCoder) { fatalError() }
     func buildChrome() {
@@ -630,8 +642,9 @@ import RiseCore
         // As tall as the bar, its line centred in it.
         developerAddress.frame = NSRect(x: x, y: 0, width: max(60, addressEnd-12-x), height: height)
     }
-    func windowDidResize(_ notification: Notification) { layoutChrome() }
-    func windowWillClose(_ notification: Notification) { githubStarrer.tearDown(); signedInPages.tearDown(); linkPullRequests.summaries.tearDown(); plainBarTimer?.invalidate(); plainBarTimer = nil; tabPressed(); gmailInbox.tearDown(); protonMailInbox.tearDown(); chatInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); saveNow() }
+    func windowDidResize(_ notification: Notification) { layoutChrome(); watchPlainBarColor(for: 0.5) }
+    func windowDidChangeOcclusionState(_ notification: Notification) { if window?.occlusionState.contains(.visible) == true { watchPlainBarColor(for: 0.5) } }
+    func windowWillClose(_ notification: Notification) { githubStarrer.tearDown(); signedInPages.tearDown(); linkPullRequests.summaries.tearDown(); plainBarTimer?.invalidate(); plainBarTimer = nil; plainBarMonitor.map(NSEvent.removeMonitor); plainBarMonitor = nil; tabPressed(); gmailInbox.tearDown(); protonMailInbox.tearDown(); chatInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); stopTabSleep(); saveNow() }
     func windowDidResignKey(_ notification: Notification) {
         cancelShortcutRecording()
         pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch(); endSidebarPeek(); tabPressed()
@@ -734,7 +747,6 @@ import RiseCore
         tab.hidesNotificationCounts = hidesNotificationCounts
         tab.showsRepositorySubtitle = showsRepositorySubtitle
         tab.page.setTheme(theme.appearance, background: theme.page)
-        adBlocker.install(on: tab.page)
         cookieConsent.install(on: tab.page)
         HistorySwipeController.install(on: tab.page)
         siteSearchLearner.install(on: tab.page)
@@ -753,7 +765,10 @@ import RiseCore
             }
             self.update()
         }
-        tab.onThumbnailChange = { [weak self] in self?.refreshTabSwitcher() }
+        tab.onThumbnailChange = { [weak self, weak tab] in
+            if let tab { self?.tabPictures.keep(tab) }
+            self?.refreshTabSwitcher()
+        }
         // The engine's full screen hands the page back where it took it from, even if its tab is no longer shown.
         tab.onFullscreenChange = { [weak self] in self?.attachVisiblePages(); self?.update() }
         return tab
@@ -1018,7 +1033,7 @@ import RiseCore
     func saveNow() {
         if !isApplyingSharedTabs { tabSync?.capture(sharedTabsSnapshot) }
         tabSync?.flush()
-        suggestionFavicons.save()
+        suggestionFavicons.save(); tabPictures.save()
         do { try browsingHistory.save(); try siteSearchLearner.searches.save() }
         catch { NSLog("Rise history save failed: %@", error.localizedDescription) }
         let state = BrowserSession(tabs: tabs.map(\.saved), selectedID: selectedID, theme: automaticTheme ? Self.automaticThemeName : theme.rawValue, sidebarWidth: sidebarWidth, splitGroups: splitGroups)

@@ -15,7 +15,9 @@ portable representation uses `NavigationController` entries and `SerializedNavig
 when importing another engine's history. It loads only the selected destination.
 Pending background tabs retain the supplied history until selected. Held Peek pages
 are flattened into one route for persistence; releasing an old live page retains its
-URLs, so Back can reload it after the three-page live retention limit.
+URLs, so Back can reload it after the three-page live retention limit. A tab that sleeps
+(`TabSleep.swift`) becomes such a pending tab again: it keeps the engine's page state it
+had, and only tabs holding no Peek pages sleep, so nothing is flattened.
 
 On iOS, `WKWebView.interactionState` is saved locally as bounded opaque Data and restored
 using the public setter, which starts loading the selected item. Archives containing

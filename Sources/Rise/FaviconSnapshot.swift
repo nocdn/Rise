@@ -4,6 +4,12 @@ import AppKit
 /// availability without embedding a site's original, potentially large image.
 @MainActor enum FaviconSnapshot {
     static let maximumBytes = 64 * 1024
+    /// Older SVG decoders could save a valid PNG with no visible pixels. Ignore it
+    /// on restoration so a blank dark variant cannot hide the working light icon.
+    static func decode(_ data: Data) -> NSImage? {
+        guard data.count <= maximumBytes, let image = NSImage(data: data), encode(image) != nil else { return nil }
+        return image
+    }
     static func encode(_ image: NSImage?) -> Data? {
         guard let image, image.isValid, image.size.width > 0, image.size.height > 0,
               let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 32, pixelsHigh: 32,
@@ -14,6 +20,10 @@ import AppKit
         defer { NSGraphicsContext.restoreGraphicsState() }
         context.imageInterpolation = .high
         image.draw(in: NSRect(x: 0, y: 0, width: 32, height: 32), from: .zero, operation: .copy, fraction: 1)
+        guard let pixels = bitmap.bitmapData,
+              (0..<32).contains(where: { row in
+                  stride(from: 3, to: 32*4, by: 4).contains { pixels[row*bitmap.bytesPerRow+$0] > 0 }
+              }) else { return nil }
         guard let data = bitmap.representation(using: .png, properties: [:]), data.count <= maximumBytes else { return nil }
         return data
     }

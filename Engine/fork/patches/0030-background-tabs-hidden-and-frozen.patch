@@ -1,0 +1,29 @@
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -1684,6 +1684,10 @@
+   // its own tab strip's window, which Rise's pages don't have; its full-page
+   // warning shows in the page itself.
+   arguments.push_back("--disable-features=HttpsFirstDialogUi");
++  // Tabs in the background a while, past the five most recently used, freeze
++  // as Chrome's own tabs can (Helium turns this on too): their pages stop
++  // running, waking a few seconds each minute, until they're shown again.
++  arguments.push_back("--enable-features=InfiniteTabsFreezing");
+   if (!keychain) {
+     arguments.push_back("--use-mock-keychain");
+   }
+@@ -1970,8 +1974,13 @@
+     [self makePopup:browser->GetProfile()];
+     return;
+   }
+-  [self adopt:content::WebContents::Create(
+-                  content::WebContents::CreateParams(browser->GetProfile()))];
++  // Hidden until its view is first in a window, as Chrome's background tabs
++  // are: Chromium keeps a page made visible that way until it has been on
++  // screen, so a tab opened in the background would otherwise run as if shown,
++  // and never freeze.
++  content::WebContents::CreateParams params(browser->GetProfile());
++  params.initially_hidden = true;
++  [self adopt:content::WebContents::Create(params)];
+ }
+ 
+ // An extension's popup, as Chrome makes one: a page of its own, which

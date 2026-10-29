@@ -105,6 +105,9 @@ On iOS, light and dark artwork is kept in a native image asset, so visible sugge
 history and tab icons follow their view's appearance, including private panels. Both
 variants survive relaunch; existing suggestion caches upgrade when next displayed.
 Legacy GitHub tab previews reload their icons while retaining their cached pictures.
+Desktop resolves SVG root presentation rules as well as appearance media rules, including
+ChatGPT's white dark-mode logo. Fully transparent images are rejected, and older blank
+cached variants fall back to the site's visible icon during restoration.
 
 Learned templates and address learning sync through the existing private CloudKit zone. See `TabSync.md`
 for conflict merging, account switching, and production schema deployment.

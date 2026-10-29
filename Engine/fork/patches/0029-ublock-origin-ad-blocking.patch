@@ -1,0 +1,497 @@
+--- a/chrome/app/framework.exports
++++ b/chrome/app/framework.exports
+@@ -22,7 +22,6 @@
+ 
+ # Rise's engine interface (chrome/browser/rise/RiseChromium.h), which Rise links.
+ _OBJC_CLASS_$_RCAdBlock
+-_RCAdBlockUseEngine
+ _OBJC_METACLASS_$_RCAdBlock
+ _OBJC_CLASS_$_RCEngine
+ _OBJC_METACLASS_$_RCEngine
+--- a/chrome/app/framework.order
++++ b/chrome/app/framework.order
+@@ -31,7 +31,6 @@
+ 
+ # _ChromeMain must be listed last.  That's the whole point of this file.
+ _ChromeMain
+-_RCAdBlockUseEngine
+ 
+ # Rise's engine interface (chrome/browser/rise/RiseChromium.h), which Rise links.
+ # Its classes are data, which follows _ChromeMain's code in the binary.
+--- a/chrome/browser/chrome_content_browser_client.cc
++++ b/chrome/browser/chrome_content_browser_client.cc
+@@ -6804,18 +6804,6 @@
+     network::mojom::URLLoaderFactoryOverridePtr* factory_override,
+     scoped_refptr<base::SequencedTaskRunner> navigation_response_task_runner,
+     bool is_for_network_service) {
+-  // An embedder's own filter (Rise's ad blocking) sees pages' requests first.
+-  if (const EmbedderURLLoaderFactoryFilter& filter =
+-          GetEmbedderURLLoaderFactoryFilter();
+-      filter &&
+-      (type == URLLoaderFactoryType::kNavigation ||
+-       type == URLLoaderFactoryType::kDocumentSubResource ||
+-       type == URLLoaderFactoryType::kWorkerSubResource ||
+-       type == URLLoaderFactoryType::kServiceWorkerSubResource ||
+-       type == URLLoaderFactoryType::kServiceWorkerScript)) {
+-    filter.Run(frame, request_initiator, factory_builder);
+-  }
+-
+ #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
+   auto* web_request_api =
+       extensions::BrowserContextKeyedAPIFactory<extensions::WebRequestAPI>::Get(
+--- a/chrome/browser/extensions/component_extensions_allowlist/allowlist.cc
++++ b/chrome/browser/extensions/component_extensions_allowlist/allowlist.cc
+@@ -40,6 +40,10 @@
+       extension_misc::kGlicExtensionId,
+       extension_misc::kInAppPaymentsSupportAppId,
+       extension_misc::kPdfExtensionId,
++      // uBlock Origin, which Rise carries and loads as Chrome's own
++      // (chrome/browser/rise/rise_bridge.mm); its id is from the key Rise's
++      // build puts in its manifest.
++      "mehgmpfnbopgodfmhbkfhkghemcgpeci",
+ #if BUILDFLAG(IS_CHROMEOS)
+       extension_misc::kAssessmentAssistantExtensionId,
+       extension_misc::kAccessibilityCommonExtensionId,
+--- a/chrome/browser/rise/RiseChromium.h
++++ b/chrome/browser/rise/RiseChromium.h
+@@ -7,23 +7,16 @@
+ #define RC_EXPORT
+ #endif
+ 
+-/// Chromium's browser process inside Rise: started once, before any page.
+-/// Ad blocking for every Chromium page, from Brave's adblock engine built with the
+-/// filter lists WebKit's rules come from. Requests go out unchecked until the lists are loaded.
++/// Ad blocking for every Chromium page: uBlock Origin, which Rise carries in its Resources and
++/// Chrome loads as one of its own extensions.
+ RC_EXPORT @interface RCAdBlock : NSObject
+-/// Whether this build has it.
+-@property (class, readonly) BOOL available;
+-/// Whether requests are checked; off lets everything through.
++/// Whether uBlock Origin is loaded; off unloads it, and every page's requests go through.
+ @property (class) BOOL enabled;
+-/// Loads the lists, off the main thread.
+-+ (void)load;
+-/// Selectors to hide on a document at `url`; given the class and id names the document uses,
+-/// the general selectors for those names instead.
+-+ (NSArray<NSString *> *)hiddenSelectorsForURL:(NSURL *)url
+-                                       classes:(nullable NSArray<NSString *> *)classes
+-                                           ids:(nullable NSArray<NSString *> *)ids;
++/// Sets `enabled`; `completion` once uBlock Origin is loaded or unloaded to match, on the main thread.
+++ (void)setEnabled:(BOOL)enabled completion:(nullable void (^)(void))completion;
+ @end
+ 
++/// Chromium's browser process inside Rise: started once, before any page.
+ RC_EXPORT @interface RCEngine : NSObject
+ /// The default search engine chosen in Chrome's settings (rise://settings), by name; nil if none.
+ + (nullable NSString *)defaultSearchName;
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -27,6 +27,8 @@
+ #include "base/files/file_enumerator.h"
+ #include "base/strings/string_util.h"
+ #include "base/task/thread_pool.h"
++#include "base/apple/foundation_util.h"
++#include "base/files/file_util.h"
+ #include "base/functional/bind.h"
+ #include "base/json/json_reader.h"
+ #include "base/json/json_writer.h"
+@@ -52,6 +54,7 @@
+ #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
+ #include "chrome/browser/devtools/devtools_ui_bindings.h"
+ #include "base/scoped_multi_source_observation.h"
++#include "chrome/browser/extensions/component_loader.h"
+ #include "chrome/browser/extensions/extension_action_dispatcher.h"
+ #include "chrome/browser/extensions/extension_action_runner.h"
+ #include "chrome/browser/extensions/extension_install_prompt.h"
+@@ -88,6 +91,7 @@
+ #include "base/observer_list.h"
+ #include "extensions/browser/install_prompt_data.h"
+ #include "extensions/common/extension.h"
++#include "extensions/common/extension_l10n_util.h"
+ #include "extensions/common/manifest.h"
+ #include "ui/gfx/geometry/rect_conversions.h"
+ #include "ui/gfx/geometry/rect_f.h"
+@@ -119,13 +123,6 @@
+ #include "content/public/browser/devtools_agent_host_client.h"
+ #include "content/public/browser/file_select_listener.h"
+ #include "content/public/browser/javascript_dialog_manager.h"
+-#include "mojo/public/cpp/bindings/receiver_set.h"
+-#include "mojo/public/cpp/bindings/remote.h"
+-#include "services/network/public/cpp/resource_request.h"
+-#include "services/network/public/cpp/url_loader_completion_status.h"
+-#include "services/network/public/cpp/url_loader_factory_builder.h"
+-#include "services/network/public/mojom/url_loader.mojom.h"
+-#include "services/network/public/mojom/url_loader_factory.mojom.h"
+ #include "net/base/mime_util.h"
+ #include "third_party/blink/public/mojom/choosers/file_chooser.mojom.h"
+ #include "content/public/browser/global_routing_id.h"
+@@ -158,8 +155,9 @@
+ 
+ extern "C" int ChromeMain(int argc, const char** argv);
+ 
+-// Puts Rise's ad blocking in front of pages' requests.
+-void InstallAdBlocking();
++// Loads uBlock Origin, Rise's ad blocking, or unloads it, as Rise's setting is;
++// `done` once it is.
++void ApplyAdBlocking(base::OnceClosure done = base::DoNothing());
+ 
+ @interface RCTabStrip ()
+ // Chrome is closing the window's Browser itself, to quit.
+@@ -1565,6 +1563,7 @@
+ 
+ void BrowserStarted() {
+   g_started = true;
++  ApplyAdBlocking();
+   NSArray* waiting = g_waiting_for_start;
+   g_waiting_for_start = nil;
+   // On the next turn, with the main loop running, as AppKit would.
+@@ -1640,8 +1639,6 @@
+         }
+         UnloadController::From(browser)->OnWindowClosing();
+       }));
+-  // Pages' requests pass Rise's ad blocking.
+-  InstallAdBlocking();
+   // Chrome's dialogs for a page go over it, and Chrome's windows over Rise's
+   // move with them.
+   WatchChromeWindows();
+@@ -2878,204 +2875,94 @@
+ 
+ namespace {
+ 
+-// Rise's ad-blocking engine (Engine/adblock), which Rise's app holds and hands
+-// over as it starts (Sources/RiseFork): the framework keeps Chrome's own Rust.
+-struct AdBlockEngine {
+-  bool (*load)() = nullptr;
+-  bool (*blocks)(const char* url, const char* source, const char* kind) =
+-      nullptr;
+-  char* (*hidden)(const char* url, const char* classes, const char* ids) =
+-      nullptr;
+-  void (*free_string)(char* value) = nullptr;
+-};
+-AdBlockEngine g_ad_block;
+-std::atomic<bool> g_ad_block_enabled{true};
+-
+-// The engine's name for what a request fetches; null for a page itself, which,
+-// as on WebKit, is never blocked.
+-const char* AdBlockKind(network::mojom::RequestDestination destination) {
+-  using Destination = network::mojom::RequestDestination;
+-  switch (destination) {
+-    case Destination::kDocument:
+-      return nullptr;
+-    case Destination::kIframe:
+-    case Destination::kFrame:
+-    case Destination::kFencedframe:
+-      return "sub_frame";
+-    case Destination::kStyle:
+-      return "stylesheet";
+-    case Destination::kScript:
+-    case Destination::kWorker:
+-    case Destination::kSharedWorker:
+-    case Destination::kServiceWorker:
+-      return "script";
+-    case Destination::kImage:
+-      return "image";
+-    case Destination::kFont:
+-      return "font";
+-    case Destination::kObject:
+-    case Destination::kEmbed:
+-      return "object";
+-    case Destination::kAudio:
+-    case Destination::kVideo:
+-    case Destination::kTrack:
+-      return "media";
+-    case Destination::kEmpty:
+-      return "xmlhttprequest";
+-    case Destination::kReport:
+-      return "csp_report";
+-    default:
+-      return "other";
++// uBlock Origin, which Rise carries in its Resources (scripts/build.sh) and
++// Chrome loads as one of its own extensions, as Helium does: Chrome's
++// extensions page and Rise's controls leave it out, and as Chrome's own it
++// keeps Manifest V2's blocking web requests. Its id comes from the key Rise's
++// build puts in its manifest, so its settings and lists outlast updates.
++constexpr char kUBlockOriginId[] = "mehgmpfnbopgodfmhbkfhkghemcgpeci";
++bool g_ad_block_enabled = true;
++
++// Its manifest, in the person's language; read off the main thread.
++std::optional<base::DictValue> ReadUBlockOrigin(const base::FilePath& directory) {
++  std::string contents;
++  if (!base::ReadFileToString(directory.AppendASCII("manifest.json"),
++                              &contents)) {
++    return std::nullopt;
+   }
++  std::optional<base::DictValue> manifest = base::JSONReader::ReadDict(
++      contents, base::JSON_PARSE_CHROMIUM_EXTENSIONS);
++  std::string error;
++  if (!manifest ||
++      !extension_l10n_util::LocalizeExtension(
++          directory, &*manifest,
++          extension_l10n_util::GzippedMessagesPermission::kDisallow, &error)) {
++    LOG(ERROR) << "Rise: uBlock Origin's manifest: " << error;
++    return std::nullopt;
++  }
++  return manifest;
+ }
+ 
+-// In front of Chrome's URL loader factory for a page or worker: what the
+-// lists block fails as blocked, the rest goes on untouched.
+-class AdBlockingFactory : public network::mojom::URLLoaderFactory {
+- public:
+-  static void Start(content::RenderFrameHost* frame,
+-                    const url::Origin& initiator,
+-                    network::URLLoaderFactoryBuilder& builder) {
+-    auto [receiver, target] = builder.Append();
+-    new AdBlockingFactory(frame, initiator, std::move(receiver),
+-                          std::move(target));
+-  }
++}  // namespace
+ 
+-  void CreateLoaderAndStart(
+-      mojo::PendingReceiver<network::mojom::URLLoader> loader,
+-      int32_t request_id,
+-      uint32_t options,
+-      const network::ResourceRequest& request,
+-      mojo::PendingRemote<network::mojom::URLLoaderClient> client,
+-      const net::MutableNetworkTrafficAnnotationTag& traffic_annotation)
+-      override {
+-    if (Blocks(request)) {
+-      mojo::Remote<network::mojom::URLLoaderClient>(std::move(client))
+-          ->OnComplete(
+-              network::URLLoaderCompletionStatus(net::ERR_BLOCKED_BY_CLIENT));
+-      return;
+-    }
+-    target_->CreateLoaderAndStart(std::move(loader), request_id, options,
+-                                  request, std::move(client),
+-                                  traffic_annotation);
++// Loads uBlock Origin into Rise's profile, or unloads it, as the setting is.
++// Before Chrome has started, there's nothing to do until it has.
++void ApplyAdBlocking(base::OnceClosure done) {
++  Profile* profile = RiseProfile();
++  extensions::ComponentLoader* loader =
++      profile ? extensions::ComponentLoader::Get(profile) : nullptr;
++  if (!loader || loader->Exists(kUBlockOriginId) == g_ad_block_enabled) {
++    std::move(done).Run();
++    return;
+   }
+-  void Clone(
+-      mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver) override {
+-    receivers_.Add(this, std::move(receiver));
++  if (!g_ad_block_enabled) {
++    loader->Remove(std::string(kUBlockOriginId));
++    std::move(done).Run();
++    return;
+   }
+-
+- private:
+-  AdBlockingFactory(
+-      content::RenderFrameHost* frame,
+-      const url::Origin& initiator,
+-      mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver,
+-      mojo::PendingRemote<network::mojom::URLLoaderFactory> target)
+-      : frame_(frame ? frame->GetGlobalId()
+-                     : content::GlobalRenderFrameHostId()),
+-        initiator_(initiator),
+-        target_(std::move(target)) {
+-    receivers_.Add(this, std::move(receiver));
+-    receivers_.set_disconnect_handler(base::BindRepeating(
+-        &AdBlockingFactory::OnDisconnect, base::Unretained(this)));
+-    target_.set_disconnect_handler(base::BindOnce(
+-        &AdBlockingFactory::OnTargetGone, base::Unretained(this)));
++  NSString* path = [NSBundle.mainBundle pathForResource:@"uBlock0.chromium"
++                                                 ofType:nil];
++  if (!path) {
++    std::move(done).Run();
++    return;
+   }
+-
+-  bool Blocks(const network::ResourceRequest& request) {
+-    const char* kind = AdBlockKind(request.destination);
+-    if (!kind || !g_ad_block.blocks || !g_ad_block_enabled) {
+-      return false;
+-    }
+-    // Rules name sites by the page the person is on, as WebKit's do.
+-    std::string source;
+-    if (content::RenderFrameHost* frame =
+-            content::RenderFrameHost::FromID(frame_)) {
+-      source = frame->GetOutermostMainFrame()->GetLastCommittedURL().spec();
+-    }
+-    if (source.empty() || source == "about:blank") {
+-      source = request.request_initiator
+-                   ? request.request_initiator->GetURL().spec()
+-                   : initiator_.GetURL().spec();
+-    }
+-    if (source.empty() || !request.url.SchemeIsHTTPOrHTTPS()) {
+-      return false;
+-    }
+-    return g_ad_block.blocks(request.url.spec().c_str(), source.c_str(), kind);
+-  }
+-
+-  void OnDisconnect() {
+-    if (receivers_.empty()) {
+-      delete this;
+-    }
+-  }
+-  void OnTargetGone() { delete this; }
+-
+-  content::GlobalRenderFrameHostId frame_;
+-  url::Origin initiator_;
+-  mojo::ReceiverSet<network::mojom::URLLoaderFactory> receivers_;
+-  mojo::Remote<network::mojom::URLLoaderFactory> target_;
+-};
+-
+-}  // namespace
+-
+-void InstallAdBlocking() {
+-  SetEmbedderURLLoaderFactoryFilter(base::BindRepeating(&AdBlockingFactory::Start));
+-}
+-
+-// Given by Rise's app as it starts.
+-extern "C" RC_EXPORT void RCAdBlockUseEngine(
+-    bool (*load)(),
+-    bool (*blocks)(const char*, const char*, const char*),
+-    char* (*hidden)(const char*, const char*, const char*),
+-    void (*free_string)(char*)) {
+-  g_ad_block = {load, blocks, hidden, free_string};
++  base::FilePath directory = base::apple::NSStringToFilePath(path);
++  base::ThreadPool::PostTaskAndReplyWithResult(
++      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_BLOCKING},
++      base::BindOnce(&ReadUBlockOrigin, directory),
++      base::BindOnce(
++          [](const base::FilePath& directory, base::OnceClosure done,
++             std::optional<base::DictValue> manifest) {
++            Profile* profile = RiseProfile();
++            extensions::ComponentLoader* loader =
++                profile ? extensions::ComponentLoader::Get(profile) : nullptr;
++            // Not if it was turned off again while it was read. Chrome's
++            // extensions are ready by now, so it loads at once.
++            if (manifest && loader && g_ad_block_enabled &&
++                !loader->Exists(kUBlockOriginId)) {
++              loader->Add(std::move(*manifest), directory);
++            }
++            std::move(done).Run();
++          },
++          directory, std::move(done)));
+ }
+ 
+ @implementation RCAdBlock
+-+ (BOOL)available {
+-  return g_ad_block.blocks != nullptr;
+-}
+ + (BOOL)enabled {
+   return g_ad_block_enabled;
+ }
+ + (void)setEnabled:(BOOL)enabled {
+-  g_ad_block_enabled = enabled;
++  [self setEnabled:enabled completion:nil];
+ }
+-+ (void)load {
+-  if (bool (*load)() = g_ad_block.load) {
+-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+-      load();
+-    });
+-  }
+-}
+-+ (NSArray<NSString*>*)hiddenSelectorsForURL:(NSURL*)url
+-                                     classes:(NSArray<NSString*>*)classes
+-                                         ids:(NSArray<NSString*>*)ids {
+-  if (!g_ad_block.hidden || !g_ad_block_enabled || !url.absoluteString) {
+-    return @[];
+-  }
+-  NSString* (^json)(NSArray*) = ^NSString*(NSArray* names) {
+-    NSData* data = names ? [NSJSONSerialization dataWithJSONObject:names
+-                                                           options:0
+-                                                             error:nil]
+-                         : nil;
+-    return data ? [[NSString alloc] initWithData:data
+-                                        encoding:NSUTF8StringEncoding]
+-                : nil;
+-  };
+-  NSString* classList = json(classes);
+-  NSString* idList = json(ids);
+-  char* result = g_ad_block.hidden(url.absoluteString.UTF8String,
+-                                   classList.UTF8String, idList.UTF8String);
+-  if (!result) {
+-    return @[];
+-  }
+-  NSData* data = [NSData dataWithBytes:result length:strlen(result)];
+-  g_ad_block.free_string(result);
+-  NSArray* selectors = [NSJSONSerialization JSONObjectWithData:data
+-                                                       options:0
+-                                                         error:nil];
+-  return [selectors isKindOfClass:NSArray.class] ? selectors : @[];
+++ (void)setEnabled:(BOOL)enabled completion:(nullable void (^)(void))completion {
++  g_ad_block_enabled = enabled;
++  ApplyAdBlocking(base::BindOnce(
++      [](void (^completion)(void)) {
++        if (completion) {
++          completion();
++        }
++      },
++      completion));
+ }
+ @end
+ 
+--- a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc
++++ b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc
+@@ -6,28 +6,13 @@
+ 
+ #include <utility>
+ 
+-#include "base/no_destructor.h"
+-
+ #include "content/public/browser/file_select_listener.h"
+ #include "content/public/browser/web_contents.h"
+ 
+ namespace {
+ const char kEmbedderTabHooksKey[] = "EmbedderTabHooks";
+-
+-EmbedderURLLoaderFactoryFilter& Filter() {
+-  static base::NoDestructor<EmbedderURLLoaderFactoryFilter> filter;
+-  return *filter;
+-}
+ }  // namespace
+ 
+-void SetEmbedderURLLoaderFactoryFilter(EmbedderURLLoaderFactoryFilter filter) {
+-  Filter() = std::move(filter);
+-}
+-
+-const EmbedderURLLoaderFactoryFilter& GetEmbedderURLLoaderFactoryFilter() {
+-  return Filter();
+-}
+-
+ // static
+ EmbedderTabHooks* EmbedderTabHooks::FromWebContents(
+     content::WebContents* contents) {
+--- a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h
++++ b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h
+@@ -34,14 +34,6 @@
+ 
+ class GURL;
+ 
+-namespace network {
+-class URLLoaderFactoryBuilder;
+-}  // namespace network
+-
+-namespace url {
+-class Origin;
+-}  // namespace url
+-
+ namespace content {
+ struct ContextMenuParams;
+ class FileSelectListener;
+@@ -117,14 +109,4 @@
+                                   base::OnceCallback<void(bool)> done);
+ };
+ 
+-// An embedder's own filter in front of the URL loader factories Chrome makes
+-// for pages and their workers (Rise's ad blocking), which may add itself to
+-// `builder`. `frame` is null for a worker's.
+-using EmbedderURLLoaderFactoryFilter =
+-    base::RepeatingCallback<void(content::RenderFrameHost* frame,
+-                                 const url::Origin& request_initiator,
+-                                 network::URLLoaderFactoryBuilder& builder)>;
+-void SetEmbedderURLLoaderFactoryFilter(EmbedderURLLoaderFactoryFilter filter);
+-const EmbedderURLLoaderFactoryFilter& GetEmbedderURLLoaderFactoryFilter();
+-
+ #endif  // CHROME_BROWSER_UI_BROWSER_WEB_CONTENTS_DELEGATE_EMBEDDER_TAB_HOOKS_H_

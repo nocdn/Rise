@@ -73,6 +73,7 @@ typealias GmailPage = MailPage<GmailEmail>
     associatedtype Request: Equatable
     associatedtype Item: MailListItem
     init()
+    var companion: WebPage? { get }
     func prepare(source: WebPage, host: NSView)
     func load(_ request: Request, _ page: Int) async throws -> MailPage<Item>
     func cancel()
@@ -91,6 +92,7 @@ extension MailPageReader {
         web.view.frame = container.bounds
         container.addSubview(web.view)
         host.addSubview(container, positioned: .below, relativeTo: host.subviews.first)
+        container.restsBetweenReads()
         return web
     }
     static func close(_ companion: WebPage?) {
@@ -152,7 +154,7 @@ typealias GmailInbox = MailInbox<GmailPageReader>
         task = Task { [weak self] in
             guard let self else { return }
             do {
-                let result = try await (loadPage ?? reader.load)(request, page)
+                let result = try await HiddenAccessibilityView.reading(reader.companion) { try await (self.loadPage ?? self.reader.load)(request, page) }
                 guard !Task.isCancelled, token == generation, self.request == request else { return }
                 if page == 1 {
                     var ids = Set<String>()
@@ -313,4 +315,17 @@ final class HiddenAccessibilityView: NSView {
     override func isAccessibilityElement() -> Bool { false }
     override func accessibilityChildren() -> [Any]? { [] }
     override func accessibilityHitTest(_ point: NSPoint) -> Any? { nil }
+
+    /// A page kept for a hover card is only read now and then. Offscreen in a window, Chromium
+    /// takes it for one on screen and runs it at full speed; hidden between reads, it's treated
+    /// as a background tab: timers slowed, nothing drawn, free to be frozen.
+    private var rests = false, readers = 0
+    func restsBetweenReads() { rests = true; isHidden = readers == 0 }
+    /// Shown while `read` reads `page`, as some sites lay their lists out only for a page on screen.
+    static func reading<T>(_ page: WebPage?, _ read: () async throws -> T) async rethrows -> T {
+        guard let container = page?.view.superview as? HiddenAccessibilityView, container.rests else { return try await read() }
+        container.readers += 1; container.isHidden = false
+        defer { container.readers -= 1; if container.readers == 0 { container.isHidden = true } }
+        return try await read()
+    }
 }

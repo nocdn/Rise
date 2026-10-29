@@ -36,7 +36,27 @@ import { createFallback, visible } from './fallback.js';
         if (message.type === 'eval') send({ type:'eval', id:message.id, snippetId:message.snippetId });
         else if (message.type === 'cmpDetected' || message.type === 'autoconsentDone' || message.type === 'optInResult')
             send({ type:message.type, cmp:message.cmp, result:message.result });
+        if (message.type === 'autoconsentDone' || (message.type === 'optInResult' && message.result)) dismissed();
     };
+    // Watching a page costs it time on every change, so it stops once the banner is answered
+    // (here or in any of the page's frames), or when none has shown up: the whole page, every frame.
+    let finished = false;
+    function finish() {
+        if (finished || !state.active) return;
+        finished = true;
+        window.__riseCookieConsent?.stop();
+        if (window !== window.top) try { window.top.postMessage({ riseCookieConsentDone:true }, '*'); } catch {}
+    }
+    // Once the banner has gone, after a moment for a late one to follow it.
+    function dismissed() { setTimeout(() => { if (!fallback.pending()) finish(); }, 2000); }
+    // None after 15 s (or, while one is being answered, a minute) on a document that's on screen.
+    let quiet = 0;
+    const settle = () => setTimeout(() => {
+        if (!state.active) return;
+        quiet += 15;
+        const asking = engine.state.detectedCmps.length || fallback.pending();
+        if (!document.hidden && (!asking || quiet >= 60)) finish(); else settle();
+    }, 15000);
     engine = new AutoConsent(bridge);
     engine.domActions.click = async (selector,all=false) => {
         const elements = engine.domActions.elementSelector(selector);
@@ -52,7 +72,7 @@ import { createFallback, visible } from './fallback.js';
         if (context?.urlPattern) { try { if (!new RegExp(context.urlPattern).test(location.href)) return false; } catch { return false; } }
         return window === window.top ? context?.main !== false : context?.frame !== false;
     });
-    const fallback = createFallback(state,click,send);
+    const fallback = createFallback(state,click,send,dismissed);
     window.__riseCookieConsent = {
         token,
         canAct() { return state.active && !state.manual; },
@@ -94,7 +114,12 @@ import { createFallback, visible } from './fallback.js';
             return result;
         };
     }
-    const receiveStop = event => { if (state.active && window.__riseCookieConsent?.token===token && event.source===window.parent && event.data?.riseCookieConsentStop===true && event.data.sentAt>=born) window.__riseCookieConsent.stop(); };
+    const receiveStop = event => {
+        if (!state.active || window.__riseCookieConsent?.token!==token) return;
+        if (event.source===window.parent && event.data?.riseCookieConsentStop===true && event.data.sentAt>=born) window.__riseCookieConsent.stop();
+        // A frame of this page answered its banner: the top document stops every frame.
+        else if (window===window.top && event.data?.riseCookieConsentDone===true && event.source !== window) finish();
+    };
     const pageShow = event => { if (event.persisted) send({type:'resume'}); };
     addEventListener('message',receiveStop);
     addEventListener('pageshow',pageShow);
@@ -104,5 +129,6 @@ import { createFallback, visible } from './fallback.js';
         if (state.active && !state.manual) for (const snippetId of ['RISE_COOKIEBOT_ACCEPT','RISE_ONETRUST_ACCEPT'])
             send({type:'eval',id:`rise-${snippetId}-${delay}`,snippetId});
     },delay);
+    settle();
     send({type:'ready'});
 })();

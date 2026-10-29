@@ -30,7 +30,7 @@ took: Chromium built from source with our own patches and our own embedding laye
 | `scripts/engine/patch.sh` | Applies our patches (skips any already applied), then the branding |
 | `scripts/engine/brand.py` | Names Rise where Chromium names itself (in every language) and puts Rise's icon (`Engine/branding/logo.png`) where Chromium's logo shows; a script rather than a patch, so it needs no fitting to new versions |
 | `scripts/engine/build.sh` | Builds Chromium.app for Apple silicon, whose framework Rise links and carries |
-| `Engine/adblock/` | Ad blocking for pages: Brave's `adblock` crate behind a small C interface |
+| `Engine/ublock.json` | The uBlock Origin release Rise carries for ad blocking, and the key that fixes its extension id |
 
 Needs Xcode with the macOS SDK the pin expects (26.5 for Chromium 156), its Metal
 toolchain (`xcodebuild -downloadComponent MetalToolchain`), and about 100 GB free.
@@ -38,9 +38,16 @@ toolchain (`xcodebuild -downloadComponent MetalToolchain`), and about 100 GB fre
 The checkout lives outside the repo: `RISE_CHROMIUM_ROOT`, by default
 `~/github/rise-chromium`. Only patches and scripts are committed.
 
-Engine builds reuse `out/Release` and its dependency cache. The script defaults to
+The engine is an official build, as Chrome's and Helium's are (`is_official_build`, which brings
+profile-guided optimisation from Chrome's profiles, ThinLTO and V8's builtins profiles; `checkout.sh`
+fetches the profiles). On Speedometer it scores about a third higher than the developer build
+Rise had before. Its final link alone takes about 6 minutes.
+
+Engine builds reuse `out/Official` and its dependency cache. The script defaults to
 four parallel jobs to leave RAM for the desktop; set `RISE_CHROMIUM_JOBS` explicitly
-to change that limit. `./scripts/engine/build.sh -n` previews pending work.
+to change that limit. Preview pending work with `./scripts/engine/build.sh -n` before
+every build: a small change should be a few steps and the link, and anything far larger
+means the build files changed and most of Chromium will compile again (hours).
 
 The patch script recognizes an installed prefix of overlapping patches, so adding the next
 patch applies only the new suffix instead of replaying older changes. Its regression checks
@@ -77,6 +84,8 @@ run without a Chromium checkout: `python3 -m unittest discover -s scripts/engine
 | `0026-rise-pip-buttons-and-camera-spring.patch` | Keeps a page picture-in-picture window's back to tab and close buttons in the bar's 28 pt square, gives the camera and microphone button the same Rise style, and springs it into the buttons' space at up to 120 Hz as they fade |
 | `0027-rise-keychain-item.patch` | Lets Rise name the Keychain item its cookie and password key is kept in (`setKeychainService:account:`), so it keeps it in "Rise Safe Storage" as Chrome keeps its in "Chrome Safe Storage"; without it, Chromium's own item as before |
 | `0028-helium-shortcut-editor.patch` | Helium's shortcut editor, adapted to Rise's registry: shortcut chips, ranked search, explicit recording/Save/Cancel, per-command reset and reset-all confirmation. Upstream source and GPL-3.0 license are in `Engine/third_party/helium` |
+| `0029-ublock-origin-ad-blocking.patch` | Ad blocking is uBlock Origin, loaded from Rise's Resources as a component extension (allowlisted by the id its pinned key gives) and unloaded when Block Ads is off; takes out `0002`'s own request filter, `RCAdBlockUseEngine` and the embedder URL loader factory hook |
+| `0030-background-tabs-hidden-and-frozen.patch` | Pages start hidden until first in a window, as Chrome's background tabs do (Chromium otherwise keeps a page opened in the background running as if shown); and Chrome's `InfiniteTabsFreezing` is on, as in Helium: background tabs past the five most recently used freeze, waking a few seconds a minute |
 
 `0002` is exported from the fork's tree with `git diff HEAD` over `base` and `chrome`, less the
 paths the other patches and `brand.py` own (see `Engine/fork-plan.md`); new files are added
@@ -124,10 +133,10 @@ What Rise does on Chromium pages, also for frames of other sites:
   button, sized to their page. Extensions see Rise's windows and tabs through the tabs and
   windows APIs. rise://extensions is Chrome's extensions page.
 
-Ad blocking uses the filter lists in `Filters/Sources`, plus Rise's own rules in
-`Engine/adblock/rise.txt`, one engine per list so each keeps its own exceptions.
-`./scripts/build.sh` builds the library with `cargo`; the engines are made when the library is
-built, so Rise only loads them.
+Ad blocking is uBlock Origin, pinned in `Engine/ublock.json`. `./scripts/build.sh` puts it in
+the app's Resources (`scripts/ublock.py`, with the pinned key in its manifest), and the bridge loads
+it as a component extension: Chrome's extensions page and Rise's controls leave it out, and as a
+component it keeps Manifest V2's blocking web requests. Turning Block Ads off unloads it.
 
 Live checks, in a real Rise window (see `scripts/test-chromium-live.py`):
 

@@ -1,8 +1,9 @@
 import AppKit
 
-/// Pictures for Control-Tab's cards of tabs that haven't been on screen, such as tabs restored at
-/// launch or opened in the background. Each page renders out of sight, behind the shown page as a
-/// Peek's standby page does, long enough for its picture.
+/// Pictures for Control-Tab's cards of tabs that haven't been on screen, such as tabs opened in
+/// the background. Each page renders out of sight, behind the shown page as a Peek's standby page
+/// does, long enough for its picture. A tab whose page hasn't loaded, as restored tabs at launch,
+/// isn't loaded for one: it keeps the picture saved last time (TabPictureStore) until it's shown.
 @MainActor extension BrowserController {
     /// The tabs Control-Tab goes through, most recently used first, the current one leading.
     var switcherTabIDs: [UUID] {
@@ -15,7 +16,8 @@ import AppKit
     var tabsNeedingSwitcherPictures: [BrowserTab] {
         let visible = Set(visibleTabIDs)
         return switcherTabIDs.compactMap { id in tabs.first { $0.id == id } }.filter { tab in
-            guard !visible.contains(tab.id), tab.thumbnail == nil, let url = tab.url, url != tab.backgroundPictureURL else { return false }
+            guard !visible.contains(tab.id), tab.thumbnail == nil, tab.hasAttemptedNavigation || tab.page.url != nil,
+                  let url = tab.url, url != tab.backgroundPictureURL else { return false }
             // A page held elsewhere, such as in a floating window or full screen, stays there.
             return tab.page.view.superview == nil && !pictureInPicture.owns(tab) && !tab.isInNativeFullscreen
         }
@@ -45,7 +47,6 @@ import AppKit
         setCovered(true, tab)
         if !tab.heldSinceBackgroundPicture { tab.heldSinceBackgroundPicture = true; page.setAudioMuted(true) }
         page.view.frame = host.bounds; host.addSubview(page.view)
-        if page.url == nil, !tab.hasAttemptedNavigation, !page.isLoading, let url = tab.requestedURL { tab.load(url) }
         // Selecting or closing the tab meanwhile ends this.
         func outOfSight() -> Bool { page.view.superview === host && tab.page === page && tabs.contains { $0 === tab } }
         let loaded = Date()+10

@@ -14,11 +14,36 @@ import AppKit
             }
             samplePlainBarColor()
         }
-        if plainBarTimer == nil {
-            // Pages scroll and restyle their tops as they're used; a cheap look 3.5 times a second keeps up.
-            let timer = Timer(timeInterval: 1/3.5, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.samplePlainBarColor() } }
-            RunLoop.main.add(timer, forMode: .common); plainBarTimer = timer
+        // A page's top changes as it loads, navigates and takes the theme; the bar keeps up then.
+        let pages = bars.map { "\($0.tab.id) \($0.tab.url?.absoluteString ?? "") \($0.tab.title) \($0.tab.isLoading)" }.joined(separator: "\n") + theme.rawValue
+        if pages != plainBarPages || bars.contains(where: { $0.tab.isLoading }) { plainBarPages = pages; watchPlainBarColor() }
+        // And as it's scrolled, typed in or clicked.
+        if plainBarMonitor == nil {
+            plainBarMonitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .keyDown, .leftMouseUp, .magnify]) { [weak self] event in
+                if let self, event.window === self.window { self.watchPlainBarColor(for: 1) }
+                return event
+            }
         }
+    }
+
+    /// Looks at the bar's colour 3.5 times a second while the page may be changing, and stops once
+    /// it has been still for `seconds`: copying the page's top each time costs the GPU, so a page
+    /// that isn't changing isn't looked at.
+    func watchPlainBarColor(for seconds: TimeInterval = 1.5) {
+        plainBarWatchedUntil = max(plainBarWatchedUntil, Date(timeIntervalSinceNow: seconds))
+        guard plainBarTimer == nil else { return }
+        samplePlainBarColor()
+        let timer = Timer(timeInterval: 1/3.5, repeats: true) { [weak self] timer in
+            MainActor.assumeIsolated {
+                guard let self else { timer.invalidate(); return }
+                self.samplePlainBarColor()
+                // The last look is after it has settled.
+                if Date() > self.plainBarWatchedUntil, !self.pageBarTabs.contains(where: { $0.tab.isLoading }) {
+                    timer.invalidate(); self.plainBarTimer = nil
+                }
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common); plainBarTimer = timer
     }
 
     func samplePlainBarColor() {

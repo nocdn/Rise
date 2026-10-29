@@ -1,7 +1,7 @@
 {
   "chromium": "156.0.8078.17",
   "gn_args": [
-    "is_official_build=false",
+    "is_official_build=true",
     "is_debug=false",
     "symbol_level=0",
     "blink_symbol_level=0",
@@ -9,8 +9,8 @@
     "dcheck_always_on=false",
     "proprietary_codecs=true",
     "ffmpeg_branding=\"Chrome\"",
-    "chrome_pgo_phase=0",
     "use_remoteexec=false",
-    "disable_fieldtrial_testing_config=true"
+    "disable_fieldtrial_testing_config=true",
+    "enable_dsyms=false"
   ]
 }
