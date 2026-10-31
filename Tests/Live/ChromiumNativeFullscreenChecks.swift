@@ -49,6 +49,7 @@ import RiseChromium
         defer { UserDefaults.standard.removePersistentDomain(forName: suite) }
         preferences.set(false, forKey: PageFullscreen.simulatedKey)
         browser = BrowserController(sessionURL: folder.appendingPathComponent("session.json"), restore: false, preferences: preferences)
+        browser.window?.setFrameAutosaveName("")
         browser.window?.setContentSize(NSSize(width: 1100, height: 720)); browser.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
         let ports = ProcessInfo.processInfo.environment["RISE_CHECK_PORTS"]!.split(separator: ",")
