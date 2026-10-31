@@ -453,7 +453,7 @@ enum RisePages {
     var onClosed: (() -> Void)?
     init(showing page: NSView) {
         let start = page.window.map { $0.convertToScreen(page.convert(page.bounds, to: nil)) } ?? NSScreen.main?.frame ?? .zero
-        super.init(contentRect: start, styleMask: [.titled, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+        super.init(contentRect: start, styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         titleVisibility = .hidden; titlebarAppearsTransparent = true
         backgroundColor = .black; isReleasedWhenClosed = false
         collectionBehavior = [.fullScreenPrimary]; delegate = self
@@ -464,6 +464,9 @@ enum RisePages {
     }
     /// Going into full screen; macOS ignores a toggle until it's in.
     private var entering = false
+    /// The engine's exit callback can arrive inside windowWillExitFullScreen.
+    /// Never toggle again during that transition: AppKit may queue it as re-entry.
+    private var exiting = false
     /// Out of full screen is where it's headed, whoever asked.
     private var wantsOut = false
     private var closed = false
@@ -476,8 +479,8 @@ enum RisePages {
     /// Heads out of full screen, as soon as macOS allows.
     func leave() {
         wantsOut = true
-        guard !entering, !closed else { return }
-        if styleMask.contains(.fullScreen) { toggleFullScreen(nil) } else { finish() }
+        guard !entering, !exiting, !closed else { return }
+        if styleMask.contains(.fullScreen) { exiting = true; toggleFullScreen(nil) } else { finish() }
     }
     func windowDidEnterFullScreen(_ notification: Notification) {
         entering = false
@@ -485,11 +488,18 @@ enum RisePages {
         if wantsOut { DispatchQueue.main.async { [weak self] in self?.leave() } }
     }
     func windowWillExitFullScreen(_ notification: Notification) {
+        exiting = true
         // The window's own button, or Mission Control: the page goes too.
         if !wantsOut { wantsOut = true; onLeave?() }
     }
-    func windowDidExitFullScreen(_ notification: Notification) { finish() }
+    func windowDidExitFullScreen(_ notification: Notification) { exiting = false; finish() }
     func windowDidFailToEnterFullScreen(_ window: NSWindow) { entering = false; finish() }
+    func windowDidFailToExitFullScreen(_ window: NSWindow) { exiting = false; finish() }
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        // Closing the temporary window leaves the video, not the browser tab.
+        onLeave?(); leave()
+        return false
+    }
     private func finish() {
         guard !closed else { return }
         closed = true
@@ -498,6 +508,10 @@ enum RisePages {
         contentView?.subviews.first?.autoresizingMask = []
         onClosed?()
         orderOut(nil)
+        // AppKit restores/orders the window after its did-exit delegate callback.
+        // Merely hiding it here can leave a black shell above Rise. Close it on
+        // the next turn, after restoration, retaining it through that final close.
+        DispatchQueue.main.async { [self] in close() }
     }
     override func sendEvent(_ event: NSEvent) {
         // Escape leaves full screen before the page sees it, as in Chrome.
