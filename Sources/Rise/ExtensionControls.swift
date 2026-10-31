@@ -15,6 +15,25 @@ import RiseChromium
         preferences.set(ids, forKey: Self.pinnedExtensionsKey)
         NotificationCenter.default.post(name: Self.pinnedExtensionsChanged, object: nil)
     }
+    /// The pinned extensions in the order the page bar's buttons were dragged into; any pinned but
+    /// not showing keep their places among them.
+    func setPinnedExtensionOrder(_ shown: [String]) {
+        var rest = shown.makeIterator()
+        let ids = pinnedExtensions.map { shown.contains($0) ? rest.next() ?? $0 : $0 }
+        guard ids != pinnedExtensions else { return }
+        preferences.set(ids, forKey: Self.pinnedExtensionsKey)
+        NotificationCenter.default.post(name: Self.pinnedExtensionsChanged, object: nil)
+    }
+    /// ⌥⇧1 to ⌥⇧9: the pinned extension that many from the left, as if its button were clicked;
+    /// again while its popup shows, it closes. False when there's no extension there.
+    func openPinnedExtension(at index: Int) -> Bool {
+        let buttons = navBar.extensionButtons
+        guard buttons.indices.contains(index) else { return false }
+        let button = buttons[index]
+        if let popup = extensionPopup, popup.anchor === button { popup.close(); return true }
+        button.runAction()
+        return true
+    }
     var extensionActions: [RCExtensionAction] { (extensionWindow as? ExtensionWindow)?.actions ?? [] }
     /// The page extensions act on: the selected tab's, when it's Chromium's.
     var selectedChromiumView: RCBrowserView? { (selectedTab?.page as? ChromiumPage)?.browserView }
@@ -283,7 +302,7 @@ import RiseChromium
     private(set) var isShown = false
     /// The page's size, which the card takes as far as the window allows.
     private(set) var contentSize = NSSize.zero
-    private weak var anchor: NSView?
+    private(set) weak var anchor: NSView?
     /// `leaving` from the moment it's asked to close, so nothing opens it again on its way out.
     private var closed = false, leaving = false, loaded = false, sized = false, revealing = false
     private var monitor: Any?

@@ -4,14 +4,18 @@ import WebKit
 /// Data Detectors append their date section *after* buildMenu and UITextInput's menu
 /// callback. Update the completed native menu instead, retaining the original actions:
 /// their icons, localized titles, handlers and Calendar/Reminders permission behavior.
+/// The same pass takes out the system's currency conversion where Rise has its own, and
+/// WebKit's Copy Link with Highlight.
 @MainActor final class SelectionTimeNativeMenu {
     private weak var page: WKWebView?
     private var link: CADisplayLink?
+    private var relocatesDates = false, replacesConversion = false
 
     init(page: WKWebView) { self.page = page }
 
-    func begin() {
+    func begin(relocatesDates: Bool, replacesConversion: Bool) {
         stop()
+        self.relocatesDates = relocatesDates; self.replacesConversion = replacesConversion
         let link = CADisplayLink(target: FrameTicker { [weak self] in self?.update() }, selector: #selector(FrameTicker.tick))
         link.add(to: .main, forMode: .common)
         self.link = link
@@ -28,14 +32,21 @@ import WebKit
             for interaction in view.interactions.compactMap({ $0 as? UIContextMenuInteraction }) {
                 NativeMenuLoading.withoutAnimation {
                     interaction.updateVisibleMenu { menu in
-                        if menu.identifier.rawValue.hasPrefix(SelectionTimeMenu.menuIdentifier.rawValue + ".") {
+                        if menu.identifier.rawValue.hasPrefix(SelectionTimeMenu.menuIdentifier.rawValue + ".")
+                            || menu.identifier.rawValue.hasPrefix(SelectionCurrencyMenu.menuIdentifier.rawValue + ".") {
                             // Opening a compact-menu submenu directly exposes only
                             // that submenu. Its four fallback actions already work.
                             updated = true
                             return menu
                         }
-                        let result = Self.relocatingDateActions(in: menu)
-                        updated = updated || result !== menu
+                        let withoutHighlight = Self.removing(in: menu, conversion: false)
+                        let tidied = replacesConversion ? Self.removing(in: withoutHighlight, conversion: true) : withoutHighlight
+                        let result = relocatesDates ? Self.relocatingDateActions(in: tidied) : tidied
+                        // Done once what this menu needed has been done; with nothing else to
+                        // do, once Copy Link with Highlight has gone.
+                        let datesDone = !relocatesDates || result !== tidied
+                        let conversionDone = !replacesConversion || tidied !== withoutHighlight
+                        updated = updated || datesDone && conversionDone && (relocatesDates || replacesConversion || withoutHighlight !== menu)
                         #if DEBUG
                         if result !== menu { SelectionTimeMenuAudit.record(result) }
                         #endif
@@ -50,6 +61,49 @@ import WebKit
         // display frame until then; stop after one update or when the menu dismisses.
         visit(page)
         if updated { stop() }
+    }
+
+    static let copyLinkWithHighlight = "WKMenuItemIdentifierCopyLinkWithHighlight"
+    /// The system's conversion of an amount (or a measurement) into the person's units.
+    static let unitConversion = "com.apple.datadetectors.DDConversion"
+
+    /// WebKit's Copy Link with Highlight, wherever buildMenu finds it.
+    static func removeCopyLinkWithHighlight(from builder: UIMenuBuilder) {
+        func visit(_ menu: UIMenu) {
+            if menu.children.contains(where: isCopyLinkWithHighlight) {
+                builder.replaceChildren(ofMenu: menu.identifier) { $0.filter { !isCopyLinkWithHighlight($0) } }
+            }
+            menu.children.compactMap { $0 as? UIMenu }.forEach(visit)
+        }
+        builder.menu(for: .root).map(visit)
+    }
+
+    private static func isCopyLinkWithHighlight(_ element: UIMenuElement) -> Bool {
+        // By WebKit's identifier, or its title should the identifier differ.
+        if element.title == "Copy Link with Highlight" || element.title == "Copy Link With Highlight" { return true }
+        if let action = element as? UIAction { return action.identifier.rawValue.contains("CopyLinkWithHighlight") }
+        if let command = element as? UICommand { return NSStringFromSelector(command.action).localizedCaseInsensitiveContains("LinkWithHighlight") }
+        return false
+    }
+
+    /// `root` without Copy Link with Highlight and, where Rise converts the amount itself, the
+    /// system's conversion; a section left empty goes too. The same menu when there's neither.
+    static func removing(in root: UIMenu, conversion: Bool) -> UIMenu {
+        func removed(_ element: UIMenuElement) -> Bool {
+            if isCopyLinkWithHighlight(element) { return true }
+            return conversion && (element as? UIAction)?.identifier.rawValue.hasPrefix(unitConversion) == true
+        }
+        func rewrite(_ menu: UIMenu) -> UIMenu {
+            let children: [UIMenuElement] = menu.children.compactMap { child in
+                if removed(child) { return nil }
+                guard let submenu = child as? UIMenu else { return child }
+                let result = rewrite(submenu)
+                return result.children.isEmpty && !submenu.children.isEmpty ? nil : result
+            }
+            if children.count == menu.children.count, zip(children, menu.children).allSatisfy({ $0 === $1 }) { return menu }
+            return menu.replacingChildren(children)
+        }
+        return rewrite(root)
     }
 
     private static let conversion = "com.apple.datadetectors.DDTimeZoneConversionAction."

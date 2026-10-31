@@ -72,5 +72,6 @@ struct KeyboardShortcut: Equatable {
         return symbols.replacingOccurrences(of: "Up", with: "↑").replacingOccurrences(of: "Down", with: "↓")
             .replacingOccurrences(of: "Left", with: "←").replacingOccurrences(of: "Right", with: "→")
             .replacingOccurrences(of: "Comma", with: ",").replacingOccurrences(of: "Period", with: ".")
+            .replacingOccurrences(of: "Enter", with: "↩").replacingOccurrences(of: "Backspace", with: "⌫")
     }
 }

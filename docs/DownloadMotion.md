@@ -68,3 +68,25 @@ The simulator recording and actual link/confirmation were inspected. These check
 verify the requested 120 Hz configuration, not physical ProMotion scan-out; the
 iPhone was unavailable. Use `./scripts/restart.sh --ios --simulator <id>` to restore
 the normal app after an audit.
+
+## Desktop context-menu downloads
+
+The native menu saves links, images, audio and video through `RCContextMenu.download`,
+using Chromium's own `SaveFrameWithHeaders` path. The clicked document supplies its
+referrer policy, cookies and storage context, including an embedded player's blob URLs.
+A weak document handle prevents a retained menu from starting a save after that document
+navigates away or closes. The general `RCBrowserView.download` API uses the same native
+download pipeline from the main document.
+
+Chromium's download-target hook calls `beginChromiumDownload`, which supplies Rise's
+configured Downloads folder, progress list and existing `launchDownloadFlight` animation.
+These actions previously reached an empty bridge method and did nothing.
+
+`python3 scripts/test-chromium-live.py Tests/Live/ChromiumDownloadMenuChecks.swift`
+exercises actual right-click menus in a Rise window. It saves the reported Lens hero
+video and checks its playable MP4 track and full duration; local fixtures check an
+embedded player requiring its own frame's cookie/referrer, a no-referrer policy, a
+file-backed blob, a stale menu after navigation, linked files and suggested names,
+audio, images and the general download API. It verifies complete files byte for byte
+and one existing flight per menu download. `DownloadFlightTests`, `DownloadControlsTests`
+and `DownloadAppearanceTests` cover the motion and list controls separately.

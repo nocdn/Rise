@@ -53,7 +53,11 @@ import RiseChromium
             header.attributedTitle = NSAttributedString(string: title, attributes: [.font: note, .foregroundColor: NSColor.secondaryLabelColor])
             menu.addItem(header)
         }
-        if event != nil || !times.isEmpty { menu.addItem(.separator()) }
+        // An amount in another currency, in the person's.
+        let shown = opener ?? (page === peekTab?.page ? peekTab : nil), currencyReplaced = shown?.replacedCurrency != nil
+        let amounts = info.selectionText.isEmpty ? [] : selectedAmounts(info.selectionText, in: page, replaced: currencyReplaced)
+        if let shown { currencyItems(for: amounts, in: shown, replaced: currencyReplaced).forEach(menu.addItem) }
+        if event != nil || !times.isEmpty || !amounts.isEmpty { menu.addItem(.separator()) }
 
         // A misspelling: the spellchecker's suggestions, first.
         if info.editable, !info.misspelledWord.isEmpty {
@@ -71,8 +75,14 @@ import RiseChromium
                 add("Open Link in Peek") { [weak self, weak page] in self?.showPeek(url: link, from: page?.view) }
             }
             group()
-            add("Download Linked File") { page.browserView.download(link) }
+            add("Download Linked File") { info.download(link) }
             add("Copy Link") { copy(link) }
+            // The system's own, as Safari's: the share sheet, from the menu, for the link.
+            let picker = NSSharingServicePicker(items: [link])
+            sharingPicker = picker
+            let share = picker.standardShareMenuItem
+            share.image = nil
+            menu.addItem(share)
             // A repository's link: starred as the person signed in to GitHub, in a section of its own.
             if let repository = GitHubRepository(url: link) {
                 group()
@@ -83,7 +93,7 @@ import RiseChromium
             group()
             let noun = info.mediaKind == .image ? "Image" : info.mediaKind == .video ? "Video" : "Audio"
             add("Open \(noun) in New Tab") { openInNewTab(source) }
-            add("Download \(noun)") { page.browserView.download(source) }
+            add("Download \(noun)") { info.download(source) }
             add("Copy \(noun) Address") { copy(source) }
             if info.mediaKind == .image { add("Copy Image", enabled: info.hasImageContents) { info.copyImage() } }
         }

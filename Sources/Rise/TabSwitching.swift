@@ -23,6 +23,12 @@ import AppKit
     func handleTabSwitchEvent(_ event: NSEvent) -> Bool {
         if handleSelectionItemUndoKey(event) { return true }
         if handleTabMoveEvent(event) { return true }
+        if event.type == .keyDown, let number = (1...9).first(where: { keyboardShortcuts.matches("openPinnedExtension\($0)", event) }),
+           openPinnedExtension(at: number-1) { return true }
+        if event.type == .keyDown, permissionCoordinator.isShowingPrompt {
+            if keyboardShortcuts.matches("allowPermission", event) { permissionCoordinator.resolve(true); return true }
+            if keyboardShortcuts.matches("denyPermission", event) { permissionCoordinator.resolve(false); return true }
+        }
         if event.type == .keyDown, let number = (1...9).first(where: { keyboardShortcuts.matches("selectTab\($0)", event) }) {
             // Take these before Chromium or an address field handles them. An absent tab is
             // a no-op, so Chromium's own ⌘9 (last tab) cannot select a different one.

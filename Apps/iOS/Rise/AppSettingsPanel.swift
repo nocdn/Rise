@@ -9,13 +9,19 @@ final class AppSettingsPanel: UIView {
     let autoplayRow = SettingsToggleRow("Autoplay videos", icon: MenuIcons.video, colour: .systemGreen, iconSide: 26)
     let incognitoLockRow = SettingsToggleRow("Locked incognito mode", icon: MenuIcons.lockedIncognito, colour: .systemPurple,
                                              iconSide: 26, on: IncognitoLock.isEnabled)
+    let currencyRow = SettingsMenuRow("Primary currency", icon: MenuIcons.currency, colour: AppSettingsPanel.currencyPink)
+    /// A deep pink, lighter in Dark to read as strongly.
+    static let currencyPink = UIColor { $0.userInterfaceStyle == .dark
+        ? UIColor(displayP3Red: 232/255, green: 72/255, blue: 132/255, alpha: 1)
+        : UIColor(displayP3Red: 196/255, green: 30/255, blue: 98/255, alpha: 1) }
     let aiOptionsRow = SettingsNavigationRow("AI Options")
     let privacyRow = SettingsNavigationRow("Privacy Policy")
     private let scroll = UIScrollView()
-    var buttons: [UIButton] { [closeButton, syncRow, autoplayRow, incognitoLockRow, aiOptionsRow, privacyRow] }
+    var buttons: [UIButton] { [closeButton, syncRow, autoplayRow, incognitoLockRow, currencyRow.button, aiOptionsRow, privacyRow] }
     private let detail = UILabel()
     private let autoplayDetail = UILabel()
     private let incognitoLockDetail = UILabel()
+    private let currencyDetail = UILabel()
     var onSyncChanged: ((Bool) -> Void)?
     var onAutoplayChanged: ((Bool) -> Void)?
 
@@ -25,6 +31,10 @@ final class AppSettingsPanel: UIView {
         addSubview(header)
         addSubview(scroll)
         scroll.alwaysBounceVertical = false
+        currencyRow.layer.cornerCurve = .continuous
+        currencyRow.layer.cornerRadius = MenuPanel.cornerRadius
+        currencyRow.clipsToBounds = true
+        scroll.addSubview(currencyRow)
         scroll.addSubview(aiOptionsRow)
         scroll.addSubview(privacyRow)
         for row in [syncRow, autoplayRow, incognitoLockRow] {
@@ -37,7 +47,7 @@ final class AppSettingsPanel: UIView {
         syncRow.onChanged = { [weak self] enabled in self?.onSyncChanged?(enabled) }
         autoplayRow.onChanged = { [weak self] enabled in self?.onAutoplayChanged?(enabled) }
         incognitoLockRow.onChanged = { enabled in IncognitoLock.isEnabled = enabled }
-        for label in [detail, autoplayDetail, incognitoLockDetail] {
+        for label in [detail, autoplayDetail, incognitoLockDetail, currencyDetail] {
             label.font = PanelHeader.font("OpenRunde-Regular", size: 13, fallbackWeight: .regular)
             label.adjustsFontForContentSizeCategory = true
             label.textColor = .secondaryLabel
@@ -49,6 +59,28 @@ final class AppSettingsPanel: UIView {
         autoplayRow.toggle.accessibilityHint = autoplayDetail.text
         incognitoLockDetail.text = "Uses Face ID to lock your incognito tabs."
         incognitoLockRow.toggle.accessibilityHint = incognitoLockDetail.text
+        currencyDetail.text = "Amounts you select in other currencies are converted to this one."
+        currencyRow.button.accessibilityHint = currencyDetail.text
+        showCurrency()
+    }
+
+    /// The person's currency, and every one there's a rate for to choose from instead.
+    func showCurrency() {
+        let primary = PrimaryCurrency.code()
+        let codes = ExchangeRateStore.shared.rates.map { Array($0.rates.keys) } ?? Locale.commonISOCurrencyCodes
+        let currencies = CurrencyAmounts.currencies(codes)
+        // The most traded first, then every other by name, each in a section of its own.
+        currencyRow.show(primary, menu: UIMenu(options: .singleSelection, children: [currencies.popular, currencies.others].map { group in
+            UIMenu(options: .displayInline, children: group.map { currency in
+                let action = UIAction(title: currency.name, state: currency.code == primary ? .on : .off) { [weak self] _ in
+                    PrimaryCurrency.set(currency.code)
+                    self?.showCurrency()
+                }
+                action.subtitle = currency.code
+                return action
+            })
+        }))
+        ExchangeRateStore.shared.refreshIfStale()
     }
 
     func canPullToClose(at point: CGPoint, velocity: CGPoint) -> Bool {
@@ -89,7 +121,11 @@ final class AppSettingsPanel: UIView {
         incognitoLockRow.center = CGPoint(x: bounds.midX, y: autoplayDetail.frame.maxY+SiteSettingsPanel.groupGap+SiteSettingsPanel.rowHeight/2)
         let lockSize = incognitoLockDetail.sizeThatFits(CGSize(width: textWidth, height: .greatestFiniteMagnitude))
         incognitoLockDetail.frame = CGRect(x: detail.frame.minX, y: incognitoLockRow.frame.maxY+12, width: textWidth, height: lockSize.height)
-        aiOptionsRow.frame = CGRect(x: syncRow.frame.minX, y: incognitoLockDetail.frame.maxY+SiteSettingsPanel.groupGap,
+        currencyRow.frame = CGRect(x: syncRow.frame.minX, y: incognitoLockDetail.frame.maxY+SiteSettingsPanel.groupGap,
+                                   width: width, height: SiteSettingsPanel.rowHeight)
+        let currencySize = currencyDetail.sizeThatFits(CGSize(width: textWidth, height: .greatestFiniteMagnitude))
+        currencyDetail.frame = CGRect(x: detail.frame.minX, y: currencyRow.frame.maxY+12, width: textWidth, height: currencySize.height)
+        aiOptionsRow.frame = CGRect(x: syncRow.frame.minX, y: currencyDetail.frame.maxY+SiteSettingsPanel.groupGap,
                                     width: width, height: SettingsNavigationRow.height)
         privacyRow.frame = aiOptionsRow.frame.offsetBy(dx: 0, dy: SettingsNavigationRow.height+12)
         scroll.contentSize = CGSize(width: bounds.width, height: privacyRow.frame.maxY+12)

@@ -32,6 +32,8 @@ import RiseCore
         siteControlsPopover.animates = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         siteControlsPopover.contentViewController = controller
         siteControlsPopover.contentSize = controller.view.frame.size
+        // Its button shows only once the page has an address, and may not be laid out yet.
+        selectedBar.layoutSubtreeIfNeeded()
         siteControlsPopover.show(relativeTo: selectedBar.settingsButton.bounds, of: selectedBar.settingsButton, preferredEdge: .maxY)
         let bar = selectedBar; bar.holdsHover = true; siteControlsBar = bar
     }

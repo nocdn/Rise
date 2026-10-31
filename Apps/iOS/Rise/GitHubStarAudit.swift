@@ -56,7 +56,7 @@ import WebKit
         let store = browser.webView.configuration.websiteDataStore
         browser.overrideUserInterfaceStyle = .light
         browser.view.layoutIfNeeded()
-        try check("link-peek-is-hard-disabled-without-removing-native-actions", !BrowserViewController.longPressPeekEnabled && browser.webView.allowsLinkPreview)
+        try check("legacy-peek-sheet-stays-disabled-with-native-link-menus-enabled", !BrowserViewController.longPressPeekEnabled && browser.webView.allowsLinkPreview)
         try check("the-provided-vector-star-is-installed", UIImage(named: "GitHubStar") != nil)
         if ProcessInfo.processInfo.arguments.contains("-RiseGitHubToastGestureAudit") { try await gestureTest(); return }
         if ProcessInfo.processInfo.arguments.contains(deviceArgument) {
@@ -123,6 +123,12 @@ import WebKit
         try check("unstarred-repository-keeps-the-same-star-and-enables-the-row",menuState.action().title == "Star repository" && menuState.action().identifier == loading.identifier && menuState.action().image?.isEqual(loading.image) == true && !menuState.action().attributes.contains(.disabled))
         try check("result-ready-before-presentation-never-leaves-a-loading-placeholder",(menuState.element().children.first as? UIAction)?.title == "Star repository")
         menuState.cancel(); browser.githubRepositoryMenu = nil
+        _ = browser.nativeLinkMenu(in: browser.webView, url: URL(string: "https://github.com/owner/missing"), actions: [suggested])
+        let unavailableMenu = browser.githubRepositoryMenu!
+        try await wait("unavailable-repository-menu-status-resolves") { unavailableMenu.status != nil }
+        try check("unavailable-repository-menu-uses-the-short-label", unavailableMenu.status == .notFound && unavailableMenu.action().title == "Repo unavailable" && unavailableMenu.action().attributes.contains(.disabled))
+        unavailableMenu.cancel(); browser.githubRepositoryMenu = nil
+        if ProcessInfo.processInfo.arguments.contains("-RiseGitHubMenuStatusAudit") { return }
         for name in ["react", "hydration", "form", "delayed", "labelled"] {
             let outcome = await starrer.star(repository(name), store: store, host: browser.view)
             try check("\(name)-requires-a-fresh-server-confirmation", outcome == .starred && fixture.isStarred(name))

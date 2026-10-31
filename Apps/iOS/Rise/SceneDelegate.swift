@@ -8,6 +8,12 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let scene = scene as? UIWindowScene else { return }
         let window = RiseWindow(windowScene: scene)
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains(LinkPreviewAudit.argument) {
+            let controller = BrowserViewController(startURL: nil, websiteDataStore: .nonPersistent())
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            LinkPreviewAudit.run(in: controller)
+            return
+        }
         if PasskeyDiagnostic.requested {
             window.rootViewController = PasskeyDiagnostic()
             self.window = window

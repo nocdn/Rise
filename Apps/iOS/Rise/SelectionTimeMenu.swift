@@ -3,8 +3,8 @@ import EventKitUI
 import UIKit
 import WebKit
 
-/// Rise's pages: WebKit's own, with a time selected in another zone leading the selection menu,
-/// and Explain in Context beside Look Up.
+/// Rise's pages: WebKit's own, with a time selected in another zone and an amount in another
+/// currency leading the selection menu, Explain in Context beside Look Up, and no Copy Link with Highlight.
 final class RiseWebView: WKWebView {
     override var keyCommands: [UIKeyCommand]? {
         var commands = super.keyCommands ?? []
@@ -34,7 +34,9 @@ final class RiseWebView: WKWebView {
     override func buildMenu(with builder: UIMenuBuilder) {
         super.buildMenu(with: builder)
         SelectionTimeMenu.build(builder, in: self)
+        SelectionCurrencyMenu.build(builder, in: self)
         SelectionExplanation.build(builder, in: self)
+        SelectionTimeNativeMenu.removeCopyLinkWithHighlight(from: builder)
     }
 }
 
@@ -59,6 +61,8 @@ final class RiseWebView: WKWebView {
     /// What each frame has selected, and the frame selected in last.
     private var selections: [String: String] = [:]
     private var latest: String?
+    /// Whether the page's amounts are rewritten into the person's currency (`SelectionCurrencyMenu`).
+    private var currencyReplaced = false
 
     static func install(on page: WKWebView) {
         guard installed.object(forKey: page) == nil else { return }
@@ -74,9 +78,16 @@ final class RiseWebView: WKWebView {
         return menu.selections[frame] ?? ""
     }
 
+    static func isCurrencyReplaced(in page: WKWebView) -> Bool { installed.object(forKey: page)?.currencyReplaced ?? false }
+    static func setCurrencyReplaced(_ replaced: Bool, in page: WKWebView) { installed.object(forKey: page)?.currencyReplaced = replaced }
+
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard message.webView === page, let body = message.body as? [String: Any],
-              let frame = body["frame"] as? String, let text = body["text"] as? String else { return }
+        guard message.webView === page, let body = message.body as? [String: Any] else { return }
+        // A new page in the main frame, or one back from the back-forward cache as it was left.
+        if let replaced = body["replaced"] as? Bool, message.frameInfo.isMainFrame { currencyReplaced = replaced; return }
+        guard let frame = body["frame"] as? String, let text = body["text"] as? String else { return }
+        // Rates for an amount selected, ready by the time its menu is asked for.
+        if text.contains(where: \.isNumber) { ExchangeRateStore.shared.refreshIfStale() }
         if text.isEmpty {
             selections[frame] = nil
             if latest == frame { latest = nil }
@@ -146,9 +157,12 @@ final class RiseWebView: WKWebView {
     static func willPresent(in page: WKWebView) {
         let text = selection(in: page), times = SelectionTimes.find(in: text)
         let hasEvent = SelectionEvents.find(in: text, pageTitle: page.title) != nil
-        guard let owner = installed.object(forKey: page), hasEvent || !times.isEmpty && times.allSatisfy({ !$0.isZoneOnly }) else { return }
+        guard let owner = installed.object(forKey: page) else { return }
+        // Every selection menu loses Copy Link with Highlight; one with an amount, the system's
+        // conversion; one with a time or event, the system's date actions, moved into Rise's.
         if owner.nativeMenu == nil { owner.nativeMenu = SelectionTimeNativeMenu(page: page) }
-        owner.nativeMenu?.begin()
+        owner.nativeMenu?.begin(relocatesDates: hasEvent || !times.isEmpty && times.allSatisfy({ !$0.isZoneOnly }),
+                                replacesConversion: !SelectionCurrencyMenu.elements(for: text, in: page).isEmpty)
     }
 
     static func willDismiss(in page: WKWebView) {
@@ -287,6 +301,12 @@ final class RiseWebView: WKWebView {
         if (shown !== sent) post(sent = shown);
       });
       addEventListener('pagehide', () => { if (sent) post(sent = ''); });
+      if (window === top) {
+        window.webkit.messageHandlers.riseSelection.postMessage({replaced: false});
+        addEventListener('pageshow', event => {
+          if (event.persisted) window.webkit.messageHandlers.riseSelection.postMessage({replaced: !!globalThis.riseCurrency?.active});
+        });
+      }
     })();
     """#
 }

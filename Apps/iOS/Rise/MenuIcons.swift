@@ -21,6 +21,11 @@ import UIKit
     static let openRouter = UIImage(named: "MenuOpenRouter")
     static let openAI = UIImage(named: "MenuOpenAI")
     static let apiKey = UIImage(named: "MenuAPIKey")
+    /// Phosphor's coins, MIT: https://github.com/phosphor-icons/core/blob/main/LICENSE, scaled and
+    /// weighted to sit with these.
+    static let currency = UIImage(named: "MenuCurrency")
+    /// The same coins at Phosphor's light weight, sized and weighted like the selection menu's symbols.
+    static let selectionCurrency = UIImage(named: "SelectionCurrency")
 
     static let summarise: UIImage = {
         let path = UIBezierPath()

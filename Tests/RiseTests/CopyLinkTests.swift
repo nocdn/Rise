@@ -73,4 +73,34 @@ final class CopyLinkTests: XCTestCase {
         XCTAssertEqual(browser.navBar.notice?.text, "Copied Link")
         XCTAssertFalse(browser.navBar.copyButton.isShowingConfirmation, "That's for the page's own address")
     }
+    @MainActor func testRightClickingTheAddressOffersCopyingPastingAndEditing() throws {
+        let browser = browser(); defer { clean(browser) }
+        let oldMenu = NSApp.mainMenu; defer { NSApp.mainMenu = oldMenu }
+        let delegate = AppDelegate(); delegate.browser = browser; delegate.buildMenu()
+        let bar = browser.navBar, tab = try XCTUnwrap(browser.selectedTab)
+        tab.title = "A [page]"
+        bar.layoutSubtreeIfNeeded()
+        func click(_ x: CGFloat) -> NSEvent {
+            NSEvent.mouseEvent(with: .rightMouseDown, location: bar.convert(NSPoint(x: x, y: PlainNavBar.Metrics.midY), to: nil), modifierFlags: [],
+                               timestamp: 0, windowNumber: browser.window!.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+        }
+        XCTAssertNil(bar.menu(for: click(bar.fieldRect.maxX+40)), "Only on the address")
+        browser.linkPasteboard.clearContents()
+        let menu = try XCTUnwrap(bar.menu(for: click(bar.fieldRect.midX)))
+        XCTAssertEqual(menu.items.map(\.title), ["Copy URL", "Copy as Markdown Link", "", "Paste and Go", "Edit Address"])
+        XCTAssertEqual(menu.items[0].keyEquivalent, "C"); XCTAssertEqual(menu.items[0].keyEquivalentModifierMask, [.command, .shift])
+        XCTAssertEqual(menu.items[4].keyEquivalent, "l")
+        XCTAssertFalse(menu.items[3].isEnabled, "Nothing to paste")
+        menu.performActionForItem(at: 0)
+        XCTAssertEqual(browser.linkPasteboard.string(forType: .string), tab.url?.absoluteString)
+        XCTAssertTrue(bar.isShowingCopied, "Said in the bar, as ⇧⌘C does")
+        menu.performActionForItem(at: 1)
+        XCTAssertEqual(browser.linkPasteboard.string(forType: .string), "[A \\[page\\]](https://example.com/a?b=1#section)")
+        XCTAssertEqual(bar.notice?.text, "Copied Markdown Link")
+        browser.linkPasteboard.clearContents(); browser.linkPasteboard.setString("  example.org/next \n", forType: .string)
+        let again = try XCTUnwrap(bar.menu(for: click(bar.fieldRect.midX)))
+        XCTAssertTrue(again.items[3].isEnabled)
+        again.performActionForItem(at: 3)
+        XCTAssertEqual(tab.requestedURL?.host, "example.org")
+    }
 }

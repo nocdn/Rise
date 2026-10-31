@@ -189,6 +189,9 @@ RC_EXPORT @interface RCContextMenu : NSObject
 /// Adds the misspelled word to the spelling dictionary.
 - (void)learnMisspelledWord;
 - (void)copyImage;
+/// Saves a link or media source in the clicked document's context. Does nothing
+/// once that document has navigated away or closed.
+- (void)downloadURL:(NSURL *)url NS_SWIFT_NAME(download(_:));
 /// Shows the dictionary's definition of the selection, at it.
 - (void)lookUp;
 /// Has the page's DevTools select the element clicked, once they're attached if they aren't yet.

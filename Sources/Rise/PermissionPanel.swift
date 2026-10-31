@@ -44,6 +44,15 @@ final class PermissionChoiceButton: ChromeButton {
     private let text = NSTextField(labelWithString: "")
     let allowButton = PermissionChoiceButton(symbol: "checkmark", size: 11, title: "Allow", action: {})
     let denyButton = PermissionChoiceButton(symbol: "xmark", size: 11, title: "Don’t Allow", action: {})
+    /// In place of both, for a notice: puts back what it tells of, turning blue as the check turns green.
+    let revertButton = PermissionChoiceButton(symbol: "arrow.uturn.backward", size: 11, title: "Revert", action: {})
+    /// Something done to the page, told in the same panel: its icon, what was done, and Revert.
+    struct Notice {
+        let image: NSImage, accent: (RiseTheme) -> NSColor
+        let text: (RiseTheme, NSFont) -> NSAttributedString, message: String
+    }
+    private(set) var notice: Notice?
+    var onRevert: (() -> Void)?
     private var slide = MotionSpring(0), stack = MotionSpring(0)
     private var link: CADisplayLink?, lastTick: CFTimeInterval?
     private var theme = RiseTheme.neutral
@@ -69,11 +78,15 @@ final class PermissionChoiceButton: ChromeButton {
         icon.imageScaling = .scaleNone
         text.lineBreakMode = .byTruncatingTail; text.cell?.usesSingleLineMode = true
         // The toolbar's own hover hints, not the system's tooltip.
-        allowButton.setHoverHint("Allow"); denyButton.setHoverHint("Don’t allow")
+        setShortcuts(allow: KeyboardShortcut("Command+Alt+Enter")?.display ?? "", deny: KeyboardShortcut("Command+Alt+Backspace")?.display ?? "")
         allowButton.actionBlock = { [weak self] in self?.answer?(true) }
         denyButton.actionBlock = { [weak self] in self?.answer?(false) }
-        [icon, text, allowButton, denyButton].forEach(content.addSubview)
+        revertButton.image = TablerIcon.revertImage()
+        revertButton.actionBlock = { [weak self] in self?.onRevert?() }
+        revertButton.isHidden = true
+        [icon, text, allowButton, denyButton, revertButton].forEach(content.addSubview)
         panel.addSubview(content); addSubview(panel)
+        panel.addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
         stack.configure(response: FindMotion.swapResponse, bounce: 0)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -81,19 +94,42 @@ final class PermissionChoiceButton: ChromeButton {
         let hit = super.hitTest(point)
         return hit === self ? nil : hit
     }
+    /// The pointer leaving the panel, for one held while it's on it.
+    var onPointerExit: (() -> Void)?
+    var isPointerInside: Bool {
+        guard let window, !isHidden else { return false }
+        return panel.bounds.contains(panel.convert(window.mouseLocationOutsideOfEventStream, from: nil))
+    }
+    override func mouseExited(with event: NSEvent) { onPointerExit?() }
+    /// Allow and Don't Allow's hints, with the keys that answer while it shows.
+    func setShortcuts(allow: String, deny: String) {
+        allowButton.setHoverHint("Allow", shortcut: allow); denyButton.setHoverHint("Don’t allow", shortcut: deny)
+    }
 
     func applyTheme(_ theme: RiseTheme) {
         self.theme = theme
         FindBar.applyPanelTheme(panel, theme: theme)
-        for button in [allowButton, denyButton] {
+        for button in [allowButton, denyButton, revertButton] {
             button.restingTint = theme.muted; button.hoverColor = theme.text.withAlphaComponent(0.07)
             button.hoverHint?.appearance = theme.appearance
         }
         allowButton.hoverTint = SiteCapability.camera.accent(theme); denyButton.hoverTint = SiteCapability.notifications.accent(theme)
+        revertButton.hoverTint = SiteCapability.location.accent(theme)
         fill()
     }
-    func ask(_ question: PermissionQuestion) { self.question = question; fill() }
+    func ask(_ question: PermissionQuestion) { self.question = question; notice = nil; fill() }
+    func tell(_ notice: Notice) { self.notice = notice; question = nil; fill() }
+    /// Revert's hint, with the key that reverts while it can.
+    func setRevertShortcut(_ shortcut: String) { revertButton.setHoverHint("Revert", shortcut: shortcut) }
     private func fill() {
+        allowButton.isHidden = notice != nil; denyButton.isHidden = notice != nil; revertButton.isHidden = notice == nil
+        if let notice {
+            icon.image = notice.image; icon.contentTintColor = notice.accent(theme)
+            text.attributedStringValue = notice.text(theme, Self.font)
+            panel.setAccessibilityLabel(notice.message)
+            needsLayout = true
+            return
+        }
         guard let question else { return }
         icon.image = TablerIcon.image(question.icon, size: Self.iconSize, description: question.heading)
         icon.contentTintColor = question.capability.accent(theme)
@@ -106,7 +142,7 @@ final class PermissionChoiceButton: ChromeButton {
     private var panelWidth: CGFloat {
         let words = ceil(text.attributedStringValue.size().width)+4
         let widest = max(FindBar.width, min(FindBar.width+140, bounds.width-2*FindBar.margin))
-        return min(widest, Self.textX+words+10+Self.buttonsWidth+8)
+        return min(widest, Self.textX+words+10+(notice == nil ? Self.buttonsWidth : 26)+8)
     }
 
     // MARK: Presentation
@@ -148,9 +184,11 @@ final class PermissionChoiceButton: ChromeButton {
         // As Find's chevrons and close.
         denyButton.frame = NSRect(x: width-8-26, y: (height-28)/2, width: 26, height: 28)
         allowButton.frame = NSRect(x: denyButton.frame.minX-27, y: denyButton.frame.minY, width: 26, height: 28)
-        text.frame = NSRect(x: Self.textX, y: (height-line)/2, width: max(0, allowButton.frame.minX-10-Self.textX), height: line)
+        revertButton.frame = denyButton.frame
+        let textEnd = notice == nil ? allowButton.frame.minX : revertButton.frame.minX
+        text.frame = NSRect(x: Self.textX, y: (height-line)/2, width: max(0, textEnd-10-Self.textX), height: line)
         // The buttons slide under a still pointer; their hover follows.
-        allowButton.refreshHoverState(); denyButton.refreshHoverState()
+        allowButton.refreshHoverState(); denyButton.refreshHoverState(); revertButton.refreshHoverState()
     }
     private func animate() {
         guard window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { settle(); return }

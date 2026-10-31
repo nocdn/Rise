@@ -68,7 +68,9 @@ import WebKit
         try await touch("document.body")
         try await wait("later-website-title-changes-are-preserved") { try await page.evaluateJavaScript("document.querySelector('#image').title === 'A website update'") as? Bool == true }
         load("<img id='image' title='Original caption' src='\(imageURL())'>")
-        try await wait("captioned-image-loaded") { try await page.evaluateJavaScript("document.querySelector('#image')?.complete === true") as? Bool == true }
+        // loadHTMLString replaces the document asynchronously. The previous
+        // fixture's image can still be complete while this navigation commits.
+        try await wait("captioned-image-loaded") { try await page.evaluateJavaScript("document.querySelector('#image')?.complete === true && document.querySelector('#image')?.getAttribute('title') === 'Original caption'") as? Bool == true }
         try await touch("document.querySelector('#image')")
         try await wait("dimensions-are-added-to-existing-captions") { ImageContextMenus.menu(in: page, actions: []).title == "Original caption\n800 × 600 px" }
         ImageContextMenus.setPresented(true, in: page)

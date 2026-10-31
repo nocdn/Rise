@@ -27,10 +27,17 @@ import AppKit
             ("tabSwitcherPrevious", "Tab Switcher: Previous Tab", "Tabs", ["Ctrl+Shift+Tab"]),
             ("smartRename", "Smart Rename Tab under Pointer", "Tabs", ["Ctrl+R"]),
             ("activateSuggestedTab", "Switch to Suggested Open Tab", "Tabs", ["Command+Enter"]),
+            ("allowPermission", "Allow Site Permission", "Site", ["Command+Alt+Enter"]),
+            ("denyPermission", "Don’t Allow Site Permission", "Site", ["Command+Alt+Backspace"]),
         ]
         for (id, title, group, bindings) in early { commands.append(Command(id: id, title: title, group: group, defaults: bindings.compactMap(KeyboardShortcut.init))) }
         for number in 1...9 {
             commands.append(Command(id: "selectTab\(number)", title: "Select Tab \(number)", group: "Tabs", defaults: [KeyboardShortcut("Command+\(number)")!]))
+        }
+        // The pinned extensions in the page bar, from the left.
+        for number in 1...9 {
+            commands.append(Command(id: "openPinnedExtension\(number)", title: "Open Pinned Extension \(number)", group: "Extensions",
+                                    defaults: [KeyboardShortcut("Alt+Shift+\(number)")!]))
         }
     }
     func register(_ item: NSMenuItem, group: String, id explicitID: String? = nil) {

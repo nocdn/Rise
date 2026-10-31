@@ -11,14 +11,16 @@ import RiseCore
     /// Dark puts Kero's lit edge around the page.
     let pageEdge = PageEdge()
     /// The bar over the page, as Dia's.
-    private(set) lazy var navBar = PlainNavBar(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() },
-                                               zoom: { [weak self] in self?.showZoomControls() }, permission: { [weak self] in self?.permissionCoordinator.togglePrompt() })
+    private(set) lazy var navBar: PlainNavBar = PlainNavBar(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() },
+                                               zoom: { [weak self] in self?.showZoomControls() }, permission: { [weak self] in self?.permissionCoordinator.togglePrompt() },
+                                               currency: { [weak self] in if let self { currencyReplacement.toggle(from: navBar) } })
     var plainBarTimer: Timer?, plainBarColors: [UUID: NSColor] = [:], plainBarTabID: UUID?, plainBarSampling = false
     /// When the page bar's colour was last seen changing, by what (`PlainNavBarController.swift`).
     var plainBarWatchedUntil = Date.distantPast, plainBarPages = "", plainBarMonitor: Any?
     /// A split's right page's own bar (`SplitNavBar.swift`), its buttons, and the page it shows.
-    private(set) lazy var splitBar = PlainNavBar(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() },
-                                                 zoom: { [weak self] in self?.showZoomControls() }, permission: { [weak self] in self?.permissionCoordinator.togglePrompt() })
+    private(set) lazy var splitBar: PlainNavBar = PlainNavBar(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() },
+                                                 zoom: { [weak self] in self?.showZoomControls() }, permission: { [weak self] in self?.permissionCoordinator.togglePrompt() },
+                                                 currency: { [weak self] in if let self { currencyReplacement.toggle(from: splitBar) } })
     var splitBarButtons: [ChromeButton] = [], splitBarTabID: UUID?
     let pageShadow = PageSurface(color: NSColor(hex: 0xFDFCFC), radius: PageAppearance.radius)
     let pageClip = PageSurface(color: NSColor(hex: 0xFDFCFC), radius: PageAppearance.radius)
@@ -43,6 +45,7 @@ import RiseCore
     let sitePermissions: SitePermissions
     let cookieConsent: CookieConsent
     lazy var permissionCoordinator = PermissionCoordinator(browser: self)
+    lazy var currencyReplacement = CurrencyReplacement(browser: self)
     lazy var pictureInPicture = VideoPictureInPicture(browser: self)
     lazy var tabMedia: TabMedia = {
         let media = TabMedia(browser: self)
@@ -322,7 +325,7 @@ import RiseCore
         }
         window.undoEvent = { [weak self] event in
             guard let self else { return false }
-            return self.handleSelectionItemUndoKey(event) || self.handleTabOrderUndoKey(event) || self.palette.handleUndoKey(event, shortcuts: self.keyboardShortcuts) || self.handleSplitUndoKey(event) || self.handlePeekUndoKey(event)
+            return self.currencyReplacement.handleUndoKey(event) || self.handleSelectionItemUndoKey(event) || self.handleTabOrderUndoKey(event) || self.palette.handleUndoKey(event, shortcuts: self.keyboardShortcuts) || self.handleSplitUndoKey(event) || self.handlePeekUndoKey(event)
         }
         window.smartRenameEvent = { [weak self] event in self?.handleSmartRenameKey(event) ?? false }
         window.extensionShortcutEvent = { [weak self] event in self?.runExtensionShortcut(event) ?? false }
@@ -440,6 +443,7 @@ import RiseCore
         root.addSubview(sidebar); root.addSubview(pageShadow); pageShadow.addSubview(pageClip); installSplitHandle()
         pageClip.addSubview(emptyPage); pageClip.addSubview(developerBar); pageClip.addSubview(navBar)
         navBar.onOpenAddress = { [weak self] in self?.focusAddress() }
+        navBar.addressMenu = { [weak self] bar in self?.addressMenu(for: bar) }
         installSidebarEdge()
         installDevTools()
         root.addSubview(grip)
@@ -594,7 +598,7 @@ import RiseCore
         retryButton.frame = NSRect(x: body.width/2-55, y: body.height/2+55, width: 110, height: 32)
         // The panels come down from beneath the page bar and what's under it.
         selectedFindBar.frame = pageShadow.frame; selectedFindBar.topInset = barHeight; selectedFindBar.tuckedInset = barHeight
-        permissionCoordinator.layoutPanel()
+        permissionCoordinator.layoutPanel(); currencyReplacement.layoutPanel()
         dismissArea.frame = b
         // Both centred panels share the same window-wide dim.
         veil.frame = b
@@ -760,6 +764,7 @@ import RiseCore
             guard let self, let tab else { return }
             self.suggestionFavicons.remember(tab)
             self.siteSearchLearner.addressChanged(tab.page.view, url: tab.page.url)
+            self.currencyReplacement.pageChanged(tab)
             if !tab.page.isLoading, let url = tab.page.url, let title = tab.page.title {
                 self.browsingHistory.updateTitle(self.historyTitle(title, url: url), for: url)
             }

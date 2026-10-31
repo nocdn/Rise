@@ -197,7 +197,9 @@ import RiseChromium
         browser.setExtension(id, pinned: true)
         _ = await waitUntil("Pinning it puts its button in the page bar") { self.browser.navBar.extensionButtons.map(\.extensionID) == [id] }
         if let button = browser.navBar.extensionButtons.first {
-            check(button.toolTip == "Rise Test", "The page bar button has its title: \(button.toolTip ?? "none")")
+            check(button.hoverHint?.text == "Rise Test" && button.toolTip == nil,
+                  "The page bar button has its title in the toolbar's hover hint: \(button.hoverHint?.text ?? "none")")
+            check(button.hoverHint?.shortcut == "⌥⇧1", "With its shortcut, the first from the left: \(button.hoverHint?.shortcut ?? "none")")
             // The pointer on its button starts the extension's process, with a page that runs none of it.
             browser.warmExtension(id, true)
             check(browser.extensionWarmer?.id == id && browser.extensionWarmer?.page.browserView.scriptsDisabled == true,

@@ -6,6 +6,7 @@
 // Run with python3 scripts/test-chromium-live.py features.
 import AppKit
 @testable import Rise
+import RiseCore
 import RiseChromium
 
 typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
@@ -232,6 +233,7 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
 
         let menus = await open(try page("menus", """
         <p id=text style='font-size:20px'>The quick brown fox jumps over the lazy dog.</p>
+        <p id=price style='font-size:20px'>Tickets £66.06, or a box for 1,250.00 GBP.</p>
         <p><a id=link href='https://example.com/linked'>A link somewhere</a></p>
         <p><a id=pic href='https://example.com/pictured'><img id=img src=picture.png width=120></a></p>
         <div id=field contenteditable spellcheck=true style='font-size:20px;padding:4px;border:1px solid'>Ths is wrng</div>
@@ -242,7 +244,7 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
 
         // A link: Rise's items, as on WebKit, with Peek and DevTools.
         let link = await rightClick(center("#link"), in: menus.page, "a link")
-        check(["Open Link", "Open Link in New Tab", "Open Link in Peek", "Download Linked File", "Copy Link", "Inspect Element"]
+        check(["Open Link", "Open Link in New Tab", "Open Link in Peek", "Download Linked File", "Copy Link", "Share…", "Inspect Element"]
               .allSatisfy(titles(link).contains), "A link's menu: \(titles(link))")
         choose("Copy Link", in: link)
         check(pasteboard.string(forType: .string) == "https://example.com/linked", "Copy Link copies its address")
@@ -269,6 +271,38 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         _ = await waitUntil("Look Up shows the dictionary") { NSApp.windows.contains { !windows.contains(ObjectIdentifier($0)) && $0.isVisible && String(describing: type(of: $0)).contains("Popover") } }
         browser.window?.makeKeyAndOrderFront(nil)
         try await Task.sleep(for: .milliseconds(300))
+
+        // An amount in another currency: in the person's, to copy, to put the whole page in, or in any other.
+        ExchangeRateStore.shared.use(ExchangeRates(base: "USD", rates: ["USD": 1, "EUR": 0.8, "GBP": 0.5, "PLN": 4], updated: Date()))
+        let primary = browser.preferences.string(forKey: PrimaryCurrency.key)
+        PrimaryCurrency.set("EUR", in: browser.preferences)
+        defer { browser.preferences.set(primary, forKey: PrimaryCurrency.key) }
+        let selectPrice = "const node = document.querySelector('#price').firstChild, range = document.createRange(); range.setStart(node, 8); range.setEnd(node, 14);" +
+            "getSelection().removeAllRanges(); getSelection().addRange(range); return 0"
+        _ = await value(selectPrice, in: menus.page)
+        let price = await rightClick(center("#price"), in: menus.page, "a selected price")
+        let amount = price?.items.first
+        check(amount?.title == "€105.70", "A price leads the menu in the person's currency: \(titles(price))")
+        check(titles(amount?.submenu) == ["Copy “€105.70”", "Replace on Page", "Other Currencies"], "Its menu: \(titles(amount?.submenu))")
+        pasteboard.clearContents()
+        choose("Copy “€105.70”", in: amount?.submenu)
+        check(pasteboard.string(forType: .string) == "€105.70", "Copy copies the converted amount")
+        let zloty = amount?.submenu?.items.last?.submenu?.items.first { $0.title.hasSuffix("(PLN)") }?.submenu
+        if let zloty { zloty.delegate?.menuNeedsUpdate?(zloty) }
+        check(zloty?.items.first?.title.contains("528.48") == true, "Another currency's submenu has the amount in it: \(titles(zloty))")
+        choose("Replace on Page", in: amount?.submenu)
+        let pagePrice = "return document.querySelector('#price').textContent"
+        _ = await waitUntil("Replace on Page rewrites the page's amounts") {
+            await self.value(pagePrice, in: menus.page) as? String == "Tickets €105.70, or a box for 2,000.00 EUR."
+        }
+        _ = await value(selectPrice.replacingOccurrences(of: "range.setEnd(node, 14)", with: "range.setEnd(node, 15)"), in: menus.page)
+        let replaced = await rightClick(center("#price"), in: menus.page, "a replaced price")
+        let checked = replaced?.items.first?.submenu?.items.first { $0.title == "Replace on Page" }
+        check(checked?.state == .on, "A rewritten amount offers to put the page back: \(titles(replaced))")
+        choose("Replace on Page", in: replaced?.items.first?.submenu)
+        _ = await waitUntil("Unchecking it puts the page back") {
+            await self.value(pagePrice, in: menus.page) as? String == "Tickets £66.06, or a box for 1,250.00 GBP."
+        }
 
         // A misspelling: Chromium's spellchecker, its suggestions, and Writing Tools in a field.
         _ = await value("const field = document.querySelector('#field'); field.textContent = ''; field.focus();" +

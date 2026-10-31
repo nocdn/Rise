@@ -16,6 +16,7 @@ import AppKit
         splitBar.navigationCentres = PlainNavBar.Metrics.navigationCentres.dropFirst().map { $0-room }
         splitBar.leadingRoom = room
         splitBar.onOpenAddress = { [weak self] in self?.focusAddress() }
+        splitBar.addressMenu = { [weak self] bar in self?.addressMenu(for: bar) }
         splitBar.isHidden = true
         pageClip.addSubview(splitBar, positioned: .above, relativeTo: navBar)
     }
@@ -76,7 +77,9 @@ import AppKit
     /// A bar shows its page's address, title, zoom and load; another page's colour comes at once,
     /// as last seen, then as it is now.
     func showPageBar(_ bar: PlainNavBar, tab: BrowserTab?, shown: inout UUID?) {
+        let sameTab = shown == tab?.id
         bar.show(url: tab?.url, title: tab?.title ?? "")
+        bar.setReplacedCurrency(currencyReplacement.shownCode(for: tab), animated: sameTab)
         bar.pageZoom = tab?.page.zoom ?? 1
         if shown != tab?.id {
             shown = tab?.id

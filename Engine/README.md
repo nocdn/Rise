@@ -86,6 +86,8 @@ run without a Chromium checkout: `python3 -m unittest discover -s scripts/engine
 | `0028-helium-shortcut-editor.patch` | Helium's shortcut editor, adapted to Rise's registry: shortcut chips, ranked search, explicit recording/Save/Cancel, per-command reset and reset-all confirmation. Upstream source and GPL-3.0 license are in `Engine/third_party/helium` |
 | `0029-ublock-origin-ad-blocking.patch` | Ad blocking is uBlock Origin, loaded from Rise's Resources as a component extension (allowlisted by the id its pinned key gives) and unloaded when Block Ads is off; takes out `0002`'s own request filter, `RCAdBlockUseEngine` and the embedder URL loader factory hook |
 | `0030-background-tabs-hidden-and-frozen.patch` | Pages start hidden until first in a window, as Chrome's background tabs do (Chromium otherwise keeps a page opened in the background running as if shown); and Chrome's `InfiniteTabsFreezing` is on, as in Helium: background tabs past the five most recently used freeze, waking a few seconds a minute |
+| `0031-attached-page-visibility.patch` | Preserves the checkout's fix that unhides Chromium's native page view when Rise attaches it, while the owning page still controls whether it is shown or hidden |
+| `0032-context-menu-downloads.patch` | Implements the formerly empty explicit-download bridge and saves context-menu links, images, audio and video through Chromium's downloader, retaining the clicked document's credentials, referrer policy and blob storage; stale menus cannot save from a later document |
 
 `0002` is exported from the fork's tree with `git diff HEAD` over `base` and `chrome`, less the
 paths the other patches and `brand.py` own (see `Engine/fork-plan.md`); new files are added

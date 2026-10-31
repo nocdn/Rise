@@ -7,9 +7,12 @@ import SafariServices
 /// tabs in a switcher. Pages that a Peek replaced in a tab are held for Back.
 final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationDelegate, UIGestureRecognizerDelegate {
     static let homeURL = URL(string: "https://news.ycombinator.com/")!
-    // Temporarily hard-disabled: long-press links use WebKit's native action menu.
-    // Keep the complete Peek implementation below for when link previews return.
+    // The legacy custom Peek sheet stays disabled. Long-press links now use a
+    // live preview inside WebKit's native context menu instead.
     static let longPressPeekEnabled = false
+    private(set) var linkPreview: LinkPreviewController?
+    private weak var linkPreviewSource: WKWebView?
+    private(set) var isLinkContextMenuOpen = false
     let githubStarrer = MobileGitHubStarrer()
     /// One toast at a time, over the page and under the bottom bar.
     var toast: Toast?
@@ -274,7 +277,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     private func applySharedTabs(_ incoming: [SharedBrowserTab]) {
         guard isViewLoaded, !isSwipingToTabs, !isTabSwitcherOpen, tabSwitcher.isHidden,
-              summarise == nil, !isPanelOpen, !isVideoContextMenuOpen, presentedViewController == nil else {
+              summarise == nil, !isPanelOpen, !isVideoContextMenuOpen, !isLinkContextMenuOpen, presentedViewController == nil else {
             hasPendingSharedTabs = true; return
         }
         isApplyingSharedTabs = true
@@ -406,8 +409,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         webView.uiDelegate = self
         webView.navigationDelegate = self
         webView.allowsBackForwardNavigationGestures = true
-        // WebKit also gates its native link actions on this property. The delegate
-        // below hard-disables our Peek preview provider while retaining those actions.
+        // Native link menus supply their own live, interactive preview below.
         webView.allowsLinkPreview = true
         #if DEBUG
         webView.isInspectable = true
@@ -454,6 +456,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     func webView(_ webView: WKWebView, contextMenuConfigurationForElement elementInfo: WKContextMenuElementInfo,
                  completionHandler: @escaping @MainActor @Sendable (UIContextMenuConfiguration?) -> Void) {
+        if !ImageContextMenus.hasImage(in: webView), let url = elementInfo.linkURL, Self.canPeek(url) {
+            completionHandler(linkPreviewConfiguration(for: url, in: webView))
+            return
+        }
         guard Self.longPressPeekEnabled, !ImageContextMenus.hasImage(in: webView), allowsPeek, let url = elementInfo.linkURL, Self.canPeek(url) else {
             // Keep WebKit's suggested actions for images, external schemes, and links inside Peek.
             completionHandler(UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { actions in
@@ -472,6 +478,17 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         ["http", "https"].contains(url.scheme?.lowercased() ?? "") && url.host != nil
     }
 
+    func linkPreviewConfiguration(for url: URL, in source: WKWebView) -> UIContextMenuConfiguration {
+        linkPreview?.stop()
+        let preview = LinkPreviewController(url: url, source: source, blocker: blocker(for: source), videoPlayback: videoPlayback)
+        linkPreview = preview; linkPreviewSource = source
+        InteractiveLinkMenu.setEnabled(true, in: source)
+        return UIContextMenuConfiguration(identifier: "Rise.LinkPreview.\(UUID())" as NSString, previewProvider: { preview }) { [weak self, weak source] actions in
+            guard let self, let source else { return UIMenu(children: actions) }
+            return self.nativeLinkMenu(in: source, url: url, actions: actions)
+        }
+    }
+
     func webView(_ webView: WKWebView, willPresentEditMenuWithAnimator animator: any UIEditMenuInteractionAnimating) {
         SelectionTimeMenu.willPresent(in: webView)
     }
@@ -481,13 +498,35 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
 
     func webView(_ webView: WKWebView, contextMenuWillPresentForElement elementInfo: WKContextMenuElementInfo) {
+        beginLinkContextMenu(in: webView)
+    }
+    func beginLinkContextMenu(in webView: WKWebView) {
+        isLinkContextMenuOpen = true
         ImageContextMenus.setPresented(true, in: webView)
         githubRepositoryMenu?.willPresent(in: webView)
     }
 
+    func webView(_ source: WKWebView, contextMenuForElement elementInfo: WKContextMenuElementInfo,
+                 willCommitWithAnimator animator: any UIContextMenuInteractionCommitAnimating) {
+        guard let preview = linkPreview, source === linkPreviewSource else { return }
+        preview.prepareToOpen()
+        animator.preferredCommitStyle = .pop
+        animator.addCompletion { [weak self, preview, weak source] in
+            guard let self, source === webView else { preview.cancelOpening(); return }
+            adopt(preview.page)
+        }
+    }
+
     func webView(_ webView: WKWebView, contextMenuDidEndForElement elementInfo: WKContextMenuElementInfo) {
+        endLinkContextMenu(in: webView)
+    }
+    func endLinkContextMenu(in webView: WKWebView) {
+        isLinkContextMenuOpen = false
+        InteractiveLinkMenu.setEnabled(false, in: webView)
+        if webView === linkPreviewSource { linkPreview?.stop(); linkPreview = nil; linkPreviewSource = nil }
         ImageContextMenus.setPresented(false, in: webView)
         githubRepositoryMenu?.cancel(); githubRepositoryMenu = nil
+        applyPendingChanges()
     }
 
     func showPeek(_ url: URL) {

@@ -23,7 +23,7 @@ import WebKit
         return UIMenu(identifier: Self.sectionIdentifier,options: .displayInline,children: [action()])
     }
     func action() -> UIAction {
-        guard let browser else { return UIAction(title: "Repository unavailable",attributes: .disabled) { _ in } }
+        guard let browser else { return UIAction(title: "Repo unavailable",attributes: .disabled) { _ in } }
         let image = UIImage(named: "GitHubStarMenu")
         let result: UIAction
         switch status {
@@ -37,7 +37,7 @@ import WebKit
         case .signedOut?:
             result = UIAction(title: "Sign in to GitHub to star",image: image,identifier: Self.identifier,attributes: .disabled) { _ in }
         case .notFound?:
-            result = UIAction(title: "Repository unavailable",image: image,identifier: Self.identifier,attributes: .disabled) { _ in }
+            result = UIAction(title: "Repo unavailable",image: image,identifier: Self.identifier,attributes: .disabled) { _ in }
         case .failed?, .cancelled?:
             result = UIAction(title: "Retry checking status",image: image,identifier: Self.identifier,attributes: .keepsMenuPresented) { [weak self] _ in
                 self?.start(); self?.refresh()
@@ -76,13 +76,9 @@ import WebKit
                 return (child as? UIMenu).map(update) ?? child
             })
         }
-        func visit(_ view: UIView) {
-            for interaction in view.interactions.compactMap({ $0 as? UIContextMenuInteraction }) {
-                NativeMenuLoading.withoutAnimation { interaction.updateVisibleMenu(update) }
-            }
-            view.subviews.forEach(visit)
+        for interaction in InteractiveLinkMenu.interactions(in: page) {
+            NativeMenuLoading.withoutAnimation { interaction.updateVisibleMenu(update) }
         }
-        visit(page)
     }
     func cancel() {
         cancelled = true; isPresented = false; lookup?.cancel(); lookup = nil

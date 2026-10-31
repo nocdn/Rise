@@ -43,6 +43,8 @@ import AppKit
                              (navBar.copyButton, "copyURL"), (splitBar.copyButton, "copyURL")] as [(ChromeButton, String)] {
             button.hoverHint?.setShortcut(shortcut(id))
         }
+        permissionCoordinator.panel.setShortcuts(allow: shortcut("allowPermission"), deny: shortcut("denyPermission"))
+        (extensionWindow as? ExtensionWindow)?.refreshButtons()
         for buttons in [Array(toolbarButtons.dropFirst()), splitBarButtons] {
             buttons[0].hoverHint?.setShortcut(shortcut("goBack"))
             buttons[1].hoverHint?.setShortcut(shortcut("goForward"))

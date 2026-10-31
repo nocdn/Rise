@@ -26,6 +26,8 @@ import RiseCore
     /// The tab whose page opened this one in a new tab and brought the user here. Back, once
     /// this tab's own history runs out, closes it and returns there.
     var returnsTo: UUID?
+    /// The currency Replace on Page has its page's prices in, and how many it replaced.
+    var replacedCurrency: (code: String, count: Int)?
     /// Whether the page is making sound.
     var isPlayingAudio: Bool { page.isPlayingAudio }
     /// The page keeps playing, but without sound.

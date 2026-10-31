@@ -1,0 +1,93 @@
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -145,8 +145,10 @@
+ #include "content/public/browser/navigation_handle.h"
+ #include "content/public/browser/render_frame_host.h"
+ #include "content/public/browser/render_widget_host_view.h"
++#include "content/public/browser/weak_document_ptr.h"
+ #include "content/public/browser/web_contents.h"
+ #include "content/public/browser/web_contents_observer.h"
++#include "content/public/common/referrer.h"
+ #include "content/public/common/isolated_world_ids.h"
+ #include "skia/ext/skia_utils_mac.h"
+ #include "third_party/blink/public/common/page/page_zoom.h"
+@@ -2387,7 +2389,22 @@
+ - (BOOL)isAudioMuted {
+   return _contents && _contents->IsAudioMuted();
+ }
+-- (void)downloadURL:(NSURL*)url {}
++- (void)downloadURL:(NSURL*)url {
++  content::RenderFrameHost* frame =
++      _contents ? _contents->GetPrimaryMainFrame() : nullptr;
++  const GURL target(base::SysNSStringToUTF8(url.absoluteString));
++  if (!frame || !frame->IsActive() || !target.is_valid()) {
++    return;
++  }
++  // Save through Chromium, not a separate network session: its download target
++  // hook calls Rise's delegate, which supplies Downloads and starts the flight.
++  const content::Referrer referrer = content::Referrer::SanitizeForRequest(
++      target, content::Referrer(frame->GetLastCommittedURL().GetAsReferrer(),
++                               network::mojom::ReferrerPolicy::kDefault));
++  _contents->SaveFrameWithHeaders(target, referrer, std::string(),
++                                 std::u16string(), frame,
++                                 /*is_subresource=*/true);
++}
+ 
+ - (void)evaluateFunctionBody:(NSString*)functionBody
+                    arguments:(NSDictionary<NSString*, id>*)arguments
+@@ -3264,6 +3281,9 @@
+ 
+ @implementation RCContextMenu {
+   content::GlobalRenderFrameHostId _frame;
++  content::WeakDocumentPtr _downloadDocument;
++  content::Referrer _downloadReferrer;
++  std::u16string _downloadName;
+   __weak RCBrowserView* _view;
+   int _x;
+   int _y;
+@@ -3287,6 +3307,10 @@
+     return nil;
+   }
+   _frame = frame->GetGlobalId();
++  _downloadDocument = frame->GetWeakDocumentPtr();
++  _downloadReferrer = content::Referrer(params.frame_url.GetAsReferrer(),
++                                        params.referrer_policy);
++  _downloadName = params.suggested_filename;
+   _view = view;
+   _extensionEntries = std::make_shared<ExtensionEntries>(frame, params);
+   _x = params.x;
+@@ -3389,6 +3413,22 @@
+                                  base::SysNSStringToUTF16(_misspelledWord));
+   }
+ }
++- (void)downloadURL:(NSURL*)url {
++  content::WebContents* contents = [self contents];
++  content::RenderFrameHost* frame =
++      _downloadDocument.AsRenderFrameHostIfValid();
++  const GURL target(base::SysNSStringToUTF8(url.absoluteString));
++  if (!contents || !frame || !frame->IsActive() || !target.is_valid() ||
++      content::WebContents::FromRenderFrameHost(frame) != contents) {
++    return;
++  }
++  // As Chrome's Save Video/Image As: preserve the clicked document's cookies,
++  // referrer policy, storage partition and blob access, including in iframes.
++  // A retained menu must not download in a later document's security context.
++  contents->SaveFrameWithHeaders(
++      target, content::Referrer::SanitizeForRequest(target, _downloadReferrer),
++      std::string(), _downloadName, frame, /*is_subresource=*/true);
++}
+ - (void)copyImage {
+   if (content::RenderFrameHost* frame =
+           content::RenderFrameHost::FromID(_frame)) {
+--- a/chrome/browser/rise/RiseChromium.h
++++ b/chrome/browser/rise/RiseChromium.h
+@@ -189,6 +189,9 @@
+ /// Adds the misspelled word to the spelling dictionary.
+ - (void)learnMisspelledWord;
+ - (void)copyImage;
++/// Saves a link or media source in the clicked document's context. Does nothing
++/// once that document has navigated away or closed.
++- (void)downloadURL:(NSURL *)url NS_SWIFT_NAME(download(_:));
+ /// Shows the dictionary's definition of the selection, at it.
+ - (void)lookUp;
+ /// Has the page's DevTools select the element clicked, once they're attached if they aren't yet.

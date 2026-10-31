@@ -15,11 +15,9 @@ import RiseCore
         /// Where the text's ink starts, 2 pt past its label's own edge.
         static let textX: CGFloat = 147, textInset: CGFloat = 2
         static let fieldX: CGFloat = 139.5, fieldHeight: CGFloat = 28.5, fieldRadius: CGFloat = 6
-        /// The field's buttons: 27 by 24, 2.25 pt in from the field's top, bottom and end, and
-        /// 1 pt apart.
-        static let fieldButtonStride: CGFloat = 28, fieldButtonInset: CGFloat = 15.75
-        /// The pinned extensions, the last centred as far in from the bar's end as the sidebar
-        /// button is from its start; the field ends this far before the first's centre.
+        /// The page's buttons, then the pinned extensions, in one row at the bar's end, 28 pt
+        /// square: the last centred as far in from the bar's end as the sidebar button is from
+        /// its start; the field ends this far before the first's centre.
         static let extensionStride: CGFloat = 29.5, extensionInset: CGFloat = 19.5, fieldEndGap: CGFloat = 18.5
         static let font = NSFont.systemFont(ofSize: 12.5)
     }
@@ -180,13 +178,16 @@ import RiseCore
         return path
     }
     let text = PlainNavBarText(labelWithString: "")
-    /// The field's buttons, which give way to developer mode's.
+    /// The page's buttons, left of the pinned extensions, which give way to developer mode's.
     private let addressHost = ContentHost()
     let copyButton: SidebarCopyButton
     let settingsButton: SidebarHoverButton, zoomButton: SidebarHoverButton
     /// What the page is asking to use, left of the site controls while it asks, or of developer
     /// mode's buttons while its bar shows; its prompt comes out of it.
     let permissionButton: SidebarHoverButton
+    /// Right of the copy button while Replace on Page has the page's prices in another currency,
+    /// shown as the permission icon is, hovered or not; its panel comes out of it.
+    let currencyButton: SidebarHoverButton
     /// Where developer mode's buttons start while its bar shows here.
     var developerControlsMinX: CGFloat? { didSet { if developerControlsMinX != oldValue { needsLayout = true } } }
     var onOpenAddress: (() -> Void)?
@@ -206,6 +207,29 @@ import RiseCore
     }
     /// A newly asked-for icon grows into its place, once laid out there, as it fades in.
     private var popsPermission = false
+    /// The currency Replace on Page has the page's prices in, nil while they're the page's own.
+    var replacedCurrency: String? { replacedCurrencyCode }
+    private var replacedCurrencyCode: String?
+    /// Shows `code`'s icon, or takes it away; growing in and shrinking away, unless the bar is
+    /// changing pages, when it just comes or goes with the rest.
+    func setReplacedCurrency(_ code: String?, animated: Bool) {
+        let old = replacedCurrencyCode
+        guard code != old else { return }
+        replacedCurrencyCode = code
+        if let code { currencyButton.setHoverHint("Prices in \(code)"); currencyButton.setAccessibilityLabel("Prices in \(code)") }
+        popsCurrency = animated && old == nil && code != nil
+        if code != nil { stopCurrencyLeaving() }
+        else if animated { currencyLeaving = leave(currencyButton) { [weak self] in
+            guard let self, self.currencyLeaving else { return }
+            self.stopCurrencyLeaving(); self.needsLayout = true; self.updateFieldControls(animated: false)
+        } }
+        needsLayout = true; updateFieldControls(animated: animated)
+    }
+    private var popsCurrency = false, currencyLeaving = false
+    private func stopCurrencyLeaving() {
+        currencyLeaving = false
+        currencyButton.layer?.removeAnimation(forKey: Self.leaveKey)
+    }
     enum PermissionMotion {
         /// From this size, on a quick spring that barely overshoots; the prompt comes out of it
         /// `promptDelay` in, as it nears its size.
@@ -217,10 +241,15 @@ import RiseCore
     private var permissionLeaving = false
     private static let leaveKey = "Rise.PermissionLeave"
     private func permissionLeaves() {
-        let button = permissionButton
+        permissionLeaving = leave(permissionButton) { [weak self] in
+            guard let self, self.permissionLeaving else { return }
+            self.stopPermissionLeaving(); self.needsLayout = true; self.updateFieldControls(animated: false)
+        }
+    }
+    /// Shrinks `button` as it fades, quickly; `done` once it has gone. Whether it's going at all.
+    private func leave(_ button: ChromeButton, then done: @escaping () -> Void) -> Bool {
         guard window != nil, !button.isHidden, button.alphaValue > 0, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
-              let layer = button.layer else { return }
-        permissionLeaving = true
+              let layer = button.layer else { return false }
         let middle = CGPoint(x: button.bounds.midX, y: button.bounds.midY), scale = PermissionMotion.scale
         let shrink = CABasicAnimation(keyPath: "transform"); shrink.fromValue = CATransform3DIdentity
         shrink.toValue = CATransform3DTranslate(CATransform3DScale(CATransform3DMakeTranslation(middle.x, middle.y, 0), scale, scale, 1), -middle.x, -middle.y, 0)
@@ -229,21 +258,17 @@ import RiseCore
         group.duration = PermissionMotion.leaveDuration; group.timingFunction = CAMediaTimingFunction(controlPoints: 0.4, 0, 0.8, 0.6)
         group.fillMode = .forwards; group.isRemovedOnCompletion = false
         CATransaction.begin()
-        CATransaction.setCompletionBlock { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self, self.permissionLeaving else { return }
-                self.stopPermissionLeaving(); self.needsLayout = true; self.updateFieldControls(animated: false)
-            }
-        }
+        CATransaction.setCompletionBlock { MainActor.assumeIsolated { done() } }
         layer.add(group, forKey: Self.leaveKey)
         CATransaction.commit()
+        return true
     }
     private func stopPermissionLeaving() {
         permissionLeaving = false
         permissionButton.layer?.removeAnimation(forKey: Self.leaveKey)
     }
-    private func popPermissionIn() {
-        let button = permissionButton
+    /// Grows `button` into its place on a quick spring that barely overshoots, as it fades in.
+    private func popIn(_ button: ChromeButton) {
         guard window != nil, !button.isHidden, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, let layer = button.layer else { return }
         let middle = CGPoint(x: button.bounds.midX, y: button.bounds.midY), scale = PermissionMotion.scale
         let grow = CASpringAnimation(keyPath: "transform")
@@ -282,7 +307,8 @@ import RiseCore
     var pageZoom: CGFloat = 1 { didSet { if pageZoom != oldValue { needsLayout = true; updateFieldControls(animated: true) } } }
     var showsZoom: Bool { url != nil && !PageZoom.isActual(pageZoom) }
 
-    init(copy: @escaping () -> Void, settings: @escaping () -> Void, zoom: @escaping () -> Void, permission: @escaping () -> Void = {}) {
+    init(copy: @escaping () -> Void, settings: @escaping () -> Void, zoom: @escaping () -> Void, permission: @escaping () -> Void = {},
+         currency: @escaping () -> Void = {}) {
         copyButton = SidebarCopyButton(action: copy)
         settingsButton = SidebarHoverButton(symbol: "slider.horizontal.3", size: 14, title: "Site controls", action: settings)
         settingsButton.setHoverHint("Site controls")
@@ -290,6 +316,8 @@ import RiseCore
         zoomButton = SidebarHoverButton(symbol: "plus.magnifyingglass", size: 14, title: "Zoom", action: zoom)
         zoomButton.image = TablerIcon.image(TablerIcon.zoomIn, size: 16, description: "Zoom")
         permissionButton = SidebarHoverButton(symbol: "camera", size: 14, title: "Permission request", action: permission)
+        currencyButton = SidebarHoverButton(symbol: "dollarsign.circle", size: 14, title: "Prices replaced", action: currency)
+        currencyButton.image = TablerIcon.coinsImage(size: 16)
         super.init(frame: .zero)
         wantsLayer = true
         field.cornerRadius = Metrics.fieldRadius; field.cornerCurve = .continuous; field.opacity = 0
@@ -301,6 +329,7 @@ import RiseCore
         for button in fieldControls { addressHost.addSubview(button); button.alphaValue = 0 }
         // Over the field, so it stays while developer mode's bar takes the field's place.
         addSubview(permissionButton); permissionButton.alphaValue = 0
+        addSubview(currencyButton); currencyButton.alphaValue = 0
         setColor(.white, animated: false)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -311,6 +340,8 @@ import RiseCore
         guard url != self.url || title != self.title else { return }
         if url != self.url { hideNotice() }
         self.url = url; self.title = title
+        // Read the full address through accessibility without opening the palette or copying it.
+        copyButton.setAccessibilityValue(url?.absoluteString ?? "")
         updateText(); updateFieldControls(animated: false); needsLayout = true
     }
 
@@ -337,7 +368,7 @@ import RiseCore
         hairline.backgroundColor = ink.hairline.cgColor; field.backgroundColor = ink.field.cgColor
         CATransaction.commit()
         // The buttons that stay over developer mode's bar take its ink.
-        let staying: [ChromeButton] = navigation + extensionButtons + [permissionButton], field: [ChromeButton] = fieldControls
+        let staying: [ChromeButton] = navigation + extensionButtons + [permissionButton, currencyButton], field: [ChromeButton] = fieldControls
         for (buttons, ink) in [(staying, shownInk), (field, ink)] {
             for button in buttons {
                 if button.contentTintColor != ink.strong { button.contentTintColor = ink.strong }
@@ -372,21 +403,28 @@ import RiseCore
         if !text.attributedStringValue.isEqual(to: shown) { text.attributedStringValue = shown }
     }
 
-    /// Where the field ends: before the first pinned extension.
+    /// Where the field ends: before the row of the page's buttons and the pinned extensions.
     private var fieldMaxX: CGFloat {
-        guard !extensionButtons.isEmpty else { return bounds.width-12 }
-        return extensionCentre(0)-Metrics.fieldEndGap
+        guard rowCount > 0 else { return bounds.width-12 }
+        return rowCentre(0)-Metrics.fieldEndGap
     }
-    private func extensionCentre(_ index: Int) -> CGFloat {
-        bounds.width-Metrics.extensionInset-Metrics.extensionStride*CGFloat(extensionButtons.count-1-index)
+    private var rowCount: Int { pageButtons.count+extensionButtons.count }
+    private func rowCentre(_ index: Int) -> CGFloat {
+        bounds.width-Metrics.extensionInset-Metrics.extensionStride*CGFloat(rowCount-1-index)
     }
+    private func extensionCentre(_ index: Int) -> CGFloat { rowCentre(pageButtons.count+index) }
     var fieldRect: NSRect {
         NSRect(x: Metrics.fieldX-leadingRoom, y: Metrics.midY-Metrics.fieldHeight/2, width: max(0, fieldMaxX-Metrics.fieldX+leadingRoom), height: Metrics.fieldHeight)
     }
     private var fieldControls: [SidebarHoverButton] { [zoomButton, copyButton, settingsButton] }
     private var showsPermission: Bool { url != nil && (requestedPermission != nil || permissionLeaving) }
-    private var fieldButtons: [SidebarHoverButton] {
-        (showsZoom ? [zoomButton] : []) + (showsPermission ? [permissionButton] : []) + [settingsButton, copyButton]
+    private var showsCurrency: Bool { url != nil && (replacedCurrencyCode != nil || currencyLeaving) }
+    /// The page's buttons, as the extensions' are: what it's zoomed to and asking for while it
+    /// is, its controls and its address's copy, for any page with an address.
+    private var pageButtons: [SidebarHoverButton] {
+        guard url != nil else { return [] }
+        return (showsZoom ? [zoomButton] : []) + (showsPermission ? [permissionButton] : []) + [settingsButton, copyButton]
+            + (showsCurrency ? [currencyButton] : [])
     }
 
     override func layout() {
@@ -401,21 +439,21 @@ import RiseCore
         for (button, centre) in zip(navigation, navigationCentres) {
             button.frame = NSRect(x: centre-14, y: mid-14, width: 28, height: 28)
         }
-        for (index, button) in extensionButtons.enumerated() {
-            button.frame = NSRect(x: extensionCentre(index)-14, y: mid-14, width: 28, height: 28)
+        layoutExtensions()
+        for (index, button) in pageButtons.enumerated() {
+            button.frame = NSRect(x: rowCentre(index)-14, y: mid-14, width: 28, height: 28)
         }
-        let buttons = fieldButtons, end = fieldRect.maxX-Metrics.fieldButtonInset
-        for (index, button) in buttons.enumerated() {
-            let centre = end-Metrics.fieldButtonStride*CGFloat(buttons.count-1-index)
-            button.frame = NSRect(x: centre-13.5, y: mid-12, width: 27, height: 24)
-        }
-        zoomButton.isHidden = !showsZoom; permissionButton.isHidden = !showsPermission
+        zoomButton.isHidden = !showsZoom; permissionButton.isHidden = !showsPermission; currencyButton.isHidden = !showsCurrency
         if developerProgress > 0.5, let start = developerControlsMinX {
-            permissionButton.frame = NSRect(x: start-8-27, y: mid-12, width: 27, height: 24)
+            // Leftwards from developer mode's buttons, the prices' icon nearest them.
+            let staying = (showsPermission ? [permissionButton] : []) + (showsCurrency ? [currencyButton] : [])
+            for (index, button) in staying.reversed().enumerated() {
+                button.frame = NSRect(x: start-8-28-Metrics.extensionStride*CGFloat(index), y: mid-14, width: 28, height: 28)
+            }
         }
-        if popsPermission { popsPermission = false; popPermissionIn() }
-        // The text runs to the field's buttons while they show, and to its end otherwise.
-        let textEnd = isHovered || showsZoom || showsPermission ? (buttons.first?.frame.minX ?? fieldRect.maxX)-4 : fieldRect.maxX-8
+        if popsPermission { popsPermission = false; popIn(permissionButton) }
+        if popsCurrency { popsCurrency = false; popIn(currencyButton) }
+        let textEnd = fieldRect.maxX-8
         let line = ceil(text.intrinsicContentSize.height)
         let textX = Metrics.textX-Metrics.textInset-leadingRoom
         text.frame = NSRect(x: textX, y: round((mid-line/2)*2)/2, width: max(0, textEnd-textX), height: line)
@@ -473,7 +511,7 @@ import RiseCore
     private func place(_ notice: BarNotice) {
         let textX = Metrics.textX-leadingRoom
         let x = textX-1-BarNotice.inkStart
-        let end = fieldButtons.filter { !$0.isHidden }.map(\.frame.minX).min() ?? fieldRect.maxX
+        let end = fieldRect.maxX
         notice.frame = NSRect(x: x, y: 0, width: min(notice.width, max(0, end-8-x)), height: bounds.height)
     }
     private func exchange(_ old: NSView, for new: NSView) {
@@ -538,7 +576,90 @@ import RiseCore
     override func hitTest(_ point: NSPoint) -> NSView? {
         let hit = super.hitTest(point)
         guard developerProgress > 0 else { return hit }
-        return (navigation+extensionButtons+[permissionButton]).contains { hit?.isDescendant(of: $0) == true } ? hit : nil
+        return (navigation+extensionButtons+[permissionButton, currencyButton]).contains { hit?.isDescendant(of: $0) == true } ? hit : nil
+    }
+
+    // MARK: Reordering the pinned extensions
+
+    /// A pinned extension dragged with Control held moves along the row as a pinned tab's tile
+    /// moves in its grid: it stays under the pointer, the others spring aside on the tiles' spring
+    /// without a bounce to make room, with a tick as it crosses each, and let go, it springs into
+    /// its place with the tiles' slight bounce. The new order is kept then.
+    var onReorderExtensions: (([String]) -> Void)?
+    var crossingClick: () -> Void = { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
+    /// The extension in hand: where the pointer holds it from its left edge, and where that is.
+    private var heldExtension: (button: SidebarExtensionButton, grab: CGFloat, x: CGFloat)?
+    var isDraggingExtension: Bool { heldExtension != nil }
+    /// Extensions on their way to their places, by their left edges.
+    private var extensionMotion: [ObjectIdentifier: MotionSpring] = [:]
+    private var extensionLink: CADisplayLink?, extensionTick: CFTimeInterval?
+    private func layoutExtensions() {
+        let mid = Metrics.midY
+        for (index, button) in extensionButtons.enumerated() {
+            let place = extensionCentre(index)-14, key = ObjectIdentifier(button)
+            var x = place
+            if let held = heldExtension, held.button === button { x = held.x }
+            else if var spring = extensionMotion[key] { spring.target = place; extensionMotion[key] = spring; x = spring.value }
+            button.frame = NSRect(x: x, y: mid-14, width: 28, height: 28)
+        }
+    }
+    func beginExtensionDrag(_ button: SidebarExtensionButton, event: NSEvent) {
+        guard heldExtension == nil, extensionButtons.contains(button) else { return }
+        let x = convert(event.locationInWindow, from: nil).x
+        // Picked up again on its way into its place, it goes on from where it's shown.
+        extensionMotion[ObjectIdentifier(button)] = nil
+        heldExtension = (button, x-button.frame.minX, button.frame.minX)
+        button.holdsHover = true; button.layer?.zPosition = 1
+    }
+    func moveExtensionDrag(_ event: NSEvent) {
+        guard var held = heldExtension, let index = extensionButtons.firstIndex(of: held.button) else { return }
+        let first = extensionCentre(0)-14, last = extensionCentre(extensionButtons.count-1)-14
+        held.x = min(max(convert(event.locationInWindow, from: nil).x-held.grab, first), last)
+        heldExtension = held
+        let slot = min(extensionButtons.count-1, max(0, Int(((held.x-first)/Metrics.extensionStride).rounded())))
+        if slot != index {
+            var order = extensionButtons
+            order.remove(at: index); order.insert(held.button, at: slot)
+            for button in extensionButtons where button !== held.button { spring(button, bouncy: false) }
+            extensionButtons = order
+            crossingClick()
+        }
+        needsLayout = true; layoutSubtreeIfNeeded()
+    }
+    func endExtensionDrag() {
+        guard let held = heldExtension else { return }
+        heldExtension = nil
+        held.button.holdsHover = false
+        spring(held.button, bouncy: true)
+        needsLayout = true; layoutSubtreeIfNeeded()
+        onReorderExtensions?(extensionButtons.map(\.extensionID))
+    }
+    /// From where `button` is now to its place, on the pinned tiles' spring.
+    private func spring(_ button: SidebarExtensionButton, bouncy: Bool) {
+        let key = ObjectIdentifier(button)
+        guard extensionMotion[key] == nil, window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+            if extensionMotion[key] == nil { button.layer?.zPosition = 0 }
+            return
+        }
+        var spring = MotionSpring(button.frame.minX)
+        spring.configure(response: PinnedLayout.response, bounce: bouncy ? PinnedLayout.bounce : 0)
+        extensionMotion[key] = spring
+        guard extensionLink == nil else { return }
+        extensionTick = CACurrentMediaTime()
+        let link = displayLink(target: self, selector: #selector(stepExtensions(_:)))
+        link.add(to: .main, forMode: .common); extensionLink = link
+    }
+    @objc private func stepExtensions(_ link: CADisplayLink) {
+        let now = CACurrentMediaTime(), dt = min(0.05, now-(extensionTick ?? now)); extensionTick = now
+        for (key, var spring) in extensionMotion {
+            spring.step(dt)
+            extensionMotion[key] = spring.isResting(within: 0.05) ? nil : spring
+        }
+        for button in extensionButtons where extensionMotion[ObjectIdentifier(button)] == nil && heldExtension?.button !== button {
+            button.layer?.zPosition = 0
+        }
+        needsLayout = true; layoutSubtreeIfNeeded()
+        if extensionMotion.isEmpty { extensionLink?.invalidate(); extensionLink = nil; extensionTick = nil }
     }
 
     // MARK: Hovering the address
@@ -548,7 +669,16 @@ import RiseCore
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self))
     }
     override func mouseMoved(with event: NSEvent) {
-        setHovered(fieldRect.contains(convert(event.locationInWindow, from: nil)) && isFrontmost(at: event.locationInWindow))
+        setHovered(hoverArea(contains: convert(event.locationInWindow, from: nil)) && isFrontmost(at: event.locationInWindow))
+    }
+    /// The address, and the page's buttons out past its end to the copy button, which show
+    /// while the pointer's on either and fade as it leaves, as they did in the field.
+    private func hoverArea(contains point: NSPoint) -> Bool {
+        if fieldRect.contains(point) { return true }
+        // Up to the copy button, or the prices' icon past it, which shows them as hovering them does.
+        let end = showsCurrency ? max(copyButton.frame.maxX, currencyButton.frame.maxX) : copyButton.frame.maxX
+        guard url != nil, end > fieldRect.maxX else { return false }
+        return NSRect(x: fieldRect.maxX, y: 0, width: end-fieldRect.maxX, height: bounds.height).contains(point)
     }
     override func mouseEntered(with event: NSEvent) { mouseMoved(with: event) }
     override func mouseExited(with event: NSEvent) { setHovered(false) }
@@ -561,7 +691,7 @@ import RiseCore
             // The pointer may have left while the popover covered the bar.
             if !holdsHover, let window {
                 let point = window.mouseLocationOutsideOfEventStream
-                pointerHovered = fieldRect.contains(convert(point, from: nil)) && isFrontmost(at: point)
+                pointerHovered = hoverArea(contains: convert(point, from: nil)) && isFrontmost(at: point)
             }
             setHovered(pointerHovered)
         }
@@ -576,10 +706,11 @@ import RiseCore
         updateText(); updateFieldControls(animated: true); needsLayout = true
     }
     private func updateFieldControls(animated: Bool) {
-        for button in fieldControls + [permissionButton] {
-            let on = url != nil && (isHovered || (button === zoomButton && showsZoom) || (button === permissionButton && showsPermission))
+        for button in fieldControls + [permissionButton, currencyButton] {
+            let on = url != nil && (isHovered && button !== currencyButton || (button === zoomButton && showsZoom)
+                || (button === permissionButton && showsPermission) || (button === currencyButton && showsCurrency))
             // A leaving icon shows until it has gone, but can't be pressed.
-            button.allowsInteraction = on && !(button === permissionButton && permissionLeaving)
+            button.allowsInteraction = on && !(button === permissionButton && permissionLeaving) && !(button === currencyButton && currencyLeaving)
             let target: CGFloat = on ? 1 : 0
             guard button.alphaValue != target else { continue }
             if animated, window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
@@ -601,9 +732,16 @@ import RiseCore
         layer.add(fade, forKey: "fade")
     }
     /// The address opens the address panel, as ⌘L does; the rest of the bar moves the window, as
-    /// a title bar would.
+    /// a title bar would. A Control-click on the address is a right-click.
     override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control), let menu = menu(for: event) { NSMenu.popUpContextMenu(menu, with: event, for: self); return }
         if fieldRect.contains(convert(event.locationInWindow, from: nil)) { onOpenAddress?() } else { window?.performDrag(with: event) }
+    }
+    /// What right-clicking the address offers, for this bar's page.
+    var addressMenu: ((PlainNavBar) -> NSMenu?)?
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard url != nil, developerProgress == 0, fieldRect.contains(convert(event.locationInWindow, from: nil)) else { return nil }
+        return addressMenu?(self)
     }
 }
 

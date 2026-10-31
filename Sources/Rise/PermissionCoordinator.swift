@@ -115,6 +115,10 @@ import UserNotifications
     func layoutPanel() {
         guard let browser, let web = requestingWebView ?? (panel.isHidden ? nil : lastPageView) else { return }
         lastPageView = web
+        Self.place(panel, over: web, in: browser)
+    }
+    /// `panel` over `web`'s page, under its bar, in front of the pages and behind Find, held below an open find panel.
+    static func place(_ panel: PermissionPanel, over web: NSView, in browser: BrowserController) {
         let root = browser.root
         let findBar = browser.selectedFindBar
         if panel.superview !== root {

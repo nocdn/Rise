@@ -84,15 +84,15 @@ import RiseChromium
         actions = RCExtensions.actions.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         let tab = browser.selectedChromiumView
         var next: [SidebarExtensionButton] = []
-        for id in browser.pinnedExtensions {
+        // In the order they show while one is being dragged along the row, which keeps it once let go.
+        let order = browser.navBar.isDraggingExtension ? browser.navBar.extensionButtons.map(\.extensionID) : browser.pinnedExtensions
+        for id in order {
             guard let action = actions.first(where: { $0.extensionID == id }) else { continue }
-            let button = buttons[id] ?? SidebarExtensionButton(extensionID: id) { [weak self] in
-                guard let browser = self?.browser else { return }
-                browser.runExtension(id, anchor: self?.buttons[id])
-            }
+            let button = buttons[id] ?? makeButton(id)
             let title = action.title(forTab: tab)
-            button.show(icon: action.icon(forTab: tab), title: title.isEmpty ? action.name : title, badge: action.badgeText(forTab: tab),
-                        badgeColor: action.badgeColor(forTab: tab), enabled: action.isEnabled(forTab: tab))
+            button.show(icon: action.icon(forTab: tab), title: title.isEmpty ? action.name : title,
+                        shortcut: browser.keyboardShortcuts.bindings("openPinnedExtension\(next.count+1)").first?.display ?? "",
+                        badge: action.badgeText(forTab: tab), badgeColor: action.badgeColor(forTab: tab), enabled: action.isEnabled(forTab: tab))
             button.menu = browser.extensionMenu(for: action)
             button.onHover = { [weak browser] hovering in browser?.warmExtension(id, hovering) }
             next.append(button)
@@ -101,6 +101,20 @@ import RiseChromium
         if browser.navBar.extensionButtons != next { browser.navBar.extensionButtons = next }
         let ids = actions.map(\.extensionID) + ["|"] + browser.pinnedExtensions
         if ids != listed { listed = ids; browser.refreshSiteControls() }
+    }
+
+    private func makeButton(_ id: String) -> SidebarExtensionButton {
+        let button = SidebarExtensionButton(extensionID: id) { [weak self] in
+            guard let browser = self?.browser else { return }
+            browser.runExtension(id, anchor: self?.buttons[id])
+        }
+        button.onDragStart = { [weak self, weak button] event in
+            guard let button else { return }
+            self?.browser?.navBar.beginExtensionDrag(button, event: event)
+        }
+        button.onDragMove = { [weak self] event in self?.browser?.navBar.moveExtensionDrag(event) }
+        button.onDragEnd = { [weak self] in self?.browser?.navBar.endExtensionDrag() }
+        return button
     }
 
     /// Rise's install sheet in place of Chrome's dialog, shown in the window in front.

@@ -1,0 +1,13 @@
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -2057,6 +2057,10 @@
+   page.frame = self.bounds;
+   page.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+   [self addSubview:page];
++  // Made hidden, Chromium hides its view too. Rise shows a page by putting
++  // this view in a window, so the page is hidden only while this view is out
++  // of one or hidden itself, and shows as soon as it's in one.
++  page.hidden = NO;
+   if (_zoom != 1) {
+     self.zoom = _zoom;
+   }
