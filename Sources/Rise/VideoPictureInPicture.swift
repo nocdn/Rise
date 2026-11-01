@@ -28,6 +28,12 @@ import AppKit
     private var current: Session?
     private var departing: [UUID: Session] = [:]
     private var probeID = UUID()
+    /// Rise has left the foreground. The shown tab's video floats until its
+    /// window is back, the way leaving the tab floats it.
+    private var away = false
+    /// A picture of a shown page whose video floated when Rise left, standing in
+    /// for the page in the browser window until the page returns.
+    private var standIn: (view: NSImageView, tabID: UUID)?
     private var endedTask: Task<Void, Never>?
     var reduceMotion: () -> Bool = { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     var sourceTabID: UUID? { current?.tab?.id }
@@ -136,10 +142,12 @@ import AppKit
         let leaving = previousVisible.subtracting(visibleIDs)
         if previousVisible != visibleIDs { probeID = UUID() }
         previousVisible = visibleIDs; dismissed.subtract(visibleIDs); ended.subtract(visibleIDs)
-        for id in visibleIDs { exitNative(id, pause: false) }
+        if let standIn, !visibleIDs.contains(standIn.tabID) { removeStandIn() }
+        // While Rise is away, a shown tab's video stays floating.
+        if !away { for id in visibleIDs { exitNative(id, pause: false) } }
         if let session = current, let tab = session.tab {
             if !allowed(tab) { restore(session, animated: true, pause: false) }
-            else if visibleIDs.contains(tab.id) { restore(session, animated: true, pause: false, returning: true) }
+            else if visibleIDs.contains(tab.id) { if !away { restore(session, animated: true, pause: false, returning: true) } }
             else if session.returning {
                 // Cancel an interrupted return in place. The frozen picture
                 // stays up until the page paints into the window again.
@@ -150,8 +158,18 @@ import AppKit
             }
         }
         let candidates = browser.tabs.filter { leaving.contains($0.id) && !dismissed.contains($0.id) && !floats($0) && allowed($0) }
+        float(candidates, shown: false)
+    }
+
+    /// Floats the first candidate's video: in Rise's own window, or Chromium's
+    /// for encrypted video. A `shown` tab's page leaves a picture behind in the
+    /// browser window while it floats.
+    private func float(_ candidates: [BrowserTab], shown: Bool) {
+        let begin = { [weak self] (tab: BrowserTab, aspect: CGFloat, target: Target) in
+            if shown { self?.floatShown(tab, aspect: aspect, target: target) } else { self?.start(tab, aspect: aspect, target: target) }
+        }
         if let tab = candidates.first(where: { isPlaying($0) && canPaint($0) }), let target = target(tab) {
-            start(tab, aspect: states[tab.id]?.aspect ?? 16.0/9, target: target)
+            begin(tab, states[tab.id]?.aspect ?? 16.0/9, target)
         } else if let tab = candidates.first(where: { isPlaying($0) && nativeFloats[$0.id] == nil }), let target = target(tab) {
             floatNatively(tab, target: target)
         } else if let tab = candidates.first {
@@ -159,13 +177,67 @@ import AppKit
             let token = UUID(); probeID = token
             let url = tab.url
             Self.call("return window.risePictureInPicture?.canFloat() ?? null", in: tab.page) { [weak self, weak tab] value, _ in
-                guard let self, self.probeID == token, let tab, tab.url == url,
-                      self.browser?.tabs.contains(where: { $0 === tab }) == true,
-                      !self.previousVisible.contains(tab.id), !self.dismissed.contains(tab.id), self.allowed(tab),
+                guard let self, self.probeID == token, let tab, tab.url == url, self.stillLeft(tab, shown: shown),
                       let found = value as? [String: Any], let aspect = found["aspect"] as? Double, aspect.isFinite, aspect > 0 else { return }
-                self.start(tab, aspect: CGFloat(aspect), target: Target(key: found["frame"] as? String, info: nil))
+                begin(tab, CGFloat(aspect), Target(key: found["frame"] as? String, info: nil))
             }
         }
+    }
+    /// Whether a tab is still where its video should float from: hidden, or
+    /// still shown while Rise is away.
+    private func stillLeft(_ tab: BrowserTab, shown: Bool) -> Bool {
+        guard let browser, browser.tabs.contains(where: { $0 === tab }), !dismissed.contains(tab.id), !floats(tab), allowed(tab) else { return false }
+        return shown ? away && browser.visibleTabIDs.contains(tab.id) && floatsWhileShown(tab) : !previousVisible.contains(tab.id)
+    }
+    /// A page in fullscreen keeps its video there.
+    private func floatsWhileShown(_ tab: BrowserTab) -> Bool {
+        guard let browser else { return false }
+        return !tab.isInNativeFullscreen && !browser.pageFullscreen.isActive(in: tab.page.view) && browser.peekTab !== tab
+    }
+
+    /// Rise left the foreground. A shown tab playing video with sound floats it
+    /// in Rise's own window, unless a video already floats.
+    func applicationDidLeave() {
+        guard let browser, !away else { return }
+        away = true
+        guard current == nil, nativeFloats.isEmpty else { return }
+        let shown = Set(browser.visibleTabIDs)
+        let candidates = browser.tabs.filter { shown.contains($0.id) && !dismissed.contains($0.id) && allowed($0) && floatsWhileShown($0) }
+        float(candidates, shown: true)
+    }
+    /// The browser window is key again: a shown tab's video goes back into its page.
+    func applicationDidReturn() {
+        guard away, let browser else { return }
+        away = false; probeID = UUID()
+        let shown = Set(browser.visibleTabIDs)
+        for id in shown { exitNative(id, pause: false) }
+        if let session = current, let tab = session.tab, shown.contains(tab.id) {
+            restore(session, animated: true, pause: false, returning: true)
+        } else { removeStandIn() }
+    }
+    /// The page leaves the browser window, so a picture of it is put in its place
+    /// first; it comes from Chromium's GPU process.
+    private func floatShown(_ tab: BrowserTab, aspect: CGFloat, target: Target) {
+        let page = tab.page, bounds = page.view.bounds
+        Task { [weak self, weak tab] in
+            let picture = await page.snapshot(rect: bounds)
+            guard let self, let tab, tab.page === page, self.current == nil, self.nativeFloats.isEmpty, self.stillLeft(tab, shown: true) else { return }
+            self.showStandIn(picture, for: tab)
+            self.start(tab, aspect: aspect, target: target)
+            if !self.floats(tab) { self.removeStandIn() }
+        }
+    }
+    private func showStandIn(_ picture: NSImage?, for tab: BrowserTab) {
+        removeStandIn()
+        guard let picture, let browser, let clip = tab.page.view.superview, clip === browser.pageClip else { return }
+        let view = NSImageView(frame: tab.page.view.frame)
+        view.image = picture; view.imageScaling = .scaleAxesIndependently
+        view.autoresizingMask = tab.page.view.autoresizingMask
+        clip.addSubview(view, positioned: .below, relativeTo: browser.developerBar)
+        standIn = (view, tab.id)
+    }
+    private func removeStandIn() {
+        standIn?.view.removeFromSuperview(); standIn = nil
     }
 
     func receive(_ message: PageMessage) {
@@ -445,6 +517,7 @@ import AppKit
         if tab.page.view.window === session.panel { tab.page.view.removeFromSuperview(); tab.page.view.autoresizingMask = [] }
         guard let browser else { return }
         browser.attachVisiblePages(); browser.layoutChrome()
+        if standIn?.tabID == tab.id { removeStandIn() }
         // Selecting the tab could not focus a page held by the panel.
         // Give it focus now, unless something else has taken it.
         if browser.selectedID == tab.id, browser.peekTab == nil,
@@ -465,6 +538,7 @@ import AppKit
         states.removeValue(forKey: tab.id); frameVideos.removeValue(forKey: tab.id); nativeFloats.removeValue(forKey: tab.id); dismissed.remove(tab.id); ended.remove(tab.id)
         var disposed = false
         if let session = current, session.tab === tab { dispose(session); current = nil; disposed = true }
+        if standIn?.tabID == tab.id { removeStandIn() }
         for session in departing.values.filter({ $0.tab === tab }) { dispose(session); departing.removeValue(forKey: session.id); disposed = true }
         return disposed
     }
@@ -473,7 +547,7 @@ import AppKit
         for id in Array(nativeFloats.keys) { exitNative(id, pause: true) }
         if let current { dispose(current) }
         departing.values.forEach(dispose)
-        current = nil; departing = [:]
+        current = nil; departing = [:]; removeStandIn(); away = false
     }
     private func dispose(_ session: Session) {
         stopPlaybackClock(session)

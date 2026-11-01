@@ -1,0 +1,90 @@
+diff --git a/third_party/devtools-frontend/src/scripts/build/compress_files.js b/third_party/devtools-frontend/src/scripts/build/compress_files.js
+--- a/third_party/devtools-frontend/src/scripts/build/compress_files.js
++++ b/third_party/devtools-frontend/src/scripts/build/compress_files.js
+@@ -90,7 +90,12 @@ async function main(argv) {
+   const fileList = argv[fileListPosition + 1];
+   const fileListContents = await readTextFile(fileList);
+   const files = fileListContents.split(/\s+/).filter(Boolean);
+-  await Promise.all(files.map(filename => filename.trim()).map(compressFile));
++  // Rise: one file at a time. Reading every DevTools file at once and writing a
++  // compressed copy of each beside it looks like ransomware to some Macs'
++  // endpoint security agents, which kill node mid-build.
++  for (const filename of files) {
++    await compressFile(filename.trim());
++  }
+ 
+   const depfileIndex = argv.indexOf('--depfile');
+   if (depfileIndex !== -1 && files.length > 0) {
+diff --git a/third_party/devtools-frontend/src/scripts/build/generate_css_js_files.js b/third_party/devtools-frontend/src/scripts/build/generate_css_js_files.js
+--- a/third_party/devtools-frontend/src/scripts/build/generate_css_js_files.js
++++ b/third_party/devtools-frontend/src/scripts/build/generate_css_js_files.js
+@@ -45,7 +45,8 @@ async function runMain() {
+   const filenames = files.split(',');
+   const isDebug = isDebugString === 'true';
+ 
+-  await Promise.all(filenames.map(async fileName => {
++  // Rise: one file at a time, as in copy-files.js.
++  for (const fileName of filenames) {
+     const contents = await fs.readFile(path.join(srcDir, fileName), {
+       encoding: 'utf8',
+       flag: 'r',
+@@ -60,7 +61,7 @@ async function runMain() {
+     const generatedFileLocation = path.join(targetGenDir, generatedFileName);
+ 
+     await writeIfChanged(generatedFileLocation, newContents);
+-  }));
++  }
+ }
+ 
+ if (import.meta.main) {
+diff --git a/third_party/devtools-frontend/src/scripts/build/ninja/copy-files.js b/third_party/devtools-frontend/src/scripts/build/ninja/copy-files.js
+--- a/third_party/devtools-frontend/src/scripts/build/ninja/copy-files.js
++++ b/third_party/devtools-frontend/src/scripts/build/ninja/copy-files.js
+@@ -8,10 +8,12 @@ import {writeIfChanged} from './write-if-changed.js';
+ 
+ const [, , src, dest, files] = process.argv;
+ 
+-await Promise.all(files.split(',').map(async file => {
++// Rise: one file at a time. Reading a whole batch at once (such as web-vitals'
++// 80 files) gets node killed by some Macs' endpoint security agents mid-build.
++for (const file of files.split(',')) {
+   const srcPath = path.join(src, file);
+   const destPath = path.join(dest, file);
+ 
+   const srcContents = await fs.readFile(srcPath);
+   await writeIfChanged(destPath, srcContents);
+-}));
++}
+diff --git a/third_party/devtools-frontend/src/scripts/build/ninja/minify-json-files.js b/third_party/devtools-frontend/src/scripts/build/ninja/minify-json-files.js
+--- a/third_party/devtools-frontend/src/scripts/build/ninja/minify-json-files.js
++++ b/third_party/devtools-frontend/src/scripts/build/ninja/minify-json-files.js
+@@ -9,7 +9,8 @@ import {writeIfChanged} from './write-if-changed.js';
+ 
+ const [, , dest, ...files] = process.argv;
+ 
+-await Promise.all(files.map(async file => {
++// Rise: one file at a time, as in copy-files.js.
++for (const file of files) {
+   const filename = path.basename(file);
+   const destPath = path.join(dest, filename);
+ 
+@@ -17,4 +18,4 @@ await Promise.all(files.map(async file => {
+   const srcContents = await fs.readFile(file, 'utf-8');
+   const destContents = JSON.stringify(JSON.parse(srcContents));
+   await writeIfChanged(destPath, destContents);
+-}));
++}
+diff --git a/ui/webui/resources/tools/minify_js.js b/ui/webui/resources/tools/minify_js.js
+--- a/ui/webui/resources/tools/minify_js.js
++++ b/ui/webui/resources/tools/minify_js.js
+@@ -90,6 +90,9 @@ async function main() {
+     await writeFile(join(args.out_folder, file), result.code);
+   }
+ 
+-  await Promise.all(inFiles.map(f => minifyFile(f)));
++  // Rise: one file at a time, as DevTools' copy-files.js in Rise's engine.
++  for (const f of inFiles) {
++    await minifyFile(f);
++  }
+ }
+ main();

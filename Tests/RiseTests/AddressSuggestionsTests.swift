@@ -4,6 +4,24 @@ import RiseCore
 @testable import Rise
 
 final class AddressSuggestionsTests: XCTestCase {
+    @MainActor func testBlankPanelRefreshesFromCurrentHabitsAndShowsOnePagePerSite() {
+        let browser = browser(); defer { browser.hidePalette(); clean(browser) }
+        let old = URL(string: "https://old.example/")!, account = URL(string: "https://work.example/account")!
+        let now = Date()
+        for _ in 0..<100 { browser.browsingHistory.record(old, title: "Old habit", at: now.addingTimeInterval(-45*86400)) }
+        for _ in 0..<8 { browser.browsingHistory.record(account, title: "Current account", at: now) }
+        browser.browsingHistory.record(URL(string: "https://www.work.example/other")!, title: "Same site", at: now)
+        browser.showWindow(nil); browser.newTab()
+        XCTAssertEqual(browser.palette.suggestions.first?.url, account)
+        XCTAssertEqual(browser.palette.suggestions.filter { $0.url?.host?.hasSuffix("work.example") == true }.count, 1)
+        browser.hidePalette()
+        let newer = URL(string: "https://newer.example/")!
+        for _ in 0..<12 { browser.browsingHistory.record(newer, title: "A new routine") }
+        browser.newTab()
+        XCTAssertEqual(browser.palette.suggestions.first?.url, newer)
+        XCTAssertFalse(browser.palette.suggestions.contains { ["Wikipedia", "GitHub"].contains($0.title) })
+    }
+
     @MainActor func testALongSearchUsesTheRowsWidthWhileAPageLeavesRoomForItsAddress() throws {
         let browser = browser(); defer { browser.hidePalette(); clean(browser) }
         browser.showWindow(nil); browser.newTab()
@@ -403,7 +421,7 @@ final class AddressSuggestionsTests: XCTestCase {
 
     @MainActor func testCommandUpSelectsTheFirstNormalSuggestionAndKeepsKeyboardOwnershipAfterHover() throws {
         let browser = browser(); defer { browser.hidePalette(); clean(browser) }
-        for index in 0..<8 { browser.browsingHistory.record(URL(string: "https://example.com/\(index)")!, title: "Document \(index)") }
+        for index in 0..<8 { browser.browsingHistory.record(URL(string: "https://document\(index).example.com/")!, title: "Document \(index)") }
         browser.showWindow(nil); browser.newTab()
         let palette = browser.palette, editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
         XCTAssertGreaterThan(palette.suggestions.count, 1)

@@ -175,8 +175,7 @@ import UserNotifications
         switch kind {
         case "status":
             let status = browser.sitePermissions.permission(.notifications, origin: origin)
-            reply(["notifications": status == .allow ? "granted" : status == .block ? "denied" : "default",
-                   "pip": browser.sitePermissions.automaticPictureInPicture(origin: origin)], nil)
+            reply(["notifications": status == .allow ? "granted" : status == .block ? "denied" : "default"], nil)
         case "permission":
             request(in: web, origin: origin, capabilities: [.notifications]) { [weak browser] allowed in
                 reply(allowed ? "granted" : browser?.sitePermissions.permission(.notifications, origin: origin) == .block ? "denied" : "default", nil)
@@ -211,21 +210,9 @@ import UserNotifications
     (() => {
       if (window.riseSiteControls || !window.isSecureContext) return;
       const send = body => riseHandlers.riseSiteControls.postMessage(body);
-      let permission = 'default', pip = true;
-      const refresh = () => send({kind:'status'}).then(value => { permission = value.notifications; pip = value.pip; }).catch(() => {});
-      window.riseSiteControls = { refresh, autoPiP() {
-        if (!pip) return;
-        // Runs when Rise leaves the foreground. Leaving a tab floats its video in
-        // Rise's own player instead, on every site. Rise owns YouTube's player and
-        // its page, so the system's separate picture in picture never starts there.
-        if (/(^|\.)youtube\.com$/.test(location.hostname)) return;
-        // Only video with sound, so muted previews and background loops stay put.
-        const video = [...document.querySelectorAll('video')].find(v => !v.paused && !v.ended && v.readyState >= 2 && !v.muted && v.volume > 0);
-        if (!video) return;
-        try {
-          if (document.pictureInPictureEnabled && !document.pictureInPictureElement) video.requestPictureInPicture().catch(() => {});
-        } catch {}
-      }};
+      let permission = 'default';
+      const refresh = () => send({kind:'status'}).then(value => { permission = value.notifications; }).catch(() => {});
+      window.riseSiteControls = { refresh };
       refresh();
       // Own the page-open API so every request uses the same native site prompt.
       class RiseNotification extends EventTarget {

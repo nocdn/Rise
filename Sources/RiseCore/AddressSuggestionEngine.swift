@@ -39,18 +39,22 @@ public enum AddressSuggestionEngine {
 
     public static func suggestions(for text: String, history: BrowsingHistory, tabs: [AddressSuggestionTab],
                                    currentURL: URL? = nil, editingCurrentAddress: Bool = false,
-                                   searchEngine: SearchEngine = .google, limit: Int = 5) -> [AddressCandidate] {
+                                   searchEngine: SearchEngine = .google, limit: Int = 5, at date: Date = Date()) -> [AddressCandidate] {
         suggestions(for: text, history: history, tabs: tabs, currentURL: currentURL, editingCurrentAddress: editingCurrentAddress,
-                    search: SearchProvider(searchEngine), limit: limit)
+                    search: SearchProvider(searchEngine), limit: limit, at: date)
     }
     public static func suggestions(for text: String, history: BrowsingHistory, tabs: [AddressSuggestionTab],
                                    currentURL: URL? = nil, editingCurrentAddress: Bool = false,
-                                   search: SearchProvider, limit: Int = 5) -> [AddressCandidate] {
+                                   search: SearchProvider, limit: Int = 5, at date: Date = Date()) -> [AddressCandidate] {
+        guard limit > 0 else { return [] }
         let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        var result: [AddressCandidate] = [], seen = Set<String>()
-        let ranked = history.ranked(for: query, limit: limit)
+        var result: [AddressCandidate] = [], seen = Set<String>(), sites = Set<String>()
         func appendSite(title: String, url: URL, learned: Bool = false, fetch: Bool = true, typed: Bool = false, completePath: Bool = false) {
-            guard url.user == nil, url.password == nil, let key = BrowsingHistory.key(url), seen.insert(key).inserted else { return }
+            guard url.user == nil, url.password == nil, let key = BrowsingHistory.key(url), !seen.contains(key) else { return }
+            if query.isEmpty {
+                guard BrowsingHistory.isStartPageDestination(url), let site = BrowsingHistory.suggestionSite(url), sites.insert(site).inserted else { return }
+            }
+            seen.insert(key)
             result.append(AddressCandidate(title: title, subtitle: url.absoluteString, url: url,
                 tabID: openTab(for: url, in: tabs)?.id, completion: learned ? BrowsingHistory.completion(for: query, url: url, includePath: completePath) : nil,
                 fetchFavicon: fetch, isTypedAction: typed))
@@ -60,6 +64,19 @@ public enum AddressSuggestionEngine {
             appendSite(title: openTab(for: url, in: tabs)?.title ?? entry.title, url: url, learned: true, typed: typed, completePath: completePath)
         }
         if editingCurrentAddress, let key = BrowsingHistory.key(currentURL) { seen.insert(key) }
+        if query.isEmpty {
+            history.startPageSuggestions(limit: min(limit, BrowsingHistory.maximumEntries)+1, at: date).forEach { appendHistory($0) }
+            for tab in tabs { if let url = tab.url { appendSite(title: tab.title, url: url) } }
+            // Starter destinations are only for an empty profile, not permanent fixtures
+            // added after the person's own destinations on every opening.
+            if result.isEmpty {
+                for (name, address) in [("Hacker News", "https://news.ycombinator.com"), ("Wikipedia", "https://en.wikipedia.org"), ("GitHub", "https://github.com")] {
+                    appendSite(title: name, url: URL(string: address)!)
+                }
+            }
+            return Array(result.prefix(limit))
+        }
+        let ranked = history.ranked(for: query, limit: limit, at: date)
         // Typing an assistant's name offers Ask even if old prefill links or a frequently visited
         // conversation dominate history. Explicit paths still complete to those conversations.
         let popular = PopularSites.completion(for: query)
@@ -70,7 +87,7 @@ public enum AddressSuggestionEngine {
                 completion: popular?.completed ?? query, isTypedAction: true, isAutofill: true))
         }
         // The site visited most across its pages, or its usual page (`BrowsingHistory.destination`).
-        if !query.isEmpty, let destination = history.destination(for: query) {
+        if let destination = history.destination(for: query, at: date) {
             if let page = destination.page { appendHistory(page, typed: true, completePath: true) }
             else {
                 let site = destination.site, saved = history.entries.first { $0.url == BrowsingHistory.key(site) }
@@ -91,7 +108,6 @@ public enum AddressSuggestionEngine {
                                                url: url, isTypedAction: true))
             } else { appendSite(title: query, url: url, fetch: false, typed: true) }
         }
-        if query.isEmpty { ranked.forEach { appendHistory($0) } }
         let words = query.split(whereSeparator: { $0.isWhitespace }).map(String.init)
         for tab in tabs where words.allSatisfy({ (tab.title+" "+(tab.url?.absoluteString ?? "")).localizedCaseInsensitiveContains($0) }) {
             if let url = tab.url { appendSite(title: tab.title, url: url) }
@@ -100,11 +116,6 @@ public enum AddressSuggestionEngine {
         if !query.isEmpty, query == currentURL?.absoluteString {
             history.ranked(for: "", limit: limit).forEach { appendHistory($0) }
             for tab in tabs { if let url = tab.url { appendSite(title: tab.title, url: url) } }
-        }
-        if query.isEmpty {
-            for (name, address) in [("Hacker News", "https://news.ycombinator.com"), ("Wikipedia", "https://en.wikipedia.org"), ("GitHub", "https://github.com")] {
-                appendSite(title: name, url: URL(string: address)!)
-            }
         }
         return Array(result.prefix(max(0, limit)))
     }

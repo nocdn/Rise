@@ -34,6 +34,17 @@ Mobile saves bounded history and learned searches beside its browser session. On
 actual foreground-tab navigation/SPA URL changes count as visits; title changes do
 not. Preview-only pages have their own delegates and never enter browsing history.
 
+With the input empty, both platforms show current habits rather than lifetime visit-count
+leaders: frequency loses half its weight after a week without use, with a separate recent-use
+boost that halves after two days. Frequency is logarithmic and capped for this list, so an old
+testing session cannot pin a page indefinitely. Choosing an already-open address also refreshes
+its relevance. Saved counts and typed-prefix/path completion keep their existing behaviour.
+The list shows the best actual destination per site, grouping www and HTTP/HTTPS variants while
+keeping different apps/subdomains and ports separate. Search results and authentication handoffs
+are left out of blank-panel shortcuts but remain searchable. Open tabs backfill missing sites;
+the built-in starter links appear only when no personal destinations are available. This reads
+the current history each time the panel opens, including synced visits and persisted learning.
+
 The most frequent/recent literal URL match can complete a stable page path after repeat
 visits, so a regularly used `voxi.co.uk/account` can outrank `voxi.co.uk`. One-off deep
 links and query-bearing URLs still complete only the site until a path is typed.

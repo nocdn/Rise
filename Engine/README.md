@@ -88,6 +88,7 @@ run without a Chromium checkout: `python3 -m unittest discover -s scripts/engine
 | `0030-background-tabs-hidden-and-frozen.patch` | Pages start hidden until first in a window, as Chrome's background tabs do (Chromium otherwise keeps a page opened in the background running as if shown); and Chrome's `InfiniteTabsFreezing` is on, as in Helium: background tabs past the five most recently used freeze, waking a few seconds a minute |
 | `0031-attached-page-visibility.patch` | Preserves the checkout's fix that unhides Chromium's native page view when Rise attaches it, while the owning page still controls whether it is shown or hidden |
 | `0032-context-menu-downloads.patch` | Implements the formerly empty explicit-download bridge and saves context-menu links, images, audio and video through Chromium's downloader, retaining the clicked document's credentials, referrer policy and blob storage; stale menus cannot save from a later document |
+| `0033-node-build-steps-one-file-at-a-time.patch` | Chromium's node build scripts that read a whole batch of files at once work through them one at a time: DevTools' copying, compression, CSS and JSON steps, and WebUI's minifying. Some Macs' endpoint security agents kill `node` mid-build for the burst (web-vitals' 80-file copy was one). Compressing DevTools takes about 10 seconds longer; the rest take no longer |
 
 `0002` is exported from the fork's tree with `git diff HEAD` over `base` and `chrome`, less the
 paths the other patches and `brand.py` own (see `Engine/fork-plan.md`); new files are added

@@ -141,6 +141,66 @@ public final class BrowsingHistory {
         return 12*log2(Double(visits)+1) + 30/(1+age/7)
     }
 
+    /// The blank panel's useful destinations, one per site. Unlike a typed match, an old
+    /// favourite must lose its frequency advantage when it stops being part of a routine.
+    func startPageSuggestions(limit: Int, at date: Date) -> [HistoryEntry] {
+        guard limit > 0 else { return [] }
+        var sites: [String: (entry: HistoryEntry, score: Double, lastUsed: Date)] = [:]
+        for entry in entries {
+            guard let url = URL(string: entry.url), Self.isStartPageDestination(url),
+                  let site = Self.suggestionSite(url) else { continue }
+            let chosen = storage.typed?[entry.url]
+            let lastUsed = max(entry.lastVisited, chosen?.last ?? .distantPast)
+            let age = max(0, date.timeIntervalSince(lastUsed)/86400)
+            // A familiar page matters, but 10,000 historical visits shouldn't keep it pinned
+            // forever. Chosen open tabs count too, without inventing extra history visits.
+            let uses = min(100, entry.visits + 2*max(0, min(20, chosen?.count ?? 0)))
+            let score = log2(Double(uses)+1)*pow(0.5, age/7) + 3*pow(0.5, age/2)
+            if let previous = sites[site] {
+                if previous.score > score { continue }
+                if previous.score == score && (previous.lastUsed > lastUsed || previous.lastUsed == lastUsed && previous.entry.url < entry.url) { continue }
+            }
+            // Pick the best actual page, not a guessed homepage: this keeps habitual /account
+            // and inbox destinations, without filling the panel with several pages of one site.
+            sites[site] = (entry, score, lastUsed)
+        }
+        return sites.values.sorted {
+            if $0.score != $1.score { return $0.score > $1.score }
+            if $0.lastUsed != $1.lastUsed { return $0.lastUsed > $1.lastUsed }
+            return $0.entry.url < $1.entry.url
+        }.prefix(limit).map(\.entry)
+    }
+
+    /// Keep distinct apps/subdomains and ports, but group HTTP/HTTPS and www variants together.
+    static func suggestionSite(_ url: URL) -> String? {
+        guard let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme),
+              var host = url.host?.lowercased(), !host.isEmpty else { return nil }
+        if host.hasPrefix("www.") { host = String(host.dropFirst(4)) }
+        let port = url.port.flatMap { $0 == (scheme == "https" ? 443 : 80) ? nil : $0 }
+        return host + (port.map { ":\($0)" } ?? "")
+    }
+
+    private static let authenticationParts: Set<String> = ["login", "logout", "signin", "signout", "sign-in", "sign-out", "oauth", "authorize", "callback", "sso"]
+    private static let handoffParameters: Set<String> = ["code", "token", "access_token", "id_token", "session", "sessionid", "samlrequest", "samlresponse"]
+    private static let searchParameters: Set<String> = ["q", "query", "search", "search_query", "term", "keywords", "_nkw", "k", "p"]
+    private static let searchPaths: Set<String> = ["search", "results", "find", "sch", "s"]
+
+    /// Blank-panel shortcuts should reopen useful pages, rather than expired authentication
+    /// handoffs or a one-off web search. Typed searches still find all of these in history.
+    static func isStartPageDestination(_ url: URL) -> Bool {
+        guard url.user == nil, url.password == nil, let host = suggestionSite(url),
+              let parts = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return false }
+        if host.split(separator: ".").first.map({ authenticationParts.contains(String($0)) }) == true { return false }
+        let path = parts.path.lowercased().split(separator: "/").map(String.init)
+        if path.contains(where: authenticationParts.contains) { return false }
+        let parameters = Set((parts.queryItems ?? []).map { $0.name.lowercased() })
+        if !parameters.isDisjoint(with: handoffParameters) { return false }
+        let searchPath = path.contains(where: searchPaths.contains)
+        let searchHost = host.hasPrefix("google.") || ["bing.com", "duckduckgo.com", "kagi.com", "search.yahoo.com"].contains(host)
+        if (searchPath || searchHost) && !parameters.isDisjoint(with: searchParameters) { return false }
+        return true
+    }
+
     /// Where typing `query` leads: of the sites whose address it starts, the one visited most across
     /// all its pages, so many pages of one site outweigh one page of another; and one of its pages
     /// only as the site's usual stable destination (repeated visits or address-field selections,

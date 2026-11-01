@@ -655,13 +655,13 @@ import RiseCore
         cancelShortcutRecording()
         pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch(); endSidebarPeek(); tabPressed()
         sidebar?.cancelTabInteractions()
+        // Leaving Rise floats a shown video in Rise's own window, as leaving its tab does.
         DispatchQueue.main.async { [weak self] in
-            guard let self, !NSApp.isActive else { return }
-            for tab in self.tabs where self.visibleTabIDs.contains(tab.id) {
-                tab.page.evaluate("window.riseSiteControls?.autoPiP()", arguments: [:], in: nil, world: .page) { _ in }
-            }
+            guard let self, !NSApp.isActive, self.window?.isKeyWindow != true else { return }
+            self.pictureInPicture.applicationDidLeave()
         }
     }
+    func windowDidBecomeKey(_ notification: Notification) { pictureInPicture.applicationDidReturn() }
     func configure(_ tab: BrowserTab) -> BrowserTab {
         // The page reports hovers, new tabs and its menu.
         // The page, not the tab, is captured: it can move to another tab when a Peek becomes one.

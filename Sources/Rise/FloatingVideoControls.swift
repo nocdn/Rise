@@ -96,20 +96,18 @@ import AppKit
     }
 }
 
-/// A rounded-square button on a faint white background, brighter on hover.
-/// The arrows spread apart and the dash drops slightly on hover; the cross
+/// A white glyph with no background, over the scrim's darker top edge, in a
+/// 30pt square that keeps the controls' spacing. The arrows spread apart and the dash drops slightly on hover; the cross
 /// stays still. The motion springs in and returns quickly.
 @MainActor final class FloatingVideoControl: NSView {
     enum Glyph { case cross, dash, arrows }
     var action: (() -> Void)?
     private let glyph: Glyph
-    /// Holds the background and glyph, so the whole button shrinks slightly while pressed.
+    /// Holds the glyph, so the whole button shrinks slightly while pressed.
     private let body = CALayer()
-    private let background = CALayer()
-    private var hovering = false { didSet { updateBackground(); updateGlyph() } }
+    private var hovering = false { didSet { updateGlyph() } }
     private var pressed = false {
         didSet {
-            updateBackground()
             if pressed != oldValue { PressScale.set(body, to: pressed ? 0.88 : 1) }
         }
     }
@@ -129,8 +127,7 @@ import AppKit
         self.glyph = glyph
         super.init(frame: NSRect(x: 0, y: 0, width: 30, height: 30))
         wantsLayer = true
-        background.cornerRadius = 8; background.cornerCurve = .continuous
-        layer?.addSublayer(body); body.addSublayer(background)
+        layer?.addSublayer(body)
         switch glyph {
         case .cross:
             for stroke in strokes {
@@ -149,7 +146,6 @@ import AppKit
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
         toolTip = title
         setAccessibilityElement(true); setAccessibilityRole(.button); setAccessibilityLabel(title)
-        updateBackground()
     }
     required init?(coder: NSCoder) { fatalError() }
     private var symbol: String { glyph == .dash ? "minus" : "arrow.up.left.and.arrow.down.right" }
@@ -157,7 +153,6 @@ import AppKit
         super.layout()
         CATransaction.begin(); CATransaction.setDisableActions(true)
         body.bounds = bounds; body.position = CGPoint(x: bounds.midX, y: bounds.midY)
-        background.frame = bounds; background.cornerRadius = 8*sizeScale
         let scale = window?.backingScaleFactor ?? 2
         // Redrawn in quarter-point steps, so a pinch doesn't redraw it every frame.
         let pointSize = (13*sizeScale*4).rounded()/4
@@ -222,11 +217,6 @@ import AppKit
         animation.fromValue = from; animation.toValue = to
         layer.add(animation, forKey: "hover")
     }
-    private func updateBackground() {
-        CATransaction.begin(); CATransaction.setAnimationDuration(pressed ? 0.05 : 0.15)
-        background.backgroundColor = NSColor.white.withAlphaComponent(pressed ? 0.38 : hovering ? 0.27 : 0.17).cgColor
-        CATransaction.commit()
-    }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func mouseEntered(with event: NSEvent) { hovering = true }
     override func mouseExited(with event: NSEvent) { hovering = false }
@@ -245,13 +235,18 @@ import AppKit
 
 /// Darkens the top and bottom edges behind the controls, so they stay legible
 /// over a bright picture, while the middle of the video stays nearly clear.
+/// The top is darker, since its buttons have no background of their own; it
+/// eases into the middle through an extra stop, so it never reads as a band.
 @MainActor final class FloatingVideoScrim: NSView {
     private let gradient = CAGradientLayer()
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        let edge = NSColor.black.withAlphaComponent(0.52).cgColor, middle = NSColor.black.withAlphaComponent(0.17).cgColor
-        gradient.colors = [edge, middle, middle, edge]; gradient.locations = [0, 0.38, 0.62, 1]
+        func black(_ alpha: CGFloat) -> CGColor { NSColor.black.withAlphaComponent(alpha).cgColor }
+        // Bottom to top: the layer's y runs up, as the view isn't flipped.
+        gradient.startPoint = CGPoint(x: 0.5, y: 0); gradient.endPoint = CGPoint(x: 0.5, y: 1)
+        gradient.colors = [black(0.52), black(0.17), black(0.17), black(0.38), black(0.68)]
+        gradient.locations = [0, 0.38, 0.58, 0.8, 1]
         layer?.addSublayer(gradient)
     }
     required init?(coder: NSCoder) { fatalError() }

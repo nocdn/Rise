@@ -101,6 +101,8 @@ enum RisePages {
         hasLoaded = browserView != nil
         super.init()
         self.browserView.delegate = self
+        addUserScript(NativeContextMenuOverride.source, world: NativeContextMenuOverride.world,
+                      mainFrameOnly: false, handlers: [])
         // Chromium zooms a pinch into the visual viewport, which only the page knows about.
         addMessageHandler("riseMagnified", world: .named("Rise.Magnify")) { [weak self] message in
             guard message.frame.isMain else { return }
