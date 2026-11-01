@@ -131,7 +131,7 @@ public enum CurrencyAmounts {
 
     /// The reader and writer of amounts. `find` and `rewrite` are plain text; `apply` and `restore`
     /// walk a page's text, only where there are digits, and set nothing but the text they change.
-    public static let script = #"""
+    public static let script = PageTextEdits.script + #"""
     (() => {
     if (globalThis.riseCurrency) return;
     // Signs written beside an amount. One several currencies share is the page's own: '$' is
@@ -304,19 +304,7 @@ public enum CurrencyAmounts {
     // The new text of each of `lengths`' consecutive pieces of `text`: a part's replacement goes
     // where it starts, so "£", "66", ".", "06" in their own elements each keep theirs.
     function distribute(text, lengths, parts) {
-      const starts = new Map(parts.map(p => [p.start, p])), covered = new Uint8Array(text.length);
-      for (const p of parts) covered.fill(1, p.start + 1, p.end);
-      const out = [];
-      let at = 0;
-      for (const length of lengths) {
-        let piece = '';
-        for (let i = at; i < at + length; i++) {
-          const part = starts.get(i);
-          if (part) piece += part.text; else if (!covered[i]) piece += text[i];
-        }
-        out.push(piece); at += length;
-      }
-      return out;
+      return riseTextEdits.distribute(text, lengths, parts).map(p => p.written);
     }
 
     function rewrite(text, options) {
@@ -378,15 +366,15 @@ public enum CurrencyAmounts {
         const parts = plan.amounts.flatMap(a => render(a, state.ctx));
         if (!parts.length) continue;
         count += plan.amounts.length;
-        const texts = distribute(plan.text, plan.nodes.map(n => n.data.length), parts);
+        const texts = riseTextEdits.distribute(plan.text, plan.nodes.map(n => n.data.length), parts);
         plan.nodes.forEach((node, i) => {
-          if (texts[i] === node.data) return;
+          if (texts[i].written === node.data) return;
           const record = state.records.get(node), changes = (record?.changes ?? 0) + 1;
           // A page that keeps putting its own back is left to it.
           if (changes > 20) return;
           if (!record) state.nodes.push(new WeakRef(node));
-          state.records.set(node, { original: node.data, written: texts[i], changes });
-          node.data = texts[i];
+          state.records.set(node, riseTextEdits.record(record, texts[i]));
+          node.data = texts[i].written;
         });
       }
       return count;
@@ -434,7 +422,7 @@ public enum CurrencyAmounts {
       state.observer.disconnect(); clearTimeout(state.timer);
       for (const ref of state.nodes) {
         const node = ref.deref(), record = node && state.records.get(node);
-        if (record && record.written === node.data) node.data = record.original;
+        if (record) node.data = riseTextEdits.restore(record, node.data);
       }
       state = null;
       return true;

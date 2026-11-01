@@ -107,11 +107,23 @@ import WebKit
         toast.leave(after: 2)
         UIAccessibility.post(notification: .announcement, argument: toast.label.text)
     }
+
+    func showTimeToast(_ message: String, revert: (() -> Void)? = nil) {
+        let toast = CurrencyToast(message: message, glyph: UIImage(systemName: "clock"), name: "times")
+        toast.revertedMessage = TimePageConversion.restoredMessage
+        toast.displayDuration = TimePageConversion.noticeDuration
+        toast.revert = revert
+        showToast(toast)
+        toast.leave(after: toast.displayDuration)
+        UIAccessibility.post(notification: .announcement, argument: toast.label.text)
+    }
 }
 
 /// A toast that a tap can answer: Replace on Page's reverts the page.
 @MainActor final class CurrencyToast: Toast {
     static let reverted = "Reverted currencies"
+    var revertedMessage = CurrencyToast.reverted
+    var displayDuration: TimeInterval = 2
     var revert: (() -> Void)? { didSet { tap.isEnabled = revert != nil; accessibilityTraits = revert == nil ? .staticText : .button } }
     private let tap = UITapGestureRecognizer()
 
@@ -127,9 +139,9 @@ import WebKit
         self.revert = nil
         revert()
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
-        setMessage(Self.reverted)
-        accessibilityLabel = Self.reverted
-        UIAccessibility.post(notification: .announcement, argument: Self.reverted)
-        leave(after: 2)
+        setMessage(revertedMessage)
+        accessibilityLabel = revertedMessage
+        UIAccessibility.post(notification: .announcement, argument: revertedMessage)
+        leave(after: displayDuration)
     }
 }

@@ -7,8 +7,9 @@ final class SelectionTimeNativeMenuTests: XCTestCase {
                                     invoked: @escaping (Int) -> Void = { _ in }) -> (UIMenu, [UIAction], UIAction) {
         let copy = UIAction(title: "Copy “18:00”", image: UIImage(systemName: "doc.on.doc")) { _ in }
         let fallback = UIAction(title: "Add to Calendar") { _ in XCTFail("The fallback must be replaced by the native action") }
+        let replace = SelectionTimeMenu.replaceAction(in: nil)
         let rise = UIMenu(identifier: SelectionTimeMenu.menuIdentifier, options: .displayInline, children:
-            (0..<timeCount).map { _ in UIMenu(title: "18:00 · in 1 hr", children: [copy, fallback]) })
+            (0..<timeCount).map { _ in UIMenu(title: "18:00 · in 1 hr", children: [copy, replace, fallback]) })
         let kinds = ["DDCreateEventAction", "DDCreateReminderAction", "DDShowCalendarAction"]
         let titles = ["Zum Kalender hinzufügen", "Zu Erinnerungen hinzufügen", "Im Kalender anzeigen"]
         let images = ["calendar", "list.bullet", "calendar.day.timeline.left"]
@@ -32,9 +33,10 @@ final class SelectionTimeNativeMenuTests: XCTestCase {
         let result = SelectionTimeNativeMenu.relocatingDateActions(in: root)
         let rise = try XCTUnwrap(result.children.first as? UIMenu)
         let time = try XCTUnwrap(rise.children.first as? UIMenu)
-        XCTAssertEqual(time.children.count, 4)
+        XCTAssertEqual(time.children.count, 5)
         XCTAssertTrue(time.children.first === copy)
-        for (index, child) in time.children.dropFirst().enumerated() {
+        XCTAssertEqual(time.children[1].title, "Replace on Page")
+        for (index, child) in time.children.dropFirst(2).enumerated() {
             let moved = try XCTUnwrap(child as? UIAction)
             XCTAssertTrue(moved === actions[index])
             XCTAssertTrue(moved.image === actions[index].image)
@@ -79,7 +81,7 @@ final class SelectionTimeNativeMenuTests: XCTestCase {
         let result = SelectionTimeNativeMenu.relocatingDateActions(in: input)
         XCTAssertEqual(result.children.count, 2)
         XCTAssertTrue(result.children.first === rise, "Each date retains its own captured instant")
-        XCTAssertEqual(rise.children.compactMap { ($0 as? UIMenu)?.children.count }, [4, 4])
+        XCTAssertEqual(rise.children.compactMap { ($0 as? UIMenu)?.children.count }, [5, 5])
     }
 
     @MainActor func testAZoneOnlySnapshotDoesNotAcquireNativeAppointmentActions() {
@@ -115,6 +117,6 @@ final class SelectionTimeNativeMenuTests: XCTestCase {
         XCTAssertEqual(menus.count, 1)
         XCTAssertEqual(menus.first?.identifier, SelectionTimeMenu.eventIdentifier)
         XCTAssertTrue(menus.first?.children.first?.title.hasPrefix("Copy “") == true)
-        XCTAssertEqual(menus.first?.children.count, 4)
+        XCTAssertEqual(menus.first?.children.count, 5)
     }
 }

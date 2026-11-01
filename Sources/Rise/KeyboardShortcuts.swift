@@ -29,6 +29,7 @@ import AppKit
             ("activateSuggestedTab", "Switch to Suggested Open Tab", "Tabs", ["Command+Enter"]),
             ("allowPermission", "Allow Site Permission", "Site", ["Command+Alt+Enter"]),
             ("denyPermission", "Don’t Allow Site Permission", "Site", ["Command+Alt+Backspace"]),
+            ("toggleLocalTimes", "Replace Times with Local Time", "View", ["Command+Alt+T"]),
         ]
         for (id, title, group, bindings) in early { commands.append(Command(id: id, title: title, group: group, defaults: bindings.compactMap(KeyboardShortcut.init))) }
         for number in 1...9 {

@@ -46,6 +46,7 @@ import RiseCore
     let cookieConsent: CookieConsent
     lazy var permissionCoordinator = PermissionCoordinator(browser: self)
     lazy var currencyReplacement = CurrencyReplacement(browser: self)
+    lazy var timeReplacement = TimeReplacement(browser: self)
     lazy var pictureInPicture = VideoPictureInPicture(browser: self)
     lazy var tabMedia: TabMedia = {
         let media = TabMedia(browser: self)
@@ -325,7 +326,7 @@ import RiseCore
         }
         window.undoEvent = { [weak self] event in
             guard let self else { return false }
-            return self.currencyReplacement.handleUndoKey(event) || self.handleSelectionItemUndoKey(event) || self.handleTabOrderUndoKey(event) || self.palette.handleUndoKey(event, shortcuts: self.keyboardShortcuts) || self.handleSplitUndoKey(event) || self.handlePeekUndoKey(event)
+            return self.timeReplacement.handleUndoKey(event) || self.currencyReplacement.handleUndoKey(event) || self.handleSelectionItemUndoKey(event) || self.handleTabOrderUndoKey(event) || self.palette.handleUndoKey(event, shortcuts: self.keyboardShortcuts) || self.handleSplitUndoKey(event) || self.handlePeekUndoKey(event)
         }
         window.smartRenameEvent = { [weak self] event in self?.handleSmartRenameKey(event) ?? false }
         window.extensionShortcutEvent = { [weak self] event in self?.runExtensionShortcut(event) ?? false }
@@ -598,7 +599,7 @@ import RiseCore
         retryButton.frame = NSRect(x: body.width/2-55, y: body.height/2+55, width: 110, height: 32)
         // The panels come down from beneath the page bar and what's under it.
         selectedFindBar.frame = pageShadow.frame; selectedFindBar.topInset = barHeight; selectedFindBar.tuckedInset = barHeight
-        permissionCoordinator.layoutPanel(); currencyReplacement.layoutPanel()
+        permissionCoordinator.layoutPanel(); currencyReplacement.layoutPanel(); timeReplacement.layoutPanel()
         dismissArea.frame = b
         // Both centred panels share the same window-wide dim.
         veil.frame = b
@@ -648,8 +649,9 @@ import RiseCore
     }
     func windowDidResize(_ notification: Notification) { layoutChrome(); watchPlainBarColor(for: 0.5) }
     func windowDidChangeOcclusionState(_ notification: Notification) { if window?.occlusionState.contains(.visible) == true { watchPlainBarColor(for: 0.5) } }
-    func windowWillClose(_ notification: Notification) { githubStarrer.tearDown(); signedInPages.tearDown(); linkPullRequests.summaries.tearDown(); plainBarTimer?.invalidate(); plainBarTimer = nil; plainBarMonitor.map(NSEvent.removeMonitor); plainBarMonitor = nil; tabPressed(); gmailInbox.tearDown(); protonMailInbox.tearDown(); chatInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); stopTabSleep(); saveNow() }
+    func windowWillClose(_ notification: Notification) { timeReplacement.cancelHold(); githubStarrer.tearDown(); signedInPages.tearDown(); linkPullRequests.summaries.tearDown(); plainBarTimer?.invalidate(); plainBarTimer = nil; plainBarMonitor.map(NSEvent.removeMonitor); plainBarMonitor = nil; tabPressed(); gmailInbox.tearDown(); protonMailInbox.tearDown(); chatInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); stopTabSleep(); saveNow() }
     func windowDidResignKey(_ notification: Notification) {
+        timeReplacement.cancelHold()
         cancelShortcutRecording()
         pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch(); endSidebarPeek(); tabPressed()
         sidebar?.cancelTabInteractions()
@@ -788,6 +790,7 @@ import RiseCore
         if let url { tab.load(url) }; return tab
     }
     func select(_ id: UUID) {
+        if selectedID != id { timeReplacement.cancelHold() }
         if selectedID != id { cancelShortcutRecording() }
         let wasSelecting = isSelectingTab
         isSelectingTab = true

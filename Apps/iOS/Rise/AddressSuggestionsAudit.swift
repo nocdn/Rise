@@ -530,12 +530,12 @@ import WebKit
         try check("fill-arrows-have-an-independent-large-touch-target", hit === fillRow.fillButton && fillRow.fillButton.bounds.width == 44
                   && fillRow.fillButton.bounds.height == SearchPanel.rowHeight)
         fillRow.fillButton.sendActions(for: .primaryActionTriggered)
-        try check("link-arrow-fills-the-full-url-without-opening-or-switching", field.text == fixture.absoluteString
-                  && panel.query == fixture.absoluteString && field.inlineCompletion == nil && filledOpen == nil && filledSwitch == nil)
+        try check("link-arrow-fills-the-full-url-with-a-trailing-space-without-opening-or-switching", field.text == fixture.absoluteString+" "
+                  && panel.query == fixture.absoluteString+" " && field.inlineCompletion == nil && filledOpen == nil && filledSwitch == nil)
         try check("link-arrow-keeps-the-keyboard-and-caret-ready-for-editing", browser.isPanelOpen && field.isFirstResponder
-                  && field.selectedTextRange?.isEmpty == true && field.offset(from: field.beginningOfDocument, to: field.selectedTextRange!.start) == fixture.absoluteString.utf16.count)
-        field.insertText("/more")
-        try check("typing-after-fill-appends-to-the-address", field.text == fixture.absoluteString+"/more")
+                  && field.selectedTextRange?.isEmpty == true && field.offset(from: field.beginningOfDocument, to: field.selectedTextRange!.start) == fixture.absoluteString.utf16.count+1)
+        field.insertText("more")
+        try check("typing-after-fill-continues-after-the-space", field.text == fixture.absoluteString+" more")
         field.text = "diagonal suggestions"; field.sendActions(for: .editingChanged); panel.layoutIfNeeded()
         try check("typed-google-search-action-does-not-appear-as-a-row", panel.resultRows.isEmpty
                   && panel.candidates.contains { $0.isTypedAction && $0.symbol == "magnifyingglass" })
@@ -545,7 +545,7 @@ import WebKit
         field.text = "amazo"; field.sendActions(for: .editingChanged); panel.layoutIfNeeded()
         let home = panel.offeredSite!.homeURL
         panel.siteRow.fillButton.sendActions(for: .primaryActionTriggered)
-        try check("site-search-arrow-fills-the-site-url-without-entering-site-search", field.text == home.absoluteString
+        try check("site-search-arrow-fills-the-site-url-with-a-trailing-space-without-entering-site-search", field.text == home.absoluteString+" "
                   && panel.siteSearch == nil && field.inlineCompletion == nil && filledOpen == nil)
         panel.end(); browser.bottomBar.restoreAddress()
         panel.beginEditingAddress(browser.bottomBar.menu.address, url: URL(string: "https://lamps.example/"))
@@ -553,7 +553,7 @@ import WebKit
         field.text = "Lighting"; field.sendActions(for: .editingChanged); panel.layoutIfNeeded()
         let editRow = panel.resultRows.first { $0.addressLabel.text == AddressSuggestionRow.displayAddress(fixture.absoluteString) }!
         editRow.fillButton.sendActions(for: .primaryActionTriggered)
-        try check("fill-also-works-in-url-editing-without-navigation", panel.editingAddress != nil && field.text == fixture.absoluteString
+        try check("fill-also-works-in-url-editing-without-navigation", panel.editingAddress != nil && field.text == fixture.absoluteString+" "
                   && field.isFirstResponder && field.inlineCompletion == nil && filledOpen == nil && filledSwitch == nil)
         panel.end(); browser.bottomBar.restoreAddress(); panel.begin(); panel.focus()
         field.text = "Lighting"; field.sendActions(for: .editingChanged); panel.layoutIfNeeded()

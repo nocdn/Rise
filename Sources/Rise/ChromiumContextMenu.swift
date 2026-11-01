@@ -36,12 +36,21 @@ import RiseChromium
         // person's own (`SelectionTimes`). An event that is one of those times takes its converted label.
         let source = page.url.flatMap { ["http", "https"].contains($0.scheme?.lowercased() ?? "") ? $0 : nil }
         let event = info.selectionText.isEmpty ? nil : SelectionEvents.find(in: info.selectionText, pageTitle: (opener ?? (page === peekTab?.page ? peekTab : nil))?.title)
-        var times = SelectionTimes.find(in: info.selectionText)
+        let shown = opener ?? (page === peekTab?.page ? peekTab : nil)
+        let timesReplaced = timeReplacement.isActive(in: page)
+        var times = SelectionTimes.find(in: info.selectionText, includingLocal: timesReplaced)
         if let event {
             let matched = times.firstIndex { !$0.isZoneOnly && $0.start == event.start }
             let title = matched.map { SelectionTimes.label(times[$0], of: times.count) }
             let view = page.view, point = NSPoint(x: info.point.x, y: view.isFlipped ? info.point.y : view.bounds.height-info.point.y)
-            menu.addItem(selectionEventItem(event, title: title, source: source, at: point, in: view) { openInNewTab($0) })
+            let item = selectionEventItem(event, title: title, source: source, at: point, in: view) { openInNewTab($0) }
+            if let matched, let submenu = item.submenu {
+                let copied = SelectionTimes.copied(times[matched])
+                let copy = menuItem("Copy “\(copied)”") { Self.copyAmount(copied) }
+                copy.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: nil)
+                submenu.insertItem(copy, at: 0); submenu.insertItem(timeReplaceItem(in: page), at: 1)
+            }
+            menu.addItem(item)
             if let matched { times.remove(at: matched) }
         }
         // A note about the selection, lighter than a section heading's semibold: weight 450 on the
@@ -49,12 +58,25 @@ import RiseChromium
         let small = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
         let note = NSFont(descriptor: small.fontDescriptor.addingAttributes([.variation: [NSNumber(value: 0x77676874 /* wght */): 450]]), size: 0) ?? small
         for time in times {
-            let title = SelectionTimes.label(time, of: times.count), header = NSMenuItem.sectionHeader(title: title)
-            header.attributedTitle = NSAttributedString(string: title, attributes: [.font: note, .foregroundColor: NSColor.secondaryLabelColor])
-            menu.addItem(header)
+            let title = SelectionTimes.label(time, of: times.count)
+            if time.isZoneOnly {
+                let header = NSMenuItem.sectionHeader(title: title)
+                header.attributedTitle = NSAttributedString(string: title, attributes: [.font: note, .foregroundColor: NSColor.secondaryLabelColor])
+                menu.addItem(header)
+            } else {
+                let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+                item.image = NSImage(systemSymbolName: "clock", accessibilityDescription: nil)
+                let submenu = NSMenu(); submenu.autoenablesItems = false
+                let copied = SelectionTimes.copied(time)
+                let copy = menuItem("Copy “\(copied)”") { Self.copyAmount(copied) }
+                copy.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: nil)
+                submenu.addItem(copy); submenu.addItem(timeReplaceItem(in: page)); item.submenu = submenu
+                menu.addItem(item)
+            }
         }
+        if timesReplaced && times.isEmpty && event == nil { menu.addItem(timeReplaceItem(in: page)) }
         // An amount in another currency, in the person's.
-        let shown = opener ?? (page === peekTab?.page ? peekTab : nil), currencyReplaced = shown?.replacedCurrency != nil
+        let currencyReplaced = shown?.replacedCurrency != nil
         let amounts = info.selectionText.isEmpty ? [] : selectedAmounts(info.selectionText, in: page, replaced: currencyReplaced)
         if let shown { currencyItems(for: amounts, in: shown, replaced: currencyReplaced).forEach(menu.addItem) }
         if event != nil || !times.isEmpty || !amounts.isEmpty { menu.addItem(.separator()) }

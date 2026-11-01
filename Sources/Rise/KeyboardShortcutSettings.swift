@@ -103,6 +103,7 @@ import AppKit
             }
             cancelShortcutRecording()
         }
+        if timeReplacement.handleKey(event) { return true }
         guard event.type == .keyDown else { return false }
         if let command = keyboardShortcuts.command(for: event) {
             if command.id == "undo:" || command.id == "redo:" {

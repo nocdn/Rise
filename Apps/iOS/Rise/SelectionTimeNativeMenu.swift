@@ -148,9 +148,10 @@ import WebKit
             // Rise's own actions fill in what the system's leave out, so they're the ones kept.
             replacement = riseSections[0]
         } else if timeMenus.count == 1, nativeGroups.count == 1, let copy = timeMenus[0].children.first as? UIAction {
-            replacement = riseSections[0].replacingChildren([timeMenus[0].replacingChildren([copy] + nativeGroups[0])])
+            let extra = timeMenus[0].children.filter { ($0 as? UIAction)?.identifier.rawValue == "dev.bartosz.Rise.replaceTimes" }
+            replacement = riseSections[0].replacingChildren([timeMenus[0].replacingChildren([copy] + extra + nativeGroups[0])])
         } else {
-            guard timeMenus.allSatisfy({ $0.children.count == 4 }) else { return root }
+            guard timeMenus.allSatisfy({ $0.children.count >= 4 }) else { return root }
             replacement = riseSections[0]
         }
         let moved = Set(nativeGroups.flatMap { $0 }.map(\.identifier))

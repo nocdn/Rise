@@ -85,6 +85,9 @@ extension BrowserController: NSMenuItemValidation {
         case #selector(zoomIn): return hasPage && (tab?.page.zoom ?? 1) < 3
         case #selector(zoomOut): return hasPage && (tab?.page.zoom ?? 1) > 0.3
         case #selector(actualSize): return hasPage
+        case #selector(toggleLocalTimes):
+            item.state = (findTab?.page as? ChromiumPage).map { timeReplacement.isActive(in: $0) } == true ? .on : .off
+            return findTab?.page is ChromiumPage && palette.isHidden
         case #selector(copyURL), #selector(shareCurrentPage): return hasPage && tab?.url?.absoluteString != "about:blank"
         case #selector(showPageSource): return ["http", "https", "file"].contains(tab?.url?.scheme ?? "")
         case #selector(javascriptConsole): return tab?.page is ChromiumPage

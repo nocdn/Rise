@@ -909,6 +909,7 @@ class FindInputCell: NSTextFieldCell {
     }
     /// Inside the rounded card, so the normal Find animation and insets follow its live size.
     func layoutPeekFindBar() {
+        defer { timeReplacement.layoutPanel() }
         guard let tab = peekTab, let bar = findBars[tab.id], let clip = peekCard?.subviews.first else { return }
         if bar.superview !== clip { clip.addSubview(bar) }
         bar.frame = clip.bounds; bar.topInset = 0
@@ -919,7 +920,7 @@ class FindInputCell: NSTextFieldCell {
         layoutPeekFindBar()
         bar.present()
         // A permission's panel moves down out of its way.
-        permissionCoordinator.layoutPanel(); currencyReplacement.layoutPanel()
+        permissionCoordinator.layoutPanel(); currencyReplacement.layoutPanel(); timeReplacement.layoutPanel()
     }
     @objc func findNext() { findAgain(.next) }
     @objc func findPrevious() { findAgain(.previous) }
@@ -932,7 +933,7 @@ class FindInputCell: NSTextFieldCell {
     }
     func hideFind() { if let tab = findTab { hideFind(in: tab) } else { tablessFindBar.hide() } }
     private func hideFind(in tab: BrowserTab) {
-        findBars[tab.id]?.hide(); permissionCoordinator.layoutPanel(); currencyReplacement.layoutPanel()
+        findBars[tab.id]?.hide(); permissionCoordinator.layoutPanel(); currencyReplacement.layoutPanel(); timeReplacement.layoutPanel()
         let page = tab.page
         Task { await PageFind.clear(page, selectingCurrent: true); await PageFind.clearPassage(page) }
         if findTab === tab { window?.makeFirstResponder(page.view) }

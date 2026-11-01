@@ -74,6 +74,7 @@ import AppKit
         item(view, "Reload", #selector(BrowserController.reload), "r", target: browser)
         item(view, "Reload Without Cache", #selector(BrowserController.hardReload), "r", modifiers: [.command, .shift], target: browser)
         item(view, "Stop Loading", #selector(BrowserController.stopLoadingPage), ".", target: browser)
+        item(view, "Replace Times with Local Time", #selector(BrowserController.toggleLocalTimes), "t", modifiers: [.command, .option], target: browser)
         view.addItem(.separator())
         item(view, "Zoom In", #selector(BrowserController.zoomIn), "+", target: browser)
         alternate(view, "Zoom In", #selector(BrowserController.zoomIn), "=")

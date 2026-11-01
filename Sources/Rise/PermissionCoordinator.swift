@@ -119,6 +119,16 @@ import UserNotifications
     }
     /// `panel` over `web`'s page, under its bar, in front of the pages and behind Find, held below an open find panel.
     static func place(_ panel: PermissionPanel, over web: NSView, in browser: BrowserController) {
+        if let peek = browser.peekTab, peek.page.view === web, let clip = browser.peekCard?.subviews.first {
+            let find = browser.findBars[peek.id]
+            if panel.superview !== clip {
+                if let find, find.superview === clip { clip.addSubview(panel, positioned: .below, relativeTo: find) }
+                else { clip.addSubview(panel) }
+            }
+            panel.frame = clip.bounds; panel.topInset = 0
+            panel.stackOffset = find?.isPresented == true ? (find?.panel.frame.height ?? 0)+FindBar.top : 0
+            return
+        }
         let root = browser.root
         let findBar = browser.selectedFindBar
         if panel.superview !== root {

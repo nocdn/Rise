@@ -36,17 +36,34 @@ public enum SelectionTimes {
     ]
 
     /// Foreign clock times and standalone numeric zones in `text`, read as of `now`.
-    public static func find(in text: String, now: Date = Date(), local: TimeZone = .current) -> [SelectionTime] {
+    public static func find(in text: String, now: Date = Date(), local: TimeZone = .current, includingLocal: Bool = false) -> [SelectionTime] {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, text.count <= maximumLength,
+        guard !text.isEmpty, text.count <= maximumLength else { return [] }
+        var found: [SelectionTime] = []
+        for match in matches(in: text, now: now, local: local, includingLocal: includingLocal) {
+            if !found.contains(where: { $0.start == match.time.start && $0.end == match.time.end && $0.isZoneOnly == match.time.isZoneOnly
+                && (!$0.isZoneOnly || $0.zone == match.time.zone) }) { found.append(match.time) }
+        }
+        return Array(found.prefix(maximumTimes))
+    }
+
+    /// Exact UTF-16 ranges, including the written zone, for reversible page edits. Unlike the
+    /// selection menu this retains repeated occurrences and every time in a passage.
+    static func matches(in text: String, now: Date, local: TimeZone, includingLocal: Bool = false) -> [(range: NSRange, time: SelectionTime)] {
+        guard !text.isEmpty, text.utf16.count <= 32_000,
               let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.date.rawValue) else { return [] }
         // "noon" and "midnight" as times the detector reads; midnight is the one the day ends with.
-        let normal = text.replacingOccurrences(of: #"(?i)\bnoon\b"#, with: "12:00pm", options: .regularExpression)
-            .replacingOccurrences(of: #"(?i)\bmidnight\b"#, with: "11:59:59pm", options: .regularExpression)
+        let normalized = Normalized(text), normal = normalized.text
         let source = normal as NSString
+        let stamps = Timestamp.matches(in: normal)
+        let detectionText = NSMutableString(string: normal)
+        for stamp in stamps { detectionText.replaceCharacters(in: stamp.range, with: String(repeating: " ", count: stamp.range.length)) }
         let offsets = Offset.matches(in: normal)
-        var usedOffsets = Set<Int>(), found: [(position: Int, time: SelectionTime)] = []
-        for match in detector.matches(in: normal, range: NSRange(location: 0, length: source.length)) {
+        var usedOffsets = Set<Int>(), found: [(range: NSRange, time: SelectionTime)] = stamps.compactMap { stamp in
+            guard let time = stamp.time else { return nil }
+            return (normalized.original(stamp.range), time)
+        }
+        for match in detector.matches(in: detectionText as String, range: NSRange(location: 0, length: source.length)) {
             guard let detected = match.date else { continue }
             let words = source.substring(with: match.range)
             // An offset's digits are not a clock time. Mask them before reading the clock.
@@ -70,13 +87,19 @@ public enum SelectionTimes {
                 return source.substring(with: gap).trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "()[]"))).isEmpty
             }
             let zone: TimeZone
+            var range = match.range
             if let attached {
                 usedOffsets.insert(attached)
                 guard let explicit = offsets[attached].zone else { continue }
                 zone = explicit
+                range = NSUnionRange(range, offsets[attached].range)
             } else {
                 guard let detectedZone = match.timeZone ?? Self.zone(at: after) ?? Self.zone(at: words) else { continue }
                 zone = detectedZone
+                if let suffix = zoneExpression.firstMatch(in: after, range: NSRange(location: 0, length: (after as NSString).length)),
+                   Self.zone(at: (after as NSString).substring(with: suffix.range)) != nil {
+                    range.length += suffix.range.length
+                }
             }
             // The wall time as written, from the zone the detector read it in.
             var calendar = Calendar(identifier: .gregorian)
@@ -85,7 +108,7 @@ public enum SelectionTimes {
             if let hour = clock.hour { parts.hour = hour; parts.minute = clock.minute }
             if clock.midnight { parts.hour = 23; parts.minute = 59 }
             var there = Calendar(identifier: .gregorian); there.timeZone = zone
-            parts.second = 0; parts.timeZone = zone
+            parts.second = clock.midnight ? 0 : clock.second; parts.timeZone = zone
             func instant(_ parts: DateComponents) -> Date? { there.date(from: parts).map { clock.midnight ? $0.addingTimeInterval(60) : $0 } }
             var start: Date?
             if Clock.hasDate(words) { start = instant(parts) }
@@ -100,20 +123,58 @@ public enum SelectionTimes {
                 }
             }
             guard let start else { continue }
-            let end = match.duration > 0 ? start.addingTimeInterval(match.duration) : nil
+            // Data Detectors can infer a one-hour appointment from prose such as "Starts at".
+            // Only a written range belongs in the converted text.
+            let hasRange = words.range(of: #"(?i)(?:\d|noon|midnight)\h*(?:[ap]\.?m\.?)?\h*(?:[-–—]|\bto\b)\h*(?:\d|noon|midnight)"#, options: .regularExpression) != nil
+            let end = hasRange && match.duration > 0 ? start.addingTimeInterval(match.duration) : nil
             // Written in the person's own zone: nothing to tell them. Another zone, even at the same
             // offset as theirs just then, still gets its day and how far off it is.
-            guard !same(zone, local, at: start) else { continue }
-            let written = words.replacingOccurrences(of: "11:59:59pm", with: "midnight").trimmingCharacters(in: .whitespaces)
+            guard includingLocal || !same(zone, local, at: start) else { continue }
+            // A detector sometimes includes "Starts at" or "Meet at" in its range. Preserve
+            // that prose while retaining an actual weekday/date before the clock.
+            let contents = source.substring(with: range)
+            if Self.zone(at: contents) == nil, let start = contents.range(of: #"(?i)\b(?:today|tonight|tomorrow|yesterday|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?|jan[a-z]*|feb[a-z]*|mar[a-z]*|apr[a-z]*|may|jun[a-z]*|jul[a-z]*|aug[a-z]*|sep[a-z]*|oct[a-z]*|nov[a-z]*|dec[a-z]*|noon|midnight)\b|\d"#, options: .regularExpression) {
+                let leading = (contents[..<start.lowerBound] as NSString).length
+                range.location += leading; range.length -= leading
+            }
+            let originalRange = normalized.original(range)
+            let written = (text as NSString).substring(with: originalRange).trimmingCharacters(in: .whitespaces)
             let time = SelectionTime(start: start, end: end, zone: zone, written: written)
-            if !found.contains(where: { $0.time.start == time.start && $0.time.end == time.end }) { found.append((match.range.location, time)) }
+            if !found.contains(where: { NSIntersectionRange($0.range, originalRange).length > 0 }) { found.append((originalRange, time)) }
         }
         for (index, offset) in offsets.enumerated() where !usedOffsets.contains(index) {
             guard let zone = offset.zone, !found.contains(where: { $0.time.isZoneOnly && $0.time.zone == zone }) else { continue }
-            found.append((offset.range.location, SelectionTime(start: now, end: nil, zone: zone,
+            found.append((normalized.original(offset.range), SelectionTime(start: now, end: nil, zone: zone,
                 written: source.substring(with: offset.range), isZoneOnly: true)))
         }
-        return found.sorted { $0.position < $1.position }.prefix(maximumTimes).map(\.time)
+        return found.sorted { $0.range.location < $1.range.location }
+    }
+
+    private static let zoneExpression = try! NSRegularExpression(pattern: #"^\s*\(?\s*(?:[A-Z][A-Za-z_]+/[A-Za-z_+\-0-9]+(?:/[A-Za-z_+\-0-9]+)?|[A-Z]{1,5}\b|Pacific\b|Mountain\b|Central\b|Eastern\b)\)?"#)
+
+    /// Preserve offsets into the original even where a clock word expanded for Data Detectors.
+    private struct Normalized {
+        let text: String
+        let boundaries: [Int]
+        init(_ original: String) {
+            let source = original as NSString
+            let words = try! NSRegularExpression(pattern: #"(?i)\b(noon|midnight)\b"#)
+            var text = "", boundaries = [0], at = 0
+            for match in words.matches(in: original, range: NSRange(location: 0, length: source.length)) {
+                text += source.substring(with: NSRange(location: at, length: match.range.location-at))
+                if at < match.range.location { boundaries += Array((at+1)...match.range.location) }
+                let replacement = source.substring(with: match.range).lowercased() == "noon" ? "12:00pm" : "11:59:59pm"
+                text += replacement
+                boundaries += (1...replacement.utf16.count).map { match.range.location + min($0, match.range.length) }
+                at = NSMaxRange(match.range)
+            }
+            text += source.substring(from: at)
+            if at < source.length { boundaries += Array((at+1)...source.length) }
+            self.text = text; self.boundaries = boundaries
+        }
+        func original(_ range: NSRange) -> NSRange {
+            NSRange(location: boundaries[range.location], length: boundaries[NSMaxRange(range)]-boundaries[range.location])
+        }
     }
 
     /// Whether two zones are the same place's: one zone, or one keeping the same time all year.
@@ -137,7 +198,7 @@ public enum SelectionTimes {
            text.substring(to: offset.range.location).trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: "("))).isEmpty {
             return offset.zone
         }
-        if let city = first(#"^\s*\(?\s*([A-Z][A-Za-z_]+/[A-Za-z_]+(?:/[A-Za-z_]+)?)"#) { return TimeZone(identifier: city) }
+        if let city = first(#"^\s*\(?\s*([A-Z][A-Za-z_]+/[A-Za-z_+\-0-9]+(?:/[A-Za-z_+\-0-9]+)?)"#) { return TimeZone(identifier: city) }
         guard let word = first(#"^\s*\(?\s*([A-Z]{1,5}|Pacific|Mountain|Central|Eastern)\b"#)?.uppercased() else { return nil }
         if let name = TimeZone.abbreviationDictionary[word] ?? extraZones[word] { return TimeZone(identifier: name) }
         return nil
@@ -262,7 +323,7 @@ public enum SelectionTimes {
     /// The time of day as written in a detected date: present at all, and its hour on a 24-hour
     /// clock when it's written without am or pm.
     struct Clock {
-        let hour: Int?, minute: Int, midnight: Bool
+        let hour: Int?, minute: Int, second: Int, midnight: Bool
         init?(_ words: String) {
             let text = words as NSString
             midnight = words.contains("11:59:59pm")
@@ -271,6 +332,8 @@ public enum SelectionTimes {
                       let match = regex.firstMatch(in: words, range: NSRange(location: 0, length: text.length)) else { return nil }
                 return (0..<match.numberOfRanges).map { match.range(at: $0).location == NSNotFound ? "" : text.substring(with: match.range(at: $0)) }
             }
+            second = groups(#"\d{1,2}:\d{2}:(\d{2})(?!\d)"#).flatMap { Int($0[1]) } ?? 0
+            guard second < 60 else { return nil }
             // Written with am or pm: the detector reads it right.
             if groups(#"\b\d{1,2}(?::\d{2})?\s*(?:a\.?\s?m\b\.?|p\.?\s?m\b\.?)"#) != nil { hour = nil; minute = 0; return }
             // "14:30", "9:30", "T17:00" or "1700 UTC": a 24-hour clock.

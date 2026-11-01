@@ -63,6 +63,37 @@ final class RiseWebView: WKWebView {
     private var latest: String?
     /// Whether the page's amounts are rewritten into the person's currency (`SelectionCurrencyMenu`).
     private var currencyReplaced = false
+    private lazy var timeConversion = TimePageConversion { [weak self] body, arguments in
+        guard let page = self?.page else { throw CancellationError() }
+        return try await page.callAsyncJavaScript(body, arguments: arguments, in: nil, contentWorld: Self.world)
+    }
+
+    static func isTimeReplaced(in page: WKWebView) -> Bool { installed.object(forKey: page)?.timeConversion.isActive ?? false }
+    static func replaceTimes(_ on: Bool, in page: WKWebView, announces: Bool = true) {
+        guard let owner = installed.object(forKey: page) else { return }
+        Task { [weak owner, weak page] in
+            guard let owner, let page else { return }
+            do {
+                let count = try await owner.timeConversion.set(on)
+                UISelectionFeedbackGenerator().selectionChanged()
+                guard announces else { return }
+                let revert: (() -> Void)? = on && count > 0 ? { [weak page] in
+                    if let page { replaceTimes(false, in: page, announces: false) }
+                } : nil
+                owner.browser?.showTimeToast(on ? TimePageConversion.message(count) : TimePageConversion.restoredMessage, revert: revert)
+            } catch {
+                owner.browser?.showTimeToast("Couldn’t replace times on this page")
+            }
+        }
+    }
+
+    static func replaceAction(in page: WKWebView?) -> UIAction {
+        let replaced = page.map(isTimeReplaced) ?? false
+        return UIAction(title: "Replace on Page", image: UIImage(systemName: "arrow.left.arrow.right"),
+                        identifier: UIAction.Identifier("dev.bartosz.Rise.replaceTimes"), state: replaced ? .on : .off) { [weak page] _ in
+            if let page { replaceTimes(!replaced, in: page) }
+        }
+    }
 
     static func install(on page: WKWebView) {
         guard installed.object(forKey: page) == nil else { return }
@@ -101,7 +132,8 @@ final class RiseWebView: WKWebView {
     static func elements(for text: String, in page: WKWebView?, now: Date = Date()) -> [UIMenuElement] {
         let pageTitle = page?.title, source = page?.url.flatMap { ["http", "https"].contains($0.scheme ?? "") ? $0 : nil }
         let found = SelectionEvents.find(in: text, pageTitle: pageTitle, now: now)
-        let times = SelectionTimes.find(in: text, now: now)
+        let replaced = page.map(isTimeReplaced) ?? false
+        let times = SelectionTimes.find(in: text, now: now, includingLocal: replaced)
         let matched = found.flatMap { found in times.firstIndex { !$0.isZoneOnly && $0.start == found.start } }
         var elements: [UIMenuElement] = []
         if let found, matched == nil {
@@ -125,7 +157,11 @@ final class RiseWebView: WKWebView {
                                        end: time.end ?? time.start.addingTimeInterval(3600), hasEnd: time.end != nil,
                                        timeZone: time.zone, notes: text)
             elements.append(UIMenu(title: title, image: UIImage(systemName: "clock"), identifier: identifier,
-                                   children: [copy] + actions(for: event, source: source, in: page)))
+                                   children: [copy, replaceAction(in: page)] + actions(for: event, source: source, in: page)))
+        }
+        if replaced && times.isEmpty {
+            elements.append(UIMenu(title: "Local times on this page", image: UIImage(systemName: "clock"),
+                                   identifier: UIMenu.Identifier("\(menuIdentifier.rawValue).restoring"), children: [replaceAction(in: page)]))
         }
         return elements
     }

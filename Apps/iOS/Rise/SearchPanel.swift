@@ -460,7 +460,7 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         UIView.performWithoutAnimation {
             applyingCompletion = true
             field.inlineCompletion = nil
-            field.text = text
+            field.text = text.trimmingCharacters(in: .whitespacesAndNewlines) + " "
             _ = field.becomeFirstResponder()
             field.selectedTextRange = field.textRange(from: field.endOfDocument, to: field.endOfDocument)
             suppressCompletion = true
