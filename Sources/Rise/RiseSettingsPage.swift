@@ -67,6 +67,7 @@ import RiseChromium
             var rows = [toggle("simulatedFullscreen", "Simulated full screen", "Pages go full screen inside Rise's window (⇧⌘F)", pageFullscreen.isSimulated)]
             if pageFullscreen.isSimulated {
                 rows.append(toggle("collapseSidebar", "Collapse sidebar in simulated full screen", nil, collapsesSidebarInSimulatedFullscreen))
+                rows.append(toggle("autoHideFullscreenNavigation", "Auto-hide URL bar in simulated full screen", "Hover over the top of the page to reveal it. Always shown while the sidebar is open", autoHidesFullscreenNavigation))
             }
             rows.append(toggle("savesCaptures", "Save page captures automatically",
                                "The camera button's JPEG and PDF go straight to the folder below; off asks where each time", savesCapturesAutomatically))
@@ -119,6 +120,7 @@ import RiseChromium
         case "simulatedFullscreen":
             if on != pageFullscreen.isSimulated { pageFullscreen.setSimulated(on, in: tabs.map(\.page) + (peekTab.map { [$0.page] } ?? [])) }
         case "collapseSidebar": setCollapsesSidebarInSimulatedFullscreen(on)
+        case "autoHideFullscreenNavigation": setAutoHidesFullscreenNavigation(on)
         case "savesCaptures": setSavesCapturesAutomatically(on)
         case "copiesCaptures": setCopiesCaptures(on)
         case "notificationPermission":

@@ -16,6 +16,8 @@ final class DownloadRow: NSView {
     let pauseButton = PlayPauseButton()
     let titleShimmer = InputShimmer()
     private var pressing = false
+    private var wasFinished = true, finishingProgress = false
+    private var completionWork: DispatchWorkItem?
     var isHighlighted = false { didSet { if isHighlighted != oldValue { restyle() } } }
     /// Corner radii; the list's first and last rows follow the popover's rounder corners.
     var topRadius: CGFloat = 8 { didSet { needsLayout = true } }
@@ -58,6 +60,7 @@ final class DownloadRow: NSView {
         restyle()
     }
     required init?(coder: NSCoder) { fatalError() }
+    deinit { completionWork?.cancel() }
     override var isFlipped: Bool { true }
     var isFinished: Bool { item.isFinished }
     /// Quick Look shows documents, media, text and fonts; anything else would only get a file icon.
@@ -83,8 +86,17 @@ final class DownloadRow: NSView {
         let url = item.record.url
         title.stringValue = url.lastPathComponent
         if isFinished { icon.showFile(url) }
-        icon.isHidden = !isFinished; progressRing.isHidden = isFinished
-        progressRing.update(fraction: item.fraction, paused: item.state != .downloading)
+        if isFinished, !wasFinished, window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            finishingProgress = true
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }; finishingProgress = false; completionWork = nil; update()
+            }
+            completionWork?.cancel(); completionWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now()+DownloadGlyphView.glide, execute: work)
+        }
+        wasFinished = isFinished
+        icon.isHidden = !isFinished || finishingProgress; progressRing.isHidden = isFinished && !finishingProgress
+        progressRing.update(fraction: finishingProgress ? 1 : item.fraction, paused: !finishingProgress && item.state != .downloading)
         if isFinished { detail.stringValue = Self.detail(for: url, progress: nil) }
         else {
             let format = { (bytes: Int64) in ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }

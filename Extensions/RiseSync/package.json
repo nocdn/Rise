@@ -1,0 +1,5 @@
+{
+  "name": "rise-tab-sync", "version": "1.0.0", "private": true, "type": "module",
+  "scripts": { "test": "node --test tests/*.test.js", "check": "node --check src/background.js && node --check src/ledger.js && node --check src/cloudkit.js && node --check src/browser.js && node --check src/controller.js && node --check src/ui.js", "package": "python3 package.py" },
+  "engines": { "node": ">=22" }
+}

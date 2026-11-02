@@ -3,11 +3,18 @@ import RiseCore
 
 /// Share icons by security origin, keeping bounded 32px PNGs across relaunches.
 @MainActor final class SuggestionFavicons {
+    private struct Saved: Codable {
+        let images: [String: Data]
+        let verified: Set<String>
+    }
     static let limit = 128
     private let storageURL: URL
     private let session: URLSession
     private var images: [String: NSImage] = [:]
     private var data: [String: Data] = [:]
+    /// Older snapshots may have upscaled a 16px favicon. Recheck them on use,
+    /// keeping the old icon visible until the site's sharper artwork arrives.
+    private var verified = Set<String>()
     private var tasks: [String: URLSessionDataTask] = [:]
     private var requested: [String: URL] = [:]
     private var attempted = Set<String>()
@@ -22,8 +29,9 @@ import RiseCore
 
     init(storageURL: URL, session: URLSession = .shared) {
         self.storageURL = storageURL; self.session = session
-        if let bytes = try? Data(contentsOf: storageURL), bytes.count <= 24_000_000,
-           let saved = try? JSONDecoder().decode([String: Data].self, from: bytes) {
+        if let bytes = try? Data(contentsOf: storageURL), bytes.count <= 24_000_000 {
+            let current = try? JSONDecoder().decode(Saved.self, from: bytes)
+            let saved = current?.images ?? (try? JSONDecoder().decode([String: Data].self, from: bytes)) ?? [:]
             for (key, png) in saved.sorted(by: { $0.key < $1.key }).prefix(Self.limit*2) {
                 let origin = key.hasSuffix("|dark") ? String(key.dropLast(5)) : key
                 guard SitePermissions.origin(URL(string: origin)) == origin,
@@ -32,13 +40,22 @@ import RiseCore
                 images[key] = image; data[key] = png
                 if !order.contains(origin) { order.append(origin) }
             }
+            verified = (current?.verified ?? []).intersection(images.keys)
         }
     }
     func remember(_ tab: BrowserTab) {
         guard let origin = tab.iconOrigin, origin == SitePermissions.origin(tab.url) else { return }
-        if let image = tab.favicon, let png = tab.faviconData, data[origin] != png { store(image, png: png, origin: origin) }
+        if let image = tab.favicon, let png = tab.faviconData, data[origin] != png {
+            if let known = images[origin], FaviconImage.pixels(known) >= FaviconImage.pixels(image) {
+                tab.favicon = known
+            } else { store(image, png: png, origin: origin) }
+        }
         let key = Self.key(origin, dark: true)
-        if let image = tab.darkFavicon, let png = tab.darkFaviconData, data[key] != png { store(image, png: png, origin: origin, dark: true) }
+        if let image = tab.darkFavicon, let png = tab.darkFaviconData, data[key] != png {
+            if let known = images[key], FaviconImage.pixels(known) >= FaviconImage.pixels(image) {
+                tab.darkFavicon = known
+            } else { store(image, png: png, origin: origin, dark: true) }
+        }
     }
     func darkImage(for url: URL?) -> NSImage? {
         guard let origin = SitePermissions.origin(url) else { return nil }
@@ -56,6 +73,9 @@ import RiseCore
     }
     func image(for url: URL?, fetch allowFetch: Bool = true, dark: Bool = false) -> NSImage? {
         guard let origin = SitePermissions.origin(url), let url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return nil }
+        if allowFetch, images[origin] != nil, !verified.contains(origin), !AddressResolver.isLocal(url), attempted.insert(origin).inserted {
+            discoverRootIcon(origin: origin)
+        }
         if dark {
             if allowFetch, let image = darkImage(for: url) { return image }
             if let image = images[Self.key(origin, dark: true)] { return image }
@@ -108,12 +128,14 @@ import RiseCore
         fetch(iconURL, origin: origin, dark: dark, throughPage: throughPage)
     }
     /// Background tab metadata uses the same decoding, appearance variants and persistent cache.
-    @discardableResult func storePageIcon(_ bytes: Data, for pageURL: URL, dark: Bool = false) -> Bool {
+    @discardableResult func storePageIcon(_ bytes: Data, for pageURL: URL, dark: Bool = false, discovered: Bool = true) -> Bool {
         guard bytes.count <= 1_000_000, let origin = SitePermissions.origin(pageURL),
               let image = FaviconImage.decode(bytes, dark: dark), image.isValid, let png = FaviconSnapshot.encode(image) else { return false }
-        store(image, png: png, origin: origin, dark: dark)
+        let key = Self.key(origin, dark: dark)
+        if let known = images[key], verified.contains(key), FaviconImage.pixels(known) > FaviconImage.pixels(image) { return true }
+        store(image, png: png, origin: origin, dark: dark, verified: discovered || FaviconImage.pixels(image) >= 32)
         if !dark, FaviconImage.hasAppearanceStyles(bytes), let variant = FaviconImage.decode(bytes, dark: true), let png = FaviconSnapshot.encode(variant) {
-            store(variant, png: png, origin: origin, dark: true)
+            store(variant, png: png, origin: origin, dark: true, verified: true)
         }
         return true
     }
@@ -126,7 +148,8 @@ import RiseCore
                 guard let self, self.requested[key] == iconURL else { return }
                 self.tasks[key] = nil
                 if let bytes, (response as? HTTPURLResponse)?.statusCode == 200,
-                   self.storePageIcon(bytes, for: URL(string: origin)!, dark: dark) {
+                   self.storePageIcon(bytes, for: URL(string: origin)!, dark: dark, discovered: !discoverIfNeeded) {
+                    if discoverIfNeeded, !self.verified.contains(key) { self.discoverRootIcon(origin: origin) }
                     return
                 } else if let throughPage {
                     Task { @MainActor [weak self] in
@@ -153,7 +176,12 @@ import RiseCore
                 guard let bytes, (response as? HTTPURLResponse)?.statusCode == 200 else { return }
                 let landed = response?.url ?? root
                 let redirectedIcon = SitePermissions.origin(landed) != origin ? Self.defaultIcon(for: landed) : nil
-                guard let icon = FaviconDiscovery.icon(in: bytes, baseURL: landed) ?? redirectedIcon else { return }
+                guard let icon = FaviconDiscovery.icon(in: bytes, baseURL: landed) ?? redirectedIcon else {
+                    if let image = self.images[origin], let png = self.data[origin] {
+                        self.store(image, png: png, origin: origin, verified: true)
+                    }
+                    return
+                }
                 self.fetch(icon, origin: origin)
                 if let dark = FaviconDiscovery.icon(in: bytes, baseURL: landed, dark: true), dark != icon {
                     self.fetch(dark, origin: origin, dark: true)
@@ -167,14 +195,15 @@ import RiseCore
         parts.user = nil; parts.password = nil; parts.path = "/favicon.ico"; parts.query = nil; parts.fragment = nil
         return parts.url
     }
-    private func store(_ image: NSImage, png: Data, origin: String, dark: Bool = false) {
+    private func store(_ image: NSImage, png: Data, origin: String, dark: Bool = false, verified isVerified: Bool = false) {
         let key = Self.key(origin, dark: dark)
         images[key] = image; data[key] = png
+        if isVerified { verified.insert(key) }
         dirty = true
         order.removeAll { $0 == origin }; order.append(origin)
         while order.count > Self.limit {
             let old = order.removeFirst()
-            for key in [old, Self.key(old, dark: true)] { images[key] = nil; data[key] = nil }
+            for key in [old, Self.key(old, dark: true)] { images[key] = nil; data[key] = nil; verified.remove(key) }
         }
         if !dark { onLoad?(origin, image) }
         onVariantLoad?(origin, image, dark)
@@ -187,7 +216,7 @@ import RiseCore
         guard dirty else { return }
         do {
             try FileManager.default.createDirectory(at: storageURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try JSONEncoder().encode(data).write(to: storageURL, options: .atomic)
+            try JSONEncoder().encode(Saved(images: data, verified: verified)).write(to: storageURL, options: .atomic)
             dirty = false
         } catch { NSLog("Rise suggestion icon save failed: %@", error.localizedDescription) }
     }

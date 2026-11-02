@@ -203,8 +203,9 @@ public final class BrowsingHistory {
 
     /// Where typing `query` leads: of the sites whose address it starts, the one visited most across
     /// all its pages, so many pages of one site outweigh one page of another; and one of its pages
-    /// only as the site's usual stable destination (repeated visits or address-field selections,
-    /// at least half the site's query-free weight), or once the address typed reaches past the site.
+    /// only as the site's usual stable destination (repeated visits, at least half the site's
+    /// query-free weight), a repeatedly typed address even past that share, or once the address
+    /// typed reaches past the site.
     public func destination(for query: String, at date: Date = Date()) -> (site: URL, page: HistoryEntry?)? {
         // Each page's weight: its visits, and each time its address was typed counting for more. An
         // address typed but never kept, as one that sent the browser elsewhere, still counts.
@@ -220,7 +221,7 @@ public final class BrowsingHistory {
         }
         var sites: [String: (site: URL, pages: [(entry: HistoryEntry, weight: Int)])] = [:]
         for page in weighed.values {
-            guard let url = URL(string: page.entry.url), Self.completion(for: query, url: url, includePath: true) != nil,
+            guard let url = URL(string: page.entry.url), Self.startsWith(query, url: url),
                   let site = Self.site(of: url) else { continue }
             sites[site.absoluteString, default: (site, [])].pages.append(page)
         }
@@ -247,8 +248,11 @@ public final class BrowsingHistory {
         let fallback = atPathStart ? top.entry : nil
         guard let usual = stable.first, let usualURL = URL(string: usual.entry.url) else { return (best.site, fallback) }
         let weight = stable.reduce(0) { $0+$1.weight }
-        let repeated = usual.entry.visits > 1 || (storage.typed?[usual.entry.url]?.count ?? 0) > 1
-        let preferred = repeated && usual.weight*2 >= weight && Self.site(of: usualURL) != usualURL
+        let typed = storage.typed?[usual.entry.url]?.count ?? 0
+        let repeated = usual.entry.visits > 1 || typed > 1
+        // Typing the same address is an explicit destination, not a path invented from
+        // visits spread over a site: it can stand even when many pages share the weight.
+        let preferred = repeated && (typed > 1 || usual.weight*2 >= weight) && Self.site(of: usualURL) != usualURL
         return (best.site, preferred ? usual.entry : fallback)
     }
 
@@ -268,6 +272,12 @@ public final class BrowsingHistory {
             return query + suffix
         }
         return nil
+    }
+    /// The address starts with what's typed, including when both are the same:
+    /// a page typed in full is still the destination, with nothing left to fill in.
+    private static func startsWith(_ query: String, url: URL) -> Bool {
+        guard !query.isEmpty, !query.contains(where: { $0.isWhitespace }), let key = key(url) else { return false }
+        return forms(key, for: query).contains { $0.lowercased().hasPrefix(query.lowercased()) }
     }
     /// The site a page is on: its address with only "/" for a path.
     public static func site(of url: URL) -> URL? {

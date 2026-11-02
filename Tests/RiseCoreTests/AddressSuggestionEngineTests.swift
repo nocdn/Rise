@@ -138,6 +138,24 @@ final class AddressSuggestionEngineTests: XCTestCase {
         XCTAssertEqual(AddressSuggestionEngine.suggestions(for: "news", history: restored, tabs: []).first?.completion, "news.example",
                        "Several equally used pages do not invent a preferred path")
     }
+    /// A console used through several pages adds up past a page's half-share of a site,
+    /// but the address typed over and over is still what the person means.
+    func testRepeatedlyTypedAddressSurvivesASiteSpreadAcrossManyPages() throws {
+        let history = BrowsingHistory(storageURL: URL.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let console = URL(string: "https://opencode.ai/console")!
+        for (address, visits) in [("https://opencode.ai/", 1), ("https://opencode.ai/console/", 1),
+                                  ("https://opencode.ai/console/go", 4), ("https://opencode.ai/console/workspace", 7),
+                                  ("https://opencode.ai/console/wrk_01/go", 3), ("https://opencode.ai/console/login", 1)] {
+            for _ in 0..<visits { history.record(URL(string: address)!, title: "OpenCode Console") }
+        }
+        for _ in 0..<4 { history.recordTyped(console) }
+        let first = try XCTUnwrap(AddressSuggestionEngine.suggestions(for: "open", history: history, tabs: []).first)
+        XCTAssertEqual(first.completion, "opencode.ai/console")
+        XCTAssertEqual(first.url, console)
+        let exact = try XCTUnwrap(AddressSuggestionEngine.suggestions(for: "opencode.ai/console", history: history, tabs: []).first)
+        XCTAssertEqual(exact.url, console, "An address typed in full stays itself")
+        XCTAssertNil(exact.completion, "A complete address has nothing left to fill in")
+    }
     func testOpenTabsDeduplicateHistoryAndRequireExactQueryAndAnchor() {
         let history = BrowsingHistory(storageURL: URL.temporaryDirectory.appendingPathComponent(UUID().uuidString))
         let url = URL(string: "https://example.com/docs?q=one#intro")!

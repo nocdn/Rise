@@ -1,9 +1,11 @@
 import XCTest
 import AppKit
+import RiseCore
 @testable import Rise
 
 private final class IconProtocol: URLProtocol {
     static var png = Data()
+    static var largePNG = Data()
     static var requests: [URL] = []
     static let lock = NSLock()
     static func snapshotRequests() -> [URL] {
@@ -17,7 +19,11 @@ private final class IconProtocol: URLProtocol {
         let url = request.url!
         let missing = ["root-only.example", "redirect-only.example"].contains(url.host ?? "") && url.path == "/favicon.ico"
         var bytes = invalid ? Data("not an image".utf8) : Self.png
-        if url.host == "calendar.example" && url.path == "/favicon.ico" {
+        if url.host == "quality.example.org", url.path == "/" {
+            bytes = Data("<link rel='shortcut icon' href='/favicon.ico'><link rel='icon' href='/large.png' sizes='144x144'>".utf8)
+        } else if url.host == "quality.example.org", url.path == "/large.png" {
+            bytes = Self.largePNG
+        } else if url.host == "calendar.example" && url.path == "/favicon.ico" {
             bytes = Data("<link rel='shortcut icon' href='https://cdn.example/calendar.png'>".utf8)
         } else if missing { bytes = Data() }
         else if url.host == "root-only.example" && url.path == "/" {
@@ -33,6 +39,60 @@ private final class IconProtocol: URLProtocol {
     override func stopLoading() {}
 }
 final class SuggestionFaviconsTests: XCTestCase {
+    @MainActor private func bitmap(_ size: Int, color: NSColor) throws -> Data {
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+        let rgb = try XCTUnwrap(color.usingColorSpace(.deviceRGB))
+        let pixels = try XCTUnwrap(bitmap.bitmapData)
+        for y in 0..<size { for x in 0..<size {
+            let at = y*bitmap.bytesPerRow+x*4
+            pixels[at] = UInt8(rgb.redComponent*255); pixels[at+1] = UInt8(rgb.greenComponent*255)
+            pixels[at+2] = UInt8(rgb.blueComponent*255); pixels[at+3] = 255
+        } }
+        return try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+    }
+    @MainActor func testLowResolutionFallbackUpgradesAndLegacySnapshotsCannotReplaceSharpArtwork() async throws {
+        _ = NSApplication.shared
+        IconProtocol.png = try bitmap(16, color: .red)
+        IconProtocol.largePNG = try bitmap(144, color: .green)
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [IconProtocol.self]
+        let session = URLSession(configuration: config); defer { session.invalidateAndCancel() }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = URL(string: "https://quality.example.org/watch?private=query")!, origin = SitePermissions.origin(url)!
+        for legacy in [false, true] {
+            IconProtocol.requests = []
+            let file = folder.appendingPathComponent(legacy ? "legacy.json" : "new.json")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            let stale = try bitmap(32, color: .red)
+            if legacy { try JSONEncoder().encode([origin: stale]).write(to: file) }
+            let cache = SuggestionFavicons(storageURL: file, session: session); defer { cache.cancel() }
+            if legacy { XCTAssertNotNil(cache.image(for: url, fetch: false), "Keep the old icon visible during migration") }
+            _ = cache.image(for: url)
+            let end = Date().addingTimeInterval(3)
+            while Date() < end {
+                if let image = cache.image(for: url, fetch: false), FaviconImage.pixels(image) >= 64 { break }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            let sharp = try XCTUnwrap(cache.image(for: url, fetch: false))
+            XCTAssertGreaterThanOrEqual(FaviconImage.pixels(sharp), 64)
+            let expected = legacy ? [URL(string: origin+"/")!, URL(string: origin+"/large.png")!]
+                : [URL(string: "https://quality.example.org/favicon.ico")!, URL(string: origin+"/")!, URL(string: origin+"/large.png")!]
+            XCTAssertEqual(IconProtocol.snapshotRequests(), expected, "Discovery must not send the suggested page's path or query")
+            let snapshot = try XCTUnwrap(FaviconSnapshot.encode(sharp))
+            cache.save()
+            let restored = SuggestionFavicons(storageURL: file, session: session); defer { restored.cancel() }
+            let staleTab = BrowserTab(saved: SavedTab(url: url.absoluteString, title: "YouTube-style page", faviconData: stale, faviconOrigin: origin))
+            restored.remember(staleTab)
+            XCTAssertEqual(staleTab.faviconData, snapshot, "A restored blurry tab adopts the sharper cache instead of overwriting it")
+            XCTAssertEqual(FaviconSnapshot.encode(restored.image(for: url)), snapshot)
+            XCTAssertTrue(restored.storePageIcon(IconProtocol.png, for: url))
+            XCTAssertEqual(FaviconSnapshot.encode(restored.image(for: url, fetch: false)), snapshot, "A later 16px default icon cannot downgrade the cache")
+            try await Task.sleep(for: .milliseconds(30))
+            XCTAssertEqual(IconProtocol.snapshotRequests(), expected, "The upgraded cache must survive relaunch without another request")
+        }
+    }
+
     @MainActor func testTypedAddressesDebounceCancelAndDiscoverHTMLIconsWithoutSendingTheTypedPath() async throws {
         let image = NSImage(size: NSSize(width: 16, height: 16), flipped: false) { rect in NSColor.systemBlue.setFill(); rect.fill(); return true }
         IconProtocol.png = FaviconSnapshot.encode(image)!; IconProtocol.requests = []

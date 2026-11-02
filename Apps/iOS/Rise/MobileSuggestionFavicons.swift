@@ -42,6 +42,8 @@ import UIKit
     }
     func remember(_ image: UIImage?, for url: URL?) {
         guard let image, let origin = Self.origin(url), let saved = MobileFavicon.Saved(image) else { return }
+        // A late /favicon.ico or a restored tab must not replace sharper artwork.
+        if let known = images[origin], Self.pixels(known) > Self.pixels(image) { return }
         // A restored tab may still have a single icon; keep any dark artwork already learned.
         if saved.dark == nil, let dark = bytes[origin]?.dark.flatMap(MobileFavicon.decode) {
             let combined = MobileFavicon.adaptive(light: image, dark: dark)
@@ -50,6 +52,10 @@ import UIKit
             images[origin] = image; bytes[origin] = saved
         }
         while images.count > 128, let oldest = images.keys.sorted().first { images[oldest] = nil; bytes[oldest] = nil }
+    }
+    private static func pixels(_ image: UIImage) -> Int {
+        let image = MobileFavicon.variant(image, style: .light)
+        return min(image.cgImage?.width ?? 0, image.cgImage?.height ?? 0)
     }
     /// Typing a literal address waits for a quiet moment before fetching its public site's icon.
     func previewCandidate(_ url: URL?) {

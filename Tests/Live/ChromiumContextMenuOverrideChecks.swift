@@ -111,6 +111,24 @@ import RiseChromium
         check(try Data(contentsOf: destination) == Data(contentsOf: folder.appendingPathComponent("clip.mp4")), "The downloaded file is the actual video")
         check(await rightClick("#video", in: page) == nil, "The next ordinary right-click isn't forced")
 
+        _ = await value("const video=document.querySelector('#video'),player=document.createElement('div');player.id='player';player.style='position:relative;width:320px;height:180px';video.replaceWith(player);player.append(video);player.insertAdjacentHTML('beforeend','<div id=overlay style=\"position:absolute;inset:0;background:transparent;pointer-events:auto!important\"></div>');window.originalVideoStyle=video.getAttribute('style');window.originalOverlayStyle=document.querySelector('#overlay').getAttribute('style');return 0", page)
+        let covered = await rightClick("#overlay", in: page, modifiers: .shift)
+        check(covered?.items.contains { $0.title == "Download Video" } == true, "A transparent player overlay retains Download Video")
+        check(await value("return document.querySelector('#video').getAttribute('style')===originalVideoStyle && document.querySelector('#overlay').getAttribute('style')===originalOverlayStyle", page) as? Bool == true, "Player controls and inline style priorities are restored immediately")
+        download = nil
+        try? FileManager.default.removeItem(at: destination)
+        choose("Download Video", in: covered)
+        try await wait("A video covered by player controls downloads normally") { download?.state == .finished }
+        check(try Data(contentsOf: destination) == Data(contentsOf: folder.appendingPathComponent("clip.mp4")), "The overlay menu saves video bytes, not the webpage")
+        check(await rightClick("#overlay", in: page) == nil, "Ordinary right-click on the player still reaches its custom menu")
+        _ = await value("document.querySelector('#video').style.pointerEvents='none';return 0", page)
+        check(await rightClick("#overlay", in: page, modifiers: .shift)?.items.contains { $0.title == "Download Video" } == true, "A video with pointer events disabled is still recognized behind its player")
+        check(await value("return document.querySelector('#video').style.pointerEvents==='none'", page) as? Bool == true, "The video's original pointer-events:none is preserved")
+        _ = await value("document.querySelector('#overlay').remove();document.querySelector('#video').style.removeProperty('pointer-events');document.body.insertAdjacentHTML('beforeend','<div id=modal role=dialog style=\"position:fixed;inset:0;background:white\">Unrelated dialog</div>');return 0", page)
+        let modal = await rightClick("#modal", in: page, modifiers: .shift)
+        check(modal != nil && modal?.items.contains { $0.title == "Download Video" } == false, "An unrelated dialog is not pierced to find a video behind it")
+        _ = await value("document.querySelector('#modal').remove();return 0", page)
+
         let link = await rightClick("#link", in: page, modifiers: .shift)
         check(link?.items.contains { $0.title == "Copy Link" } == true && link?.items.contains { $0.title == "Download Linked File" } == true,
               "Links retain their native actions")
@@ -136,6 +154,12 @@ import RiseChromium
         check(shadow?.items.contains { $0.title == "Copy Link" } == true, "Native hit testing still sees links inside a closed shadow root")
         let frame = await rightClick("#frame", in: page, modifiers: .shift)
         check(frame?.items.contains { $0.title == "Copy Link" } == true, "Cross-origin frames also use the override")
+
+        _ = await value("const player=document.querySelector('#player');player.__reactFiber$riseCheck={memoizedProps:{},return:{memoizedProps:{variants:[{src:'https://video.twimg.com/low.mp4',type:'video/mp4',bitrate:256000},{src:'https://video.twimg.com/high.mp4?tag=29',type:'video/mp4',bitrate:832000},{src:'https://evil.test/other.mp4',type:'video/mp4',bitrate:999999}]},return:{memoizedProps:{variants:[{src:'https://video.twimg.com/wrong-player.mp4',type:'video/mp4',bitrate:9999999}]}}}};return 0", page)
+        let variants = try await page.evaluate(ContextMenuVideoSource.xVariants, arguments: ["source": site+"/clip.mp4"], in: nil, world: .page) as? [[String: Any]] ?? []
+        check(ContextMenuVideoSource.preferredVariant(variants)?.absoluteString == "https://video.twimg.com/high.mp4?tag=29", "Streaming video resolution uses the clicked player's best safe MP4")
+        let absent = try await page.evaluate(ContextMenuVideoSource.xVariants, arguments: ["source": "blob:https://x.com/no-longer-present"], in: nil, world: .page) as? [Any]
+        check(absent?.isEmpty == true, "A stale stream never picks another player's video")
         page.reload()
         try await wait("The page reloads") { await self.value("return document.querySelector('#video')?.readyState>=2", page) as? Bool == true && !page.isLoading }
         check(await rightClick("#video", in: page, modifiers: .shift)?.items.contains { $0.title == "Download Video" } == true, "The override is reinstalled on navigation")

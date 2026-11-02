@@ -36,7 +36,7 @@ final class DownloadFlightTests: XCTestCase {
     }
 
     /// The button's ring shows how much of the downloads in progress has come.
-    @MainActor func testTheButtonFollowsDownloadsInProgress() throws {
+    @MainActor func testTheButtonFollowsDownloadsInProgress() async throws {
         let browser = browser(); defer { clean(browser) }
         let glyph = browser.sidebar.archiveButton.glyph
         browser.updateDownloadsButton()
@@ -51,7 +51,60 @@ final class DownloadFlightTests: XCTestCase {
         browser.downloads.fail(unknown)
         XCTAssertEqual(glyph.state, .progress(0.25))
         browser.downloads.finish(id)
+        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            XCTAssertEqual(glyph.state, .progress(1), "Completion fills before the icon returns to idle")
+            try await Task.sleep(for: .milliseconds(350))
+        }
         XCTAssertEqual(glyph.state, .idle, "Done, the circle is whole again")
+    }
+
+    @MainActor func testInstantCompletionAndFirstProgressNeverJumpAndNewTransfersInterruptTheFinish() async throws {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { throw XCTSkip("Reduce Motion") }
+        let browser = browser(); defer { clean(browser) }
+        browser.window?.setFrameOrigin(NSPoint(x: 80, y: 80))
+        let glyph = browser.sidebar.archiveButton.glyph
+        glyph.setState(.progress(1))
+        XCTAssertEqual(glyph.displayed.state, .progress(0), "A first update at 100% must start at zero")
+        glyph.complete(); glyph.setState(.idle)
+        try await Task.sleep(for: .milliseconds(50))
+        guard case .progress(let fraction) = glyph.displayed.state else { return XCTFail("Completion disappeared early") }
+        XCTAssertGreaterThan(fraction, 0); XCTAssertLessThan(fraction, 1)
+        glyph.setState(.progress(0.3))
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertEqual(glyph.state, .progress(0.3), "An old completion must not hide a new download")
+        glyph.setState(.idle)
+        XCTAssertEqual(glyph.state, .idle, "Cancellation does not play a success animation")
+        let id = browser.downloads.begin(URL(fileURLWithPath: "/tmp/instant-download.bin"), progress: nil)
+        browser.downloads.finish(id)
+        XCTAssertEqual(glyph.state, .progress(1), "Unknown-size instant downloads also animate their completion")
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertEqual(glyph.state, .idle)
+    }
+
+    @MainActor func testFastCompletedRowRetainsItsRingUntilTheFillFinishes() async throws {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { throw XCTSkip("Reduce Motion") }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("tiny.txt"); try Data("tiny".utf8).write(to: file)
+        let list = DownloadList(storeURL: folder.appendingPathComponent("downloads.json"))
+        let id = list.begin(file, progress: Progress(totalUnitCount: 100))
+        let controller = DownloadsController(list: list)
+        let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 300, height: 100), styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = controller.view; window.orderFront(nil)
+        defer { window.orderOut(nil) }
+        let row = try XCTUnwrap(controller.rows.first)
+        list.onChange = { controller.reload() }
+        list.finish(id)
+        XCTAssertTrue(controller.rows.first === row)
+        XCTAssertFalse(row.progressRing.isHidden)
+        XCTAssertEqual(row.progressRing.fraction, 1)
+        let fill = try XCTUnwrap(row.progressRing.layer?.sublayers?.last as? CAShapeLayer)
+        let animation = try XCTUnwrap(fill.animation(forKey: "progress") as? CABasicAnimation)
+        XCTAssertEqual(animation.fromValue as? Double, 0)
+        XCTAssertEqual(animation.toValue as? Double, 1)
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertTrue(row.progressRing.isHidden, "Only the completed ring gives way to the file icon")
     }
 
     /// A download's card flies into a stand-in for the button, which shows again after.

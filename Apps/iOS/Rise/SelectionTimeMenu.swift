@@ -37,6 +37,8 @@ final class RiseWebView: WKWebView {
         SelectionCurrencyMenu.build(builder, in: self)
         SelectionExplanation.build(builder, in: self)
         SelectionTimeNativeMenu.removeCopyLinkWithHighlight(from: builder)
+        SelectionBase64Menu.build(builder, in: self)
+        SelectionMenuIcons.build(builder)
     }
 }
 
@@ -60,6 +62,8 @@ final class RiseWebView: WKWebView {
     private var nativeMenu: SelectionTimeNativeMenu?
     /// What each frame has selected, and the frame selected in last.
     private var selections: [String: String] = [:]
+    /// Encoding must preserve whitespace and selections beyond date parsing's limit.
+    private var rawSelections: [String: String] = [:]
     private var latest: String?
     /// Whether the page's amounts are rewritten into the person's currency (`SelectionCurrencyMenu`).
     private var currencyReplaced = false
@@ -108,6 +112,10 @@ final class RiseWebView: WKWebView {
         guard let menu = installed.object(forKey: page), let frame = menu.latest else { return "" }
         return menu.selections[frame] ?? ""
     }
+    static func rawSelection(in page: WKWebView) -> String {
+        guard let menu = installed.object(forKey: page), let frame = menu.latest else { return "" }
+        return menu.rawSelections[frame] ?? ""
+    }
 
     static func isCurrencyReplaced(in page: WKWebView) -> Bool { installed.object(forKey: page)?.currencyReplaced ?? false }
     static func setCurrencyReplaced(_ replaced: Bool, in page: WKWebView) { installed.object(forKey: page)?.currencyReplaced = replaced }
@@ -119,11 +127,12 @@ final class RiseWebView: WKWebView {
         guard let frame = body["frame"] as? String, let text = body["text"] as? String else { return }
         // Rates for an amount selected, ready by the time its menu is asked for.
         if text.contains(where: \.isNumber) { ExchangeRateStore.shared.refreshIfStale() }
-        if text.isEmpty {
-            selections[frame] = nil
+        let raw = body["raw"] as? String ?? text
+        if raw.isEmpty || raw.utf8.count > SelectionBase64.maximumBytes {
+            selections[frame] = nil; rawSelections[frame] = nil
             if latest == frame { latest = nil }
         } else {
-            selections[frame] = text; latest = frame
+            selections[frame] = text.isEmpty ? nil : text; rawSelections[frame] = raw; latest = frame
         }
     }
 
@@ -324,8 +333,8 @@ final class RiseWebView: WKWebView {
     static let source = #"""
     (() => {
       const frame = crypto.randomUUID?.() || `${Date.now()}-${Math.random()}`;
-      const post = text => window.webkit.messageHandlers.riseSelection.postMessage({frame, text});
-      let sent = '';
+      const post = (text, raw) => window.webkit.messageHandlers.riseSelection.postMessage({frame, text, raw});
+      let sent = '', sentRaw = '';
       // The document's selection, or a text field's, which keeps its own to itself.
       function selected() {
         const text = String(getSelection() || ''), field = document.activeElement;
@@ -333,10 +342,11 @@ final class RiseWebView: WKWebView {
         try { return field.value.slice(field.selectionStart ?? 0, field.selectionEnd ?? 0); } catch { return ''; }
       }
       document.addEventListener('selectionchange', () => {
-        const text = selected().trim(), shown = text.length > 3000 ? '' : text;
-        if (shown !== sent) post(sent = shown);
+        const selectedText = selected(), text = selectedText.trim(), shown = text.length > 3000 ? '' : text;
+        const raw = selectedText.length > __BASE64_LIMIT__ ? '' : selectedText;
+        if (shown !== sent || raw !== sentRaw) post(sent = shown, sentRaw = raw);
       });
-      addEventListener('pagehide', () => { if (sent) post(sent = ''); });
+      addEventListener('pagehide', () => { if (sent || sentRaw) post(sent = '', sentRaw = ''); });
       if (window === top) {
         window.webkit.messageHandlers.riseSelection.postMessage({replaced: false});
         addEventListener('pageshow', event => {
@@ -344,5 +354,5 @@ final class RiseWebView: WKWebView {
         });
       }
     })();
-    """#
+    """#.replacingOccurrences(of: "__BASE64_LIMIT__", with: String(SelectionBase64.maximumBytes))
 }

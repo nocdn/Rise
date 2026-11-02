@@ -188,11 +188,12 @@ final class FindInput: NSTextField {
 }
 class FindInputCell: NSTextFieldCell {
     // TextKit 1 from the start: the shimmer reads the editor's layout manager.
-    let editor: NSTextView = {
-        let editor = NSTextView(usingTextLayoutManager: false)
+    lazy var editor: NSTextView = {
+        let editor = makeEditor()
         editor.isFieldEditor = true; editor.allowsUndo = true
         return editor
     }()
+    func makeEditor() -> NSTextView { NSTextView(usingTextLayoutManager: false) }
     override func fieldEditor(for controlView: NSView) -> NSTextView? { editor }
 }
 
@@ -231,7 +232,7 @@ class FindInputCell: NSTextFieldCell {
     let badge = SendBadge()
     let shimmer = InputShimmer()
     private let separator = Surface()
-    private let answerScroll = NSScrollView()
+    private let answerScroll = PopoverScrollView()
     // TextKit 1 from the start: the streaming effect paints with the layout manager.
     private let answerView = TokenTextView()
     private let footer = FlippedView()

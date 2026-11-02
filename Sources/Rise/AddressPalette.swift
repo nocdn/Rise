@@ -20,7 +20,7 @@ struct AddressSuggestion {
 }
 @MainActor final class AddressPalette: Surface, NSTextFieldDelegate {
     let input = AddressInputField(frame: .zero)
-    let leadingIcon = NSImageView()
+    let leadingIcon = FaviconView(frame: .zero)
     private let emptyCommands = NSTextField(labelWithString: "No matching commands")
     var suggestions: [AddressSuggestion] = []
     var buttons: [NSButton] = []
@@ -188,6 +188,7 @@ struct AddressSuggestion {
         return learnedSite?(address) ?? popular
     }
     private func updateLeadingIcon() {
+        leadingIcon.roundsImage = false
         if let list = choice {
             leadingIcon.image = list.symbol == "paintbrush" ? TablerIcon.themeImage(size: 16) : NSImage(systemSymbolName: list.symbol, accessibilityDescription: nil)
             leadingIcon.contentTintColor = fieldIconColor; return
@@ -201,13 +202,16 @@ struct AddressSuggestion {
         let address = query.trimmingCharacters(in: .whitespacesAndNewlines)
         if let site = fieldSite, let favicon = siteFavicon?(site.homeURL) {
             leadingIcon.image = favicon; leadingIcon.contentTintColor = nil
+            leadingIcon.roundsImage = true
         } else if siteSearch != nil {
             leadingIcon.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil); leadingIcon.contentTintColor = fieldIconColor
         } else if completionRange != nil, let favicon = suggestions.first?.favicon {
             // A visited page filling in shows its icon too.
             leadingIcon.image = favicon; leadingIcon.contentTintColor = nil
+            leadingIcon.roundsImage = true
         } else if let page = currentPage, !createsTab, !address.isEmpty, address == page.address, let favicon = page.favicon {
             leadingIcon.image = favicon; leadingIcon.contentTintColor = nil
+            leadingIcon.roundsImage = true
         } else {
             leadingIcon.image = isCommandMode ? NSImage(systemSymbolName: "command", accessibilityDescription: "Browser commands")
                 : isCentered ? CenteredPaletteStyle.searchIcon : AddressAppearance.searchIcon
@@ -575,6 +579,7 @@ struct AddressSuggestion {
         let range = NSRange(location: typed.utf16.count, length: completed.utf16.count-typed.utf16.count)
         editor.string = completed; input.stringValue = completed; editor.setSelectedRange(range)
         completionPrefix = typed; completionRange = range
+        input.anchorInlineCompletion(range)
         applyingCompletion = false
         updateOffer(); updateLeadingIcon(); if isCentered { updateSelection() }
     }

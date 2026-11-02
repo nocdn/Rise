@@ -29,7 +29,7 @@ import RiseChromium
             pasteboard.writeObjects([url as NSURL]); pasteboard.setString(url.absoluteString, forType: .string)
         }
         let opener = tabs.first { $0.page === page }
-        func openInNewTab(_ url: URL) { addTab(url: url).returnsTo = opener?.id }
+        func openInNewTab(_ url: URL) { addTab(url: url, opener: opener?.id ?? selectedID).returnsTo = opener?.id }
 
         // An event in the selection heads the menu as its time, opening to Calendar, Reminders and
         // Google Calendar, filled in (`SelectionEvents`); a time selected in another zone, in the
@@ -115,7 +115,10 @@ import RiseChromium
             group()
             let noun = info.mediaKind == .image ? "Image" : info.mediaKind == .video ? "Video" : "Audio"
             add("Open \(noun) in New Tab") { openInNewTab(source) }
-            add("Download \(noun)") { info.download(source) }
+            add("Download \(noun)") {
+                guard info.mediaKind == .video else { info.download(source); return }
+                Task { info.download(await ContextMenuVideoSource.resolve(source, in: page)) }
+            }
             add("Copy \(noun) Address") { copy(source) }
             if info.mediaKind == .image { add("Copy Image", enabled: info.hasImageContents) { info.copyImage() } }
         }
@@ -149,6 +152,9 @@ import RiseChromium
             add("Forward", enabled: page.canGoForward) { page.goForward() }
             add("Reload") { page.reload() }
         }
+        // Selection utilities share a section near the end, after lookup and editing.
+        let utilities = [base64DecodeItem(for: info.selectionText), base64EncodeItem(for: info.selectionText)].compactMap { $0 }
+        if !utilities.isEmpty { group(); utilities.forEach(menu.addItem) }
         // Extensions' entries, where Chrome puts them.
         let entries = info.extensionItems
         if !entries.isEmpty {

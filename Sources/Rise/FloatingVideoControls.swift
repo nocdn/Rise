@@ -14,17 +14,16 @@ import AppKit
     let progress = FloatingVideoProgressBar()
     private let scrim = FloatingVideoScrim()
     private let closeControl = FloatingVideoControl(glyph: .cross, title: "Close Picture in Picture and pause video")
-    private let minimizeControl = FloatingVideoControl(glyph: .dash, title: "Hide Picture in Picture and keep playing")
     private let returnControl = FloatingVideoControl(glyph: .arrows, title: "Return video to its tab")
     private var downPoint: NSPoint?
     private var dragged = false
     private(set) var controlsVisible = false
-    private var faded: [NSView] { [scrim, closeControl, minimizeControl, returnControl, playButton, progress] }
+    private var faded: [NSView] { [scrim, closeControl, returnControl, playButton, progress] }
     override var isFlipped: Bool { true }
     override init(frame: NSRect) {
         super.init(frame: frame)
         closeControl.action = { [weak self] in self?.closeAction?() }
-        minimizeControl.action = { [weak self] in self?.minimizeAction?() }
+        closeControl.alternateAction = { [weak self] in self?.minimizeAction?() }
         returnControl.action = { [weak self] in self?.returnAction?() }
         playButton.action = { [weak self] in self?.toggle() }
         playButton.growsOnHover = true
@@ -37,10 +36,9 @@ import AppKit
     override func layout() {
         super.layout()
         let scale = Self.controlScale(width: bounds.width)
-        let side = 30*scale, inset = 10*scale
+        let side = 30*scale, inset = 6*scale
         scrim.frame = bounds
         closeControl.frame = NSRect(x: inset, y: inset, width: side, height: side)
-        minimizeControl.frame = NSRect(x: inset+side+6*scale, y: inset, width: side, height: side)
         returnControl.frame = NSRect(x: bounds.width-inset-side, y: inset, width: side, height: side)
         let play = min(72, max(44, bounds.height*0.3))
         playButton.frame = NSRect(x: (bounds.width-play)/2, y: (bounds.height-play)/2, width: play, height: play)
@@ -63,10 +61,14 @@ import AppKit
         guard let window, window.isVisible else { setControlsVisible(false); return }
         setControlsVisible(bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)))
         playButton.refreshGrowth()
+        updateModifiers(NSEvent.modifierFlags)
     }
+    func updateModifiers(_ modifiers: NSEvent.ModifierFlags) { closeControl.updateModifiers(modifiers) }
+    func hideHoverHints() { closeControl.hideHoverHint(); returnControl.hideHoverHint() }
     private func setControlsVisible(_ visible: Bool) {
         guard visible != controlsVisible else { return }
         controlsVisible = visible
+        if !visible { hideHoverHints() }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : visible ? 0.15 : 0.1
             faded.forEach { $0.animator().alphaValue = visible ? 1 : 0 }
@@ -97,15 +99,22 @@ import AppKit
 }
 
 /// A white glyph with no background, over the scrim's darker top edge, in a
-/// 30pt square that keeps the controls' spacing. The arrows spread apart and the dash drops slightly on hover; the cross
-/// stays still. The motion springs in and returns quickly.
+/// 30pt square that keeps the controls' spacing. The return arrows spread apart
+/// on hover; the X morphs into a stationary bar while Shift is held over it.
 @MainActor final class FloatingVideoControl: NSView {
-    enum Glyph { case cross, dash, arrows }
+    enum Glyph { case cross, arrows }
     var action: (() -> Void)?
+    var alternateAction: (() -> Void)?
     private let glyph: Glyph
+    private let title: String
+    private(set) var hoverHint: ButtonHoverHint?
+    private var shiftHeld = false
+    private(set) var minimizesInBackground = false
     /// Holds the glyph, so the whole button shrinks slightly while pressed.
     private let body = CALayer()
-    private var hovering = false { didSet { updateGlyph() } }
+    private var hovering = false {
+        didSet { updateCloseMode(); updateGlyph(); hoverHint?.setHovered(hovering) }
+    }
     private var pressed = false {
         didSet {
             if pressed != oldValue { PressScale.set(body, to: pressed ? 0.88 : 1) }
@@ -124,7 +133,7 @@ import AppKit
     /// Matches the 13pt semibold xmark: ink 10 wide and 10.6 tall, strokes 1.9pt.
     private static let crossArm = CGVector(dx: 4.05, dy: 4.36), crossWidth: CGFloat = 1.9
     init(glyph: Glyph, title: String) {
-        self.glyph = glyph
+        self.glyph = glyph; self.title = title
         super.init(frame: NSRect(x: 0, y: 0, width: 30, height: 30))
         wantsLayer = true
         layer?.addSublayer(body)
@@ -135,7 +144,6 @@ import AppKit
                 stroke.lineCap = .round
                 body.addSublayer(stroke)
             }
-        case .dash: pieces = [(CALayer(), CGVector(dx: 0, dy: -1))]
         case .arrows:
             // Up-left keeps the triangle above the bottom-left to top-right
             // diagonal; down-right keeps the one below it.
@@ -144,11 +152,13 @@ import AppKit
         }
         pieces.forEach { body.addSublayer($0.layer) }
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
-        toolTip = title
+        hoverHint = ButtonHoverHint(button: self, text: title)
         setAccessibilityElement(true); setAccessibilityRole(.button); setAccessibilityLabel(title)
     }
     required init?(coder: NSCoder) { fatalError() }
-    private var symbol: String { glyph == .dash ? "minus" : "arrow.up.left.and.arrow.down.right" }
+    func hideHoverHint() { hovering = false }
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); if window == nil { hideHoverHint() } }
+    override func viewDidHide() { super.viewDidHide(); hideHoverHint() }
     override func layout() {
         super.layout()
         CATransaction.begin(); CATransaction.setDisableActions(true)
@@ -156,8 +166,8 @@ import AppKit
         let scale = window?.backingScaleFactor ?? 2
         // Redrawn in quarter-point steps, so a pinch doesn't redraw it every frame.
         let pointSize = (13*sizeScale*4).rounded()/4
-        if !pieces.isEmpty, scale != renderedScale || pointSize != renderedPointSize,
-           let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(
+        if glyph == .arrows, scale != renderedScale || pointSize != renderedPointSize,
+           let image = NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: nil)?.withSymbolConfiguration(
                NSImage.SymbolConfiguration(pointSize: pointSize, weight: .semibold).applying(.init(paletteColors: [.white]))) {
             renderedScale = scale; renderedPointSize = pointSize
             let size = image.size
@@ -176,6 +186,7 @@ import AppKit
         for (index, stroke) in strokes.enumerated() where glyph == .cross {
             stroke.frame = bounds; stroke.lineWidth = Self.crossWidth*sizeScale
             stroke.path = crossArm(index)
+            stroke.opacity = minimizesInBackground && index == 1 ? 0 : 1
         }
         CATransaction.commit()
     }
@@ -183,11 +194,38 @@ import AppKit
     private static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     /// One arm of the cross through the center.
     private func crossArm(_ index: Int) -> CGPath {
-        let dx = Self.crossArm.dx*sizeScale, dy = (index == 0 ? 1 : -1)*Self.crossArm.dy*sizeScale
+        let dx = Self.crossArm.dx*sizeScale
+        let dy = minimizesInBackground ? 0 : (index == 0 ? 1 : -1)*Self.crossArm.dy*sizeScale
         let path = CGMutablePath()
         path.move(to: CGPoint(x: bounds.midX-dx, y: bounds.midY-dy))
         path.addLine(to: CGPoint(x: bounds.midX+dx, y: bounds.midY+dy))
         return path
+    }
+    func updateModifiers(_ modifiers: NSEvent.ModifierFlags) {
+        shiftHeld = modifiers.contains(.shift); updateCloseMode()
+    }
+    private func updateCloseMode() {
+        let minimize = glyph == .cross && hovering && shiftHeld && alternateAction != nil
+        guard minimize != minimizesInBackground else { return }
+        minimizesInBackground = minimize
+        let label = minimize ? "Hide Picture in Picture and keep playing" : title
+        hoverHint?.update(text: label, shortcut: ""); setAccessibilityLabel(label)
+        for (index, stroke) in strokes.enumerated() {
+            let from = stroke.presentation()?.path ?? stroke.path
+            let opacity = stroke.presentation()?.opacity ?? stroke.opacity
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            stroke.path = crossArm(index); stroke.opacity = minimize && index == 1 ? 0 : 1
+            stroke.removeAnimation(forKey: "mode"); stroke.removeAnimation(forKey: "modeOpacity")
+            CATransaction.commit()
+            guard !Self.reduceMotion, let from else { continue }
+            let morph = CABasicAnimation(keyPath: "path")
+            morph.fromValue = from; morph.toValue = stroke.path; morph.duration = 0.14
+            morph.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            stroke.add(morph, forKey: "mode")
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = opacity; fade.toValue = stroke.opacity; fade.duration = 0.12
+            stroke.add(fade, forKey: "modeOpacity")
+        }
     }
     private func updateGlyph() {
         let moved = hovering && !Self.reduceMotion
@@ -218,19 +256,23 @@ import AppKit
         layer.add(animation, forKey: "hover")
     }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override func mouseEntered(with event: NSEvent) { hovering = true }
+    override func mouseEntered(with event: NSEvent) { updateModifiers(event.modifierFlags); hovering = true }
     override func mouseExited(with event: NSEvent) { hovering = false }
-    override func mouseDown(with event: NSEvent) { pressed = true }
+    override func mouseDown(with event: NSEvent) { hoverHint?.hide(); updateModifiers(event.modifierFlags); pressed = true }
     override func mouseDragged(with event: NSEvent) { pressed = bounds.contains(convert(event.locationInWindow, from: nil)) }
     override func mouseUp(with event: NSEvent) {
         let inside = bounds.contains(convert(event.locationInWindow, from: nil))
         pressed = false
-        if inside { action?() }
+        if inside { perform(modifiers: event.modifierFlags) }
     }
     // AppKit turns a trackpad pinch into magnify(with:) only for a view that
     // implements it; the overlay resizes the window.
     override func magnify(with event: NSEvent) { superview?.magnify(with: event) }
-    override func accessibilityPerformPress() -> Bool { action?(); return true }
+    private func perform(modifiers: NSEvent.ModifierFlags) {
+        hoverHint?.hide()
+        if modifiers.contains(.shift), let alternateAction { alternateAction() } else { action?() }
+    }
+    override func accessibilityPerformPress() -> Bool { perform(modifiers: NSEvent.modifierFlags); return true }
 }
 
 /// Darkens the top and bottom edges behind the controls, so they stay legible
@@ -245,8 +287,8 @@ import AppKit
         func black(_ alpha: CGFloat) -> CGColor { NSColor.black.withAlphaComponent(alpha).cgColor }
         // Bottom to top: the layer's y runs up, as the view isn't flipped.
         gradient.startPoint = CGPoint(x: 0.5, y: 0); gradient.endPoint = CGPoint(x: 0.5, y: 1)
-        gradient.colors = [black(0.52), black(0.17), black(0.17), black(0.38), black(0.68)]
-        gradient.locations = [0, 0.38, 0.58, 0.8, 1]
+        gradient.colors = [black(0.52), black(0.17), black(0.17), black(0.31), black(0.56)]
+        gradient.locations = [0, 0.38, 0.48, 0.74, 1]
         layer?.addSublayer(gradient)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -263,8 +305,12 @@ import AppKit
 /// position updates never interrupt the thickness animation.
 @MainActor final class FloatingVideoProgressBar: NSView {
     var seek: ((Double, Bool) -> Void)?
+    var scrollFinished: (() -> Void)?
     private(set) var fraction: Double = 0
     private(set) var isScrubbing = false
+    private(set) var isTrackpadScrubbing = false
+    private var duration: Double = 0
+    private var scrollEnd: DispatchWorkItem?
     private var seekTarget: (fraction: Double, until: CFTimeInterval)?
     private let track = CALayer()
     private let fill = CALayer()
@@ -312,7 +358,10 @@ import AppKit
     /// The page's position. Ignored while scrubbing, and briefly after a seek
     /// until the page reaches it, so the fill never jumps back.
     func show(time: Double, duration: Double) {
-        guard duration.isFinite, duration > 0, time.isFinite else { isHidden = true; return }
+        guard duration.isFinite, duration > 0, time.isFinite else {
+            finishTrackpadScrub(commit: false); self.duration = 0; isHidden = true; return
+        }
+        self.duration = duration
         isHidden = false
         let reported = min(1, max(0, time/duration))
         if isScrubbing { return }
@@ -332,11 +381,46 @@ import AppKit
         fraction = min(1, max(0, Double(x/max(1, bounds.width)))); updateFill()
         seek?(fraction, final)
     }
+    /// One hundred points of finger travel seeks five seconds, regardless of
+    /// video length. AppKit's momentum supplies the flick and its natural decay.
+    func handleScroll(_ input: FloatingVideoScrollInput) {
+        guard input.precise, duration > 0, !isHidden, input.translation.dx.isFinite else { return }
+        let moving = input.phase.contains(.began) || input.phase.contains(.changed) ||
+            input.momentumPhase.contains(.began) || input.momentumPhase.contains(.changed)
+        if moving, !isTrackpadScrubbing { isTrackpadScrubbing = true; setScrubbing(true) }
+        guard isTrackpadScrubbing else { return }
+        scrollEnd?.cancel()
+        if moving, input.translation.dx != 0 {
+            fraction = min(1, max(0, fraction+Double(input.translation.dx)*0.05/duration))
+            updateFill(); seek?(fraction, false)
+            setAccessibilityValue(Self.timestamp(fraction*duration))
+        }
+        if input.phase.contains(.cancelled) || input.momentumPhase.contains(.ended) || input.momentumPhase.contains(.cancelled) {
+            finishTrackpadScrub(); return
+        }
+        // Finger lift can be followed by momentum on the next event. Keep the
+        // gesture captured across that gap, then finish precisely when it stops.
+        let end = DispatchWorkItem { [weak self] in self?.finishTrackpadScrub() }
+        scrollEnd = end
+        let released = input.phase.contains(.ended) || !input.momentumPhase.isEmpty
+        DispatchQueue.main.asyncAfter(deadline: .now()+(released ? 0.15 : 1.5), execute: end)
+    }
+    func finishTrackpadScrub(commit: Bool = true) {
+        scrollEnd?.cancel(); scrollEnd = nil
+        guard isTrackpadScrubbing else { return }
+        isTrackpadScrubbing = false; setScrubbing(false)
+        if commit {
+            seekTarget = (fraction, CACurrentMediaTime()+1.5)
+            seek?(fraction, true)
+        }
+        scrollFinished?()
+        (superview as? FloatingVideoOverlay)?.refreshHover()
+    }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func magnify(with event: NSEvent) { superview?.magnify(with: event) }
     override func mouseEntered(with event: NSEvent) { setHovering(true) }
     override func mouseExited(with event: NSEvent) { setHovering(false) }
-    override func mouseDown(with event: NSEvent) { setScrubbing(true); scrub(to: event, final: false) }
+    override func mouseDown(with event: NSEvent) { finishTrackpadScrub(); setScrubbing(true); scrub(to: event, final: false) }
     override func mouseDragged(with event: NSEvent) { scrub(to: event, final: false) }
     override func mouseUp(with event: NSEvent) {
         scrub(to: event, final: true)

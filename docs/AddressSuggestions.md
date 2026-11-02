@@ -48,6 +48,9 @@ the current history each time the panel opens, including synced visits and persi
 The most frequent/recent literal URL match can complete a stable page path after repeat
 visits, so a regularly used `voxi.co.uk/account` can outrank `voxi.co.uk`. One-off deep
 links and query-bearing URLs still complete only the site until a path is typed.
+An address typed repeatedly completes even when a site's many pages share its weight,
+as with a console used through several sub-pages; typing it in full leaves it unchanged
+rather than filling in a deeper page.
 Login redirects and query-bearing search pages still count toward which site is preferred,
 but do not dilute a stable page's share when choosing its usual path. Both platforms give
 extra weight to an address chosen in the field, including switching to an already-open tab.

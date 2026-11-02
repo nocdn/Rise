@@ -4,7 +4,7 @@ import AppKit
 /// Kept separate from drawing so custom glyph buttons use the same hint as image buttons.
 @MainActor final class ButtonHoverHint {
     static let delay = 0.6
-    private weak var button: ChromeButton?
+    private weak var button: NSView?
     private(set) var text: String
     private(set) var shortcut: String
     private var hovered = false
@@ -13,7 +13,7 @@ import AppKit
     private(set) var popover: NSPopover?
     var appearance: NSAppearance? { didSet { popover?.appearance = appearance ?? button?.effectiveAppearance } }
 
-    init(button: ChromeButton, text: String, shortcut: String) {
+    init(button: NSView, text: String, shortcut: String = "") {
         self.button = button; self.text = text; self.shortcut = shortcut
     }
     var hintText: NSAttributedString {
@@ -45,7 +45,7 @@ import AppKit
     }
     private func show() {
         timer = nil
-        guard let button, button.hover, button.window?.isVisible == true,
+        guard let button, hovered, button.window?.isVisible == true,
               !button.isHiddenOrHasHiddenAncestor, button.alphaValue > 0.01, popover?.isShown != true else { return }
         let popover = popover ?? makePopover()
         popover.appearance = appearance ?? button.effectiveAppearance

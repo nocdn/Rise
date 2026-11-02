@@ -26,7 +26,7 @@ private final class DownloadsListView: NSView {
 /// Delete clears it from the list; Command-Delete moves a completed file to the Bin.
 @MainActor final class DownloadsController: NSViewController, NSPopoverDelegate {
     private let list: DownloadList
-    private let stack = FlippedView(), scroll = NSScrollView(), listView = DownloadsListView()
+    private let stack = FlippedView(), scroll = PopoverScrollView(), listView = DownloadsListView()
     private(set) var rows: [DownloadRow] = []
     private(set) var highlightedID: UUID? { didSet { applyHighlight() } }
     private(set) var usesKeyboard = false
@@ -84,7 +84,7 @@ private final class DownloadsListView: NSView {
     func reload() {
         let items = list.visible
         // The initial empty list still needs its layout and empty-state label.
-        if !stack.subviews.isEmpty, items.map(\.record.id) == rows.map(\.item.record.id), items.map({ $0.progress == nil }) == rows.map({ $0.item.progress == nil }) {
+        if !stack.subviews.isEmpty, items.map(\.record.id) == rows.map(\.item.record.id) {
             // Finished rows only need one final update when their ring disappears.
             rows.filter { !$0.isFinished || !$0.progressRing.isHidden }.forEach { $0.update() }
             return

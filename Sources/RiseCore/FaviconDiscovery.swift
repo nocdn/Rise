@@ -27,7 +27,7 @@ public enum FaviconDiscovery {
            let href = attributes(tag)["href"], let url = URL(string: href, relativeTo: baseURL)?.absoluteURL {
             base = url
         }
-        let candidates = tags.compactMap { tag -> (url: URL, svg: Bool, themed: Bool)? in
+        let candidates = tags.compactMap { tag -> (url: URL, svg: Bool, themed: Bool, pixels: Int)? in
             guard tag.lowercased().hasPrefix("<link") else { return nil }
             let values = attributes(tag)
             let media = values["media"]?.lowercased() ?? ""
@@ -38,13 +38,18 @@ public enum FaviconDiscovery {
                   let url = URL(string: href, relativeTo: base)?.absoluteURL,
                   ["http", "https"].contains(url.scheme?.lowercased() ?? ""), url.user == nil, url.password == nil else { return nil }
             let svg = values["type"]?.lowercased().contains("svg") == true || url.pathExtension.lowercased() == "svg"
-            return (url, svg, scheme != nil)
+            let pixels = (values["sizes"] ?? "").lowercased().split(whereSeparator: { $0.isWhitespace }).compactMap { size -> Int? in
+                let sides = size.split(separator: "x").compactMap { Int($0) }
+                guard sides.count == 2, sides.allSatisfy({ $0 > 0 && $0 <= 16384 }) else { return nil }
+                return min(sides[0], sides[1])
+            }.max() ?? 0
+            return (url, svg, scheme != nil, pixels)
         }
         if let icon = githubIcon(for: baseURL, dark: dark) { return icon }
         let themed = candidates.filter(\.themed)
         let eligible = themed.isEmpty ? candidates : themed
-        if dark { return (eligible.first(where: \.svg)?.url ?? eligible.first?.url).map(preferred) }
-        return (eligible.first(where: { !$0.svg })?.url ?? eligible.first?.url).map(preferred)
+        let format = eligible.filter { $0.svg == dark }
+        return ((format.isEmpty ? eligible : format).max(by: { $0.pixels < $1.pixels })?.url).map(preferred)
     }
     private static func matches(_ pattern: String, in text: String) -> [String] {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return [] }

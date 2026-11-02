@@ -1,0 +1,200 @@
+import AppKit
+import Carbon.HIToolbox
+import XCTest
+@testable import Rise
+
+final class FloatingVideoControlsTests: XCTestCase {
+    @MainActor func testTemporarySystemSpaceShortcutUsesNativeHotkeyEventsAndReleasesCleanly() throws {
+        _ = NSApplication.shared
+        var available = true, toggles = 0
+        let shortcut = FloatingVideoSpaceShortcut(available: { available }, action: { toggles += 1 })
+        defer { shortcut.setEnabled(false) }
+        shortcut.setEnabled(true)
+        XCTAssertTrue(shortcut.isRegistered, "Unmodified Space is registered system-wide")
+        func send(_ kind: UInt32) throws {
+            var event: EventRef?
+            XCTAssertEqual(CreateEvent(nil, OSType(kEventClassKeyboard), kind, 0, EventAttributes(kEventAttributeNone), &event), noErr)
+            let ref = try XCTUnwrap(event); defer { ReleaseEvent(ref) }
+            var id = FloatingVideoSpaceShortcut.identifier
+            XCTAssertEqual(SetEventParameter(ref, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), MemoryLayout<EventHotKeyID>.size, &id), noErr)
+            _ = SendEventToEventTarget(ref, GetApplicationEventTarget())
+        }
+        try send(UInt32(kEventHotKeyPressed)); try send(UInt32(kEventHotKeyPressed))
+        XCTAssertEqual(toggles, 1, "A held key toggles only once")
+        try send(UInt32(kEventHotKeyReleased)); try send(UInt32(kEventHotKeyPressed))
+        XCTAssertEqual(toggles, 2)
+        try send(UInt32(kEventHotKeyReleased)); available = false
+        try send(UInt32(kEventHotKeyPressed)); XCTAssertEqual(toggles, 2)
+        shortcut.setEnabled(false); XCTAssertFalse(shortcut.isRegistered)
+        available = true; try send(UInt32(kEventHotKeyPressed)); XCTAssertEqual(toggles, 2)
+    }
+
+    @MainActor func testSpaceCoversTheWholePictureAndCornerButtonsSitNearerTheEdges() throws {
+        let panel = FloatingVideoWindow(aspectRatio: 16.0/9, screen: try XCTUnwrap(NSScreen.main))
+        panel.pointerLocation = { .zero }
+        defer { panel.closeImmediately() }
+        var toggles = 0; panel.onTogglePlayback = { toggles += 1 }
+        panel.present(); panel.contentView?.layoutSubtreeIfNeeded()
+        func key(_ type: NSEvent.EventType = .keyDown, modifiers: NSEvent.ModifierFlags = [], repeating: Bool = false) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: modifiers, timestamp: 0, windowNumber: 0,
+                context: nil, characters: " ", charactersIgnoringModifiers: " ", isARepeat: repeating, keyCode: 49))
+        }
+        for point in [NSPoint(x: panel.videoFrame.midX, y: panel.videoFrame.midY),
+                      NSPoint(x: panel.videoFrame.minX+12, y: panel.videoFrame.maxY-12),
+                      NSPoint(x: panel.videoFrame.maxX-12, y: panel.videoFrame.minY+12)] {
+            XCTAssertNil(panel.routeSpace(try key(), pointer: point))
+        }
+        XCTAssertEqual(toggles, 3)
+        XCTAssertNil(panel.routeSpace(try key(repeating: true), pointer: panel.videoFrame.origin)); XCTAssertEqual(toggles, 3)
+        XCTAssertNotNil(panel.routeSpace(try key(modifiers: .command), pointer: panel.videoFrame.origin))
+        XCTAssertNotNil(panel.routeSpace(try key(), pointer: .zero))
+        let controls = panel.overlay.subviews.compactMap { $0 as? FloatingVideoControl }
+        XCTAssertEqual(controls.count, 2)
+        XCTAssertLessThan(controls[0].frame.minX, 10*FloatingVideoOverlay.controlScale(width: panel.overlay.bounds.width))
+        XCTAssertEqual(controls[0].frame.minY, controls[0].frame.minX)
+        XCTAssertEqual(panel.overlay.bounds.maxX-controls[1].frame.maxX, controls[0].frame.minX, accuracy: 0.01)
+    }
+
+    @MainActor func testPiPButtonsUseDelayedNativeHintsThatFollowShiftAndDismissCleanly() async throws {
+        _ = NSApplication.shared
+        let panel = NSPanel(contentRect: NSRect(x: 200, y: 200, width: 360, height: 160),
+                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        panel.isReleasedWhenClosed = false; panel.level = .floating
+        let close = FloatingVideoControl(glyph: .cross, title: "Close Picture in Picture and pause video")
+        let back = FloatingVideoControl(glyph: .arrows, title: "Return video to its tab")
+        close.alternateAction = {}
+        close.frame.origin = NSPoint(x: 20, y: 100); back.frame.origin = NSPoint(x: 300, y: 100)
+        panel.contentView?.addSubview(close); panel.contentView?.addSubview(back)
+        let closeHint = try XCTUnwrap(close.hoverHint), backHint = try XCTUnwrap(back.hoverHint)
+        defer { closeHint.hide(); backHint.hide(); panel.orderOut(nil) }
+        panel.orderFront(nil); panel.contentView?.layoutSubtreeIfNeeded()
+        XCTAssertNil(close.toolTip); XCTAssertNil(back.toolTip, "Neither button keeps the old system tooltip")
+        func hover(_ button: FloatingVideoControl, _ type: NSEvent.EventType) throws {
+            let event = try XCTUnwrap(NSEvent.enterExitEvent(with: type, location: .zero, modifierFlags: [], timestamp: 0,
+                windowNumber: panel.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil))
+            if type == .mouseEntered { button.mouseEntered(with: event) } else { button.mouseExited(with: event) }
+        }
+        try hover(close, .mouseEntered)
+        XCTAssertNil(closeHint.popover, "The normal hover delay applies")
+        try await Task.sleep(for: .milliseconds(750))
+        let popover = try XCTUnwrap(closeHint.popover)
+        XCTAssertTrue(popover.isShown)
+        let text = try XCTUnwrap(popover.contentViewController?.view.subviews.first as? NSTextField)
+        XCTAssertEqual(text.stringValue, "Close Picture in Picture and pause video")
+        close.updateModifiers(.shift)
+        XCTAssertTrue(closeHint.popover === popover && popover.isShown, "Shift updates the same native popover")
+        XCTAssertEqual(text.stringValue, "Hide Picture in Picture and keep playing")
+        close.updateModifiers([])
+        XCTAssertEqual(text.stringValue, "Close Picture in Picture and pause video")
+        popover.animates = false
+        try hover(close, .mouseExited)
+        XCTAssertFalse(popover.isShown)
+
+        try hover(back, .mouseEntered)
+        try await Task.sleep(for: .milliseconds(750))
+        let returnPopover = try XCTUnwrap(backHint.popover)
+        XCTAssertTrue(returnPopover.isShown)
+        XCTAssertEqual(backHint.text, "Return video to its tab")
+        returnPopover.animates = false
+        _ = back.accessibilityPerformPress()
+        XCTAssertFalse(returnPopover.isShown, "Activating a PiP control closes its hint")
+        try hover(close, .mouseEntered)
+        close.removeFromSuperview()
+        try await Task.sleep(for: .milliseconds(750))
+        XCTAssertFalse(popover.isShown, "Removing a custom glyph anchor cancels a pending hint")
+    }
+
+    @MainActor func testShiftMorphsOnlyTheHoveredXIntoAStationaryBar() throws {
+        _ = NSApplication.shared
+        let panel = FloatingVideoWindow(aspectRatio: 16.0/9, screen: try XCTUnwrap(NSScreen.main))
+        defer { panel.closeImmediately() }
+        panel.contentView?.layoutSubtreeIfNeeded()
+        let close = try XCTUnwrap(panel.overlay.subviews.compactMap { $0 as? FloatingVideoControl }.first)
+        let body = try XCTUnwrap(close.layer?.sublayers?.first)
+        let strokes = try XCTUnwrap(body.sublayers?.compactMap { $0 as? CAShapeLayer })
+        func hover(_ type: NSEvent.EventType, modifiers: NSEvent.ModifierFlags = []) throws {
+            let event = try XCTUnwrap(NSEvent.enterExitEvent(with: type, location: .zero, modifierFlags: modifiers,
+                timestamp: 0, windowNumber: panel.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil))
+            if type == .mouseEntered { close.mouseEntered(with: event) } else { close.mouseExited(with: event) }
+        }
+        panel.overlay.updateModifiers(.shift)
+        XCTAssertFalse(close.minimizesInBackground, "Holding Shift elsewhere does not change the X")
+        try hover(.mouseEntered)
+        let positions = strokes.map(\.position)
+        let flags = try XCTUnwrap(NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: .shift,
+            timestamp: 0, windowNumber: panel.windowNumber, context: nil, characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 56))
+        panel.sendEvent(flags)
+        XCTAssertTrue(close.minimizesInBackground, "Shift changes it without moving the pointer")
+        XCTAssertEqual(strokes.first?.path?.boundingBoxOfPath.height, 0)
+        XCTAssertEqual(strokes.map(\.position), positions)
+        XCTAssertTrue(strokes.allSatisfy { $0.animation(forKey: "hover") == nil }, "The bar has no downward hover motion")
+        XCTAssertEqual(close.accessibilityLabel(), "Hide Picture in Picture and keep playing")
+        panel.overlay.updateModifiers([])
+        XCTAssertFalse(close.minimizesInBackground)
+        try hover(.mouseExited)
+        try hover(.mouseEntered, modifiers: .shift)
+        XCTAssertTrue(close.minimizesInBackground, "Entering while Shift is already held also works")
+        try hover(.mouseExited, modifiers: .shift)
+        XCTAssertFalse(close.minimizesInBackground)
+    }
+
+    @MainActor func testSlowScrubbingContinuesThroughNativeMomentumAndCommitsPrecisely() {
+        let bar = FloatingVideoProgressBar(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        var seeks: [(Double, Bool)] = []
+        bar.seek = { seeks.append(($0, $1)) }
+        bar.show(time: 500, duration: 1000)
+        bar.handleScroll(.init(phase: .began, timestamp: 1))
+        bar.handleScroll(.init(phase: .changed, translation: CGVector(dx: 100, dy: 0), timestamp: 1.1))
+        XCTAssertEqual(bar.fraction, 0.505, accuracy: 0.00001)
+        bar.show(time: 490, duration: 1000)
+        XCTAssertEqual(bar.fraction, 0.505, accuracy: 0.00001, "An old playback report cannot jump the scrub backwards")
+        bar.handleScroll(.init(phase: .ended, timestamp: 1.2))
+        XCTAssertTrue(bar.isTrackpadScrubbing)
+        bar.handleScroll(.init(phase: [], momentumPhase: .changed, translation: CGVector(dx: 200, dy: 0), timestamp: 1.3))
+        XCTAssertEqual(bar.fraction, 0.515, accuracy: 0.00001)
+        bar.handleScroll(.init(phase: [], momentumPhase: .ended, timestamp: 1.4))
+        XCTAssertFalse(bar.isScrubbing); XCTAssertFalse(bar.isTrackpadScrubbing)
+        XCTAssertEqual(seeks.last?.0 ?? 0, 0.515, accuracy: 0.00001)
+        XCTAssertEqual(seeks.last?.1, true, "The final seek lands exactly after the flick")
+    }
+
+    @MainActor func testSeeksClampAtBothEndsAndAQuietFingerLiftFinishes() async throws {
+        let bar = FloatingVideoProgressBar(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        var final = false
+        bar.seek = { _, finished in final = finished }
+        bar.show(time: 1, duration: 10)
+        bar.handleScroll(.init(phase: .began, translation: CGVector(dx: -1000, dy: 0), timestamp: 1))
+        XCTAssertEqual(bar.fraction, 0)
+        bar.handleScroll(.init(phase: .changed, translation: CGVector(dx: 1000, dy: 0), timestamp: 1.1))
+        XCTAssertEqual(bar.fraction, 1)
+        bar.handleScroll(.init(phase: .ended, timestamp: 1.2))
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertFalse(bar.isTrackpadScrubbing); XCTAssertTrue(final)
+        bar.show(time: 0, duration: .infinity)
+        bar.handleScroll(.init(phase: .began, translation: CGVector(dx: 100, dy: 0), timestamp: 2))
+        XCTAssertFalse(bar.isScrubbing, "A live stream without a duration cannot be scrubbed")
+    }
+
+    @MainActor func testSeekGestureNeverMovesWindowAndMovementNeverBecomesASeekMidGesture() throws {
+        _ = NSApplication.shared
+        let panel = FloatingVideoWindow(aspectRatio: 16.0/9, screen: try XCTUnwrap(NSScreen.main))
+        defer { panel.closeImmediately() }
+        panel.contentView?.layoutSubtreeIfNeeded()
+        let bar = panel.overlay.progress
+        bar.show(time: 10, duration: 100)
+        let point = panel.convertPoint(toScreen: bar.convert(NSPoint(x: bar.bounds.midX, y: bar.bounds.midY), to: nil))
+        let frame = panel.frame
+        panel.handleScroll(.init(phase: .began, timestamp: 1), pointer: point)
+        panel.handleScroll(.init(phase: .changed, translation: CGVector(dx: 100, dy: 0), timestamp: 1.1), pointer: .zero)
+        panel.handleScroll(.init(phase: .ended, timestamp: 1.2), pointer: .zero)
+        panel.handleScroll(.init(phase: [], momentumPhase: .changed, translation: CGVector(dx: 100, dy: 0), timestamp: 1.3), pointer: .zero)
+        XCTAssertEqual(panel.frame, frame); XCTAssertFalse(panel.isDragging)
+        XCTAssertEqual(bar.fraction, 0.20, accuracy: 0.0001)
+        panel.handleScroll(.init(phase: [], momentumPhase: .ended, timestamp: 1.4), pointer: .zero)
+        let outside = NSPoint(x: panel.videoFrame.midX, y: panel.videoFrame.midY)
+        panel.handleScroll(.init(phase: .began, timestamp: 2), pointer: outside)
+        panel.handleScroll(.init(phase: .changed, translation: CGVector(dx: -20, dy: 0), timestamp: 2.1), pointer: point)
+        XCTAssertTrue(panel.isDragging); XCTAssertFalse(bar.isTrackpadScrubbing)
+        panel.handleScroll(.init(phase: .ended, timestamp: 2.2), pointer: point)
+    }
+}

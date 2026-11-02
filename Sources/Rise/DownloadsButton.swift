@@ -67,20 +67,33 @@ final class DownloadGlyphView: FlippedView {
     private var shown = 0.0, from = 0.0, to = 0.0, glideStart: CFTimeInterval = 0
     private var spinStart = CACurrentMediaTime()
     private var link: CADisplayLink?
+    private var completing = false
     static let glide = 0.22
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     func setState(_ state: DownloadGlyph.State) {
+        if completing, state == .idle { return }
+        completing = false
         guard state != self.state else { return }
         let animated = window != nil && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         if case .progress(let fraction) = state {
-            if case .progress = self.state, animated { from = shown; to = fraction; glideStart = CACurrentMediaTime() }
-            else { shown = fraction; from = fraction; to = fraction }
+            if animated {
+                if self.state == .idle { shown = 0 }
+                else if self.state == .indeterminate { shown = DownloadGlyph.unknownLength }
+                from = shown; to = fraction; glideStart = CACurrentMediaTime()
+            } else { shown = fraction; from = fraction; to = fraction }
         }
         if state == .indeterminate, self.state != .indeterminate { spinStart = CACurrentMediaTime() }
         self.state = state
         needsDisplay = true
         if animated && (state == .indeterminate || from != to) { startLink() } else { stopLink() }
+    }
+    /// Even a transfer which finishes before the first display frame fills
+    /// smoothly before returning to the idle icon. A new transfer can take over.
+    func complete() {
+        setState(.progress(1))
+        guard window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, shown < 1 else { setState(.idle); return }
+        completing = true; startLink()
     }
     /// What it shows now, for a stand-in to copy.
     var displayed: (state: DownloadGlyph.State, spin: Double) {
@@ -97,11 +110,15 @@ final class DownloadGlyphView: FlippedView {
         let t = min(1, (CACurrentMediaTime()-glideStart)/Self.glide)
         shown = from+(to-from)*(1-pow(1-t, 3))
         needsDisplay = true
-        if state != .indeterminate, t >= 1 { stopLink() }
+        if state != .indeterminate, t >= 1 {
+            stopLink()
+            if completing { completing = false; state = .idle }
+        }
     }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window == nil { stopLink() } else if state == .indeterminate { startLink() }
+        if window == nil { stopLink(); if completing { completing = false; state = .idle } }
+        else if state == .indeterminate || from != to { startLink() }
     }
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }

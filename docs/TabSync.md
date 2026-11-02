@@ -185,3 +185,13 @@ and live grid updates, and verifies that cached cards restore without another pa
 Local diagnostics use the `dev.bartosz.Rise` / `TabSync` log category and the cache's
 `lastStatus` / `lastError` fields. A successful manual fetch/send clears the last
 error once all pending edits have uploaded.
+
+## Windows / Chromium extension
+
+[**Rise Tab Sync**](../Extensions/RiseSync/README.md) lives in
+`Extensions/RiseSync`. Its toolbar popup connects one regular Chromium window to
+this same private CloudKit ledger, using Apple's web sign-in and the native merge
+rules. Web client tokens are preconfigured for both environments; setup requires
+only choosing a window, matching the apps' environment and signing in to iCloud.
+There is no companion process or full-page setup UI. See the extension README for
+installation, browser-specific limitations, tests and ZIP packaging.

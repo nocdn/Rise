@@ -217,6 +217,32 @@ final class BrowserLifecycleTests: XCTestCase {
         XCTAssertNotNil(browser.sidebar.rows[browser.tabs[1].id], "The new tab shows in the list")
         XCTAssertNil(browser.peekTab)
     }
+    @MainActor func testPageOpenedTabsStayAboveTheirSourceForBothDispositions() throws {
+        for background in [false, true] {
+            let browser = makeBrowser(); defer { clean(browser) }
+            let bottom = browser.addTab(), source = browser.addTab(), top = browser.addTab()
+            browser.select(source.id)
+            XCTAssertTrue(source.page.onOpenElsewhere?(URL(string: "about:blank")!, background) == true)
+            let opened = try XCTUnwrap(browser.tabs.first { ![bottom.id, source.id, top.id].contains($0.id) })
+            XCTAssertEqual(browser.tabs.map(\.id), [top.id, opened.id, source.id, bottom.id])
+            XCTAssertEqual(browser.selectedID, background ? source.id : opened.id)
+            XCTAssertEqual(opened.returnsTo, background ? nil : source.id)
+            if !background {
+                browser.goBack()
+                XCTAssertEqual(browser.selectedID, source.id)
+                XCTAssertFalse(browser.tabs.contains { $0.id == opened.id })
+            }
+        }
+    }
+    @MainActor func testPageOpenedTabsUseTheirSourceRatherThanTheCurrentlySelectedTab() throws {
+        let browser = makeBrowser(); defer { clean(browser) }
+        let source = browser.addTab(), current = browser.addTab(), top = browser.addTab()
+        browser.select(current.id)
+        XCTAssertTrue(source.page.onOpenElsewhere?(URL(string: "about:blank")!, true) == true)
+        let opened = try XCTUnwrap(browser.tabs.first { ![source.id, current.id, top.id].contains($0.id) })
+        XCTAssertEqual(browser.tabs.map(\.id), [top.id, current.id, opened.id, source.id])
+        XCTAssertEqual(browser.selectedID, current.id)
+    }
     @MainActor func testHiddenSidebarFillsWindowAndRestoresNativeChromeImmediately() {
         let browser = makeBrowser(); defer { clean(browser) }
         let tab = browser.addTab()

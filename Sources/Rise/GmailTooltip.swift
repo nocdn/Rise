@@ -30,9 +30,12 @@ final class GmailScroller: NSScroller {
 }
 
 /// A card's list: its scroller appears once the reader scrolls, not as the card opens.
-final class CardScrollView: NSScrollView {
+final class CardScrollView: PopoverScrollView {
+    /// Optional card-specific horizontal gestures, before native vertical scrolling.
+    var interceptScroll: ((NSEvent) -> Bool)?
     func hideScrollerUntilScrolled() { (verticalScroller as? GmailScroller)?.isRevealed = false }
     override func scrollWheel(with event: NSEvent) {
+        if interceptScroll?(event) == true { return }
         (verticalScroller as? GmailScroller)?.isRevealed = true
         super.scrollWheel(with: event)
     }

@@ -1,9 +1,12 @@
 import AppKit
 
-/// Dia's subtle clipping on a 16-point favicon, scaled with the displayed icon.
+/// Simple circular corners, shared by sidebar and address-panel favicons:
+/// a 4-point radius at 16 points, scaled with the displayed icon.
 /// Keep the cached image intact; transparent and circular logos retain theirs.
 final class FaviconView: NSImageView {
     private let emptyPlaceholder = CALayer()
+    /// A search or command glyph can share the slot without clipping its strokes.
+    var roundsImage = true { didSet { if roundsImage != oldValue { needsLayout = true } } }
     override var image: NSImage? {
         didSet { emptyPlaceholder.isHidden = true }
     }
@@ -11,8 +14,8 @@ final class FaviconView: NSImageView {
         super.init(frame: frame)
         imageScaling = .scaleProportionallyUpOrDown
         wantsLayer = true; clipsToBounds = true
-        layer?.masksToBounds = true; layer?.cornerCurve = .continuous
-        emptyPlaceholder.cornerCurve = .continuous
+        layer?.masksToBounds = true; layer?.cornerCurve = .circular
+        emptyPlaceholder.cornerCurve = .circular
         emptyPlaceholder.isHidden = true
         layer?.addSublayer(emptyPlaceholder)
     }
@@ -29,7 +32,7 @@ final class FaviconView: NSImageView {
     override func layout() {
         super.layout()
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        layer?.cornerRadius = min(bounds.width, bounds.height) * (4.0 / 16.0)
+        layer?.cornerRadius = roundsImage ? min(bounds.width, bounds.height) * (4.0 / 16.0) : 0
         let scale = min(bounds.width, bounds.height) / 16
         let size = 14 * scale
         emptyPlaceholder.frame = NSRect(x: bounds.midX-size/2, y: bounds.midY-size/2, width: size, height: size)

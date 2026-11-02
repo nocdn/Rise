@@ -1,5 +1,12 @@
 import AppKit
 
+/// The sidebar and fullscreen navigation share the same quick reveal and softer collapse.
+enum ChromeSlideMotion {
+    static func configure(_ spring: inout MotionSpring, showing: Bool) {
+        spring.configure(response: showing ? 0.185 : 0.17, bounce: showing ? 0.2 : 0.15)
+    }
+}
+
 /// Measured against Dia's floating sidebar: it rests one page margin in from the
 /// window's edges, rounded and lifted a little off the page.
 enum SidebarFloatAppearance {
@@ -62,14 +69,14 @@ final class SidebarShadowView: NSView {
     var dockProgress: CGFloat { CGFloat(dock.value) }
     init() {
         // Quick, with a few points of overshoot as it lands.
-        slide.configure(response: 0.185, bounce: 0.2)
+        ChromeSlideMotion.configure(&slide, showing: true)
         dock.configure(response: Self.dockResponse, bounce: 0)
     }
     static let dockResponse = 0.15
     /// Quick, with a gentler spring than sliding out.
-    fileprivate func configureCollapse() { dock.configure(response: 0.17, bounce: 0.15) }
+    fileprivate func configureCollapse() { ChromeSlideMotion.configure(&dock, showing: false) }
     /// Opening lands with the same small overshoot as sliding out.
-    fileprivate func configureOpen() { dock.configure(response: 0.185, bounce: 0.2) }
+    fileprivate func configureOpen() { ChromeSlideMotion.configure(&dock, showing: true) }
     fileprivate func configureDock() {
         dock.configure(response: Self.dockResponse, bounce: 0)
     }

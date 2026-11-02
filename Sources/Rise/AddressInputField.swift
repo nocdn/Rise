@@ -33,7 +33,14 @@ final class AddressInputField: NSTextField {
               note.object as? NSTextView === editor || note.object as? NSView === editor.superview else { return }
         updateFade()
     }
-    override func layout() { super.layout(); updateFade() }
+    override func layout() {
+        super.layout()
+        (currentEditor() as? AddressFieldEditor)?.revealTypedPrefix()
+        updateFade()
+    }
+    func anchorInlineCompletion(_ range: NSRange) {
+        (currentEditor() as? AddressFieldEditor)?.anchorCompletion(range)
+    }
     func updateFade() {
         var overflowing = attributedStringValue.size().width > bounds.width-2
         if let editor = currentEditor() as? NSTextView, let manager = editor.layoutManager, let container = editor.textContainer {
@@ -52,6 +59,7 @@ final class AddressInputField: NSTextField {
 /// AppKit restyles a field editor each time editing starts, selection color included, so the
 /// gray goes back on after that.
 final class AddressInputCell: FindInputCell {
+    override func makeEditor() -> NSTextView { AddressFieldEditor(usingTextLayoutManager: false) }
     var selectionColor = NSColor.selectedTextBackgroundColor {
         didSet { editor.selectedTextAttributes = [.backgroundColor: selectionColor] }
     }
@@ -59,5 +67,35 @@ final class AddressInputCell: FindInputCell {
         let text = super.setUpFieldEditorAttributes(textObj)
         (text as? NSTextView)?.selectedTextAttributes = [.backgroundColor: selectionColor]
         return text
+    }
+}
+
+/// A selected completion can extend far past the field. AppKit normally scrolls
+/// to its far end after insertion; keep the user's prefix in view instead. Once
+/// they accept it or move the caret, ordinary native horizontal scrolling resumes.
+final class AddressFieldEditor: NSTextView {
+    private var completion: (text: String, suffix: NSRange)?
+    func anchorCompletion(_ suffix: NSRange) {
+        completion = (string, suffix)
+        revealTypedPrefix()
+    }
+    private var activeSuffix: NSRange? {
+        guard let completion, completion.text == string, selectedRange() == completion.suffix else { return nil }
+        return completion.suffix
+    }
+    func revealTypedPrefix() {
+        guard let suffix = activeSuffix else { return }
+        scrollRangeToVisible(NSRange(location: suffix.location, length: 0))
+    }
+    override func scrollRangeToVisible(_ range: NSRange) {
+        guard let suffix = activeSuffix, let manager = layoutManager, let container = textContainer else {
+            super.scrollRangeToVisible(range); return
+        }
+        let prefix = NSRange(location: 0, length: suffix.location)
+        manager.ensureLayout(for: container)
+        let glyphs = manager.glyphRange(forCharacterRange: prefix, actualCharacterRange: nil)
+        let width = manager.boundingRect(forGlyphRange: glyphs, in: container).width
+        let fits = width+2*textContainerOrigin.x+8 < visibleRect.width
+        super.scrollRangeToVisible(fits ? prefix : NSRange(location: suffix.location, length: 0))
     }
 }

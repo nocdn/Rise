@@ -4,11 +4,13 @@ final class DownloadProgressRing: FlippedView {
     private let track = CAShapeLayer(), fill = CAShapeLayer()
     private(set) var fraction: Double?
     private var isPaused = false
+    private var hasUpdated = false
     init() {
         super.init(frame: .zero); wantsLayer = true
         for shape in [track, fill] {
             shape.fillColor = nil; shape.lineWidth = 2.5; shape.lineCap = .round; layer?.addSublayer(shape)
         }
+        fill.strokeEnd = 0
         updateColors()
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -22,12 +24,14 @@ final class DownloadProgressRing: FlippedView {
         CATransaction.commit()
     }
     func update(fraction: Double?, paused: Bool) {
+        let changed = !hasUpdated || fraction != self.fraction
+        hasUpdated = true
         self.fraction = fraction
         if isPaused != paused { isPaused = paused; updateColors(animated: true) }
         let previous = fill.presentation()?.strokeEnd ?? fill.strokeEnd
         let value = CGFloat(fraction ?? 0.25)
-        CATransaction.begin(); CATransaction.setDisableActions(true); fill.strokeEnd = value; CATransaction.commit()
-        if fraction != nil, value != previous, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+        if changed { CATransaction.begin(); CATransaction.setDisableActions(true); fill.strokeEnd = value; CATransaction.commit() }
+        if changed, fraction != nil, value != previous, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             let animation = CABasicAnimation(keyPath: "strokeEnd")
             animation.fromValue = previous; animation.toValue = value; animation.duration = 0.22
             fill.add(animation, forKey: "progress")

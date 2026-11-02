@@ -235,9 +235,10 @@ enum CalendarSchedule {
     }
 }
 
-/// Today's and tomorrow's events of one account, held in memory only.
+/// Today's countdown and a bounded cache of browsed days, held in memory only.
 @MainActor final class CalendarAgenda {
     typealias Loader = (CalendarAccount) async throws -> [CalendarDay]
+    typealias DayLoader = (CalendarAccount, Date) async throws -> [CalendarDay]
     typealias Answerer = (CalendarAnswer, CalendarEvent, CalendarAccount) async throws -> Void
     private(set) var account: CalendarAccount?
     private(set) var events: [CalendarEvent] = []
@@ -246,6 +247,16 @@ enum CalendarSchedule {
     private(set) var loadedAt = Date.distantPast
     private var task: Task<Void, Never>?
     private var generation = 0
+    private struct DaySnapshot { var events: [CalendarEvent]; let loadedAt: Date }
+    private var days: [Date: DaySnapshot] = [:]
+    private var prefetchDays: [Date] = []
+    private var isPrefetching = false
+    /// Today always uses the normal view, without a date navigation header.
+    private(set) var browsingDay: Date?
+    var displayedDay: Date { browsingDay ?? Calendar.current.startOfDay(for: Date()) }
+    var displayedEvents: [CalendarEvent] { browsingDay.flatMap { days[$0]?.events } ?? events }
+    var displayedHasLoaded: Bool { browsingDay.map { days[$0] != nil } ?? hasLoaded }
+    private var displayedLoadedAt: Date { browsingDay.flatMap { days[$0]?.loadedAt } ?? (browsingDay == nil ? loadedAt : .distantPast) }
     var onChange: (() -> Void)?
     /// An answer Calendar didn't take; the event has its earlier answer back.
     var onAnswerFailed: ((CalendarEvent, Error) -> Void)?
@@ -253,6 +264,7 @@ enum CalendarSchedule {
     /// Answers take the companion one at a time, and refreshes wait for them.
     private var answering: Task<Void, Never>?, answersWaiting = 0
     var load: Loader?
+    var loadDay: DayLoader?
     var answerer: Answerer?
     /// Moves the tabs' countdowns on; the browser owns it.
     var clock: Timer?
@@ -268,19 +280,39 @@ enum CalendarSchedule {
     func show(_ account: CalendarAccount, refreshAfter: TimeInterval = 60) {
         guard self.account == account else {
             cancel()
-            self.account = account; events = []; error = nil; loadedAt = .distantPast
+            prefetchDays = []
+            self.account = account; events = []; days = [:]; browsingDay = nil; error = nil; loadedAt = .distantPast
             onChange?(); refresh(); return
         }
-        let stale = Date().timeIntervalSince(loadedAt) >= refreshAfter || !Calendar.current.isDate(loadedAt, inSameDayAs: Date())
-        if isLoading || (error == nil && hasLoaded && !stale) { return }
+        let stale = Date().timeIntervalSince(displayedLoadedAt) >= refreshAfter || !Calendar.current.isDate(displayedLoadedAt, inSameDayAs: Date())
+        if isLoading || (error == nil && displayedHasLoaded && !stale) { return }
         refresh()
+    }
+    func selectDay(_ date: Date?) {
+        let day = date.flatMap { Calendar.current.isDateInToday($0) ? nil : Calendar.current.startOfDay(for: $0) }
+        guard day != browsingDay else { return }
+        cancel(); browsingDay = day; error = nil
+        onChange?()
+        if !displayedHasLoaded || Date().timeIntervalSince(displayedLoadedAt) >= 60 { refresh() }
+        else { prefetchNextDay() }
+    }
+    /// The same companion reads one day at a time. Foreground browsing and RSVP
+    /// interrupt prefetching; the remaining dates resume once that work finishes.
+    func beginBrowsing() {
+        let today = Calendar.current.startOfDay(for: Date())
+        prefetchDays = [1, -1, 2].compactMap { Calendar.current.date(byAdding: .day, value: $0, to: today) }
+        prefetchNextDay()
+    }
+    func endBrowsing() {
+        prefetchDays = []
+        if isPrefetching { cancel() }
     }
     func retry() { guard account != nil, !isLoading else { return }; refresh() }
     /// Shows the answer at once and gives it to Calendar; an answer it doesn't take is undone.
     func respond(_ answer: CalendarAnswer, to event: CalendarEvent) {
-        guard let account, let index = events.firstIndex(where: { $0.id == event.id }), events[index].answer != answer else { return }
-        let earlierAnswer = events[index].answer, shown = events[index]
-        events[index].answer = answer; onChange?()
+        guard let account, let shown = knownEvent(event.id), shown.answer != answer else { return }
+        let earlierAnswer = shown.answer
+        applyAnswer(answer, id: event.id); onChange?()
         answersWaiting += 1
         let before = answering
         answering = Task { [weak self] in
@@ -296,37 +328,97 @@ enum CalendarSchedule {
             guard !Task.isCancelled else { return }
             answersWaiting -= 1
             if let failure, self.account == account {
-                if let index = events.firstIndex(where: { $0.id == shown.id }), events[index].answer == answer { events[index].answer = earlierAnswer }
+                if knownEvent(shown.id)?.answer == answer { applyAnswer(earlierAnswer, id: shown.id) }
                 onChange?(); onAnswerFailed?(shown, failure)
             }
             if answersWaiting == 0 { answering = nil; if self.account == account { refresh() } }
         }
     }
+    private func knownEvent(_ id: String) -> CalendarEvent? {
+        (displayedEvents+events).first { $0.id == id } ?? days.values.lazy.flatMap(\.events).first { $0.id == id }
+    }
+    private func applyAnswer(_ answer: CalendarAnswer?, id: String) {
+        for index in events.indices where events[index].id == id { events[index].answer = answer }
+        for day in Array(days.keys) {
+            guard var snapshot = days[day] else { continue }
+            for index in snapshot.events.indices where snapshot.events[index].id == id { snapshot.events[index].answer = answer }
+            days[day] = snapshot
+        }
+    }
     private func refresh() {
         guard let account, answersWaiting == 0 else { return }
         cancel(); isLoading = true
-        if !hasLoaded { error = nil }
+        if !displayedHasLoaded { error = nil }
         onChange?()
-        let token = generation
+        let token = generation, requestedDay = browsingDay
         task = Task { [weak self] in
             guard let self else { return }
             do {
-                let days = try await HiddenAccessibilityView.reading(reader.companion) { try await (self.load ?? self.reader.load)(account) }
+                let read = try await HiddenAccessibilityView.reading(reader.companion) {
+                    if let requestedDay { return try await (self.loadDay ?? self.reader.loadDay)(account, requestedDay) }
+                    return try await (self.load ?? self.reader.load)(account)
+                }
                 guard !Task.isCancelled, token == generation, self.account == account else { return }
-                events = CalendarSchedule.events(days); loadedAt = Date(); error = nil
+                if let requestedDay, !read.contains(where: { Calendar.current.date(from: $0.date).map { Calendar.current.isDate($0, inSameDayAs: requestedDay) } == true }) {
+                    throw CalendarPageReader.Failure.unavailable
+                }
+                cache(read, baseline: requestedDay == nil)
+                error = nil
             } catch {
                 guard !Task.isCancelled, token == generation else { return }
                 // A failed refresh keeps the events already shown.
-                if !hasLoaded { self.error = (error as? CalendarPageReader.Failure)?.message ?? CalendarPageReader.Failure.unavailable.message }
+                if !displayedHasLoaded { self.error = (error as? CalendarPageReader.Failure)?.message ?? CalendarPageReader.Failure.unavailable.message }
                 reader.cancel()
             }
             isLoading = false; task = nil; onChange?()
+            prefetchNextDay()
         }
     }
-    func cancel() { generation += 1; task?.cancel(); task = nil; isLoading = false; reader.cancel() }
+    private func cache(_ read: [CalendarDay], baseline: Bool = false) {
+        let readEvents = CalendarSchedule.events(read), now = Date()
+        if baseline { events = readEvents; loadedAt = now }
+        for day in read {
+            guard let date = Calendar.current.date(from: day.date) else { continue }
+            days[Calendar.current.startOfDay(for: date)] = DaySnapshot(events: readEvents, loadedAt: now)
+        }
+        // Keep the baseline countdown and selected day during long swipe sessions.
+        let today = Calendar.current.startOfDay(for: now), tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: today)
+        for date in days.keys.sorted(by: { days[$0]!.loadedAt < days[$1]!.loadedAt }) where days.count > 14 && date != today && date != tomorrow && date != browsingDay {
+            days[date] = nil
+        }
+    }
+    private func prefetchNextDay() {
+        guard task == nil, answersWaiting == 0, hasLoaded, let account else { return }
+        while let day = prefetchDays.first, let cached = days[day], Date().timeIntervalSince(cached.loadedAt) < 60 {
+            prefetchDays.removeFirst()
+        }
+        guard let day = prefetchDays.first else { return }
+        let token = generation
+        isPrefetching = true
+        task = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let read = try await HiddenAccessibilityView.reading(reader.companion) {
+                    try await (self.loadDay ?? self.reader.loadDay)(account, day)
+                }
+                guard !Task.isCancelled, token == generation, self.account == account else { return }
+                if read.contains(where: { Calendar.current.date(from: $0.date).map { Calendar.current.isDate($0, inSameDayAs: day) } == true }) {
+                    cache(read)
+                }
+            } catch {
+                guard !Task.isCancelled, token == generation else { return }
+                // A background miss never replaces the current day's content or error.
+                reader.cancel()
+            }
+            prefetchDays.removeAll { $0 == day }
+            isPrefetching = false; task = nil
+            prefetchNextDay()
+        }
+    }
+    func cancel() { generation += 1; task?.cancel(); task = nil; isLoading = false; isPrefetching = false; reader.cancel() }
     func tearDown() {
         answering?.cancel(); answering = nil; answersWaiting = 0
-        cancel(); reader.tearDown(); events = []; account = nil; loadedAt = .distantPast; error = nil
+        cancel(); prefetchDays = []; reader.tearDown(); events = []; days = [:]; browsingDay = nil; account = nil; loadedAt = .distantPast; error = nil
     }
     deinit { task?.cancel(); answering?.cancel(); clock?.invalidate() }
 }
@@ -375,6 +467,15 @@ enum CalendarSchedule {
         var second = try? await read(CalendarDay.key(tomorrow), in: web, account: account)
         if let day = second { second = try await describe(day, in: web) }
         return [first] + (second.map { [$0] } ?? [])
+    }
+    /// Browsing uses the same signed-in companion and never changes the user's real Calendar tab.
+    func loadDay(_ account: CalendarAccount, _ date: Date) async throws -> [CalendarDay] {
+        guard let web = companion else { throw Failure.unavailable }
+        let day = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        let target = account.url(view: "day", day: day)
+        if web.url != target || web.isLoading { web.load(target) }
+        let read = try await read(CalendarDay.key(day), in: web, account: account)
+        return [try await describe(read, in: web)]
     }
     /// Each event's description, read once a day from its details, which open and close
     /// again in the companion as a click on its chip opens them. "" for none.

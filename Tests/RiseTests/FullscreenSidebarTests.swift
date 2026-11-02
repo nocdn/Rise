@@ -73,16 +73,27 @@ import XCTest
         }
     }
 
-    func testManualSidebarChoiceDuringFullscreenTakesPrecedence() {
+    func testSidebarTogglesDuringFullscreenKeepTheOriginalStateForExit() {
         let browser = makeBrowser(); defer { clean(browser) }
         let tab = browser.addTab()
-        browser.pageFullscreen.setActive(true, in: tab.page.view)
-        browser.toggleSidebar()
-        browser.update()
-        XCTAssertTrue(browser.sidebarVisible, "The user can reopen the sidebar during fullscreen")
-        browser.toggleSidebar()
-        browser.pageFullscreen.setActive(false, in: tab.page.view)
-        XCTAssertFalse(browser.sidebarVisible, "An explicit collapse must not be undone on exit")
+        for originallyOpen in [true, false] {
+            for toggleCount in 1...3 {
+                browser.setSidebarVisible(originallyOpen)
+                browser.pageFullscreen.setActive(true, in: tab.page.view)
+                XCTAssertFalse(browser.sidebarVisible)
+                XCTAssertEqual(browser.fullscreenSidebarWasVisible, originallyOpen)
+                for index in 0..<toggleCount {
+                    browser.toggleSidebar()
+                    browser.update()
+                    browser.pageFullscreen.setActive(true, in: tab.page.view)
+                    XCTAssertEqual(browser.sidebarVisible, index.isMultiple(of: 2), "The sidebar remains freely toggleable during fullscreen")
+                    XCTAssertEqual(browser.fullscreenSidebarWasVisible, originallyOpen, "Temporary toggles cannot overwrite the saved state")
+                }
+                browser.pageFullscreen.setActive(false, in: tab.page.view)
+                XCTAssertEqual(browser.sidebarVisible, originallyOpen, "Exit restores the original state after \(toggleCount) toggles")
+                XCTAssertNil(browser.fullscreenSidebarWasVisible, "The next fullscreen session saves its own state")
+            }
+        }
     }
 
     func testSettingAndModeChangesRestoreImmediately() {

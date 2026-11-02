@@ -11,6 +11,32 @@ canceling Chromium's default action. Mouse-up remains covered if Shift is releas
 mid-click. Primary clicks, ordinary right-clicks and synthetic page events are unchanged.
 The existing native context-menu/download bridge retains the clicked document's context.
 
+Players such as X put transparent controls in front of their video. For this gesture,
+Rise briefly lets hit testing pass through those controls within the clicked player,
+including when the video itself has pointer events disabled. Chromium then builds its
+real media menu. The original styles are restored as soon as the menu opens; ordinary
+clicks and unrelated dialogs keep their usual behavior.
+
+X's MediaSource blobs cannot be saved as files. When Download Video is chosen on X,
+`ContextMenuVideoSource` reads the clicked player's own rendition metadata and chooses
+the highest-bitrate complete MP4. This runs only for that action, matches the original
+blob exactly, and accepts only HTTPS MP4s on `video.twimg.com`. The download still uses
+Chromium's normal download list and animation. Ordinary file/blob downloads are unchanged.
+
 This follows [Firefox's Shift–right-click convention](https://developer.mozilla.org/en-US/docs/Web/API/Element/contextmenu_event).
 
 Validation: `python3 scripts/test-chromium-live.py Tests/Live/ChromiumContextMenuOverrideChecks.swift`.
+
+Selected text also offers **Encode → Base64** near the end of the native menu on
+desktop and iOS. Readable UTF-8 Base64 has a separate **Decode Base64** submenu,
+with **Copy Decoded Value** and a disabled, shortened preview. Standard and URL-safe
+Base64, omitted padding and wrapped lines are supported by the shared
+`SelectionBase64` implementation. Encoding preserves the exact selected text,
+including whitespace. Clipboard actions use the existing notice/toast with the QR
+icon; conversion stays on-device. Inputs above 64 KiB and binary decoded payloads
+are omitted from these text utilities.
+
+Decode and Encode share one section on both platforms. On iOS, the decode copy
+action is labeled **Copy Value**, and selection menus use Rise's translation glyph
+while preserving the native Translate command and its responder routing. Desktop's
+menus and URL-bar copy notice use the same lighter QR finder outlines as iOS menus.

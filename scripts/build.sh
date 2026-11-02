@@ -26,6 +26,8 @@ if [[ "$EXECUTABLE" == RiseLab ]]; then
   done
 fi
 cp THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/THIRD_PARTY_NOTICES.md"
+# SwiftPM's module resources must travel with the executable, including selection-menu icons.
+rsync -a --delete .build/release/Rise_Rise.bundle/ "$APP/Contents/Resources/Rise_Rise.bundle/"
 mkdir -p "$APP/Contents/Resources/Licenses"
 cp Engine/third_party/helium/LICENSE "$APP/Contents/Resources/Licenses/Helium-GPL-3.0.txt"
 # Inter and Ioskeley Mono, each with its license, as the fonts' licenses ask.

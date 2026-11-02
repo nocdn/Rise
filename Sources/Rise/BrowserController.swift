@@ -234,6 +234,10 @@ import RiseCore
     lazy var downloads: DownloadList = {
         let list = DownloadList(storeURL: sessionURL.deletingLastPathComponent().appendingPathComponent("downloads.json"))
         list.onChange = { [weak self] in self?.reloadDownloadsList?(); self?.updateDownloadsButton() }
+        list.onFinish = { [weak self] _ in
+            guard let self, self.downloads.items.allSatisfy(\.isFinished) else { return }
+            self.sidebar.archiveButton.glyph.complete()
+        }
         return list
     }()
     /// Refreshes the downloads popover's rows while it's open.
@@ -265,6 +269,7 @@ import RiseCore
     let pageFullscreen: PageFullscreen
     /// The docked sidebar's state before the visible page entered simulated fullscreen.
     var fullscreenSidebarWasVisible: Bool?
+    let fullscreenNavigationHover = FullscreenNavigationHover(frame: .zero)
     let tabSwitcher = TabSwitcherView()
     var recentTabIDs: [UUID] = []
     var tabSwitchOrder: [UUID] = []
@@ -302,7 +307,8 @@ import RiseCore
             syncedTabMetadata = SyncedTabMetadata(icons: suggestionFavicons)
             syncedTabMetadata?.onChange = { [weak self] in self?.update() }
         }
-        pageFullscreen.onChange = { [weak self] in self?.reconcileFullscreenSidebar() }
+        pageFullscreen.onChange = { [weak self] in self?.reconcileFullscreenSidebar(); self?.layoutChrome() }
+        fullscreenNavigationHover.changed = { [weak self] in self?.refreshFullscreenNavigation() }
         googleSearchSuggestions.onLoad = { [weak self] query in
             guard let self, self.palette.isPresented, self.palette.query.trimmingCharacters(in: .whitespacesAndNewlines) == query,
                   (self.palette.input.currentEditor() as? NSTextView)?.hasMarkedText() != true else { return }
@@ -339,10 +345,18 @@ import RiseCore
             if event.type == .leftMouseDown { self?.linkCardPagePressed(event) }
             return self?.takeLinkClick(event) ?? false
         }
-        window.historyScrollEvent = { [weak self] event in self?.historySwipe.handle(event) ?? false }
+        window.historyScrollEvent = { [weak self] event in
+            guard let self else { return false }
+            if let handled = self.tabHoverCards.calendarCard.routeScroll(event) {
+                self.historySwipe.cancel()
+                return handled
+            }
+            return self.historySwipe.handle(event)
+        }
         window.otherMouseEvent = { [weak self] event in self?.handleMiddleTabClick(event) ?? false }
         window.modifiersChanged = { [weak self] flags in self?.updateHoveredLinkModifiers(flags); self?.sidebarPeekModifiersChanged(flags) }
         window.pointerMoved = { [weak self] event in
+            self?.refreshFullscreenNavigation(pointer: event.locationInWindow)
             self?.sidebar.refreshReturningTabHover(at: event.locationInWindow)
             self?.tabHoverPointerMoved()
         }
@@ -578,14 +592,17 @@ import RiseCore
         let barHeight = PlainNavBar.Metrics.height
         layoutPageBars(width: cb.width)
         layoutDeveloperBar()
-        let body = NSRect(x: 0, y: barHeight, width: cb.width, height: cb.height-barHeight)
+        let regularBody = NSRect(x: 0, y: barHeight, width: cb.width, height: cb.height-barHeight)
+        let body = activeSplitGroup == nil ? fullscreenContentFrame(for: selectedTab, regular: regularBody) : regularBody
         emptyPage.frame = body; pageBody = body
         if pageLayoutHeld {
             // An animation is placing the pages.
         } else if let group = activeSplitGroup {
             let frames = splitFrames(in: body, fraction: group.fraction)
             for (id, frame) in [(group.leftID, frames.left), (group.rightID, frames.right)] {
-                if let tab = tabs.first(where: { $0.id == id }), !pictureInPicture.owns(tab), !tab.isInNativeFullscreen { tab.page.view.frame = frame }
+                if let tab = tabs.first(where: { $0.id == id }), !pictureInPicture.owns(tab), !tab.isInNativeFullscreen {
+                    tab.page.view.frame = fullscreenContentFrame(for: tab, regular: frame)
+                }
             }
             shapePage(around: [frames.left, frames.right])
         } else {
@@ -618,6 +635,7 @@ import RiseCore
             palette.place(centeredAt: NSPoint(x: b.midX, y: b.midY), width: min(centeredWidth, b.width-16))
         }
         layoutPeek()
+        layoutFullscreenNavigation()
         layoutLinkStatus()
         if !tabSwitcher.isHidden { tabSwitcher.place(in: b) }
     }
@@ -672,15 +690,15 @@ import RiseCore
         }
         page.onOpenElsewhere = { [weak self, weak page] url, background in
             guard let self else { return false }
+            let opener = self.tabs.first { $0.page === page }?.id
             // Chrome's own pages open only as Rise's (rise://settings); the rest, which Rise's pages
             // can't show, aren't opened at all rather than as a blank tab.
             if url.scheme?.lowercased() == "chrome" {
-                if let address = RisePages.address(for: url), address.scheme == "rise" { self.addTab(url: address) }
+                if let address = RisePages.address(for: url), address.scheme == "rise" { self.addTab(url: address, opener: opener ?? self.selectedID) }
                 return true
             }
-            let opener = self.tabs.first { $0.page === page }?.id
             if background { self.addTab(url: url, background: true, opener: opener ?? self.selectedID) }
-            else { self.addTab(url: url).returnsTo = opener }
+            else { self.addTab(url: url, opener: opener ?? self.selectedID).returnsTo = opener }
             return true
         }
         page.onOpenInPeek = { [weak self, weak page] url in self?.showPeek(url: url, from: page?.view) }
@@ -730,7 +748,7 @@ import RiseCore
                 }
                 // A site taking the user to a new tab: Back from there comes home again.
                 let opener = self.tabs.first { $0.page === chromium }
-                self.addTab(page: popup).returnsTo = opener?.id
+                self.addTab(opener: opener?.id ?? self.selectedID, page: popup).returnsTo = opener?.id
                 return true
             }
             chromium.onPermissionRequest = { [weak self, weak chromium] capabilities, origin, decide in
@@ -878,6 +896,7 @@ import RiseCore
         googleSearchSuggestions.cancel(); suggestionFavicons.cancelPreview()
         guard palette.isPresented else { return }
         palette.hide(); dismissArea.isHidden = true; veil.hide(); window?.makeFirstResponder(selectedTab?.page.view)
+        refreshFullscreenNavigation()
         DispatchQueue.main.async { [weak self] in self?.applyPendingSharedTabs() }
     }
     func submitAddress(_ text: String, suggestion: AddressSuggestion?) {
@@ -980,8 +999,6 @@ import RiseCore
     @objc func retry() { errorWebView = nil; if let url = selectedTab?.url { selectedTab?.load(url) }; update() }
     @objc func toggleSidebar() {
         if keepPeekedSidebar() { return }
-        // An explicit sidebar choice takes precedence over automatic restoration.
-        if fullscreenSidebarWasVisible != nil { fullscreenSidebarWasVisible = false }
         setSidebarVisible(!sidebarVisible)
     }
     func setSidebarVisible(_ visible: Bool) {

@@ -199,6 +199,44 @@ final class AddressSuggestionsTests: XCTestCase {
         editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
         XCTAssertEqual(submitted, editor.string, "Submitting keeps the entire edited URL")
     }
+    @MainActor func testLongInlineCompletionKeepsTypedPrefixVisibleUntilTheUserAcceptsIt() throws {
+        let browser = browser(); defer { browser.hidePalette(); clean(browser) }
+        browser.showWindow(nil); browser.newTab()
+        let palette = browser.palette
+        let editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
+        let manager = try XCTUnwrap(editor.layoutManager), container = try XCTUnwrap(editor.textContainer)
+        let prefixes = ["dev", "developers.example/👩🏽‍💻/", "developers.example/"+String(repeating: "typed-path/", count: 25)]
+        for prefix in prefixes {
+            let completed = prefix + String(repeating: "autofilled-path/", count: 45)
+            palette.queryChanged = { _ in
+                [AddressSuggestion(title: "A long address", subtitle: completed, symbol: "globe", url: URL(string: "https://developers.example/"),
+                                   tabID: nil, command: nil, completion: completed, isTypedAction: true)]
+            }
+            palette.input.selectText(nil)
+            editor.insertText(prefix, replacementRange: editor.selectedRange())
+            XCTAssertEqual(editor.string, completed)
+            XCTAssertEqual(editor.selectedRange(), NSRange(location: prefix.utf16.count, length: completed.utf16.count-prefix.utf16.count))
+            // AppKit asks to reveal the selected suffix after insertion. That
+            // must not move what the user typed off the left side of the field.
+            editor.scrollRangeToVisible(editor.selectedRange())
+            palette.place(at: NSPoint(x: 6, y: 48), width: 300)
+            palette.layoutSubtreeIfNeeded()
+            manager.ensureLayout(for: container)
+            let last = NSRange(location: prefix.utf16.count-1, length: 1)
+            let glyphs = manager.glyphRange(forCharacterRange: last, actualCharacterRange: nil)
+            let typedEnd = manager.boundingRect(forGlyphRange: glyphs, in: container).offsetBy(dx: editor.textContainerOrigin.x, dy: editor.textContainerOrigin.y)
+            XCTAssertTrue(editor.visibleRect.intersects(typedEnd), "The text being typed remains visible, including a long prefix")
+            if prefix.utf16.count < 40 {
+                XCTAssertEqual(editor.visibleRect.minX, 0, accuracy: 1, "A short prefix must remain visible in full")
+            }
+            let prefixViewport = editor.visibleRect.minX
+            editor.setSelectedRange(NSRange(location: completed.utf16.count, length: 0))
+            editor.scrollRangeToVisible(editor.selectedRange())
+            XCTAssertGreaterThan(editor.visibleRect.minX, prefixViewport, "Accepting the completion restores normal caret scrolling")
+            XCTAssertEqual(editor.string, completed, "The complete destination is preserved")
+        }
+    }
+
     @MainActor func testExpandedSuggestionsIncludeEightDistinctHistoryMatchesAndKeepCompletionPriority() throws {
         let browser = browser(); defer { clean(browser) }
         for index in 0..<12 {

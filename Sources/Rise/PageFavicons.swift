@@ -52,7 +52,11 @@ import AppKit
             eligible.sort((a, b) => {
               const themed = link => /prefers-color-scheme/i.test(link.media);
               const svg = link => /svg/i.test(link.type + link.href);
-              return Number(themed(b))-Number(themed(a)) || (dark ? Number(svg(b))-Number(svg(a)) : Number(svg(a))-Number(svg(b)));
+              const pixels = link => Math.max(0, ...Array.from(link.sizes).map(size => {
+                const match = /^(\\d+)x(\\d+)$/i.exec(size);
+                return match ? Math.min(Number(match[1]), Number(match[2])) : 0;
+              }));
+              return Number(themed(b))-Number(themed(a)) || (dark ? Number(svg(b))-Number(svg(a)) : Number(svg(a))-Number(svg(b))) || pixels(b)-pixels(a);
             });
             return eligible.length ? eligible[0].href : null;
           }

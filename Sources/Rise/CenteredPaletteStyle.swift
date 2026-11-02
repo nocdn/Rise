@@ -11,9 +11,9 @@ import AppKit
     static let cornerRadius: CGFloat = 14
     static let fieldHeight: CGFloat = 50
     static let fieldPadding: CGFloat = 16
-    static let fieldIconSize: CGFloat = 16
+    static let fieldFont = NSFont.systemFont(ofSize: 14.5)
+    static let fieldIconSize: CGFloat = 16 * (fieldFont.pointSize/15)
     static let gap: CGFloat = 10
-    static let fieldFont = NSFont.systemFont(ofSize: 15)
     /// "Search Hacker News": the field's size, a weight heavier than what's typed, at 500 on SF's
     /// weight axis ('wght'), Medium.
     static let siteSearchFont: NSFont = {
@@ -25,9 +25,10 @@ import AppKit
     static let rowHeight: CGFloat = 38
     static let rowPadding: CGFloat = 10
     static let rowRadius: CGFloat = 8
-    static let rowIconSize: CGFloat = 14
-    static let titleFont = NSFont.systemFont(ofSize: 13.5)
-    static let detailFont = NSFont.systemFont(ofSize: 12.5)
+    static let titleFont = NSFont.systemFont(ofSize: 14)
+    static let detailFont = NSFont.systemFont(ofSize: 13.25)
+    /// Keep the icons in proportion to the title type.
+    static let rowIconSize: CGFloat = 14 * (titleFont.pointSize/13.5)
     static let titleMaximumWidth: CGFloat = 300
 
     /// The most rows the tallest palette shows; a longer list scrolls, a whole row at a time.

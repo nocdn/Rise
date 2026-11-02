@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "Rise Tab Sync",
+  "version": "1.0.0",
+  "description": "Your Rise tabs, together on Mac, iPhone and this browser. Sync directly with your private iCloud account.",
+  "minimum_chrome_version": "120",
+  "permissions": [
+    "tabs",
+    "storage",
+    "alarms",
+    "identity",
+    "unlimitedStorage"
+  ],
+  "host_permissions": [
+    "https://api.apple-cloudkit.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Rise Tab Sync",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/16.png",
+      "32": "icons/32.png"
+    }
+  },
+  "icons": {
+    "16": "icons/16.png",
+    "32": "icons/32.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "incognito": "not_allowed",
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; connect-src https://api.apple-cloudkit.com"
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA9pvyfVuB/gMTqm+//dDHRNZZulIJu8nvKdKdHopfO6xiR2O8G7ERkkxn5IKJpoDOasW1q+JlwrYa073kyEu/XYqFOat9UvVTGDZU98FE04vM/iFkG5sPPPfRC1Ag/dZMEKTkqV9kUF7YNqQNS1XjbwoqX6f2rLhZaVQTqktMzbS8YNhu8NiEnxn8W+j3nPfhUGMrc4oTPAOwUjc/rhTl7K+UDa1CJIsuouaneZVOPljTcltv8B6r9+eArIyKve/Rj4aCAUks5ivrMpYtIXhGPPztU9rvRuBZ89PO59+4kEJptmKCjwWfioKNqNQwf4dR/uuxtKsXHNUW7cNtKYCM4QIDAQAB"
+}

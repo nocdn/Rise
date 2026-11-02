@@ -177,6 +177,45 @@ private final class FaviconProtocol: URLProtocol {
                     "unvaried-icons-keep-their-colors")
     }
 
+    func testLargeDeclaredIconUpgradesSuggestionsAndSurvivesSmallTabIcons() async throws {
+        func png(_ size: CGFloat) throws -> Data {
+            let format = UIGraphicsImageRendererFormat(); format.scale = 1
+            return try unwrap(UIGraphicsImageRenderer(size: CGSize(width: size, height: size), format: format).image { context in
+                UIColor.systemRed.setFill(); context.fill(CGRect(x: 0, y: 0, width: size, height: size))
+            }.pngData())
+        }
+        let root = URL(string: "https://quality.example.org/")!, small = try png(16), large = try png(144)
+        let html = "<link rel='shortcut icon' href='/favicon.ico'><link rel='icon' href='/large.png' sizes='144x144'><link rel='icon' href='/32.png' sizes='32x32'>"
+        FaviconProtocol.responses = [root.absoluteString: Data(html.utf8),
+            root.appendingPathComponent("favicon.ico").absoluteString: small,
+            root.appendingPathComponent("large.png").absoluteString: large]
+        let folder = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("icons.json")
+        let session = session(); defer { session.invalidateAndCancel() }
+        let cache = MobileSuggestionFavicons(storageURL: file, session: session)
+        cache.remember(MobileFavicon.decode(small), for: root)
+        _ = cache.image(for: root)
+        for _ in 0..<300 {
+            if cache.image(for: root, fetch: false)?.cgImage?.width == 64 { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try require(cache.image(for: root, fetch: false)?.cgImage?.width == 64, "suggestions-upgrade-to-large-declared-icon")
+        cache.remember(MobileFavicon.decode(small), for: root)
+        try require(cache.image(for: root, fetch: false)?.cgImage?.width == 64, "small-tab-icon-cannot-downgrade-suggestions")
+        cache.save(); cache.flush()
+        let restored = MobileSuggestionFavicons(storageURL: file, allowsNetwork: false)
+        try require(restored.image(for: root, fetch: false)?.cgImage?.width == 64, "sharp-icon-persists-offline")
+        let page = WKWebView(); page.loadHTMLString(html, baseURL: root)
+        for _ in 0..<300 {
+            if !page.isLoading, page.url != nil { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let candidates = await BrowserTab.faviconCandidates(for: page)
+        try require(candidates.light.first?.lastPathComponent == "large.png", "page-selects-large-icon-before-ico")
+        try require(candidates.dark.first?.lastPathComponent == "large.png", "page-selects-large-icon-in-dark-mode-too")
+    }
+
     static func exercise() async throws -> [String: Bool] {
         let audit = MobileFaviconAudit()
         try await audit.testLegacyGitHubCacheUpgradesAndPersistsBothAppearancesWithoutNetwork()
@@ -185,6 +224,7 @@ private final class FaviconProtocol: URLProtocol {
         try await audit.testPageCandidatesSelectBothSchemesIndependentlyOfWebViewAppearance()
         try await audit.testTabPreviewCacheRetainsBothAppearances()
         try audit.testSitesWithoutDarkArtworkKeepTheirOriginalColors()
+        try await audit.testLargeDeclaredIconUpgradesSuggestionsAndSurvivesSmallTabIcons()
         return audit.checks
     }
     private static func captureGitHub(in browser: BrowserViewController, folder: URL) async throws {

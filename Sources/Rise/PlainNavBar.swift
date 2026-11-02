@@ -458,6 +458,7 @@ import RiseCore
         let textX = Metrics.textX-Metrics.textInset-leadingRoom
         text.frame = NSRect(x: textX, y: round((mid-line/2)*2)/2, width: max(0, textEnd-textX), height: line)
         for case let notice as BarNotice in subviews { place(notice) }
+        window?.invalidateCursorRects(for: self)
     }
 
     // MARK: Saying something in the address's place
@@ -573,7 +574,21 @@ import RiseCore
     private var background: CGColor { color.withAlphaComponent(color.alphaComponent*DeveloperModeMotion.covering(developerProgress)).cgColor }
     /// Where developer mode's buttons can run to: up to the pinned extensions.
     var developerControlsMaxX: CGFloat { extensionButtons.isEmpty ? bounds.width : extensionCentre(0)-14 }
+    lazy var fullscreenSlide = FullscreenNavigationSlide(view: self)
+    private(set) var isFullscreenHidden = false
+    func setFullscreenHidden(_ hidden: Bool, animated: Bool) {
+        if hidden != isFullscreenHidden {
+            isFullscreenHidden = hidden
+            setAccessibilityHidden(hidden)
+            if hidden {
+                setHovered(false)
+                (navigation+extensionButtons+fieldControls+[permissionButton, currencyButton]).forEach { $0.hoverHint?.setHovered(false) }
+            }
+        }
+        fullscreenSlide.setHidden(hidden, animated: animated)
+    }
     override func hitTest(_ point: NSPoint) -> NSView? {
+        guard !isFullscreenHidden else { return nil }
         let hit = super.hitTest(point)
         guard developerProgress > 0 else { return hit }
         return (navigation+extensionButtons+[permissionButton, currencyButton]).contains { hit?.isDescendant(of: $0) == true } ? hit : nil
@@ -664,6 +679,11 @@ import RiseCore
 
     // MARK: Hovering the address
 
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        guard url != nil, developerProgress == 0, !isFullscreenHidden, !fieldRect.isEmpty else { return }
+        addCursorRect(fieldRect, cursor: .iBeam)
+    }
     override func updateTrackingAreas() {
         super.updateTrackingAreas(); removeOwnTrackingAreas()
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self))

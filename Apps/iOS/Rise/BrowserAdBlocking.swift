@@ -103,6 +103,10 @@ extension BrowserViewController {
             return
         }
         if action.shouldPerformDownload { finishAdBlockingReload(on: page); decisionHandler(.download); return }
+        // New-window links pass the popup policy in createWebViewWith first.
+        if action.targetFrame != nil, handleExternalAppLink(action, in: page) {
+            decisionHandler(.cancel); return
+        }
         // A nil target opens another window; its own browser applies its policy. Do not
         // change this page's filtering while it is merely opening a link elsewhere.
         guard action.targetFrame?.isMainFrame == true else { decisionHandler(.allow); return }

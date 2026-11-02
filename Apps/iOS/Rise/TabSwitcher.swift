@@ -307,7 +307,7 @@ import WebKit
         return rememberedURL?.host() ?? "New Page"
     }
 
-    /// The icons the page declares, as bitmaps can be drawn here, in the page's own order.
+    /// Prefer larger declared bitmaps, keeping the requested appearance first.
     private static let iconScript = """
     (() => {
       const links = Array.from(document.querySelectorAll('link[rel][href]'));
@@ -322,7 +322,11 @@ import WebKit
         };
         const icons = links.filter(link => rels(link).includes('icon') && usable(link));
         const touch = links.filter(link => rels(link).some(rel => rel.startsWith('apple-touch-icon')) && usable(link));
-        return icons.concat(touch).sort((a, b) => Number(!!scheme(b))-Number(!!scheme(a))).map(link => link.href);
+        const pixels = link => Math.max(0, ...Array.from(link.sizes).map(size => {
+          const match = /^(\\d+)x(\\d+)$/i.exec(size);
+          return match ? Math.min(Number(match[1]), Number(match[2])) : 0;
+        }));
+        return icons.concat(touch).sort((a, b) => Number(!!scheme(b))-Number(!!scheme(a)) || pixels(b)-pixels(a)).map(link => link.href);
       };
       return { light: candidates(false), dark: candidates(true) };
     })()

@@ -11,18 +11,21 @@ import AppKit
         return image
     }
     static func encode(_ image: NSImage?) -> Data? {
-        guard let image, image.isValid, image.size.width > 0, image.size.height > 0,
-              let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 32, pixelsHigh: 32,
+        guard let image, image.isValid, image.size.width > 0, image.size.height > 0 else { return nil }
+        // Don't turn a 16px fallback into a misleading "32px" cache entry.
+        let size = min(32, FaviconImage.pixels(image))
+        guard size > 0,
+              let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: size, pixelsHigh: size,
                   bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
                   colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0),
               let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
         NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = context
         defer { NSGraphicsContext.restoreGraphicsState() }
         context.imageInterpolation = .high
-        image.draw(in: NSRect(x: 0, y: 0, width: 32, height: 32), from: .zero, operation: .copy, fraction: 1)
+        image.draw(in: NSRect(x: 0, y: 0, width: size, height: size), from: .zero, operation: .copy, fraction: 1)
         guard let pixels = bitmap.bitmapData,
-              (0..<32).contains(where: { row in
-                  stride(from: 3, to: 32*4, by: 4).contains { pixels[row*bitmap.bytesPerRow+$0] > 0 }
+              (0..<size).contains(where: { row in
+                  stride(from: 3, to: size*4, by: 4).contains { pixels[row*bitmap.bytesPerRow+$0] > 0 }
               }) else { return nil }
         guard let data = bitmap.representation(using: .png, properties: [:]), data.count <= maximumBytes else { return nil }
         return data

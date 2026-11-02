@@ -21,7 +21,9 @@ import AppKit
             else { tuckFloatingSidebar() }
         } else if let wasVisible = fullscreenSidebarWasVisible {
             fullscreenSidebarWasVisible = nil
-            if wasVisible { setSidebarVisible(true) }
+            // Sidebar changes while watching are temporary; restore the exact
+            // state from before fullscreen, whether it was open or collapsed.
+            setSidebarVisible(wasVisible)
         }
     }
 }

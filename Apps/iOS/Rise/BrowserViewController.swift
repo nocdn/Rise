@@ -110,6 +110,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// Continues the bar's opaque background to the screen edge during its upward rebound.
     private let bottomBarUnderfill = UIView()
     let downloadOrigins = DownloadOriginTracker()
+    var openExternalURL: (URL, @escaping @MainActor @Sendable (Bool) -> Void) -> Void = { url, completion in
+        UIApplication.shared.open(url, options: [:], completionHandler: completion)
+    }
     private var scrollObservation: NSKeyValueObservation?
     /// Keeps More's address and its Back and Forward up to date with the page.
     private var addressObservations: [NSKeyValueObservation] = []
@@ -2550,6 +2553,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         guard !isPanelOpen else { popupPolicy.rejectWindow(navigationAction, in: webView, reason: "browser_panel_open"); return nil }
         guard presentedViewController == nil else { popupPolicy.rejectWindow(navigationAction, in: webView, reason: "native_presentation_open"); return nil }
         guard popupPolicy.allows(navigationAction, in: webView) else { return nil }
+        if handleExternalAppLink(navigationAction, in: webView) { return nil }
         // Return WebKit's actual new window: replaying its request in the opener
         // loses POST bodies, window handles, blank-then-navigate and OAuth flows.
         let blocker = blocker(for: webView)

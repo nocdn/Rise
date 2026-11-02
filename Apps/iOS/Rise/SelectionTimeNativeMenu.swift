@@ -50,7 +50,8 @@ import WebKit
                         #if DEBUG
                         if result !== menu { SelectionTimeMenuAudit.record(result) }
                         #endif
-                        return result
+                        // UIKit can add commands when the compact menu expands.
+                        return SelectionMenuIcons.applying(to: result)
                     }
                 }
             }

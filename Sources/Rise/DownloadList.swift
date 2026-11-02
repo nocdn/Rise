@@ -58,6 +58,7 @@ struct DownloadRecord: Codable, Equatable {
     private var transfers: [UUID: DownloadControl] = [:]
     private var timer: Timer?
     var onChange: (() -> Void)?
+    var onFinish: ((Item) -> Void)?
     static let limit = 200
 
     init(storeURL: URL) {
@@ -93,9 +94,9 @@ struct DownloadRecord: Codable, Equatable {
         item.progress = progress; item.state = .downloading; item.resetRate(); changed()
     }
     func finish(_ id: UUID) {
-        guard let item = items.first(where: { $0.record.id == id }) else { return }
+        guard let item = items.first(where: { $0.record.id == id }), !item.isFinished else { return }
         item.readProgress(); item.progress = nil; item.state = .finished; item.bytesPerSecond = 0
-        transfers[id] = nil; save(); changed()
+        transfers[id] = nil; save(); onFinish?(item); changed()
     }
     /// Clears the list entry only; the completed file stays on disk.
     func remove(_ id: UUID) {

@@ -81,7 +81,7 @@ final class CalendarEventChip: NSButton {
     @objc private func open() { onOpen?() }
 }
 
-/// Today, hour by hour from midnight: lines, hour labels and the time now.
+/// The selected day, hour by hour from midnight: lines, hour labels and the time now.
 final class CalendarTimeline: FlippedView {
     static let hourHeight: CGFloat = 42, labelWidth: CGFloat = 54, trailing: CGFloat = 6
     /// The hour lines, drawn below their hour's point, and an event's room from them.
@@ -108,6 +108,7 @@ final class CalendarTimeline: FlippedView {
     /// Above the events, as in Calendar.
     func raiseNow() { [now, dot].forEach { $0.removeFromSuperview(); addSubview($0) } }
     func layoutNow() {
+        now.isHidden = !Calendar.current.isDateInToday(midnight); dot.isHidden = now.isHidden
         let color = theme == .dark ? NSColor.white : theme.selectedText
         now.layer?.backgroundColor = color.cgColor; dot.layer?.backgroundColor = color.cgColor
         let y = y(Date()).rounded()
@@ -132,10 +133,22 @@ final class CalendarTimeline: FlippedView {
 @MainActor final class CalendarTooltip: FlippedView, NSMenuDelegate {
     static let width: CGFloat = 264, preferredHeight: CGFloat = 268
     static let allDayHeight: CGFloat = 22, allDayGap: CGFloat = 4
+    static let navigationHeight: CGFloat = 28
     let scroll = CardScrollView()
     let timeline = CalendarTimeline(frame: .zero)
     private let panel = Surface(radius: FindBar.radius)
     private let clip = FlippedView(), allDay = FlippedView(), divider = Surface()
+    private let dayClip = FlippedView(), dayBody = Surface()
+    private let navigation = Surface()
+    let dayLabel = NSTextField(labelWithString: "")
+    let todayButton = ChromeButton(symbol: "arrow.uturn.backward", size: 14, title: "Go to today", action: {})
+    private var navigationSlide = MotionSpring(0)
+    private var daySlide = MotionSpring(0), dayDirection: CGFloat = 1
+    private var outgoingDay: CalendarDayImage?, slidesDays = false
+    private var daySwipe = CalendarDaySwipe()
+    private var ownsScroll = false, lastScroll: TimeInterval?
+    private var lastDayScroll: NSEvent?, lastDayScrollConsumed = false
+    private weak var agenda: CalendarAgenda?
     private(set) var chips: [CalendarEventChip] = []
     private(set) var allDayChips: [CalendarEventChip] = []
     private let moreAllDay = NSTextField(labelWithString: "")
@@ -166,10 +179,12 @@ final class CalendarTimeline: FlippedView {
         panel.clipsToBounds = false
         clip.wantsLayer = true; clip.layer?.cornerRadius = FindBar.radius
         clip.layer?.cornerCurve = .continuous; clip.layer?.masksToBounds = true
+        dayClip.wantsLayer = true; dayClip.layer?.masksToBounds = true
         scroll.drawsBackground = false; scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = false
         scroll.verticalScroller = GmailScroller(); scroll.verticalScroller?.controlSize = .small
         scroll.scrollerStyle = .overlay; scroll.autohidesScrollers = true
         scroll.documentView = timeline; scroll.contentView.postsBoundsChangedNotifications = true
+        scroll.interceptScroll = { [weak self] in self?.handleDayScroll($0) ?? false }
         NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
         message.font = .systemFont(ofSize: 12); message.alignment = .center
         message.maximumNumberOfLines = 2; message.lineBreakMode = .byWordWrapping
@@ -177,12 +192,22 @@ final class CalendarTimeline: FlippedView {
         retry.isBordered = false; retry.font = .systemFont(ofSize: 12, weight: .medium)
         retry.target = self; retry.action = #selector(retryLoading)
         moreAllDay.font = .systemFont(ofSize: 11, weight: .medium)
-        clip.addSubview(scroll); clip.addSubview(allDay); clip.addSubview(divider)
-        clip.addSubview(message); clip.addSubview(retry)
+        dayLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        dayLabel.lineBreakMode = .byTruncatingTail
+        todayButton.title = "Today"; todayButton.imagePosition = .imageLeading; todayButton.imageHugsTitle = true
+        todayButton.image = TablerIcon.image("M9.333 13.667L6 10.333L9.333 7M6 10.333h9.167a3.333 3.333 0 0 1 0 6.667h-.834", size: 18)
+        todayButton.font = .systemFont(ofSize: 11.5, weight: .medium)
+        todayButton.actionBlock = { [weak self] in self?.goToToday() }
+        navigation.addSubview(dayLabel); navigation.addSubview(todayButton)
+        dayBody.addSubview(scroll); dayBody.addSubview(allDay); dayBody.addSubview(divider)
+        dayBody.addSubview(message); dayBody.addSubview(retry)
+        dayClip.addSubview(dayBody); clip.addSubview(dayClip)
+        clip.addSubview(navigation)
         allDay.addSubview(moreAllDay)
         panel.addSubview(clip); addSubview(panel)
         height.configure(response: FindMotion.swapResponse, bounce: 0)
         top.configure(response: FindMotion.swapResponse, bounce: 0)
+        ChromeSlideMotion.configure(&daySlide, showing: true)
     }
     required init?(coder: NSCoder) { fatalError() }
     deinit { NotificationCenter.default.removeObserver(self) }
@@ -194,6 +219,53 @@ final class CalendarTimeline: FlippedView {
     override func mouseEntered(with event: NSEvent) { onPointer?(true); updateHover() }
     override func mouseExited(with event: NSEvent) { if menuEvent == nil { onPointer?(false) }; updateHover() }
     override func mouseMoved(with event: NSEvent) { updateHover() }
+    override func scrollWheel(with event: NSEvent) {
+        if !handleDayScroll(event) { super.scrollWheel(with: event) }
+    }
+    private func handleDayScroll(_ event: NSEvent) -> Bool {
+        guard key != nil else { return false }
+        if event === lastDayScroll { return lastDayScrollConsumed }
+        let result = daySwipe.handle(event)
+        lastDayScroll = event; lastDayScrollConsumed = result.consumed
+        if let day = result.day { browseDay(by: day) }
+        return result.consumed
+    }
+    /// Claim the gesture before the window's page-history router sees it,
+    /// including the undecided first deltas and momentum after the pointer leaves.
+    /// nil leaves page history in charge; false skips history but leaves native
+    /// vertical dispatch alone; true takes the event entirely.
+    func routeScroll(_ event: NSEvent) -> Bool? {
+        guard event.type == .scrollWheel, key != nil, !isHidden, window != nil else { return nil }
+        if event.phase.contains(.began) || event.phase.contains(.mayBegin) ||
+            event.phase.isEmpty && event.momentumPhase.isEmpty && lastScroll.map({ event.timestamp-$0 > 0.3 }) == true {
+            ownsScroll = false
+        }
+        let inside = bounds.contains(convert(event.locationInWindow, from: nil))
+        if inside, !ownsScroll { daySwipe = CalendarDaySwipe(); lastDayScroll = nil; ownsScroll = true }
+        guard ownsScroll else { return nil }
+        lastScroll = event.timestamp
+        let consumed = handleDayScroll(event)
+        if !inside && !consumed { scroll.scrollWheel(with: event) }
+        if event.phase.contains(.cancelled) || event.momentumPhase.contains(.ended) || event.momentumPhase.contains(.cancelled) { ownsScroll = false }
+        return consumed || !inside
+    }
+    func browseDay(by offset: Int) {
+        guard let agenda, let day = Calendar.current.date(byAdding: .day, value: offset, to: agenda.displayedDay) else { return }
+        agenda.selectDay(day); update(agenda)
+    }
+    @objc func goToToday() {
+        guard let agenda else { return }
+        agenda.selectDay(nil); update(agenda); scrollToNow()
+    }
+    static func dayTitle(_ date: Date, now: Date = Date(), calendar: Calendar = .current) -> String {
+        let day = calendar.startOfDay(for: date), today = calendar.startOfDay(for: now)
+        if day == today { return "Today" }
+        if day == calendar.date(byAdding: .day, value: -1, to: today) { return "Yesterday" }
+        if day == calendar.date(byAdding: .day, value: 1, to: today) { return "Tomorrow" }
+        let format = DateFormatter(); format.calendar = calendar; format.timeZone = calendar.timeZone
+        format.setLocalizedDateFormatFromTemplate(calendar.isDate(date, equalTo: now, toGranularity: .year) ? "EEEEdMMMM" : "EEEEdMMMMy")
+        return format.string(from: date)
+    }
     /// Only the event under the pointer is highlighted, including after the timeline scrolls under it.
     func updateHover() {
         let inside = !isHidden && window.map { bounds.contains(convert($0.mouseLocationOutsideOfEventStream, from: nil)) } == true
@@ -217,17 +289,24 @@ final class CalendarTimeline: FlippedView {
     func present(key: String, agenda: CalendarAgenda, left: CGFloat, anchorTop: CGFloat, maxBottom: CGFloat, theme: RiseTheme,
                  glides: Bool = false, growsFrom: NSPoint? = nil) {
         let appearing = self.key == nil, switching = self.key != key
+        if appearing || switching { slidesDays = false; finishDaySlide() }
         if appearing { CardMotionAnimator.cancelOut(self) }
         self.key = key; self.theme = theme; isHidden = false
+        self.agenda = agenda
+        if appearing || switching { daySwipe = CalendarDaySwipe(); ownsScroll = false; lastScroll = nil; lastDayScroll = nil; agenda.selectDay(nil) }
         frame.origin.x = left; self.anchorTop = anchorTop; self.maxBottom = maxBottom; tabPoint = growsFrom
         appearance = theme.appearance
-        panel.fill = background
+        panel.fill = background; dayBody.fill = background
+        navigation.fill = background; dayLabel.textColor = theme.text; todayButton.contentTintColor = theme.text
+        todayButton.baseColor = theme.text.withAlphaComponent(theme == .dark ? 0.1 : 0.06)
+        todayButton.hoverColor = theme.text.withAlphaComponent(theme == .dark ? 0.17 : 0.1)
+        todayButton.refreshHoverState()
         KeroLitEdge.apply(to: panel, theme: theme)
         timeline.theme = theme
         divider.fill = theme.text.withAlphaComponent(theme == .dark ? 0.14 : 0.1)
         if switching { events = []; (chips+allDayChips).forEach { $0.removeFromSuperview() }; chips = []; allDayChips = [] }
         update(agenda)
-        if appearing { height.settle(); if !glides { top.settle() }; render() }
+        if appearing { height.settle(); navigationSlide.settle(); if !glides { top.settle() }; render() }
         if appearing && !glides { CardMotionAnimator.animateIn(self, CardMotion.selected, tab: tabOrigin) }
         // Opens at the hour now, a little of the hour before showing above it.
         if appearing || switching { scrollToNow(); scroll.hideScrollerUntilScrolled() }
@@ -237,20 +316,29 @@ final class CalendarTimeline: FlippedView {
         clock = Timer.scheduledTimer(withTimeInterval: 20, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
+        slidesDays = true
+        if appearing || switching { agenda.beginBrowsing() }
     }
     func update(_ agenda: CalendarAgenda) {
         guard key != nil else { return }
-        let midnight = Calendar.current.startOfDay(for: Date())
+        let midnight = agenda.displayedDay
         let dayChanged = timeline.midnight != midnight
+        if dayChanged { startDaySlide(to: midnight) }
         timeline.midnight = midnight
-        // Tomorrow's events are loaded for the tab's countdown, not shown.
         let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: midnight) ?? midnight
-        let shown = agenda.events.filter { $0.end > midnight && $0.start < tomorrow }
+        let shown = agenda.displayedEvents.filter { $0.end > midnight && $0.start < tomorrow }
         if shown != events || dayChanged {
             events = shown
             rebuild(timed: shown.filter { !$0.allDay }, allDay: shown.filter(\.allDay))
         }
-        let waiting = !agenda.hasLoaded
+        let browsing = agenda.browsingDay != nil
+        if navigationSlide.target != (browsing ? 1 : 0) {
+            ChromeSlideMotion.configure(&navigationSlide, showing: browsing)
+            navigationSlide.target = browsing ? 1 : 0
+        }
+        dayLabel.stringValue = Self.dayTitle(midnight); dayLabel.toolTip = dayLabel.stringValue
+        todayButton.isEnabled = browsing
+        let waiting = !agenda.displayedHasLoaded
         let text = agenda.error ?? (waiting ? "Loading events" : "")
         message.isHidden = text.isEmpty; retry.isHidden = agenda.error == nil
         if message.stringValue != text { shimmer.cancel(); message.stringValue = text }
@@ -259,6 +347,29 @@ final class CalendarTimeline: FlippedView {
         if waiting, agenda.error == nil, agenda.isLoading { if !shimmer.isRunning, window != nil { shimmer.start() } } else { shimmer.cancel() }
         timeline.alphaValue = agenda.error != nil ? 0.35 : 1
         layoutCard(); updateHover(); animate()
+    }
+    /// Capture the visible composition before rebuilding it. A second swipe can
+    /// start from a partially completed slide without flashing an older day.
+    private func startDaySlide(to date: Date) {
+        guard slidesDays, window?.isVisible == true, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+              !dayClip.bounds.isEmpty, let bitmap = dayClip.bitmapImageRepForCachingDisplay(in: dayClip.bounds) else {
+            finishDaySlide(); return
+        }
+        dayClip.cacheDisplay(in: dayClip.bounds, to: bitmap)
+        let image = NSImage(size: dayClip.bounds.size); image.addRepresentation(bitmap)
+        finishDaySlide()
+        let outgoing = CalendarDayImage(frame: dayClip.bounds)
+        outgoing.image = image; outgoing.imageScaling = .scaleAxesIndependently
+        outgoing.wantsLayer = true; outgoing.layer?.backgroundColor = background.cgColor
+        outgoing.setAccessibilityElement(false)
+        dayClip.addSubview(outgoing); outgoingDay = outgoing
+        dayDirection = date > timeline.midnight ? 1 : -1
+        daySlide.value = 1; daySlide.target = 0; daySlide.velocity = 0
+    }
+    private func finishDaySlide() {
+        outgoingDay?.removeFromSuperview(); outgoingDay = nil
+        daySlide.target = 0; daySlide.settle()
+        dayBody.setFrameOrigin(.zero)
     }
     /// Where the card comes out of its tab, in its superview: by default its own left edge level
     /// with the middle of the tab beside it.
@@ -277,7 +388,9 @@ final class CalendarTimeline: FlippedView {
     func dismiss(animated: Bool = true) {
         let wasShown = key != nil
         key = nil; link?.invalidate(); link = nil; clock?.invalidate(); clock = nil; shimmer.cancel()
-        height.settle(); top.settle()
+        slidesDays = false; finishDaySlide(); agenda?.endBrowsing()
+        height.settle(); top.settle(); navigationSlide.target = 0; navigationSlide.settle(); daySwipe = CalendarDaySwipe(); ownsScroll = false; lastScroll = nil; lastDayScroll = nil
+        if wasShown { agenda?.selectDay(nil) }
         guard animated, wasShown else { isHidden = true; return }
         CardMotionAnimator.animateOut(self, CardMotion.selected, tab: tabOrigin) { [weak self] in
             if self?.key == nil { self?.isHidden = true }
@@ -312,9 +425,9 @@ final class CalendarTimeline: FlippedView {
         timeline.layoutNow()
     }
     private var allDayRows: Int { allDayChips.count + (moreAllDay.stringValue.isEmpty ? 0 : 1) }
-    private var headerHeight: CGFloat { allDayRows == 0 ? 0 : CGFloat(allDayRows)*(Self.allDayHeight+Self.allDayGap)+Self.allDayGap+4 }
+    private var allDayHeaderHeight: CGFloat { allDayRows == 0 ? 0 : CGFloat(allDayRows)*(Self.allDayHeight+Self.allDayGap)+Self.allDayGap+4 }
     private func layoutCard() {
-        height.target = min(Self.preferredHeight+headerHeight, max(120, maxBottom-8))
+        height.target = min(Self.preferredHeight+allDayHeaderHeight, max(120, maxBottom-8))
         top.target = max(8, min(anchorTop, maxBottom-height.target))
         timeline.setFrameSize(NSSize(width: Self.width, height: CalendarTimeline.contentHeight))
         let columnsWidth = Self.width-CalendarTimeline.labelWidth-CalendarTimeline.trailing
@@ -351,17 +464,29 @@ final class CalendarTimeline: FlippedView {
     }
     private func render() {
         let origin = scroll.contentView.bounds.origin
-        frame = NSRect(x: frame.minX, y: top.value, width: Self.width, height: max(0, height.value))
+        let navigationHeight = Self.navigationHeight*navigationSlide.value
+        // Its spring can travel above the clipping edge on the way out, but
+        // that mustn't take space away from the all-day rows or timeline.
+        let navigationSpace = max(0, navigationHeight)
+        let shownHeight = max(0, min(height.value+navigationSpace, maxBottom-8))
+        frame = NSRect(x: frame.minX, y: max(8, min(top.value, maxBottom-shownHeight)), width: Self.width, height: shownHeight)
         panel.frame = bounds; clip.frame = bounds
-        let header = headerHeight
-        allDay.frame = NSRect(x: 0, y: 0, width: Self.width, height: header); allDay.isHidden = header == 0
-        divider.frame = NSRect(x: 0, y: header-0.5, width: Self.width, height: 0.5); divider.isHidden = header == 0
-        scroll.frame = NSRect(x: 0, y: header, width: Self.width, height: max(0, bounds.height-header))
+        let header = allDayHeaderHeight+navigationSpace
+        navigation.frame = NSRect(x: 0, y: navigationHeight-Self.navigationHeight, width: Self.width, height: Self.navigationHeight)
+        navigation.isHidden = navigationSlide.value == 0 && navigationSlide.target == 0
+        dayLabel.frame = NSRect(x: 12, y: 6, width: Self.width-100, height: 17)
+        todayButton.frame = NSRect(x: Self.width-80, y: 3, width: 68, height: 22)
+        dayClip.frame = NSRect(x: 0, y: navigationSpace, width: Self.width, height: max(0, bounds.height-navigationSpace))
+        dayBody.frame = dayClip.bounds.offsetBy(dx: dayDirection*Self.width*daySlide.value, dy: 0)
+        if let outgoingDay { outgoingDay.frame.origin.x = dayDirection*Self.width*(daySlide.value-1) }
+        allDay.frame = NSRect(x: 0, y: 0, width: Self.width, height: allDayHeaderHeight); allDay.isHidden = allDayHeaderHeight == 0
+        divider.frame = NSRect(x: 0, y: allDayHeaderHeight-0.5, width: Self.width, height: 0.5); divider.isHidden = header == 0
+        scroll.frame = NSRect(x: 0, y: allDayHeaderHeight, width: Self.width, height: max(0, bounds.height-header))
         scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, min(origin.y, CalendarTimeline.contentHeight-scroll.contentView.bounds.height))))
         scroll.reflectScrolledClipView(scroll.contentView)
         let textWidth = Self.width-48
         let size = message.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: textWidth, height: 100)) ?? .zero
-        let middle = header+(bounds.height-header)/2
+        let middle = allDayHeaderHeight+(bounds.height-header)/2
         message.frame = NSRect(x: 24, y: middle-ceil(size.height)/2-(retry.isHidden ? 0 : 12), width: textWidth, height: ceil(size.height))
         shimmer.frame = message.bounds
         retry.frame = NSRect(x: (Self.width-100)/2, y: message.frame.maxY+6, width: 100, height: 22)
@@ -370,7 +495,7 @@ final class CalendarTimeline: FlippedView {
     @objc private func scrolled() { updateHover() }
     @objc private func retryLoading() { onRetry?() }
     private func animate() {
-        guard window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { height.settle(); top.settle(); render(); return }
+        guard window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { height.settle(); top.settle(); navigationSlide.settle(); finishDaySlide(); render(); return }
         guard link == nil else { return }
         lastTick = CACurrentMediaTime()
         let link = displayLink(target: self, selector: #selector(step(_:)))
@@ -378,10 +503,16 @@ final class CalendarTimeline: FlippedView {
     }
     @objc private func step(_ link: CADisplayLink) {
         let now = CACurrentMediaTime(), dt = min(0.05, now-(lastTick ?? now)); lastTick = now
-        height.step(dt); top.step(dt)
-        if height.isResting(within: 0.05), top.isResting(within: 0.05) {
-            link.invalidate(); self.link = nil; height.settle(); top.settle()
+        height.step(dt); top.step(dt); navigationSlide.step(dt); daySlide.step(dt)
+        if daySlide.isResting(within: 0.001) { finishDaySlide() }
+        if height.isResting(within: 0.05), top.isResting(within: 0.05), navigationSlide.isResting(within: 0.001), outgoingDay == nil {
+            link.invalidate(); self.link = nil; height.settle(); top.settle(); navigationSlide.settle()
         }
         render()
     }
+}
+
+/// The outgoing day is only a picture; its old events must never take a click.
+private final class CalendarDayImage: NSImageView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }

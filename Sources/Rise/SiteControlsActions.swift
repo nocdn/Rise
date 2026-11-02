@@ -48,6 +48,10 @@ import Vision
                 guard let self else { return }
                 self.setCollapsesSidebarInSimulatedFullscreen(!self.collapsesSidebarInSimulatedFullscreen)
             })
+            menu.addItem(menuItem("Auto-hide URL Bar in Simulated Full Screen", checked: autoHidesFullscreenNavigation) { [weak self] in
+                guard let self else { return }
+                self.setAutoHidesFullscreenNavigation(!self.autoHidesFullscreenNavigation)
+            })
         }
         menu.addItem(menuItem("Clear Browsing History…") { [weak self] in self?.confirmClearBrowsingHistory() })
         let visibleRows = (siteControlsPopover.contentViewController as? SiteControlsController)?.rows ?? [:]

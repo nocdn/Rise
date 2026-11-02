@@ -49,6 +49,9 @@ struct FloatingVideoScrollInput {
     private var localPinchMonitor: Any?
     private var globalPinchMonitor: Any?
     private var spaceMonitor: Any?
+    private lazy var spaceShortcut = FloatingVideoSpaceShortcut(available: { [weak self] in
+        guard let self else { return false }; return self.takesSpace(at: self.pointerLocation())
+    }, action: { [weak self] in self?.overlay.toggle() })
     private var localPointerMonitor: Any?
     private var globalPointerMonitor: Any?
     /// Whether the video takes clicks at all. Even then, the transparent
@@ -113,6 +116,11 @@ struct FloatingVideoScrollInput {
         overlay.togglePlayback = { [weak self] in self?.onTogglePlayback?() }
         overlay.minimizeAction = { [weak self] in self?.onMinimize?() }
         overlay.seek = { [weak self] fraction, final in self?.onSeek?(fraction, final) }
+        overlay.progress.scrollFinished = { [weak self] in
+            guard let self else { return }
+            if !self.isDragging { self.stopScrollCapture() }
+            self.updateMousePassThrough()
+        }
         overlay.mouseDrag = { [weak self] event in self?.handleMouse(event) }
         overlay.pinch = { [weak self] event in self?.handleMagnification(event.magnification, phase: event.phase) }
         observeScreenChanges()
@@ -279,7 +287,7 @@ struct FloatingVideoScrollInput {
 
     // MARK: Closing
 
-    /// Closing with the X or minimize button: the controls go at once, and the window starts on its
+    /// Closing with the X (or Shift–X): the controls go at once, and the window starts on its
     /// way out before the page has gone back to its tab.
     func beginClosing() {
         guard closeStarted == nil, !isDismissing, isVisible else { return }
@@ -344,6 +352,7 @@ struct FloatingVideoScrollInput {
     }
 
     override func sendEvent(_ event: NSEvent) {
+        if event.type == .flagsChanged { overlay.updateModifiers(event.modifierFlags) }
         if event.type == .magnify {
             handleMagnification(event.magnification, phase: event.phase); return
         }
@@ -381,13 +390,13 @@ struct FloatingVideoScrollInput {
         // The panel ignores the mouse outside the video, so it never sees the
         // pointer come back over it; watch the pointer everywhere instead.
         localPointerMonitor = NSEvent.addLocalMonitorForEvents(matching: Self.pointerTypes) { [weak self] event in
-            self?.updateMousePassThrough(); return event
+            self?.updateMousePassThrough(); self?.overlay.updateModifiers(event.modifierFlags); return event
         }
-        globalPointerMonitor = NSEvent.addGlobalMonitorForEvents(matching: Self.pointerTypes) { [weak self] _ in
-            MainActor.assumeIsolated { self?.updateMousePassThrough() }
+        globalPointerMonitor = NSEvent.addGlobalMonitorForEvents(matching: Self.pointerTypes) { [weak self] event in
+            MainActor.assumeIsolated { self?.updateMousePassThrough(); self?.overlay.updateModifiers(event.modifierFlags) }
         }
     }
-    private static let pointerTypes: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseUp, .rightMouseUp, .otherMouseUp]
+    private static let pointerTypes: NSEvent.EventTypeMask = [.mouseMoved, .leftMouseUp, .rightMouseUp, .otherMouseUp, .flagsChanged]
 
     /// Takes the mouse only over the video's rounded shape, so the shadow
     /// margin never blocks clicks or hover in the windows beneath it. A press
@@ -395,7 +404,8 @@ struct FloatingVideoScrollInput {
     /// strays into the margin continues; so does a pinch or a two-finger drag,
     /// whose gesture would otherwise reach the page beneath.
     func updateMousePassThrough() {
-        if acceptsMouse, resizeMotion?.phase == .pinching || motion.phase == .dragging { return }
+        spaceShortcut.setEnabled(takesSpace(at: pointerLocation()))
+        if acceptsMouse, resizeMotion?.phase == .pinching || motion.phase == .dragging || overlay.progress.isTrackpadScrubbing { return }
         let pointer = pointerLocation()
         let over = acceptsMouse && NSBezierPath(roundedRect: videoFrame, xRadius: 16, yRadius: 16).contains(pointer)
         guard over == ignoresMouseEvents, !acceptsMouse || NSEvent.pressedMouseButtons == 0 else { return }
@@ -407,6 +417,8 @@ struct FloatingVideoScrollInput {
     private static let pinchTypes: NSEvent.EventTypeMask = [.magnify, .beginGesture, .endGesture]
 
     private func removeEventMonitors() {
+        spaceShortcut.setEnabled(false)
+        overlay.hideHoverHints()
         if let localPointerMonitor { NSEvent.removeMonitor(localPointerMonitor); self.localPointerMonitor = nil }
         if let globalPointerMonitor { NSEvent.removeMonitor(globalPointerMonitor); self.globalPointerMonitor = nil }
         if let localPinchMonitor { NSEvent.removeMonitor(localPinchMonitor); self.localPinchMonitor = nil }
@@ -433,12 +445,12 @@ struct FloatingVideoScrollInput {
     /// Space plays or pauses while the pointer is over the video, and never
     /// reaches the page behind it. Returns nil when it was handled.
     var pointerLocation: () -> NSPoint = { NSEvent.mouseLocation }
+    private func takesSpace(at pointer: NSPoint) -> Bool { videoFrame.contains(pointer) && acceptsMouse && !isDismissing && isVisible }
     func routeSpace(_ event: NSEvent) -> NSEvent? { routeSpace(event, pointer: pointerLocation()) }
     func routeSpace(_ event: NSEvent, pointer: NSPoint) -> NSEvent? {
         guard event.type == .keyDown || event.type == .keyUp, event.keyCode == 49,
               event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return event }
-        let over = videoFrame.contains(pointer) || overlay.controlsVisible
-        guard over, !isDismissing, isVisible else {
+        guard takesSpace(at: pointer) else {
             // Only near the video, so ordinary Space presses elsewhere stay quiet.
             if event.type == .keyDown, videoFrame.insetBy(dx: -24, dy: -24).contains(pointer) {
                 Self.log.notice("Space reached the page beside Picture in Picture: pointer=\(pointer.debugDescription) video=\(self.videoFrame.debugDescription) dismissing=\(self.isDismissing) visible=\(self.isVisible)")
@@ -451,7 +463,23 @@ struct FloatingVideoScrollInput {
     private static let log = Logger(subsystem: "Rise", category: "PictureInPicture")
 
     func handleScroll(_ event: NSEvent) {
-        handleGesture(.from(event))
+        let pointer = event.window === self ? convertPoint(toScreen: event.locationInWindow) : pointerLocation()
+        handleScroll(.from(event), pointer: pointer)
+    }
+    func handleScroll(_ input: FloatingVideoScrollInput, pointer: NSPoint) {
+        guard !isDismissing, input.precise, resizeMotion?.phase != .pinching else { return }
+        let progress = overlay.progress
+        if input.phase.contains(.began) { progress.finishTrackpadScrub() }
+        let point = progress.convert(convertPoint(fromScreen: pointer), from: nil)
+        let startsOnTrack = !progress.isHidden && progress.bounds.contains(point) && input.momentumPhase.isEmpty &&
+            (input.phase.contains(.began) || input.phase.contains(.changed))
+        if !isDragging, progress.isTrackpadScrubbing || startsOnTrack {
+            if !progress.isTrackpadScrubbing { stopMotion() }
+            progress.handleScroll(input)
+            if progress.isTrackpadScrubbing { captureScroll() }
+        } else {
+            handleGesture(input)
+        }
     }
 
     func handleGesture(_ input: FloatingVideoScrollInput) {
@@ -512,15 +540,20 @@ struct FloatingVideoScrollInput {
         motion.begin(at: timestamp)
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
         startClock()
-        // A moving window can leave the pointer during a two-finger gesture.
-        // Continue receiving that gesture until its finger phase ends.
+        captureScroll()
+    }
+    /// Keep the gesture's original target if the pointer leaves it, including
+    /// system momentum after a seek's finger phase ends.
+    private func captureScroll() {
         if localScrollMonitor == nil {
             localScrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-                guard let self, self.motion.phase == .dragging else { return event }
+                guard let self, self.isDragging || self.overlay.progress.isTrackpadScrubbing else { return event }
                 self.handleScroll(event); return nil
             }
             globalScrollMonitor = NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-                MainActor.assumeIsolated { if self?.motion.phase == .dragging { self?.handleScroll(event) } }
+                MainActor.assumeIsolated {
+                    if let self, self.isDragging || self.overlay.progress.isTrackpadScrubbing { self.handleScroll(event) }
+                }
             }
         }
     }
@@ -576,6 +609,7 @@ struct FloatingVideoScrollInput {
     private func stopMotion() {
         // A dismissal scales the window itself; anything else lets a lifted window settle back.
         if isDismissing { isLifted = false } else { lift(false) }
+        overlay.progress.finishTrackpadScrub()
         stopScrollCapture(); displayLink?.invalidate(); displayLink = nil; lastFrameTime = nil
     }
     private func observeScreenChanges() {

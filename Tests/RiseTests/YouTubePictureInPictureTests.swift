@@ -94,9 +94,9 @@ final class YouTubePictureInPictureTests: XCTestCase {
         XCTAssertFalse(overlay.controlsVisible, "Controls stay hidden until the pointer is over the video")
         overlay.mouseEntered(with: try XCTUnwrap(NSEvent.enterExitEvent(with: .mouseEntered, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: panel.windowNumber, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil)))
         XCTAssertTrue(overlay.controlsVisible)
-        func click(_ point: NSPoint) {
+        func click(_ point: NSPoint, modifiers: NSEvent.ModifierFlags = []) {
             for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-                panel.sendEvent(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                panel.sendEvent(NSEvent.mouseEvent(with: type, location: point, modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime,
                     windowNumber: panel.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!)
             }
         }
@@ -105,7 +105,8 @@ final class YouTubePictureInPictureTests: XCTestCase {
         XCTAssertEqual(closes, 1); XCTAssertEqual(toggles, 0, "A glass control click must not reach the video")
         click(NSPoint(x: video.maxX-26, y: video.maxY-26))
         XCTAssertEqual(returns, 1); XCTAssertEqual(toggles, 0)
-        click(NSPoint(x: video.minX+61, y: video.maxY-26))
+        XCTAssertEqual(overlay.subviews.compactMap { $0 as? FloatingVideoControl }.count, 2, "Only the X and return-to-tab buttons remain")
+        click(NSPoint(x: video.minX+26, y: video.maxY-26), modifiers: .shift)
         XCTAssertEqual(minimizes, 1); XCTAssertEqual(toggles, 0)
         XCTAssertFalse(panel.overlay.playButton.paused)
         click(NSPoint(x: video.midX, y: video.midY))

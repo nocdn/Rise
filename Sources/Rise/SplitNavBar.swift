@@ -50,11 +50,11 @@ import AppKit
         let height = PlainNavBar.Metrics.height
         if let group = activeSplitGroup, splitBar.superview === pageClip {
             let frames = splitFrames(in: NSRect(x: 0, y: 0, width: width, height: height), fraction: group.fraction)
-            navBar.frame = NSRect(x: 0, y: 0, width: frames.left.width, height: height)
-            splitBar.frame = NSRect(x: frames.right.minX, y: 0, width: frames.right.width, height: height)
+            navBar.fullscreenSlide.place(NSRect(x: 0, y: 0, width: frames.left.width, height: height))
+            splitBar.fullscreenSlide.place(NSRect(x: frames.right.minX, y: 0, width: frames.right.width, height: height))
             splitBar.isHidden = false
         } else {
-            navBar.frame = NSRect(x: 0, y: 0, width: width, height: height)
+            navBar.fullscreenSlide.place(NSRect(x: 0, y: 0, width: width, height: height))
             if splitBar.superview === pageClip { splitBar.isHidden = true }
         }
     }
