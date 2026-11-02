@@ -11,8 +11,12 @@ import RiseCore
             guard let self else { return }
             let bar = self.selectedBar
             switch await self.githubStarrer.star(repository) {
-            case .starred: bar.showNotice("Starred Repository", image: BarNotice.starImage, hold: 2)
-            case .alreadyStarred: bar.showNotice("Already Starred", image: BarNotice.starImage, hold: 2)
+            case .starred:
+                self.githubLinkStatus.record(true, for: repository)
+                bar.showNotice("Starred Repository", image: BarNotice.starImage, hold: 2)
+            case .alreadyStarred:
+                self.githubLinkStatus.record(true, for: repository)
+                bar.showNotice("Already Starred", image: BarNotice.starImage, hold: 2)
             case .signedOut:
                 bar.showNotice("Sign in to GitHub to star repositories", image: BarNotice.warningImage,
                                link: .init(text: "Sign In") { [weak self] in self?.addTab(url: URL(string: "https://github.com/login")!) }, hold: 4)
@@ -34,6 +38,8 @@ import RiseCore
     private var idle: Task<Void, Never>?
     /// Where the offscreen page lives: a window keeps it running.
     weak var host: NSView?
+    /// Overridden only by local-page integration fixtures.
+    var origin = URL(string: "https://github.com")!
     static let world = "Rise.GitHub"
     /// Each attempt and what came of it, for finding out why one didn't work.
     static let logURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -58,26 +64,60 @@ import RiseCore
         return await work.value
     }
 
+    /// The actual authenticated repository page, using the same status detection
+    /// as Star, but never running the press script. Serialized with mutations.
+    func status(_ repository: GitHubRepository) async -> Bool? {
+        let previous = queue
+        let work = Task { @MainActor [weak self] () -> Bool? in
+            await previous?.value
+            guard let self, !Task.isCancelled else { return nil }
+            idle?.cancel()
+            defer { scheduleTearDown() }
+            guard let page = await load(repository), !Task.isCancelled else { return nil }
+            let result = await withTimeout(seconds: 15) { await page.evaluate(Self.findScript, arguments: [:], world: Self.world) }
+            guard !Task.isCancelled else { return nil }
+            let status = (result as? [String: Any])?["status"] as? String
+            Self.log("hover \(repository.path): live page \(status ?? "no answer")")
+            switch status {
+            case "already": return true
+            case "ready": return false
+            default: return nil
+            }
+        }
+        queue = Task { _ = await work.value }
+        return await withTaskCancellationHandler(operation: { await work.value }, onCancel: { work.cancel() })
+    }
+    private func load(_ repository: GitHubRepository) async -> WebPage? {
+        let path = "/\(repository.owner)/\(repository.name)"
+        guard let page = hiddenPage(), let url = URL(string: origin.absoluteString + path) else { return nil }
+        // A cached page at the same URL must not be mistaken for a completed new load.
+        // Only the new navigation's completion makes its authentication and state current.
+        var finished = false, failed = false
+        let previousEvent = page.onEvent
+        page.onEvent = { event in
+            previousEvent?(event)
+            switch event { case .finished: finished = true; case .failed, .crashed: failed = true; default: break }
+        }
+        defer { page.onEvent = previousEvent }
+        page.load(url)
+        let deadline = Date().addingTimeInterval(20)
+        while !finished && !failed && Date() < deadline {
+            do { try await Task.sleep(for: .milliseconds(100)) } catch {
+                // Late cancellation callbacks must not belong to the next repository's load.
+                page.stopLoading(); tearDown(); return nil
+            }
+        }
+        guard finished, !failed, !page.isLoading, page.url?.host == origin.host else {
+            Self.log("\(repository.path): the page didn't load (\(page.url?.absoluteString ?? "nothing"))"); tearDown(); return nil
+        }
+        return page
+    }
+
     private func run(_ repository: GitHubRepository) async -> Outcome {
         idle?.cancel()
         defer { scheduleTearDown() }
         Self.log("start \(repository.path)")
-        let path = "/\(repository.owner)/\(repository.name)"
-        guard let page = hiddenPage(), let url = URL(string: "https://github.com" + path) else { return .failed }
-        // The repository's own page, with GitHub's Star button. A page left from an earlier star
-        // mustn't pass for it: done once this load has been seen to start, or it shows this one.
-        let before = page.url
-        page.load(url)
-        var started = false
-        let deadline = Date().addingTimeInterval(20)
-        while Date() < deadline {
-            try? await Task.sleep(for: .milliseconds(100))
-            if page.isLoading || page.url != before { started = true }
-            if !page.isLoading, page.url?.host == "github.com", started || page.url?.path.lowercased() == path.lowercased() { break }
-        }
-        guard !page.isLoading, page.url?.host == "github.com", started || page.url?.path.lowercased() == path.lowercased() else {
-            Self.log("\(repository.path): the page didn't load (\(page.url?.absoluteString ?? "nothing"))"); tearDown(); return .failed
-        }
+        guard let page = await load(repository) else { return .failed }
         let found = await withTimeout(seconds: 15) { await page.evaluate(Self.findScript, arguments: [:], world: Self.world) }
         guard let ready = found as? [String: Any], ready["status"] as? String == "ready" else {
             let found = Self.outcome(found)

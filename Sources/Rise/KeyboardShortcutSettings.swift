@@ -108,15 +108,17 @@ import AppKit
         if let command = keyboardShortcuts.command(for: event) {
             if command.id == "undo:" || command.id == "redo:" {
                 if (window as? BrowserWindow)?.undoEvent?(event) == true { return true }
-                return NSApp.sendAction(NSSelectorFromString(command.id), to: nil, from: command.items.first)
+                return NSApp.mainMenu?.performKeyEquivalent(with: event) ?? false
             }
             let early = ["moveCurrentTabUp", "moveCurrentTabDown", "moveCurrentTabToTop",
                          "tabSwitcherNext", "tabSwitcherPrevious", "smartRename", "activateSuggestedTab"]
-            if early.contains(command.id) || command.id.hasPrefix("selectTab") { return false }
-            guard let item = command.items.first, let action = item.action else { return false }
+            if early.contains(command.id) { return false }
+            guard let item = command.items.first, item.action != nil else { return false }
             tabMoveSequence = nil; tabOrderUndoPending = false
             if let target = item.target as? NSMenuItemValidation, !target.validateMenuItem(item) { return true }
-            NSApp.sendAction(action, to: item.target, from: item)
+            // Let AppKit invoke the menu item, including native menu-bar feedback.
+            // Even an unavailable command is consumed rather than leaking to Chromium.
+            _ = NSApp.mainMenu?.performKeyEquivalent(with: event)
             return true
         }
         return keyboardShortcuts.isRemovedDefault(event)

@@ -1,5 +1,6 @@
 import XCTest
 import AppKit
+import RiseCore
 @testable import Rise
 
 final class KeyboardShortcutsTests: XCTestCase {
@@ -18,7 +19,8 @@ final class KeyboardShortcutsTests: XCTestCase {
         try test(browser, preferences)
     }
     @MainActor private func key(_ character: String, _ modifiers: NSEvent.ModifierFlags, code: UInt16 = 0, in browser: BrowserController) -> NSEvent {
-        NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0,
+        let character = modifiers.contains(.shift) ? character.uppercased() : character
+        return NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers, timestamp: 0,
             windowNumber: browser.window!.windowNumber, context: nil, characters: character,
             charactersIgnoringModifiers: character, isARepeat: false, keyCode: code)!
     }
@@ -39,6 +41,81 @@ final class KeyboardShortcutsTests: XCTestCase {
             XCTAssertGreaterThan(commands.count, 65)
             XCTAssertTrue(browser.keyboardShortcuts.bindings("pinCurrentTab").isEmpty)
             XCTAssertEqual(browser.keyboardShortcuts.bindings("toggleSidebar").count, 2, "The existing ⌘B and ⌘S aliases stay available")
+        }
+    }
+    @MainActor func testOrdinaryShortcutsUseNativeMenuDispatchExactlyOnceIncludingExtraBindings() throws {
+        try withBrowser { browser, _ in
+            let probe = ShortcutMenuProbe(title: "Main")
+            let old = try XCTUnwrap(NSApp.mainMenu)
+            for item in old.items { old.removeItem(item); probe.addItem(item) }
+            NSApp.mainMenu = probe
+            let command = try XCTUnwrap(browser.keyboardShortcuts.commands.first { $0.id == "newTab" })
+            let item = try XCTUnwrap(command.items.first)
+            let target = ShortcutActionProbe()
+            item.target = target; item.action = #selector(ShortcutActionProbe.invoke)
+            XCTAssertNil(browser.keyboardShortcuts.assign("Command+Alt+N", to: "newTab"))
+            XCTAssertNil(browser.keyboardShortcuts.assign("Command+Ctrl+Y", to: "newTab"))
+            for event in [key("t", .command, code: 17, in: browser), key("n", [.command, .option], code: 45, in: browser), key("y", [.command, .control], code: 16, in: browser)] {
+                let before = target.calls, routed = probe.calls
+                XCTAssertTrue(browser.window!.performKeyEquivalent(with: event))
+                XCTAssertEqual(target.calls, before+1)
+                XCTAssertEqual(probe.calls, routed+1, "The real NSMenu.performKeyEquivalent path is used")
+            }
+            browser.keyboardShortcuts.applyToMenus(); browser.keyboardShortcuts.applyToMenus()
+            XCTAssertEqual(item.menu?.items.filter { $0.action == #selector(ShortcutActionProbe.invoke) }.count, 3, "Refreshing never duplicates aliases")
+            let before = target.calls
+            browser.window!.sendEvent(key("t", .command, code: 17, in: browser))
+            XCTAssertEqual(target.calls, before+1, "sendEvent does not invoke the command a second time")
+            target.enabled = false
+            XCTAssertTrue(browser.window!.performKeyEquivalent(with: key("t", .command, code: 17, in: browser)))
+            XCTAssertEqual(target.calls, before+1, "Disabled commands are consumed without executing or leaking to Chromium")
+            XCTAssertNil(browser.keyboardShortcuts.remove("Command+Alt+N", from: "newTab"))
+            XCTAssertEqual(item.menu?.items.filter { $0.action == #selector(ShortcutActionProbe.invoke) }.count, 2)
+        }
+    }
+    @MainActor func testPageMenuOrderDefaultsScopeAndPersistentCheckmarks() throws {
+        try withBrowser { browser, preferences in
+            XCTAssertEqual(Array(NSApp.mainMenu!.items.prefix(5).map(\.title)), ["Rise", "File", "Edit", "Page", "View"])
+            let page = try XCTUnwrap(NSApp.mainMenu?.items.first { $0.title == "Page" }?.submenu)
+            XCTAssertEqual(page.items.map(\.title), ["Dismiss Cookie Banners", "Automatic PiP", "Preload Links on Hover"])
+            let first = browser.addTab(); first.requestedURL = URL(string: "https://example.com/path")!
+            func states() -> [NSControl.StateValue] {
+                for item in page.items { item.isEnabled = browser.validateMenuItem(item) }
+                return page.items.map(\.state)
+            }
+            XCTAssertEqual(states(), [.off, .on, .on])
+            for item in page.items { XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item)) }
+            XCTAssertEqual(states(), [.on, .off, .off])
+            XCTAssertTrue(CookieConsent(preferences: preferences).isEnabled(for: first.url))
+            XCTAssertFalse(SitePermissions(preferences: preferences).automaticPictureInPicture(origin: SitePermissions.origin(first.url)))
+            XCTAssertFalse(LinkPreloader(preferences: preferences).enabled)
+            let second = browser.addTab(); second.requestedURL = URL(string: "https://other.example")!
+            XCTAssertEqual(states(), [.off, .on, .off], "Only preloading is browser-wide")
+            browser.select(first.id)
+            XCTAssertEqual(states(), [.on, .off, .off])
+            second.requestedURL = URL(string: "rise://settings")!; browser.select(second.id)
+            XCTAssertEqual(states(), [.off, .off, .off])
+            XCTAssertFalse(page.items[0].isEnabled); XCTAssertFalse(page.items[1].isEnabled); XCTAssertTrue(page.items[2].isEnabled)
+        }
+    }
+    @MainActor func testNativeDispatchCoversDeleteFunctionAndShiftedKeys() throws {
+        try withBrowser { browser, _ in
+            let target = ShortcutActionProbe()
+            let item = try XCTUnwrap(browser.keyboardShortcuts.commands.first { $0.id == "newTab" }?.items.first)
+            item.target = target; item.action = #selector(ShortcutActionProbe.invoke)
+            for (binding, character, flags, code) in [
+                ("Command+Alt+Backspace", "\u{7F}", [.command, .option] as NSEvent.ModifierFlags, UInt16(51)),
+                ("Command+Alt+Delete", "\u{F728}", [.command, .option], UInt16(117)),
+                ("F6", "\u{F709}", [], UInt16(97)),
+                ("Command+Ctrl+Shift+S", "S", [.command, .control, .shift], UInt16(1)),
+                ("Command+Plus", "+", [.command, .shift], UInt16(24)),
+                ("Command+Shift+[", "{", [.command, .shift], UInt16(33))
+            ] {
+                XCTAssertNil(browser.keyboardShortcuts.assign(binding, to: "newTab"))
+                let before = target.calls
+                XCTAssertTrue(browser.window!.performKeyEquivalent(with: key(character, flags, code: code, in: browser)))
+                XCTAssertEqual(target.calls, before+1, binding)
+            }
         }
     }
     @MainActor func testChangesPersistUpdateMenusAndRemovedDefaultsStayDisabled() {
@@ -194,4 +271,17 @@ final class KeyboardShortcutsTests: XCTestCase {
             }
         }
     }
+}
+
+@MainActor private final class ShortcutMenuProbe: NSMenu {
+    var calls = 0
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        calls += 1
+        return super.performKeyEquivalent(with: event)
+    }
+}
+@MainActor private final class ShortcutActionProbe: NSObject, NSMenuItemValidation {
+    var calls = 0, enabled = true
+    @objc func invoke() { calls += 1 }
+    func validateMenuItem(_ item: NSMenuItem) -> Bool { enabled }
 }

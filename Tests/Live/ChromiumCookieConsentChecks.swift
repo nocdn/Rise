@@ -89,6 +89,7 @@ import RiseChromium
             await clearCookies()
             let name = item["name"] as! String, negative = item["negative"] as? Bool == true
             let url = URL(string: item["url"] as! String, relativeTo: base)!.absoluteURL
+            browser.cookieConsent.setEnabled(true, for: url)
             _ = await load(url)
             let start = Date(), limit = negative ? 4.5 : item["timeout"] as? Double ?? 6
             let wanted = negative ? 0 : item["repeat"] as? Bool == true ? 2 : 1

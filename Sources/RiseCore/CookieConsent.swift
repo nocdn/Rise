@@ -33,14 +33,18 @@ public struct CookieConsentRules: Sendable {
     }
 }
 
-/// Acceptance is on by default. www and the bare host share an exception; subdomains
-/// remain independent. A nil store is an in-memory private-browsing preference.
+/// Each platform chooses its default; explicit site choices persist independently.
+/// www and the bare host share an exception; subdomains remain independent.
+/// A nil store is an in-memory private-browsing preference.
 @MainActor public final class CookieConsentPolicy {
     public static let preferenceKey = "Rise.CookieConsent.DisabledSites"
+    private static let enabledPreferenceKey = "Rise.CookieConsent.EnabledSites"
     private let preferences: UserDefaults?
+    private let defaultEnabled: Bool
     private var privateDisabledSites = Set<String>()
-    public init(preferences: UserDefaults? = .standard) {
-        self.preferences = preferences
+    private var privateEnabledSites = Set<String>()
+    public init(preferences: UserDefaults? = .standard, defaultEnabled: Bool = true) {
+        self.preferences = preferences; self.defaultEnabled = defaultEnabled
         if let preferences, preferences.object(forKey: Self.preferenceKey) == nil,
            let old = preferences.stringArray(forKey: "Rise.iOS.CookieBanners.DisabledSites") {
             preferences.set(old, forKey: Self.preferenceKey)
@@ -53,13 +57,20 @@ public struct CookieConsentRules: Sendable {
         return host.isEmpty ? nil : host
     }
     private var disabled: Set<String> { preferences?.stringArray(forKey: Self.preferenceKey).map(Set.init) ?? privateDisabledSites }
-    public func isEnabled(for url: URL?) -> Bool { Self.site(url).map { !disabled.contains($0) } ?? false }
+    private var enabled: Set<String> { preferences?.stringArray(forKey: Self.enabledPreferenceKey).map(Set.init) ?? privateEnabledSites }
+    public func isEnabled(for url: URL?) -> Bool {
+        guard let site = Self.site(url), !disabled.contains(site) else { return false }
+        return enabled.contains(site) || defaultEnabled
+    }
     public func setEnabled(_ enabled: Bool, for url: URL) {
         guard let site = Self.site(url) else { return }
-        var values = disabled
-        if enabled { values.remove(site) } else { values.insert(site) }
-        if let preferences { preferences.set(values.sorted(), forKey: Self.preferenceKey) }
-        else { privateDisabledSites = values }
+        var denied = disabled, allowed = self.enabled
+        if enabled { denied.remove(site); allowed.insert(site) }
+        else { denied.insert(site); allowed.remove(site) }
+        if let preferences {
+            preferences.set(denied.sorted(), forKey: Self.preferenceKey)
+            preferences.set(allowed.sorted(), forKey: Self.enabledPreferenceKey)
+        } else { privateDisabledSites = denied; privateEnabledSites = allowed }
     }
-    public func sharesStore(with other: CookieConsentPolicy) -> Bool { self === other || (preferences != nil && preferences === other.preferences) }
+    public func sharesStore(with other: CookieConsentPolicy) -> Bool { self === other || (defaultEnabled == other.defaultEnabled && preferences != nil && preferences === other.preferences) }
 }

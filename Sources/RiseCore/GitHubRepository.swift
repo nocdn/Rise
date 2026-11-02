@@ -33,9 +33,9 @@ public struct GitHubRepository: Equatable, Sendable {
 public enum GitHubStarScripts {
     /// On the repository's own page, what both button scripts share: GitHub's Star button, and
     /// whether the page shows the repository starred.
-    private static let buttonHelpers = """
+    private static func buttonHelpers(detached: Bool = false) -> String { """
           const sleep = ms => new Promise(done => setTimeout(done, ms));
-          const shown = el => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+          const shown = el => \(detached ? "!!el && !el.closest('[hidden], [aria-hidden=\"true\"], template') && ![el, ...ancestors(el)].some(node => /display\\s*:\\s*none|visibility\\s*:\\s*hidden/i.test(node.getAttribute('style') || ''))" : "!!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden'");
           const label = el => `${el.getAttribute('aria-label') || ''} ${el.textContent || ''}`.replace(/\\s+/g, ' ').trim();
           const controls = () => [...document.querySelectorAll('button, input[type=submit], a[role=button], summary')].filter(shown);
           const repository = '/' + location.pathname.split('/').filter(Boolean).slice(0, 2).join('/').toLowerCase();
@@ -60,6 +60,25 @@ public enum GitHubStarScripts {
             if (controls().some(isUnstar)) return 'on';
             return controls().some(isStar) ? 'off' : null;
           };
+        """ }
+    /// GET-only lookup through a signed-in github.com page. The fetched document never
+    /// executes scripts, and no Star control is marked, clicked or submitted.
+    public static let readStatus = """
+        try {
+          const response = await fetch('https://github.com/' + repositoryPath, {
+            credentials: 'same-origin', cache: 'no-cache', headers: { Accept: 'text/html' },
+            signal: AbortSignal.timeout(8000)
+          });
+          if (!response.ok) return null;
+          const location = new URL(response.url);
+          if (location.origin !== 'https://github.com' || location.pathname.split('/').filter(Boolean).length !== 2) return null;
+          const document = new DOMParser().parseFromString(await response.text(), 'text/html');
+          if (!document.querySelector('meta[name="user-login"]')?.content) return null;
+          function* ancestors(el) { for (let node = el.parentElement; node; node = node.parentElement) yield node; }
+          \(buttonHelpers(detached: true))
+          const found = state();
+          return found === 'on' ? true : found === 'off' ? false : null;
+        } catch { return null; }
         """
     /// Default star scripts remain source compatible with the desktop browser.
     public static let find = find(starred: true)
@@ -71,7 +90,7 @@ public enum GitHubStarScripts {
         let predicate = desired ? "isStar" : "isUnstar"
         return """
         return (async () => { try {
-        \(buttonHelpers)
+        \(buttonHelpers())
           if (/^page not found/i.test(document.title)) return { status: 'notFound' };
           if (!document.querySelector('meta[name="user-login"]')?.content) return { status: 'signedOut' };
           const until = Date.now() + 8000;
@@ -96,7 +115,7 @@ public enum GitHubStarScripts {
         let success = desired ? "starred" : "unstarred", predicate = desired ? "isStar" : "isUnstar"
         return """
         return (async () => { try {
-        \(buttonHelpers)
+        \(buttonHelpers())
           if (state() === '\(target)') return { status: '\(already)' };
           const button = document.querySelector('[data-rise-star]');
           if (!button || button.disabled || !\(predicate)(button)) return { status: 'failed', detail: 'the requested control changed' };

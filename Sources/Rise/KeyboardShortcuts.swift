@@ -13,6 +13,9 @@ import AppKit
     private let preferences: UserDefaults
     private(set) var commands: [Command] = []
     private var overrides: [String: [String]]
+    /// Extra user bindings need real menu equivalents too, so AppKit can invoke
+    /// them with the same validation and menu-bar feedback as the primary one.
+    private var additionalMenuItems: [NSMenuItem] = []
     var onChange: (() -> Void)?
     init(preferences: UserDefaults) {
         self.preferences = preferences
@@ -53,7 +56,10 @@ import AppKit
             commands.append(Command(id: id, title: item.title, group: group, defaults: binding.map { [$0] } ?? [], items: [item]))
         }
     }
-    func clearMenuItems() { for index in commands.indices { commands[index].items.removeAll() } }
+    func clearMenuItems() {
+        removeAdditionalMenuItems()
+        for index in commands.indices { commands[index].items.removeAll() }
+    }
     func bindings(_ id: String) -> [KeyboardShortcut] {
         if let custom = overrides[id] {
             let parsed = custom.compactMap(KeyboardShortcut.init)
@@ -116,13 +122,26 @@ import AppKit
     }
     func resetAll() { overrides.removeAll(); save() }
     func applyToMenus() {
+        removeAdditionalMenuItems()
         for command in commands {
             let current = bindings(command.id)
             for (index, item) in command.items.enumerated() {
                 item.keyEquivalent = current.indices.contains(index) ? current[index].keyEquivalent : ""
                 item.keyEquivalentModifierMask = current.indices.contains(index) ? current[index].modifiers : []
             }
+            if let template = command.items.first, let menu = template.menu {
+                for binding in current.dropFirst(command.items.count) {
+                    let alias = template.copy() as! NSMenuItem
+                    alias.isHidden = true; alias.allowsKeyEquivalentWhenHidden = true
+                    alias.keyEquivalent = binding.keyEquivalent; alias.keyEquivalentModifierMask = binding.modifiers
+                    menu.addItem(alias); additionalMenuItems.append(alias)
+                }
+            }
         }
+    }
+    private func removeAdditionalMenuItems() {
+        for item in additionalMenuItems { item.menu?.removeItem(item) }
+        additionalMenuItems.removeAll()
     }
     var settings: [[String: Any]] {
         commands.map { command in

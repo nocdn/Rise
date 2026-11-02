@@ -21,7 +21,7 @@ import AppKit
 
     init(preferences: UserDefaults = .standard) {
         self.preferences = preferences
-        enabled = preferences.bool(forKey: Self.preferenceKey)
+        enabled = preferences.object(forKey: Self.preferenceKey) as? Bool ?? true
         super.init()
     }
     func install(on page: WebPage) {

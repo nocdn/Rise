@@ -67,6 +67,11 @@ import AppKit
         item(edit, "Find Previous", #selector(BrowserController.findPrevious), "G", modifiers: [.command, .shift], target: browser)
         item(edit, "Skip to Previous Match Above", #selector(BrowserController.skipToPreviousMatch), "G", modifiers: [.command, .option, .shift], target: browser).isAlternate = true
 
+        let page = addMenu("Page")
+        item(page, "Dismiss Cookie Banners", #selector(BrowserController.toggleCookieConsent), target: browser)
+        item(page, "Automatic PiP", #selector(BrowserController.toggleAutomaticPictureInPicture), target: browser)
+        item(page, "Preload Links on Hover", #selector(BrowserController.toggleLinkPreloading), target: browser)
+
         let view = addMenu("View")
         item(view, "Hide Sidebar", #selector(BrowserController.toggleSidebar), "b", target: browser)
         alternate(view, "Toggle Sidebar", #selector(BrowserController.toggleSidebar), "s")

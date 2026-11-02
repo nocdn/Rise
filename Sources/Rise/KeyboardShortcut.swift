@@ -65,7 +65,12 @@ struct KeyboardShortcut: Equatable {
         else { parts.append(Self.namedKeys.first { $0.value == key }?.key ?? key.uppercased()) }
         return parts.joined(separator: "+")
     }
-    var keyEquivalent: String { modifiers.contains(.shift) ? key.uppercased() : key }
+    var keyEquivalent: String {
+        // AppKit matches the shifted character ({, +, !), while the saved
+        // binding keeps the physical base key ([, =, 1) and Shift separately.
+        guard modifiers.contains(.shift) else { return key }
+        return Self.shifted.first { $0.value == key }?.key ?? key.uppercased()
+    }
     var display: String {
         let symbols = rawValue.replacingOccurrences(of: "Command+", with: "⌘").replacingOccurrences(of: "Ctrl+", with: "⌃")
             .replacingOccurrences(of: "Alt+", with: "⌥").replacingOccurrences(of: "Shift+", with: "⇧")

@@ -22,6 +22,8 @@ import AppKit
         }
         hoveredWebView = url == nil ? nil : webView
         linkStatus.show(url, theme: theme, peek: shouldPeek(modifiers: NSEvent.modifierFlags), blocked: hoversInsidePeek)
+        githubLinkStatus.hover(url)
+        linkStatus.setRepositoryState(githubLinkStatus.state)
         root.addSubview(linkStatus, positioned: .below, relativeTo: dismissArea)
         layoutLinkStatus()
         if let url, linkPreloader.isComplete(url) { linkStatus.markReady(url) }
@@ -46,7 +48,7 @@ import AppKit
     /// Only the status. Leaving a link ends its hover, but its card stays while the pointer
     /// crosses into it.
     private func clearLinkStatus() {
-        hoveredWebView = nil; linkStatus.show(nil, theme: theme)
+        hoveredWebView = nil; linkStatus.show(nil, theme: theme); githubLinkStatus.hover(nil)
     }
     func layoutLinkStatus() {
         guard let webView = hoveredWebView, webView.superview != nil else { clearLinkStatus(); return }

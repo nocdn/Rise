@@ -1,4 +1,5 @@
 import AppKit
+import RiseCore
 
 @MainActor extension BrowserController {
     @objc func openFile() {
@@ -77,6 +78,14 @@ extension BrowserController: NSMenuItemValidation {
             item.title = activeSplitGroup == nil ? "Split View" : "Separate Split Tabs"
             return tab != nil && (tabs.count > 1 || hasPage)
         case #selector(toggleDeveloper): item.state = tab?.developer == true ? .on : .off; return tab != nil
+        case #selector(toggleCookieConsent):
+            item.state = cookieConsent.isEnabled(for: tab?.url) ? .on : .off
+            return CookieConsentPolicy.site(tab?.url) != nil
+        case #selector(toggleAutomaticPictureInPicture):
+            let origin = SitePermissions.origin(tab?.url)
+            item.state = sitePermissions.automaticPictureInPicture(origin: origin) ? .on : .off
+            return origin != nil
+        case #selector(toggleLinkPreloading): item.state = linkPreloader.enabled ? .on : .off; return true
         case #selector(toggleDevTools):
             item.title = devTools.isOpen && devTools.tabID == tab?.id ? "Hide Developer Tools" : "Show Developer Tools"
             return tab?.page is ChromiumPage

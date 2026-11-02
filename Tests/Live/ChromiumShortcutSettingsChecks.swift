@@ -42,6 +42,8 @@ import RiseChromium
         catch { print("JavaScript:", source.prefix(100), error.localizedDescription); return nil }
     }
     func key(_ character: String, _ modifiers: NSEvent.ModifierFlags, code: UInt16) {
+        // A real shifted letter arrives uppercase in both character fields.
+        let character = modifiers.contains(.shift) ? character.uppercased() : character
         for type: NSEvent.EventType in [.keyDown, .keyUp] {
             NSApp.sendEvent(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: modifiers,
                 timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: browser.window!.windowNumber,

@@ -110,11 +110,12 @@ import Vision
             }
         }
     }
-    func toggleAutomaticPictureInPicture() {
+    @objc func toggleAutomaticPictureInPicture() {
         guard let origin = SitePermissions.origin(selectedTab?.url) else { return }
         sitePermissions.setAutomaticPictureInPicture(!sitePermissions.automaticPictureInPicture(origin: origin), origin: origin)
         pictureInPicture.reconcile(visibleIDs: Set(visibleTabIDs))
     }
+    @objc func toggleLinkPreloading() { linkPreloader.setEnabled(!linkPreloader.enabled) }
     func refreshPermissionScripts() {
         for tab in tabs + allPeekTabs {
             tab.page.evaluate("window.riseSiteControls?.refresh()", arguments: [:], in: nil, world: .page) { _ in }

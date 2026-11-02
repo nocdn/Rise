@@ -40,3 +40,22 @@ Decode and Encode share one section on both platforms. On iOS, the decode copy
 action is labeled **Copy Value**, and selection menus use Rise's translation glyph
 while preserving the native Translate command and its responder routing. Desktop's
 menus and URL-bar copy notice use the same lighter QR finder outlines as iOS menus.
+
+Hovering a GitHub repository link shows a native mini spinner in the normal link
+pill, then an outlined or filled star for the signed-in account's state. Shift's
+Peek hint keeps its existing layout. An existing GitHub page can answer with a
+read-only authenticated GET. Otherwise, or if raw HTML omits the current state,
+the live offscreen repository page uses the same hydrated control recognition as
+starring, without pressing it. It waits for a fresh document even at the same URL,
+and records lookup diagnostics in `github-star.log`. It starts after a 150 ms dwell,
+caches known states for 15 seconds, and ignores late results for departed links.
+Signed-out, failed and unavailable lookups leave the pill plain; starring from
+Rise updates its cached result immediately.
+
+The desktop **Page** menu follows Edit and holds **Dismiss Cookie Banners**,
+**Automatic PiP**, and **Preload Links on Hover** as checkable actions. Cookie
+dismissal defaults off on desktop; Automatic PiP and link preloading default on.
+Cookie dismissal and PiP follow the current site, while preloading is browser-wide.
+Explicit choices persist. The site-controls popover has no Settings heading or
+the former four toggles; Developer Mode remains in Develop. iOS keeps its existing
+cookie-dismissal default.

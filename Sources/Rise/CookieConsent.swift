@@ -11,7 +11,7 @@ import RiseCore
         guard let directory = Bundle.main.resourceURL?.appendingPathComponent("CookieConsent") else { throw CookieConsentRules.Failure.resources }
         return try CookieConsentRules.load(from: directory)
     }
-    init(preferences: UserDefaults) { policy = CookieConsentPolicy(preferences: preferences) }
+    init(preferences: UserDefaults) { policy = CookieConsentPolicy(preferences: preferences, defaultEnabled: false) }
     func isEnabled(for url: URL?) -> Bool { policy.isEnabled(for: url) }
     func install(on page: WebPage) {
         guard contexts.object(forKey: page) == nil else { return }
@@ -79,7 +79,7 @@ import RiseCore
 }
 
 @MainActor extension BrowserController {
-    func toggleCookieConsent() {
+    @objc func toggleCookieConsent() {
         guard let url = selectedTab?.url, CookieConsentPolicy.site(url) != nil else { return }
         historySwipe.cancel(); linkPreloader.cancelAll()
         cookieConsent.setEnabled(!cookieConsent.isEnabled(for: url), for: url)

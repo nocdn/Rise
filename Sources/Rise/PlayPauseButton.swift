@@ -19,7 +19,7 @@ import AppKit
     private let playLayer = CALayer()
     private let pauseLayer = CALayer()
     private var renderedKey: (size: CGFloat, scale: CGFloat)?
-    static let hiddenScale: CGFloat = 0.25
+    static let hiddenScale = SymbolSwapMotion.hiddenScale
     static let hoverScale: CGFloat = 1.08
     /// The floating player's: a touch bigger under the pointer.
     var growsOnHover = false { didSet { updateTrackingAreas(); refreshGrowth() } }
@@ -110,33 +110,7 @@ import AppKit
     }
     private func show(animated: Bool) {
         let incoming = paused ? playLayer : pauseLayer, outgoing = paused ? pauseLayer : playLayer
-        // Continue from wherever an interrupted swap currently is.
-        let incomingScale = incoming.presentation()?.value(forKeyPath: "transform.scale") as? CGFloat ?? Self.hiddenScale
-        let incomingOpacity = incoming.presentation()?.opacity ?? 0
-        let outgoingScale = outgoing.presentation()?.value(forKeyPath: "transform.scale") as? CGFloat ?? 1
-        let outgoingOpacity = outgoing.presentation()?.opacity ?? 1
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        incoming.removeAllAnimations(); outgoing.removeAllAnimations()
-        incoming.opacity = 1; incoming.transform = CATransform3DIdentity
-        outgoing.opacity = 0; outgoing.transform = CATransform3DMakeScale(Self.hiddenScale, Self.hiddenScale, 1)
-        CATransaction.commit()
-        guard animated else { return }
-        // Underdamped (ζ ≈ 0.55): about a 12% overshoot, settled in ~0.3s.
-        let grow = CASpringAnimation(keyPath: "transform.scale")
-        grow.mass = 1; grow.stiffness = 700; grow.damping = 2*0.55*sqrt(700)
-        grow.fromValue = incomingScale; grow.toValue = 1; grow.duration = grow.settlingDuration
-        incoming.add(grow, forKey: "swap.scale")
-        incoming.add(Self.fade(from: incomingOpacity, to: 1, duration: 0.08), forKey: "swap.opacity")
-        let shrink = CABasicAnimation(keyPath: "transform.scale")
-        shrink.fromValue = outgoingScale; shrink.toValue = Self.hiddenScale; shrink.duration = 0.12
-        shrink.timingFunction = CAMediaTimingFunction(name: .easeIn)
-        outgoing.add(shrink, forKey: "swap.scale")
-        outgoing.add(Self.fade(from: outgoingOpacity, to: 0, duration: 0.1), forKey: "swap.opacity")
-    }
-    private static func fade(from: Float, to: Float, duration: CFTimeInterval) -> CABasicAnimation {
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = from; fade.toValue = to; fade.duration = duration
-        return fade
+        SymbolSwapMotion.show(incoming, replacing: outgoing, animated: animated)
     }
     override func updateTrackingAreas() {
         super.updateTrackingAreas()

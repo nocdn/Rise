@@ -216,8 +216,6 @@ final class SiteOptionRow: NSButton {
         }
         heading("Extensions", y: 52)
         var y = layOutExtensions(in: view, theme: theme, scale: scale)
-        heading("Settings", y: y)
-        y += 26
         func row(_ title: String, _ subtitle: String, _ icon: String, _ accessory: SiteOptionRow.Accessory, action: @escaping () -> Void) {
             let row = SiteOptionRow(title: title, subtitle: subtitle, image: SiteOptionRow.icon(icon), accessory: accessory, theme: theme, action: action)
             // As wide as the buttons above.
@@ -225,25 +223,9 @@ final class SiteOptionRow: NSButton {
             y += SiteOptionRow.height
         }
         let origin = SitePermissions.origin(browser.selectedTab?.url)
-        // Each switch shows its new state as it slides; the popover isn't rebuilt under it. Only
-        // developer mode closes it, as the page bar it hangs from gives way to developer mode's.
-        row("Developer Mode", "Tools for building sites", LucideIcon.hammer, .toggle(browser.selectedTab?.developer == true)) { [weak browser] in
-            browser?.siteControlsPopover.close(); browser?.toggleDeveloper()
-        }
-        row("Dismiss Cookies", "Closes cookie banners", TablerIcon.cookie, .toggle(browser.cookieConsent.isEnabled(for: browser.selectedTab?.url))) { [weak browser] in
-            browser?.toggleCookieConsent()
-        }
-        rows["Dismiss Cookies"]?.isEnabled = origin != nil
-        row("Picture in Picture", "Floats videos you leave", TablerIcon.pictureInPicture, .toggle(browser.sitePermissions.automaticPictureInPicture(origin: origin))) { [weak browser] in
-            browser?.toggleAutomaticPictureInPicture()
-        }
-        rows["Picture in Picture"]?.toolTip = "Videos on this site float in their own window when you switch away."
-        rows["Picture in Picture"]?.isEnabled = origin != nil
-        row("Preload Links", "Loads links on hover", TablerIcon.bolt, .toggle(browser.linkPreloader.enabled)) { [weak browser] in
-            guard let browser else { return }; browser.linkPreloader.setEnabled(!browser.linkPreloader.enabled)
-        }
-        rows["Preload Links"]?.toolTip = "Experimental: preload a link after hovering for 150 ms."
-        for capability in [SiteCapability.camera, .microphone, .location] where browser.sitePermissions.hasDecision(capability, origin: origin) {
+        let permissions = [SiteCapability.camera, .microphone, .location].filter { browser.sitePermissions.hasDecision($0, origin: origin) }
+        if !permissions.isEmpty { heading("Permissions", y: y); y += 26 }
+        for capability in permissions {
             let permission = browser.sitePermissions.permission(capability, origin: origin)
             row(capability.title, "Access for this site", capability.tablerIcon, .value(permission.subtitle)) { [weak browser] in browser?.permissionSettingMenu(capability) }
         }

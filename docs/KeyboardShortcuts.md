@@ -12,6 +12,12 @@ by `./scripts/restart.sh` to package the framework and relaunch Rise.
 
 The AppKit registry remains authoritative for command names, defaults, persistence,
 menu shortcuts and dispatch. Saved user bindings retain their existing format.
+Ordinary menu commands go through `NSMenu.performKeyEquivalent(with:)`, including
+AppKit's validation and native menu-bar feedback. Extra user bindings receive
+hidden native menu equivalents, refreshed without duplicates. Shifted punctuation
+uses AppKit's character representation; saved bindings keep their existing format.
+Recording, held shortcuts, browser undo and tab-switch gestures retain their early
+handlers so they cannot be intercepted by a page or executed twice.
 
 - Search ranks exact, prefix and substring matches across names, menu groups,
   displayed key symbols and serialized bindings; results are alphabetical within ranks.

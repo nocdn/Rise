@@ -21,6 +21,26 @@ import CryptoKit
         XCTAssertTrue(CookieConsentPolicy(preferences: nil).isEnabled(for: URL(string: "https://private.example")))
     }
 
+    func testOptInDefaultPersistsHostChoicesWithoutChangingTheMobileDefault() {
+        let suite = "CookieConsentOptIn.\(UUID())", defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let url = URL(string: "https://www.example.com/path")!, other = URL(string: "https://other.example.com")!
+        let policy = CookieConsentPolicy(preferences: defaults, defaultEnabled: false)
+        XCTAssertFalse(policy.isEnabled(for: url)); XCTAssertFalse(policy.isEnabled(for: other))
+        policy.setEnabled(true, for: url)
+        let restored = CookieConsentPolicy(preferences: defaults, defaultEnabled: false)
+        XCTAssertTrue(restored.isEnabled(for: URL(string: "http://example.com")))
+        XCTAssertFalse(restored.isEnabled(for: other))
+        restored.setEnabled(false, for: url)
+        XCTAssertFalse(policy.isEnabled(for: url))
+        let mobile = CookieConsentPolicy(preferences: nil)
+        XCTAssertTrue(mobile.isEnabled(for: url), "iOS keeps its existing on-by-default policy")
+        let privatePolicy = CookieConsentPolicy(preferences: nil, defaultEnabled: false)
+        privatePolicy.setEnabled(true, for: url)
+        XCTAssertTrue(privatePolicy.isEnabled(for: url))
+        XCTAssertFalse(CookieConsentPolicy(preferences: nil, defaultEnabled: false).isEnabled(for: url))
+    }
+
     private func rules() throws -> CookieConsentRules {
         let folder = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
