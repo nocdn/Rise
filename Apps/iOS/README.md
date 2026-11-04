@@ -120,7 +120,10 @@ transcribed on the device by iOS's newest speech-to-text model, `SpeechAnalyzer`
 whose assets are fetched at launch. The first hold asks for the microphone and speech recognition
 instead of listening. More, the ellipsis
 circle on the right, grows the bar the same way into a smaller panel, the page
-behind receding only as far as that growth takes it at the same rate. The bar's buttons
+behind receding only as far as that growth takes it at the same rate. Holding More for 0.35 seconds
+copies the page's link instead, More's ellipsis turning to a checkmark with a success haptic, as
+Copy does, and letting go opens nothing; on a page without a link, the hold opens More as a tap
+does. VoiceOver offers the same as More's Copy Link action. The bar's buttons
 swap the same way for the page's address, styled like the search field: Back and Forward
 close together, each only if there's a page that way, the host behind a green padlock on HTTPS pages, then Reload.
 The 14.5-point history chevrons keep their normal tap areas. When the only available direction

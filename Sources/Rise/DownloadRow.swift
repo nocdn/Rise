@@ -209,6 +209,7 @@ final class DownloadRow: NSView {
             let picker = NSSharingServicePicker(items: [item.record.url])
             sharingPicker = picker
             menu.addItem(picker.standardShareMenuItem)
+            if let airDrop = AirDropMenuItem.make(for: [item.record.url], in: { [weak self] in self?.window }) { menu.addItem(airDrop) }
         }
         return menu
     }

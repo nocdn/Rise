@@ -79,7 +79,17 @@ import RiseChromium
         let currencyReplaced = shown?.replacedCurrency != nil
         let amounts = info.selectionText.isEmpty ? [] : selectedAmounts(info.selectionText, in: page, replaced: currencyReplaced)
         if let shown { currencyItems(for: amounts, in: shown, replaced: currencyReplaced).forEach(menu.addItem) }
-        if event != nil || !times.isEmpty || !amounts.isEmpty { menu.addItem(.separator()) }
+        // An address, on Google Maps in a Peek that grows out of the selection: beside a link's own
+        // Peek when the address is a link, or else heading the menu. Not from a Peek's own page.
+        let address = info.selectionText.isEmpty || page === peekTab?.page ? nil : SelectionAddresses.find(in: info.selectionText)
+        func addMap() {
+            guard let address else { return }
+            add("Open Map in Peek") { [weak self, weak page] in
+                self?.showPeek(url: SelectionAddresses.mapsURL(for: address), from: page?.view, fromSelection: true)
+            }
+        }
+        if info.linkURL == nil { addMap() }
+        if event != nil || !times.isEmpty || !amounts.isEmpty || (address != nil && info.linkURL == nil) { menu.addItem(.separator()) }
 
         // A misspelling: the spellchecker's suggestions, first.
         if info.editable, !info.misspelledWord.isEmpty {
@@ -96,6 +106,7 @@ import RiseChromium
             if page !== peekTab?.page, ["http", "https"].contains(link.scheme?.lowercased() ?? "") {
                 add("Open Link in Peek") { [weak self, weak page] in self?.showPeek(url: link, from: page?.view) }
             }
+            addMap()
             group()
             add("Download Linked File") { info.download(link) }
             add("Copy Link") { copy(link) }
@@ -105,6 +116,7 @@ import RiseChromium
             let share = picker.standardShareMenuItem
             share.image = nil
             menu.addItem(share)
+            if let airDrop = AirDropMenuItem.make(for: [link], in: { [weak page] in page?.view.window }) { menu.addItem(airDrop) }
             // A repository's link: starred as the person signed in to GitHub, in a section of its own.
             if let repository = GitHubRepository(url: link) {
                 group()

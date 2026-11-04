@@ -391,8 +391,13 @@ import RiseCore
             if swallowingEscape && event.isARepeat { return true }
             // Escape in a card being edited cancels the edit, not Find.
             let editingCard = self.tabHoverCards.pullRequestCard.isEditing || self.linkPullRequests.card.isEditing
-            guard self.findBar.isPresented, self.palette.isHidden, !self.isSwitchingTabs, self.sidebar.drag == nil, !editingCard else { return false }
-            swallowingEscape = true; self.findBar.handleEscape(); return true
+            guard self.palette.isHidden, !self.isSwitchingTabs, self.sidebar.drag == nil, !editingCard else { return false }
+            if self.findBar.isPresented { swallowingEscape = true; self.findBar.handleEscape(); return true }
+            // Escape closes a Peek before its page can keep it, as most pages do, so it never comes back
+            // to `escapeAction`; but a page full screen leaves that first, and text being composed ends it.
+            guard let peek = self.peekTab, !peek.isInNativeFullscreen, !self.pageFullscreen.isActive(in: peek.page.view),
+                  (self.window?.firstResponder as? NSTextInputClient)?.hasMarkedText() != true else { return false }
+            swallowingEscape = true; self.closePeek(animated: true); return true
         }
         window.escapeAction = { [weak self] in
             guard let self else { return false }

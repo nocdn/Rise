@@ -235,6 +235,8 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         <p id=text style='font-size:20px'>The quick brown fox jumps over the lazy dog.</p>
         <p id=price style='font-size:20px'>Tickets £66.06, or a box for 1,250.00 GBP.</p>
         <p><a id=link href='https://example.com/linked'>A link somewhere</a></p>
+        <p style='font-size:20px'>Lives at <span id=address>100 Newland Park Drive, York</span>.</p>
+        <p style='font-size:20px'><a id=linked-address href='https://example.com/letting'>100 Newland Park Drive, York</a></p>
         <p><a id=pic href='https://example.com/pictured'><img id=img src=picture.png width=120></a></p>
         <div id=field contenteditable spellcheck=true style='font-size:20px;padding:4px;border:1px solid'>Ths is wrng</div>
         <div id=blank style='height:120px'></div>
@@ -248,6 +250,11 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
               .allSatisfy(titles(link).contains), "A link's menu: \(titles(link))")
         choose("Copy Link", in: link)
         check(pasteboard.string(forType: .string) == "https://example.com/linked", "Copy Link copies its address")
+        // AirDrop, right under Share in its section, with an icon like Share's, sends the link straight there.
+        let shared = link?.items ?? []
+        let airDrop = shared.firstIndex { $0.title == "Share…" }.flatMap { shared.indices.contains($0+1) ? shared[$0+1] : nil }
+        check(airDrop?.title == "AirDrop" && airDrop?.image?.isTemplate == true && airDrop?.image?.size == NSSize(width: 15, height: 15),
+              "AirDrop follows Share: \(titles(link))")
 
         // An image in a link: the link's items and the image's.
         let image = await rightClick(center("#img"), in: menus.page, "an image")
@@ -271,6 +278,42 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         _ = await waitUntil("Look Up shows the dictionary") { NSApp.windows.contains { !windows.contains(ObjectIdentifier($0)) && $0.isVisible && String(describing: type(of: $0)).contains("Popover") } }
         browser.window?.makeKeyAndOrderFront(nil)
         try await Task.sleep(for: .milliseconds(300))
+
+        // A selected address: its map in a Peek, beside a link's own Peek when it's a link, or else heading the menu,
+        // growing out of the selected text and closing back into it.
+        for (selector, linked) in [("#address", false), ("#linked-address", true)] {
+            _ = await value("const range = document.createRange(); range.selectNodeContents(document.querySelector('\(selector)'));" +
+                            "getSelection().removeAllRanges(); getSelection().addRange(range); return 0", in: menus.page)
+            let menu = await rightClick(center(selector), in: menus.page, "a selected address")
+            let shown = titles(menu)
+            if linked {
+                check(shown.contains("Open Map in Peek") && shown.firstIndex(of: "Open Map in Peek") == shown.firstIndex(of: "Open Link in Peek").map { $0+1 }, "A linked address's map follows the link's Peek: \(shown)")
+            } else {
+                check(shown.first == "Open Map in Peek" && menu?.items.dropFirst().first?.isSeparatorItem == true, "An address heads the menu with its map: \(shown)")
+            }
+            choose("Open Map in Peek", in: menu)
+            let peeked = await waitUntil("Open Map in Peek opens Google Maps in a Peek") {
+                self.browser.peekTab?.url?.absoluteString == "https://www.google.com/maps/search/?api=1&query=100%20Newland%20Park%20Drive%2C%20York"
+            }
+            check(peeked, "The Peek searches Maps for the address: \(browser.peekTab?.url?.absoluteString ?? "none")")
+            let selected = await value("const r = getSelection().getRangeAt(0).getBoundingClientRect(); return [r.x, r.y, r.width, r.height]", in: menus.page) as? [Double]
+            let origin = await browser.peekLink(in: menus.page, locate: false)
+            let zoom = max(0.01, menus.page.zoom)
+            check(selected.map { abs((origin?.rect.width ?? 0) - ($0[2]*zoom+6)) < 2 && abs((origin?.rect.minX ?? 0) - ($0[0]*zoom-3)) < 2 } == true,
+                  "It grows out of, and closes into, the selected address: \(origin.map { "\($0.rect)" } ?? "none") for \(selected ?? [])")
+            // Escape closes it, though the page in it has the key focus and would keep the key.
+            if let window = browser.window {
+                for type in [NSEvent.EventType.keyDown, .keyUp] {
+                    NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                     context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53).map(window.sendEvent)
+                }
+            }
+            check(await waitUntil("Escape closes the map's Peek") { self.browser.peekTab == nil }, "Escape closes the map's Peek")
+            _ = await waitUntil("The Peek finishes closing") { self.browser.peekGhosts.isEmpty && self.browser.peekCard == nil }
+            browser.closePeek()
+            browser.window?.makeKeyAndOrderFront(nil)
+            _ = await waitUntil("Closing the Peek gives the page its focus back") { await self.value("return document.hasFocus()", in: menus.page) as? Bool == true }
+        }
 
         // An amount in another currency: in the person's, to copy, to put the whole page in, or in any other.
         ExchangeRateStore.shared.use(ExchangeRates(base: "USD", rates: ["USD": 1, "EUR": 0.8, "GBP": 0.5, "PLN": 4], updated: Date()))
@@ -923,5 +966,22 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         check(restored.canGoBack, "With the page before it to go back to")
         restored.goBack()
         _ = await waitUntil("Back goes to the first page") { restored.url == first && !restored.isLoading }
+
+        // Last, as nothing after it can count on Rise's window: AirDrop's panel is ShareKit's, drawn by
+        // another process, so only a real click on its Cancel dismisses it cleanly; closing its window
+        // here leaves ShareKit's dimming, and later sheets, over Rise.
+        try await airDropPanel()
+    }
+
+    /// The link menu's AirDrop sends the link straight to AirDrop's panel, over Rise's window.
+    func airDropPanel() async throws {
+        let shared = await open(try page("shared", "<p style='font-size:20px'><a id=link href='https://example.com/linked'>A link to send</a></p>"))
+        let menu = await rightClick(center("#link"), in: shared.page, "a link to send")
+        let before = Set(NSApp.windows.map(ObjectIdentifier.init))
+        func added() -> [NSWindow] { NSApp.windows.filter { !before.contains(ObjectIdentifier($0)) && $0.isVisible } }
+        choose("AirDrop", in: menu)
+        let opened = await waitUntil("AirDrop opens its panel") { added().contains { $0.title == "AirDrop" } }
+        check(opened && added().allSatisfy { $0.frame == self.browser.window?.frame }, "AirDrop opens its panel, over Rise's window: \(added().map { "\(type(of: $0)) “\($0.title)” \($0.frame)" })")
+        added().forEach { $0.close() }
     }
 }

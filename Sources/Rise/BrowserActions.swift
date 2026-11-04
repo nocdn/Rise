@@ -94,8 +94,9 @@ import RiseCore
     }
     @objc func peekCurrentPage() { if let url = selectedTab?.url { showPeek(url: url) } }
     /// `existing` brings back a page that was a Peek before, as ⌘Z does, without loading it again,
-    /// shrinking it out of `standIn`, the page it had become, when given.
-    func showPeek(url: URL, from source: NSView? = nil, opensNewTab: Bool = false, existing: BrowserTab? = nil, standIn: PeekOrigin? = nil, animated: Bool = true) {
+    /// shrinking it out of `standIn`, the page it had become, when given. `fromSelection` grows it
+    /// out of the source's selected text rather than a link, as an address's map does.
+    func showPeek(url: URL, from source: NSView? = nil, opensNewTab: Bool = false, existing: BrowserTab? = nil, standIn: PeekOrigin? = nil, fromSelection: Bool = false, animated: Bool = true) {
         // One Peek at a time: a Peek link inside the Peek shakes the pill's "Cannot open … in Peek".
         if source != nil, source === peekTab?.page.view { refusePeek(url); return }
         if existing == nil { discardPeekUndo() }
@@ -104,7 +105,7 @@ import RiseCore
         cancelTabSwitch()
         closePeek(replacing: true); hideLinkStatus()
         peekSourceTabID = sourceID; peekOpensNewTab = opensNewTab
-        let reveal = animated ? beginPeekReveal(from: sourcePage, standIn: standIn) : nil
+        let reveal = animated ? beginPeekReveal(from: sourcePage, standIn: standIn, selection: fromSelection) : nil
         // A page already rendering from a Shift-hover shows from the first frame.
         let standby = existing == nil ? takePeekStandby(for: url) : nil
         let tab = existing ?? standby ?? configure(BrowserTab()); peekTab = tab

@@ -122,14 +122,20 @@ extension NSView {
     static let peekLinkScript = """
     const selector = 'a[href], area[href]';
     let link = window.__risePeekLink, index = window.__risePeekIndex ?? 0;
-    if (locate) {
+    // A Peek of the selection, as an address's map, grows out of the selected text: a live range,
+    // found again on closing as a link is, whose whole box (index -1) it shrinks back into.
+    const picked = locate && selection ? getSelection() : null;
+    if (picked?.rangeCount && !picked.isCollapsed) {
+      link = picked.getRangeAt(0).cloneRange(); index = -1;
+      window.__risePeekLink = link; window.__risePeekIndex = index;
+    } else if (locate) {
       const hit = x >= 0 ? document.elementFromPoint(x, y)?.closest?.(selector) : null;
       link = hit ?? document.activeElement?.closest?.(selector) ?? null;
       const rects = link ? [...link.getClientRects()] : [];
       index = Math.max(0, rects.findIndex(r => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom));
       window.__risePeekLink = link; window.__risePeekIndex = index;
     }
-    if (!link?.isConnected) return null;
+    if (!(link?.isConnected ?? link?.startContainer?.isConnected)) return null;
     const r = [...link.getClientRects()][index] ?? link.getBoundingClientRect();
     return r.width >= 1 && r.height >= 1 ? [r.left, r.top, r.width, r.height] : null;
     """
@@ -149,17 +155,17 @@ extension NSView {
     var peekMotionAllowed: Bool { window?.isVisible == true && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
     /// Sends the lookup to the page immediately, so it is not queued behind other work.
-    func peekLink(in page: WebPage, locate: Bool, completion: @escaping (PeekOrigin?) -> Void) {
-        Task { completion(await peekLink(in: page, locate: locate)) }
+    func peekLink(in page: WebPage, locate: Bool, selection: Bool = false, completion: @escaping (PeekOrigin?) -> Void) {
+        Task { completion(await peekLink(in: page, locate: locate, selection: selection)) }
     }
-    func peekLink(in page: WebPage, locate: Bool) async -> PeekOrigin? {
+    func peekLink(in page: WebPage, locate: Bool, selection: Bool = false) async -> PeekOrigin? {
         let web = page.view
         guard let window = web.window, !page.isMagnified, !web.isHiddenOrHasHiddenAncestor, web.bounds.width > 0 else { return nil }
         let zoom = max(0.01, page.zoom)
         var point = web.convert(window.mouseLocationOutsideOfEventStream, from: nil)
         if !web.isFlipped { point.y = web.bounds.height - point.y }
         let inside = point.x >= 0 && point.y >= 0 && point.x <= web.bounds.width && point.y <= web.bounds.height
-        let arguments: [String: Any] = ["x": inside ? point.x/zoom : -1, "y": inside ? point.y/zoom : -1, "locate": locate]
+        let arguments: [String: Any] = ["x": inside ? point.x/zoom : -1, "y": inside ? point.y/zoom : -1, "locate": locate, "selection": selection]
         guard let box = await page.evaluate(Self.peekLinkScript, arguments: arguments, world: nil) as? [NSNumber], box.count == 4 else { return nil }
         var rect = NSRect(x: box[0].doubleValue*zoom, y: box[1].doubleValue*zoom, width: box[2].doubleValue*zoom, height: box[3].doubleValue*zoom)
         if !web.isFlipped { rect.origin.y = web.bounds.height - rect.maxY }
@@ -253,11 +259,11 @@ extension NSView {
     }
     /// Starts locating the clicked link before the Peek's own page begins loading;
     /// a new page's startup otherwise delays the lookup by well over 100 ms.
-    func beginPeekReveal(from source: WebPage?, standIn: PeekOrigin? = nil) -> UUID? {
+    func beginPeekReveal(from source: WebPage?, standIn: PeekOrigin? = nil, selection: Bool = false) -> UUID? {
         guard peekMotionAllowed else { return nil }
         let token = UUID(); peekMotionToken = token
         if let standIn { DispatchQueue.main.async { [weak self] in self?.playPeekOpen(standIn, token: token) } }
-        else if let source { peekLink(in: source, locate: true) { [weak self] in self?.playPeekOpen($0, token: token) } }
+        else if let source { peekLink(in: source, locate: true, selection: selection) { [weak self] in self?.playPeekOpen($0, token: token) } }
         else { DispatchQueue.main.async { [weak self] in self?.playPeekOpen(nil, token: token) } }
         return token
     }

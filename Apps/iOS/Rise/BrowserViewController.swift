@@ -63,6 +63,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// Holding Reload in More reloads without the cache, as ⌘⇧R does on the Mac.
     private lazy var hardReloadHold = UILongPressGestureRecognizer(target: self, action: #selector(holdReload))
     private let hardReloadClick = UIImpactFeedbackGenerator(style: .rigid)
+    /// Holding More copies the page's link, More's checkmark saying so, instead of opening it.
+    private lazy var copyLinkHold = UILongPressGestureRecognizer(target: self, action: #selector(holdMore))
     let voice = VoiceInput()
     private var isSwipingToTabs = false
     private lazy var backSwipe = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(swipeBack))
@@ -860,6 +862,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         }
         // While the address is being edited, the button is X, which only clears.
         if gestureRecognizer === hardReloadHold { return isPanelOpen && !bottomBar.menu.address.isEditingURL }
+        // Without a link to copy, the hold gives way and letting go opens More as a tap does.
+        if gestureRecognizer === copyLinkHold { return shareableURL != nil && presentedViewController == nil && !isSwipingToTabs && !isTabSwitcherOpen }
         if gestureRecognizer === panelBackSwipe {
             let delta = panelBackSwipe.translation(in: view), velocity = panelBackSwipe.velocity(in: view)
             let direction = abs(delta.x)+abs(delta.y) > 1 ? delta : velocity
@@ -1076,6 +1080,14 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             settlePanelOpen()
         }
         bottomBar.moreButton.addAction(UIAction { [weak self] _ in self?.openPanel(.menu) }, for: .primaryActionTriggered)
+        // Once it holds, the hold takes the touch from the button, so letting go doesn't open More too.
+        copyLinkHold.minimumPressDuration = 0.35
+        copyLinkHold.delegate = self
+        bottomBar.moreButton.addGestureRecognizer(copyLinkHold)
+        bottomBar.moreButton.accessibilityCustomActions = [UIAccessibilityCustomAction(name: "Copy Link") { [weak self] _ in
+            guard let self, shareableURL != nil else { return false }
+            copyLink(); return true
+        }]
         bottomBar.find.find = { [weak self] query, direction in
             await self?.find(query, direction: direction) ?? PageFind.Matches(count: 0, index: -1)
         }
@@ -2464,6 +2476,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
     private func goForward() {
         if webView.canGoForward { webView.goForward() } else { returnToNextPage() }
+    }
+
+    @objc private func holdMore(_ hold: UILongPressGestureRecognizer) {
+        if hold.state == .began { copyLink() }
     }
 
     private func copyLink() {

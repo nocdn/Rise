@@ -68,6 +68,27 @@ final class PeekInteractionTests: XCTestCase {
         XCTAssertEqual(browser.closedTabs.last?.id, source.id)
         XCTAssertEqual(browser.selectedID, other.id)
     }
+    /// Escape reaches Rise before the page, which would otherwise keep it, and closes the Peek; the
+    /// rest of the press, held or let go, goes nowhere. With no Peek open, the page has it.
+    @MainActor func testEscapeClosesPeekBeforeThePageSeesIt() throws {
+        let browser = browser(); defer { clean(browser) }
+        let source = browser.addTab()
+        let window = try XCTUnwrap(browser.window as? BrowserWindow)
+        func escape(_ type: NSEvent.EventType, repeating: Bool = false) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
+                context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: repeating, keyCode: 53))
+        }
+        XCTAssertEqual(window.escapeEvent?(try escape(.keyDown)), false, "Without a Peek, Escape is the page's")
+        browser.showPeek(url: URL(string: "about:blank")!, from: source.page.view)
+        XCTAssertNotNil(browser.peekTab)
+        XCTAssertEqual(window.escapeEvent?(try escape(.keyDown)), true)
+        XCTAssertNil(browser.peekTab)
+        XCTAssertEqual(browser.selectedID, source.id)
+        XCTAssertEqual(window.escapeEvent?(try escape(.keyDown, repeating: true)), true, "Holding Escape doesn't reach the page behind")
+        XCTAssertEqual(window.escapeEvent?(try escape(.keyUp)), true)
+        XCTAssertEqual(window.escapeEvent?(try escape(.keyDown)), false, "The next press is the page's again")
+    }
+
     @MainActor func testAPeekLinkInsideThePeekShakesThePillAndHistoryMovesThroughThePeek() async throws {
         let browser = browser(); defer { clean(browser) }
         browser.showWindow(nil)
