@@ -104,15 +104,25 @@ extension PullRequestDetails.State {
 }
 
 /// The status badge, the number and file count, lines added and removed, and diff squares.
-/// The file count opens the changed files.
+/// The file count opens the changed files; it and the diff size show the split of the lines hovered.
 final class PullRequestMetaRow: CardLinkRow {
     static let height: CGFloat = 20
     var details: PullRequestDetails? { didSet { needsDisplay = true } }
     /// "#12" on GitHub, "!12" on GitLab.
     var reference = "" { didSet { needsDisplay = true } }
+    /// Where the lines added and removed and the squares were last drawn.
+    private(set) var statsRect = NSRect.zero
+    /// The pointer went onto the diff size, or off it.
+    var onStatsHover: ((Bool) -> Void)?
+    private(set) var statsHovered = false { didSet { if statsHovered != oldValue { onStatsHover?(statsHovered) } } }
+    override func mouseEntered(with event: NSEvent) { super.mouseEntered(with: event); hoverStats(event) }
+    override func mouseMoved(with event: NSEvent) { super.mouseMoved(with: event); hoverStats(event) }
+    override func mouseExited(with event: NSEvent) { super.mouseExited(with: event); statsHovered = false }
+    override func viewDidHide() { super.viewDidHide(); statsHovered = false }
+    private func hoverStats(_ event: NSEvent) { statsHovered = statsRect.contains(convert(event.locationInWindow, from: nil)) }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard let details else { placeLink(.zero); return }
+        guard let details else { placeLink(.zero); statsRect = .zero; return }
         let midY = Self.height/2
         let badgeFont = NSFont.systemFont(ofSize: 11, weight: .semibold)
         let ink = PullRequestPalette.badgeText(details.state, dark: dark)
@@ -157,6 +167,7 @@ final class PullRequestMetaRow: CardLinkRow {
             x -= gap+ceil(text.size().width)
             text.draw(at: NSPoint(x: x, y: midY-text.size().height/2))
         }
+        statsRect = NSRect(x: floor(x), y: 0, width: bounds.width-floor(x), height: Self.height)
     }
     private static func icon(_ data: String, size: CGFloat, color: NSColor) -> NSImage {
         let icon = TablerIcon.image(data, size: size)
@@ -237,9 +248,12 @@ final class PullRequestMetaRow: CardLinkRow {
     var onOpenFiles: (() -> Void)?
     /// The file count was hovered, so its split of the lines is wanted.
     var onWantsBreakdown: (() -> Void)?
-    /// Under the file count while it's hovered.
+    /// Under the file count or the diff size while it's hovered.
     let breakdownCard = ChangeBreakdownCard()
     private var breakdownDelay: DispatchWorkItem?
+    /// What the split last came out of: the file count, off its bottom right corner, or the
+    /// diff size, off its bottom left one.
+    private var breakdownFromStats = false
     /// The pipeline's number was clicked.
     var onOpenPipeline: ((Pipeline) -> Void)?
     /// The merge status was clicked.
@@ -307,7 +321,8 @@ final class PullRequestMetaRow: CardLinkRow {
         moreButton.menuDidClose = { [weak self] in self?.menuOpen = false; self?.checkPointerLeft() }
         mergeRow.onOpen = { [weak self] in self?.onOpenMergeChecks?() }
         meta.onOpen = { [weak self] in self?.onOpenFiles?() }
-        meta.onLinkHover = { [weak self] hovered in self?.fileCountHovered(hovered) }
+        meta.onLinkHover = { [weak self] _ in self?.breakdownHoverChanged() }
+        meta.onStatsHover = { [weak self] _ in self?.breakdownHoverChanged() }
         pipelineRow.onOpen = { [weak self] in if let pipeline = self?.current?.details?.pipeline { self?.onOpenPipeline?(pipeline) } }
         panel.addSubview(content); addSubview(panel)
         height.configure(response: FindMotion.swapResponse, bounce: 0)
@@ -461,13 +476,15 @@ final class PullRequestMetaRow: CardLinkRow {
         let point = tabPoint ?? NSPoint(x: frame.minX, y: anchorTop+TabAppearance.height/2)
         return CGPoint(x: point.x-frame.minX, y: point.y-frame.minY)
     }
-    /// A moment on the file count shows its split, asked for the first time it's wanted.
-    private func fileCountHovered(_ hovered: Bool) {
+    /// A moment on the file count or the diff size shows the split, asked for the first time it's wanted.
+    private func breakdownHoverChanged() {
         breakdownDelay?.cancel(); breakdownDelay = nil
-        guard hovered else { breakdownCard.hide(); return }
+        guard meta.linkHovered || meta.statsHovered else { breakdownCard.hide(); return }
+        let fromStats = meta.statsHovered
         let show = DispatchWorkItem { [weak self] in
-            guard let self, self.key != nil, self.meta.linkHovered else { return }
+            guard let self, self.key != nil, fromStats ? self.meta.statsHovered : self.meta.linkHovered else { return }
             self.onWantsBreakdown?()
+            self.breakdownFromStats = fromStats
             self.showBreakdown()
         }
         breakdownDelay = show
@@ -480,7 +497,9 @@ final class PullRequestMetaRow: CardLinkRow {
         breakdownCard.appearance = theme.appearance
         breakdownCard.show(details.breakdown, loading: source?.breakdownPending == true,
                            total: ChangeBreakdown.Lines(additions: details.additions, deletions: details.deletions),
-                           below: host.convert(meta.linkRect, from: meta), in: host.bounds, theme: theme, background: background, text: summaryColor)
+                           below: host.convert(breakdownFromStats ? meta.statsRect : meta.linkRect, from: meta),
+                           from: breakdownFromStats ? .bottomLeft : .bottomRight,
+                           in: host.bounds, theme: theme, background: background, text: summaryColor)
     }
     /// New details or more of the description for the card's pull request.
     func update(_ incoming: Content) {

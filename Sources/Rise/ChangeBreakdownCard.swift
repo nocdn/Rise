@@ -1,15 +1,20 @@
 import AppKit
 
 /// The pull request card's file count, hovered: a small card off its bottom right corner with the
-/// lines added and removed in code, tests, mocks and generated files, then in all, as T3 Code
-/// shows them. It comes out of that corner as a pinned tab's card comes out of its tile, and
-/// takes no clicks, so the card under it keeps the pointer.
+/// lines added and removed in code, tests, mocks, generated files and docs, then in all, as T3 Code
+/// shows them. The diff size, hovered, shows the same card off its bottom left corner, mirrored.
+/// It comes out of that corner as a pinned tab's card comes out of its tile, and takes no clicks,
+/// so the card under it keeps the pointer.
 @MainActor final class ChangeBreakdownCard: FlippedView {
     static let inset = NSSize(width: 12, height: 10)
     static let rowHeight: CGFloat = 18, rowGap: CGFloat = 4, columnGap: CGFloat = 16, countGap: CGFloat = 10
     static let dividerGap: CGFloat = 6
-    /// Off the file count's bottom right corner, across and down; its row runs a little below the text.
+    /// Off the file count's bottom right corner (or the diff size's bottom left one), across and
+    /// down; its row runs a little below the text.
     static let gap = CGSize(width: 1, height: 0)
+    /// The corner of what was hovered that the card comes out of: the card's top left corner sits
+    /// off the bottom right one, its top right corner off the bottom left one.
+    enum Corner { case bottomRight, bottomLeft }
     static let labelFont = NSFont.systemFont(ofSize: 13)
     static let countFont = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .semibold)
     static let loadingText = "Loading breakdown"
@@ -17,7 +22,7 @@ import AppKit
     private let panel = Surface(radius: FindBar.radius)
     private let rows = Rows()
     private(set) var isShown = false
-    /// The count's bottom right corner, in the card's own coordinates.
+    /// The hovered text's corner, in the card's own coordinates.
     private var growsFrom = CGPoint.zero
     private var exits = 0
 
@@ -36,9 +41,10 @@ import AppKit
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     /// Its top left corner just off `link`'s bottom right one (the file count, in the superview),
-    /// kept inside `area`. Nothing shows with no split and none on the way.
-    func show(_ breakdown: ChangeBreakdown?, loading: Bool, total: ChangeBreakdown.Lines, below link: NSRect, in area: NSRect,
-              theme: RiseTheme, background: NSColor, text: NSColor) {
+    /// or its top right corner just off the bottom left one, kept inside `area`. Nothing shows
+    /// with no split and none on the way.
+    func show(_ breakdown: ChangeBreakdown?, loading: Bool, total: ChangeBreakdown.Lines, below link: NSRect, from corner: Corner = .bottomRight,
+              in area: NSRect, theme: RiseTheme, background: NSColor, text: NSColor) {
         guard breakdown != nil || loading else { hide(); return }
         rows.breakdown = breakdown; rows.total = total; rows.theme = theme; rows.text = text
         panel.fill = background; KeroLitEdge.apply(to: panel, theme: theme)
@@ -46,7 +52,8 @@ import AppKit
         panel.layer?.shadowOpacity = theme == .dark ? 0.45 : 0.12
         let size = rows.size
         let width = size.width+2*Self.inset.width, height = size.height+2*Self.inset.height
-        let x = max(area.minX+8, min(link.maxX+Self.gap.width, area.maxX-8-width))
+        let cornerX = corner == .bottomRight ? link.maxX : link.minX
+        let x = max(area.minX+8, min(corner == .bottomRight ? cornerX+Self.gap.width : cornerX-Self.gap.width-width, area.maxX-8-width))
         let y = min(link.maxY+Self.gap.height, area.maxY-8-height)
         let appearing = !isShown
         CATransaction.begin(); CATransaction.setDisableActions(true)
@@ -56,13 +63,13 @@ import AppKit
         rows.frame = NSRect(x: Self.inset.width, y: Self.inset.height, width: size.width, height: size.height)
         CATransaction.commit()
         rows.needsDisplay = true
-        growsFrom = CGPoint(x: link.maxX-x, y: link.maxY-y)
+        growsFrom = CGPoint(x: cornerX-x, y: link.maxY-y)
         guard appearing else { return }
         isShown = true; exits += 1; isHidden = false
         CardMotionAnimator.cancelOut(self)
         CardMotionAnimator.animateIn(self, CardMotion.selected, tab: growsFrom)
     }
-    /// Back into the count's corner, or at once.
+    /// Back into the corner it came out of, or at once.
     func hide(animated: Bool = true) {
         guard isShown else { return }
         isShown = false

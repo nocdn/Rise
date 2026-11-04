@@ -110,9 +110,11 @@ extension BrowserViewController {
         // A nil target opens another window; its own browser applies its policy. Do not
         // change this page's filtering while it is merely opening a link elsewhere.
         guard action.targetFrame?.isMainFrame == true else { decisionHandler(.allow); return }
-        if adBlocker.prepareIfReady(page, for: action.request.url) { decisionHandler(.allow); return }
+        // Open Here's load and its redirects stay in Rise rather than going to an app.
+        let allow = allowPolicy(for: action, in: page)
+        if adBlocker.prepareIfReady(page, for: action.request.url) { decisionHandler(allow); return }
         Task {
-            do { try await adBlocker.prepare(page, for: action.request.url); decisionHandler(.allow) }
+            do { try await adBlocker.prepare(page, for: action.request.url); decisionHandler(allow) }
             catch is CancellationError { decisionHandler(.cancel) }
             catch { finishAdBlockingReload(on: page); showAdBlockingError(error); decisionHandler(.cancel) }
         }

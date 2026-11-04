@@ -31,8 +31,22 @@ final class ChangeBreakdownTests: XCTestCase {
             ("src/app.ts", .code), ("Sources/Rise/Latest.swift", .code), ("src/app.test.ts", .tests), ("pkg/api_test.go", .tests),
             ("app/FooTest.java", .tests), ("tests/helpers.py", .tests), ("src/__mocks__/api.ts", .mocks), ("fixtures/user.json", .mocks),
             ("ui/__snapshots__/card.snap", .mocks), ("bun.lock", .generated), ("api/schema.generated.ts", .generated),
+            ("convex/_generated/api.d.ts", .generated), ("src/agent.eval.ts", .tests), ("evals/summary.ts", .tests),
+            ("README.md", .docs), ("docs/Motion.md", .docs), ("guide/intro.MDX", .docs), ("NOTES.txt", .docs), ("api/index.rst", .docs),
+            ("requirements-dev.txt", .code), ("CMakeLists.txt", .code), ("public/robots.txt", .code), ("llms.txt", .code),
+            ("tests/fixtures/sample.md", .mocks), ("tests/plan.md", .tests),
         ]
         for (path, kind) in kinds { XCTAssertEqual(ChangeBreakdown.kind(ofPath: path), kind, path) }
+    }
+
+    func testASplitSavedBeforeDocsIsDroppedWithTheDetailsKept() throws {
+        let saved = #"{"title":"fix: it","state":"open","commits":1,"changedFiles":2,"additions":42,"deletions":4,"#
+            + #""breakdown":{"code":{"additions":30,"deletions":4},"tests":{"additions":12,"deletions":0},"mocks":{"additions":0,"deletions":0},"generated":{"additions":0,"deletions":0}}}"#
+        let old = try JSONDecoder().decode(PullRequestDetails.self, from: Data(saved.utf8))
+        XCTAssertEqual(old.additions, 42); XCTAssertNil(old.breakdown, "Read again, so its docs are counted")
+        var details = PullRequestDetails(title: "fix: it", state: .merged, commits: 1, changedFiles: 2, additions: 42, deletions: 4)
+        details.breakdown = ChangeBreakdown(code: .init(additions: 30, deletions: 4), docs: .init(additions: 12, deletions: 0))
+        XCTAssertEqual(try JSONDecoder().decode(PullRequestDetails.self, from: JSONEncoder().encode(details)), details)
     }
 
     func testGitLabAndGitHubSplitTheLinesAndGiveUpWhenNotEveryFileIsCounted() async throws {
@@ -115,6 +129,18 @@ final class ChangeBreakdownTests: XCTestCase {
         XCTAssertEqual(card.breakdownCard.frame.origin.x, corner.maxX+ChangeBreakdownCard.gap.width, accuracy: 0.5, "Off the count's bottom right corner")
         XCTAssertEqual(card.breakdownCard.frame.origin.y, corner.maxY+ChangeBreakdownCard.gap.height, accuracy: 0.5)
         move(to: NSPoint(x: link.maxX+40, y: link.midY))
+        XCTAssertFalse(card.breakdownCard.isShown)
+
+        // The diff size shows the same split, mirrored: off its bottom left corner.
+        let stats = card.meta.statsRect
+        XCTAssertFalse(stats.isEmpty); XCTAssertGreaterThan(stats.minX, link.maxX)
+        move(to: NSPoint(x: stats.midX, y: stats.midY))
+        try await Task.sleep(for: .milliseconds(Int(PullRequestTooltip.breakdownDelay*1000)+150))
+        XCTAssertTrue(card.breakdownCard.isShown)
+        let left = host.convert(stats, from: card.meta)
+        XCTAssertEqual(card.breakdownCard.frame.maxX, left.minX-ChangeBreakdownCard.gap.width, accuracy: 0.5, "Off the diff size's bottom left corner")
+        XCTAssertEqual(card.breakdownCard.frame.origin.y, left.maxY+ChangeBreakdownCard.gap.height, accuracy: 0.5)
+        move(to: NSPoint(x: stats.minX-10, y: stats.midY))
         XCTAssertFalse(card.breakdownCard.isShown)
     }
 

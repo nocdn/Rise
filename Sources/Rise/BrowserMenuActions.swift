@@ -86,6 +86,7 @@ extension BrowserController: NSMenuItemValidation {
             item.state = sitePermissions.automaticPictureInPicture(origin: origin) ? .on : .off
             return origin != nil
         case #selector(toggleLinkPreloading): item.state = linkPreloader.enabled ? .on : .off; return true
+        case #selector(toggleYouTubeAutoplay): item.state = youTubeAutoplay.isEnabled ? .on : .off; return true
         case #selector(toggleDevTools):
             item.title = devTools.isOpen && devTools.tabID == tab?.id ? "Hide Developer Tools" : "Show Developer Tools"
             return tab?.page is ChromiumPage

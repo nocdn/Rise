@@ -268,6 +268,7 @@ import RiseCore
     let linkPreloader: LinkPreloader
     let openTabLinks: OpenTabLinks
     let pageFullscreen: PageFullscreen
+    let youTubeAutoplay: YouTubeAutoplay
     /// The docked sidebar's state before the visible page entered simulated fullscreen.
     var fullscreenSidebarWasVisible: Bool?
     let fullscreenNavigationHover = FullscreenNavigationHover(frame: .zero)
@@ -295,6 +296,7 @@ import RiseCore
         linkPreloader = LinkPreloader(preferences: preferences)
         openTabLinks = OpenTabLinks(preferences: preferences)
         pageFullscreen = PageFullscreen(preferences: preferences)
+        youTubeAutoplay = YouTubeAutoplay(preferences: preferences)
         let sessionURL = sessionURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Rise/session.json")
         self.sessionURL = sessionURL
         paletteCommandUsage = PaletteCommandUsage(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("command-usage.json"))
@@ -780,6 +782,7 @@ import RiseCore
         pageFullscreen.install(on: tab.page)
         pictureInPicture.install(on: tab.page)
         tabMedia.install(on: tab.page)
+        youTubeAutoplay.install(on: tab.page)
         suggestionFavicons.remember(tab)
         tab.onChange = { [weak self, weak tab] in
             guard let self, let tab else { return }

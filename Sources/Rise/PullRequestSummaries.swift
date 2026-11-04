@@ -70,6 +70,19 @@ struct PullRequestDetails: Equatable, Codable {
     var breakdown: ChangeBreakdown?
     private enum CodingKeys: String, CodingKey { case title, state, commits, changedFiles, additions, deletions, pipeline, mergeCheck, breakdown }
 }
+extension PullRequestDetails {
+    /// A split saved before docs were counted is dropped, so it's read again, rather than
+    /// failing the details with it.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(title: try container.decode(String.self, forKey: .title), state: try container.decode(State.self, forKey: .state),
+                  commits: try container.decode(Int.self, forKey: .commits), changedFiles: try container.decode(Int.self, forKey: .changedFiles),
+                  additions: try container.decode(Int.self, forKey: .additions), deletions: try container.decode(Int.self, forKey: .deletions),
+                  pipeline: try container.decodeIfPresent(Pipeline.self, forKey: .pipeline),
+                  mergeCheck: try container.decodeIfPresent(MergeCheck.self, forKey: .mergeCheck))
+        breakdown = (try? container.decodeIfPresent(ChangeBreakdown.self, forKey: .breakdown)) ?? nil
+    }
+}
 
 /// Whether an open merge request can be merged, and if not, what's in the way.
 struct MergeCheck: Equatable, Codable {

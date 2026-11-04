@@ -116,6 +116,7 @@ import Vision
         pictureInPicture.reconcile(visibleIDs: Set(visibleTabIDs))
     }
     @objc func toggleLinkPreloading() { linkPreloader.setEnabled(!linkPreloader.enabled) }
+    @objc func toggleYouTubeAutoplay() { youTubeAutoplay.setEnabled(!youTubeAutoplay.isEnabled) }
     func refreshPermissionScripts() {
         for tab in tabs + allPeekTabs {
             tab.page.evaluate("window.riseSiteControls?.refresh()", arguments: [:], in: nil, world: .page) { _ in }

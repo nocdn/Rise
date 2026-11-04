@@ -9,6 +9,7 @@ extension BrowserViewController {
         if page === webView { updateNavigationStatus() }
     }
     func handlePageFailure(_ page: WKWebView, navigation: WKNavigation?, error: Error) {
+        finishOpeningHere(page, navigation: navigation)
         let diagnosticError = error as NSError
         blocker(for: page).popups.noteNavigation("navigation.failed", in: page,
             details: ["errorDomain": diagnosticError.domain, "errorCode": String(diagnosticError.code)])

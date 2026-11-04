@@ -53,9 +53,11 @@ Signed-out, failed and unavailable lookups leave the pill plain; starring from
 Rise updates its cached result immediately.
 
 The desktop **Page** menu follows Edit and holds **Dismiss Cookie Banners**,
-**Automatic PiP**, and **Preload Links on Hover** as checkable actions. Cookie
-dismissal defaults off on desktop; Automatic PiP and link preloading default on.
-Cookie dismissal and PiP follow the current site, while preloading is browser-wide.
+**Automatic PiP**, **Preload Links on Hover**, and **Autoplay YouTube Videos** as
+checkable actions. Cookie dismissal and YouTube autoplay default off on desktop;
+Automatic PiP and link preloading default on. Cookie dismissal and PiP follow the
+current site, while preloading and YouTube autoplay are browser-wide (the latter
+also in Settings → Tabs; see `docs/YouTubeAutoplay.md`).
 Explicit choices persist. The site-controls popover has no Settings heading or
 the former four toggles; Developer Mode remains in Develop. iOS keeps its existing
 cookie-dismissal default.

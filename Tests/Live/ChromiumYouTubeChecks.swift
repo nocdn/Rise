@@ -47,6 +47,7 @@ import RiseChromium
             if only?.contains("PinchingStretchesThePictureUntilItSettlesAndNeverShowsThePage") ?? true { await liveCase("PinchingStretchesThePictureUntilItSettlesAndNeverShowsThePage") { try await self.testPinchingStretchesThePictureUntilItSettlesAndNeverShowsThePage(); self.tearDown() } }
             if only?.contains("PinchResizesTheRealWindowAndRestoresBothLimitsWithoutChangingPlayback") ?? true { await liveCase("PinchResizesTheRealWindowAndRestoresBothLimitsWithoutChangingPlayback") { try await self.testPinchResizesTheRealWindowAndRestoresBothLimitsWithoutChangingPlayback(); self.tearDown() } }
             if only?.contains("SwitchCanProbePlaybackBeforeMediaStateArrivesAndNewVideoReplacesOldPiP") ?? true { await liveCase("SwitchCanProbePlaybackBeforeMediaStateArrivesAndNewVideoReplacesOldPiP") { try await self.testSwitchCanProbePlaybackBeforeMediaStateArrivesAndNewVideoReplacesOldPiP(); self.tearDown() } }
+            if only?.contains("OpenedVideosWaitForPlayUntilYouClickOrTurnAutoplayOn") ?? true { await liveCase("OpenedVideosWaitForPlayUntilYouClickOrTurnAutoplayOn") { try await self.testOpenedVideosWaitForPlayUntilYouClickOrTurnAutoplayOn(); self.tearDown() } }
             liveFinish()
         }
     }
@@ -628,6 +629,68 @@ import RiseChromium
         browser.setHidesNotificationCounts(true)
         XCTAssertEqual(tab.title, "Some Video - YouTube")
         XCTAssertEqual(browser.makeMoreSiteMenu().items.first { $0.title == "Hide Notification Counts" }?.state, .on)
+    }
+
+    /// The player is played at load, as YouTube plays its own, beside another video on the page. Both are muted, which
+    /// Chromium lets play by itself, so only Rise holds one back.
+    @MainActor func testOpenedVideosWaitForPlayUntilYouClickOrTurnAutoplayOn() async throws {
+        let browser = browser(); defer { clean(browser) }
+        XCTAssertFalse(browser.youTubeAutoplay.isEnabled, "Videos wait by default")
+        let video = try Data(contentsOf: LiveFixtures.repository("Tests/RiseTests/Resources/PiPTestVideo.mp4")).base64EncodedString()
+        func load(_ url: String = "https://www.youtube.com/watch?v=rise-fixture") async throws -> BrowserTab {
+            let tab = browser.addTab()
+            tab.web.loadHTMLString("""
+              <!doctype html><title>Autoplay fixture</title>
+              <div id="movie_player"><video id="main" muted style="width:400px;height:200px" src="data:video/mp4;base64,\(video)"></video></div>
+              <video id="other" muted loop style="width:100px;height:50px" src="data:video/mp4;base64,\(video)"></video>
+              <button id="play" style="width:200px;height:60px" onclick="main.play().then(() => clicked = 'played', e => clicked = e.name)">Play</button>
+              <script>
+                var outcome, other, clicked;
+                main.play().then(() => outcome = 'played', e => outcome = e.name);
+                document.querySelector('#other').play().then(() => other = 'played', e => other = e.name);
+              </script>
+              """, baseURL: URL(string: url))
+            try await wait("the page's own play() settled") {
+                guard !tab.web.isLoading, tab.web.url?.host == URL(string: url)?.host else { return false }
+                return try await tab.web.evaluateJavaScript("outcome !== undefined && other !== undefined") as? Bool == true
+            }
+            return tab
+        }
+        let held = try await load()
+        try await assertValue("outcome", in: held, equals: "NotAllowedError")
+        try await assertValue("main.paused", in: held, equals: true)
+        try await assertValue("other", in: held, equals: "played")
+        // Rise's own scripts run with a user gesture; that isn't you choosing to play.
+        try await assertValue("main.play().then(() => 'played', e => e.name)", in: held, equals: "NotAllowedError")
+
+        // A real click in the page is.
+        browser.select(held.id); NSApp.activate(ignoringOtherApps: true)
+        browser.window?.makeKeyAndOrderFront(nil); browser.window?.makeFirstResponder(held.page.view)
+        try await Task.sleep(for: .milliseconds(300))
+        // In points: an earlier check can leave youtube.com zoomed.
+        let box = try await value("(() => { const r = play.getBoundingClientRect(); return [r.x + r.width/2, r.y + r.height/2, innerWidth] })()", in: held)
+        let xy = try XCTUnwrap(box as? [Double]), view = held.page.view, zoom = view.bounds.width/xy[2]
+        let point = view.convert(NSPoint(x: xy[0]*zoom, y: view.isFlipped ? xy[1]*zoom : view.bounds.height-xy[1]*zoom), to: nil)
+        for type in [NSEvent.EventType.mouseMoved, .leftMouseDown, .leftMouseUp] {
+            if type == .leftMouseDown { try await Task.sleep(for: .milliseconds(100)) }
+            browser.window!.sendEvent(NSEvent.mouseEvent(with: type, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                         windowNumber: browser.window!.windowNumber, context: nil, eventNumber: 0, clickCount: 1,
+                                                         pressure: type == .leftMouseDown ? 1 : 0)!)
+        }
+        try await wait("the clicked video plays") { try await self.value("clicked", in: held) as? String == "played" }
+        try await assertValue("main.paused", in: held, equals: false)
+
+        // Turned on, YouTube plays as it would, in pages open and to come.
+        let waiting = try await load()
+        browser.setRiseSetting("youTubeAutoplay", true)
+        XCTAssertTrue(browser.youTubeAutoplay.isEnabled)
+        try await wait("the open page is told") { try await self.value("main.play().then(() => 'played', e => e.name)", in: waiting) as? String == "played" }
+        try await assertValue("outcome", in: try await load(), equals: "played")
+        // And off again, a page opened next waits.
+        browser.setRiseSetting("youTubeAutoplay", false)
+        try await assertValue("outcome", in: try await load(), equals: "NotAllowedError")
+        // Other sites' videos are theirs.
+        try await assertValue("outcome", in: try await load("https://videos.example/watch"), equals: "played")
     }
 
     @MainActor func testProgressFollowsPlaybackSeeksAndThePlayButtonFollowsThePage() async throws {

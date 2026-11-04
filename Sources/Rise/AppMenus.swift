@@ -71,6 +71,7 @@ import AppKit
         item(page, "Dismiss Cookie Banners", #selector(BrowserController.toggleCookieConsent), target: browser)
         item(page, "Automatic PiP", #selector(BrowserController.toggleAutomaticPictureInPicture), target: browser)
         item(page, "Preload Links on Hover", #selector(BrowserController.toggleLinkPreloading), target: browser)
+        item(page, "Autoplay YouTube Videos", #selector(BrowserController.toggleYouTubeAutoplay), target: browser)
 
         let view = addMenu("View")
         item(view, "Hide Sidebar", #selector(BrowserController.toggleSidebar), "b", target: browser)

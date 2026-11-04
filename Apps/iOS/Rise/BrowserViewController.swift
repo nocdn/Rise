@@ -12,6 +12,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     static let longPressPeekEnabled = false
     private(set) var linkPreview: LinkPreviewController?
     private weak var linkPreviewSource: WKWebView?
+    /// Pages loading a link opened with Open Here, by the navigation it started (`BrowserOpenHere`).
+    let openingHere = NSMapTable<WKWebView, WKNavigation>.weakToStrongObjects()
     private(set) var isLinkContextMenuOpen = false
     let githubStarrer = MobileGitHubStarrer()
     /// One toast at a time, over the page and under the bottom bar.
@@ -2577,6 +2579,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         if webView.url?.scheme == MobileTabHistory.scheme { return }
         blocker(for: webView).popups.didCommit(webView)
         pageTranslation.didCommit(webView)
+        finishOpeningHere(webView, navigation: navigation)
         if let navigation { tabs.first { $0.webView === webView }?.didCommit(navigation) }
         addressSuggestions.committed(webView)
         if webView === self.webView { updateNavigationStatus(); updateAddress() }

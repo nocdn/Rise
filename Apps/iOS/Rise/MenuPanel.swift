@@ -60,6 +60,15 @@ final class AddressBar: UIControl {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// A quick tap as More springs open can lift on the address where it's drawn yet further from
+    /// where it's laid out than UIKit allows for a touch up inside; it still edits the address.
+    override func endTracking(_ touch: UITouch?, with event: UIEvent?) {
+        super.endTracking(touch, with: event)
+        guard let touch, !isTouchInside, let window, let drawn = layer.presentation() else { return }
+        let point = drawn.convert(touch.location(in: window), from: window.layer.presentation() ?? window.layer)
+        if drawn.bounds.contains(point) { sendActions(for: .primaryActionTriggered) }
+    }
+
     func showTranslation(_ state: MobilePageTranslation.State) {
         offersTranslation = state.available
         translateButton.isHidden = !offersTranslation || isEditingURL

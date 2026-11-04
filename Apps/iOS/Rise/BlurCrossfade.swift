@@ -68,6 +68,11 @@ import UIKit
         }
         let fade = UIViewPropertyAnimator(duration: style.exitFadeDuration, timingParameters: curve)
         fade.addAnimations { for view in leaving { view.alpha = 0 } }
+        // Hit-tested where they're laid out: they only scale in place. Left to the animator, a
+        // swapped view is tested where it's drawn but its subviews where they're laid out, and the
+        // bar's own correction for its spring (`BottomBar.hitTest`) would be counted twice.
+        move.isManualHitTestingEnabled = true
+        fade.isManualHitTestingEnabled = true
         running[ObjectIdentifier(container)] = [move, fade]
         move.startAnimation()
         fade.startAnimation()

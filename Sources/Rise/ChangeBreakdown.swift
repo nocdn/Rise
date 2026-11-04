@@ -1,26 +1,31 @@
 import Foundation
 
-/// How a pull request's lines split between code, tests, mocks and generated files, as T3 Code
-/// shows it (pingdotgg/t3code#22189): each changed file sorted by its path alone.
+/// How a pull request's lines split between code, tests, mocks, generated files and docs, as
+/// T3 Code shows it (pingdotgg/t3code#22189): each changed file sorted by its path alone.
+/// A split saved before docs were counted has no `docs` and doesn't decode, so it's read again.
 struct ChangeBreakdown: Equatable, Codable {
     struct Lines: Equatable, Codable {
         var additions = 0, deletions = 0
         var isEmpty: Bool { additions == 0 && deletions == 0 }
     }
     enum Kind: String, CaseIterable {
-        case code, tests, mocks, generated
+        /// T3 Code's order.
+        case code, tests, mocks, generated, docs
         var title: String {
-            switch self { case .code: "Code"; case .tests: "Tests"; case .mocks: "Mocks"; case .generated: "Generated" }
+            switch self { case .code: "Code"; case .tests: "Tests"; case .mocks: "Mocks"; case .generated: "Generated"; case .docs: "Docs" }
         }
     }
-    var code = Lines(), tests = Lines(), mocks = Lines(), generated = Lines()
+    var code = Lines(), tests = Lines(), mocks = Lines(), generated = Lines(), docs = Lines()
 
     subscript(kind: Kind) -> Lines {
         get {
-            switch kind { case .code: code; case .tests: tests; case .mocks: mocks; case .generated: generated }
+            switch kind { case .code: code; case .tests: tests; case .mocks: mocks; case .generated: generated; case .docs: docs }
         }
         set {
-            switch kind { case .code: code = newValue; case .tests: tests = newValue; case .mocks: mocks = newValue; case .generated: generated = newValue }
+            switch kind {
+            case .code: code = newValue; case .tests: tests = newValue; case .mocks: mocks = newValue
+            case .generated: generated = newValue; case .docs: docs = newValue
+            }
         }
     }
     mutating func add(path: String, additions: Int, deletions: Int) {
@@ -61,18 +66,22 @@ struct ChangeBreakdown: Equatable, Codable {
         "pnpm-lock.yaml", "podfile.lock", "poetry.lock", "pubspec.lock", "uv.lock", "yarn.lock",
     ]
     private static let generatedName = regex(#"(\.generated\.|\.gen\.|\.g\.dart$|\.pb\.go$|_pb2(_grpc)?\.py$|\.pb\.(cc|h)$|\.min\.(js|css)$|\.(js|css)\.map$)"#)
-    private static let generatedDirectories: Set<String> = ["__generated__", "generated"]
+    private static let generatedDirectories: Set<String> = ["__generated__", "_generated", "generated"]
     private static let mockName = regex(#"(\.snap$|\.(mocks?|fixtures?|stubs?|fakes?)\.[^.]+$|^(mocks?|fixtures?|stubs?|fakes?)([-_.A-Z]|$))"#)
     private static let mockDirectories: Set<String> = [
         "__fixtures__", "__mocks__", "__snapshots__", "fakes", "fixture", "fixtures", "mock", "mocks", "stubs", "testdata",
     ]
-    private static let testName = regex(#"(\.(test|spec|e2e)\.[^.]+$|_(test|spec)\.[^.]+$|^test_.+\.py$|^conftest\.py$|^(vitest|jest)\.setup\.[^.]+$)"#, caseInsensitive: true)
+    private static let testName = regex(#"(\.(test|spec|e2e|eval)\.[^.]+$|_(test|spec)\.[^.]+$|^test_.+\.py$|^conftest\.py$|^(vitest|jest)\.setup\.[^.]+$)"#, caseInsensitive: true)
     /// Case-sensitive: `FooTest.java` is a test class, `Latest.java` isn't.
     private static let classTestName = regex(#"(Tests?|Spec)\.(java|kt|kts|scala|groovy|cs|php|swift|m)$"#)
-    private static let testDirectories: Set<String> = ["__tests__", "__test__", "cypress", "e2e", "spec", "specs", "test", "tests"]
+    private static let testDirectories: Set<String> = ["__tests__", "__test__", "cypress", "e2e", "evals", "spec", "specs", "test", "tests"]
+
+    private static let docsName = regex(#"\.(md|mdx|markdown|rst|adoc|txt)$"#, caseInsensitive: true)
+    /// Plain-text files that tools read as config or input, not prose.
+    private static let notDocsName = regex(#"^(requirements.*|constraints.*|CMakeLists|robots|llms)\.txt$"#, caseInsensitive: true)
 
     /// Lockfiles and build output are generated; mocks, fixtures and snapshots are kept apart
-    /// from the tests themselves; everything else is code.
+    /// from the tests themselves; prose (Markdown, plain text) is docs; everything else is code.
     static func kind(ofPath path: String) -> Kind {
         var segments = path.replacingOccurrences(of: "\\", with: "/").split(separator: "/", omittingEmptySubsequences: false).map(String.init)
         let name = segments.popLast() ?? ""
@@ -83,6 +92,7 @@ struct ChangeBreakdown: Equatable, Codable {
         if generatedFiles.contains(name.lowercased()) || matches(generatedName) || !directories.isDisjoint(with: generatedDirectories) { return .generated }
         if matches(mockName) || !directories.isDisjoint(with: mockDirectories) { return .mocks }
         if matches(testName) || matches(classTestName) || !directories.isDisjoint(with: testDirectories) { return .tests }
+        if matches(docsName) && !matches(notDocsName) { return .docs }
         return .code
     }
     private static func regex(_ pattern: String, caseInsensitive: Bool = false) -> NSRegularExpression {

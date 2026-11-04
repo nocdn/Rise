@@ -45,6 +45,7 @@ import RiseChromium
                 toggle("developerTabBorder", "Yellow and black border on developer mode tabs", "Around the tab while it's the one you're on", developerTabLook.border),
                 toggle("developerTabHammer", "Hammer on developer mode tabs", "At the tab's end, where its close button shows on hover", developerTabLook.hammer),
                 toggle("calendarBadge", "Show upcoming events on Calendar tabs", "A badge such as “in 17m” after the tab’s title, for an event starting within the hour", showsCalendarBadge),
+                toggle("youTubeAutoplay", "Autoplay YouTube videos", "When off, a video you open shows its play button and waits for you. Videos you pick on YouTube still play", youTubeAutoplay.isEnabled),
             ]
         case "ai":
             let provider = aiProvider
@@ -113,6 +114,7 @@ import RiseChromium
         case "developerTabBorder": setDeveloperTabLook(on, forKey: Self.developerTabBorderKey)
         case "developerTabHammer": setDeveloperTabLook(on, forKey: Self.developerTabHammerKey)
         case "calendarBadge": setShowsCalendarBadge(on)
+        case "youTubeAutoplay": youTubeAutoplay.setEnabled(on)
         case "aiProvider": if let provider = AIProvider(rawValue: text) { selectAIProvider(provider) }
         case "aiKey": if !text.isEmpty { setAIKey(text, for: aiProvider) }
         case "aiModel": setAIModel(text, for: aiProvider)

@@ -131,6 +131,18 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             PanelCloseGapAudit.run(in: controller)
             return
         }
+        if ProcessInfo.processInfo.arguments.contains(OpenHereAudit.argument) {
+            let controller = BrowserViewController(startURL: nil)
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            OpenHereAudit.run(in: controller)
+            return
+        }
+        if ProcessInfo.processInfo.arguments.contains(MenuAddressTapAudit.argument) {
+            let controller = BrowserViewController(startURL: nil)
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            MenuAddressTapAudit.run(in: controller)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains(PanelMotionAudit.argument) {
             let controller = BrowserViewController(startURL: nil)
             window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()

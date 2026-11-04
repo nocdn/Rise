@@ -382,6 +382,19 @@ final class BottomBar: UIView {
         return contents.filter { $0 !== next && $0.alpha > 0 }
     }
 
+    /// While the bar springs open or closed, UIKit tests touches against where it's going, which
+    /// opening More puts up to its full travel above where it's drawn: a tap on the address as it
+    /// rises would land on the panel behind it and do nothing until the spring settled. Test them
+    /// against where the bar is drawn instead, so its controls answer straight away. The panels'
+    /// contents keep their place from the bar's top, so the bar's own motion is all there is to undo.
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        guard layer.animationKeys()?.isEmpty == false, let drawn = layer.presentation(), let parent = superview?.layer else {
+            return super.hitTest(point, with: event)
+        }
+        let modelParent = layer.convert(point, to: parent)
+        return super.hitTest(drawn.convert(modelParent, from: parent.presentation() ?? parent), with: event)
+    }
+
     override func layoutSubviews() {
         super.layoutSubviews()
         separator.frame = CGRect(x: 0, y: 0, width: bounds.width, height: 1/max(1, traitCollection.displayScale))

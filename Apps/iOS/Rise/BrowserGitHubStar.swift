@@ -2,8 +2,9 @@ import UIKit
 import WebKit
 
 extension BrowserViewController {
-    func nativeLinkMenu(in page: WKWebView, url: URL?, actions: [UIMenuElement]) -> UIMenu {
+    func nativeLinkMenu(in page: WKWebView, url: URL?, actions suggested: [UIMenuElement]) -> UIMenu {
         githubRepositoryMenu?.cancel(); githubRepositoryMenu = nil
+        let actions = addingOpenHere(to: suggested, url: url, in: page)
         guard let repository = GitHubRepository(url: url) else { return ImageContextMenus.menu(in: page, actions: actions) }
         let store = page.configuration.websiteDataStore
         let menu = GitHubRepositoryMenu(browser: self,page: page,repository: repository,store: store)
