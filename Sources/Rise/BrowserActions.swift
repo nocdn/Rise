@@ -159,8 +159,10 @@ import RiseCore
     }
     /// Animated closes spring the Peek back into its link, reversing one that is still
     /// growing. State clears immediately either way. Replacing a Peek keeps the page
-    /// receded and lets the old dimming fade under the new one.
-    func closePeek(animated: Bool = false, replacing: Bool = false) {
+    /// receded and lets the old dimming fade under the new one. `keepingPage` leaves the Peek's
+    /// page loading, for a tab that takes it over (`stashPeekInNewTab`); the card closes showing
+    /// `still`, a picture of it, as the page itself is going elsewhere.
+    func closePeek(animated: Bool = false, replacing: Bool = false, keepingPage: Bool = false, still: NSImage? = nil) {
         if let page = peekTab?.page { historySwipe.cancel(for: page) }
         // An interrupted live resize leaves the pages for layout to put back.
         let interrupted = peekLiveMotion?.isRunning == true
@@ -177,13 +179,20 @@ import RiseCore
         peekOrigin = nil
         if let peekTab { permissionCoordinator.cancel(for: peekTab.page.view) }
         if let peekTab, hoveredWebView === peekTab.page.view { hideLinkStatus() }
-        if let peekTab { findBars.removeValue(forKey: peekTab.id)?.discard() }
-        peekTab?.cancelLoad(); peekTab = nil
+        if let peekTab {
+            if keepingPage { suspendFindBar(for: peekTab) } else { findBars.removeValue(forKey: peekTab.id)?.discard() }
+        }
+        if !keepingPage { peekTab?.cancelLoad() }
+        peekTab = nil
         peekBackdrop = nil; peekCard = nil
         swapFindBar(from: nil)
         if motion, let card {
             recedePage(false, along: Self.peekPageReturnSpring)
             if let growing { shrinkPeek(growing, into: peekFrame(of: origin), backdrop: backdrop); retire(card, behind: growing) }
+            else if keepingPage, card.alphaValue == 1 {
+                let token = UUID(); peekMotionToken = token
+                playPeekClose(card: card, backdrop: backdrop, page: still, live: nil, origin: origin, token: token)
+            }
             else if card.alphaValue == 1, let web {
                 dismissPeek(card: card, backdrop: backdrop, page: web, origin: origin, hold: peekControls.isEmpty ? 0 : Self.peekCloseHold)
             }

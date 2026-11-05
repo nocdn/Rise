@@ -256,6 +256,8 @@ import RiseCore
     var presentContextMenu: (NSMenu, NSPoint, NSView) -> Void = { menu, point, view in
         menu.popUp(positioning: nil, at: point, in: view)
     }
+    /// macOS's certificate choosers showing for pages that asked for a certificate, by page.
+    var clientCertificateChoosers: [ObjectIdentifier: ClientCertificateChooser] = [:]
     var lastSaved: BrowserSession?
     var tabSync: SharedTabsSync?
     var isApplyingSharedTabs = false
@@ -742,6 +744,14 @@ import RiseCore
                 guard let self, let chromium else { finish(false, nil); return nil }
                 return self.showDialog(dialog, from: chromium, finish: finish)
             }
+            chromium.onChooseClientCertificate = { [weak self, weak chromium] identities, host, finish in
+                guard let self, let chromium else { finish(nil); return }
+                self.chooseClientCertificate(identities, host: host, for: chromium, finish: finish)
+            }
+            chromium.onClientCertificateCancelled = { [weak self, weak chromium] in
+                guard let self, let chromium else { return }
+                self.cancelClientCertificate(for: chromium)
+            }
             chromium.onChooseFiles = { [weak self] mode, path, finish in
                 guard let self else { finish(nil); return }
                 self.chooseFiles(mode, defaultPath: path, finish: finish)
@@ -813,10 +823,14 @@ import RiseCore
     /// Given an `opener`, it goes right above that tab (or its split pair), so the two stay together.
     @discardableResult func addTab(url: URL? = nil, background: Bool = false, opener: UUID? = nil, page: WebPage? = nil) -> BrowserTab {
         let tab = configure(BrowserTab(page: page))
-        let members = opener.map { id in splitGroups.first { $0.contains(id) }.map { [$0.leftID, $0.rightID] } ?? [id] } ?? []
-        tabs.insert(tab, at: members.compactMap { id in tabs.firstIndex { $0.id == id } }.min() ?? 0)
+        tabs.insert(tab, at: newTabIndex(opener: opener))
         if background { update() } else { select(tab.id) }
         if let url { tab.load(url) }; return tab
+    }
+    /// Where a new tab goes: right above its opener (or the opener's split pair), else at the top.
+    func newTabIndex(opener: UUID?) -> Int {
+        let members = opener.map { id in splitGroups.first { $0.contains(id) }.map { [$0.leftID, $0.rightID] } ?? [id] } ?? []
+        return members.compactMap { id in tabs.firstIndex { $0.id == id } }.min() ?? 0
     }
     func select(_ id: UUID) {
         if selectedID != id { timeReplacement.cancelHold() }

@@ -1,6 +1,6 @@
 """Rise's features on Chromium pages in an actual Rise window.
 
-    python3 scripts/test-chromium-live.py [peek|features|extensions|passkeys|scripts|app|float|capture|tools|youtube|media|devtools|path/to/Check.swift]
+    python3 scripts/test-chromium-live.py [peek|features|extensions|passkeys|scripts|app|float|capture|tools|youtube|media|devtools|certificates|path/to/Check.swift]
 
 peek: Peek's motion, frame by frame (Tests/Live/ChromiumPeekBenchmarks.swift).
 features: history after a relaunch, downloads, find, permissions, picture in picture and the
@@ -8,6 +8,10 @@ tab's media and sound (Tests/Live/ChromiumFeatureChecks.swift), with pages serve
 sites so one can hold a frame of the other.
 devtools: DevTools' menus, close button, device mode, downloads, saving and choosing files
 (Tests/Live/ChromiumDevToolsChecks.swift).
+certificates: a site asking for a client certificate gets macOS's chooser, on a local site and on
+client.badssl.com (Tests/Live/ChromiumClientCertificateChecks.swift). It puts a test identity, and
+badssl.com's public client certificate, in a keychain of its own for the run (not the login keychain),
+granted to Rise's signing team so nothing asks for a password, and deletes that keychain after.
 scripts: Rise's page scripts and messages, in frames of both sites (Tests/Live/ChromiumScriptChecks.swift).
 passkeys: Real provisioned-platform availability, relying-party isolation and cancellation, without
 creating a passkey or completing biometric authentication (Tests/Live/ChromiumPasskeyChecks.swift).
@@ -36,7 +40,8 @@ import time
 checks = {"peek": "ChromiumPeekBenchmarks.swift", "features": "ChromiumFeatureChecks.swift", "extensions": "ChromiumExtensionChecks.swift", "passkeys": "ChromiumPasskeyChecks.swift",
           "float": "ChromiumFloatingVideoChecks.swift", "capture": "ChromiumCaptureChecks.swift", "tools": "ChromiumToolChecks.swift",
           "youtube": "ChromiumYouTubeChecks.swift", "media": "ChromiumMediaChecks.swift",
-          "scripts": "ChromiumScriptChecks.swift", "app": "ChromiumAppChecks.swift", "devtools": "ChromiumDevToolsChecks.swift"}
+          "scripts": "ChromiumScriptChecks.swift", "app": "ChromiumAppChecks.swift", "devtools": "ChromiumDevToolsChecks.swift",
+          "certificates": "ChromiumClientCertificateChecks.swift"}
 check = sys.argv[1] if len(sys.argv) > 1 else "peek"
 # Checks written as XCTest cases, with pages at the HTTPS addresses they name.
 fixtures = check in ("youtube", "media")
@@ -84,9 +89,11 @@ subprocess.run(["swiftc", "-target", f"{platform.machine()}-apple-macos14.0", "-
                 "-Xcc", f"-fmodule-map-file={debug / 'RiseChromium.build/module.modulemap'}",
                 "-I", str(root / "Sources/RiseChromium/include"), *objects, *engine_linking,
                 *linker, "-o", str(executable)], cwd=root, check=True)
-if check == "passkeys":
+if check in ("passkeys", "certificates"):
     # An ad-hoc probe cannot exercise macOS's real keychain entitlement checks. Use Rise's
     # normal certificate and provisioning profile, including RISE_SIGNING_* overrides.
+    # For certificates, its team is what the test keychain grants its keys to: an ad-hoc
+    # signature changes with every build, so macOS would ask for the password on each run.
     subprocess.run([sys.executable, str(root / "scripts/sign-app.py"), str(probe)], check=True)
 else:
     subprocess.run(["codesign", "--force", "--sign", "-", str(executable)], check=True, capture_output=True)
@@ -195,6 +202,29 @@ if check == "extensions":
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)]
     environment["RISE_CHECK_PORTS"] = str(ports[0])
     arguments = [f"--load-extension={extension}"]
+identities = []
+if check == "certificates":
+    # A local site that asks for a certificate from a test CA, and that CA's identity in the keychain.
+    fixture = root / "scripts/client-certificate-fixture.py"
+    signature = subprocess.run(["codesign", "-dv", str(probe)], capture_output=True, text=True).stderr
+    team = next((line.split("=", 1)[1] for line in signature.splitlines() if line.startswith("TeamIdentifier=")), "")
+    if not team or team == "not set":
+        sys.exit("The certificates check needs a signing identity with a team (scripts/sign-app.py), so the keychain can grant its key without asking.")
+    subprocess.run([sys.executable, str(fixture), "setup", str(folder / "certs"), team], check=True)
+    identities.append(lambda: subprocess.run([sys.executable, str(fixture), "teardown", str(folder / "certs")]))
+    with socket.socket() as probe_socket:
+        probe_socket.bind(("127.0.0.1", 0)); port = probe_socket.getsockname()[1]
+    servers = [subprocess.Popen([sys.executable, "-u", str(fixture), "serve", str(folder / "certs"), str(port)],
+                                stdout=subprocess.DEVNULL, stderr=open(folder / "certificate-server.log", "w"))]
+    environment["RISE_CHECK_PORTS"] = str(port)
+    # client.badssl.com, a real site asking for badssl.com's public client certificate, when online.
+    badssl = folder / "badssl" / "badssl.com-client.p12"
+    badssl.parent.mkdir(exist_ok=True)
+    if subprocess.run(["curl", "-sSfL", "-o", str(badssl), "https://badssl.com/certs/badssl.com-client.p12"], capture_output=True).returncode == 0 \
+            and subprocess.run([sys.executable, str(fixture), "import", str(badssl), "badssl.com", team], capture_output=True).returncode == 0:
+        environment["RISE_BADSSL"] = "1"
+    # The local site's certificate is the test CA's; the site at rise-cert.test is the same one.
+    arguments = ["--ignore-certificate-errors", "--host-resolver-rules=MAP rise-cert.test 127.0.0.1"]
 try:
     # RISE_LLDB=1 runs the check under lldb, which prints where it crashed.
     # RISE_LLDB_BREAK=<function> also prints where that function is called from, each time.
@@ -205,6 +235,8 @@ try:
 finally:
     for server in servers:
         server.terminate()
+    for remove in identities:
+        remove()
 if not keep:
     shutil.rmtree(folder, ignore_errors=True)
 # macOS keeps a copy of each app it launches, to check its signature against, which takes the

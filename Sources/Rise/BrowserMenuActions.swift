@@ -60,6 +60,7 @@ extension BrowserController: NSMenuItemValidation {
         case #selector(goForward): return historyPage.map { canNavigate($0, .forward) } ?? false
         case #selector(reopenTab): return !closedTabs.isEmpty
         case #selector(closeCurrentTab): return tab != nil || peekTab != nil
+        case #selector(stashPeekInNewTab): return peekTab != nil && !isPromotingPeek
         case #selector(nextTab), #selector(previousTab), #selector(cleanUpTabs): return tabs.count > 1
         case #selector(moveCurrentTabToTop): return canMoveCurrentTabToTop
         case #selector(moveCurrentTabUp): return canMoveCurrentTab(by: -1)

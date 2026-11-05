@@ -1,0 +1,198 @@
+--- a/chrome/browser/chrome_content_browser_client.cc	2026-11-05 10:11:05
++++ b/chrome/browser/chrome_content_browser_client.cc	2026-11-05 10:11:05
+@@ -4350,6 +4350,17 @@
+       !matching_certificates.empty() ? std::move(matching_certificates)
+                                      : std::move(nonmatching_certificates);
+ 
++  // An embedder whose windows aren't Chrome's has the person choose in its
++  // own interface.
++  if (EmbedderTabHooks* hooks =
++          EmbedderTabHooks::FromWebContents(web_contents)) {
++    base::OnceClosure cancel;
++    if (hooks->SelectClientCertificate(*cert_request_info, client_cert_choices,
++                                       delegate, &cancel)) {
++      return cancel;
++    }
++  }
++
+   return ShowSSLClientCertificateSelector(web_contents, cert_request_info,
+                                           std::move(client_cert_choices),
+                                           std::move(delegate));
+--- a/chrome/browser/rise/RiseChromium.h
++++ b/chrome/browser/rise/RiseChromium.h
+@@ -262,6 +262,17 @@
+ /// shows in the inspected page's place, under it, as Chrome does. Their device mode shows its
+ /// toolbar and rulers there, around the page; otherwise the page fills it, from the origin.
+ - (void)browserView:(RCBrowserView *)browserView setInspectedPageBounds:(NSRect)bounds;
++/// A site, at `host`, asks for a certificate to identify the person (TLS client authentication):
++/// `identities` are the keychain's that suit it, as SecIdentityRefs. Call `completion` once with
++/// the index of the one chosen, or -1 to go on without one; Chromium keeps either answer for the
++/// site until it quits, as from its own chooser.
++- (void)browserView:(RCBrowserView *)browserView
++    chooseClientCertificate:(NSArray *)identities
++                       host:(NSString *)host
++                 completion:(void (^)(NSInteger index))completion;
++/// The site's request went away (it navigated or closed) before a certificate was chosen: close
++/// the chooser without calling its completion.
++- (void)browserViewDidCancelClientCertificate:(RCBrowserView *)browserView;
+ /// The page was right-clicked; Rise shows its menu for `menu`.
+ - (void)browserView:(RCBrowserView *)browserView
+     showContextMenu:(RCContextMenu *)menu NS_SWIFT_NAME(browserView(_:showContextMenu:));
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -131,6 +131,11 @@
+ #include "mojo/public/cpp/bindings/associated_remote.h"
+ #include "mojo/public/cpp/bindings/callback_helpers.h"
+ #include "net/base/net_errors.h"
++#include "net/cert/x509_util_apple.h"
++#include "net/ssl/client_cert_identity.h"
++#include "net/ssl/ssl_cert_request_info.h"
++#include "net/ssl/ssl_private_key.h"
++#include "content/public/browser/client_certificate_delegate.h"
+ #include "third_party/blink/public/mojom/window_features/window_features.mojom.h"
+ #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
+ #include "components/tabs/public/tab_interface.h"
+@@ -890,6 +895,87 @@
+       return false;
+     }
+     return [NSApp.mainMenu performKeyEquivalent:key];
++  }
++
++  // A site asking for a certificate to identify the person: Rise has them
++  // choose among the keychain's identities that suit it, in macOS's chooser.
++  bool SelectClientCertificate(
++      const net::SSLCertRequestInfo& request,
++      net::ClientCertIdentityList& certs,
++      std::unique_ptr<content::ClientCertificateDelegate>& delegate,
++      base::OnceClosure* cancel) override {
++    RCBrowserView* view = view_;
++    id<RCBrowserViewDelegate> rise = view.delegate;
++    if (!view || certs.empty() ||
++        ![rise respondsToSelector:@selector
++               (browserView:chooseClientCertificate:host:completion:)]) {
++      return false;
++    }
++    // The keychain's identities for the certificates, in Chrome's order.
++    NSMutableArray* identities = [NSMutableArray array];
++    auto choices = std::make_shared<net::ClientCertIdentityList>();
++    for (std::unique_ptr<net::ClientCertIdentity>& cert : certs) {
++      base::apple::ScopedCFTypeRef<SecCertificateRef> certificate =
++          net::x509_util::CreateSecCertificateFromX509Certificate(
++              cert->certificate());
++      SecIdentityRef identity = nullptr;
++      if (certificate &&
++          SecIdentityCreateWithCertificate(nullptr, certificate.get(),
++                                           &identity) == errSecSuccess) {
++        [identities addObject:(__bridge_transfer id)identity];
++        choices->push_back(std::move(cert));
++      }
++    }
++    if (!identities.count) {
++      return false;
++    }
++    // Answered once: with the identity chosen, or none (Cancel), which Chrome
++    // keeps for the site until it quits, as it does from its own chooser.
++    auto answer =
++        std::make_shared<std::unique_ptr<content::ClientCertificateDelegate>>(
++            std::move(delegate));
++    [rise browserView:view
++        chooseClientCertificate:identities
++                           host:base::SysUTF8ToNSString(
++                                    request.host_and_port.host())
++                     completion:^(NSInteger index) {
++                       if (!*answer) {
++                         return;
++                       }
++                       std::unique_ptr<content::ClientCertificateDelegate>
++                           chosen_delegate = std::move(*answer);
++                       if (index < 0 ||
++                           static_cast<size_t>(index) >= choices->size()) {
++                         chosen_delegate->ContinueWithCertificate(nullptr,
++                                                                  nullptr);
++                         return;
++                       }
++                       std::unique_ptr<net::ClientCertIdentity> chosen =
++                           std::move((*choices)[index]);
++                       scoped_refptr<net::X509Certificate> certificate =
++                           chosen->certificate();
++                       net::ClientCertIdentity::SelfOwningAcquirePrivateKey(
++                           std::move(chosen),
++                           base::BindOnce(&content::ClientCertificateDelegate::
++                                              ContinueWithCertificate,
++                                          std::move(chosen_delegate),
++                                          std::move(certificate)));
++                     }];
++    // The request went away first: the chooser closes, unanswered.
++    __weak RCBrowserView* weak_view = view;
++    *cancel = base::BindOnce(
++        [](std::shared_ptr<
++               std::unique_ptr<content::ClientCertificateDelegate>> answer,
++           __weak RCBrowserView* view) {
++          answer->reset();
++          RCBrowserView* shown = view;
++          if ([shown.delegate respondsToSelector:@selector
++                              (browserViewDidCancelClientCertificate:)]) {
++            [shown.delegate browserViewDidCancelClientCertificate:shown];
++          }
++        },
++        answer, weak_view);
++    return true;
+   }
+ 
+   // An extension can request its popup without clicking Rise's toolbar button.
+--- a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc	2026-11-05 10:11:05
++++ b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc	2026-11-05 10:11:05
+@@ -83,6 +83,14 @@
+   return false;
+ }
+ 
++bool EmbedderTabHooks::SelectClientCertificate(
++    const net::SSLCertRequestInfo& request,
++    net::ClientCertIdentityList& certs,
++    std::unique_ptr<content::ClientCertificateDelegate>& delegate,
++    base::OnceClosure* cancel) {
++  return false;
++}
++
+ bool EmbedderTabHooks::ChooseDownloadPath(download::DownloadItem* download,
+                                           const base::FilePath& suggested,
+                                           DownloadPathCallback done) {
+--- a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h	2026-11-05 10:11:05
++++ b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h	2026-11-05 10:11:05
+@@ -13,6 +13,7 @@
+ #include "base/functional/callback.h"
+ #include "base/memory/scoped_refptr.h"
+ #include "base/supports_user_data.h"
++#include "net/ssl/client_cert_identity.h"
+ #include "ui/base/window_open_disposition.h"
+ #include "third_party/blink/public/mojom/choosers/file_chooser.mojom-forward.h"
+ 
+@@ -34,7 +35,12 @@
+ 
+ class GURL;
+ 
++namespace net {
++class SSLCertRequestInfo;
++}  // namespace net
++
+ namespace content {
++class ClientCertificateDelegate;
+ struct ContextMenuParams;
+ class FileSelectListener;
+ struct OpenURLParams;
+@@ -107,6 +113,15 @@
+   virtual bool ShowExtensionPopup(const std::string& extension_id,
+                                   const GURL& url,
+                                   base::OnceCallback<void(bool)> done);
++  // A site asks the tab for a certificate to identify the person, one of
++  // `certs`: whether the embedder has the person choose in its own interface,
++  // answering `delegate`, which it takes, and those of `certs` it uses.
++  // `cancel` is set to what closes its chooser if the request goes away first.
++  virtual bool SelectClientCertificate(
++      const net::SSLCertRequestInfo& request,
++      net::ClientCertIdentityList& certs,
++      std::unique_ptr<content::ClientCertificateDelegate>& delegate,
++      base::OnceClosure* cancel);
+ };
+ 
+ #endif  // CHROME_BROWSER_UI_BROWSER_WEB_CONTENTS_DELEGATE_EMBEDDER_TAB_HOOKS_H_

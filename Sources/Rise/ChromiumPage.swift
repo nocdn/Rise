@@ -188,6 +188,22 @@ enum RisePages {
         if let sheet = open.sheet { (sheet.sheetParent ?? browserView.window)?.endSheet(sheet) }
         open.completion(false, nil)
     }
+    /// A site asks for a certificate to identify the person, one of `identities` (the keychain's
+    /// that suit it): `finish` takes the index of the one chosen, or nil to go on without one.
+    var onChooseClientCertificate: (([SecIdentity], _ host: String, _ finish: @escaping (Int?) -> Void) -> Void)?
+    /// The site's request for a certificate went away before one was chosen.
+    var onClientCertificateCancelled: (() -> Void)?
+    nonisolated func browserView(_ browserView: RCBrowserView, chooseClientCertificate identities: [Any], host: String,
+                                 completion: @escaping (Int) -> Void) {
+        MainActor.assumeIsolated {
+            let identities = identities.map { ($0 as AnyObject) as! SecIdentity }
+            guard let onChooseClientCertificate, !identities.isEmpty else { completion(-1); return }
+            onChooseClientCertificate(identities, host) { completion($0 ?? -1) }
+        }
+    }
+    nonisolated func browserViewDidCancelClientCertificate(_ browserView: RCBrowserView) {
+        MainActor.assumeIsolated { onClientCertificateCancelled?() }
+    }
     /// The page asks for files: `finish` takes those chosen, or nil.
     var onChooseFiles: ((RCFileChooserMode, _ defaultPath: String, _ finish: @escaping ([URL]?) -> Void) -> Void)?
     nonisolated func browserView(_ browserView: RCBrowserView, chooseFiles mode: RCFileChooserMode, title: String, defaultPath: String,

@@ -262,6 +262,17 @@ RC_EXPORT @interface RCContextMenu : NSObject
 /// shows in the inspected page's place, under it, as Chrome does. Their device mode shows its
 /// toolbar and rulers there, around the page; otherwise the page fills it, from the origin.
 - (void)browserView:(RCBrowserView *)browserView setInspectedPageBounds:(NSRect)bounds;
+/// A site, at `host`, asks for a certificate to identify the person (TLS client authentication):
+/// `identities` are the keychain's that suit it, as SecIdentityRefs. Call `completion` once with
+/// the index of the one chosen, or -1 to go on without one; Chromium keeps either answer for the
+/// site until it quits, as from its own chooser.
+- (void)browserView:(RCBrowserView *)browserView
+    chooseClientCertificate:(NSArray *)identities
+                       host:(NSString *)host
+                 completion:(void (^)(NSInteger index))completion;
+/// The site's request went away (it navigated or closed) before a certificate was chosen: close
+/// the chooser without calling its completion.
+- (void)browserViewDidCancelClientCertificate:(RCBrowserView *)browserView;
 /// The page was right-clicked; Rise shows its menu for `menu`.
 - (void)browserView:(RCBrowserView *)browserView
     showContextMenu:(RCContextMenu *)menu NS_SWIFT_NAME(browserView(_:showContextMenu:));

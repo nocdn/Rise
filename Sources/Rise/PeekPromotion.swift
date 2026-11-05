@@ -80,6 +80,37 @@ struct PeekUndo {
         if livePeekResize, peekMotionAllowed, let card = peekCard { splitPeekLive(tab, card: card, finish: finish) } else { finish() }
     }
 
+    /// Stash Peek in New Tab: the Peek closes as one with nowhere to go back to does, fading as it
+    /// shrinks a little, while its live page carries on, without loading again, in a new tab in
+    /// the background, right above the tab it was over, as a ⌘-clicked link's tab goes.
+    /// ⌘Z puts it back in the Peek.
+    @objc func stashPeekInNewTab() {
+        guard let tab = peekTab, !isPromotingPeek else { return }
+        guard peekMotionAllowed, peekCard != nil else { stashPeek(tab, still: nil); return }
+        // The card closes showing a picture of the page, which is leaving it for the tab.
+        var finished = false
+        let finish = { [weak self, weak tab] (still: NSImage?) in
+            guard !finished else { return }
+            finished = true
+            guard let self, let tab, tab === self.peekTab else { return }
+            self.stashPeek(tab, still: still)
+        }
+        let page = tab.page
+        Task { finish(await page.snapshot(width: nil)) }
+        // A busy page mustn't hold the press up.
+        DispatchQueue.main.asyncAfter(deadline: .now()+0.12) { finish(nil) }
+    }
+    private func stashPeek(_ tab: BrowserTab, still: NSImage?) {
+        let source = tabs.first { $0.id == peekSourceTabID } ?? selectedTab
+        let opensNewTab = peekOpensNewTab, origin = peekOrigin
+        peekOrigin = nil
+        closePeek(animated: true, keepingPage: true, still: still)
+        tab.page.view.removeFromSuperview()
+        tabs.insert(tab, at: newTabIndex(opener: source?.id))
+        registerPeekUndo(.newTab, tab: tab, sourceID: source?.id, opensNewTab: opensNewTab, origin: origin)
+        update()
+    }
+
     func promotePeek(_ tab: BrowserTab, modifiers: NSEvent.ModifierFlags, snapshots: (peek: NSImage?, under: NSImage?)) {
         let source = tabs.first { $0.id == peekSourceTabID } ?? selectedTab
         let opensNewTab = peekOpensNewTab, origin = peekOrigin
