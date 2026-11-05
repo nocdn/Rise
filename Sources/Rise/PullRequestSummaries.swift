@@ -60,7 +60,8 @@ struct PullRequest: Equatable {
 
 struct PullRequestDetails: Equatable, Codable {
     enum State: String, Codable { case open, draft, merged, closed }
-    let title: String, state: State, commits: Int, changedFiles: Int, additions: Int, deletions: Int
+    var title: String, state: State
+    let commits: Int, changedFiles: Int, additions: Int, deletions: Int
     /// A GitLab merge request's latest pipeline, and whether it can be merged.
     var pipeline: Pipeline?, mergeCheck: MergeCheck?
     /// Only for writing the description; never saved.
@@ -211,10 +212,7 @@ enum GitHubAPI {
     /// limit: its hover card for the title, the state and the start of the description, and the
     /// whole diff for the lines and their split, and to describe it from.
     static func pageDetails(_ pr: PullRequest, session: URLSession = .shared) async throws -> PullRequestDetails {
-        var call = URLRequest(url: URL(string: "https://github.com/\(pr.project)/pull/\(pr.number)/hovercard")!)
-        call.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
-        call.setValue("text/html", forHTTPHeaderField: "Accept"); call.timeoutInterval = 15
-        let request = call
+        let request = hovercardRequest(pr)
         async let card = session.data(for: request)
         async let whole = diff(pr, limit: wholeDiffLimit, session: session)
         let ((data, response), diff) = try await (card, whole)
@@ -225,6 +223,21 @@ enum GitHubAPI {
         return PullRequestDetails(title: shown.title, state: shown.state, commits: 0, changedFiles: files,
                                   additions: read.lines.additions, deletions: read.lines.deletions,
                                   body: shown.body, diff: String(diff.prefix(PullRequestAPI.diffLimit)), breakdown: read.breakdown)
+    }
+    private static func hovercardRequest(_ pr: PullRequest) -> URLRequest {
+        var call = URLRequest(url: URL(string: "https://github.com/\(pr.project)/pull/\(pr.number)/hovercard")!)
+        call.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
+        call.setValue("text/html", forHTTPHeaderField: "Accept"); call.timeoutInterval = 15
+        return call
+    }
+    /// The title and state now, from GitHub's hover card, which doesn't count against the API's
+    /// hourly limit.
+    static func status(_ pr: PullRequest, session: URLSession = .shared) async throws -> (title: String, state: PullRequestDetails.State) {
+        let (data, response) = try await session.data(for: hovercardRequest(pr))
+        guard (response as? HTTPURLResponse)?.statusCode == 200, let shown = hovercard(String(decoding: data, as: UTF8.self)) else {
+            throw URLError(.badServerResponse)
+        }
+        return (shown.title, shown.state)
     }
     /// The title, state and start of the description in GitHub's hover card for a pull request.
     static func hovercard(_ html: String) -> (title: String, state: PullRequestDetails.State, body: String)? {
@@ -320,13 +333,24 @@ enum GitLabAPI {
         }
     }
 
-    /// The pipeline and merge checks, which move on by the minute, unlike the rest.
-    static func status(_ pr: PullRequest, session: URLSession = .shared) async throws -> (pipeline: Pipeline?, mergeCheck: MergeCheck?) {
+    typealias Status = (title: String, state: PullRequestDetails.State, pipeline: Pipeline?, mergeCheck: MergeCheck?)
+    /// What moves on after it's opened: its title, its state, the pipeline and merge checks.
+    static func status(_ pr: PullRequest, session: URLSession = .shared) async throws -> Status {
         try await status(pr, fetch: fetch(session))
     }
-    static func status(_ pr: PullRequest, fetch: Fetch) async throws -> (pipeline: Pipeline?, mergeCheck: MergeCheck?) {
-        guard let object = try await json(pr, path: "", fetch: fetch) as? [String: Any] else { throw URLError(.badServerResponse) }
-        return await status(pr, object: object, fetch: fetch)
+    static func status(_ pr: PullRequest, fetch: Fetch) async throws -> Status {
+        guard let object = try await json(pr, path: "", fetch: fetch) as? [String: Any], let title = object["title"] as? String else {
+            throw URLError(.badServerResponse)
+        }
+        let checks = await status(pr, object: object, fetch: fetch)
+        return (title, state(object), checks.pipeline, checks.mergeCheck)
+    }
+    private static func state(_ object: [String: Any]) -> PullRequestDetails.State {
+        switch object["state"] as? String {
+        case "merged": .merged
+        case "closed", "locked": .closed
+        default: object["draft"] as? Bool == true || object["work_in_progress"] as? Bool == true ? .draft : .open
+        }
     }
     private static func status(_ pr: PullRequest, object: [String: Any], fetch: Fetch) async -> (pipeline: Pipeline?, mergeCheck: MergeCheck?) {
         let approvals = object["state"] as? String == "opened" ? try? await json(pr, path: "/approvals", fetch: fetch) as? [String: Any] : nil
@@ -339,11 +363,7 @@ enum GitLabAPI {
         let object = try await json(pr, path: "", fetch: fetch) as? [String: Any]
         guard let object, let title = object["title"] as? String else { throw URLError(.badServerResponse) }
         let status = await status(pr, object: object, fetch: fetch)
-        let state: PullRequestDetails.State = switch object["state"] as? String {
-            case "merged": .merged
-            case "closed", "locked": .closed
-            default: object["draft"] as? Bool == true || object["work_in_progress"] as? Bool == true ? .draft : .open
-        }
+        let state = state(object)
         // The merge request itself has no line counts; they come from its changed files.
         var files = 0, additions = 0, deletions = 0, diff = "", breakdown = ChangeBreakdown()
         for page in 1...maximumFilePages {
@@ -363,12 +383,34 @@ enum GitLabAPI {
             }
             if changes.count < 100 { break }
         }
-        let changed = Int((object["changes_count"] as? String ?? "").filter(\.isNumber)) ?? files
+        var changed = Int((object["changes_count"] as? String ?? "").filter(\.isNumber)) ?? files
+        // The API leaves out the text of a file too large to show at once, as a long test, so its
+        // lines can't be counted from it. The page's own file list counts every file's lines.
+        if let counted = try? await lineCounts(pr, fetch: fetch) {
+            (files, additions, deletions, breakdown) = (counted.files, counted.additions, counted.deletions, counted.breakdown)
+            changed = counted.files
+        }
         return PullRequestDetails(title: title, state: state, commits: 0, changedFiles: max(changed, files),
                                   additions: additions, deletions: deletions, pipeline: status.pipeline, mergeCheck: status.mergeCheck,
                                   body: object["description"] as? String ?? "", diff: String(diff.prefix(PullRequestAPI.diffLimit)),
                                   // Only when every file was read, so the split adds up to the whole.
                                   breakdown: files >= changed ? breakdown : nil)
+    }
+    /// Every changed file's added and removed lines, from what the merge request's Changes page
+    /// lists them from (`diffs_metadata.json`), which counts them from the whole diff.
+    static func lineCounts(_ pr: PullRequest, fetch: Fetch) async throws -> (files: Int, additions: Int, deletions: Int, breakdown: ChangeBreakdown) {
+        guard case .gitlab(let host) = pr.forge,
+              let url = URL(string: "https://\(host)/\(pr.project)/-/merge_requests/\(pr.number)/diffs_metadata.json") else { throw URLError(.badURL) }
+        let (data, status) = try await fetch(url)
+        guard status == 200, let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let changes = object["diff_files"] as? [[String: Any]], !changes.isEmpty else { throw URLError(.badServerResponse) }
+        var additions = 0, deletions = 0, breakdown = ChangeBreakdown()
+        for change in changes {
+            guard let added = change["added_lines"] as? Int, let removed = change["removed_lines"] as? Int else { throw URLError(.cannotParseResponse) }
+            additions += added; deletions += removed
+            breakdown.add(path: change["new_path"] as? String ?? change["old_path"] as? String ?? "", additions: added, deletions: removed)
+        }
+        return (changes.count, additions, deletions, breakdown)
     }
     private static func json(_ pr: PullRequest, path: String, fetch: Fetch) async throws -> Any {
         guard case .gitlab(let host) = pr.forge,
@@ -457,8 +499,9 @@ enum PullRequestSummarizer {
     var signedInPage: (String) async -> WebPage? = { _ in nil }
     /// GitLab servers that only answered through a signed-in page: asked that way from then on.
     private var signedInHosts: Set<String> = []
-    /// A pipeline and merge checks are checked again when the card shows, at most this often.
-    static let statusRefresh: TimeInterval = 10
+    /// A title, state, pipeline and merge checks are checked again when the card shows, at most
+    /// this often, and when the request's own page loads, at most `pageRefresh` apart.
+    static let statusRefresh: TimeInterval = 10, pageRefresh: TimeInterval = 2
     private let storageURL: URL
     var onChange: ((String) -> Void)?
     /// Which service writes descriptions.
@@ -584,19 +627,45 @@ enum PullRequestSummarizer {
         load(pr, title: title, page: page)
         onChange?(key)
     }
-    /// Pipelines and merge checks change by the minute, unlike the rest of a merge request;
-    /// each time its card shows, a GitLab merge request checks them again.
-    func refreshStatus(_ pr: PullRequest) {
+    /// Its title, state, pipeline and merge checks move on after it's opened, unlike the rest; they're
+    /// checked again each time its card shows and, in the background, each time its own page loads,
+    /// as when it's reloaded to see it now. A merged one won't change again; a closed one is only
+    /// checked as its page loads, which is how one reopened would be seen.
+    func refreshStatus(_ pr: PullRequest, pageLoaded: Bool = false) {
         let key = pr.key
-        guard case .gitlab = pr.forge, tasks[key] == nil, entries[key]?.details != nil,
-              Date().timeIntervalSince(statusChecks[key] ?? .distantPast) > Self.statusRefresh else { return }
+        guard tasks[key] == nil, let known = entries[key]?.details ?? saved[key]?.details, Self.checksAgain(known.state, pageLoaded: pageLoaded),
+              Date().timeIntervalSince(statusChecks[key] ?? .distantPast) > (pageLoaded ? Self.pageRefresh : Self.statusRefresh) else { return }
         statusChecks[key] = Date()
         Task { [weak self] in
-            guard let self, let status = try? await GitLabAPI.status(pr, fetch: await self.gitLabFetch(pr)), var details = self.entries[key]?.details,
-                  details.pipeline != status.pipeline || details.mergeCheck != status.mergeCheck else { return }
-            details.pipeline = status.pipeline; details.mergeCheck = status.mergeCheck
-            self.update(key) { $0.details = details }
-            self.saved[key, default: Saved()].details = details; self.save()
+            guard let self else { return }
+            var status: GitLabAPI.Status?
+            switch pr.forge {
+            case .gitlab: status = try? await GitLabAPI.status(pr, fetch: await self.gitLabFetch(pr))
+            case .github: status = (try? await GitHubAPI.status(pr)).map { ($0.title, $0.state, nil, nil) }
+            }
+            guard let status else { return }
+            self.apply(status, to: key, checks: pr.forge != .github)
+        }
+    }
+    static func checksAgain(_ state: PullRequestDetails.State, pageLoaded: Bool) -> Bool {
+        state != .merged && (state != .closed || pageLoaded)
+    }
+    /// The status taken into what's shown and saved. A card not yet loaded this launch only has its
+    /// saved details brought up to date, so its first showing still loads the rest.
+    func apply(_ status: GitLabAPI.Status, to key: String, checks: Bool) {
+        func applied(_ old: PullRequestDetails) -> PullRequestDetails {
+            var details = old
+            details.title = status.title; details.state = status.state
+            if checks { details.pipeline = status.pipeline; details.mergeCheck = status.mergeCheck }
+            return details
+        }
+        if let shown = entries[key]?.details {
+            let details = applied(shown)
+            guard details != shown else { return }
+            update(key) { $0.details = details }
+            saved[key, default: Saved()].details = details; save()
+        } else if let old = saved[key]?.details, applied(old) != old {
+            saved[key]?.details = applied(old); save(); onChange?(key)
         }
     }
     /// Through a signed-in page for a server that needs one; otherwise by itself.

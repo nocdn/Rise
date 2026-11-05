@@ -449,6 +449,7 @@ diff --git a/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts
 +    </settings-subpage>`;
  }
 diff --git a/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.css.ts b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.css.ts
+new file mode 100644
 --- /dev/null
 +++ b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.css.ts
 @@ -0,0 +1,167 @@

@@ -805,6 +805,10 @@ import RiseCore
         }
         // The engine's full screen hands the page back where it took it from, even if its tab is no longer shown.
         tab.onFullscreenChange = { [weak self] in self?.attachVisiblePages(); self?.update() }
+        // A pull request's page loading, as when it's reloaded to see it now, brings its card up to date.
+        tab.onLoadFinished = { [weak self, weak tab] in
+            if let pr = PullRequest(url: tab?.url) { self?.tabHoverCards.summaries.refreshStatus(pr, pageLoaded: true) }
+        }
         return tab
     }
     /// A background tab loads in the list without taking over the page, as ⌘-clicked links do.
