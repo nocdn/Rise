@@ -542,14 +542,11 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         check(inspected.page.view.frame.width < wide-300, "The page makes room: \(wide) to \(inspected.page.view.frame.width)")
         if let frontend = browser.devTools.clip.subviews.first as? RCBrowserView {
             _ = await waitUntil("They inspect the page", 20) { frontend.title?.contains("inspected.html") == true }
-            let elements = """
-            const find = root => root.querySelector('#tab-elements') ||
-              [...root.querySelectorAll('*')].map(node => node.shadowRoot && find(node.shadowRoot)).find(Boolean);
-            return find(document)?.getAttribute('aria-selected')
-            """
-            _ = await waitUntil("On the Elements panel", 10) { await self.value(elements, in: frontend) as? String == "true" }
+            let selectedTab = "const UI = await import('./ui/legacy/legacy.js'); return UI.InspectorView.InspectorView.instance().tabbedPane.selectedTabId"
+            _ = await waitUntil("On the Elements panel", 10) { await self.value(selectedTab, in: frontend) as? String == "elements" }
             let picking = "const UI = await import('./ui/legacy/legacy.js'); return UI.ActionRegistry.ActionRegistry.instance().getAction('elements.toggle-element-search').toggled()"
             _ = await waitUntil("Ready to select an element", 10) { await self.value(picking, in: frontend) as? Bool == true }
+            // Their menus, close button, device mode and files: python3 scripts/test-chromium-live.py devtools.
         } else { check(false, "DevTools are in the panel") }
         // A third of the window by default, with the split's handle in the gap beside the page.
         let panel = browser.devTools, standard = panel.shadow.frame.width

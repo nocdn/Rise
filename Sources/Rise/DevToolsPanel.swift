@@ -21,6 +21,17 @@ import RiseChromium
     fileprivate(set) var tabID: UUID?
     fileprivate var frontend: NSView?
     fileprivate var close: (() -> Void)?
+    /// What DevTools ask of Rise: their menus, closing from their own close button, their
+    /// toolbox, where to lay out the page, and their downloads and file choosers.
+    fileprivate let events = DevToolsEvents()
+    /// DevTools' toolbox, a page of theirs Rise shows in the inspected page's place, under it, as
+    /// Chrome does: their device mode's toolbar and rulers, around the page.
+    fileprivate(set) var toolbox: RCBrowserView?
+    /// Where DevTools last laid out the page in their toolbox, from its top left: at the origin
+    /// it fills it, and otherwise device mode has it on its screen.
+    fileprivate(set) var inspectedBounds: NSRect?
+    /// Device mode is on: the page is on its screen, in DevTools' toolbox.
+    var isInDeviceMode: Bool { toolbox != nil && (inspectedBounds.map { $0.minX > 0.5 || $0.minY > 0.5 } ?? false) }
     var isOpen: Bool { slide.target > 0 }
     var progress: CGFloat { CGFloat(slide.value) }
     init() {
@@ -68,6 +79,18 @@ import RiseChromium
       return false;
     };
     """
+    /// Rise's DevTools are undocked, filling their panel (docked, they keep room beside themselves
+    /// for a page Chrome lays under them), but can dock, which gives them device mode. Undocked,
+    /// they'd hide their close button and offer places to dock in their menu: they keep the
+    /// button, as Chrome's docked DevTools have it, and stay where Rise shows them.
+    static let undocked = """
+    import('./ui/legacy/legacy.js').then(UI => {
+      const Dock = UI.DockController.DockController, set = Dock.prototype.setDockSide;
+      Dock.prototype.setDockSide = function (side) { set.call(this, side); this.closeButton.setVisible(true); };
+      Dock.prototype.canDock = () => false;
+      Dock.prototype.toggleDockSide = () => {};
+    });
+    """
     /// The springs the docked sidebar opens and collapses with.
     fileprivate func configureOpen() { slide.configure(response: 0.185, bounce: 0.2) }
     fileprivate func configureCollapse() { slide.configure(response: 0.17, bounce: 0.15) }
@@ -80,6 +103,28 @@ import RiseChromium
 
     func installDevTools() {
         let panel = devTools
+        panel.events.onContextMenu = { [weak self] menu, view in self?.showDevToolsMenu(menu, in: view) }
+        panel.events.onClose = { [weak self] view in
+            guard let self, view === self.devTools.frontend else { return }
+            self.closeDevTools()
+        }
+        panel.events.onPopup = { [weak self] opener, popup, url in
+            guard let self, opener === self.devTools.frontend, url.lastPathComponent == "device_mode_emulation_frame.html" else { return false }
+            self.adoptDevToolsToolbox(popup)
+            return true
+        }
+        panel.events.onInspectedBounds = { [weak self] view, bounds in
+            guard let self, view === self.devTools.frontend, self.devTools.inspectedBounds != bounds else { return }
+            self.devTools.inspectedBounds = bounds
+            self.layoutDevToolsMotion()
+        }
+        // Their screenshots and saved files go where a page's downloads do, and they choose files
+        // as a page does.
+        panel.events.onDownload = { [weak self] download, name in self?.beginChromiumDownload(download, suggestedName: name) }
+        panel.events.onChooseFiles = { [weak self] mode, path, finish in
+            guard let self else { finish(nil); return }
+            self.chooseFiles(mode, defaultPath: path, finish: finish)
+        }
         root.addSubview(panel.shadow, positioned: .above, relativeTo: pageShadow)
         root.addSubview(panel.handle, positioned: .above, relativeTo: panel.shadow)
         panel.shadow.shadow = chromeShadow(opacity: PageAppearance.shadowOpacity, blur: PageAppearance.shadowBlur, offset: PageAppearance.shadowOffset)
@@ -160,6 +205,8 @@ import RiseChromium
         frontend.pageBackgroundColor = theme.page
         // DevTools paint the page's size on it as it's resized, which Rise's slide does on every frame.
         frontend.addUserScript(DevToolsPanel.quietResizes, world: nil, mainFrameOnly: true, handlers: [])
+        frontend.addUserScript(DevToolsPanel.undocked, world: nil, mainFrameOnly: true, handlers: [])
+        frontend.delegate = panel.events
         // They open ready to pick an element in the page, unless one was picked to open them.
         if picking {
             frontend.addUserScript(DevToolsPanel.pickElement + "if (document.readyState === 'complete') pick(); else addEventListener('load', pick);",
@@ -170,9 +217,73 @@ import RiseChromium
         panel.tabID = tab.id; panel.frontend = frontend
         panel.close = { [weak frontend] in frontend?.close() }
     }
+    /// A menu DevTools show: the » past their tabs, a toolbar's menu, a node's or a request's
+    /// right-click. They give its entries, as they do Chrome, and hear which was chosen.
+    private func showDevToolsMenu(_ info: RCContextMenu, in view: RCBrowserView) {
+        defer { DispatchQueue.main.async { info.closed() } }
+        guard view.window != nil else { return }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        info.customItems.map(extensionMenuItem).forEach(menu.addItem)
+        func add(_ title: String, enabled: Bool = true, _ action: @escaping () -> Void) {
+            let item = menuItem(title, action: action); item.isEnabled = enabled
+            menu.addItem(item)
+        }
+        func group() { if let last = menu.items.last, !last.isSeparatorItem { menu.addItem(.separator()) } }
+        // A text field's, or the selection's, as after DevTools' own entries in Chrome.
+        if info.editable {
+            group()
+            add("Cut", enabled: info.editFlags.contains(.canCut)) { info.perform(.cut) }
+            add("Copy", enabled: info.editFlags.contains(.canCopy)) { info.perform(.copy) }
+            add("Paste", enabled: info.editFlags.contains(.canPaste)) { info.perform(.paste) }
+            add("Select All", enabled: info.editFlags.contains(.canSelectAll)) { info.perform(.selectAll) }
+        } else if !info.selectionText.isEmpty {
+            group()
+            add("Copy") { info.perform(.copy) }
+        }
+        guard !menu.items.isEmpty else { return }
+        let point = NSPoint(x: info.point.x, y: view.isFlipped ? info.point.y : view.bounds.height-info.point.y)
+        presentContextMenu(menu, point, view)
+    }
+
+    /// DevTools' toolbox, opened as they start: under the page, in its place.
+    private func adoptDevToolsToolbox(_ toolbox: RCBrowserView) {
+        let panel = devTools
+        panel.toolbox?.delegate = nil; panel.toolbox?.close(); panel.toolbox?.removeFromSuperview()
+        toolbox.delegate = panel.events
+        toolbox.prefersDark = NSNumber(value: theme == .dark)
+        toolbox.pageBackgroundColor = theme.page
+        toolbox.isHidden = true
+        panel.toolbox = toolbox; panel.inspectedBounds = nil
+        layoutDevToolsMotion()
+    }
+
+    /// DevTools' toolbox in the selected page's place, `body`, under it, while their tab's
+    /// DevTools show; in device mode, the page on the screen they lay out for it there.
+    func layoutDevToolsToolbox(body: NSRect?) {
+        let panel = devTools
+        guard let toolbox = panel.toolbox else { return }
+        guard let body, panel.tabID == selectedID, panel.progress > 0, let tab = selectedTab,
+              !pictureInPicture.owns(tab), !tab.isInNativeFullscreen, let container = tab.page.view.superview else {
+            toolbox.isHidden = true; return
+        }
+        let page = tab.page.view
+        if toolbox.superview !== container || container.subviews.firstIndex(of: toolbox) != container.subviews.firstIndex(of: page).map({ $0-1 }) {
+            container.addSubview(toolbox, positioned: .below, relativeTo: page)
+        }
+        toolbox.frame = body; toolbox.isHidden = false
+        if toolbox.prefersDark?.boolValue != (theme == .dark) { toolbox.prefersDark = NSNumber(value: theme == .dark) }
+        guard panel.isInDeviceMode, let screen = panel.inspectedBounds else { return }
+        page.frame = NSRect(x: body.minX+screen.minX, y: container.isFlipped ? body.minY+screen.minY : body.maxY-screen.maxY,
+                            width: screen.width, height: screen.height)
+    }
+
     /// Lets the DevTools go: their tab closed, or they slid away.
     private func tearDownDevTools() {
         let panel = devTools
+        (panel.frontend as? RCBrowserView)?.delegate = nil
+        panel.toolbox?.delegate = nil; panel.toolbox?.close(); panel.toolbox?.removeFromSuperview()
+        panel.toolbox = nil; panel.inspectedBounds = nil
         panel.close?(); panel.frontend?.removeFromSuperview()
         panel.frontend = nil; panel.close = nil; panel.tabID = nil
     }
@@ -239,5 +350,40 @@ import RiseChromium
         CATransaction.begin(); CATransaction.setDisableActions(true)
         layoutChrome(); root.layoutSubtreeIfNeeded()
         CATransaction.commit()
+    }
+}
+
+/// The DevTools page's delegate: what it asks of Rise.
+@MainActor final class DevToolsEvents: NSObject, RCBrowserViewDelegate {
+    var onContextMenu: ((RCContextMenu, RCBrowserView) -> Void)?
+    var onClose: ((RCBrowserView) -> Void)?
+    var onPopup: ((_ opener: RCBrowserView, _ popup: RCBrowserView, URL) -> Bool)?
+    var onInspectedBounds: ((RCBrowserView, NSRect) -> Void)?
+    var onDownload: ((RCDownload, _ suggestedName: String) -> URL?)?
+    var onChooseFiles: ((RCFileChooserMode, _ defaultPath: String, _ finish: @escaping ([URL]?) -> Void) -> Void)?
+    /// Their toolbox, opened as they start.
+    nonisolated func browserView(_ browserView: RCBrowserView, adoptPopup popup: RCBrowserView, url: URL, userGesture: Bool) -> Bool {
+        MainActor.assumeIsolated { onPopup?(browserView, popup, url) ?? false }
+    }
+    nonisolated func browserView(_ browserView: RCBrowserView, setInspectedPageBounds bounds: NSRect) {
+        MainActor.assumeIsolated { onInspectedBounds?(browserView, bounds) }
+    }
+    nonisolated func browserView(_ browserView: RCBrowserView, destinationFor download: RCDownload, suggestedName: String) -> URL? {
+        MainActor.assumeIsolated { onDownload?(download, suggestedName) }
+    }
+    nonisolated func browserView(_ browserView: RCBrowserView, chooseFiles mode: RCFileChooserMode, title: String, defaultPath: String,
+                                 extensions: [String], completion: @escaping ([URL]?) -> Void) {
+        MainActor.assumeIsolated {
+            guard let onChooseFiles else { completion(nil); return }
+            onChooseFiles(mode, defaultPath, completion)
+        }
+    }
+    nonisolated func browserViewDidChange(_ browserView: RCBrowserView) {}
+    nonisolated func browserView(_ browserView: RCBrowserView, showContextMenu menu: RCContextMenu) {
+        MainActor.assumeIsolated { onContextMenu?(menu, browserView) }
+    }
+    /// Their close button.
+    nonisolated func browserViewDidRequestClose(_ browserView: RCBrowserView) {
+        MainActor.assumeIsolated { onClose?(browserView) }
     }
 }

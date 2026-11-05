@@ -183,7 +183,8 @@ import RiseChromium
         return menu
     }
 
-    private func extensionMenuItem(_ entry: RCExtensionMenuItem) -> NSMenuItem {
+    /// An extension's entry, or one of the page's own (as DevTools gives), as a menu item.
+    func extensionMenuItem(_ entry: RCExtensionMenuItem) -> NSMenuItem {
         if entry.separator { return .separator() }
         let item = entry.children.isEmpty ? menuItem(entry.title, checked: entry.checked) { entry.perform() }
             : NSMenuItem(title: entry.title, action: nil, keyEquivalent: "")

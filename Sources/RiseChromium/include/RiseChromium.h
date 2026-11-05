@@ -149,7 +149,8 @@ typedef NS_ENUM(NSInteger, RCEditCommand) {
 };
 
 /// An extension's entry in the page menu (chrome.contextMenus), as Chrome would show it for the
-/// click: an extension with several is one entry, its name, holding them.
+/// click: an extension with several is one entry, its name, holding them. Also the page's own
+/// entries, as DevTools gives for its menus (see `customItems`).
 RC_EXPORT @interface RCExtensionMenuItem : NSObject
 /// Empty for a separator.
 @property (nonatomic, readonly) NSString *title;
@@ -162,7 +163,7 @@ RC_EXPORT @interface RCExtensionMenuItem : NSObject
 /// What a submenu holds; empty for an entry.
 @property (nonatomic, readonly) NSArray<RCExtensionMenuItem *> *children;
 - (instancetype)init NS_UNAVAILABLE;
-/// Tells the extension it was chosen.
+/// Tells the extension, or the page, it was chosen.
 - (void)perform;
 @end
 
@@ -198,6 +199,12 @@ RC_EXPORT @interface RCContextMenu : NSObject
 - (void)inspect;
 /// Extensions' entries for what was clicked.
 @property (nonatomic, readonly) NSArray<RCExtensionMenuItem *> *extensionItems;
+/// The page's own entries, as DevTools gives for every menu it shows (its tabs' overflow, its
+/// toolbars' menus, a node's or a request's right-click): when there are any, they're the menu,
+/// as in Chrome. Call `closed` once that menu is gone, chosen from or not.
+@property (nonatomic, readonly) NSArray<RCExtensionMenuItem *> *customItems;
+/// Tells the page its menu closed, after any entry chosen was performed.
+- (void)closed;
 @end
 
 @class RCBrowserView;
@@ -250,6 +257,11 @@ RC_EXPORT @interface RCContextMenu : NSObject
 - (void)browserView:(RCBrowserView *)browserView openInOtherApp:(NSURL *)url;
 /// The page is closing without Rise having asked, as when an extension closes its tab.
 - (void)browserViewDidRequestClose:(RCBrowserView *)browserView;
+/// DevTools for another page lay it out at `bounds`, in points from the top left of their
+/// toolbox: a page they open with window.open (device_mode_emulation_frame.html), which Rise
+/// shows in the inspected page's place, under it, as Chrome does. Their device mode shows its
+/// toolbar and rulers there, around the page; otherwise the page fills it, from the origin.
+- (void)browserView:(RCBrowserView *)browserView setInspectedPageBounds:(NSRect)bounds;
 /// The page was right-clicked; Rise shows its menu for `menu`.
 - (void)browserView:(RCBrowserView *)browserView
     showContextMenu:(RCContextMenu *)menu NS_SWIFT_NAME(browserView(_:showContextMenu:));

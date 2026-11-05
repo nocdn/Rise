@@ -612,9 +612,11 @@ import RiseCore
                     tab.page.view.frame = fullscreenContentFrame(for: tab, regular: frame)
                 }
             }
+            layoutDevToolsToolbox(body: nil)
             shapePage(around: [frames.left, frames.right])
         } else {
             if let tab = selectedTab, !pictureInPicture.owns(tab), !tab.isInNativeFullscreen { tab.page.view.frame = body }
+            layoutDevToolsToolbox(body: body)
             shapePage(around: [])
         }
         layoutSplitHandle()

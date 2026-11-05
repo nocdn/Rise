@@ -1,0 +1,262 @@
+--- a/chrome/browser/rise/RiseChromium.h
++++ b/chrome/browser/rise/RiseChromium.h
+@@ -149,7 +149,8 @@
+ };
+ 
+ /// An extension's entry in the page menu (chrome.contextMenus), as Chrome would show it for the
+-/// click: an extension with several is one entry, its name, holding them.
++/// click: an extension with several is one entry, its name, holding them. Also the page's own
++/// entries, as DevTools gives for its menus (see `customItems`).
+ RC_EXPORT @interface RCExtensionMenuItem : NSObject
+ /// Empty for a separator.
+ @property (nonatomic, readonly) NSString *title;
+@@ -162,7 +163,7 @@
+ /// What a submenu holds; empty for an entry.
+ @property (nonatomic, readonly) NSArray<RCExtensionMenuItem *> *children;
+ - (instancetype)init NS_UNAVAILABLE;
+-/// Tells the extension it was chosen.
++/// Tells the extension, or the page, it was chosen.
+ - (void)perform;
+ @end
+ 
+@@ -198,6 +199,12 @@
+ - (void)inspect;
+ /// Extensions' entries for what was clicked.
+ @property (nonatomic, readonly) NSArray<RCExtensionMenuItem *> *extensionItems;
++/// The page's own entries, as DevTools gives for every menu it shows (its tabs' overflow, its
++/// toolbars' menus, a node's or a request's right-click): when there are any, they're the menu,
++/// as in Chrome. Call `closed` once that menu is gone, chosen from or not.
++@property (nonatomic, readonly) NSArray<RCExtensionMenuItem *> *customItems;
++/// Tells the page its menu closed, after any entry chosen was performed.
++- (void)closed;
+ @end
+ 
+ @class RCBrowserView;
+@@ -250,6 +257,11 @@
+ - (void)browserView:(RCBrowserView *)browserView openInOtherApp:(NSURL *)url;
+ /// The page is closing without Rise having asked, as when an extension closes its tab.
+ - (void)browserViewDidRequestClose:(RCBrowserView *)browserView;
++/// DevTools for another page lay it out at `bounds`, in points from the top left of their
++/// toolbox: a page they open with window.open (device_mode_emulation_frame.html), which Rise
++/// shows in the inspected page's place, under it, as Chrome does. Their device mode shows its
++/// toolbar and rulers there, around the page; otherwise the page fills it, from the origin.
++- (void)browserView:(RCBrowserView *)browserView setInspectedPageBounds:(NSRect)bounds;
+ /// The page was right-clicked; Rise shows its menu for `menu`.
+ - (void)browserView:(RCBrowserView *)browserView
+     showContextMenu:(RCContextMenu *)menu NS_SWIFT_NAME(browserView(_:showContextMenu:));
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -23,6 +23,7 @@
+ #include <vector>
+ 
+ #include "base/check_is_test.h"
++#include "base/containers/flat_set.h"
+ #include "base/pickle.h"
+ #include "base/files/file_enumerator.h"
+ #include "base/strings/string_util.h"
+@@ -1347,7 +1348,17 @@
+   void ActivateWindow() override {}
+   void CloseWindow() override { Close(); }
+   void Inspect(scoped_refptr<content::DevToolsAgentHost> host) override {}
+-  void SetInspectedPageBounds(const gfx::Rect& rect) override {}
++  // Where their device mode lays out the page: in their toolbox, a page of
++  // theirs Rise shows in the page's place, under it.
++  void SetInspectedPageBounds(const gfx::Rect& rect) override {
++    RCBrowserView* frontend = frontend_;
++    if ([frontend.delegate respondsToSelector:@selector
++                           (browserView:setInspectedPageBounds:)]) {
++      [frontend.delegate browserView:frontend
++              setInspectedPageBounds:NSMakeRect(rect.x(), rect.y(),
++                                                rect.width(), rect.height())];
++    }
++  }
+   void InspectElementCompleted() override {}
+   void SetIsDocked(bool is_docked) override {}
+   void OpenInNewTab(const std::string& url) override {
+@@ -2654,14 +2665,20 @@
+ 
+ - (RCBrowserView*)makeDevToolsView {
+   // DevTools opens on the panel it last showed; Rise's opens on Elements.
++  // They're undocked, filling Rise's panel, but could dock, as Chrome's in a
++  // window of their own can: that way they have device mode, which they show
++  // in a toolbox page of theirs in the inspected page's place (see
++  // SetInspectedPageBounds).
+   if (Profile* profile = RiseProfile()) {
+-    ScopedDictPrefUpdate(profile->GetPrefs(), prefs::kDevToolsPreferences)
+-        ->Set("panel-selectedTab", "\"elements\"");
++    ScopedDictPrefUpdate preferences(profile->GetPrefs(),
++                                     prefs::kDevToolsPreferences);
++    preferences->Set("panel-selectedTab", "\"elements\"");
++    preferences->Set("currentDockState", "\"undocked\"");
+   }
+   RCBrowserView* frontend = [[RCBrowserView alloc]
+       initWithFrame:NSZeroRect
+-                URL:[NSURL URLWithString:
+-                               @"devtools://devtools/bundled/devtools_app.html"]];
++                URL:[NSURL URLWithString:@"devtools://devtools/bundled/"
++                                         @"devtools_app.html?can_dock=true"]];
+   frontend->_inspected = self;
+   _devToolsFrontend = frontend;
+   _devToolsLoaded = NO;
+@@ -3214,17 +3231,101 @@
+   ui::SimpleMenuModel model_;
+   extensions::ContextMenuMatcher matcher_;
+ };
++
++// The page's own entries for its right-click, as DevTools gives for every menu
++// it shows (its tabs' overflow, its toolbars' menus, a node's or a request's
++// right-click): Chrome shows these in place of its own entries and tells the
++// page which was chosen, then that its menu closed.
++class CustomEntries : public ui::SimpleMenuModel::Delegate {
++ public:
++  CustomEntries(content::RenderFrameHost* frame,
++                const content::ContextMenuParams& params)
++      : frame_(frame->GetGlobalId()),
++        link_followed_(params.link_followed),
++        model_(this) {
++    Add(params.custom_items, 0, &model_);
++  }
+ 
++  bool IsCommandIdChecked(int command_id) const override {
++    return checked_.contains(command_id);
++  }
++  bool IsCommandIdEnabled(int command_id) const override {
++    return enabled_.contains(command_id);
++  }
++  void ExecuteCommand(int command_id, int event_flags) override {
++    if (content::WebContents* contents = Contents()) {
++      contents->ExecuteCustomContextMenuCommand(command_id, link_followed_);
++    }
++  }
++  void Closed() {
++    if (content::WebContents* contents = Contents()) {
++      contents->NotifyContextMenuClosed(link_followed_);
++    }
++  }
++
++  ui::MenuModel* model() { return &model_; }
++
++ private:
++  content::WebContents* Contents() const {
++    content::RenderFrameHost* frame = content::RenderFrameHost::FromID(frame_);
++    return frame ? content::WebContents::FromRenderFrameHost(frame) : nullptr;
++  }
++  // As Chrome adds them, no deeper than it goes.
++  void Add(const std::vector<blink::mojom::CustomContextMenuItemPtr>& items,
++           size_t depth,
++           ui::SimpleMenuModel* menu) {
++    if (depth > 5) {
++      return;
++    }
++    for (const auto& item : items) {
++      if (item->enabled) {
++        enabled_.insert(item->action);
++      }
++      if (item->checked) {
++        checked_.insert(item->action);
++      }
++      switch (item->type) {
++        case blink::mojom::CustomContextMenuItemType::kOption:
++          menu->AddItem(item->action, item->label);
++          break;
++        case blink::mojom::CustomContextMenuItemType::kCheckableOption:
++          menu->AddCheckItem(item->action, item->label);
++          break;
++        case blink::mojom::CustomContextMenuItemType::kSeparator:
++          menu->AddSeparator(ui::NORMAL_SEPARATOR);
++          break;
++        case blink::mojom::CustomContextMenuItemType::kSubMenu: {
++          auto submenu = std::make_unique<ui::SimpleMenuModel>(this);
++          Add(item->submenu, depth + 1, submenu.get());
++          menu->AddSubMenu(item->action, item->label, submenu.get());
++          submenus_.push_back(std::move(submenu));
++          break;
++        }
++        case blink::mojom::CustomContextMenuItemType::kGroup:
++          break;
++      }
++    }
++  }
++
++  content::GlobalRenderFrameHostId frame_;
++  GURL link_followed_;
++  ui::SimpleMenuModel model_;
++  std::vector<std::unique_ptr<ui::SimpleMenuModel>> submenus_;
++  base::flat_set<int> enabled_;
++  base::flat_set<int> checked_;
++};
++
+ }  // namespace
+ 
+ @interface RCExtensionMenuItem ()
+ - (instancetype)initWithModel:(ui::MenuModel*)model
+                         index:(size_t)index
+-                      entries:(std::shared_ptr<ExtensionEntries>)entries;
++                      entries:
++                          (std::shared_ptr<ui::SimpleMenuModel::Delegate>)entries;
+ @end
+ 
+ @implementation RCExtensionMenuItem {
+-  std::shared_ptr<ExtensionEntries> _entries;
++  std::shared_ptr<ui::SimpleMenuModel::Delegate> _entries;
+   int _command;
+ }
+ @synthesize title = _title;
+@@ -3236,8 +3337,9 @@
+ 
+ // What `model` holds, as Rise's entries.
+ + (NSArray<RCExtensionMenuItem*>*)itemsOf:(ui::MenuModel*)model
+-                                  entries:
+-                                      (std::shared_ptr<ExtensionEntries>)entries {
++                                  entries:(std::shared_ptr<
++                                              ui::SimpleMenuModel::Delegate>)
++                                              entries {
+   NSMutableArray<RCExtensionMenuItem*>* items = [NSMutableArray array];
+   for (size_t i = 0; model && i < model->GetItemCount(); ++i) {
+     if (model->GetTypeAt(i) == ui::MenuModel::TYPE_SEPARATOR ||
+@@ -3252,7 +3354,8 @@
+ 
+ - (instancetype)initWithModel:(ui::MenuModel*)model
+                         index:(size_t)index
+-                      entries:(std::shared_ptr<ExtensionEntries>)entries {
++                      entries:
++                          (std::shared_ptr<ui::SimpleMenuModel::Delegate>)entries {
+   if (!(self = [super init])) {
+     return nil;
+   }
+@@ -3288,6 +3391,7 @@
+   int _x;
+   int _y;
+   std::shared_ptr<ExtensionEntries> _extensionEntries;
++  std::shared_ptr<CustomEntries> _customEntries;
+ }
+ @synthesize point = _point;
+ @synthesize linkURL = _linkURL;
+@@ -3313,6 +3417,9 @@
+   _downloadName = params.suggested_filename;
+   _view = view;
+   _extensionEntries = std::make_shared<ExtensionEntries>(frame, params);
++  if (!params.custom_items.empty()) {
++    _customEntries = std::make_shared<CustomEntries>(frame, params);
++  }
+   _x = params.x;
+   _y = params.y;
+   _point = NSMakePoint(params.x, params.y);
+@@ -3449,7 +3556,17 @@
+              ? [RCExtensionMenuItem itemsOf:_extensionEntries->model()
+                                     entries:_extensionEntries]
+              : @[];
++}
++- (NSArray<RCExtensionMenuItem*>*)customItems {
++  return _customEntries ? [RCExtensionMenuItem itemsOf:_customEntries->model()
++                                               entries:_customEntries]
++                        : @[];
+ }
++- (void)closed {
++  if (_customEntries) {
++    _customEntries->Closed();
++  }
++}
+ @end
+ 
+ @interface RCTabStrip ()
