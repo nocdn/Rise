@@ -13,6 +13,14 @@ private final class ForgeProtocol: URLProtocol {
             body = [["filename": "src/app.ts", "additions": 30, "deletions": 4], ["filename": "src/app.test.ts", "additions": 12, "deletions": 0]]
         } else if url.path.hasSuffix("/merge_requests/1") {
             body = ["title": "Add the banner", "state": "merged", "changes_count": "3"]
+        } else if url.path.hasSuffix("/merge_requests/2") {
+            body = ["title": "Add the importer", "state": "opened", "changes_count": "2"]
+        } else if url.path.hasSuffix("/merge_requests/2/diffs") {
+            // A long test's text is left out, as GitLab does for a file too large to show at once.
+            body = [["new_path": "src/index.ts", "diff": "+a\n-b\n"], ["new_path": "src/index.test.ts", "diff": "", "collapsed": true]]
+        } else if url.path.hasSuffix("/merge_requests/2/diffs_metadata.json") {
+            body = ["diff_files": [["new_path": "src/index.ts", "added_lines": 206, "removed_lines": 50],
+                                   ["new_path": "src/index.test.ts", "added_lines": 389, "removed_lines": 23]]]
         } else if url.path.hasSuffix("/merge_requests/1/diffs") {
             body = [["new_path": "Sources/Banner.swift", "diff": "+a\n+b\n-c\n"], ["new_path": "Tests/BannerTests.swift", "diff": "+t\n"],
                     ["new_path": "package-lock.json", "diff": "+x\n-y\n"]]
@@ -57,12 +65,40 @@ final class ChangeBreakdownTests: XCTestCase {
         let split = try XCTUnwrap(details.breakdown)
         XCTAssertEqual(split.code, .init(additions: 2, deletions: 1)); XCTAssertEqual(split.tests, .init(additions: 1, deletions: 0))
         XCTAssertEqual(split.generated, .init(additions: 1, deletions: 1)); XCTAssertTrue(split.mocks.isEmpty)
+        let long = try await GitLabAPI.details(try XCTUnwrap(PullRequest(url: URL(string: "https://gitlab.com/rise/app/-/merge_requests/2")!)), session: session)
+        XCTAssertEqual(long.breakdown?.tests, .init(additions: 389, deletions: 23), "A test too long for the API's diff still counts")
+        XCTAssertEqual(long.breakdown?.code, .init(additions: 206, deletions: 50))
+        XCTAssertEqual([long.additions, long.deletions], [595, 73])
 
         let pull = try XCTUnwrap(PullRequest(url: URL(string: "https://github.com/rise/app/pull/7")!))
         let github = try await GitHubAPI.breakdown(pull, changedFiles: 2, session: session)
         XCTAssertEqual(github?.code, .init(additions: 30, deletions: 4)); XCTAssertEqual(github?.tests, .init(additions: 12, deletions: 0))
         let partial = try await GitHubAPI.breakdown(pull, changedFiles: 900, session: session)
         XCTAssertNil(partial, "A split that doesn't add up to the whole isn't shown")
+    }
+
+    @MainActor func testAMergedRequestIsSeenOnTheNextLookAndThenLeftAlone() async throws {
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [ForgeProtocol.self]
+        let session = URLSession(configuration: config); defer { session.invalidateAndCancel() }
+        let request = try XCTUnwrap(PullRequest(url: URL(string: "https://gitlab.com/rise/app/-/merge_requests/1")!))
+        let status = try await GitLabAPI.status(request, session: session)
+        XCTAssertEqual(status.state, .merged); XCTAssertEqual(status.title, "Add the banner")
+
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("pr-refresh-\(UUID()).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let open = PullRequestDetails(title: "WIP banner", state: .open, commits: 1, changedFiles: 3, additions: 4, deletions: 2)
+        let details = try JSONSerialization.jsonObject(with: JSONEncoder().encode(open))
+        try JSONSerialization.data(withJSONObject: [request.key: ["details": details, "summary": "Adds a banner."]]).write(to: file)
+        let summaries = PullRequestSummaries(storageURL: file)
+        summaries.apply(status, to: request.key, checks: true)
+        XCTAssertEqual(summaries.entry(for: request).details?.state, .merged, "Its page reloaded: the card is up to date before it shows")
+        XCTAssertEqual(summaries.entry(for: request).details?.title, "Add the banner")
+        XCTAssertNil(summaries.entries[request.key], "Its first showing still loads the rest")
+
+        XCTAssertFalse(PullRequestSummaries.checksAgain(.merged, pageLoaded: true), "Merged won't change again")
+        XCTAssertFalse(PullRequestSummaries.checksAgain(.closed, pageLoaded: false))
+        XCTAssertTrue(PullRequestSummaries.checksAgain(.closed, pageLoaded: true), "A reload shows one reopened")
+        XCTAssertTrue(PullRequestSummaries.checksAgain(.open, pageLoaded: false))
     }
 
     func testADiffIsReadFileByFileWithoutCountingItsHeaders() {

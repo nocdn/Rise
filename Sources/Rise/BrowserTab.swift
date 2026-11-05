@@ -57,6 +57,9 @@ import RiseCore
     static let maximumSessionState = 2_000_000
     var onThumbnailChange: (() -> Void)?
     var onFullscreenChange: (() -> Void)?
+    /// The page finished loading, as after a reload.
+    var onLoadFinished: (() -> Void)?
+    private var wasLoading = false
     /// The engine's own fullscreen has the page in its window.
     var isInNativeFullscreen: Bool { page.isInNativeFullscreen }
     private var thumbnailCaptureInFlight = false
@@ -90,7 +93,10 @@ import RiseCore
             case .loading:
                 // Checked when the change arrives, so the end of a load the hard reload replaced doesn't clear it.
                 if !isLoading { isHardReloading = false }
+                let finished = wasLoading && !isLoading
+                wasLoading = isLoading
                 onChange?()
+                if finished { onLoadFinished?() }
             case .fullscreen: onFullscreenChange?()
             case .progress, .navigation, .audio: onChange?()
             }
