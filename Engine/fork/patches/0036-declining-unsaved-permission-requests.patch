@@ -1,0 +1,27 @@
+--- a/chrome/browser/rise/rise_bridge.mm	2026-11-06 11:05:25
++++ b/chrome/browser/rise/rise_bridge.mm	2026-11-06 11:05:25
+@@ -110,6 +110,7 @@
+ #include "chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h"
+ #include "chrome/common/rise/rise_frame.mojom.h"
+ #include "components/content_settings/core/browser/host_content_settings_map.h"
++#include "components/content_settings/core/browser/permission_settings_registry.h"
+ #include "components/download/public/common/download_item.h"
+ #include "chrome/browser/permissions/system/system_permission_settings.h"
+ #include "components/permissions/embedded_permission_prompt_flow_model.h"
+@@ -1402,8 +1403,14 @@
+         HostContentSettingsMapFactory::GetForProfile(
+             contents->GetBrowserContext());
+     for (ContentSettingsType type : types) {
+-      settings->SetContentSettingDefaultScope(origin, GURL(), type,
+-                                              CONTENT_SETTING_DEFAULT);
++      // Some requests keep no setting to reset (a site handling links, several
++      // downloads, writing files, storage, signing in), which Chrome stops for.
++      if (!content_settings::PermissionSettingsRegistry::GetInstance()->Get(
++              type)) {
++        continue;
++      }
++      settings->SetPermissionSettingDefaultScope(origin, GURL(), type,
++                                                 std::nullopt);
+     }
+   }
+ 
