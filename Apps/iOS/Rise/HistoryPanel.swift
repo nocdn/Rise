@@ -1,7 +1,21 @@
 import UIKit
 
 /// Browsing history in the toolbar's expanding surface, using the address suggestions' exact rows.
+/// Archived Tabs is the same list, of the tabs to bring back.
 final class HistoryPanel: UIView, UICollectionViewDataSource {
+    enum Content { case history, archivedTabs }
+    var content = Content.history {
+        didSet {
+            let archived = content == .archivedTabs
+            header.title = archived ? "Archived Tabs" : "History"
+            closeButton.accessibilityLabel = archived ? "Close Archived Tabs" : "Close History"
+            listMenuButton.accessibilityLabel = archived ? "Archived Tabs Options" : "History Options"
+            empty.text = archived ? "Tabs you don't use for a while are kept here" : "No browsing history yet"
+        }
+    }
+    var archivedEntries: (() -> [HistoryEntry])?
+    var removeArchived: ((Set<String>) -> Void)?
+    var reopenArchived: ((String) -> Void)?
     static let extraHorizontalInset: CGFloat = 4
     let header = PanelHeader(title: "History")
     var closeButton: AnimatedSymbolButton { header.closeButton }
@@ -47,8 +61,10 @@ final class HistoryPanel: UIView, UICollectionViewDataSource {
             return entries[index].url
         }
         swipe.commit = { [weak self] key in
+            guard let self else { return }
+            if content == .archivedTabs { removeArchived?([key]); return }
             guard let url = URL(string: key) else { return }
-            self?.source?.removeHistory(url)
+            source?.removeHistory(url)
         }
         swipe.remove = { [weak self] key, finished in self?.removeRow(key, finished: finished) }
         empty.text = "No browsing history yet"
@@ -64,7 +80,7 @@ final class HistoryPanel: UIView, UICollectionViewDataSource {
         guard !list.isRangeSelecting else { deferredReload = true; return }
         cancelSwipe()
         let offset = list.contentOffset
-        entries = (source?.history.entries ?? []).sorted {
+        entries = (content == .archivedTabs ? archivedEntries?() ?? [] : source?.history.entries ?? []).sorted {
             $0.lastVisited == $1.lastVisited ? $0.url < $1.url : $0.lastVisited > $1.lastVisited
         }
         list.backgroundView = entries.isEmpty ? empty : nil
@@ -123,7 +139,7 @@ final class HistoryPanel: UIView, UICollectionViewDataSource {
 
     private func updateListMenu() {
         let count = isSelecting ? selected.count : entries.count
-        let title = isSelecting ? (count == 0 ? "Select History" : "\(count) selected")
+        let title = isSelecting ? (count == 0 ? (content == .archivedTabs ? "Select Tabs" : "Select History") : "\(count) selected")
             : count == 1 ? "1 item" : "\(count) items"
         listMenuButton.menu = UIMenu(title: title, children: [UIDeferredMenuElement.uncached { [weak self] completion in
             completion(self?.selectionMenu() ?? [])
@@ -149,7 +165,7 @@ final class HistoryPanel: UIView, UICollectionViewDataSource {
     func deleteSelected() {
         guard isSelecting, !selected.isEmpty, !list.isRangeSelecting else { return }
         let keys = selected
-        source?.removeHistory(keys.compactMap(URL.init(string:)))
+        if content == .archivedTabs { removeArchived?(keys) } else { source?.removeHistory(keys.compactMap(URL.init(string:))) }
         selected = []
         removeRows(keys) { [weak self] in self?.setSelecting(false) }
     }
@@ -241,6 +257,7 @@ final class HistoryPanel: UIView, UICollectionViewDataSource {
             guard let self, !swipe.isActive else { return }
             click.impactOccurred(intensity: 0.5)
             if isSelecting { setSelected(entry.url, !selected.contains(entry.url)) }
+            else if content == .archivedTabs { reopenArchived?(entry.url) }
             else if let url { open?(url) }
         }
         cell.checkButton.addAction(UIAction(identifier: UIAction.Identifier("HistorySelection")) { [weak self] _ in
@@ -248,8 +265,8 @@ final class HistoryPanel: UIView, UICollectionViewDataSource {
             click.impactOccurred(intensity: 0.5)
             setSelected(entry.url, !selected.contains(entry.url))
         }, for: .primaryActionTriggered)
-        cell.row.accessibilityHint = isSelecting ? "Toggles selection" : "Open page"
-        cell.row.accessibilityCustomActions = isSelecting ? nil : [UIAccessibilityCustomAction(name: "Delete from history") { [weak self, weak cell] _ in
+        cell.row.accessibilityHint = isSelecting ? "Toggles selection" : content == .archivedTabs ? "Reopen tab" : "Open page"
+        cell.row.accessibilityCustomActions = isSelecting ? nil : [UIAccessibilityCustomAction(name: content == .archivedTabs ? "Delete from Archived Tabs" : "Delete from history") { [weak self, weak cell] _ in
             guard let self, let cell else { return false }
             return swipe.delete(cell)
         }]

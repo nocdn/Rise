@@ -334,13 +334,15 @@ final class MenuPanel: UIView {
     }
 }
 
-/// More in the tab switcher: Incognito mode's switch, then History, using the address row's
+/// More in the tab switcher: Incognito mode's switch, then History and Archived Tabs, using the address row's
 /// geometry and the usual button feedback.
 final class TabMenuPanel: UIView {
     static let incognitoRowHeight: CGFloat = 52
     let incognitoRow = SettingsToggleRow("Incognito mode", icon: nil, colour: .label, on: false)
     let historyButton = MenuTile(image: MenuIcons.history, label: "History", showsLabel: true, labelFont: SearchPanel.fieldFont)
-    static var height: CGFloat { incognitoRowHeight+MenuPanel.spacing+SearchPanel.fieldHeight }
+    let archivedButton = MenuTile(image: UIImage(systemName: "archivebox", withConfiguration: UIImage.SymbolConfiguration(pointSize: 18, weight: .medium)),
+                                  label: "Archived Tabs", showsLabel: true, labelFont: SearchPanel.fieldFont)
+    static var height: CGFloat { incognitoRowHeight+2*(MenuPanel.spacing+SearchPanel.fieldHeight) }
     override init(frame: CGRect) {
         super.init(frame: frame)
         incognitoRow.layer.cornerCurve = .continuous
@@ -348,8 +350,10 @@ final class TabMenuPanel: UIView {
         incognitoRow.clipsToBounds = true
         incognitoRow.toggle.onTintColor = SiteSettingsPanel.switchBlue
         historyButton.layer.cornerRadius = SearchPanel.cornerRadius
+        archivedButton.layer.cornerRadius = SearchPanel.cornerRadius
         addSubview(incognitoRow)
         addSubview(historyButton)
+        addSubview(archivedButton)
     }
     required init?(coder: NSCoder) { fatalError() }
     override func layoutSubviews() {
@@ -360,6 +364,8 @@ final class TabMenuPanel: UIView {
         incognitoRow.center = CGPoint(x: bounds.midX, y: Self.incognitoRowHeight/2)
         historyButton.bounds = CGRect(x: 0, y: 0, width: width, height: SearchPanel.fieldHeight)
         historyButton.center = CGPoint(x: bounds.midX, y: Self.incognitoRowHeight+MenuPanel.spacing+SearchPanel.fieldHeight/2)
+        archivedButton.bounds = historyButton.bounds
+        archivedButton.center = CGPoint(x: bounds.midX, y: historyButton.center.y+MenuPanel.spacing+SearchPanel.fieldHeight)
     }
 }
 

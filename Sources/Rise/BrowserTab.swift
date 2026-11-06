@@ -69,6 +69,7 @@ import RiseCore
     init(saved: SavedTab? = nil, page: WebPage? = nil) {
         id = saved?.id ?? UUID(); customTitle = saved?.customTitle; title = saved?.customTitle ?? saved?.title ?? "New Tab"
         pinned = saved?.pinned ?? false; developer = saved?.developer ?? false
+        use = saved?.use ?? TabUse(lastUsed: Date())
         requestedURL = saved.flatMap { URL(string: $0.url) }
         visitedAddress = BrowsingHistory.key(requestedURL)
         if let saved, let data = saved.sessionState { restoredState = (saved.url, data) }
@@ -129,7 +130,7 @@ import RiseCore
         let data = origin != nil && origin == iconOrigin ? faviconData : nil
         return SavedTab(id: id, url: savedURL?.absoluteString ?? "about:blank", title: title, pinned: pinned, developer: developer, customTitle: customTitle,
                         faviconData: data, darkFaviconData: data == nil ? nil : darkFaviconData,
-                        faviconOrigin: data == nil ? nil : origin, sessionState: sessionState, navigationHistory: history)
+                        faviconOrigin: data == nil ? nil : origin, sessionState: sessionState, navigationHistory: history, use: use)
     }
     /// The live history once the page has loaded; until then, the history it was restored with.
     var sessionState: Data? {
@@ -164,6 +165,11 @@ import RiseCore
     }
     /// When the tab was last on screen, for letting it sleep.
     var lastSeen = Date()
+    /// When it was last really used, for archiving it. Starts now for a tab with no record of that.
+    var use: TabUse
+    /// Whether the page had something part-filled when it was left, for when it's since been frozen
+    /// and can't be asked. A frozen page can't have changed since.
+    var leftWithEdits = false
     /// Whether `sleep()` can let the page go and bring it back as it was: it has loaded, holds no
     /// earlier pages, and the engine can give its history.
     var canSleep: Bool {
@@ -176,7 +182,7 @@ import RiseCore
         let old = page
         restoredState = (url.absoluteString, state); restoredHistory = navigationHistory.map { (url.absoluteString, $0) }
         requestedURL = url; hasAttemptedNavigation = false
-        backgroundPictureURL = nil; heldSinceBackgroundPicture = false
+        backgroundPictureURL = nil; heldSinceBackgroundPicture = false; leftWithEdits = false
         old.onChange = nil; old.stopLoading(); old.view.removeFromSuperview()
         page = Self.makePage()
         if isAudioMuted { page.setAudioMuted(true) }

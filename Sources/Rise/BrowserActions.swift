@@ -55,6 +55,8 @@ import RiseCore
         for saved in closedTabs.suffix(15).reversed() {
             menu.addItem(menuItem(saved.title) { [weak self] in self?.reopenClosedTab(saved.id) })
         }
+        menu.addItem(.separator())
+        menu.addItem(menuItem("Archived Tabs…") { [weak self] in self?.showArchivedTabs() })
         menu.popUp(positioning: nil, at: NSPoint(x: 12, y: sidebar.bounds.height-42), in: sidebar)
     }
     /// For now only the title's shimmer, standing in for the rename to come.

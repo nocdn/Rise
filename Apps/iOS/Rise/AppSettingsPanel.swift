@@ -2,7 +2,7 @@ import UIKit
 
 /// App-wide settings, with matching toggle rows and explanatory subtitles.
 final class AppSettingsPanel: UIView {
-    static var height: CGFloat { SiteSettingsPanel.height+120 }
+    static var height: CGFloat { SiteSettingsPanel.height+230 }
     private let header = PanelHeader(title: "Settings")
     var closeButton: AnimatedSymbolButton { header.closeButton }
     let syncRow = SettingsToggleRow("Sync tabs with iCloud", icon: MenuIcons.syncTabs, colour: .systemBlue, iconSide: 26)
@@ -14,14 +14,16 @@ final class AppSettingsPanel: UIView {
     static let currencyPink = UIColor { $0.userInterfaceStyle == .dark
         ? UIColor(displayP3Red: 232/255, green: 72/255, blue: 132/255, alpha: 1)
         : UIColor(displayP3Red: 196/255, green: 30/255, blue: 98/255, alpha: 1) }
+    let archiveRow = SettingsMenuRow("Archive unused tabs", icon: UIImage(systemName: "archivebox.fill"), colour: .systemOrange)
     let aiOptionsRow = SettingsNavigationRow("AI Options")
     let privacyRow = SettingsNavigationRow("Privacy Policy")
     private let scroll = UIScrollView()
-    var buttons: [UIButton] { [closeButton, syncRow, autoplayRow, incognitoLockRow, currencyRow.button, aiOptionsRow, privacyRow] }
+    var buttons: [UIButton] { [closeButton, syncRow, autoplayRow, incognitoLockRow, currencyRow.button, archiveRow.button, aiOptionsRow, privacyRow] }
     private let detail = UILabel()
     private let autoplayDetail = UILabel()
     private let incognitoLockDetail = UILabel()
     private let currencyDetail = UILabel()
+    private let archiveDetail = UILabel()
     var onSyncChanged: ((Bool) -> Void)?
     var onAutoplayChanged: ((Bool) -> Void)?
 
@@ -35,6 +37,10 @@ final class AppSettingsPanel: UIView {
         currencyRow.layer.cornerRadius = MenuPanel.cornerRadius
         currencyRow.clipsToBounds = true
         scroll.addSubview(currencyRow)
+        archiveRow.layer.cornerCurve = .continuous
+        archiveRow.layer.cornerRadius = MenuPanel.cornerRadius
+        archiveRow.clipsToBounds = true
+        scroll.addSubview(archiveRow)
         scroll.addSubview(aiOptionsRow)
         scroll.addSubview(privacyRow)
         for row in [syncRow, autoplayRow, incognitoLockRow] {
@@ -47,7 +53,7 @@ final class AppSettingsPanel: UIView {
         syncRow.onChanged = { [weak self] enabled in self?.onSyncChanged?(enabled) }
         autoplayRow.onChanged = { [weak self] enabled in self?.onAutoplayChanged?(enabled) }
         incognitoLockRow.onChanged = { enabled in IncognitoLock.isEnabled = enabled }
-        for label in [detail, autoplayDetail, incognitoLockDetail, currencyDetail] {
+        for label in [detail, autoplayDetail, incognitoLockDetail, currencyDetail, archiveDetail] {
             label.font = PanelHeader.font("OpenRunde-Regular", size: 13, fallbackWeight: .regular)
             label.adjustsFontForContentSizeCategory = true
             label.textColor = .secondaryLabel
@@ -61,7 +67,17 @@ final class AppSettingsPanel: UIView {
         incognitoLockRow.toggle.accessibilityHint = incognitoLockDetail.text
         currencyDetail.text = "Amounts you select in other currencies are converted to this one."
         currencyRow.button.accessibilityHint = currencyDetail.text
+        archiveDetail.text = "Search pages and duplicates go sooner, tabs you keep returning to stay longer. Reopen them from Archived Tabs in the tab view's More."
+        archiveRow.button.accessibilityHint = archiveDetail.text
         showCurrency()
+    }
+
+    /// How long a tab may go unused, with the choices of what to change it to.
+    func showTabArchiving(hours: Int, choose: @escaping (Int) -> Void) {
+        let choices = BrowserViewController.tabArchiveChoices
+        archiveRow.show(choices.first { $0.0 == hours }?.1 ?? "\(hours) hours", menu: UIMenu(options: .singleSelection, children: choices.map { choice in
+            UIAction(title: choice.1, state: choice.0 == hours ? .on : .off) { _ in choose(choice.0) }
+        }))
     }
 
     /// The person's currency, and every one there's a rate for to choose from instead.
@@ -125,7 +141,11 @@ final class AppSettingsPanel: UIView {
                                    width: width, height: SiteSettingsPanel.rowHeight)
         let currencySize = currencyDetail.sizeThatFits(CGSize(width: textWidth, height: .greatestFiniteMagnitude))
         currencyDetail.frame = CGRect(x: detail.frame.minX, y: currencyRow.frame.maxY+12, width: textWidth, height: currencySize.height)
-        aiOptionsRow.frame = CGRect(x: syncRow.frame.minX, y: currencyDetail.frame.maxY+SiteSettingsPanel.groupGap,
+        archiveRow.frame = CGRect(x: syncRow.frame.minX, y: currencyDetail.frame.maxY+SiteSettingsPanel.groupGap,
+                                  width: width, height: SiteSettingsPanel.rowHeight)
+        let archiveSize = archiveDetail.sizeThatFits(CGSize(width: textWidth, height: .greatestFiniteMagnitude))
+        archiveDetail.frame = CGRect(x: detail.frame.minX, y: archiveRow.frame.maxY+12, width: textWidth, height: archiveSize.height)
+        aiOptionsRow.frame = CGRect(x: syncRow.frame.minX, y: archiveDetail.frame.maxY+SiteSettingsPanel.groupGap,
                                     width: width, height: SettingsNavigationRow.height)
         privacyRow.frame = aiOptionsRow.frame.offsetBy(dx: 0, dy: SettingsNavigationRow.height+12)
         scroll.contentSize = CGSize(width: bounds.width, height: privacyRow.frame.maxY+12)

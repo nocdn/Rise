@@ -67,6 +67,8 @@ enum PageZoom {
             tab != nil ? PaletteCommand(id: "Close Tab", title: "Close Tab", symbol: "xmark", keywords: ["dismiss", "remove tab"]) : nil,
             !closedTabs.isEmpty ? PaletteCommand(id: "Reopen Closed Tab", title: "Reopen Closed Tab", symbol: "arrow.uturn.backward",
                                                 keywords: ["undo", "restore", "recover", "bring back"]) : nil,
+            !archivedTabs.entries.isEmpty ? PaletteCommand(id: "Archived Tabs", title: "Archived Tabs", symbol: "archivebox",
+                                                           keywords: ["unused", "auto closed", "restore", "recover", "bring back"]) : nil,
             hasPage ? PaletteCommand(id: "Duplicate Tab", title: "Duplicate Tab", symbol: "plus.square.on.square", keywords: ["copy", "clone"]) : nil,
             tab.flatMap { tab in tab.pinned || canPinTab && !splitGroups.contains { $0.contains(tab.id) }
                 ? PaletteCommand(id: "Toggle Pin", title: tab.pinned ? "Unpin Tab" : "Pin Tab", symbol: tab.pinned ? "pin.slash" : "pin",
@@ -157,6 +159,7 @@ enum PageZoom {
         switch command {
         case "Close Tab": closeSelectedTab(confirmingPinned: false)
         case "Reopen Closed Tab": reopenTab()
+        case "Archived Tabs": showArchivedTabs()
         case "Duplicate Tab": duplicateCurrentTab()
         case "Toggle Pin": pinCurrentTab()
         case "Toggle Mute": if let tab = selectedTab { tab.setAudioMuted(!tab.isAudioMuted) }

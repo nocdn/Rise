@@ -155,6 +155,11 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     #endif
     private(set) var downloadsSheet = DownloadsSheetState()
     private var historyReturnPanel: BottomBar.Panel?
+    private var lastTabArchiveCheck: Date?
+    private var isArchivingTabs = false
+    private var tabArchiveTimer: Timer?
+    private lazy var tabUseClock: TabUseClock = UserDefaults.standard.data(forKey: Self.tabUseClockKey)
+        .flatMap { try? JSONDecoder().decode(TabUseClock.self, from: $0) } ?? TabUseClock()
     /// Pinching in on the page, from its smallest zoom, folds it up and summarises it.
     private lazy var summarisePinch = UIPinchGestureRecognizer(target: self, action: #selector(pinchToSummarise(_:)))
     private var pinchFromSmallest = false
@@ -212,6 +217,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         self.tabSync?.onHistoryChange = { [weak self] in self?.bottomBar.search.refresh() }
         self.tabSync?.onTabsChange = { [weak self] in self?.applySharedTabs($0) }
         self.tabSync?.onStatusChange = { [weak self] _ in self?.updateAppSettings() }
+        self.tabSync?.onArchiveChange = { [weak self] in
+            guard let self, isPanelOpen, bottomBar.panel == .history else { return }
+            bottomBar.history.reload(preservingScrollPosition: true)
+        }
     }
 
     private func track(_ tab: BrowserTab) {
@@ -270,6 +279,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.aiOptions.ai.refresh()
         updateAIAvailability()
         bottomBar.appSettings.showAutoplay(enabled: videoPlayback.allowsAutoplay)
+        bottomBar.appSettings.showTabArchiving(hours: tabArchiveHours) { [weak self] in self?.setTabArchiveHours($0) }
         if isPrivateBrowsing {
             bottomBar.appSettings.showSync(enabled: false, message: "Private tabs are never saved or synced with iCloud.")
             bottomBar.appSettings.syncRow.isEnabled = false
@@ -716,9 +726,16 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     /// The tracking that follows whichever page is current: the strip's and the bar's colours,
     /// the pull to reload, and the bar collapsing as the page scrolls.
+    /// Tells other devices this tab is in use, so the Mac doesn't archive it. Private tabs aren't shared,
+    /// so they have nothing to tell.
+    func recordTabUse() {
+        guard UIApplication.shared.applicationState == .active, !isPrivateBrowsing else { return }
+        tabSync?.recordUse(of: currentTab.id)
+    }
     private func pageChanged(from topColor: UIColor? = nil) {
         guard allowsPeek else { return }
         if isPrivateBrowsing { lastPrivateTabID = currentTab.id } else { lastRegularTabID = currentTab.id }
+        recordTabUse()
         updatePrivacyAppearance(animated: false)
         tint.track(webView, from: topColor)
         pullToReload.attach(to: webView)
@@ -1051,6 +1068,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.search.source = addressSuggestions
         bottomBar.search.onPrivateBrowsingChanged = { [weak self] in self?.updatePrivacyAppearance(animated: true) }
         bottomBar.history.source = addressSuggestions
+        bottomBar.history.archivedEntries = { [weak self] in self?.archivedEntries ?? [] }
+        bottomBar.history.removeArchived = { [weak self] urls in self?.removeArchived(urls) }
+        bottomBar.history.reopenArchived = { [weak self] url in self?.reopenArchived(url) }
         addressSuggestions.icons.onLoad = { [weak self] in
             self?.bottomBar.search.refresh()
             self?.bottomBar.history.refreshIcons()
@@ -1166,6 +1186,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             (bottomBar.appSettings.privacyRow, { $0.showPrivacyPolicy() }),
             (menu.downloadsButton, { $0.openDownloads() }),
             (bottomBar.tabMenu.historyButton, { $0.openHistory() }),
+            (bottomBar.tabMenu.archivedButton, { $0.openArchivedTabs() }),
         ]
         for (control, action) in actions {
             control.addAction(UIAction { [weak self] _ in if let self { action(self) } }, for: .primaryActionTriggered)
@@ -1441,6 +1462,18 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         guard allowsPeek, presentedViewController == nil, !isPanelOpen || bottomBar.panel != .history else { return }
         historyReturnPanel = isPanelOpen ? bottomBar.panel : nil
         bottomBar.history.setSelecting(false, animated: false)
+        bottomBar.history.content = .history
+        bottomBar.history.reload()
+        if isPanelOpen { swapMenuPanel(to: .history) }
+        else { openPanel(.history) }
+    }
+
+    /// Archived Tabs, in History's panel with History's rows.
+    func openArchivedTabs() {
+        guard allowsPeek, presentedViewController == nil, !isPanelOpen || bottomBar.panel != .history else { return }
+        historyReturnPanel = isPanelOpen ? bottomBar.panel : nil
+        bottomBar.history.setSelecting(false, animated: false)
+        bottomBar.history.content = .archivedTabs
         bottomBar.history.reload()
         if isPanelOpen { swapMenuPanel(to: .history) }
         else { openPanel(.history) }
@@ -2512,6 +2545,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         currentTab.loadIfNeeded()
         updateAppSettings()
         tabSync?.start(tabs: sharedTabsSnapshot, learnedSearches: addressSuggestions.learner.searches, browsingHistory: addressSuggestions.history)
+        startTabArchiving()
     }
 
     @objc private func holdNewPage(_ hold: UILongPressGestureRecognizer) {
@@ -2623,5 +2657,161 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         #if DEBUG
         if webView.url == Self.homeURL { print("Rise iOS: Hacker News loaded") }
         #endif
+    }
+}
+
+// MARK: Archiving unused tabs
+
+/// Tabs that go unused move to Archived Tabs, by the same rules as on Mac and without needing one.
+/// With both, each decides for itself from the same uses, and whichever acts first just closes the
+/// tab on the other, in the same list. See docs/TabArchive.md.
+extension BrowserViewController {
+    static let tabArchiveHoursKey = "Rise.TabArchiveHours"
+    static let tabUseClockKey = "Rise.TabUseClock"
+    static let tabArchiveChoices = [(0, "Never"), (24, "After 1 day"), (48, "After 2 days"), (72, "After 3 days"), (168, "After 1 week")]
+    private static let tabArchiveInterval: TimeInterval = 15*60
+    /// How long a tab may go unused, in hours: 48 unless set (0: never).
+    var tabArchiveHours: Int {
+        UserDefaults.standard.object(forKey: Self.tabArchiveHoursKey) == nil ? TabArchiveRules.defaultHours : UserDefaults.standard.integer(forKey: Self.tabArchiveHoursKey)
+    }
+    func setTabArchiveHours(_ hours: Int) {
+        UserDefaults.standard.set(hours, forKey: Self.tabArchiveHoursKey)
+        updateAppSettings()
+    }
+
+    /// Only the app's own browser archives, not a Peek's or a test's.
+    private var archivesTabs: Bool { allowsPeek && sessionStore != nil && tabSync != nil }
+    func startTabArchiving() {
+        guard archivesTabs else { return }
+        let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tabArchiveTick() }
+        }
+        timer.tolerance = 10
+        RunLoop.main.add(timer, forMode: .common)
+        tabArchiveTimer = timer
+    }
+    /// With the app in front, its time counts and its tab is in use, and any that have gone unused
+    /// long enough are archived. The timer doesn't run in the background.
+    func tabArchiveTick(now: Date = Date()) {
+        guard archivesTabs, UIApplication.shared.applicationState == .active else { return }
+        tabUseClock.noteActive(at: now)
+        if let data = try? JSONEncoder().encode(tabUseClock) { UserDefaults.standard.set(data, forKey: Self.tabUseClockKey) }
+        recordTabUse()
+        if lastTabArchiveCheck.map({ now.timeIntervalSince($0) >= Self.tabArchiveInterval }) ?? true {
+            lastTabArchiveCheck = now
+            Task { await archiveUnusedTabs(now: now) }
+        }
+    }
+    /// The tabs due now, going by their use on every device. A tab with no shared record, such as a
+    /// local page, isn't one Archived Tabs could bring back, so it stays.
+    func tabsDueForArchiving(now: Date = Date()) -> [BrowserTab] {
+        guard tabArchiveHours > 0, let tabSync else { return [] }
+        let regular = tabs.filter { !$0.isPrivateBrowsing && !$0.isSyncPlaceholder }
+        tabSync.beginUse(of: regular.map(\.id), at: now)
+        let candidates = regular.map { tab -> TabArchiveRules.Tab in
+            let url = tab.sessionTab.url, page = tab.webView, use = tabSync.use(of: tab.id)
+            let isProtected = use == nil || tab === currentTab || tab.id == lastRegularTabID || tabSync.isKept(tab.id)
+                || page.isLoading || page.cameraCaptureState != .none || page.microphoneCaptureState != .none
+            return TabArchiveRules.Tab(id: tab.id, use: use ?? TabUse(lastUsed: now), url: url,
+                                       visits: addressSuggestions.history.visits(to: url), isProtected: isProtected)
+        }
+        let due = TabArchiveRules(limit: Double(tabArchiveHours)*3600).due(candidates, clock: tabUseClock, at: now)
+        return due.compactMap { id in regular.first { $0.id == id } }
+    }
+    /// Whether a page is playing, or holds something part-filled. One not loaded does neither.
+    private func isInUse(_ tab: BrowserTab) async -> Bool {
+        let page = tab.webView
+        guard page.url != nil else { return false }
+        if await page.requestMediaPlaybackState() == .playing { return true }
+        return await withCheckedContinuation { continuation in
+            var answered = false
+            func answer(_ edits: Bool) {
+                guard !answered else { return }
+                answered = true
+                continuation.resume(returning: edits)
+            }
+            page.callAsyncJavaScript(TabArchiveRules.editingScript, in: nil, in: .defaultClient) { result in
+                answer((try? result.get()) as? Bool ?? false)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now()+2) { answer(false) }
+        }
+    }
+    private var canArchiveNow: Bool {
+        isViewLoaded && !isSwipingToTabs && !isTabSwitcherOpen && tabSwitcher.isHidden && summarise == nil && !isPanelOpen
+            && !isVideoContextMenuOpen && !isLinkContextMenuOpen && presentedViewController == nil
+    }
+    func archiveUnusedTabs(now: Date = Date()) async {
+        guard archivesTabs, !isArchivingTabs, let tabSync else { return }
+        isArchivingTabs = true
+        defer { isArchivingTabs = false }
+        guard !tabsDueForArchiving(now: now).isEmpty else { return }
+        let started = Date()
+        guard await tabSync.refreshBeforeArchiving() else { return }
+        var ready: [BrowserTab] = []
+        for tab in tabsDueForArchiving(now: now) where await !isInUse(tab) { ready.append(tab) }
+        // Time has passed since it asked, in which a tab may have been shown or closed elsewhere.
+        let later = now.addingTimeInterval(Date().timeIntervalSince(started))
+        let due = tabsDueForArchiving(now: later)
+        guard canArchiveNow else { lastTabArchiveCheck = nil; return }
+        archive(ready.filter { tab in due.contains { $0 === tab } }, at: later)
+    }
+    /// Closes tabs, listing them in Archived Tabs. A blank tab holds nothing to come back to.
+    func archive(_ chosen: [BrowserTab], at now: Date = Date()) {
+        guard !chosen.isEmpty else { return }
+        let listed = chosen.filter { $0.sessionTab.url != nil }
+        tabSync?.archive(listed.map(\.id), at: now)
+        let current = currentTab
+        for tab in chosen {
+            tab.onPageChange = nil
+            for page in [tab.webView]+tab.previousPages+tab.forwardPages {
+                pageTranslation.cancel(page)
+                page.stopLoading(); page.navigationDelegate = nil; page.uiDelegate = nil
+            }
+        }
+        tabs.removeAll { tab in chosen.contains { $0 === tab } }
+        tabIndex = tabs.firstIndex { $0 === current } ?? 0
+        updateTabsCount()
+        saveSession()
+        guard !listed.isEmpty else { return }
+        let toast = Toast(message: listed.count == 1 ? "Archived 1 unused tab" : "Archived \(listed.count) unused tabs",
+                          glyph: UIImage(systemName: "archivebox.fill"), name: "archived-tabs")
+        toast.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(openArchivedTabsFromToast)))
+        showToast(toast)
+    }
+    @objc private func openArchivedTabsFromToast() {
+        toast?.dismiss()
+        openArchivedTabs()
+    }
+
+    /// What's archived on any device, one row to an address, the newest of them. Tabs still open
+    /// here aren't in the list, as when another device archived the page being read.
+    private var archivedTabEntries: [SharedArchivedTab] {
+        let open = Set(tabs.map(\.id))
+        var seen = Set<String>()
+        return (tabSync?.archivedTabs() ?? []).filter { !open.contains($0.id) && seen.insert($0.url).inserted }
+    }
+    var archivedEntries: [HistoryEntry] {
+        archivedTabEntries.map { HistoryEntry(url: $0.url, title: $0.title, visits: 0, lastVisited: $0.archivedAt) }
+    }
+    /// Takes every tab at these addresses out of the list, here and on every device.
+    func removeArchived(_ urls: Set<String>) {
+        for entry in tabSync?.archivedTabs() ?? [] where urls.contains(entry.url) { tabSync?.removeFromArchive(entry.id) }
+    }
+    /// Opens an archived tab at the front of the list, with its history, under a new identity as
+    /// its old one has closed for good.
+    func reopenArchived(_ url: String) {
+        guard isPanelOpen, bottomBar.panel == .history, let saved = archivedTabEntries.first(where: { $0.url == url }) else { return }
+        removeArchived([url])
+        historyReturnPanel = nil
+        let tab = BrowserTab(webView: Self.makeWebView(dataStore: regularWebsiteDataStore, videoPlayback: videoPlayback), restoring: .init(
+            id: UUID(), url: URL(string: saved.url), title: saved.title, navigationHistory: saved.navigationHistory))
+        track(tab)
+        if !tabSwitcher.isHidden { closeTabSwitcherAtOnce() } else { currentTab.snapshot = snapshotPage(); tabPreviews?.save(currentTab) }
+        tabs.insert(tab, at: 0)
+        tabIndex += 1
+        closePanel()
+        switchTab(to: 0)
+        updateTabsCount()
+        tabSync?.recordUse(of: tab.id)
     }
 }

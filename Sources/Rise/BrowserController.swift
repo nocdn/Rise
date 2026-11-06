@@ -105,6 +105,14 @@ import RiseCore
     var extensionWarmer: (id: String, page: ChromiumPage, ends: DispatchWorkItem?)?
     var selectedTab: BrowserTab? { tabs.first { $0.id == selectedID } }
     var closedTabs: [SavedTab] = []
+    /// Tabs archived for going unused, which stay until reopened, removed or too old to keep.
+    lazy var archivedTabs = ArchivedTabs(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("archived-tabs.json"))
+    let archivedTabsPopover = NSPopover()
+    lazy var tabUseClock: TabUseClock = preferences.data(forKey: Self.tabUseClockKey)
+        .flatMap { try? JSONDecoder().decode(TabUseClock.self, from: $0) } ?? TabUseClock()
+    var tabUseWork: DispatchWorkItem?
+    var lastTabArchiveCheck: Date?
+    var isArchivingTabs = false
     /// A pinned tab ⌘W was pressed in, and until when a second press closes it.
     var pinnedCloseRequest: (id: UUID, until: Date)?
     let browsingHistory: BrowsingHistory
@@ -502,6 +510,7 @@ import RiseCore
         developerAddress.onCancel = { [weak self] in self?.window?.makeFirstResponder(self?.selectedTab?.page.view) }
         siteInfoPopover.behavior = .transient
         downloadsPopover.behavior = .transient
+        archivedTabsPopover.behavior = .transient
         siteControlsPopover.behavior = .transient; siteControlsPopover.delegate = self
         let devActions: [(String, String, () -> Void)] = [
             ("link", "Copy URL", { [weak self] in self?.copyURL() }),
@@ -854,7 +863,10 @@ import RiseCore
         cancelTabSwitch()
         siteInfoPopover.close()
         siteControlsPopover.close(); permissionCoordinator.cancel()
-        if selectedID != id { selectedTab?.captureThumbnail() }
+        if selectedID != id {
+            selectedTab?.captureThumbnail()
+            selectedTab.map(noteEditsOnLeaving)
+        }
         hideLinkStatus()
         hidePalette()
         if selectedID != id {
@@ -868,6 +880,7 @@ import RiseCore
         attachVisiblePages()
         restoreSuspendedPeek()
         recentTabIDs.removeAll { $0 == id }; recentTabIDs.insert(id, at: 0)
+        scheduleTabUse(id)
         if let tab = selectedTab {
             window?.makeFirstResponder(peekTab?.page.view ?? tab.page.view)
         }
@@ -956,7 +969,8 @@ import RiseCore
         if confirmingPinned, asksBeforeClosingPinnedTab(id) { return }
         closeTab(id)
     }
-    func closeTab(_ id: UUID) {
+    /// With `remembering` off, ⌘⇧T won't bring it back, as for a tab that's archived instead.
+    func closeTab(_ id: UUID, remembering: Bool = true) {
         historySwipe.cancel()
         cancelTabSwitch()
         discardPeek(for: id)
@@ -964,7 +978,8 @@ import RiseCore
         pictureInPicture.remove(tabs[index]); tabMedia.remove(id)
         let partner = splitGroups.first { $0.contains(id) }.map { $0.leftID == id ? $0.rightID : $0.leftID }
         splitGroups.removeAll { $0.contains(id) }
-        let tab = tabs.remove(at: index); closedTabs.append(tab.saved)
+        let tab = tabs.remove(at: index)
+        if remembering { closedTabs.append(tab.saved) }
         assistantSubmissions.removeValue(forKey: id)?.cancel()
         pageFullscreen.setActive(false, in: tab.page.view)
         releaseHeldPages(of: tab)
@@ -992,10 +1007,17 @@ import RiseCore
     /// A tab picked from the recently closed list is shown. With no other tab open, it always is.
     func reopenClosedTab(_ id: UUID, shows: Bool = true) {
         guard let index = closedTabs.firstIndex(where: { $0.id == id }) else { return }
-        var saved = closedTabs.remove(at: index)
-        if tabSync?.isClosed(saved.id) == true { saved.id = UUID() }
-        let tab = configure(BrowserTab(saved: saved)); tabs.insert(tab, at: 0)
+        let tab = reopened(closedTabs.remove(at: index)); tabs.insert(tab, at: 0)
         if shows || selectedTab == nil { select(tab.id) } else { update() }
+    }
+    /// A saved tab open again, used just now, with a new identity if its old one's closure has synced.
+    func reopened(_ tab: SavedTab) -> BrowserTab {
+        var saved = tab
+        if tabSync?.isClosed(saved.id) == true { saved.id = UUID() }
+        var use = saved.use ?? TabUse(lastUsed: Date())
+        use.record(at: Date())
+        saved.use = use
+        return configure(BrowserTab(saved: saved))
     }
     @objc func goBack() { navigateHistory(.back) }
     @objc func goForward() { navigateHistory(.forward) }

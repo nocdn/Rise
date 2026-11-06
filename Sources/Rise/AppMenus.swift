@@ -105,6 +105,7 @@ import AppKit
         let recentItem = NSMenuItem(title: recentlyClosed.title, action: nil, keyEquivalent: "")
         recentItem.submenu = recentlyClosed; history.addItem(recentItem)
         menuNeedsUpdate(recentlyClosed)
+        item(history, "Archived Tabs…", #selector(BrowserController.showArchivedTabs), target: browser)
         history.addItem(.separator())
         item(history, "Clear Browsing History…", #selector(BrowserController.confirmClearBrowsingHistory), target: browser)
 

@@ -77,6 +77,12 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             PrivateTabsAudit.run(in: controller)
             return
         }
+        if ProcessInfo.processInfo.arguments.contains(TabArchiveAudit.argument) {
+            let controller = BrowserViewController(startURL: nil)
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            TabArchiveAudit.run(in: controller)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains(TabSyncAudit.argument) {
             let controller = BrowserViewController(startURL: nil)
             window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
@@ -294,6 +300,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         if let enteredBackground, Date().timeIntervalSince(enteredBackground) >= Self.reconnectAfter { browser?.tabSync?.reconnect() }
         else { browser?.tabSync?.refresh() }
         enteredBackground = nil
+        browser?.tabArchiveTick()
         browser?.setTabPreviewsActive(true)
         browser?.resumeLockedSwitcher()
     }

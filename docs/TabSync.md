@@ -14,8 +14,9 @@ transition. On Mac, use **Rise → Sync Tabs with iCloud**. Turning sync off ret
 the local tabs; turning it back on merges local changes with the shared list.
 
 The private CloudKit database in `iCloud.dev.bartosz.Rise`, zone `RiseSharedTabs`,
-stores tab IDs, HTTP(S) addresses, titles, order and each tab's Back/Forward URL/title
-entries with its current position. It also stores learned site-search
+stores tab IDs, HTTP(S) addresses, titles, order, when each tab was last used and on which
+days, whether it's archived or kept (see [Archiving unused tabs](TabArchive.md)), and each tab's
+Back/Forward URL/title entries with its current position. It also stores learned site-search
 names and URL templates in a `RiseSearches` record (`payload: Bytes`), controlled by
 the same sync switch. Address learning also syncs normalized HTTP(S) URLs, titles,
 visit counts and last-visit times, so both devices use the same learned destinations.

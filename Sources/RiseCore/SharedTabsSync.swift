@@ -42,6 +42,8 @@ import Foundation
     public var onHistoryChange: (() -> Void)?
     public var onSearchesChange: (() -> Void)?
     public var onTabsChange: (([SharedBrowserTab]) -> Void)?
+    /// Archived Tabs changed on another device. Follows `onTabsChange` for the same changes.
+    public var onArchiveChange: (() -> Void)?
     public var onStatusChange: ((Status) -> Void)?
     public private(set) var status: Status = .ready {
         didSet {
@@ -65,6 +67,7 @@ import Foundation
     private var generation = 0
     private var accountObserver: NSObjectProtocol?
     private var started = false
+    private var archiveChanged = false
 
     public init(cacheURL: URL, preferences: UserDefaults = .standard,
                 cloudAvailable: Bool = Bundle.main.object(forInfoDictionaryKey: "RiseCloudKitEnabled") as? Bool ?? false,
@@ -98,6 +101,52 @@ import Foundation
         cache.dirtyIDs.formUnion(changed)
         persist()
         if isEnabled { enqueue(changed) }
+    }
+
+    /// How far apart a tab's uses go to iCloud: much finer than any time limit needs.
+    static let useInterval: TimeInterval = 15*60
+    public func recordUse(of id: UUID, at date: Date = Date()) {
+        guard cache.ledger.recordUse(of: id, at: date, every: Self.useInterval) else { return }
+        cache.dirtyIDs.insert(id)
+        persist()
+        if isEnabled { enqueue([id]) }
+    }
+    public func use(of id: UUID) -> TabUse? { cache.ledger.records[id]?.use }
+    private func noteChanged(_ ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        cache.dirtyIDs.formUnion(ids)
+        persist()
+        if isEnabled { enqueue(ids) }
+    }
+    /// Starts the time of any of these tabs that haven't got one.
+    public func beginUse(of ids: [UUID], at date: Date = Date()) {
+        noteChanged(Set(ids.filter { cache.ledger.beginUse(of: $0, at: date) }))
+    }
+    /// The tabs every device has archived. A tab closed anywhere stays closed, so any that this
+    /// device still has open is left out by the adapters.
+    public func archivedTabs(at now: Date = Date()) -> [SharedArchivedTab] { cache.ledger.archivedTabs(at: now) }
+    public func isArchived(_ id: UUID) -> Bool { cache.ledger.records[id]?.archive?.isRemoved == false }
+    public func isRemovedFromArchive(_ id: UUID) -> Bool { cache.ledger.records[id]?.archive?.isRemoved == true }
+    public func archive(_ ids: [UUID], at date: Date = Date()) {
+        noteChanged(Set(ids.filter { cache.ledger.markArchived($0, at: date) }))
+    }
+    public func removeFromArchive(_ id: UUID) {
+        noteChanged(cache.ledger.removeFromArchive(id) ? [id] : [])
+    }
+    /// Asks other devices to leave a tab alone, for a reason only this one knows of.
+    public func setKept(_ id: UUID, _ kept: Bool) {
+        noteChanged(cache.ledger.setKept(id, kept) ? [id] : [])
+    }
+    public func isKept(_ id: UUID) -> Bool { cache.ledger.records[id]?.kept?.isKept == true }
+    /// Catches up with other devices, so a use or closure on its way isn't missed. False while
+    /// iCloud is out of reach, when it's best to wait. With no iCloud to wait for, there's nothing to miss.
+    public func refreshBeforeArchiving() async -> Bool {
+        guard isEnabled else { return true }
+        if await refreshAndWait() { return true }
+        switch status {
+        case .noAccount, .unavailable, .disabled, .accountChanged: return true
+        default: return false
+        }
     }
 
     public func captureSearches() {
@@ -313,6 +362,7 @@ import Foundation
             }
         case .fetchedRecordZoneChanges(let event):
             var changed = false
+            archiveChanged = false
             for modification in event.modifications {
                 if SharedHistorySyncState.recognizes(modification.record.recordID.recordName) { mergeHistory(modification.record) }
                 else if modification.record.recordID == searchesRecordID { mergeSearches(modification.record) }
@@ -337,6 +387,7 @@ import Foundation
                 cache.systemFields[id] = nil; cache.dirtyIDs.insert(id); enqueue([id]); changed = true
             }
             persist(); if changed { onTabsChange?(tabs) }
+            if archiveChanged { onArchiveChange?() }
         case .fetchedDatabaseChanges(let event):
             if event.deletions.contains(where: { $0.zoneID == zoneID }) {
                 cache.systemFields = [:]; cache.engineState = nil
@@ -429,7 +480,9 @@ import Foundation
         guard record.recordID.zoneID == zoneID, let id = UUID(uuidString: record.recordID.recordName),
               let data = record["payload"] as? Data, let incoming = try? JSONDecoder().decode(SharedTabRecord.self, from: data),
               incoming.tab.id == id, incoming.isValid else { return false }
+        let archive = cache.ledger.records[id]?.archive
         let changed = cache.ledger.merge(incoming)
+        if cache.ledger.records[id]?.archive != archive { archiveChanged = true }
         rememberFields(record, id: id)
         if cache.ledger.records[id] != incoming { cache.dirtyIDs.insert(id); enqueue([id]) }
         return changed

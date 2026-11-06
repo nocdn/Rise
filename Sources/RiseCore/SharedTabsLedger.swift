@@ -29,6 +29,72 @@ public struct SharedBrowserTab: Codable, Equatable, Sendable {
     }
 }
 
+/// When a tab was last really used, on any device, and which days it was used on. Merging takes the
+/// latest time and every day, so it needs no version and an older client dropping it does no harm.
+public struct TabUse: Codable, Equatable, Sendable {
+    public var lastUsed: Date
+    /// Local day numbers, oldest first, at most `maximumDays` of them.
+    public private(set) var days: [Int]
+    static let maximumDays = 10
+    public init(lastUsed: Date, days: [Int] = []) {
+        self.lastUsed = lastUsed; self.days = Array(Set(days).sorted().suffix(Self.maximumDays))
+    }
+    public static func day(of date: Date, in zone: TimeZone = .current) -> Int {
+        Int(floor((date.timeIntervalSince1970+Double(zone.secondsFromGMT(for: date)))/86400))
+    }
+    /// Notes a use, unless the last was within `interval` on the same day. Returns whether it changed.
+    @discardableResult public mutating func record(at date: Date, every interval: TimeInterval = 0) -> Bool {
+        let day = Self.day(of: date), newDay = !days.contains(day)
+        guard newDay || date.timeIntervalSince(lastUsed) >= interval else { return false }
+        self = TabUse(lastUsed: max(lastUsed, date), days: days + [day])
+        return true
+    }
+    /// The days it was used on in the 30 days up to `date`.
+    public func daysUsed(before date: Date, within span: Int = 30) -> Int {
+        let today = Self.day(of: date)
+        return days.filter { today-$0 < span }.count
+    }
+    public func merging(_ other: TabUse?) -> TabUse {
+        guard let other else { return self }
+        return TabUse(lastUsed: max(lastUsed, other.lastUsed), days: days + other.days)
+    }
+}
+
+/// That a closed tab went to Archived Tabs rather than being closed for good. It stays with the
+/// tab's record, so every device has the same list and needs nothing more to bring the tab back.
+/// Being taken out of the list, by reopening or deleting it, is final, as the tab's identity is.
+public struct TabArchiveMark: Codable, Equatable, Sendable {
+    public var archivedAt: Date
+    public var isRemoved = false
+    func merging(_ other: Self?) -> Self {
+        guard let other else { return self }
+        return TabArchiveMark(archivedAt: min(archivedAt, other.archivedAt), isRemoved: isRemoved || other.isRemoved)
+    }
+}
+
+/// A tab in Archived Tabs, as every device has it.
+public struct SharedArchivedTab: Equatable, Sendable {
+    public let id: UUID
+    public let url: String
+    public let title: String
+    public let navigationHistory: TabNavigationHistory?
+    public let use: TabUse?
+    public let archivedAt: Date
+    /// It's a list to come back to, so it holds a lot but not for ever.
+    public static let maximumCount = 500
+    public static let keptFor: TimeInterval = 90*86400
+}
+
+/// That a device wants a tab left alone for a reason others can't see, such as its being pinned there.
+struct TabKeptMark: Codable, Equatable, Sendable {
+    var isKept: Bool
+    var version: TabSyncVersion
+    func merging(_ other: Self?) -> Self {
+        guard let other else { return self }
+        return version < other.version ? other : self
+    }
+}
+
 /// On Mac, remote closures update background tabs without taking away the page being read there;
 /// on iOS, that page closes too and the first tab takes its place.
 /// The retained tab keeps its identity: the ledger's closure still wins, so retaining it locally
@@ -60,6 +126,9 @@ struct SharedTabRecord: Codable, Equatable, Sendable {
     var position: Double
     var positionVersion: TabSyncVersion
     var closedAt: TabSyncVersion?
+    var use: TabUse?
+    var archive: TabArchiveMark?
+    var kept: TabKeptMark?
     var maximumClock: Int64 { max(contentVersion.clock, positionVersion.clock, closedAt?.clock ?? 0) }
     var isValid: Bool { tab.isShareable && position.isFinite }
 
@@ -70,6 +139,9 @@ struct SharedTabRecord: Codable, Equatable, Sendable {
         else { result.tab = result.tab.preservingHistory(from: other.tab) }
         if positionVersion < other.positionVersion { result.position = other.position; result.positionVersion = other.positionVersion }
         if let closed = other.closedAt { result.closedAt = max(closedAt ?? closed, closed) }
+        result.use = use?.merging(other.use) ?? other.use
+        result.archive = archive?.merging(other.archive) ?? other.archive
+        result.kept = kept?.merging(other.kept) ?? other.kept
         return result
     }
 }
@@ -131,8 +203,57 @@ struct SharedTabsLedger: Codable, Equatable, Sendable {
         guard incoming.isValid else { return false }
         clock = max(clock, incoming.maximumClock)
         let merged = records[incoming.tab.id].map { $0.merging(incoming) } ?? incoming
-        let changed = records[incoming.tab.id] != merged
+        // These change nothing in the list of tabs, so they aren't changes for the adapters to show.
+        var previous = records[incoming.tab.id]
+        previous?.use = merged.use; previous?.archive = merged.archive; previous?.kept = merged.kept
         records[incoming.tab.id] = merged
-        return changed
+        return previous != merged
+    }
+
+    /// Starts an open tab's time, unless it has one already. Returns whether it changed.
+    mutating func beginUse(of id: UUID, at date: Date) -> Bool {
+        guard var record = records[id], record.closedAt == nil, record.use == nil else { return false }
+        record.use = TabUse(lastUsed: date); records[id] = record
+        return true
+    }
+    mutating func markArchived(_ id: UUID, at date: Date) -> Bool {
+        guard var record = records[id], record.tab.url != nil, record.archive == nil else { return false }
+        record.archive = TabArchiveMark(archivedAt: date); records[id] = record
+        return true
+    }
+    mutating func removeFromArchive(_ id: UUID) -> Bool {
+        guard var record = records[id], var mark = record.archive, !mark.isRemoved else { return false }
+        mark.isRemoved = true
+        record.archive = mark; records[id] = record
+        return true
+    }
+    /// Turning it on is always heard. Only the device that turned it on can turn it off, as another
+    /// has simply never had a reason for it.
+    mutating func setKept(_ id: UUID, _ kept: Bool) -> Bool {
+        guard var record = records[id], record.closedAt == nil else { return false }
+        if kept { guard record.kept?.isKept != true else { return false } }
+        else { guard let mark = record.kept, mark.isKept, mark.version.device == deviceID else { return false } }
+        record.kept = TabKeptMark(isKept: kept, version: nextVersion()); records[id] = record
+        return true
+    }
+    /// The tabs in Archived Tabs, newest first.
+    func archivedTabs(at now: Date) -> [SharedArchivedTab] {
+        let entries = records.values.compactMap { record -> SharedArchivedTab? in
+            guard record.closedAt != nil, let mark = record.archive, !mark.isRemoved, let url = record.tab.url,
+                  now.timeIntervalSince(mark.archivedAt) < SharedArchivedTab.keptFor else { return nil }
+            return SharedArchivedTab(id: record.tab.id, url: url, title: record.tab.title ?? url, navigationHistory: record.tab.navigationHistory,
+                                     use: record.use, archivedAt: mark.archivedAt)
+        }
+        return Array(entries.sorted { $0.archivedAt == $1.archivedAt ? $0.id.uuidString < $1.id.uuidString : $0.archivedAt > $1.archivedAt }
+            .prefix(SharedArchivedTab.maximumCount))
+    }
+
+    /// Notes a use of an open tab, at most once in `interval`, as each one goes to iCloud.
+    mutating func recordUse(of id: UUID, at date: Date, every interval: TimeInterval) -> Bool {
+        guard var record = records[id], record.closedAt == nil else { return false }
+        var use = record.use ?? TabUse(lastUsed: .distantPast)
+        guard use.record(at: date, every: interval) else { return false }
+        record.use = use; records[id] = record
+        return true
     }
 }

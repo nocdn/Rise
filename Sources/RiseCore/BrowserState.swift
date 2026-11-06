@@ -46,12 +46,15 @@ public struct SavedTab: Codable, Equatable {
     /// The engine's archived session for the tab, including its back/forward list.
     public var sessionState: Data?
     public var navigationHistory: TabNavigationHistory?
-    public init(id: UUID = UUID(), url: String, title: String, pinned: Bool = false, developer: Bool = false, customTitle: String? = nil, faviconData: Data? = nil, darkFaviconData: Data? = nil, faviconOrigin: String? = nil, sessionState: Data? = nil, navigationHistory: TabNavigationHistory? = nil) {
+    /// Nil in sessions from before uses were kept: its time starts when it's next restored.
+    public var use: TabUse?
+    public init(id: UUID = UUID(), url: String, title: String, pinned: Bool = false, developer: Bool = false, customTitle: String? = nil, faviconData: Data? = nil, darkFaviconData: Data? = nil, faviconOrigin: String? = nil, sessionState: Data? = nil, navigationHistory: TabNavigationHistory? = nil, use: TabUse? = nil) {
         self.id = id; self.url = url; self.title = title; self.pinned = pinned; self.developer = developer
         self.customTitle = customTitle
         self.faviconData = faviconData; self.darkFaviconData = darkFaviconData; self.faviconOrigin = faviconOrigin
         self.sessionState = sessionState
         self.navigationHistory = navigationHistory?.validated(for: url)
+        self.use = use
     }
 }
 public struct SplitTabGroup: Codable, Equatable {

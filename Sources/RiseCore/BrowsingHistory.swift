@@ -51,6 +51,11 @@ public final class BrowsingHistory {
         }
     }
 
+    /// How many times an address has been visited, on every device.
+    public func visits(to url: URL?) -> Int {
+        guard let key = Self.key(url) else { return 0 }
+        return entries.first { $0.url == key }?.visits ?? 0
+    }
     public static func key(_ url: URL?) -> String? {
         guard let url, var parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
               let scheme = parts.scheme?.lowercased(), ["http", "https"].contains(scheme),

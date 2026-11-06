@@ -131,6 +131,31 @@ import Foundation
             _ = visitsA.remove(account); _ = await a.refreshAndWait()
             visitsB.record(account, title: "Offline old counter"); b.setEnabled(true)
             try await require({ visitsA.entries.map(\.url) == [home.absoluteString] && visitsB.entries.map(\.url) == [home.absoluteString] }, "individual history deletion survives reconnection without removing other pages")
+            // Archiving unused tabs, with both devices doing it at once.
+            var archiveChanges = 0
+            b.onArchiveChange = { archiveChanges += 1 }
+            let three = SharedBrowserTab(id: UUID(), url: "https://example.net/three", title: "Three")
+            let four = SharedBrowserTab(id: UUID(), url: "https://example.net/four", title: "Four")
+            a.capture([two, three, four])
+            try await require({ b.tabs == [two, three, four] }, "tabs to archive reach the other client")
+            let used = Date()
+            b.recordUse(of: three.id, at: used)
+            try await require({ a.use(of: three.id)?.lastUsed == used && a.use(of: three.id)?.days.count == 1 }, "a use on one device reaches the other")
+            a.setKept(four.id, true)
+            try await require({ b.isKept(four.id) }, "a tab pinned on one device is left alone by the other")
+            a.setKept(four.id, false)
+            try await require({ !b.isKept(four.id) }, "and no longer once it's unpinned")
+            a.capture([two, four]); a.archive([three.id])
+            try await require({ b.tabs == [two, four] && b.archivedTabs().map(\.id) == [three.id] && archiveChanges > 0 }, "a tab archived on one device closes on the other and joins its list")
+            guard b.archivedTabs().first?.url == three.url, b.archivedTabs().first?.title == three.title else {
+                throw NSError(domain: "Rise.TabSyncAudit", code: 5, userInfo: [NSLocalizedDescriptionKey: "An archived tab arrived without its address"])
+            }
+            b.removeFromArchive(three.id)
+            try await require({ a.archivedTabs().isEmpty && a.isRemovedFromArchive(three.id) }, "reopening or deleting on one device takes it off the other's list")
+            b.setEnabled(false)
+            a.capture([two]); a.archive([four.id]); _ = await a.refreshAndWait()
+            b.capture([two]); b.archive([four.id]); b.setEnabled(true)
+            try await require({ a.archivedTabs().map(\.id) == [four.id] && a.archivedTabs() == b.archivedTabs() }, "both devices archiving the same tab offline leaves one entry on both")
             print("Live tabs, learned-search and visit-learning sync integration passed")
         } catch { print("FAIL: \(error.localizedDescription)"); result = 1 }
         a.onTabsChange = nil; b.onTabsChange = nil

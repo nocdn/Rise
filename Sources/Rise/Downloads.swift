@@ -276,14 +276,18 @@ private final class DownloadsListView: NSView {
         downloadsPopover.contentViewController = controller; controller.popover = downloadsPopover
         downloadsPopover.delegate = controller
         if let id { controller.focus(id) }
+        showFromSidebarCorner(downloadsPopover)
+    }
+    /// From the sidebar's downloads button.
+    func showFromSidebarCorner(_ popover: NSPopover) {
         let button = sidebar.archiveButton
         if isSidebarShown && !sidebar.isHidden && button.window != nil {
-            downloadsPopover.show(relativeTo: button.bounds, of: button, preferredEdge: button.isFlipped ? .minY : .maxY)
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: button.isFlipped ? .minY : .maxY)
         } else {
             // With the sidebar collapsed, point at the corner where downloads land on their tile.
             let side = DownloadFlight.tileSize, margin = DownloadFlight.tileMargin
             let tile = NSRect(x: margin, y: root.isFlipped ? root.bounds.height-margin-side : margin, width: side, height: side)
-            downloadsPopover.show(relativeTo: tile, of: root, preferredEdge: root.isFlipped ? .minY : .maxY)
+            popover.show(relativeTo: tile, of: root, preferredEdge: root.isFlipped ? .minY : .maxY)
         }
     }
 

@@ -38,6 +38,10 @@ import RiseChromium
                 select("gmailCategory", "Gmail preview category", "Which emails the Gmail tab's hover card shows", gmailCategory.rawValue,
                        GmailCategory.allCases.map { ($0.rawValue, $0.title) }),
                 toggle("goToOpenTabs", "Go to tabs that are already open", "Clicking a link you have open in another tab switches to that tab. ⌘-click still opens it in a new one.", openTabLinks.enabled),
+                select("tabArchiveHours", "Archive unused tabs",
+                       "Search pages and duplicates go sooner, tabs you keep returning to stay longer. Pinned and renamed tabs stay",
+                       "\(tabArchiveHours)", Self.tabArchiveChoices),
+                ["key": "showArchivedTabs", "type": "button", "label": "Archived tabs", "sublabel": archivedTabsSummary, "button": "Show"],
                 toggle("showReopenedTabs", "Switch to reopened tabs", "⌘⇧T shows the tab it brings back, rather than keeping you where you are", showsReopenedTabs),
                 toggle("hideNotificationCounts", "Hide notification counts", "Leave counts such as (3) out of tab titles and history", hidesNotificationCounts),
                 toggle("repositorySubtitle", "Show repository under merge request tabs", nil, showsRepositorySubtitle),
@@ -107,6 +111,7 @@ import RiseChromium
         case "tabSwitcherLimit": if let limit = Int(text) { setTabSwitcherLimit(limit) }
         case "gmailCategory": if let category = GmailCategory(rawValue: text) { selectGmailCategory(category) }
         case "goToOpenTabs": openTabLinks.setEnabled(on); openTabLinks.refresh(shownPages)
+        case "tabArchiveHours": if let hours = Int(text) { setTabArchiveHours(hours) }
         case "showReopenedTabs": setShowsReopenedTabs(on)
         case "hideNotificationCounts": setHidesNotificationCounts(on)
         case "repositorySubtitle": setShowsRepositorySubtitle(on)
@@ -139,6 +144,7 @@ import RiseChromium
     func runRiseSetting(_ key: String) {
         switch key {
         case "clearHistory": confirmClearBrowsingHistory()
+        case "showArchivedTabs": showArchivedTabs()
         case "aiKeyRemove": setAIKey(nil, for: aiProvider)
         case "capturesFolder":
             chooseCapturesFolder { [weak self] in

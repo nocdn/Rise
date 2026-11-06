@@ -24,7 +24,9 @@ import RiseCore
             guard let self, self.palette.isPresented else { return }
             self.palette.refresh()
         }
+        sync.onArchiveChange = { [weak self] in self?.reconcileArchivedTabs() }
         sync.start(tabs: sharedTabsSnapshot, learnedSearches: siteSearchLearner.searches, browsingHistory: browsingHistory)
+        reconcileArchivedTabs()
     }
 
     var canApplySharedTabs: Bool {
@@ -60,6 +62,8 @@ import RiseCore
             return configure(BrowserTab(saved: saved))
         } + localTabs
         for old in tabs where !next.contains(where: { $0 === old }) {
+            // Archived on another device: kept with what only this Mac has, such as its session.
+            if tabSync?.isArchived(old.id) == true { archivedTabs.add([old.saved]) }
             discardPeek(for: old.id)
             old.onChange = nil; old.onThumbnailChange = nil; old.onFullscreenChange = nil
             pictureInPicture.remove(old); tabMedia.remove(old.id)

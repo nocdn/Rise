@@ -1,4 +1,5 @@
 import AppKit
+import RiseCore
 
 /// Tabs left in the background a while let their pages go, as tabs restored at launch start
 /// out: each keeps its place, title, icon, picture and history, and loads again from that history
@@ -17,7 +18,10 @@ import AppKit
     func startTabSleep() {
         tabSleepTimer?.invalidate()
         let timer = Timer(timeInterval: 60, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.sleepIdleTabs() }
+            MainActor.assumeIsolated {
+                self?.sleepIdleTabs()
+                self?.tabUseTick()
+            }
         }
         timer.tolerance = 10
         RunLoop.main.add(timer, forMode: .common)
@@ -64,21 +68,5 @@ import AppKit
         _ = configure(tab)
         update()
     }
-    /// Whether anything on the page has been typed into, chosen or picked and not sent, or the
-    /// page's focus is in something being written.
-    static let editingScript = """
-        for (const field of document.querySelectorAll('input, textarea, select')) {
-          if (field instanceof HTMLSelectElement) {
-            if ([...field.options].some(option => option.selected !== option.defaultSelected)) return true;
-          } else if (field.type === 'checkbox' || field.type === 'radio') {
-            if (field.checked !== field.defaultChecked) return true;
-          } else if (field.type === 'file') {
-            if (field.files?.length) return true;
-          } else if (!['hidden', 'submit', 'button', 'reset', 'image'].includes(field.type)) {
-            if (field.value !== field.defaultValue) return true;
-          }
-        }
-        const focus = document.activeElement;
-        return !!focus && (focus.isContentEditable || (/^(INPUT|TEXTAREA)$/.test(focus.tagName) && focus.value !== ''));
-        """
+    static let editingScript = TabArchiveRules.editingScript
 }
