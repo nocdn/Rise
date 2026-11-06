@@ -1,0 +1,48 @@
+--- a/chrome/browser/rise/rise_bridge.mm	2026-11-06 13:05:12
++++ b/chrome/browser/rise/rise_bridge.mm	2026-11-06 13:05:12
+@@ -700,6 +700,7 @@
+ - (void)willNavigate:(RCNavigationKind)kind;
+ - (void)finishedLoad;
+ - (void)crashed;
++- (void)closeIfExtensionPopup;
+ @end
+ 
+ namespace {
+@@ -1737,6 +1738,12 @@
+           return;
+         }
+         RiseWillTerminate();
++        // An extension popup's page, open or made ahead, is Rise's own rather
++        // than a tab Chrome closes, so it goes now: none may outlive the
++        // profile Chrome destroys once its windows have closed.
++        for (RCBrowserView* view in [Views() objectEnumerator].allObjects) {
++          [view closeIfExtensionPopup];
++        }
+         for (RCTabStrip* strip in Strips()) {
+           [strip browserClosing:browser];
+         }
+@@ -2963,6 +2970,12 @@
+                            : nil);
+           },
+           completion));
++}
++
++- (void)closeIfExtensionPopup {
++  if (_popupContents) {
++    [self close];
++  }
+ }
+ 
+ - (void)close {
+@@ -2978,6 +2991,11 @@
+     [_popupContents->GetNativeView().GetNativeNSView() removeFromSuperview];
+     _popupContents->SetDelegate(nullptr);
+     _popupDelegate.reset();
++    // Quitting, no next turn comes before Chrome destroys the profile.
++    if (browser_shutdown::IsTryingToQuit()) {
++      _popupContents.reset();
++      return;
++    }
+     base::SequencedTaskRunner::GetCurrentDefault()->DeleteSoon(
+         FROM_HERE, std::move(_popupContents));
+     return;
