@@ -272,7 +272,10 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         (window?.rootViewController as? BrowserViewController)?.setTabPreviewsActive(false)
         saveSession()
     }
+    private var enteredBackground: Date?
+    private static let reconnectAfter: TimeInterval = 60
     func sceneDidEnterBackground(_ scene: UIScene) {
+        enteredBackground = Date()
         (window?.rootViewController as? BrowserViewController)?.backgroundSearch.enteredBackground()
         (window?.rootViewController as? BrowserViewController)?.lockPrivateTabs()
         saveSession()
@@ -286,7 +289,11 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         if let window { browser?.quickActions.setActive(true, in: window) }
         browser?.applyPendingChanges()
         browser?.backgroundSearch.becameActive { [weak browser] in browser?.reopenSearchAfterInactivity() }
-        browser?.tabSync?.refresh()
+        // Back after a while, sync starts over as a launch does: a phone left suspended overnight
+        // was seen not to fetch on returning, while a fresh start always does.
+        if let enteredBackground, Date().timeIntervalSince(enteredBackground) >= Self.reconnectAfter { browser?.tabSync?.reconnect() }
+        else { browser?.tabSync?.refresh() }
+        enteredBackground = nil
         browser?.setTabPreviewsActive(true)
         browser?.resumeLockedSwitcher()
     }

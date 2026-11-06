@@ -54,14 +54,16 @@ Each device keeps its current selection where possible and lazily loads restored
 background tabs. Remote updates wait while a mobile panel, Peek, summary or tab
 gesture is active.
 
-Remote closures never take away the active page on either device, including when
-the other device closes every tab. The same live page and its local session stay
-in place; background closures and inserts still apply. This uses the shared
-`SharedTabsReconciliation` policy. The retained page keeps its original identity
-and its closure tombstone, so it cannot reopen itself on the other device. A later
-sync can remove it once it is in the background; closing it locally still works.
-`-RiseTabSyncAudit` checks the iOS adapter with an isolated WebKit page, repeated
-close-all updates, session restoration and background removal after switching tabs.
+On iOS, a remote closure applies to the active page too: it closes and the first tab
+in the list takes its place, or a blank page if every tab closed. Private tabs stay.
+On Mac, remote closures never take away the active page, including when the other
+device closes every tab: the same live page and its local session stay in place,
+while background closures and inserts still apply (`SharedTabsReconciliation`). The
+retained page keeps its original identity and its closure tombstone, so it cannot
+reopen itself on the other device. A later sync can remove it once it is in the
+background; closing it locally still works.
+`-RiseTabSyncAudit` checks the iOS adapter with an isolated WebKit page, a remote
+close of the active page, repeated close-all updates and session restoration.
 
 On Mac, dormant synced and restored tabs fill missing titles and favicons through
 three bounded HTTP metadata workers. They reuse the existing light/dark favicon
@@ -109,7 +111,10 @@ order. The adapter acknowledges the list only after it has displayed it, so a
 deferred remote insert cannot be mistaken for a local close.
 
 `CKSyncEngine` persists its change tokens and pending uploads, retries failures,
-and receives CloudKit silent pushes. Foreground activation also fetches changes.
+and receives CloudKit silent pushes. Foreground activation also fetches changes; on
+iOS, after at least a minute in the background it recreates the engine from its saved
+state, as a launch does, since silent pushes aren't guaranteed and a phone suspended
+overnight was seen not to fetch on resuming.
 Offline, quota and unavailable-account states retain local tabs and show a short
 message under the mobile switch. An account switch disables syncing until the
 user explicitly enables it again; this prevents automatically uploading the old

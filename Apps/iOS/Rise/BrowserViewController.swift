@@ -289,9 +289,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         }
         isApplyingSharedTabs = true
         hasPendingSharedTabs = false
-        let previous = webView, selected = currentTab.id, previousIndex = tabIndex
+        let previous = webView, selected = currentTab.id
         let existing = Dictionary(uniqueKeysWithValues: tabs.map { ($0.id, $0) })
-        let incoming = SharedTabsReconciliation.preservingActiveTab(in: incoming, displayed: sharedTabsSnapshot, activeID: selected)
         var next = incoming.map { saved -> BrowserTab in
             if let tab = existing[saved.id], tab.sessionTab.url?.absoluteString == saved.url,
                saved.navigationHistory.map({ tab.navigationHistory?.hasSameRoute(as: $0) == true }) ?? true {
@@ -316,7 +315,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             }
         }
         tabs = next
-        tabIndex = tabs.firstIndex { $0.id == selected } ?? min(previousIndex, tabs.count-1)
+        // The tab being read closed on another device closes here too, going to the front of the list.
+        tabIndex = tabs.firstIndex { $0.id == selected } ?? 0
         if previous !== webView { install(webView); previous.removeFromSuperview() }
         updateTabsCount()
         tabSync?.acknowledge(sharedTabsSnapshot)

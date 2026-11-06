@@ -184,6 +184,13 @@ import Foundation
         Task { [weak self] in _ = await self?.fetchAndSend(using: engine) }
     }
 
+    /// Starts over with a new engine from the saved state, as a launch does, in place of one that
+    /// may have gone stale while the app was suspended.
+    public func reconnect() {
+        guard started, isEnabled else { return }
+        connect()
+    }
+
     /// Keep a silent notification's background completion pending until its work finishes.
     public func refreshAndWait() async -> Bool {
         guard isEnabled else { return false }

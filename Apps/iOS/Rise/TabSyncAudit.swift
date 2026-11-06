@@ -50,29 +50,25 @@ import WebKit
             try await Task.sleep(for: .milliseconds(25))
         }
         try check("real-webkit-page-is-loaded", webView.title == "Page being read")
-        let added = SharedBrowserTab(id: UUID(), url: nil, title: "Remote insert")
-        sync.capture([added]); sync.onTabsChange?([added])
-        try check("background-removal-and-insertion-still-apply", browser.tabs.map(\.id) == [added.id, active.id])
-        try check("remote-close-keeps-the-same-active-tab-and-webview", browser.tabs[browser.tabIndex] === page && browser.webView === webView)
-        let marker = try await webView.evaluateJavaScript("window.syncMarker") as? Int
-        try check("remote-close-does-not-reload-the-active-page", marker == 42)
-        for _ in 0..<3 { sync.capture([]); sync.onTabsChange?([]) }
-        try check("remote-close-all-leaves-only-the-active-page", browser.tabs.map(\.id) == [active.id])
-        try check("repeated-sync-never-reshare-the-retained-tab", sync.tabs.isEmpty && sync.isClosed(active.id))
+        // The tab being read closes on the other device: it closes here, for the front of the list.
+        let front = SharedBrowserTab(id: UUID(), url: nil, title: "Front"), back = SharedBrowserTab(id: UUID(), url: nil, title: "Back")
+        sync.capture([front, back]); sync.onTabsChange?([front, back])
+        try check("remote-close-of-the-active-tab-closes-it-here", browser.tabs.map(\.id) == [front.id, back.id] && sync.isClosed(active.id))
+        try check("remote-close-goes-to-the-first-tab", browser.tabIndex == 0 && browser.tabs[browser.tabIndex].id == front.id && browser.tabs[0] !== page)
+        try check("remote-close-replaces-the-page-shown", browser.webView !== webView && webView.superview == nil && browser.webView.superview != nil)
         browser.saveSession(flush: true)
-        try check("session-persists-the-retained-page-and-selection", store.load()?.tabs.map(\.id) == [active.id] && store.load()?.selectedTabID == active.id)
+        try check("session-drops-the-closed-tab", store.load()?.tabs.map(\.id) == [front.id, back.id] && store.load()?.selectedTabID == front.id)
+        // A background closure and an insert leave the tab being read alone, wherever it moves to.
+        let shown = browser.webView, inserted = SharedBrowserTab(id: UUID(), url: nil, title: "Inserted")
+        sync.capture([inserted, front]); sync.onTabsChange?([inserted, front])
+        try check("background-removal-and-insertion-still-apply", browser.tabs.map(\.id) == [inserted.id, front.id] && sync.isClosed(back.id))
+        try check("background-changes-keep-the-tab-being-read", browser.tabs[browser.tabIndex].id == front.id && browser.webView === shown)
+        for _ in 0..<3 { sync.capture([]); sync.onTabsChange?([]) }
+        try check("remote-close-all-leaves-a-blank-page", browser.tabs.count == 1 && browser.tabs[0].isSyncPlaceholder && browser.tabIndex == 0)
+        try check("repeated-sync-never-reshares-closed-tabs", sync.tabs.isEmpty && sync.isClosed(front.id))
+        browser.saveSession(flush: true)
         let restoredSync = makeSync(), restored = makeBrowser(restoredSync)
-        try check("relaunch-keeps-the-active-page", restored.tabs.map(\.id) == [active.id] && restored.tabs[restored.tabIndex].id == active.id)
-        try check("relaunch-keeps-the-remote-tombstone", restoredSync.tabs.isEmpty && restoredSync.isClosed(active.id))
-        let next = SharedBrowserTab(id: UUID(), url: nil, title: "Another new tab")
-        restoredSync.capture([next]); restoredSync.onTabsChange?([next])
-        let index = restored.tabs.firstIndex { $0.id == next.id }!
-        restored.showTabSwitcher()
-        try await Task.sleep(for: .milliseconds(400))
-        restored.selectTab(index)
-        try await Task.sleep(for: .milliseconds(450))
-        restoredSync.onTabsChange?([next])
-        try check("a-previously-active-closed-page-can-be-removed-in-background", restored.tabs.map(\.id) == [next.id])
+        try check("relaunch-keeps-the-remote-tombstones", restoredSync.tabs.isEmpty && restoredSync.isClosed(active.id) && !restored.tabs.contains { $0.id == active.id })
         restored.saveSession(flush: true)
     }
 }

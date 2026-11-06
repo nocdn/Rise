@@ -29,7 +29,8 @@ public struct SharedBrowserTab: Codable, Equatable, Sendable {
     }
 }
 
-/// Remote closures update background tabs without taking away the page being read on this device.
+/// On Mac, remote closures update background tabs without taking away the page being read there;
+/// on iOS, that page closes too and the first tab takes its place.
 /// The retained tab keeps its identity: the ledger's closure still wins, so retaining it locally
 /// never reopens it on the other device. A later sync may remove it once it is in the background.
 public enum SharedTabsReconciliation {
