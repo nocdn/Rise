@@ -238,6 +238,8 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         <p style='font-size:20px'>Lives at <span id=address>100 Newland Park Drive, York</span>.</p>
         <p style='font-size:20px'><a id=linked-address href='https://example.com/letting'>100 Newland Park Drive, York</a></p>
         <p><a id=pic href='https://example.com/pictured'><img id=img src=picture.png width=120></a></p>
+        <p><img id=gone src=missing.png width=120 height=40></p>
+        <p><video id=clip src=clip.mp4 width=120 height=68 muted preload=auto></video></p>
         <div id=field contenteditable spellcheck=true style='font-size:20px;padding:4px;border:1px solid'>Ths is wrng</div>
         <div id=blank style='height:120px'></div>
         <input id=file type=file>
@@ -264,6 +266,31 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         pasteboard.clearContents()
         choose("Copy Image", in: image)
         _ = await waitUntil("Copy Image copies its picture") { pasteboard.canReadObject(forClasses: [NSImage.self], options: nil) }
+
+        // AirDrop Image and Video send the file itself, from a temporary folder, not through Downloads.
+        var airDropped: URL?
+        browser.airDropFile = { airDropped = $0 }
+        let downloadsBefore = browser.downloads.items.count
+        check(titles(image).contains("AirDrop") && titles(image).last(where: { $0.hasPrefix("AirDrop") }) == "AirDrop Image"
+              && image?.items.first { $0.title == "AirDrop Image" }?.image === AirDropMenuItem.icon, "A linked image has its own AirDrop: \(titles(image))")
+        choose("AirDrop Image", in: image)
+        _ = await waitUntil("AirDrop Image gets the picture") { airDropped != nil }
+        check(airDropped.flatMap { try? Data(contentsOf: $0) } == (try? Data(contentsOf: folder.appendingPathComponent("picture.png"))) && airDropped?.lastPathComponent == "picture.png"
+              && airDropped?.path.contains(MediaAirDrop.folder.lastPathComponent) == true && browser.downloads.items.count == downloadsBefore,
+              "AirDrop Image sends the picture's own file, kept out of Downloads: \(airDropped?.path ?? "none")")
+        airDropped = nil
+        let clipMenu = await rightClick(center("#clip"), in: menus.page, "a video")
+        check(titles(clipMenu).contains("AirDrop Video"), "A video's menu: \(titles(clipMenu))")
+        choose("AirDrop Video", in: clipMenu)
+        _ = await waitUntil("AirDrop Video gets the video") { airDropped != nil }
+        check(airDropped.flatMap { try? Data(contentsOf: $0) } == (try? Data(contentsOf: folder.appendingPathComponent("clip.mp4"))) && browser.downloads.items.count == downloadsBefore,
+              "AirDrop Video sends the video's own file: \(airDropped?.path ?? "none")")
+        airDropped = nil
+        let gone = await rightClick(center("#gone"), in: menus.page, "a missing image")
+        choose("AirDrop Image", in: gone)
+        let said = await waitUntil("A missing image says it couldn't be got") { self.browser.selectedBar.notice?.text.hasPrefix("Couldn’t Get Image") == true }
+        check(said && airDropped == nil && browser.downloads.items.count == downloadsBefore, "It doesn't open AirDrop on nothing")
+        browser.airDropFile = nil
 
         // Selected text: Look Up, a search and Copy.
         _ = await value("const range = document.createRange(); range.selectNodeContents(document.querySelector('#text').firstChild);" +

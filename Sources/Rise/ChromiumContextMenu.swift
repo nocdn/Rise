@@ -133,6 +133,14 @@ import RiseChromium
             }
             add("Copy \(noun) Address") { copy(source) }
             if info.mediaKind == .image { add("Copy Image", enabled: info.hasImageContents) { info.copyImage() } }
+            // The file itself rather than its address, which a link's own AirDrop above would send.
+            if AirDropMenuItem.canSend([source]) {
+                let video = info.mediaKind == .video
+                menu.addItem(AirDropMenuItem.item(title: "AirDrop \(noun)") { [weak self, weak page] in
+                    guard let page else { return }
+                    self?.airDropMedia(source, named: noun, video: video, from: info, in: page)
+                })
+            }
         }
         let selection = info.selectionText.trimmingCharacters(in: .whitespacesAndNewlines)
         // A link's own text isn't a selection to look up, as on WebKit.

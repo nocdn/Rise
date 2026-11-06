@@ -232,6 +232,9 @@ import RiseCore
     var downloadFlight: DownloadFlight?
     /// Downloads save here without asking; tests point it elsewhere.
     var downloadsFolder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+    /// The image or video being got for AirDrop, and, for checks, what's sent in place of AirDrop's panel.
+    var mediaAirDrop: MediaAirDrop?
+    var airDropFile: ((URL) -> Void)?
     lazy var downloads: DownloadList = {
         let list = DownloadList(storeURL: sessionURL.deletingLastPathComponent().appendingPathComponent("downloads.json"))
         list.onChange = { [weak self] in self?.reloadDownloadsList?(); self?.updateDownloadsButton() }

@@ -35,14 +35,22 @@ import AppKit
     /// The AirDrop item for `items`, or nil when AirDrop can't take them, as when it's off.
     /// `window` is the one AirDrop's panel opens on.
     static func make(for items: [Any], in window: @escaping () -> NSWindow?) -> NSMenuItem? {
-        guard let service = NSSharingService(named: .sendViaAirDrop), service.canPerform(withItems: items) else { return nil }
-        let item = NSMenuItem(title: service.title, action: #selector(MenuAction.invoke), keyEquivalent: "")
-        let handler = MenuAction {
-            let source = SourceWindow(window); service.delegate = source
-            // Kept until AirDrop finishes, which the service doesn't do for its delegate.
-            sending = (service, source)
-            service.perform(withItems: items)
-        }
+        guard canSend(items) else { return nil }
+        return item(title: "AirDrop") { send(items, in: window) }
+    }
+    static func canSend(_ items: [Any]) -> Bool { NSSharingService(named: .sendViaAirDrop)?.canPerform(withItems: items) == true }
+    /// Opens AirDrop's panel on `items`, over `window`.
+    static func send(_ items: [Any], in window: @escaping () -> NSWindow?) {
+        guard let service = NSSharingService(named: .sendViaAirDrop) else { return }
+        let source = SourceWindow(window); service.delegate = source
+        // Kept until AirDrop finishes, which the service doesn't do for its delegate.
+        sending = (service, source)
+        service.perform(withItems: items)
+    }
+    /// A menu item with AirDrop's icon.
+    static func item(title: String, action: @escaping () -> Void) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: #selector(MenuAction.invoke), keyEquivalent: "")
+        let handler = MenuAction(action)
         item.target = handler; item.representedObject = handler
         item.image = icon
         // macOS 27 hides menu items' images unless they ask to be seen, as Share's own does.

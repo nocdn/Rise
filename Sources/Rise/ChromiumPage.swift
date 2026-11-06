@@ -85,6 +85,8 @@ enum RisePages {
     var onOpenInPeek: ((URL) -> Void)?
     /// The page wants to save a file; where to, or nil not to.
     var onDownload: ((RCDownload, _ suggestedName: String) -> URL?)?
+    /// Takes the next download instead of `onDownload`, once.
+    var nextDownload: ((RCDownload, _ suggestedName: String) -> URL?)?
     /// The page asks for these; `decide` takes whether they're allowed.
     var onPermissionRequest: ((_ capabilities: [SiteCapability], _ origin: String?, _ decide: @escaping (Bool) -> Void) -> Void)?
     var onPermissionWithdrawn: (() -> Void)?
@@ -225,7 +227,10 @@ enum RisePages {
         }
     }
     nonisolated func browserView(_ browserView: RCBrowserView, destinationFor download: RCDownload, suggestedName: String) -> URL? {
-        MainActor.assumeIsolated { onDownload?(download, suggestedName) }
+        MainActor.assumeIsolated {
+            if let next = nextDownload { nextDownload = nil; return next(download, suggestedName) }
+            return onDownload?(download, suggestedName)
+        }
     }
     nonisolated func browserView(_ browserView: RCBrowserView, requestPermissions permissions: RCPermission, origin: String,
                                  decide: @escaping (RCPermission) -> Void) {

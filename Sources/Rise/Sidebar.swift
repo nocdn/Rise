@@ -13,6 +13,13 @@ import RiseCore
     let newTab = NewTabButton()
     let scroll = NSScrollView()
     let rowsHost = FlippedView()
+    /// Masks the list's edges where more tabs lie past them (`SidebarScrollCues.swift`).
+    let scrollFade = CAGradientLayer()
+    var shownEdges = SidebarScrollCues.Edges(top: 0, bottom: 0)
+    /// Points to the chosen tab when it's scrolled out of the list.
+    let chosenPill = ChosenTabPill()
+    /// While a click on the pill scrolls to its tab, the pill stays gone.
+    var isRevealingChosenTab = false
     /// Holds closed tabs' rows while they fade, below the others.
     private let leavingRows = LeavingRowsView()
     private(set) var appliedTheme: RiseTheme?
@@ -87,16 +94,22 @@ import RiseCore
         scroll.drawsBackground = false; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
         scroll.verticalScroller = ThinScroller(); scroll.scrollerStyle = .overlay
         scroll.documentView = rowsHost
-        [pinnedView, newTab, scroll, archiveButton, cleanUpButton].forEach(addSubview)
+        scroll.wantsLayer = true
+        scrollFade.startPoint = CGPoint(x: 0.5, y: 0); scrollFade.endPoint = CGPoint(x: 0.5, y: 1)
+        scroll.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(listScrolled), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
+        chosenPill.target = self; chosenPill.action = #selector(revealChosenTab)
+        [pinnedView, newTab, scroll, chosenPill, archiveButton, cleanUpButton].forEach(addSubview)
     }
     required init?(coder: NSCoder) { fatalError() }
     @objc func createTab() { onNewTab?() }
+    @objc private func listScrolled() { updateScrollCues() }
     func update(tabs: [BrowserTab], selected: BrowserTab?, theme: RiseTheme, splits: [SplitTabGroup] = []) {
         // This runs on every change to any tab; only what changed is set, as each set is redrawn.
         if appliedTheme != theme {
             appliedTheme = theme
             fill = theme.background
-            newTab.theme = theme; searchRow.apply(theme)
+            newTab.theme = theme; searchRow.apply(theme); chosenPill.apply(theme)
             (scroll.verticalScroller as? ThinScroller)?.dark = theme == .dark
             for button in [archiveButton, cleanUpButton, titlebarNewTab] as [ChromeButton] {
                 button.hoverHint?.appearance = theme.appearance
@@ -236,6 +249,7 @@ import RiseCore
         leavingRows.frame = rowsHost.bounds
         archiveButton.frame = NSRect(x: downloadsCentreX-14, y: bounds.height-39, width: 28, height: 28)
         cleanUpButton.frame = NSRect(x: 10, y: bounds.height-39, width: 28, height: 28)
+        updateScrollCues()
     }
     /// A closed tab's row fades out quickly where it was, under the rows sliding into its place,
     /// and takes no clicks or hover meanwhile.

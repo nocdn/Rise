@@ -3,6 +3,7 @@ import AppKit
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     var browser: BrowserController!
     func applicationDidFinishLaunching(_ notification: Notification) {
+        MediaAirDrop.clearLeftovers()
         browser = BrowserController(sessionURL: RiseProfile.directory?.appendingPathComponent("session.json")); buildMenu()
         if PaletteLab.isOn { browser.installPaletteLab() }
         browser.showWindow(nil)
