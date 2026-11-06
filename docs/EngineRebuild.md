@@ -43,5 +43,12 @@ built it before then. A small rebuild won't do it. Read this before building.
 ## The shortcut
 
 To skip building on a Mac, copy `../rise-chromium/fork/src/out/Official/Chromium.app` from a Mac
-that has built it to the same path. `scripts/build.sh` only needs that, and works straight away.
-Copy it again whenever the engine changes.
+that has built it to the same path: `./scripts/engine/fetch.sh <ssh-host> [ssh-port]`. `scripts/build.sh`
+only needs that, and works straight away. Copy it again whenever the engine changes.
+
+Macs running SentinelOne can't build the engine from scratch: it reads DevTools' build, about
+2,000 node steps copying batches of files, as ransomware and kills `node` (`exit=-9` in
+`out/Official/siso_output`). Small rebuilds rarely run those steps, but a new out folder, new
+GN settings, a Chromium update or a patch to DevTools runs them all. Build the engine on a Mac
+without SentinelOne and fetch it from there. Copying a built out folder over doesn't help:
+siso only keeps the last build's command log, so it runs the copied steps again.

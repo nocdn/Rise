@@ -6,9 +6,9 @@ diff --git a/third_party/devtools-frontend/src/scripts/build/compress_files.js b
    const fileListContents = await readTextFile(fileList);
    const files = fileListContents.split(/\s+/).filter(Boolean);
 -  await Promise.all(files.map(filename => filename.trim()).map(compressFile));
-+  // Rise: one file at a time. Reading every DevTools file at once and writing a
-+  // compressed copy of each beside it looks like ransomware to some Macs'
-+  // endpoint security agents, which kill node mid-build.
++  // Rise: one file at a time, meant to stop SentinelOne killing node for reading
++  // every DevTools file at once. It doesn't: DevTools' build still gets node
++  // killed (docs/EngineRebuild.md). It does no harm, so it stays.
 +  for (const filename of files) {
 +    await compressFile(filename.trim());
 +  }
@@ -45,8 +45,8 @@ diff --git a/third_party/devtools-frontend/src/scripts/build/ninja/copy-files.js
  const [, , src, dest, files] = process.argv;
  
 -await Promise.all(files.split(',').map(async file => {
-+// Rise: one file at a time. Reading a whole batch at once (such as web-vitals'
-+// 80 files) gets node killed by some Macs' endpoint security agents mid-build.
++// Rise: one file at a time, meant to stop SentinelOne killing node mid-build.
++// It doesn't (docs/EngineRebuild.md), but it does no harm, so it stays.
 +for (const file of files.split(',')) {
    const srcPath = path.join(src, file);
    const destPath = path.join(dest, file);

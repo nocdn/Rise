@@ -54,7 +54,10 @@ import AppKit
         item.target = handler; item.representedObject = handler
         item.image = icon
         // macOS 27 hides menu items' images unless they ask to be seen, as Share's own does.
+        // Only its SDK (Swift 6.4, Xcode 27) has the setting; older Xcodes build without it.
+        #if compiler(>=6.4)
         if #available(macOS 27, *) { item.preferredImageVisibility = .visible }
+        #endif
         return item
     }
     private static var sending: (NSSharingService, SourceWindow)?
