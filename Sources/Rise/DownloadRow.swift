@@ -1,21 +1,29 @@
 import AppKit
 import QuartzCore
+@preconcurrency import QuickLookThumbnailing
 import UniformTypeIdentifiers
 
 /// One download: the file's thumbnail or icon beside its name, with its size (or progress) below.
 /// Clicking a finished download opens it in its default app. While highlighted (by the
 /// pointer or the arrow keys), an eye previews it in Quick Look, for files Quick Look can
 /// show, and an X clears it from the list; with Shift held, a bin deletes its file instead.
+/// Dragging a finished download carries its file out, to a page or another app (`DownloadDragging`).
 final class DownloadRow: NSView {
     enum Pointer { case entered, exited, pressed }
     let item: DownloadList.Item
-    private let icon = DownloadFileIcon(), title = NSTextField(labelWithString: ""), detail = NSTextField(labelWithString: "")
+    let icon = DownloadFileIcon()
+    private let title = NSTextField(labelWithString: ""), detail = NSTextField(labelWithString: "")
     let progressRing = DownloadProgressRing()
     private let upper = RowFill(edge: .top), lower = RowFill(edge: .bottom)
     private(set) var previewButton: ChromeButton!, removeButton: ChromeButton!
     let pauseButton = PlayPauseButton()
     let titleShimmer = InputShimmer()
     private var pressing = false
+    /// The press a drag would start from, until the pointer has moved far enough or let go.
+    var dragStart: NSEvent?
+    var dragPicture: NSImage?
+    var dragPictureRequest: QLThumbnailGenerator.Request?
+    weak var dragSession: NSDraggingSession?
     private var wasFinished = true, finishingProgress = false
     private var completionWork: DispatchWorkItem?
     var isHighlighted = false { didSet { if isHighlighted != oldValue { restyle() } } }
@@ -159,8 +167,18 @@ final class DownloadRow: NSView {
     }
     override func mouseEntered(with event: NSEvent) { pointer?(self, .entered) }
     override func mouseExited(with event: NSEvent) { pressing = false; restyle(); pointer?(self, .exited) }
-    override func mouseDown(with event: NSEvent) { pointer?(self, .pressed); pressing = true; restyle() }
+    override func mouseDown(with event: NSEvent) {
+        pointer?(self, .pressed); pressing = true; restyle()
+        prepareDrag(from: event)
+    }
+    override func mouseDragged(with event: NSEvent) {
+        guard let start = dragStart, Self.isDrag(from: start.locationInWindow, to: event.locationInWindow) else { return }
+        dragStart = nil
+        pressing = false; restyle()
+        beginFileDrag(from: start)
+    }
     override func mouseUp(with event: NSEvent) {
+        dragStart = nil
         let inside = bounds.contains(convert(event.locationInWindow, from: nil))
         pressing = false; restyle()
         if inside { performOpen() }

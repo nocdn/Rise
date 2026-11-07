@@ -44,6 +44,7 @@ import AppKit
             button.hoverHint?.setShortcut(shortcut(id))
         }
         permissionCoordinator.panel.setShortcuts(allow: shortcut("allowPermission"), deny: shortcut("denyPermission"))
+        adBlockPrompt.panel.setShortcuts(allow: shortcut("allowPermission"), deny: shortcut("denyPermission"), allowHint: "Disable ad-blocking", denyHint: "Keep blocking")
         (extensionWindow as? ExtensionWindow)?.refreshButtons()
         for buttons in [Array(toolbarButtons.dropFirst()), splitBarButtons] {
             buttons[0].hoverHint?.setShortcut(shortcut("goBack"))
@@ -106,13 +107,15 @@ import AppKit
         if timeReplacement.handleKey(event) { return true }
         guard event.type == .keyDown else { return false }
         if let command = keyboardShortcuts.command(for: event) {
-            if command.id == "undo:" || command.id == "redo:" {
-                if (window as? BrowserWindow)?.undoEvent?(event) == true { return true }
-                return NSApp.mainMenu?.performKeyEquivalent(with: event) ?? false
-            }
             let early = ["moveCurrentTabUp", "moveCurrentTabDown", "moveCurrentTabToTop",
                          "tabSwitcherNext", "tabSwitcherPrevious", "smartRename", "activateSuggestedTab"]
             if early.contains(command.id) { return false }
+            // The page goes first; what it doesn't use comes back through the engine.
+            if letPageTryShortcut(command, event) { return false }
+            if command.id == "undo:" || command.id == "redo:" {
+                if runBrowserUndo(event) { return true }
+                return NSApp.mainMenu?.performKeyEquivalent(with: event) ?? false
+            }
             guard let item = command.items.first, item.action != nil else { return false }
             tabMoveSequence = nil; tabOrderUndoPending = false
             if let target = item.target as? NSMenuItemValidation, !target.validateMenuItem(item) { return true }

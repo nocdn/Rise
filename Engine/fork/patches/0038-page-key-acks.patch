@@ -1,0 +1,139 @@
+--- a/chrome/browser/rise/RiseChromium.h
++++ b/chrome/browser/rise/RiseChromium.h
+@@ -214,6 +214,11 @@
+ @optional
+ /// The pointer moved onto a link, or off one (nil).
+ - (void)browserView:(RCBrowserView *)browserView didHoverLink:(nullable NSURL *)url;
++/// The page used the key press `-watchNextKeyPress` was asked about, as its keydown handler did
++/// or its editing did. `keyCode` is the press's `NSEvent.keyCode`.
++- (void)browserView:(RCBrowserView *)browserView pageUsedKeyCode:(unsigned short)keyCode;
++/// The page didn't use a key press, which goes to the menu bar next. Return YES to take it first.
++- (BOOL)browserView:(RCBrowserView *)browserView handleUnusedKey:(NSEvent *)event;
+ /// The page wants `url` somewhere other than itself, a new tab or window. Return YES once
+ /// Rise has opened it; NO lets it open in this page instead.
+ - (BOOL)browserView:(RCBrowserView *)browserView openURL:(NSURL *)url disposition:(RCOpenDisposition)disposition
+@@ -312,6 +317,9 @@
+ - (instancetype)initWithFrame:(NSRect)frameRect NS_UNAVAILABLE;
+ - (nullable instancetype)initWithCoder:(NSCoder *)coder NS_UNAVAILABLE;
+ @property (nonatomic, weak, nullable) id<RCBrowserViewDelegate> delegate;
++/// Reports it to the delegate if the page uses the next key press it gets
++/// (`browserView:pageUsedKeyCode:`). One that isn't used comes to `browserView:handleUnusedKey:`.
++- (void)watchNextKeyPress;
+ @property (nonatomic, readonly, nullable) NSURL *URL;
+ @property (nonatomic, readonly, nullable) NSString *title;
+ /// Navigation loading state for browser UI. Late subframe loads on a finished page do not
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -151,7 +151,11 @@
+ #include "content/public/browser/navigation_entry.h"
+ #include "content/public/browser/navigation_handle.h"
+ #include "content/public/browser/render_frame_host.h"
++#include "content/public/browser/render_process_host.h"
++#include "content/public/browser/render_widget_host.h"
+ #include "content/public/browser/render_widget_host_view.h"
++#include "third_party/blink/public/common/input/web_keyboard_event.h"
++#include "third_party/blink/public/mojom/input/input_event_result.mojom-shared.h"
+ #include "content/public/browser/weak_document_ptr.h"
+ #include "content/public/browser/web_contents.h"
+ #include "content/public/browser/web_contents_observer.h"
+@@ -865,6 +869,56 @@
+ }
+ 
+ // What Rise shows itself for a page, in its own interface.
++// Tells Rise whether the page used a key press it asked about: Rise gives a
++// page the shortcuts it might want first, and offers its own command if the
++// page kept the key. Watches one press in the widget that has the keyboard.
++class PageKeyWatcher : public content::RenderWidgetHost::InputEventObserver {
++ public:
++  explicit PageKeyWatcher(RCBrowserView* view) : view_(view) {}
++  ~PageKeyWatcher() override { Stop(); }
++
++  void Watch(content::RenderWidgetHost* host) {
++    Stop();
++    process_id_ = host->GetProcess()->GetDeprecatedID();
++    routing_id_ = host->GetRoutingID();
++    host->AddInputEventObserver(this);
++  }
++
++  void OnInputEventAck(const content::RenderWidgetHost&,
++                       blink::mojom::InputEventResultSource,
++                       blink::mojom::InputEventResultState state,
++                       const blink::WebInputEvent& event) override {
++    if (event.GetType() != blink::WebInputEvent::Type::kRawKeyDown) {
++      return;
++    }
++    const int key_code =
++        static_cast<const blink::WebKeyboardEvent&>(event).native_key_code;
++    Stop();
++    RCBrowserView* view = view_;
++    id<RCBrowserViewDelegate> delegate = view.delegate;
++    if (state == blink::mojom::InputEventResultState::kConsumed &&
++        [delegate respondsToSelector:@selector(browserView:pageUsedKeyCode:)]) {
++      [delegate browserView:view
++            pageUsedKeyCode:static_cast<unsigned short>(key_code)];
++    }
++  }
++
++ private:
++  void Stop() {
++    if (content::RenderWidgetHost* host =
++            routing_id_ ? content::RenderWidgetHost::FromID(process_id_,
++                                                            routing_id_)
++                        : nullptr) {
++      host->RemoveInputEventObserver(this);
++    }
++    routing_id_ = 0;
++  }
++
++  __weak RCBrowserView* view_;
++  int process_id_ = 0;
++  int routing_id_ = 0;
++};
++
+ class RiseTabHooks : public EmbedderTabHooks {
+  public:
+   explicit RiseTabHooks(RCBrowserView* view)
+@@ -895,6 +949,12 @@
+     NSEvent* key = event.os_event.Get();
+     if (event.skip_if_unhandled || !key || key.type != NSEventTypeKeyDown) {
+       return false;
++    }
++    RCBrowserView* view = view_;
++    id<RCBrowserViewDelegate> delegate = view.delegate;
++    if ([delegate respondsToSelector:@selector(browserView:handleUnusedKey:)] &&
++        [delegate browserView:view handleUnusedKey:key]) {
++      return true;
+     }
+     return [NSApp.mainMenu performKeyEquivalent:key];
+   }
+@@ -1909,6 +1969,7 @@
+ @implementation RCBrowserView {
+   raw_ptr<content::WebContents> _contents;
+   std::unique_ptr<TabObserver> _observer;
++  std::unique_ptr<PageKeyWatcher> _keyWatcher;
+   NSURL* _pendingURL;
+   BOOL _closed;
+   // Rise's scripts for the page's documents, in order: source, world (none
+@@ -2051,6 +2112,22 @@
+ }
+ - (NSView*)focusView {
+   return [self pageAccessibilityView];
++}
++- (void)watchNextKeyPress {
++  if (!_contents) {
++    return;
++  }
++  content::RenderFrameHost* frame = _contents->GetFocusedFrame();
++  if (!frame) {
++    frame = _contents->GetPrimaryMainFrame();
++  }
++  if (!frame || !frame->GetRenderWidgetHost()) {
++    return;
++  }
++  if (!_keyWatcher) {
++    _keyWatcher = std::make_unique<PageKeyWatcher>(self);
++  }
++  _keyWatcher->Watch(frame->GetRenderWidgetHost());
+ }
+ - (NSView*)pageAccessibilityView {
+   content::RenderWidgetHostView* view =

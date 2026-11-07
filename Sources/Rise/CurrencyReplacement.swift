@@ -164,6 +164,11 @@ import RiseCore
     }
 
     /// ⌘Z, for a little while after replacing, puts the prices back.
+    /// ⌘Z would put the prices back.
+    var canUndo: Bool {
+        guard let browser, browser.palette.isHidden, Date() < undoUntil, let tab = undoTab, tab.replacedCurrency != nil else { return false }
+        return browser.pageBarTabs.contains { $0.tab === tab }
+    }
     func handleUndoKey(_ event: NSEvent) -> Bool {
         guard let browser, event.type == .keyDown, browser.palette.isHidden, !(browser.window?.firstResponder is NSTextView),
               browser.keyboardShortcuts.matches("undo:", event), Date() < undoUntil,

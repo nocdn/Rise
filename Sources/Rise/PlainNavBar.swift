@@ -375,7 +375,7 @@ import RiseCore
                 button.hoverColor = ink.hover
             }
         }
-        for case let notice as BarNotice in subviews { notice.tint(shownInk.strong) }
+        for case let notice as BarNotice in subviews { notice.tint(noticeInk) }
         updateText()
     }
 
@@ -480,12 +480,17 @@ import RiseCore
     private var noticeTimer: Timer?
     func showCopied() { showNotice(BarNotice.copied, image: BarNotice.linkImage) }
     /// Saying the same again while it shows holds it longer, and so does the pointer on its link.
-    func showNotice(_ words: String, image: NSImage, link: BarNotice.Link? = nil, action: BarNotice.Link? = nil, hold: TimeInterval = Notice.hold) {
+    /// `nudge` moves the words and icon that far right of where notices sit.
+    /// `dotted` is a word among `words` to show a link's dots under, though it's no link.
+    func showNotice(_ words: String, image: NSImage, link: BarNotice.Link? = nil, action: BarNotice.Link? = nil, hold: TimeInterval = Notice.hold, nudge: CGFloat = 0, dotted: String? = nil) {
         holdNotice(hold)
         // Two saves can say the same thing while referring to different items.
         guard link != nil || action != nil || notice?.text != BarNotice.text(words, link: link) else { return }
-        let next = BarNotice(words, image: image, link: link, action: action)
-        next.tint(shownInk.strong); next.alphaValue = 0
+        // In the font of the address it takes the place of.
+        let next = BarNotice(words, image: image, link: link, action: action,
+                             font: showsDeveloperAddress ? IoskeleyMonoFont.developerAddress : Metrics.font)
+        next.nudge = nudge; next.dottedWords = dotted
+        next.tint(noticeInk); next.alphaValue = 0
         addSubview(next); place(next)
         let old: NSView = notice ?? address
         notice = next
@@ -507,11 +512,13 @@ import RiseCore
         self.notice = nil
         exchange(notice, for: address)
     }
+    /// A notice's colour: over developer mode's bar, that of the address it takes the place of.
+    private var noticeInk: NSColor { showsDeveloperAddress ? (developerAddress as? NSTextField)?.textColor ?? shownInk.strong : shownInk.strong }
     /// What a notice takes the place of: the address, or developer mode's while it's on.
     private var address: NSView { showsDeveloperAddress ? developerAddress ?? text : text }
     private func place(_ notice: BarNotice) {
         let textX = Metrics.textX-leadingRoom
-        let x = textX-1-BarNotice.inkStart
+        let x = textX-1-BarNotice.inkStart+notice.nudge
         let end = fieldRect.maxX
         notice.frame = NSRect(x: x, y: 0, width: min(notice.width, max(0, end-8-x)), height: bounds.height)
     }
@@ -772,10 +779,17 @@ import RiseCore
     struct Link { let text: String; let perform: () -> Void }
     static let copied = "Copied Current URL"
     /// The copy button's confirmation glyph: the link with its marks around it.
+    /// How far right of the usual place this one sits.
+    var nudge: CGFloat = 0
+    var dottedWords: String? {
+        get { words.dotted }
+        set { words.dotted = newValue; needsLayout = true }
+    }
     static let linkImage = TablerIcon.image(TablerIcon.linkCopied, size: 16, description: nil)
     /// The arrows of the full screen notices, drawn as heavy as the link.
     static let fullScreenImage = symbol("arrow.up.left.and.arrow.down.right")
     static let starImage = TablerIcon.image(TablerIcon.star, size: 14, description: nil)
+    static let commandImage = symbol("command")
     static let unpinImage = symbol("pin.slash"), resetImage = symbol("arrow.counterclockwise")
     static let warningImage = TablerIcon.image(TablerIcon.alertTriangle, size: 14, description: nil)
     static let photoImage = symbol("photo"), documentImage = symbol("doc.richtext")
@@ -822,23 +836,25 @@ import RiseCore
     private(set) var linkLabel: BarLinkLabel?
     private(set) var actionLabel: BarLinkLabel?
     let text: String
-    init(_ text: String, image: NSImage, link: Link? = nil, action: Link? = nil) {
+    let font: NSFont
+    init(_ text: String, image: NSImage, link: Link? = nil, action: Link? = nil, font: NSFont = PlainNavBar.Metrics.font) {
         words = PlainNavBarText(labelWithString: text)
         self.text = Self.text(text, link: link)
         self.image = image
+        self.font = font
         super.init(frame: .zero)
         wantsLayer = true
         icon.imageScaling = .scaleNone
         if image === Self.spinnerImage { let spinner = SpinnerView(); self.spinner = spinner; icon.addSubview(spinner) } else { icon.image = image }
-        words.font = PlainNavBar.Metrics.font
+        words.font = font
         words.usesSingleLineMode = true; words.cell?.wraps = false
         addSubview(icon); addSubview(words)
         if let link {
-            let label = BarLinkLabel(link.text, perform: link.perform)
+            let label = BarLinkLabel(link.text, font: font, perform: link.perform)
             linkLabel = label; addSubview(label)
         }
         if let action {
-            let label = BarLinkLabel(action.text, perform: action.perform)
+            let label = BarLinkLabel(action.text, font: font, perform: action.perform)
             actionLabel = label; addSubview(label)
         }
         setAccessibilityElement(link == nil && action == nil); setAccessibilityRole(.staticText); setAccessibilityLabel(self.text)
@@ -856,8 +872,7 @@ import RiseCore
     /// The link a space after the words: both labels' margins are the same, so the words' own
     /// width and a space's from where they start.
     private var linkX: CGFloat {
-        let font = PlainNavBar.Metrics.font
-        return wordsX+((words.stringValue+" ") as NSString).size(withAttributes: [.font: font]).width
+        wordsX+((words.stringValue+" ") as NSString).size(withAttributes: [.font: font]).width
     }
     var width: CGFloat {
         let main = linkLabel.map { linkX+$0.fittingWidth } ?? wordsX+ceil(words.intrinsicContentSize.width)+4
@@ -865,7 +880,12 @@ import RiseCore
     }
     override func layout() {
         super.layout()
-        let mid = PlainNavBar.Metrics.midY, line = ceil(words.intrinsicContentSize.height), y = round((mid-line/2)*2)/2
+        let mid = PlainNavBar.Metrics.midY, line = ceil(words.intrinsicContentSize.height)
+        // On the baseline of the address it replaces: developer mode's centres its capitals, which
+        // in its font isn't where centring the line would put them. A label draws its baseline
+        // under its font's ascent and leading, rounded up, whatever its own offset reports.
+        let y = font == PlainNavBar.Metrics.font ? round((mid-line/2)*2)/2
+            : DeveloperAddressCell.baseline(of: font, middle: mid)-ceil(font.ascender+font.leading)
         // Level with the reload glyph's ink, whatever the glyph.
         let level: CGFloat = {
             guard let bar = superview as? PlainNavBar, let reload = bar.navigation.compactMap({ $0 as? ReloadButton }).first,
@@ -883,10 +903,12 @@ import RiseCore
         spinner?.frame = NSRect(x: 2, y: 2, width: 12, height: 12)
         let actionWidth = actionLabel?.fittingWidth ?? 0
         let mainEnd = max(wordsX, bounds.width-(actionLabel == nil ? 0 : actionWidth+12))
-        words.frame = NSRect(x: wordsX, y: y, width: min(ceil(words.intrinsicContentSize.width)+4, max(0, mainEnd-wordsX)), height: line)
+        // With dots, a little taller than the line, as a link is.
+        words.frame = NSRect(x: wordsX, y: y, width: min(ceil(words.intrinsicContentSize.width)+4, max(0, mainEnd-wordsX)), height: line+(words.dotted == nil ? 0 : 2))
+        // A little taller than the line, for the dots under it.
         linkLabel?.frame = NSRect(x: linkX, y: y,
-                                  width: min(linkLabel?.fittingWidth ?? 0, max(0, mainEnd-linkX)), height: line)
-        actionLabel?.frame = NSRect(x: max(wordsX, bounds.width-actionWidth), y: y, width: actionWidth, height: line)
+                                  width: min(linkLabel?.fittingWidth ?? 0, max(0, mainEnd-linkX)), height: line+2)
+        actionLabel?.frame = NSRect(x: max(wordsX, bounds.width-actionWidth), y: y, width: actionWidth, height: line+2)
     }
 }
 
@@ -897,10 +919,10 @@ import RiseCore
     private let perform: () -> Void
     var ink = NSColor.labelColor { didSet { textColor = ink; needsDisplay = true } }
     private(set) var isHovered = false { didSet { needsDisplay = true } }
-    init(_ text: String, perform: @escaping () -> Void) {
+    init(_ text: String, font: NSFont = PlainNavBar.Metrics.font, perform: @escaping () -> Void) {
         self.perform = perform
         super.init(frame: .zero)
-        stringValue = text; font = PlainNavBar.Metrics.font
+        stringValue = text; self.font = font
         isEditable = false; isSelectable = false; isBordered = false; drawsBackground = false
         usesSingleLineMode = true; cell?.wraps = false; cell?.isScrollable = false
         lineBreakMode = .byTruncatingTail
@@ -915,15 +937,18 @@ import RiseCore
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
         guard let font, let cell else { return }
-        let text = cell.titleRect(forBounds: bounds)
         let width = min(ceil((stringValue as NSString).size(withAttributes: [.font: font]).width), max(0, bounds.width-4))
-        let baseline = isFlipped ? text.minY+font.ascender : text.maxY-font.ascender
-        let y = baseline + (isFlipped ? 1 : -1)*Self.dotDrop
-        let (size, step) = (Self.dotSize, Self.dotStep)
-        ink.withAlphaComponent(isHovered ? 0.7 : 0.35).setFill()
+        Self.drawDots(under: cell.titleRect(forBounds: bounds), flipped: isFlipped, font: font, from: 0, width: width, ink: ink.withAlphaComponent(isHovered ? 0.7 : 0.35))
+    }
+    /// The row of dots under `width` of a label's text, starting `offset` along it.
+    static func drawDots(under text: NSRect, flipped: Bool, font: NSFont, from offset: CGFloat, width: CGFloat, ink: NSColor) {
+        let baseline = flipped ? text.minY+font.ascender+font.leading : text.maxY-font.ascender-font.leading
+        let y = baseline + (flipped ? 1 : -1)*dotDrop
+        let (size, step) = (dotSize, dotStep)
+        ink.setFill()
         // Label cells pad their text by 2 pt on each side; the dots start two points in from the
         // word's left and run to its end, the row a pixel left of that.
-        let start = text.minX + 2 - Self.dotShift, end = start + width
+        let start = text.minX + 2 - dotShift + offset, end = start + width
         var x = start + 2 + size/2
         while x <= end - size/2 {
             NSBezierPath(ovalIn: NSRect(x: x-size/2, y: y-size/2, width: size, height: size)).fill()
@@ -949,7 +974,17 @@ import RiseCore
 
 /// The address, which leaves its clicks to the bar.
 final class PlainNavBarText: NSTextField {
+    /// Words in it to show a link's dots under, though they're no link.
+    var dotted: String? { didSet { needsDisplay = true } }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard let dotted, let font, let cell, let range = stringValue.range(of: dotted) else { return }
+        let measure = { (words: String) in (words as NSString).size(withAttributes: [.font: font]).width }
+        BarLinkLabel.drawDots(under: cell.titleRect(forBounds: bounds), flipped: isFlipped, font: font,
+                              from: measure(String(stringValue[..<range.lowerBound])), width: ceil(measure(dotted)),
+                              ink: (textColor ?? .labelColor).withAlphaComponent(0.35))
+    }
 }
 
 /// Views together so they can fade and move as one; its own clicks go to what's behind it.

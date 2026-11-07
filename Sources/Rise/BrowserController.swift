@@ -48,6 +48,7 @@ import RiseCore
     lazy var permissionCoordinator = PermissionCoordinator(browser: self)
     lazy var currencyReplacement = CurrencyReplacement(browser: self)
     lazy var timeReplacement = TimeReplacement(browser: self)
+    lazy var adBlockPrompt = AdBlockPrompt(browser: self)
     lazy var pictureInPicture = VideoPictureInPicture(browser: self)
     lazy var tabMedia: TabMedia = {
         let media = TabMedia(browser: self)
@@ -194,6 +195,9 @@ import RiseCore
     var tabMoveSequence: (tabID: UUID, order: [UUID])?
     /// Route undo to the sidebar until the next editing key goes to the page or a text field.
     var tabOrderUndoPending = false
+    /// A shortcut on its way to the page, and one the bar is offering Rise's command for (`PageShortcuts`).
+    var pendingPageKey: PendingPageKey?
+    var shortcutAgain: (id: String, until: Date)?
     var peekSourceTabID: UUID?
     var peekOpensNewTab = false
     var peekSwipePull: Double = 0
@@ -348,7 +352,9 @@ import RiseCore
         }
         window.undoEvent = { [weak self] event in
             guard let self else { return false }
-            return self.timeReplacement.handleUndoKey(event) || self.currencyReplacement.handleUndoKey(event) || self.handleSelectionItemUndoKey(event) || self.handleTabOrderUndoKey(event) || self.palette.handleUndoKey(event, shortcuts: self.keyboardShortcuts) || self.handleSplitUndoKey(event) || self.handlePeekUndoKey(event)
+            // On its way to the page, which goes first.
+            if let pending = self.pendingPageKey, pending.timestamp == event.timestamp, pending.keyCode == event.keyCode { return false }
+            return self.runBrowserUndo(event)
         }
         window.smartRenameEvent = { [weak self] event in self?.handleSmartRenameKey(event) ?? false }
         window.extensionShortcutEvent = { [weak self] event in self?.runExtensionShortcut(event) ?? false }
@@ -495,7 +501,9 @@ import RiseCore
             if symbol == "arrow.left" || symbol == "arrow.right" {
                 button = HistoryArrowButton(direction: symbol == "arrow.left" ? .back : .forward, title: title, action: action)
             } else if symbol == "arrow.clockwise" {
-                button = ReloadButton(title: title, action: action)
+                let reload = ReloadButton(title: title, action: action)
+                reload.onRepeatedPress = { [weak self] in self?.adBlockPrompt.noteReload() }
+                button = reload
             } else { button = ChromeButton(symbol: symbol, size: 13, title: title, action: action) }
             if symbol == "sidebar.left" { button.setHoverHint("Toggle Sidebar", shortcut: "⌘B") }
             toolbarButtons.append(button)
@@ -503,7 +511,7 @@ import RiseCore
         // The page bar's, drawn as Dia's: chevrons, and a smaller sidebar glyph.
         navBar.navigation = toolbarButtons
         installSplitBar()
-        developerAddress.font = IoskeleyMonoFont.regular(ofSize: 12)
+        developerAddress.font = IoskeleyMonoFont.developerAddress
         developerAddress.textColor = NSColor(hex: 0x393134); developerBar.addSubview(developerAddress)
         navBar.developerAddress = developerAddress; splitBar.developerAddress = developerAddress
         developerAddress.onSubmit = { [weak self] text in self?.navigateDeveloperAddress(text) }
@@ -640,7 +648,7 @@ import RiseCore
         retryButton.frame = NSRect(x: body.width/2-55, y: body.height/2+55, width: 110, height: 32)
         // The panels come down from beneath the page bar and what's under it.
         selectedFindBar.frame = pageShadow.frame; selectedFindBar.topInset = barHeight; selectedFindBar.tuckedInset = barHeight
-        permissionCoordinator.layoutPanel(); currencyReplacement.layoutPanel(); timeReplacement.layoutPanel()
+        permissionCoordinator.layoutPanel(); currencyReplacement.layoutPanel(); timeReplacement.layoutPanel(); adBlockPrompt.layoutPanel()
         dismissArea.frame = b
         // Both centred panels share the same window-wide dim.
         veil.frame = b
@@ -756,6 +764,8 @@ import RiseCore
                 guard let self, let chromium else { finish(false, nil); return nil }
                 return self.showDialog(dialog, from: chromium, finish: finish)
             }
+            chromium.onPageUsedKey = { [weak self] code in self?.pageUsedKey(code: code) }
+            chromium.onUnusedKey = { [weak self] event in self?.handleUnusedPageKey(event) ?? false }
             chromium.onChooseClientCertificate = { [weak self, weak chromium] identities, host, finish in
                 guard let self, let chromium else { finish(nil); return }
                 self.chooseClientCertificate(identities, host: host, for: chromium, finish: finish)
@@ -818,6 +828,7 @@ import RiseCore
             self.suggestionFavicons.remember(tab)
             self.siteSearchLearner.addressChanged(tab.page.view, url: tab.page.url)
             self.currencyReplacement.pageChanged(tab)
+            self.adBlockPrompt.pageChanged(tab)
             if !tab.page.isLoading, let url = tab.page.url, let title = tab.page.title {
                 self.browsingHistory.updateTitle(self.historyTitle(title, url: url), for: url)
             }
@@ -1044,12 +1055,12 @@ import RiseCore
     }
     /// Reloads without the cache, refetching the page and everything it loads.
     @objc func hardReload() {
-        historySwipe.cancel(); errorWebView = nil; selectedReloadButton?.armAnimation()
+        adBlockPrompt.noteReload(); historySwipe.cancel(); errorWebView = nil; selectedReloadButton?.armAnimation()
         selectedTab?.isHardReloading = true
         if let tab = selectedTab, tab.page.url == nil, let url = tab.requestedURL { tab.load(url) } else { selectedTab?.page.reloadIgnoringCache() }
         update()
     }
-    @objc func reload() { historySwipe.cancel(); errorWebView = nil; selectedReloadButton?.armAnimation(); if selectedTab?.isLoading == true { selectedTab?.cancelLoad() } else if let tab = selectedTab, tab.page.url == nil, let url = tab.requestedURL { tab.load(url) } else { selectedTab?.page.reload() }; update() }
+    @objc func reload() { adBlockPrompt.noteReload(); historySwipe.cancel(); errorWebView = nil; selectedReloadButton?.armAnimation(); if selectedTab?.isLoading == true { selectedTab?.cancelLoad() } else if let tab = selectedTab, tab.page.url == nil, let url = tab.requestedURL { tab.load(url) } else { selectedTab?.page.reload() }; update() }
     @objc func retry() { errorWebView = nil; if let url = selectedTab?.url { selectedTab?.load(url) }; update() }
     @objc func toggleSidebar() {
         if keepPeekedSidebar() { return }

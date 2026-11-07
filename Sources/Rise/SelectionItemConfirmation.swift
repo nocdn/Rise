@@ -21,6 +21,11 @@ import RiseCore
         return true
     }
 
+    /// What ⌘Z or ⇧⌘Z would do to an item added from a selection, in words after "to".
+    func selectionItemUndoAction(redo: Bool) -> String? {
+        guard palette.isHidden, let receipt = selectionItemReceipts.last(where: { $0.allowsUndo && (redo ? $0.undo.canRedo : $0.undo.canUndo) }) else { return nil }
+        return redo ? "add back to \(receipt.appName)" : "remove from \(receipt.appName)"
+    }
     func changeSelectionItem(_ receipt: SelectionItemReceipt, redo: Bool) {
         do {
             guard try redo ? receipt.undo.redo() : receipt.undo.undo() else { return }

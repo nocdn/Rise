@@ -52,6 +52,9 @@ final class PermissionChoiceButton: ChromeButton {
         let text: (RiseTheme, NSFont) -> NSAttributedString, message: String
     }
     private(set) var notice: Notice?
+    /// A notice answered with the check and the cross, rather than told.
+    private var noticeAsks = false
+    private var hasChoice: Bool { notice == nil || noticeAsks }
     var onRevert: (() -> Void)?
     private var slide = MotionSpring(0), stack = MotionSpring(0)
     private var link: CADisplayLink?, lastTick: CFTimeInterval?
@@ -102,8 +105,8 @@ final class PermissionChoiceButton: ChromeButton {
     }
     override func mouseExited(with event: NSEvent) { onPointerExit?() }
     /// Allow and Don't Allow's hints, with the keys that answer while it shows.
-    func setShortcuts(allow: String, deny: String) {
-        allowButton.setHoverHint("Allow", shortcut: allow); denyButton.setHoverHint("Don’t allow", shortcut: deny)
+    func setShortcuts(allow: String, deny: String, allowHint: String = "Allow", denyHint: String = "Don’t allow") {
+        allowButton.setHoverHint(allowHint, shortcut: allow); denyButton.setHoverHint(denyHint, shortcut: deny)
     }
 
     func applyTheme(_ theme: RiseTheme) {
@@ -118,11 +121,12 @@ final class PermissionChoiceButton: ChromeButton {
         fill()
     }
     func ask(_ question: PermissionQuestion) { self.question = question; notice = nil; fill() }
-    func tell(_ notice: Notice) { self.notice = notice; question = nil; fill() }
+    func tell(_ notice: Notice) { self.notice = notice; noticeAsks = false; question = nil; fill() }
+    func offer(_ notice: Notice) { self.notice = notice; noticeAsks = true; question = nil; fill() }
     /// Revert's hint, with the key that reverts while it can.
     func setRevertShortcut(_ shortcut: String) { revertButton.setHoverHint("Revert", shortcut: shortcut) }
     private func fill() {
-        allowButton.isHidden = notice != nil; denyButton.isHidden = notice != nil; revertButton.isHidden = notice == nil
+        allowButton.isHidden = !hasChoice; denyButton.isHidden = !hasChoice; revertButton.isHidden = hasChoice
         if let notice {
             icon.image = notice.image; icon.contentTintColor = notice.accent(theme)
             text.attributedStringValue = notice.text(theme, Self.font)
@@ -142,7 +146,7 @@ final class PermissionChoiceButton: ChromeButton {
     private var panelWidth: CGFloat {
         let words = ceil(text.attributedStringValue.size().width)+4
         let widest = max(FindBar.width, min(FindBar.width+140, bounds.width-2*FindBar.margin))
-        return min(widest, Self.textX+words+10+(notice == nil ? Self.buttonsWidth : 26)+8)
+        return min(widest, Self.textX+words+10+(hasChoice ? Self.buttonsWidth : 26)+8)
     }
 
     // MARK: Presentation
@@ -185,7 +189,7 @@ final class PermissionChoiceButton: ChromeButton {
         denyButton.frame = NSRect(x: width-8-26, y: (height-28)/2, width: 26, height: 28)
         allowButton.frame = NSRect(x: denyButton.frame.minX-27, y: denyButton.frame.minY, width: 26, height: 28)
         revertButton.frame = denyButton.frame
-        let textEnd = notice == nil ? allowButton.frame.minX : revertButton.frame.minX
+        let textEnd = hasChoice ? allowButton.frame.minX : revertButton.frame.minX
         text.frame = NSRect(x: Self.textX, y: (height-line)/2, width: max(0, textEnd-10-Self.textX), height: line)
         // The buttons slide under a still pointer; their hover follows.
         allowButton.refreshHoverState(); denyButton.refreshHoverState(); revertButton.refreshHoverState()

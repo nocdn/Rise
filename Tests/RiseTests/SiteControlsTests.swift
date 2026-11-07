@@ -42,7 +42,20 @@ final class SiteControlsTests: XCTestCase {
         let content = try XCTUnwrap(browser.siteControlsPopover.contentViewController as? SiteControlsController)
         XCTAssertEqual(content.view.frame.width, 240)
         XCTAssertEqual(content.quickActions.count, 4)
-        XCTAssertEqual(content.quickActions.map(\.toolTip), ["Share Page", "Capture Whole Page", "Copy Text from Page Image", "More Site Controls"])
+        XCTAssertEqual(content.quickActions.map(\.toolTip), ["Share Page", "Capture Whole Page", "Block Ads", "More Site Controls"])
+        let adBlock = try XCTUnwrap(content.quickActions[2] as? AdBlockButton)
+        XCTAssertFalse(adBlock.showsSlash)
+        XCTAssertEqual(adBlock.title, "", "Only the symbol shows on it")
+        adBlock.performClick(nil)
+        XCTAssertTrue(browser.adBlocker.enabled, "It's only this site")
+        XCTAssertFalse(browser.adBlocker.isBlocking(on: tab.url))
+        XCTAssertTrue(browser.adBlocker.isBlocking(on: URL(string: "https://example.org")))
+        XCTAssertTrue(adBlock.showsSlash)
+        XCTAssertEqual(adBlock.accessibilityValue() as? String, "Off")
+        XCTAssertTrue(browser.siteControlsPopover.isShown, "It stays open to show the change")
+        adBlock.performClick(nil)
+        XCTAssertTrue(browser.adBlocker.isBlocking(on: tab.url))
+        XCTAssertFalse(adBlock.showsSlash)
         XCTAssertFalse(content.view.subviews.contains { $0 is NSVisualEffectView })
         XCTAssertEqual(content.extensionsButton.layer?.cornerRadius, content.quickActions[0].layer?.cornerRadius)
         XCTAssertFalse(content.view.subviews.contains { ($0 as? NSButton)?.title == "Secure" || ($0 as? NSButton)?.title == "Not Secure" })
@@ -66,6 +79,78 @@ final class SiteControlsTests: XCTestCase {
         RunLoop.main.run(until: Date().addingTimeInterval(0.3))
         XCTAssertFalse(browser.siteControlsPopover.isShown)
         XCTAssertFalse(browser.navBar.settingsButton.holdsHover, "Closed, the bar follows the pointer again")
+    }
+    @MainActor func testAdBlockingIsLeftOffBySite() {
+        let suite = "Rise.AdBlockSiteTests.\(UUID())", defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let blocker = AdBlocker(preferences: defaults)
+        XCTAssertEqual(AdBlocker.site(of: URL(string: "https://www.Example.com:8443/a?b#c")), "example.com")
+        XCTAssertNil(AdBlocker.site(of: URL(string: "file:///a.html")))
+        XCTAssertNil(AdBlocker.site(of: URL(string: "rise://settings")))
+        blocker.setAllowed(true, site: "example.com")
+        for page in ["https://example.com/a", "https://www.example.com/b", "http://mail.example.com/c"] {
+            XCTAssertFalse(blocker.isBlocking(on: URL(string: page)), page)
+        }
+        XCTAssertEqual(blocker.allowedSite(for: URL(string: "https://mail.example.com")), "example.com")
+        for page in ["https://example.org", "https://notexample.com", "https://example.com.evil.net"] {
+            XCTAssertTrue(blocker.isBlocking(on: URL(string: page)), page)
+        }
+        XCTAssertEqual(AdBlocker(preferences: defaults).allowedSites, ["example.com"], "It's remembered")
+    }
+    @MainActor func testReloadingAPageAgainOffersToLeaveItsSiteUnblocked() throws {
+        _ = NSApplication.shared
+        let suite = "Rise.AdBlockPromptTests.\(UUID())", defaults = UserDefaults(suiteName: suite)!
+        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), restore: false, preferences: defaults)
+        defer { browser.saveWork?.cancel(); browser.window?.orderOut(nil); defaults.removePersistentDomain(forName: suite) }
+        browser.showWindow(nil)
+        let tab = browser.addTab(url: URL(string: "https://example.com/a#one")!)
+        let prompt = browser.adBlockPrompt, start = Date()
+        prompt.noteReload(at: start); prompt.noteReload(at: start+5)
+        XCTAssertFalse(prompt.panel.isPresented, "Twice is nothing to go on")
+        prompt.noteReload(at: start+30)
+        XCTAssertFalse(prompt.panel.isPresented, "Nor are reloads far apart")
+        prompt.noteReload(at: start+35); prompt.noteReload(at: start+40)
+        XCTAssertTrue(prompt.panel.isPresented)
+        XCTAssertFalse(prompt.panel.allowButton.isHidden || prompt.panel.denyButton.isHidden)
+        XCTAssertTrue(prompt.panel.revertButton.isHidden)
+        XCTAssertEqual(prompt.panel.notice?.message, "Disable ad-blocking on this site?")
+        let text = AdBlockPrompt.text(theme: .neutral, font: .systemFont(ofSize: 13))
+        let word = (text.string as NSString).range(of: "ad-blocking")
+        XCTAssertEqual(text.attribute(.foregroundColor, at: word.location, effectiveRange: nil) as? NSColor, SiteCapability.notifications.accent(.neutral))
+        XCTAssertEqual(text.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor, RiseTheme.neutral.text)
+        // Declined, it doesn't ask about that site again.
+        prompt.panel.denyButton.performClick(nil)
+        XCTAssertFalse(prompt.panel.isPresented)
+        for offset in 0..<3 { prompt.noteReload(at: start+50+Double(offset)) }
+        XCTAssertFalse(prompt.panel.isPresented)
+        XCTAssertTrue(browser.adBlocker.isBlocking(on: tab.page.url))
+        // Another site asks, and yes leaves that site alone and no other.
+        tab.page.load(URL(string: "https://example.org/b")!)
+        for offset in 0..<3 { prompt.noteReload(at: start+60+Double(offset)) }
+        XCTAssertTrue(prompt.panel.isPresented)
+        prompt.panel.allowButton.performClick(nil)
+        XCTAssertFalse(prompt.panel.isPresented)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        XCTAssertEqual(browser.selectedBar.notice?.text, "Ad-blocking disabled on this site")
+        XCTAssertTrue(browser.selectedBar.notice?.subviews.contains { ($0 as? NSImageView)?.image === AdBlockPrompt.noticeIcon } == true, "With its icon")
+        XCTAssertEqual(browser.selectedBar.notice?.nudge, AdBlockPrompt.noticeNudge)
+        XCTAssertEqual(browser.selectedBar.notice?.dottedWords, "disabled")
+        XCTAssertNil(browser.selectedBar.notice?.linkLabel, "It's not a link: nothing to click")
+        XCTAssertFalse(browser.adBlocker.isBlocking(on: URL(string: "https://example.org/c")))
+        XCTAssertTrue(browser.adBlocker.isBlocking(on: URL(string: "https://example.com/a")))
+        XCTAssertTrue(browser.adBlocker.enabled)
+        // The shield then blocks it again.
+        browser.toggleAdBlockingHere()
+        XCTAssertTrue(browser.adBlocker.isBlocking(on: tab.page.url))
+        // Off everywhere, it turns blocking back on.
+        browser.toggleAdBlocking()
+        XCTAssertFalse(browser.adBlocker.enabled)
+        browser.toggleAdBlockingHere()
+        XCTAssertTrue(browser.adBlocker.enabled)
+        // Pages a developer reloads all day don't ask.
+        tab.developer = true
+        for offset in 0..<3 { prompt.noteReload(at: start+70+Double(offset)) }
+        XCTAssertFalse(prompt.panel.isPresented)
     }
     @MainActor func testPermissionPanelDismissalReversalAndAllowCompleteOnlyOnce() throws {
         _ = NSApplication.shared

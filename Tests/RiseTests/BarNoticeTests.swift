@@ -36,6 +36,36 @@ import AppKit
         XCTAssertFalse(bar.hitTest(onLink) is BarLinkLabel)
     }
 
+    func testNoticesTakeTheFontOfTheAddressTheyReplace() throws {
+        let (bar, window) = bar(); defer { window.close() }
+        func fonts(_ notice: BarNotice) -> [NSFont?] {
+            [notice.subviews.compactMap { $0 as? PlainNavBarText }.first?.font, notice.linkLabel?.font, notice.actionLabel?.font]
+        }
+        let link = BarNotice.Link(text: "Downloads") {}, undo = BarNotice.Link(text: "Undo") {}
+        bar.showNotice("Saved to", image: BarNotice.photoImage, link: link, action: undo, hold: 2)
+        XCTAssertEqual(fonts(try XCTUnwrap(bar.notice)), [PlainNavBar.Metrics.font, PlainNavBar.Metrics.font, PlainNavBar.Metrics.font])
+
+        let address = NSTextField(labelWithString: "http://localhost:3000")
+        address.textColor = NSColor(hex: 0x393134); bar.developerAddress = address; bar.addSubview(address)
+        bar.setDeveloper(1, enabled: true, surface: .systemYellow)
+        XCTAssertNil(bar.notice, "Developer mode's address replaces what was said before")
+        bar.showCopied()
+        let mono = IoskeleyMonoFont.developerAddress
+        XCTAssertEqual(try XCTUnwrap(bar.notice).font, mono, "⇧⌘C says so in the address's monospaced font")
+        let copied = try XCTUnwrap(try XCTUnwrap(bar.notice).subviews.compactMap { $0 as? PlainNavBarText }.first)
+        XCTAssertEqual(copied.textColor, address.textColor, "And its colour")
+        bar.showNotice("Saved to", image: BarNotice.photoImage, link: link, action: undo, hold: 2)
+        let notice = try XCTUnwrap(bar.notice)
+        XCTAssertEqual(fonts(notice), [mono, mono, mono], "Its words and links alike")
+        bar.layoutSubtreeIfNeeded(); notice.layoutSubtreeIfNeeded()
+        let words = try XCTUnwrap(notice.subviews.compactMap { $0 as? PlainNavBarText }.first)
+        XCTAssertGreaterThan(try XCTUnwrap(notice.linkLabel).frame.minX, words.frame.maxX-5, "The link still follows the wider words")
+
+        bar.setDeveloper(0, enabled: false, surface: .systemYellow)
+        bar.showCopied()
+        XCTAssertEqual(try XCTUnwrap(bar.notice).font, PlainNavBar.Metrics.font, "Out of developer mode, the normal font again")
+    }
+
     func testAnotherMessageSwapsTheWholeRowAndTheSameAgainKeepsIt() throws {
         let (bar, window) = bar(); defer { window.close() }
         bar.showNotice("Starring Repository", image: BarNotice.spinnerImage, hold: 90)

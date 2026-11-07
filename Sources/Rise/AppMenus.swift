@@ -75,7 +75,6 @@ import AppKit
 
         let view = addMenu("View")
         item(view, "Hide Sidebar", #selector(BrowserController.toggleSidebar), "b", target: browser)
-        alternate(view, "Toggle Sidebar", #selector(BrowserController.toggleSidebar), "s")
         view.addItem(.separator())
         item(view, "Reload", #selector(BrowserController.reload), "r", target: browser)
         item(view, "Reload Without Cache", #selector(BrowserController.hardReload), "r", modifiers: [.command, .shift], target: browser)

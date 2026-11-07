@@ -12,6 +12,7 @@ import AppKit
             HistoryArrowButton(direction: .forward, title: "Forward (⌘])", action: { [weak self] in self?.goForward() }),
             ReloadButton(title: "Reload (⌘R)", action: { [weak self] in self?.reload() }),
         ]
+        (splitBarButtons[2] as? ReloadButton)?.onRepeatedPress = { [weak self] in self?.adBlockPrompt.noteReload() }
         splitBar.navigation = splitBarButtons
         splitBar.navigationCentres = PlainNavBar.Metrics.navigationCentres.dropFirst().map { $0-room }
         splitBar.leadingRoom = room

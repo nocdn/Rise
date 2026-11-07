@@ -275,18 +275,20 @@ final class BrowserLifecycleTests: XCTestCase {
         XCTAssertFalse(window.standardWindowButton(.closeButton)!.isHidden)
         XCTAssertEqual(browser.tabs.count, 1)
     }
-    @MainActor func testCommandBAndLegacyCommandSToggleSidebarThroughMenu() {
+    @MainActor func testOnlyCommandBTogglesTheSidebarThroughTheMenu() {
         let browser = makeBrowser(); defer { clean(browser) }
         let previousMenu = NSApp.mainMenu; defer { NSApp.mainMenu = previousMenu }
         let delegate = AppDelegate(); delegate.browser = browser; delegate.buildMenu()
-        for (key, code) in [("b", UInt16(11)), ("s", UInt16(1))] {
-            let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
-                                        windowNumber: browser.window!.windowNumber, context: nil,
-                                        characters: key, charactersIgnoringModifiers: key, isARepeat: false, keyCode: code)!
-            let before = browser.sidebarVisible
-            XCTAssertTrue(NSApp.mainMenu!.performKeyEquivalent(with: event))
-            XCTAssertEqual(browser.sidebarVisible, !before)
+        func press(_ key: String, _ code: UInt16) -> NSEvent {
+            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+                             windowNumber: browser.window!.windowNumber, context: nil,
+                             characters: key, charactersIgnoringModifiers: key, isARepeat: false, keyCode: code)!
         }
+        let before = browser.sidebarVisible
+        XCTAssertTrue(NSApp.mainMenu!.performKeyEquivalent(with: press("b", 11)))
+        XCTAssertEqual(browser.sidebarVisible, !before)
+        XCTAssertFalse(NSApp.mainMenu!.performKeyEquivalent(with: press("s", 1)), "⌘S is the page's")
+        XCTAssertEqual(browser.sidebarVisible, !before)
     }
 
 }

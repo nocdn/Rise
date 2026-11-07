@@ -50,13 +50,14 @@ final class DeveloperAddressField: FadingTextField, NSTextFieldDelegate {
 /// editor lays it out, and editing puts the editor's baseline on the drawn one, so a click to
 /// edit doesn't move it: AppKit's editing otherwise sets its line a point lower.
 final class DeveloperAddressCell: FindInputCell {
+    /// The baseline where the capitals' middle is the field's, on a whole pixel. A notice in the
+    /// address's place sits on it too (`BarNotice`), so nothing hops as the two change places.
+    static func baseline(of font: NSFont, middle: CGFloat) -> CGFloat { ceil((middle+font.capHeight/2)*2)/2 }
     private func line(in rect: NSRect) -> NSRect {
         var line = super.drawingRect(forBounds: rect)
         guard let font else { return line }
         let manager = NSLayoutManager()
-        // The baseline where the capitals' middle is the field's, on a whole pixel.
-        let baseline = ceil((rect.midY+font.capHeight/2)*2)/2
-        line.origin.y = baseline-manager.defaultBaselineOffset(for: font)
+        line.origin.y = Self.baseline(of: font, middle: rect.midY)-manager.defaultBaselineOffset(for: font)
         line.size.height = manager.defaultLineHeight(for: font)
         return line
     }

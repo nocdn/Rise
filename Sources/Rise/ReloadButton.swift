@@ -42,10 +42,12 @@ final class ReloadButton: ChromeButton {
         layer?.addSublayer(glyph)
     }
     required init?(coder: NSCoder) { fatalError() }
+    /// A press that does nothing itself, being that second click, but is still someone reloading.
+    var onRepeatedPress: (() -> Void)?
     override func runAction() {
         let now = CACurrentMediaTime()
         // The second click of a double click on Reload doesn't stop the load it started.
-        if mode == .stop, now-reloadPressedAt < NSEvent.doubleClickInterval { return }
+        if mode == .stop, now-reloadPressedAt < NSEvent.doubleClickInterval { onRepeatedPress?(); return }
         if mode == .reload { reloadPressedAt = now }
         super.runAction()
     }

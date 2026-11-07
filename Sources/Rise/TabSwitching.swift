@@ -25,6 +25,7 @@ import AppKit
         if handleTabMoveEvent(event) { return true }
         if event.type == .keyDown, let number = (1...9).first(where: { keyboardShortcuts.matches("openPinnedExtension\($0)", event) }),
            openPinnedExtension(at: number-1) { return true }
+        if adBlockPrompt.handleKey(event) { return true }
         if event.type == .keyDown, permissionCoordinator.isShowingPrompt {
             if keyboardShortcuts.matches("allowPermission", event) { permissionCoordinator.resolve(true); return true }
             if keyboardShortcuts.matches("denyPermission", event) { permissionCoordinator.resolve(false); return true }

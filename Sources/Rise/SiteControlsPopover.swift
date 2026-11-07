@@ -8,7 +8,7 @@ enum SiteControlsLayout {
 }
 
 /// Shared Arc-style action bezel used by settings and copy confirmation.
-final class PopoverActionButton: ChromeButton {
+class PopoverActionButton: ChromeButton {
     /// The share symbol's box sits low in its frame, so it's drawn higher: a little in the
     /// notices' small buttons, a little more in the settings popover's wide ones.
     static let shareSymbol = "square.and.arrow.up", shareLift: CGFloat = 1.5, popoverShareLift: CGFloat = 2
@@ -37,6 +37,139 @@ final class PopoverActionButton: ChromeButton {
         setAccessibilityLabel(text)
     }
     required init?(coder: NSCoder) { fatalError() }
+}
+
+/// Block Ads in the site controls: a shield while ads are blocked on this site, with a slash drawn
+/// across it while they aren't. It's one symbol that stays put, and the slash its own stroke over it, as
+/// `shield` and `shield.slash` sit differently in their boxes, so swapping them moves the shield.
+final class AdBlockButton: PopoverActionButton {
+    /// Over the button, without taking its clicks.
+    private final class Glyph: NSView {
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    }
+    static let symbol = "shield"
+    /// The slash, as `shield.slash` has it, in points at the size the button's symbol is drawn:
+    /// its reach from the middle of the shield's ink, its stroke, and the gap each side of it.
+    private static let reach: CGFloat = 7.5, stroke: CGFloat = 1.25, gap: CGFloat = 1.1
+    /// The middle of the shield's ink in its 18 by 20 box, measured from the bottom left.
+    private static let inkCenter = CGPoint(x: 8.25, y: 9.94)
+    /// The same slashed shield still, as an image to tint, for anywhere it can't draw itself.
+    /// `pointSize` is the symbol's; the slash keeps its proportions, in a `stroke` wide line.
+    static func slashedShield(canvas: CGFloat, pointSize: CGFloat, weight: NSFont.Weight, stroke: CGFloat, description: String) -> NSImage {
+        let symbol = NSImage(systemSymbolName: Self.symbol, accessibilityDescription: nil)!
+            .withSymbolConfiguration(.init(pointSize: pointSize, weight: weight))!
+        let ratio = pointSize/(17*SiteControlsLayout.scale)
+        let image = NSImage(size: NSSize(width: canvas, height: canvas), flipped: false) { _ in
+            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+            let middle = canvas/2
+            context.beginTransparencyLayer(auxiliaryInfo: nil)
+            symbol.draw(in: NSRect(x: middle-inkCenter.x*ratio, y: middle-inkCenter.y*ratio, width: symbol.size.width, height: symbol.size.height))
+            let reach = Self.reach*ratio
+            context.setLineCap(.round)
+            context.move(to: CGPoint(x: middle-reach, y: middle+reach)); context.addLine(to: CGPoint(x: middle+reach, y: middle-reach))
+            let line = context.path
+            context.setBlendMode(.clear); context.setLineWidth(stroke+2*Self.gap*ratio); context.strokePath()
+            context.setBlendMode(.normal); context.setStrokeColor(NSColor.black.cgColor); context.setLineWidth(stroke)
+            if let line { context.addPath(line) }
+            context.strokePath()
+            context.endTransparencyLayer()
+            return true
+        }
+        image.isTemplate = true; image.accessibilityDescription = description
+        return image
+    }
+    private let glyph = Glyph()
+    private let shield = CALayer(), shieldCut = CAShapeLayer(), slash = CAShapeLayer()
+    private let shieldImage: NSImage
+    private(set) var isBlocking: Bool
+    private static let response: Double = 0.22, bounce: Double = 0.45
+    private var progress: MotionSpring
+    private var link: CADisplayLink?, lastTick: CFTimeInterval?
+    init(isBlocking: Bool, size: CGFloat, scale: CGFloat, theme: RiseTheme) {
+        progress = MotionSpring(isBlocking ? 0 : 1)
+        self.isBlocking = isBlocking
+        let symbol = NSImage(systemSymbolName: Self.symbol, accessibilityDescription: nil)!
+            .withSymbolConfiguration(.init(pointSize: size*scale, weight: .regular))!
+        let tint = theme.text
+        shieldImage = NSImage(size: symbol.size, flipped: false) { rect in
+            symbol.draw(in: rect); tint.set(); rect.fill(using: .sourceIn); return true
+        }
+        super.init(symbol: Self.symbol, size: size, scale: scale, title: "Block Ads", theme: theme, action: {})
+        image = nil; title = ""
+        glyph.wantsLayer = true
+        glyph.frame.size = shieldImage.size
+        shield.frame = CGRect(origin: .zero, size: shieldImage.size)
+        shieldCut.frame = shield.bounds; shieldCut.fillRule = .evenOdd; shieldCut.fillColor = NSColor.black.cgColor
+        shield.mask = shieldCut
+        slash.frame = shield.bounds; slash.fillColor = nil; slash.strokeColor = tint.cgColor
+        slash.lineWidth = Self.stroke; slash.lineCap = .round
+        glyph.layer?.addSublayer(shield); glyph.layer?.addSublayer(slash)
+        addSubview(glyph)
+        render()
+        setAccessibilityValue(isBlocking ? "On" : "Off")
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    private var slashStart: CGPoint { CGPoint(x: Self.inkCenter.x-Self.reach, y: Self.inkCenter.y+Self.reach) }
+    private var slashEnd: CGPoint { CGPoint(x: Self.inkCenter.x+Self.reach, y: Self.inkCenter.y-Self.reach) }
+    /// The slash as far along as `progress`, which passes 1 as it overshoots, with the shield cut
+    /// away around it: the box, then a cut of the slash's width plus a gap each side, which even-odd
+    /// filling leaves empty. It reaches only a gap ahead of the line's tip, so each gap in the shield
+    /// opens as the line gets there.
+    private func render() {
+        let progress = max(0, self.progress.value)
+        let tip = CGPoint(x: slashStart.x+(slashEnd.x-slashStart.x)*progress, y: slashStart.y+(slashEnd.y-slashStart.y)*progress)
+        let line = CGMutablePath(), cut = CGMutablePath()
+        cut.addRect(shield.bounds.insetBy(dx: -4, dy: -4))
+        if progress > 0.001 {
+            line.move(to: slashStart); line.addLine(to: tip)
+            let half = Self.stroke/2+Self.gap, step = half/2.0.squareRoot()
+            let start = CGPoint(x: slashStart.x-step, y: slashStart.y+step), end = CGPoint(x: tip.x+step, y: tip.y-step)
+            cut.addLines(between: [CGPoint(x: start.x-step, y: start.y-step), CGPoint(x: start.x+step, y: start.y+step),
+                                   CGPoint(x: end.x+step, y: end.y+step), CGPoint(x: end.x-step, y: end.y-step)])
+            cut.closeSubpath()
+        }
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        slash.path = line; shieldCut.path = cut
+        CATransaction.commit()
+    }
+    private func settle() {
+        link?.invalidate(); link = nil
+        progress.settle(); render()
+    }
+    @objc private func tick(_ link: CADisplayLink) {
+        let now = CACurrentMediaTime(), dt = min(0.05, now-(lastTick ?? now)); lastTick = now
+        progress.step(dt)
+        if progress.isResting(within: 0.001) { settle() } else { render() }
+    }
+    var showsSlash: Bool { !isBlocking }
+    func show(blocking: Bool) {
+        guard blocking != isBlocking else { return }
+        isBlocking = blocking
+        setAccessibilityValue(blocking ? "On" : "Off")
+        // Quick, and overshooting as it draws. Going away it can't: past nothing there's nothing to show.
+        progress.configure(response: Self.response, bounce: blocking ? 0 : Self.bounce)
+        progress.target = blocking ? 0 : 1
+        guard window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { settle(); return }
+        guard link == nil else { return }
+        lastTick = CACurrentMediaTime()
+        let link = displayLink(target: self, selector: #selector(tick(_:)))
+        link.add(to: .main, forMode: .common); self.link = link
+    }
+    /// In the middle, on whole pixels, wherever the button has been put.
+    private func placeGlyph() {
+        let size = glyph.frame.size
+        let middle = NSRect(x: (bounds.width-size.width)/2, y: (bounds.height-size.height)/2, width: size.width, height: size.height)
+        glyph.frame.origin = window == nil ? middle.origin : backingAlignedRect(middle, options: .alignAllEdgesNearest).origin
+        let scale = window?.backingScaleFactor ?? 2
+        [shield, shieldCut, slash, glyph.layer].forEach { $0?.contentsScale = scale }
+        shield.contents = shieldImage.layerContents(forContentsScale: scale)
+    }
+    override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize); placeGlyph() }
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); placeGlyph(); if window == nil { settle() } }
+    override func viewDidChangeBackingProperties() { super.viewDidChangeBackingProperties(); placeGlyph() }
+    override var isEnabled: Bool { didSet { glyph.alphaValue = isEnabled ? 1 : 0.4 } }
+    /// Dims while pressed, as the other buttons' images do.
+    override func highlight(_ flag: Bool) { super.highlight(flag); glyph.alphaValue = flag ? 0.6 : 1 }
 }
 
 final class SiteSettingRow: NSButton {
@@ -200,14 +333,23 @@ final class SiteOptionRow: NSButton {
         let actions: [(String, String, () -> Void)] = [
             (PopoverActionButton.shareSymbol, "Share Page", { [weak browser] in browser?.shareCurrentPage() }),
             ("camera", "Capture Whole Page", {}),
-            ("text.viewfinder", "Copy Text from Page Image", { [weak browser] in browser?.siteControlsPopover.close(); browser?.copyTextFromPageImage() }),
+            (AdBlockButton.symbol, "Block Ads", {}),
             ("ellipsis", "More Site Controls", { [weak browser] in browser?.moreSiteControls() })
         ]
         for (index, action) in actions.enumerated() {
-            let button = PopoverActionButton(symbol: action.0, size: action.0 == "ellipsis" ? 18 : 17, scale: scale, title: action.1, theme: theme,
-                                             shareLift: PopoverActionButton.popoverShareLift, action: action.2)
+            let button = action.0 == AdBlockButton.symbol
+                ? AdBlockButton(isBlocking: browser.adBlocker.isBlocking(on: browser.selectedTab?.url), size: 17, scale: scale, theme: theme)
+                : PopoverActionButton(symbol: action.0, size: action.0 == "ellipsis" ? 18 : 17, scale: scale, title: action.1, theme: theme,
+                                      shareLift: PopoverActionButton.popoverShareLift, action: action.2)
             button.frame = NSRect(x: 10+CGFloat(index)*56+(52-52*scale)/2, y: 10+(34-34*scale)/2, width: 52*scale, height: 34*scale)
             if action.0 == "camera" { button.actionBlock = { [weak browser, weak button] in if let button { browser?.showCaptureChoices(from: button) } } }
+            if let adBlock = button as? AdBlockButton {
+                // Only a web page has a site to turn it off for, unless it's off everywhere.
+                adBlock.isEnabled = !browser.adBlocker.enabled || AdBlocker.site(of: browser.selectedTab?.url) != nil
+                adBlock.actionBlock = { [weak browser, weak adBlock] in
+                    browser?.toggleAdBlockingHere(); adBlock?.show(blocking: browser?.adBlocker.isBlocking(on: browser?.selectedTab?.url) ?? true)
+                }
+            }
             view.addSubview(button); quickActions.append(button)
         }
         func heading(_ title: String, y: CGFloat) {
@@ -231,7 +373,9 @@ final class SiteOptionRow: NSButton {
         }
         layoutKey = [theme == .dark ? "dark" : "light"] + view.subviews.compactMap { ($0 as? NSButton)?.toolTip ?? ($0 as? SiteOptionRow)?.name.stringValue }
             + rows.keys.sorted() + ["\(y)"]
-        view.setFrameSize(NSSize(width: 240, height: y+8))
+        // Ending on the extensions' buttons, it leaves as much below them as beside them.
+        let bottom = (view.subviews.last as? PopoverActionButton).map { ($0.frame.maxY+quickActions[0].frame.minX).rounded() }
+        view.setFrameSize(NSSize(width: 240, height: bottom ?? y+8))
     }
     /// Only the rows' states changed: this popover takes them from a fresh one.
     func take(_ fresh: SiteControlsController) -> Bool {

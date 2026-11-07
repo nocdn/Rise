@@ -5,7 +5,8 @@ import UniformTypeIdentifiers
 /// More's Downloads: Site settings' title and X over a list laid out as on the Mac, each file's
 /// thumbnail or icon beside its name, with its size or progress below. A row opens its file in
 /// Quick Look; its dots open a menu to show it in Files, share it, or take it off the list. The
-/// title's dots act on the whole list, or, in Multi Select, on the files ticked.
+/// title's dots act on the whole list, or, in Multi Select, on the files ticked. Holding a finished
+/// download picks its file up, to drop on the page or in another app.
 final class DownloadsPanel: UIView {
     /// A little taller than Site settings' rows, for a file's two lines.
     static let rowHeight: CGFloat = 64
@@ -250,6 +251,10 @@ final class DownloadsPanel: UIView {
             layer.cornerCurve = .continuous
             shrinksWhenPressed(to: DownloadsPanel.pressedScale, filled: true,
                                restingFill: DownloadsPanel.rowFill, pressedFill: DownloadsPanel.pressedRowFill)
+            // UIKit leaves dragging off on iPhone unless it's asked for.
+            let drag = UIDragInteraction(delegate: self)
+            drag.isEnabled = true
+            addInteraction(drag)
             update()
         }
 
@@ -308,7 +313,8 @@ final class DownloadsPanel: UIView {
             thumbnailFor = url
             icon.image = UIImage(systemName: "doc")
             icon.tintColor = .secondaryLabel
-            let side: CGFloat = 36
+            // Bigger than the row shows it, for the picture when it's dragged.
+            let side: CGFloat = 96
             let request = QLThumbnailGenerator.Request(fileAt: url, size: CGSize(width: side, height: side),
                                                        scale: traitCollection.displayScale, representationTypes: .all)
             QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { [weak self] thumbnail, _ in
@@ -396,4 +402,47 @@ final class DownloadsPanel: UIView {
             } else { fill.removeAnimation(forKey: "spin") }
         }
     }
+}
+
+/// A finished download picked up with a hold, as a file is in the Files app: the row lifts, turning
+/// into the file's thumbnail, and whatever it's dropped on, a page or another app, gets a copy.
+/// Tapping other rows during the drag adds their files. Multi Select's taps tick, so it doesn't drag.
+extension DownloadsPanel.Row: UIDragInteractionDelegate {
+    /// The file to carry, if the row has one that's finished and still there.
+    func makeDragItem() -> UIDragItem? {
+        // Multi Select takes the dots' touches, and the row's.
+        guard moreButton.isUserInteractionEnabled, item.state == .finished, FileManager.default.fileExists(atPath: item.url.path),
+              let provider = NSItemProvider(contentsOf: item.url) else { return nil }
+        provider.suggestedName = item.name
+        let dragged = UIDragItem(itemProvider: provider)
+        dragged.localObject = item.id
+        let picture = icon.image
+        dragged.previewProvider = {
+            guard let picture else { return nil }
+            let longest = max(1, max(picture.size.width, picture.size.height)), fit = 96/longest
+            let view = UIImageView(image: picture)
+            view.frame = CGRect(x: 0, y: 0, width: picture.size.width*fit, height: picture.size.height*fit)
+            let parameters = UIDragPreviewParameters()
+            parameters.backgroundColor = .clear
+            parameters.visiblePath = UIBezierPath(roundedRect: view.bounds, cornerRadius: 8)
+            return UIDragPreview(view: view, parameters: parameters)
+        }
+        return dragged
+    }
+    func dragInteraction(_ interaction: UIDragInteraction, itemsForBeginning session: any UIDragSession) -> [UIDragItem] {
+        // The dots keep their own menu.
+        guard !moreButton.bounds.contains(session.location(in: moreButton)) else { return [] }
+        return makeDragItem().map { [$0] } ?? []
+    }
+    func dragInteraction(_ interaction: UIDragInteraction, itemsForAddingTo session: any UIDragSession, withTouchAt point: CGPoint) -> [UIDragItem] {
+        guard !session.items.contains(where: { $0.localObject as? UUID == item.id }) else { return [] }
+        return makeDragItem().map { [$0] } ?? []
+    }
+    func dragInteraction(_ interaction: UIDragInteraction, previewForLifting item: UIDragItem, session: any UIDragSession) -> UITargetedDragPreview? {
+        let parameters = UIDragPreviewParameters()
+        parameters.backgroundColor = DownloadsPanel.rowFill
+        parameters.visiblePath = UIBezierPath(roundedRect: bounds, cornerRadius: layer.cornerRadius)
+        return UITargetedDragPreview(view: self, parameters: parameters)
+    }
+    func dragInteraction(_ interaction: UIDragInteraction, sessionAllowsMoveOperation session: any UIDragSession) -> Bool { false }
 }

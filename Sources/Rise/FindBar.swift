@@ -222,7 +222,8 @@ class FindInputCell: NSTextFieldCell {
     private let content = FlippedView(), row = FlippedView()
     let input = FindInput()
     private let placeholders = FlippedView()
-    private let findPlaceholder = label("Find on page", size: 13)
+    let findPlaceholder = label("Find on page", size: 13)
+    var cannotSearchPage: (() -> Bool)?
     private let askPlaceholder = label("Ask a model about the page", size: 13)
     let previous: ChromeButton
     let next: ChromeButton
@@ -421,6 +422,7 @@ class FindInputCell: NSTextFieldCell {
 
     /// Slides in, starting in find mode with a clean slate; an open bar just takes focus.
     func present() {
+        updateFindPlaceholder()
         if !isPresented {
             isPresented = true; isHidden = false
             cancelAnswer(); hasSubmittedQuestion = false; conversation = []; answerText = ""; answerFailed = false; stream = TokenStream(); lastQuestion = nil; renderAnswer()
@@ -519,7 +521,12 @@ class FindInputCell: NSTextFieldCell {
     }
     /// The selected tab changed or reloaded; search it for the same text.
     func pageChanged() {
+        updateFindPlaceholder()
         if isPresented && mode == .find && !input.stringValue.isEmpty { run(.restart) }
+    }
+    /// A page drawn on a canvas has no text to search, which is better said than shown as no matches.
+    private func updateFindPlaceholder() {
+        findPlaceholder.stringValue = cannotSearchPage?() == true ? "Can't search this document" : "Find on page"
     }
     private func show(_ matches: PageFind.Matches?, animated: Bool = false) {
         lastMatches = matches
@@ -880,6 +887,7 @@ class FindInputCell: NSTextFieldCell {
             guard let webView = tab?.page else { return PageFind.Matches(count: 0, index: -1) }
             return await PageFind.find(query, direction: direction, in: webView)
         }
+        bar.cannotSearchPage = { [weak tab] in Self.drawsItsOwnText(tab?.url) }
         bar.dismiss = { [weak self, weak tab] in
             guard let tab else { return }
             self?.hideFind(in: tab)
@@ -921,7 +929,7 @@ class FindInputCell: NSTextFieldCell {
         layoutPeekFindBar()
         bar.present()
         // A permission's panel moves down out of its way.
-        permissionCoordinator.layoutPanel(); currencyReplacement.layoutPanel(); timeReplacement.layoutPanel()
+        permissionCoordinator.layoutPanel(); currencyReplacement.layoutPanel(); timeReplacement.layoutPanel(); adBlockPrompt.layoutPanel()
     }
     @objc func findNext() { findAgain(.next) }
     @objc func findPrevious() { findAgain(.previous) }
@@ -934,7 +942,7 @@ class FindInputCell: NSTextFieldCell {
     }
     func hideFind() { if let tab = findTab { hideFind(in: tab) } else { tablessFindBar.hide() } }
     private func hideFind(in tab: BrowserTab) {
-        findBars[tab.id]?.hide(); permissionCoordinator.layoutPanel(); currencyReplacement.layoutPanel(); timeReplacement.layoutPanel()
+        findBars[tab.id]?.hide(); permissionCoordinator.layoutPanel(); currencyReplacement.layoutPanel(); timeReplacement.layoutPanel(); adBlockPrompt.layoutPanel()
         let page = tab.page
         Task { await PageFind.clear(page, selectingCurrent: true); await PageFind.clearPassage(page) }
         if findTab === tab { window?.makeFirstResponder(page.view) }

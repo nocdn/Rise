@@ -40,7 +40,7 @@ final class KeyboardShortcutsTests: XCTestCase {
             }
             XCTAssertGreaterThan(commands.count, 65)
             XCTAssertTrue(browser.keyboardShortcuts.bindings("pinCurrentTab").isEmpty)
-            XCTAssertEqual(browser.keyboardShortcuts.bindings("toggleSidebar").count, 2, "The existing ⌘B and ⌘S aliases stay available")
+            XCTAssertEqual(browser.keyboardShortcuts.bindings("toggleSidebar").map(\.display), ["⌘B"], "⌘S is left for the page")
         }
     }
     @MainActor func testOrdinaryShortcutsUseNativeMenuDispatchExactlyOnceIncludingExtraBindings() throws {

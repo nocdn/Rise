@@ -120,7 +120,7 @@ if check == "features" or check.endswith(".swift"):
     # Media plays without a click, and the camera is Chromium's made-up one, so no real camera is asked for.
     # rise-check.test is an ordinary site to the filter lists, which leave local addresses alone.
     arguments = ["--autoplay-policy=no-user-gesture-required", "--use-fake-device-for-media-stream",
-                 "--host-resolver-rules=MAP rise-check.test 127.0.0.1, MAP pagead2.googlesyndication.com 127.0.0.1"]
+                 "--host-resolver-rules=MAP rise-check.test 127.0.0.1, MAP other-check.test 127.0.0.1, MAP pagead2.googlesyndication.com 127.0.0.1"]
 if fixtures:
     # One HTTPS server for every fixture address, with a certificate made for the run.
     subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2", "-subj", "/CN=rise-check",
@@ -225,6 +225,9 @@ if check == "certificates":
         environment["RISE_BADSSL"] = "1"
     # The local site's certificate is the test CA's; the site at rise-cert.test is the same one.
     arguments = ["--ignore-certificate-errors", "--host-resolver-rules=MAP rise-cert.test 127.0.0.1"]
+# The probe shares Rise's bundle identifier, so its window would replace the frame Rise remembers.
+frame_key = "NSWindow Frame RiseBrowser"
+saved_frame = subprocess.run(["defaults", "read", bundle_id, frame_key], capture_output=True, text=True).stdout.strip()
 try:
     # RISE_LLDB=1 runs the check under lldb, which prints where it crashed.
     # RISE_LLDB_BREAK=<function> also prints where that function is called from, each time.
@@ -237,6 +240,8 @@ finally:
         server.terminate()
     for remove in identities:
         remove()
+    if saved_frame:
+        subprocess.run(["defaults", "write", bundle_id, frame_key, saved_frame])
 if not keep:
     shutil.rmtree(folder, ignore_errors=True)
 # macOS keeps a copy of each app it launches, to check its signature against, which takes the

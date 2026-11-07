@@ -71,6 +71,8 @@ import AppKit
         if event.type == .keyDown, keyboardShortcuts.matches("moveCurrentTabToTop", event) {
             moveCurrentTabToTop(); return true
         }
+        // A ⌘Z on its way to the page goes there first, and can still undo the move after.
+        if let pending = pendingPageKey, pending.timestamp == event.timestamp, ["undo:", "redo:"].contains(pending.commandID) { return false }
         if handleTabOrderUndoKey(event) { return true }
         if event.type == .keyDown {
             tabMoveSequence = nil
@@ -81,6 +83,13 @@ import AppKit
             tabMoveSequence = nil
         }
         return false
+    }
+    /// What ⌘Z or ⇧⌘Z would do to the tabs' order, in words after "to".
+    func tabOrderUndoAction(redo: Bool) -> String? {
+        guard tabOrderUndoPending, let undo = window?.undoManager else { return nil }
+        let names = ["Move Tab", "Move Tab to Top", "Sort Tabs by Domain"]
+        if redo { return undo.canRedo && names.contains(undo.redoActionName) ? "redo \(undo.redoActionName)" : nil }
+        return undo.canUndo && names.contains(undo.undoActionName) ? "undo \(undo.undoActionName)" : nil
     }
     func handleTabOrderUndoKey(_ event: NSEvent) -> Bool {
         guard tabOrderUndoPending, event.type == .keyDown,

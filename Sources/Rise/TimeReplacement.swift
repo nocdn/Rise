@@ -80,6 +80,11 @@ import RiseCore
         guard browser.findTab?.page === page else { panel.hide(); return }
         PermissionCoordinator.place(panel, over: page.view, in: browser)
     }
+    /// ⌘Z would put the times back.
+    var canUndo: Bool {
+        guard let browser, browser.palette.isHidden, Date() < undoUntil, let page = undoPage, browser.findTab?.page === page else { return false }
+        return isActive(in: page)
+    }
     func handleUndoKey(_ event: NSEvent) -> Bool {
         guard event.type == .keyDown, let browser, browser.palette.isHidden, !(browser.window?.firstResponder is NSTextView),
               browser.keyboardShortcuts.matches("undo:", event), Date() < undoUntil,

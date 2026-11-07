@@ -214,6 +214,11 @@ RC_EXPORT @interface RCContextMenu : NSObject
 @optional
 /// The pointer moved onto a link, or off one (nil).
 - (void)browserView:(RCBrowserView *)browserView didHoverLink:(nullable NSURL *)url;
+/// The page used the key press `-watchNextKeyPress` was asked about, as its keydown handler did
+/// or its editing did. `keyCode` is the press's `NSEvent.keyCode`.
+- (void)browserView:(RCBrowserView *)browserView pageUsedKeyCode:(unsigned short)keyCode;
+/// The page didn't use a key press, which goes to the menu bar next. Return YES to take it first.
+- (BOOL)browserView:(RCBrowserView *)browserView handleUnusedKey:(NSEvent *)event;
 /// The page wants `url` somewhere other than itself, a new tab or window. Return YES once
 /// Rise has opened it; NO lets it open in this page instead.
 - (BOOL)browserView:(RCBrowserView *)browserView openURL:(NSURL *)url disposition:(RCOpenDisposition)disposition
@@ -312,6 +317,9 @@ RC_EXPORT @interface RCBrowserView : NSView
 - (instancetype)initWithFrame:(NSRect)frameRect NS_UNAVAILABLE;
 - (nullable instancetype)initWithCoder:(NSCoder *)coder NS_UNAVAILABLE;
 @property (nonatomic, weak, nullable) id<RCBrowserViewDelegate> delegate;
+/// Reports it to the delegate if the page uses the next key press it gets
+/// (`browserView:pageUsedKeyCode:`). One that isn't used comes to `browserView:handleUnusedKey:`.
+- (void)watchNextKeyPress;
 @property (nonatomic, readonly, nullable) NSURL *URL;
 @property (nonatomic, readonly, nullable) NSString *title;
 /// Navigation loading state for browser UI. Late subframe loads on a finished page do not

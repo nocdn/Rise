@@ -192,6 +192,15 @@ enum RisePages {
     }
     /// A site asks for a certificate to identify the person, one of `identities` (the keychain's
     /// that suit it): `finish` takes the index of the one chosen, or nil to go on without one.
+    /// The page used a shortcut Rise let it try first, or had no use for one, which Rise can take.
+    var onPageUsedKey: ((UInt16) -> Void)?
+    var onUnusedKey: ((NSEvent) -> Bool)?
+    nonisolated func browserView(_ browserView: RCBrowserView, pageUsedKeyCode keyCode: UInt16) {
+        MainActor.assumeIsolated { onPageUsedKey?(keyCode) }
+    }
+    nonisolated func browserView(_ browserView: RCBrowserView, handleUnusedKey event: NSEvent) -> Bool {
+        MainActor.assumeIsolated { onUnusedKey?(event) ?? false }
+    }
     var onChooseClientCertificate: (([SecIdentity], _ host: String, _ finish: @escaping (Int?) -> Void) -> Void)?
     /// The site's request for a certificate went away before one was chosen.
     var onClientCertificateCancelled: (() -> Void)?
