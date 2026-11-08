@@ -38,6 +38,8 @@ import RiseCore
     /// Restores history saved by `sessionState`; false if there was nothing to restore.
     func restoreSession(_ data: Data, fallback url: URL) -> Bool
     var navigationHistory: TabNavigationHistory? { get }
+    /// Every page in the page's history as the engine has it, unfiltered, for a list to go to.
+    var backForwardList: TabNavigationHistory? { get }
     func restoreNavigationHistory(_ history: TabNavigationHistory, fallback url: URL) -> Bool
     /// A picture of the page as it is now, `width` points wide (or its own width).
     func snapshot(width: CGFloat?) async -> NSImage?
@@ -110,6 +112,7 @@ struct PageScriptError: Error, LocalizedError {
 
 extension WebPage {
     var navigationHistory: TabNavigationHistory? { nil }
+    var backForwardList: TabNavigationHistory? { nil }
     func restoreNavigationHistory(_ history: TabNavigationHistory, fallback url: URL) -> Bool { false }
     func runScript(_ body: String, arguments: [String: Any], world: String?) async throws -> Any? {
         guard let world else { return await evaluate(body, arguments: arguments, world: nil) }

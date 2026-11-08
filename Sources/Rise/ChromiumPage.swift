@@ -375,6 +375,12 @@ enum RisePages {
               let history = try? JSONDecoder().decode(TabNavigationHistory.self, from: data) else { return nil }
         return history.validated()
     }
+    var backForwardList: TabNavigationHistory? {
+        guard let value = browserView.navigationHistory, let data = try? JSONSerialization.data(withJSONObject: value),
+              let history = try? JSONDecoder().decode(TabNavigationHistory.self, from: data),
+              history.entries.indices.contains(history.index) else { return nil }
+        return history
+    }
     func restoreNavigationHistory(_ history: TabNavigationHistory, fallback url: URL) -> Bool {
         guard let history = history.validated(for: url.absoluteString), let data = try? JSONEncoder().encode(history),
               let value = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }

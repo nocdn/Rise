@@ -67,8 +67,7 @@ import UIKit
         try check("progress-refresh-does-not-reset-the-selection", panel.selected == [fixtures[0].id]
                   && first.iconButton.accessibilityLabel == "Deselect Report 1.pdf")
         first.iconButton.sendActions(for: .primaryActionTriggered)
-        try check("tapping-the-checkbox-deselects-only-that-row", panel.isSelecting && panel.selected.isEmpty && opened == 0)
-        panel.setSelecting(false)
+        try check("unticking-the-last-file-leaves-multi-select", !panel.isSelecting && panel.selected.isEmpty && opened == 0)
         try await Task.sleep(for: .milliseconds(80))
         try check("the-checkbox-to-icon-transition-stays-animated", (badge.layer.presentation()?.opacity ?? 0) > 0
                   && (badge.layer.presentation()?.opacity ?? 1) < 1)
@@ -107,6 +106,27 @@ import UIKit
         try check("select-all-includes-offscreen-files", panel.selected.count == fixtures.count+1)
         panel.toggleAll()
         try check("deselect-all-clears-native-and-custom-selection", panel.selected.isEmpty && list.indexPathsForSelectedItems?.isEmpty != false)
+        panel.setSelecting(false)
+        // A range drawn and taken back leaves nothing ticked: only as it ends does Multi Select go.
+        list.collectionView(list,didBeginMultipleSelectionInteractionAt: IndexPath(item: 0,section: 0))
+        let path = IndexPath(item: 0,section: 0)
+        list.selectItem(at: path,animated: false,scrollPosition: [])
+        list.collectionView(list,didSelectItemAt: path)
+        list.deselectItem(at: path,animated: false)
+        list.collectionView(list,didDeselectItemAt: path)
+        try check("a-range-taken-back-stays-in-multi-select-mid-drag", panel.isSelecting && panel.selected.isEmpty)
+        list.collectionViewDidEndMultipleSelectionInteraction(list)
+        try check("and-leaves-it-when-the-drag-ends", !panel.isSelecting)
+        // Unticking one of several stays.
+        panel.setSelecting(true)
+        for index in 0...1 {
+            let path = IndexPath(item: index,section: 0)
+            list.selectItem(at: path,animated: false,scrollPosition: [])
+            list.collectionView(list,didSelectItemAt: path)
+        }
+        list.deselectItem(at: IndexPath(item: 1,section: 0),animated: false)
+        list.collectionView(list,didDeselectItemAt: IndexPath(item: 1,section: 0))
+        try check("unticking-one-of-several-stays-in-multi-select", panel.isSelecting && panel.selected.count == 1)
         panel.setSelecting(false)
         list.setContentOffset(CGPoint(x: 0,y: list.contentSize.height-list.bounds.height),animated: false)
         list.layoutIfNeeded()

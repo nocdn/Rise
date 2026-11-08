@@ -16,7 +16,7 @@ public struct SelectionTime: Equatable {
 }
 
 /// Times in selected text, in the person's own zone, for the right-click menu to head with: "10am PST"
-/// selected reads "18:00 · in 3 hours", and "11pm PST" "Tomorrow at 07:00 · in 15 hours"; the iPhone's
+/// selected reads "18:00 (in 3 hours)", and "11pm PST" "Tomorrow at 07:00 (in 15 hours)"; the iPhone's
 /// selection menu offers the same. The system's date detector finds dates and times, ranges and words such as "tomorrow"; what it misses, this reads itself: zones it doesn't know,
 /// "noon" and "midnight", and an hour written without am or pm, which is a 24-hour one.
 public enum SelectionTimes {
@@ -248,8 +248,8 @@ public enum SelectionTimes {
             let amount = remainder == 0 ? "\(hours) \(hours == 1 ? "hour" : "hours")"
                 : hours == 0 ? "\(remainder) min" : "\(hours) hr \(remainder) min"
             text += " there · " + (difference == 0 ? "same time as here" : amount + (difference > 0 ? " ahead" : " behind"))
-        } else if let end = time.end, time.start <= now, now < end { text += " · happening now" }
-        else if let away = away(from: now, to: time.start) { text += " · \(away)" }
+        } else if let end = time.end, time.start <= now, now < end { text += " (happening now)" }
+        else if let away = away(from: now, to: time.start) { text += " (\(away))" }
         return count > 1 ? "\(time.written) → \(text)" : text
     }
 

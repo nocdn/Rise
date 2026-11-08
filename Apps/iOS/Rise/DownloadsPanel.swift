@@ -61,9 +61,9 @@ final class DownloadsPanel: UIView {
         addSubview(list)
         list.rangeBegan = { [weak self] in self?.setSelecting(true, syncingList: false) }
         list.rangeEnded = { [weak self] in
-            guard let self, let items = deferredItems else { return }
-            deferredItems = nil
-            reload(items)
+            guard let self else { return }
+            if let items = deferredItems { deferredItems = nil; reload(items) }
+            if selected.isEmpty { setSelecting(false) }
         }
         list.selectionChanged = { [weak self] index, selected in
             guard let self, rows.indices.contains(index) else { return }
@@ -158,6 +158,9 @@ final class DownloadsPanel: UIView {
     private func setSelected(_ row: Row, _ selecting: Bool, syncingList: Bool = true) {
         if selecting { selected.insert(row.item.id) } else { selected.remove(row.item.id) }
         row.setChecked(selecting, animated: true)
+        // With the last one unticked it leaves Multi Select, though not mid-drag, where the range
+        // can still come back over the rows.
+        if !selecting, selected.isEmpty, !list.isRangeSelecting { setSelecting(false); return }
         if syncingList { syncListSelection() }
         updateListMenu()
     }

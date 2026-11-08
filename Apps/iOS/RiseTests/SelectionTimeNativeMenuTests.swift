@@ -9,7 +9,7 @@ final class SelectionTimeNativeMenuTests: XCTestCase {
         let fallback = UIAction(title: "Add to Calendar") { _ in XCTFail("The fallback must be replaced by the native action") }
         let replace = SelectionTimeMenu.replaceAction(in: nil)
         let rise = UIMenu(identifier: SelectionTimeMenu.menuIdentifier, options: .displayInline, children:
-            (0..<timeCount).map { _ in UIMenu(title: "18:00 · in 1 hr", children: [copy, replace, fallback]) })
+            (0..<timeCount).map { _ in UIMenu(title: "18:00 (in 1 hr)", children: [copy, replace, fallback]) })
         let kinds = ["DDCreateEventAction", "DDCreateReminderAction", "DDShowCalendarAction"]
         let titles = ["Zum Kalender hinzufügen", "Zu Erinnerungen hinzufügen", "Im Kalender anzeigen"]
         let images = ["calendar", "list.bullet", "calendar.day.timeline.left"]

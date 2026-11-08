@@ -93,8 +93,18 @@ import RiseCore
             if committed { self?.closePeek(animated: true) } else { self?.returnPeekFromSwipe() }
         }
         controller.cancelPeek = { [weak self] in self?.returnPeekFromSwipe() }
+        controller.indicatorDrag = { [weak self] page, direction, pull, armed in
+            self?.dragHistoryIndicator(on: page, direction, pull: pull, armed: armed)
+        }
+        controller.indicatorList = { [weak self] entries in
+            if let entries { self?.historyIndicator.showList(entries) } else { self?.historyIndicator.hideList() }
+        }
+        controller.indicatorSelect = { [weak self] index in self?.historyIndicator.select(index) }
+        controller.indicatorRelease = { [weak self] in self?.historyIndicator.release() }
+        controller.listEntries = { [weak self] page, direction in self?.historyListEntries(for: page, direction) ?? [] }
         return controller
     }()
+    lazy var historyIndicator = HistorySwipeIndicator(frame: .zero)
     var tabs: [BrowserTab] = [] { didSet { extensionTabsChanged() } }
     var selectedID: UUID? { didSet { extensionTabsChanged() } }
     /// The window as Chrome extensions see it (`ExtensionWindow`).

@@ -69,6 +69,12 @@ import RiseCore
             .init(url: $0.absoluteString, title: $0 == url ? title : nil)
         }, index: back.count).validated()
     }
+    var backForwardList: TabNavigationHistory? {
+        guard let url else { return nil }
+        return TabNavigationHistory(entries: (back + [url] + Array(forward.reversed())).map {
+            .init(url: $0.absoluteString, title: $0 == url ? title : nil)
+        }, index: back.count)
+    }
     func restoreNavigationHistory(_ history: TabNavigationHistory, fallback url: URL) -> Bool {
         guard let history = history.validated(for: url.absoluteString), let current = history.current,
               let destination = URL(string: current.url) else { return false }

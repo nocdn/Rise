@@ -135,6 +135,9 @@ import UIKit
             view.center = pose.centre
             // The swiped card owns its vertical translation and stays opaque.
             if view !== cell { view.transform = pose.transform }
+            // Favicons tucked in at the left edge come and go with their cards' moving places,
+            // as the deck's own layout has them, so nothing jumps when it takes over.
+            view.captionNudge = TabCell.captionNudge(cardMinX: pose.centre.x-pose.bounds.width*abs(view.transform.a)/2)
             view.card.layer.cornerRadius = pose.radius
             view.shadeAmount = pose.shade
             view.title.alpha = pose.title

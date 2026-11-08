@@ -62,6 +62,7 @@ import UIKit
             case "more": await openMore(in: controller)
             case "downloads": await downloads(in: controller, savingTo: folder)
             case "tabsPress": await pressTabs(in: controller)
+            case "tabsSwipe": await swipeTabs(in: controller)
             default: await run(in: controller, savingFramesTo: folder)
             }
             let report = "revealed \(result.revealed), bar \(result.barWhileLoading), summary \(result.summaryHeight), finished \(result.finished), page moved \(result.pageMoved)"
@@ -745,6 +746,101 @@ import UIKit
             try? await Task.sleep(for: .milliseconds(900))
         }
         return Result()
+    }
+
+    /// Opens the switcher on whatever tabs are open and sweeps the deck sideways in real time, as a
+    /// drag would, then card by card as flicks settle, printing each sweep's frame drops and how
+    /// long each scroll update (the deck's layout) held the main thread.
+    static func swipeTabs(in controller: BrowserViewController) async -> Result {
+        // A replay starts with no session, so open a dozen real pages, each in its own tab.
+        let sites = ["news.ycombinator.com", "www.apple.com", "en.wikipedia.org/wiki/Swift", "www.bbc.co.uk/news",
+                     "github.com/apple/swift", "www.youtube.com", "x.com", "www.facebook.com", "www.theverge.com",
+                     "developer.apple.com/documentation/uikit", "www.reddit.com", "www.google.com/search?q=rise"]
+        for (n, site) in sites.enumerated() {
+            if n > 0 { controller.openNewBlankTab(); try? await Task.sleep(for: .milliseconds(400)); controller.closePanel() }
+            controller.webView.load(URLRequest(url: URL(string: "https://"+site)!))
+            for _ in 0..<150 where controller.webView.isLoading { try? await Task.sleep(for: .milliseconds(20)) }
+            try? await Task.sleep(for: .milliseconds(700))
+        }
+        try? await Task.sleep(for: .milliseconds(1500))
+        // After a relaunch, previews come back from the cache as JPEG, as `BackgroundTabPreviews`
+        // restores them. `fresh` keeps this launch's bitmaps instead.
+        let variant = ProcessInfo.processInfo.arguments.contains("fresh") ? "fresh bitmap" : "restored JPEG"
+        if variant != "fresh bitmap" {
+            for (n, tab) in controller.tabs.enumerated() where n != controller.tabIndex {
+                if let data = tab.snapshot?.jpegData(compressionQuality: 0.82) { tab.snapshot = UIImage(data: data) }
+            }
+        }
+        controller.bottomBar.tabsButton.sendActions(for: .primaryActionTriggered)
+        try? await Task.sleep(for: .milliseconds(1500))
+        let deck = controller.tabSwitcher, scroll = deck.scroll
+        let step = max(1, deck.bounds.width*0.57), last = max(0, scroll.contentSize.width-scroll.bounds.width)
+        print("Rise iOS tabsSwipe: \(deck.cells.count) cards, step \(step), range \(last), \(variant) previews")
+        for round in 0..<3 {
+            // A steady drag across up to eight cards and back, 1.6 cards a second.
+            let start = scroll.contentOffset.x, span = min(last, step*8)
+            let recorder = FrameRecorder(), clock = SweepClock()
+            recorder.start()
+            var costs: [Double] = [], slow: [String] = []
+            let duration = 2*span/(step*1.6)
+            await clock.run(for: duration) { t in
+                let p = t/duration, x = start-span*(p < 0.5 ? p*2 : 2-p*2)
+                let shown = deck.cells.filter { !$0.isHidden }.count
+                let began = CACurrentMediaTime()
+                scroll.contentOffset.x = min(last, max(0, x))
+                let laidOut = CACurrentMediaTime()
+                // Committed here so drawing newly shown cards counts too.
+                CATransaction.flush()
+                let ended = CACurrentMediaTime()
+                costs.append(ended-began)
+                if ended-began > 0.006 {
+                    slow.append(String(format: "%.1f (layout %.1f, commit %.1f) at slot %.2f, cards shown %d→%d",
+                        (ended-began)*1000, (laidOut-began)*1000, (ended-laidOut)*1000, scroll.contentOffset.x/step,
+                        shown, deck.cells.filter { !$0.isHidden }.count))
+                }
+            }
+            costs.sort()
+            let median = costs.isEmpty ? 0 : costs[costs.count/2]*1000, worst = (costs.last ?? 0)*1000
+            print(String(format: "Rise iOS tabsSwipe drag %d: %d updates, median %.2f ms, worst %.2f ms, over 6 ms: [%@]; ",
+                         round, costs.count, median, worst, slow.joined(separator: "; "))
+                  + recorder.stop())
+            try? await Task.sleep(for: .milliseconds(600))
+            // Card by card, as flicks settle, on UIScrollView's own animation.
+            let flicks = FrameRecorder()
+            flicks.start()
+            let from = scroll.contentOffset.x
+            for k in 1...4 {
+                scroll.setContentOffset(CGPoint(x: max(0, from-step*CGFloat(k)), y: 0), animated: true)
+                try? await Task.sleep(for: .milliseconds(450))
+            }
+            scroll.setContentOffset(CGPoint(x: from, y: 0), animated: true)
+            try? await Task.sleep(for: .milliseconds(500))
+            print("Rise iOS tabsSwipe flicks \(round): " + flicks.stop())
+            try? await Task.sleep(for: .milliseconds(600))
+        }
+        return Result()
+    }
+
+    /// Calls back on every display frame, with seconds since it started, for a while.
+    @MainActor final class SweepClock: NSObject {
+        private var link: CADisplayLink?, t0: CFTimeInterval = 0, duration: Double = 0
+        private var body: ((Double) -> Void)?, done: CheckedContinuation<Void, Never>?
+        func run(for duration: Double, _ body: @escaping (Double) -> Void) async {
+            self.duration = duration; self.body = body
+            await withCheckedContinuation { done in
+                self.done = done
+                let link = CADisplayLink(target: self, selector: #selector(frame(_:)))
+                link.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
+                link.add(to: .main, forMode: .common)
+                self.link = link
+            }
+        }
+        @objc private func frame(_ link: CADisplayLink) {
+            if t0 == 0 { t0 = link.targetTimestamp }
+            let t = min(duration, link.targetTimestamp-t0)
+            body?(t)
+            if t >= duration { link.invalidate(); self.link = nil; done?.resume(); done = nil }
+        }
     }
 
     /// Notes every frame's gap and when things happened between them.

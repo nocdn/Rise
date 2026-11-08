@@ -12,14 +12,16 @@ final class AdBlockHTTPFixture: @unchecked Sendable {
     func requestCount(for path: String) -> Int { lock.lock(); defer { lock.unlock() }; return paths[path, default: 0] }
     private var fail = false
     private let slowIcons: Bool
+    private let missingRootIcon: Bool
     var pageRequests: Int { lock.lock(); defer { lock.unlock() }; return requests }
     var shouldFail: Bool {
         get { lock.lock(); defer { lock.unlock() }; return fail }
         set { lock.lock(); defer { lock.unlock() }; fail = newValue }
     }
     var url: URL { URL(string: "http://127.0.0.1:\(listener.port!.rawValue)/")! }
-    init(slowIcons: Bool = false) throws {
+    init(slowIcons: Bool = false, missingRootIcon: Bool = false) throws {
         self.slowIcons = slowIcons
+        self.missingRootIcon = missingRootIcon
         listener = try NWListener(using: .tcp, on: .any)
     }
     func start() async throws {
@@ -50,7 +52,7 @@ final class AdBlockHTTPFixture: @unchecked Sendable {
             let route = request.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
             lock.lock(); paths[route, default: 0] += 1; let attempt = paths[route]!; lock.unlock()
             if shouldFail { connection.cancel(); return }
-            if slowIcons, route == "/favicon.ico" {
+            if (slowIcons || missingRootIcon), route == "/favicon.ico" {
                 let missing = Data("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
                 connection.send(content: missing, completion: .contentProcessed { _ in connection.cancel() }); return
             }
@@ -58,8 +60,20 @@ final class AdBlockHTTPFixture: @unchecked Sendable {
                 let unavailable = Data("HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
                 connection.send(content: unavailable, completion: .contentProcessed { _ in connection.cancel() }); return
             }
+            if route == "/favicon-audit/protected.svg", !request.contains("rise-icon=allowed") {
+                let denied = Data("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
+                connection.send(content: denied, completion: .contentProcessed { _ in connection.cancel() }); return
+            }
             let body: String, type: String
-            if route == "/" || route == "/replacement" { lock.lock(); requests += 1; lock.unlock(); body = Self.html(); type = "text/html" }
+            if route == "/favicon-audit/page" {
+                body = "<html><head><title>Declared artwork</title></head><body><script>document.cookie='rise-icon=allowed; path=/'</script>Article</body></html>"
+                type = "text/html"
+            }
+            else if route == "/favicon-audit/protected.svg" {
+                body = "<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'><rect width='32' height='32' fill='#ee3322'/></svg>"
+                type = "image/svg+xml"
+            }
+            else if route == "/" || route == "/replacement" { lock.lock(); requests += 1; lock.unlock(); body = Self.html(); type = "text/html" }
             else if route == "/preview/slow.js" { body = "window.slowResourceFinished=true"; type = "application/javascript" }
             else if route.hasPrefix("/preview/") && !route.hasSuffix(".png") {
                 lock.lock(); requests += 1; lock.unlock()

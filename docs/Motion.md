@@ -759,6 +759,13 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
   other cards to be waiting behind the shrinking page. Button entry now sets the grid fully
   visible before committing the flight and makes no incoming blurred copy. The outgoing
   grid crossfade when choosing a tab still runs after the flight's first commit.
+- **Sideways swiping through the deck (8 November 2026),** with `tabsSwipe` on the iPhone 14
+  Pro: an update (the deck's layout and its commit) costs about 1.8 ms, and Animation Hitches
+  traces found no hitches across the sweeps. The worst updates are the first time a card comes
+  into view after a relaunch: its cached JPEG is decoded inside the commit, 7–9 ms (12–20 ms on
+  the Simulator). Drawing cached pictures off the main thread first removed those, but traces
+  showed no hitches from them either way, and it would hold every restored tab's picture
+  decoded, so it was left out. `byPreparingForDisplay()` didn't remove them on the Simulator.
 - **Core Animation keyframes play at 60 Hz unless asked.** Measured with the `tabsPress` replay
   (nothing else asking for frames): the switcher's flights ran at 60 Hz except while the grid's
   UIKit crossfade ran alongside. With `preferredFrameRateRange` 80–120 on each keyframe animation
@@ -931,6 +938,13 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
     fade over the field).
   - `tabsPress`: presses Tabs and taps the card back three times on Hacker News with nothing else
     asking for frames, for an Animation Hitches trace of the rate the flights really run at.
+  - `tabsSwipe [fresh]`: opens twelve real sites in tabs, opens the switcher and sweeps the deck
+    sideways in real time (a steady drag across eight cards and back, then four card-by-card
+    flicks, three rounds), printing each drag's update cost, every update over 6 ms split into
+    the deck's layout and Core Animation's commit, and dropped frames. Pictures go through the
+    cache's JPEG, as after a relaunch; `fresh` keeps this launch's bitmaps. A replay starts with
+    no session, hence opening its own tabs. It sets the scroll offset on its own display link, so
+    it shows the deck's own costs, not a real finger's (the pan, or the refresh rate it gets).
   - `tabsNew`: on a real page, six rounds of Tabs and then New Page 100 ms later, New Page alone
     and Tabs alone, printing each press's main-thread cost and every frame the main thread
     dropped. Its drops show the main thread, not the screen: check what showed with an Animation

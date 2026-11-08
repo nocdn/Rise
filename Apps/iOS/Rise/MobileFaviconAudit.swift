@@ -146,7 +146,7 @@ private final class FaviconProtocol: URLProtocol {
             <link rel="icon" href="/dark.png" media="(prefers-color-scheme: dark)">
             """, baseURL: URL(string: "https://icons.example.org"))
         for _ in 0..<300 {
-            if !page.isLoading, page.url != nil { break }
+            if !page.isLoading, (try? await page.evaluateJavaScript("document.readyState")) as? String == "complete" { break }
             try await Task.sleep(for: .milliseconds(10))
         }
         let candidates = await BrowserTab.faviconCandidates(for: page)
@@ -208,7 +208,7 @@ private final class FaviconProtocol: URLProtocol {
         try require(restored.image(for: root, fetch: false)?.cgImage?.width == 64, "sharp-icon-persists-offline")
         let page = WKWebView(); page.loadHTMLString(html, baseURL: root)
         for _ in 0..<300 {
-            if !page.isLoading, page.url != nil { break }
+            if !page.isLoading, (try? await page.evaluateJavaScript("document.readyState")) as? String == "complete" { break }
             try await Task.sleep(for: .milliseconds(10))
         }
         let candidates = await BrowserTab.faviconCandidates(for: page)
@@ -216,6 +216,88 @@ private final class FaviconProtocol: URLProtocol {
         try require(candidates.dark.first?.lastPathComponent == "large.png", "page-selects-large-icon-in-dark-mode-too")
     }
 
+    func testSVGArtworkAndBrokenDeclarations() async throws {
+        let svg = Data("""
+            <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" fill="none">
+              <style>:root { fill: #000 } @media (prefers-color-scheme: dark) { :root { fill: #fff } }</style>
+              <rect width="32" height="32"/>
+            </svg>
+            """.utf8)
+        let rendered = try unwrap(await MobileFavicon.artwork(svg))
+        try assertVariants(rendered, name: "svg-media-and-root-styles")
+        try assertVariants(MobileFavicon.Saved(rendered)?.image, name: "svg-persisted")
+        let page = URL(string: "https://svg.example.org/article")!, root = BrowsingHistory.site(of: page)!
+        let session = session(); defer { session.invalidateAndCancel() }
+        FaviconProtocol.responses = [
+            root.absoluteString: Data("<link rel='icon' href='/broken.png' sizes='180x180'><link rel='icon' href='/icon.svg' type='image/svg+xml'>".utf8),
+            root.appendingPathComponent("broken.png").absoluteString: Data("not an image".utf8),
+            root.appendingPathComponent("icon.svg").absoluteString: svg
+        ]
+        let cache = MobileSuggestionFavicons(storageURL: nil, session: session)
+        try await waitForLoad(cache, url: page)
+        try assertVariants(cache.image(for: page, fetch: false), name: "svg-suggestions-with-broken-png")
+        try require(await MobileFavicon.artwork(Data("<svg>invalid".utf8)) == nil, "malformed-svg-fails-without-hanging")
+    }
+
+    func testFinishedPageRechecksDeclarationsUsingItsOwnCookiesIncludingPrivateTabs() async throws {
+        let fixture = try AdBlockHTTPFixture(missingRootIcon: true)
+        try await fixture.start(); defer { fixture.stop() }
+        for privateBrowsing in [false, true] {
+            let config = WKWebViewConfiguration()
+            config.websiteDataStore = privateBrowsing ? .nonPersistent() : .default()
+            let web = WKWebView(frame: .zero, configuration: config)
+            let tab = BrowserTab(webView: web, isPrivateBrowsing: privateBrowsing)
+            web.load(URLRequest(url: fixture.url.appendingPathComponent("favicon-audit/page")))
+            for _ in 0..<300 {
+                if !web.isLoading, web.url != nil { break }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            tab.loadFavicon() // First look: no declared icon and /favicon.ico is missing.
+            try await Task.sleep(for: .milliseconds(400))
+            try await web.evaluateJavaScript("""
+                const link = document.createElement('link'); link.rel = 'icon';
+                link.type = 'image/svg+xml'; link.href = '/favicon-audit/protected.svg';
+                document.head.append(link); void 0;
+                """)
+            tab.loadFavicon(afterNavigation: true)
+            for _ in 0..<600 {
+                if tab.favicon != nil { break }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            try require(tab.favicon != nil, "finished-page-rechecks-icon-private-\(privateBrowsing)")
+            try require((tab.favicon?.cgImage?.width ?? 0) >= 32, "finished-page-renders-svg-private-\(privateBrowsing)")
+        }
+        try require(fixture.requestCount(for: "/favicon-audit/protected.svg") >= 2, "private-icons-fetch-with-their-own-cookies")
+    }
+
+    func testLoadedPageSharesIconWithSuggestionsAndRestoredTabCards() async throws {
+        let fixture = try AdBlockHTTPFixture(missingRootIcon: true)
+        try await fixture.start(); defer { fixture.stop() }
+        let folder = URL.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let scene = try unwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let previous = scene.keyWindow
+        let window = UIWindow(windowScene: scene)
+        defer { window.isHidden = true; previous?.makeKey() }
+        let browser = BrowserViewController(startURL: fixture.url.appendingPathComponent("preview/blue"), suggestionsDirectory: folder)
+        window.rootViewController = browser; window.makeKeyAndVisible()
+        browser.view.layoutIfNeeded()
+        for _ in 0..<600 {
+            if browser.tabs[0].favicon != nil { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let url = fixture.url.appendingPathComponent("preview/blue")
+        try require(browser.tabs[0].favicon != nil, "page-without-root-ico-has-artwork")
+        try require(browser.addressSuggestions.icons.image(for: url, fetch: false) != nil, "page-artwork-reaches-suggestions")
+        browser.addressSuggestions.icons.flush()
+        let restored = MobileSuggestionFavicons(storageURL: folder.appendingPathComponent("suggestion-icons.json"), allowsNetwork: false)
+        try require(restored.image(for: url, fetch: false) != nil, "page-artwork-persists-for-suggestions")
+        let store = MobileBrowserSessionStore(fileURL: folder.appendingPathComponent("session.json"))
+        let saved = MobileBrowserSession.Tab(url: url, title: "Restored article")
+        store.save(MobileBrowserSession(tabs: [saved], selectedTabID: saved.id)); store.flush()
+        let restoredBrowser = BrowserViewController(sessionStore: store, suggestionsDirectory: folder)
+        try require(restoredBrowser.tabs[0].favicon != nil, "restored-card-adopts-site-artwork-without-network")
+    }
     static func exercise() async throws -> [String: Bool] {
         let audit = MobileFaviconAudit()
         try await audit.testLegacyGitHubCacheUpgradesAndPersistsBothAppearancesWithoutNetwork()
@@ -225,8 +307,33 @@ private final class FaviconProtocol: URLProtocol {
         try await audit.testTabPreviewCacheRetainsBothAppearances()
         try audit.testSitesWithoutDarkArtworkKeepTheirOriginalColors()
         try await audit.testLargeDeclaredIconUpgradesSuggestionsAndSurvivesSmallTabIcons()
+        try await audit.testSVGArtworkAndBrokenDeclarations()
+        try await audit.testFinishedPageRechecksDeclarationsUsingItsOwnCookiesIncludingPrivateTabs()
+        try await audit.testLoadedPageSharesIconWithSuggestionsAndRestoredTabCards()
         return audit.checks
     }
+    private static func checkReportedSite(folder: URL) async throws -> [String: Bool] {
+        let url = URL(string: "https://annotatekit.com/")!
+        guard let lazyIcon = await BrowserTab.favicon(for: url) else { throw Failure(check: "Live AnnotateKit lazy-tab icon") }
+        try MobileFavicon.Saved(lazyIcon)?.light.write(to: folder.appendingPathComponent("annotatekit-icon.png"))
+        let cache = MobileSuggestionFavicons(storageURL: nil)
+        _ = cache.image(for: url)
+        for _ in 0..<500 {
+            if cache.image(for: url, fetch: false) != nil { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        guard cache.image(for: url, fetch: false) != nil else { throw Failure(check: "Live AnnotateKit suggestion icon") }
+        let page = WKWebView()
+        page.load(URLRequest(url: url))
+        for _ in 0..<500 {
+            if !page.isLoading, page.url != nil { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        defer { page.stopLoading() }
+        guard await BrowserTab.favicon(for: page) != nil else { throw Failure(check: "Live AnnotateKit visited-page icon") }
+        return ["live-annotatekit-lazy-tab": true, "live-annotatekit-suggestions": true, "live-annotatekit-visited-page": true]
+    }
+
     private static func captureGitHub(in browser: BrowserViewController, folder: URL) async throws {
         let url = URL(string: "https://github.com/")!
         let icons = browser.addressSuggestions.icons
@@ -261,7 +368,8 @@ private final class FaviconProtocol: URLProtocol {
             try? FileManager.default.removeItem(at: folder)
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             do {
-                let checks = try await exercise()
+                var checks = try await exercise()
+                checks.merge(try await checkReportedSite(folder: folder)) { _, new in new }
                 try JSONSerialization.data(withJSONObject: checks, options: [.prettyPrinted, .sortedKeys])
                     .write(to: folder.appendingPathComponent("checks.json"))
                 try await captureGitHub(in: browser, folder: folder)

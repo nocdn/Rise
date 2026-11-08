@@ -45,7 +45,7 @@ final class RiseWebView: WKWebView {
 /// An event selected on the page, first in the selection menu as its time (`SelectionEvents`: "Tue 3 Nov,
 /// 13:30 – 20:30"), opening to Calendar's editor filled in with its title, place and times, Reminders,
 /// and the day in Calendar. A time selected in another zone follows, in the person's own zone as
-/// `SelectionTimes` reads it ("Tomorrow at 07:00 · in 15 hours"), opening to the same date actions.
+/// `SelectionTimes` reads it ("Tomorrow at 07:00 (in 15 hours)"), opening to the same date actions.
 /// UIKit asks for the menu as it appears, before the page could be asked what's selected, so a
 /// script in each frame keeps the app told of the selection as it changes.
 @MainActor final class SelectionTimeMenu: NSObject, WKScriptMessageHandler, @preconcurrency EKEventEditViewDelegate {

@@ -225,6 +225,17 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     private func track(_ tab: BrowserTab) {
         adoptDelegates(of: tab.webView, privateBrowsing: tab.isPrivateBrowsing)
+        if !tab.isPrivateBrowsing {
+            tab.restoreFavicon(addressSuggestions.icons.image(for: tab.addressURL, fetch: false))
+        }
+        tab.onFaviconLoad = { [weak self, weak tab] in
+            guard let self, let tab, !tab.isPrivateBrowsing, let image = tab.favicon else { return }
+            self.addressSuggestions.icons.remember(image, for: tab.addressURL)
+            self.addressSuggestions.icons.save()
+            self.tabPreviews?.save(tab)
+            self.bottomBar.search.refresh()
+            self.bottomBar.history.refreshIcons()
+        }
         tab.onPageChange = { [weak self, weak tab] in
             guard let self, let tab else { return }
             self.addressSuggestions.changed(tab.webView)
@@ -1072,8 +1083,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.history.removeArchived = { [weak self] urls in self?.removeArchived(urls) }
         bottomBar.history.reopenArchived = { [weak self] url in self?.reopenArchived(url) }
         addressSuggestions.icons.onLoad = { [weak self] in
-            self?.bottomBar.search.refresh()
-            self?.bottomBar.history.refreshIcons()
+            guard let self else { return }
+            for tab in self.tabs where !tab.isPrivateBrowsing && tab.favicon == nil {
+                tab.restoreFavicon(self.addressSuggestions.icons.image(for: tab.addressURL, fetch: false))
+            }
+            self.bottomBar.search.refresh()
+            self.bottomBar.history.refreshIcons()
         }
         bottomBar.history.open = { [weak self] url in
             guard let self, isPanelOpen, bottomBar.panel == .history else { return }
@@ -2646,7 +2661,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         finishAdBlockingReload(on: webView, navigation: navigation)
         PagePaintWatcher.shared.didFinish(webView)
         addressSuggestions.changed(webView)
-        tabs.first { $0.webView === webView }?.loadFavicon()
+        tabs.first { $0.webView === webView }?.loadFavicon(afterNavigation: true)
         fingerprintPage(webView)
         guard webView === self.webView else { return }
         updateTabsPreview()

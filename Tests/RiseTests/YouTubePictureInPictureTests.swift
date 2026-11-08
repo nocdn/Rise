@@ -34,7 +34,7 @@ final class YouTubePictureInPictureTests: XCTestCase {
         XCTAssertEqual(FloatingVideoOverlay.controlScale(width: 100), 0.85)
     }
 
-    func testYouTubeXAndGmailTitlesLoseOnlyTheirNotificationCount() {
+    func testYouTubeXFacebookAndGmailTitlesLoseOnlyTheirNotificationCount() {
         let youtube = URL(string: "https://www.youtube.com/watch?v=abc")
         XCTAssertEqual(TitleNotificationCount.removing(from: "(7) It's Finally Happened - YouTube", url: youtube), "It's Finally Happened - YouTube")
         XCTAssertEqual(TitleNotificationCount.removing(from: "(9+) YouTube", url: URL(string: "https://youtube.com/")), "YouTube")
@@ -44,6 +44,10 @@ final class YouTubePictureInPictureTests: XCTestCase {
         let x = URL(string: "https://x.com/SebCornelius/status/1")
         XCTAssertEqual(TitleNotificationCount.removing(from: "(7) Seb Cornelius on X: \"Building\"", url: x), "Seb Cornelius on X: \"Building\"")
         XCTAssertEqual(TitleNotificationCount.removing(from: "(20+) Home / X", url: URL(string: "https://twitter.com/home")), "Home / X")
+        let marketplace = URL(string: "https://www.facebook.com/marketplace/")
+        XCTAssertEqual(TitleNotificationCount.removing(from: "(15) Facebook Marketplace | Facebook", url: marketplace), "Facebook Marketplace | Facebook")
+        XCTAssertEqual(TitleNotificationCount.removing(from: "(9+) Facebook", url: URL(string: "https://m.facebook.com/")), "Facebook")
+        XCTAssertEqual(TitleNotificationCount.removing(from: "(2024) Event | Facebook", url: marketplace), "(2024) Event | Facebook")
         let gmail = URL(string: "https://mail.google.com/mail/u/0/#inbox")
         XCTAssertEqual(TitleNotificationCount.removing(from: "Inbox (49) - name@gmail.com - Gmail", url: gmail), "Inbox - name@gmail.com - Gmail")
         XCTAssertEqual(TitleNotificationCount.removing(from: "Updates (1,234) - name@gmail.com - Gmail", url: gmail), "Updates - name@gmail.com - Gmail")

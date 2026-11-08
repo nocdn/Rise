@@ -66,7 +66,7 @@ and reads the rest itself:
 - A day without a time is all day. A time without a day is today's, or tomorrow's once it's
   over. Without a written end, the event lasts an hour.
 
-A time selected in another zone keeps its converted item ("Tomorrow at 07:00 · in 15 hours" on
+A time selected in another zone keeps its converted item ("Tomorrow at 07:00 (in 15 hours)" on
 iOS, its heading on the Mac). When that time is the event's start, the item takes the event's
 actions. On iOS, Rise's event menu takes the place of Data Detectors' date section
 (`SelectionTimeNativeMenu`), since its actions fill in the place and title. A section without

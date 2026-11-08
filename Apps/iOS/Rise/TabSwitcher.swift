@@ -14,6 +14,7 @@ import WebKit
             rememberedTitle = nil
             pendingHistory = nil; pendingInteractionState = nil; isRestoringHistory = false
             snapshot = nil
+            faviconTask?.cancel(); faviconTask = nil; faviconPage = nil
             favicon = nil
             summary = nil; fingerprint = nil
             observePage()
@@ -83,12 +84,15 @@ import WebKit
     var snapshot: UIImage? { didSet { onSnapshotChange?() } }
     var onSnapshotChange: (() -> Void)?
     /// The page's icon, or nil for the blank square.
-    private(set) var favicon: UIImage? { didSet { onFaviconChange?() } }
+    private(set) var favicon: UIImage? { didSet { onFaviconChange?(); onFaviconLoad?() } }
+    var onFaviconLoad: (() -> Void)?
     var onFaviconChange: (() -> Void)?
     func restoreFavicon(_ image: UIImage?) { if favicon == nil { favicon = image } }
     /// The page the icon was looked up for, so it's looked up once a page.
     private var faviconPage: URL?
+    private var faviconTask: Task<Void, Never>?
     private static var icons: [URL: UIImage] = [:]
+    private static let iconSession = URLSession(configuration: .ephemeral)
 
     init(webView: WKWebView, restoring tab: MobileBrowserSession.Tab? = nil, initialURL: URL? = nil,
          isPrivateBrowsing: Bool = false) {
@@ -315,7 +319,6 @@ import WebKit
       const scheme = link => link.media.match(/\\(\\s*prefers-color-scheme\\s*:\\s*(dark|light)\\s*\\)/i);
       const candidates = dark => {
         const usable = link => {
-          if (/svg/i.test(link.type) || /\\.svg([?#]|$)/i.test(link.href)) return false;
           const appearance = scheme(link);
           return appearance ? (appearance[1].toLowerCase() === 'dark') === dark
             : (!link.media || matchMedia(link.media).matches);
@@ -338,15 +341,22 @@ import WebKit
     }
 
     /// Looks up the page's icon: the first it declares that loads, else the site's favicon.ico.
-    func loadFavicon() {
+    func loadFavicon(afterNavigation: Bool = false) {
         let web = webView
-        guard let page = web.url, page != faviconPage else { return }
+        guard let page = web.url, afterNavigation || page != faviconPage else { return }
+        faviconTask?.cancel()
         faviconPage = page
         guard ["http", "https"].contains(page.scheme?.lowercased() ?? "") else { favicon = nil; return }
-        Task { [weak self] in
-            let image = await Self.favicon(for: web)
-            guard let self, webView === web, faviconPage == page else { return }
-            favicon = image
+        faviconTask = Task { [weak self] in
+            var image = await Self.favicon(for: web)
+            // Client-rendered sites can add their declaration just after didFinish.
+            if image == nil, afterNavigation, !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                if web.url == page, !Task.isCancelled { image = await Self.favicon(for: web) }
+            }
+            guard let self, !Task.isCancelled, webView === web, web.url == page, faviconPage == page else { return }
+            if let image { favicon = image }
+            else { faviconPage = nil } // A failed request must not suppress a later retry.
         }
     }
 
@@ -354,20 +364,29 @@ import WebKit
     static func favicon(for page: URL) async -> UIImage? {
         guard MobileBrowserSession.canRestore(page),
               let fallback = URL(string: "/favicon.ico", relativeTo: page)?.absoluteURL else { return nil }
-        return await favicon(at: IconCandidates(
+        if let image = await favicon(at: IconCandidates(
             light: [FaviconDiscovery.lightIcon(for: page), fallback].compactMap { $0 },
-            dark: [FaviconDiscovery.darkIcon(for: page), fallback].compactMap { $0 }))
+            dark: [FaviconDiscovery.darkIcon(for: page), fallback].compactMap { $0 })) { return image }
+        guard !Task.isCancelled, let root = BrowsingHistory.site(of: page),
+              let (html, response) = try? await iconSession.data(for: URLRequest(url: root, timeoutInterval: 5)),
+              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+        let base = response.url ?? root
+        return await favicon(at: IconCandidates(
+            light: Array(FaviconDiscovery.icons(in: html, baseURL: base).prefix(4)),
+            dark: Array(FaviconDiscovery.icons(in: html, baseURL: base, dark: true).prefix(4))))
     }
 
     /// Used by the temporary preview page too, without changing a real tab's address/history.
     static func favicon(for web: WKWebView) async -> UIImage? {
-        await favicon(at: faviconCandidates(for: web))
+        let page = web.url
+        let candidates = await faviconCandidates(for: web)
+        guard web.url == page else { return nil }
+        return await favicon(at: candidates, in: web)
     }
 
     static func faviconCandidates(for web: WKWebView) async -> IconCandidates {
-        guard web.configuration.websiteDataStore.isPersistent,
-              let page = web.url, MobileBrowserSession.canRestore(page) else { return IconCandidates(light: [], dark: []) }
-        let result = (try? await web.evaluateJavaScript(iconScript)) as? [String: [String]]
+        guard let page = web.url, MobileBrowserSession.canRestore(page) else { return IconCandidates(light: [], dark: []) }
+        let result = await MobileFavicon.evaluate("return " + iconScript, in: web) as? [String: [String]]
         func candidates(dark: Bool) -> [URL] {
             var urls = (result?[dark ? "dark" : "light"] ?? []).compactMap(URL.init(string:))
                 .filter { ["http", "https", "data"].contains($0.scheme?.lowercased() ?? "") }
@@ -380,26 +399,52 @@ import WebKit
         return IconCandidates(light: candidates(dark: false), dark: candidates(dark: true))
     }
 
-    static func favicon(at candidates: IconCandidates) async -> UIImage? {
-        let light = await firstIcon(at: candidates.light)
-        let dark = candidates.dark == candidates.light ? nil : await firstIcon(at: candidates.dark)
+    static func favicon(at candidates: IconCandidates, in web: WKWebView? = nil) async -> UIImage? {
+        let light = await firstIcon(at: candidates.light, in: web)
+        let dark = candidates.dark == candidates.light ? nil : await firstIcon(at: candidates.dark, in: web)
         guard let light = light ?? dark else { return nil }
         return MobileFavicon.adaptive(light: light, dark: dark)
     }
 
-    private static func firstIcon(at candidates: [URL]) async -> UIImage? {
+    private static func firstIcon(at candidates: [URL], in web: WKWebView?) async -> UIImage? {
         for url in candidates {
             guard !Task.isCancelled else { return nil }
-            if let image = await icon(at: url) { return image }
+            if let image = await icon(at: url, in: web) { return image }
         }
         return nil
     }
 
-    private static func icon(at url: URL) async -> UIImage? {
-        if let icon = icons[url] { return icon }
-        guard let loaded = try? await URLSession.shared.data(for: URLRequest(url: url, timeoutInterval: 5)),
+    private static func icon(at url: URL, in web: WKWebView?) async -> UIImage? {
+        let persistent = web?.configuration.websiteDataStore.isPersistent ?? true
+        if persistent, let icon = icons[url] { return icon }
+        // Use the visited page's cookies/cache first. A separate URLSession cannot
+        // read WebKit's sign-in and is rejected by sites such as ChatGPT.
+        var bytes: Data?
+        if let web {
+            let encoded = await MobileFavicon.evaluate("""
+                try {
+                  const response = await fetch(url, { credentials: 'include', cache: 'force-cache', signal: AbortSignal.timeout(4000) });
+                  if (!response.ok) return null;
+                  const bytes = new Uint8Array(await response.arrayBuffer());
+                  if (bytes.length > 1000000) return null;
+                  let text = '';
+                  for (let i = 0; i < bytes.length; i += 0x8000)
+                    text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+                  return btoa(text);
+                } catch { return null; }
+                """, arguments: ["url": url.absoluteString], in: web) as? String
+            bytes = encoded.flatMap { Data(base64Encoded: $0) }
+        }
+        if let bytes, let icon = await MobileFavicon.artwork(bytes) {
+            if persistent { icons[url] = icon }
+            return icon
+        }
+        // Private artwork stays in its WebKit store and in the tab's memory only.
+        guard persistent, !Task.isCancelled,
+              let loaded = try? await iconSession.data(for: URLRequest(url: url, timeoutInterval: 5)),
               (loaded.1 as? HTTPURLResponse).map({ (200..<300).contains($0.statusCode) }) ?? true,
-              let icon = MobileFavicon.decode(loaded.0) else { return nil }
+              let icon = await MobileFavicon.artwork(loaded.0) else { return nil }
+        if icons.count >= 256 { icons.removeAll() }
         icons[url] = icon
         return icon
     }
@@ -513,6 +558,12 @@ final class TabCell: UIControl {
     var isPrivateBrowsing = false
     /// How far the caption moves right of its usual place, to keep a favicon on screen.
     var captionNudge: CGFloat = 0 { didSet { if captionNudge != oldValue { setNeedsLayout() } } }
+    /// A card just off the left edge keeps its favicon 4 pt in, as Arc does, tucked under the
+    /// next one's; further off, the favicon goes with its card.
+    static func captionNudge(cardMinX: CGFloat) -> CGFloat {
+        let icon = cardMinX+captionOffset
+        return max(icon, min(4, 3*cardMinX+43))-icon
+    }
 
     override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
         touchOrigin = touch.location(in: window)
@@ -1004,10 +1055,7 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
             cell.bounds = CGRect(origin: .zero, size: frame.size)
             cell.center = CGPoint(x: frame.midX, y: frame.midY)
             cell.shadeAmount = deck.shadeOpacity(at: slot)
-            // A card just off the left edge keeps its favicon 4 pt in, as Arc does, tucked
-            // under the next one's; further off, the favicon goes with its card.
-            let icon = frame.minX+TabCell.captionOffset
-            cell.captionNudge = max(icon, min(4, 3*frame.minX+43))-icon
+            cell.captionNudge = TabCell.captionNudge(cardMinX: frame.minX)
             cell.title.alpha = deck.titleOpacity(at: slot)
             cell.card.layer.cornerRadius = Self.cornerRadius*frame.width/max(1, cardSize.width)
             cell.canClose = cells.count > 1 || cell.isPrivateBrowsing

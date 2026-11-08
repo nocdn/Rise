@@ -38,7 +38,7 @@ paused. See
 
 Selecting a time written in another zone, such as "11pm PST", puts it first in the selection
 menu in your own time, with its day when that isn't today and how far off it is: "Tomorrow at
-07:00 · in 15 hours". It opens to Copy (the time, dated when it isn't today) and Add to Calendar,
+07:00 (in 15 hours)". It opens to Copy (the time, dated when it isn't today) and Add to Calendar,
 Calendar's own editor filled in with the time and page, which needs no calendar access. The
 reading is shared with the Mac's right-click menu (`Sources/RiseCore/SelectionTimes.swift`); a
 script in each frame keeps the app told of the selection, as UIKit asks for the menu before the

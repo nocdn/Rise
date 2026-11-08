@@ -9,6 +9,7 @@ import UIKit
     private var bytes: [String: MobileFavicon.Saved] = [:]
     private var tasks: [String: Task<Void, Never>] = [:]
     private var attempted = Set<String>()
+    private var retryAfter: [String: Date] = [:]
     private var preview: Task<Void, Never>?
     private let writer = DispatchQueue(label: "Rise.SuggestionIcons", qos: .utility)
     var onLoad: (() -> Void)?
@@ -74,10 +75,17 @@ import UIKit
         // Only complete public domains are fetched. In-progress/local addresses keep the placeholder.
         guard fetch, allowsNetwork, !AddressResolver.isLocal(url), let host = url.host, host.contains("."),
               !host.hasSuffix(".test"), !host.hasSuffix(".example"), !host.hasSuffix(".invalid"),
+              tasks[origin] == nil, (retryAfter[origin] ?? .distantPast) <= Date(),
               attempted.insert(origin).inserted else { return images[origin] }
         tasks[origin] = Task { [weak self] in
             guard let self else { return }
-            defer { tasks[origin] = nil }
+            defer {
+                tasks[origin] = nil
+                if images[origin] == nil {
+                    attempted.remove(origin)
+                    retryAfter[origin] = Date().addingTimeInterval(60)
+                }
+            }
             let root = URL(string: origin)!
             if let lightURL = FaviconDiscovery.lightIcon(for: root), let darkURL = FaviconDiscovery.darkIcon(for: root) {
                 async let light = load(lightURL)
@@ -94,26 +102,33 @@ import UIKit
             }
             // Even when favicon.ico loads, metadata can declare a separate dark icon.
             var dark: UIImage?
-            if let html = await data(from: root) {
-                let lightURL = FaviconDiscovery.icon(in: html, baseURL: root)
-                let darkURL = FaviconDiscovery.icon(in: html, baseURL: root, dark: true)
-                if let lightURL, let declared = await load(lightURL) { light = declared }
-                if let darkURL, darkURL != lightURL { dark = await load(darkURL) }
+            if let html = await resource(from: root) {
+                let lightURLs = Array(FaviconDiscovery.icons(in: html.data, baseURL: html.url).prefix(4))
+                let darkURLs = Array(FaviconDiscovery.icons(in: html.data, baseURL: html.url, dark: true).prefix(4))
+                if let declared = await firstIcon(lightURLs) { light = declared }
+                if darkURLs != lightURLs { dark = await firstIcon(darkURLs) }
             }
             if let light = light ?? dark { store(MobileFavicon.adaptive(light: light, dark: dark), origin: origin) }
         }
         return images[origin]
     }
-    private func load(_ url: URL) async -> UIImage? {
-        guard let data = await data(from: url) else { return nil }
-        return MobileFavicon.decode(data)
+    private func firstIcon(_ urls: [URL]) async -> UIImage? {
+        for url in urls {
+            if Task.isCancelled { return nil }
+            if let image = await load(url) { return image }
+        }
+        return nil
     }
-    private func data(from url: URL) async -> Data? {
+    private func load(_ url: URL) async -> UIImage? {
+        guard let resource = await resource(from: url) else { return nil }
+        return await MobileFavicon.artwork(resource.data)
+    }
+    private func resource(from url: URL) async -> (data: Data, url: URL)? {
         guard ["http", "https"].contains(url.scheme ?? ""), url.user == nil, url.password == nil else { return nil }
         var request = URLRequest(url: url); request.httpShouldHandleCookies = false
         guard let (data, response) = try? await session.data(for: request), !Task.isCancelled,
               (response as? HTTPURLResponse)?.statusCode == 200, data.count <= 1_000_000 else { return nil }
-        return data
+        return (data, response.url ?? url)
     }
     private func store(_ image: UIImage, origin: String) {
         remember(image, for: URL(string: origin))

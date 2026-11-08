@@ -17,6 +17,25 @@ import AppKit
     var dragPeek: ((Double) -> Void)?
     var releasePeek: ((Bool) -> Void)?
     var cancelPeek: (() -> Void)?
+    /// The indicator over the page (`HistorySwipeIndicator`): following the pull, growing into the
+    /// list of pages that way once held (nil folds it back), picking from it, and letting go.
+    var indicatorDrag: ((WebPage, HistoryDirection, Double, Bool) -> Void)?
+    var indicatorList: (([HistoryListEntry]?) -> Void)?
+    var indicatorSelect: ((Int) -> Void)?
+    var indicatorRelease: (() -> Void)?
+    /// The pages that way in the page's own history, nearest first.
+    var listEntries: (WebPage, HistoryDirection) -> [HistoryListEntry] = { _, _ in [] }
+    /// Goes that many pages, for a page picked in the list.
+    var navigateSteps: (WebPage, HistoryDirection, Int) -> Void = { page, direction, steps in
+        for _ in 0..<steps { if direction == .back { page.goBack() } else { page.goForward() } }
+    }
+    /// How long a swipe past the threshold is held before its list comes up, as Dia's does.
+    static let listDelay = 0.45
+    private var listTimer: DispatchWorkItem?
+    private var shownSelection = 0
+    var selectionClick: () -> Void = {
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+    }
     private var peekGesture = false
     var thresholdClick: () -> Void = {
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
@@ -104,17 +123,49 @@ import AppKit
         guard event.phase.contains(.began) || event.phase.contains(.changed), gesture.isTracking else { return false }
         // Undo the user's scroll preference: physical right = back, left = forward.
         let dx = event.scrollingDeltaX * (event.isDirectionInvertedFromDevice ? 1 : -1)
+        // A held swipe's list scrolls as a page does, by the user's own scroll direction.
         if gesture.move(dx: Double(dx), dy: Double(event.scrollingDeltaY),
                         canBack: peekGesture || canNavigate(page, .back), canForward: canNavigate(page, .forward)) { thresholdClick() }
         if gesture.consumesScroll {
             // The page stays still; only the arrow answers, and a Peek follows the pull back.
             feedback(gesture.direction, gesture.arrowPull, gesture.isArmed, nil)
             if peekGesture, gesture.direction == .back { dragPeek?(gesture.arrowPull) }
+            else if let direction = gesture.direction { updateIndicator(page, direction) }
         }
         return gesture.consumesScroll
     }
+    /// The circle follows the pull; held past the threshold, it becomes the list, and further
+    /// pull picks further pages. Going back under the threshold folds the list away.
+    private func updateIndicator(_ page: WebPage, _ direction: HistoryDirection) {
+        indicatorDrag?(page, direction, gesture.arrowPull, gesture.isArmed)
+        guard gesture.isArmed else {
+            listTimer?.cancel(); listTimer = nil
+            if gesture.listBase != nil { gesture.closeList(); indicatorList?(nil) }
+            return
+        }
+        if gesture.listBase == nil, listTimer == nil {
+            let token = generation
+            let timer = DispatchWorkItem { [weak self, weak page] in
+                guard let self, let page, self.generation == token, self.page === page else { return }
+                self.listTimer = nil
+                guard self.gesture.isTracking, self.gesture.isArmed, self.gesture.listBase == nil else { return }
+                let entries = self.listEntries(page, direction)
+                guard entries.count >= 2 else { return }
+                self.gesture.openList(count: entries.count); self.shownSelection = 0
+                self.indicatorList?(entries)
+            }
+            listTimer = timer
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.listDelay, execute: timer)
+        }
+        if gesture.listBase != nil, gesture.selection != shownSelection {
+            shownSelection = gesture.selection
+            indicatorSelect?(shownSelection); selectionClick()
+        }
+    }
     private func finish(cancelled: Bool) -> Bool {
-        let consumed = gesture.consumesScroll, direction = gesture.direction
+        let consumed = gesture.consumesScroll, direction = gesture.direction, steps = gesture.steps
+        listTimer?.cancel(); listTimer = nil
+        if consumed { indicatorRelease?() }
         let page = self.page, committed = gesture.finish(cancelled: cancelled)
         let dismissesPeek = peekGesture && direction == .back
         suppressMomentum = consumed; permitted = false; self.page = nil; peekGesture = false
@@ -122,13 +173,15 @@ import AppKit
         if dismissesPeek { releasePeek?(committed != nil) }
         // Past the threshold the page simply goes there, at once.
         if !dismissesPeek, let committed, let page {
-            navigate(page, committed)
+            if steps > 1 { navigateSteps(page, committed, steps) } else { navigate(page, committed) }
         }
         return consumed
     }
     func cancel(for page: WebPage) { if self.page === page { cancel() } }
     func cancel() {
         generation += 1; probeTimeout?.cancel(); probeTimeout = nil
+        listTimer?.cancel(); listTimer = nil
+        if gesture.consumesScroll { indicatorRelease?() }
         pending.removeAll(); probing = false; permitted = false; suppressMomentum = false
         let direction = gesture.direction, returnsPeek = peekGesture && direction == .back
         _ = gesture.finish(cancelled: true); page = nil; peekGesture = false
@@ -176,6 +229,38 @@ import AppKit
 }
 
 @MainActor extension BrowserController {
+    /// The swipe's indicator over `page`, cut off at its edges: over the page and its bars, under
+    /// the link status, the address palette and its veil.
+    func dragHistoryIndicator(on page: WebPage, _ direction: HistoryDirection, pull: Double, armed: Bool) {
+        let indicator = historyIndicator
+        if indicator.isHidden || indicator.superview !== root {
+            indicator.removeFromSuperview()
+            root.addSubview(indicator, positioned: .below, relativeTo: linkStatus.superview === root ? linkStatus : nil)
+        }
+        indicator.frame = page.view.convert(page.view.bounds, to: root)
+        indicator.setTheme(theme)
+        indicator.drag(direction: direction, pull: pull, armed: armed)
+    }
+    /// The pages that way in the page's own history, nearest first, with their titles and icons.
+    func historyListEntries(for page: WebPage, _ direction: HistoryDirection) -> [HistoryListEntry] {
+        guard let history = page.backForwardList else { return [] }
+        let indices = direction == .back ? Array((0..<history.index).reversed())
+            : Array((history.index+1)..<history.entries.count)
+        return indices.prefix(8).map { index in
+            let entry = history.entries[index], url = URL(string: entry.url)
+            let blank = url == nil || entry.url == "about:blank"
+            var title = entry.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if title.isEmpty {
+                title = blank ? "New Tab" : AddressDisplay.text(entry.url)
+                if title.hasSuffix("/"), title.dropLast().contains(".") { title.removeLast() }
+            }
+            if let url { title = historyTitle(title, url: url) }
+            let origin = SitePermissions.origin(url)
+            let icon = blank ? nil : suggestionFavicons.image(for: url, fetch: false, dark: theme == .dark)
+                ?? tabs.first { origin != nil && SitePermissions.origin($0.url) == origin && $0.favicon != nil }?.favicon(for: theme)
+            return HistoryListEntry(title: title, icon: icon)
+        }
+    }
     func historyPage(at event: NSEvent) -> WebPage? {
         // Hit-testing also excludes the URL palette, find panel, and Peek controls.
         guard window?.isKeyWindow == true else { return nil }

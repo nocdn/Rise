@@ -19,8 +19,12 @@ public enum FaviconDiscovery {
         return URL(string: "https://github.githubassets.com/favicons/favicon\(dark ? "-dark" : "").png")
     }
     public static func icon(in bytes: Data, baseURL: URL, dark: Bool = false) -> URL? {
+        icons(in: bytes, baseURL: baseURL, dark: dark).first
+    }
+    /// Ordered alternatives let clients recover from unsupported or broken declared artwork.
+    public static func icons(in bytes: Data, baseURL: URL, dark: Bool = false) -> [URL] {
         guard bytes.count <= 1_000_000,
-              let html = String(data: bytes, encoding: .utf8) ?? String(data: bytes, encoding: .isoLatin1) else { return nil }
+              let html = String(data: bytes, encoding: .utf8) ?? String(data: bytes, encoding: .isoLatin1) else { return [] }
         let tags = matches("<(?:link|base)\\b[^>]*>", in: html)
         var base = baseURL
         if let tag = tags.first(where: { $0.lowercased().hasPrefix("<base") }),
@@ -45,12 +49,16 @@ public enum FaviconDiscovery {
             }.max() ?? 0
             return (url, svg, scheme != nil, pixels)
         }
-        if let icon = githubIcon(for: baseURL, dark: dark) { return icon }
-        let themed = candidates.filter(\.themed)
-        let eligible = themed.isEmpty ? candidates : themed
-        let format = eligible.filter { $0.svg == dark }
-        return ((format.isEmpty ? eligible : format).max(by: { $0.pixels < $1.pixels })?.url).map(preferred)
+        var urls = candidates.sorted { a, b in
+            if a.themed != b.themed { return a.themed }
+            if a.svg != b.svg { return a.svg == dark }
+            return a.pixels > b.pixels
+        }.map { preferred($0.url) }
+        if let icon = githubIcon(for: baseURL, dark: dark) { urls.insert(icon, at: 0) }
+        var seen = Set<URL>()
+        return urls.filter { seen.insert($0).inserted }
     }
+
     private static func matches(_ pattern: String, in text: String) -> [String] {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return [] }
         return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap {
