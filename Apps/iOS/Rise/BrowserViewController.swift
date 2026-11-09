@@ -1468,7 +1468,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         case .privacyPolicy: min(view.bounds.height-view.safeAreaInsets.top-12, BottomBar.privacyPolicyHeight(safeBottom: safeBottom))
         case .downloads: downloadsSheet.height(in: downloadsHeights)
         case .history: BottomBar.historyHeight(screenHeight: view.bounds.height, safeTop: view.safeAreaInsets.top)
-        case .fontInfo: BottomBar.fontInfoHeight(screenHeight: view.bounds.height, safeTop: view.safeAreaInsets.top)
+        case .fontInfo: BottomBar.fontInfoHeight(bottomBar.fontInfo, width: view.bounds.width, screenHeight: view.bounds.height,
+                                                 safeTop: view.safeAreaInsets.top, safeBottom: safeBottom)
         }
         return max(1, height-open)
     }

@@ -438,6 +438,12 @@ final class FontInfoPanel: UIView, UIScrollViewDelegate {
         scroll.setContentOffset(CGPoint(x: 0, y: -scroll.adjustedContentInset.top), animated: false)
     }
 
+    /// The header, and the list below it as far as its bottom.
+    func naturalHeight(width: CGFloat) -> CGFloat {
+        PanelHeader.height+MenuPanel.top+(list?.naturalHeight(width: Self.listWidth(width)) ?? 0)
+    }
+    private static func listWidth(_ width: CGFloat) -> CGFloat { 4*MenuPanel.tileSize(width: width).width+3*MenuPanel.spacing }
+
     func canPullToClose(at point: CGPoint, velocity: CGPoint) -> Bool {
         guard abs(velocity.y) > abs(velocity.x) else { return false }
         guard scroll.frame.contains(point) else { return true }
@@ -452,16 +458,20 @@ final class FontInfoPanel: UIView, UIScrollViewDelegate {
         let top = PanelHeader.height
         scroll.frame = CGRect(x: 0, y: top, width: bounds.width, height: max(0, bounds.height-top))
         // As wide as Site settings' groups.
-        let width = 4*MenuPanel.tileSize(width: bounds.width).width+3*MenuPanel.spacing
+        let width = Self.listWidth(bounds.width)
         var y = MenuPanel.top
         if let list {
             list.frame = CGRect(x: (bounds.width-width)/2, y: y, width: width, height: list.naturalHeight(width: width))
             y = list.frame.maxY+MenuPanel.spacing
         }
         scroll.contentSize = CGSize(width: bounds.width, height: y)
-        scroll.contentInset.bottom = Self.fadeHeight
-        scroll.verticalScrollIndicatorInsets.bottom = Self.fadeHeight
-        // The last rows fade under the panel's edge, as Privacy Policy's do.
+        // Only when the list is taller than the panel can be: it scrolls, its last rows fading
+        // under the panel's edge, as Privacy Policy's do.
+        let scrolls = y > scroll.bounds.height+0.5
+        scroll.alwaysBounceVertical = scrolls
+        scroll.contentInset.bottom = scrolls ? Self.fadeHeight : 0
+        scroll.verticalScrollIndicatorInsets.bottom = scrolls ? Self.fadeHeight : 0
+        guard scrolls else { scroll.layer.mask = nil; return }
         CATransaction.begin(); CATransaction.setDisableActions(true)
         let height = max(1, scroll.bounds.height)
         let fade = min(Self.fadeHeight, height)/height

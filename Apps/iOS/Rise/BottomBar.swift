@@ -200,9 +200,9 @@ final class BottomBar: UIView {
         min(screenHeight*0.8, screenHeight-safeTop-12).rounded()
     }
 
-    /// Font info opens to half the screen, as a sheet's medium detent does, and scrolls for the rest.
-    static func fontInfoHeight(screenHeight: CGFloat, safeTop: CGFloat) -> CGFloat {
-        min((screenHeight*0.5).rounded(), screenHeight-safeTop-12)
+    /// Font info grows just tall enough for its list, scrolling only if larger text makes it taller than the screen.
+    static func fontInfoHeight(_ panel: FontInfoPanel, width: CGFloat, screenHeight: CGFloat, safeTop: CGFloat, safeBottom: CGFloat) -> CGFloat {
+        min(searchTop+panel.naturalHeight(width: width)+max(safeBottom, 16), screenHeight-safeTop-12)
     }
 
     /// As Site settings, growing for a longer list.

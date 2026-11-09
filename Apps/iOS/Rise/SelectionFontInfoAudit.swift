@@ -121,8 +121,7 @@ import WebKit
         try await shot("panel")
         let scroll = browser.bottomBar.fontInfo.scroll
         try note("list-and-room", [scroll.contentSize.height, scroll.bounds.height])
-        scroll.setContentOffset(CGPoint(x: 0, y: scroll.contentSize.height+scroll.adjustedContentInset.bottom-scroll.bounds.height), animated: false)
-        try await shot("scrolled")
+        try check("the-whole-list-fits-without-a-fade", scroll.contentSize.height <= scroll.bounds.height+0.5 && scroll.layer.mask == nil)
         browser.overrideUserInterfaceStyle = .dark
         browser.view.window?.overrideUserInterfaceStyle = .dark
         scroll.setContentOffset(CGPoint(x: 0, y: -scroll.adjustedContentInset.top), animated: false)
