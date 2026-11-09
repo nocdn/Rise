@@ -9,12 +9,20 @@ import QuartzCore
     /// Slides `view` to `frame`. It starts when the frame it's in reaches the screen, so work done
     /// before then, such as showing the next tab's page after a close, can't eat into the slide;
     /// everything moved in the same frame still starts together.
-    static func move(_ view: NSView, to frame: NSRect, animated: Bool) {
-        guard view.frame != frame else { return }
+    /// `shift` moves where it starts by that much, as the list scrolling under it by that much at
+    /// once would, so it stays where it was on screen and slides from there.
+    static func move(_ view: NSView, to frame: NSRect, animated: Bool, shift: CGFloat = 0) {
+        guard view.frame != frame || shift != 0 else { return }
         let canAnimate = animated && view.frame.size == frame.size && view.frame.minX == frame.minX
         let layer = view.layer
-        let old = layer?.presentation()?.position ?? layer?.position
+        var old = layer?.presentation()?.position ?? layer?.position
         CATransaction.begin(); CATransaction.setDisableActions(true)
+        if shift != 0, let layer, let start = old {
+            // The same offset in the layer's own terms, whichever way up its geometry is.
+            let model = layer.position
+            view.frame = view.frame.offsetBy(dx: 0, dy: shift)
+            old = CGPoint(x: start.x+layer.position.x-model.x, y: start.y+layer.position.y-model.y)
+        }
         view.frame = frame
         CATransaction.commit()
         guard canAnimate, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, let layer, let old, old != layer.position else {

@@ -281,7 +281,7 @@ final class TabOrganizationTests: XCTestCase {
         let row = browser.sidebar.rows[dragged.id]!, slot = row.frame
         for offset: CGFloat in [-20, 20] {
             row.layer?.removeAllAnimations()
-            row.mouseEntered(with: NSEvent())
+            row.pointerEnters()
             browser.window!.sendEvent(event(.leftMouseDown, at: NSPoint(x: 45, y: 18), in: row))
             let release = NSPoint(x: 45, y: slot.minY + 18 + offset)
             browser.window!.sendEvent(event(.leftMouseDragged, at: release, in: browser.sidebar.rowsHost))

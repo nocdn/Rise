@@ -1017,6 +1017,8 @@ import RiseCore
         cancelTabSwitch()
         discardPeek(for: id)
         guard let index = tabs.firstIndex(where: { $0.id == id }) else { return }
+        // Scrolled to the list's end, the tab above comes down into its place, and is the one shown.
+        let atListEnd = sidebar.isScrolledToEnd
         pictureInPicture.remove(tabs[index]); tabMedia.remove(id)
         let partner = splitGroups.first { $0.contains(id) }.map { $0.leftID == id ? $0.rightID : $0.leftID }
         splitGroups.removeAll { $0.contains(id) }
@@ -1037,6 +1039,7 @@ import RiseCore
             let opener = tab.openedFrom.flatMap { id in recentTabIDs.first == id ? tabs.first { $0.id == id } : nil }
             if let partner, tabs.contains(where: { $0.id == partner }) { select(partner) }
             else if let opener { select(opener.id) }
+            else if atListEnd, !tab.pinned, index > 0, !tabs[index-1].pinned { select(tabs[index-1].id) }
             else if !tabs.isEmpty { select(tabs[min(index, tabs.count-1)].id) }
         }
         attachVisiblePages(); update()

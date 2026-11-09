@@ -135,7 +135,7 @@ final class PeekPersistenceTests: XCTestCase {
         XCTAssertEqual(row.peekIndicator.layer!.cornerRadius-row.peekIndicator.favicon.layer!.cornerRadius, PeekFaviconIndicator.inset)
         XCTAssertLessThanOrEqual(row.titleField.frame.maxX, row.peekIndicator.frame.minX)
         let close = row.close.frame, indicator = row.peekIndicator.frame
-        row.mouseEntered(with: NSEvent()); row.layoutSubtreeIfNeeded()
+        row.pointerEnters(); row.layoutSubtreeIfNeeded()
         XCTAssertFalse(row.close.isHidden); XCTAssertEqual(row.close.frame, close)
         XCTAssertEqual(row.peekIndicator.frame, indicator, "Hovering leaves the Peek favicon in its usual slot")
         XCTAssertNil(row.peekIndicator.layer?.animation(forKey: TabListMotion.slideKey))

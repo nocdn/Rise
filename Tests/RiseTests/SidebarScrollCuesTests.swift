@@ -96,6 +96,52 @@ final class SidebarScrollCuesTests: XCTestCase {
         XCTAssertTrue(sidebar.scroll.contentView.bounds.contains(row))
     }
 
+    @MainActor func testTheRowUnderThePillIsntHoveredThroughIt() throws {
+        let (sidebar, _) = listOfTabs(selecting: 0)
+        let window = NSWindow(contentRect: sidebar.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = sidebar; window.orderFrontRegardless(); defer { window.orderOut(nil) }
+        scroll(sidebar, to: 300)
+        let pill = sidebar.chosenPill
+        XCTAssertEqual(pill.direction, .above)
+        let onPill = pill.convert(NSPoint(x: pill.bounds.midX, y: pill.bounds.midY), to: nil)
+        let row = try XCTUnwrap(sidebar.rows.values.first { !$0.isHidden && $0.bounds.contains($0.convert(onPill, from: nil)) })
+        var hovered: [Bool] = []
+        let before = row.onHover; row.onHover = { hovered.append($0); before?($0) }
+        let beside = row.convert(NSPoint(x: 12, y: row.bounds.midY), to: nil)
+        row.refreshHover(at: beside)
+        XCTAssertEqual(hovered.last, true, "Beside the pill, the row takes the pointer")
+        row.refreshHover(at: onPill)
+        XCTAssertEqual(hovered.last, false, "Over the pill, it doesn't")
+    }
+
+    @MainActor func testClosingATabAtTheListsEndScrollsBackSoTheRowsBelowStayPut() {
+        let (sidebar, tabs) = listOfTabs(selecting: 25)
+        let window = NSWindow(contentRect: sidebar.frame, styleMask: [.borderless], backing: .buffered, defer: false)
+        window.contentView = sidebar; window.orderFrontRegardless(); defer { window.orderOut(nil) }
+        scroll(sidebar, to: sidebar.rowsHost.frame.height-sidebar.scroll.contentView.bounds.height)
+        XCTAssertTrue(sidebar.isScrolledToEnd)
+        let last = sidebar.rows[tabs[29].id]!, onScreen = last.convert(last.bounds, to: sidebar)
+        var left = tabs; left.remove(at: 25)
+        sidebar.update(tabs: left, selected: tabs[24], theme: .neutral, animated: false)
+        XCTAssertTrue(sidebar.isScrolledToEnd, "Still at the end")
+        XCTAssertEqual(last.convert(last.bounds, to: sidebar), onScreen, "The last row stays where it was")
+    }
+
+    @MainActor func testClosingTheCurrentTabAtTheListsEndShowsTheOneAbove() {
+        _ = NSApplication.shared
+        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"), restore: false)
+        defer { browser.saveWork?.cancel(); browser.tabs.forEach { $0.cancelLoad() }; browser.window?.orderOut(nil) }
+        browser.showWindow(nil)
+        for _ in 0..<40 { browser.addTab(background: true) }
+        browser.root.layoutSubtreeIfNeeded()
+        let sidebar: SidebarView = browser.sidebar
+        scroll(sidebar, to: sidebar.rowsHost.frame.height-sidebar.scroll.contentView.bounds.height)
+        XCTAssertTrue(sidebar.isScrolledToEnd)
+        let closing = browser.tabs[37], above = browser.tabs[36]
+        browser.select(closing.id); browser.closeTab(closing.id)
+        XCTAssertEqual(browser.selectedID, above.id, "The tab coming down into its place")
+    }
+
     @MainActor func testClickingThePillPlacesTheTabInTheMiddleOrAsNearAsItCan() {
         let (sidebar, tabs) = listOfTabs(selecting: 15)
         scroll(sidebar, to: 0)

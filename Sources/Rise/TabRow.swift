@@ -352,11 +352,18 @@ import RiseCore
     func refreshHover(at location: NSPoint? = nil) {
         guard pressEvent == nil else { return }
         guard let window, window.isVisible, !isHiddenOrHasHiddenAncestor else { setHovered(false); return }
-        let point = convert(location ?? window.mouseLocationOutsideOfEventStream, from: nil)
-        setHovered(visibleRect.intersection(bounds).contains(point))
+        let location = location ?? window.mouseLocationOutsideOfEventStream
+        setHovered(visibleRect.intersection(bounds).contains(convert(location, from: nil)) && isFrontmost(at: location))
     }
-    override func mouseEntered(with event: NSEvent) { setHovered(true); onPointerMove?() }
-    override func mouseMoved(with event: NSEvent) { if hover { onPointerMove?() } }
+    /// Only where the row is in front: under the current-tab pill, or anything else over the list,
+    /// it isn't hovered, as tracking areas report the pointer either way.
+    override func mouseEntered(with event: NSEvent) {
+        setHovered(takesPointer(event)); if hover { onPointerMove?() }
+    }
+    override func mouseMoved(with event: NSEvent) {
+        setHovered(takesPointer(event)); if hover { onPointerMove?() }
+    }
+    private func takesPointer(_ event: NSEvent) -> Bool { window == nil || isFrontmost(at: event.locationInWindow) }
     override func mouseExited(with event: NSEvent) { if pressEvent == nil { setHovered(false) } else { onHover?(false) } }
     override func rightMouseDown(with event: NSEvent) { onPress?(); onMenu?(event) }
     override func hitTest(_ point: NSPoint) -> NSView? {

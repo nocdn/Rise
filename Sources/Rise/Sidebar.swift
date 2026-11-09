@@ -242,22 +242,43 @@ import RiseCore
         if shift != 0, animatesRows, window != nil, newTab.frame.width > 0 {
             [newTab, searchRow, scroll].forEach { PinnedLayout.slideVertically($0, from: -shift) }
         }
+        // At the list's end, a shorter list scrolls back by what it lost: the rows above slide down
+        // into the gap while those below stay where they are, rather than all jumping.
+        let clip = scroll.contentView, oldHeight = rowsHost.frame.height, oldOffset = clip.bounds.minY
+        let atEnd = isScrolledToEnd
         var y: CGFloat = 0; targetFrames = [:]
+        for row in displayedRows {
+            y += ((row as? SplitTabRow)?.rowHeight ?? (row as? TabRow)?.rowHeight ?? TabAppearance.height)+TabAppearance.spacing
+        }
+        let newHeight = max(y+8, scroll.bounds.height)
+        let offset = atEnd && newHeight < oldHeight ? max(0, min(oldOffset, newHeight-clip.bounds.height)) : oldOffset
+        let scrollShift = animatesRows && window != nil && drag == nil ? offset-oldOffset : 0
+        y = 0
         for (index, row) in displayedRows.enumerated() {
             let h: CGFloat = (row as? SplitTabRow)?.rowHeight ?? (row as? TabRow)?.rowHeight ?? TabAppearance.height
             let target = NSRect(x: TabAppearance.inset, y: y, width: w-2*TabAppearance.inset, height: h)
             targetFrames[orderedIDs[index]] = target
             if drag?.view !== row && returningDrag?.view !== row {
-                TabListMotion.move(row, to: target, animated: animatesRows && row.frame.width > 0)
+                TabListMotion.move(row, to: target, animated: animatesRows && row.frame.width > 0, shift: row.frame.width > 0 ? scrollShift : 0)
             }
             y += h+TabAppearance.spacing
         }
         rowsHost.frame = NSRect(x: 0, y: 0, width: w, height: max(y+8, scroll.bounds.height))
         leavingRows.frame = rowsHost.bounds
+        if offset != oldOffset {
+            clip.scroll(to: NSPoint(x: clip.bounds.minX, y: offset)); scroll.reflectScrolledClipView(clip)
+            // A closing row fades where it was on screen.
+            if scrollShift != 0 { for row in leavingRows.subviews { row.frame = row.frame.offsetBy(dx: 0, dy: scrollShift) } }
+        }
         archiveButton.frame = NSRect(x: downloadsCentreX-14, y: bounds.height-39, width: 28, height: 28)
         cleanUpButton.frame = NSRect(x: 10, y: bounds.height-39, width: 28, height: 28)
         nowPlaying.dock(x: TabAppearance.inset, width: w-2*TabAppearance.inset, bottom: bounds.height-46)
         updateScrollCues()
+    }
+    /// Whether the list is long enough to scroll and is scrolled to its end.
+    var isScrolledToEnd: Bool {
+        let clip = scroll.contentView.bounds
+        return rowsHost.frame.height > clip.height+1 && clip.maxY >= rowsHost.frame.height-2
     }
     /// A closed tab's row fades out quickly where it was, under the rows sliding into its place,
     /// and takes no clicks or hover meanwhile.

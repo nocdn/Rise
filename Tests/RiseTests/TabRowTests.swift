@@ -246,7 +246,7 @@ final class TabRowTests: XCTestCase {
         let window = try XCTUnwrap(browser.window as? BrowserWindow)
         XCTAssertFalse(window.smartRenameEvent?(key) ?? true, "With no tab under the pointer, ⌃R goes on to the page")
         let row = try XCTUnwrap(browser.sidebar.rows[first.id])
-        row.mouseEntered(with: NSEvent())
+        row.pointerEnters()
         XCTAssertTrue(window.performKeyEquivalent(with: key))
         XCTAssertTrue(row.titleShimmer.isRunning, "The hovered tab's title shimmers")
         XCTAssertNotEqual(row.titleField.textColor, browser.theme.muted, "Its text eases down to muted rather than jumping")
