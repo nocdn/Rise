@@ -93,6 +93,98 @@ final class FloatingVideoMotionTests: XCTestCase {
         XCTAssertEqual(motion.frame.minY, start.minY, "Clamping to the screen must not pull a placement into a corner")
     }
 
+    /// A quick sideways flick, as Snap would dismiss its preview with.
+    private func flick(_ motion: inout FloatingVideoMotion, dx: CGFloat, dy: CGFloat = 0, at start: TimeInterval = 0) {
+        motion.begin(at: start)
+        for step in 1...4 {
+            motion.drag(by: CGVector(dx: dx, dy: dy), at: start+Double(step)/120)
+            motion.step(elapsed: 1.0/120)
+        }
+        motion.end(at: start+4.0/120)
+    }
+    private func settle(_ motion: inout FloatingVideoMotion, seconds: Double = 4) {
+        for _ in 0..<Int(seconds*120) { motion.step(elapsed: 1.0/120) }
+    }
+
+    func testFlickingOffEitherSideTucksAllButATenthAwayAtItsHeight() {
+        for dx: CGFloat in [-30, 30] {
+            // Snap's rule: the flick's projection has to cross the side, so from near it.
+            let start = CGRect(x: dx < 0 ? -1300 : -500, y: 350, width: size.width, height: size.height)
+            var motion = FloatingVideoMotion(frame: start, visibleFrame: screen)
+            flick(&motion, dx: dx)
+            XCTAssertEqual(motion.tucked, dx < 0 ? .left : .right)
+            settle(&motion)
+            XCTAssertEqual(motion.phase, .idle)
+            let onScreen = motion.frame.intersection(screen).width
+            XCTAssertEqual(onScreen, size.width*0.1, accuracy: 0.5)
+            XCTAssertEqual(motion.frame.minY, start.minY, accuracy: 1)
+            XCTAssertEqual(FloatingVideoMotion.tuckProgress(content: motion.frame, visibleFrame: screen), 1, accuracy: 0.001)
+        }
+    }
+
+    func testASideAnotherDisplayCarriesOnFromNeverTucks() {
+        var motion = FloatingVideoMotion(frame: CGRect(x: -1300, y: 350, width: size.width, height: size.height),
+                                         visibleFrame: screen, tuckable: [.right])
+        flick(&motion, dx: -30)
+        XCTAssertNil(motion.tucked)
+        settle(&motion)
+        XCTAssertTrue(screen.contains(motion.frame))
+    }
+
+    func testFlicksOffTheTopOrBottomStillGoToACorner() {
+        for dy: CGFloat in [-30, 30] {
+            var motion = FloatingVideoMotion(frame: CGRect(x: -900, y: 350, width: size.width, height: size.height), visibleFrame: screen)
+            flick(&motion, dx: -6, dy: dy)
+            XCTAssertNil(motion.tucked)
+            settle(&motion)
+            XCTAssertTrue(screen.contains(motion.frame))
+        }
+    }
+
+    func testATuckedWindowComesBackToTheSideItLeftAndCanBeStoppedOnItsWay() {
+        let start = CGRect(x: -900, y: 350, width: size.width, height: size.height)
+        var motion = FloatingVideoMotion(frame: start, visibleFrame: screen)
+        flick(&motion, dx: -30)
+        settle(&motion)
+        motion.untuck()
+        XCTAssertNil(motion.tucked)
+        settle(&motion)
+        let limits = FloatingVideoMotion.originBounds(size: size, visibleFrame: screen)
+        XCTAssertEqual(motion.frame.origin, CGPoint(x: limits.minX, y: motion.frame.minY))
+        XCTAssertEqual(FloatingVideoMotion.tuckProgress(content: motion.frame, visibleFrame: screen), 0)
+
+        // Brought back while still on its way out, it turns round.
+        flick(&motion, dx: -30, at: 10)
+        for _ in 0..<6 { motion.step(elapsed: 1.0/120) }
+        motion.untuck()
+        settle(&motion)
+        XCTAssertEqual(motion.frame.minX, limits.minX)
+    }
+
+    func testDraggingATuckedWindowOutBringsItBackAndANudgeLeavesItTucked() {
+        let limits = FloatingVideoMotion.originBounds(size: size, visibleFrame: screen)
+        let tuckedX = FloatingVideoMotion.tuckedX(.left, width: size.width, visibleFrame: screen)
+        for (distance, staysTucked) in [(CGFloat(40), true), (CGFloat(260), false)] {
+            var motion = FloatingVideoMotion(frame: CGRect(x: tuckedX, y: 350, width: size.width, height: size.height),
+                                             visibleFrame: screen, tucked: .left)
+            motion.begin(at: 0)
+            for step in 1...60 { motion.drag(by: CGVector(dx: distance/60, dy: 0), at: Double(step)/60); motion.step(elapsed: 1.0/60) }
+            motion.end(at: 1.5)
+            settle(&motion)
+            XCTAssertEqual(motion.tucked, staysTucked ? .left : nil)
+            XCTAssertEqual(motion.frame.minX, staysTucked ? tuckedX : max(limits.minX, tuckedX+distance), accuracy: 0.5)
+        }
+        // Flicked back the way it came, it stays; flicked out, it's back on the screen.
+        for (dx, staysTucked) in [(CGFloat(-12), true), (CGFloat(12), false)] {
+            var motion = FloatingVideoMotion(frame: CGRect(x: tuckedX, y: 350, width: size.width, height: size.height),
+                                             visibleFrame: screen, tucked: .left)
+            flick(&motion, dx: dx)
+            settle(&motion)
+            XCTAssertEqual(motion.tucked, staysTucked ? .left : nil)
+            if !staysTucked { XCTAssertTrue(screen.contains(motion.frame)) }
+        }
+    }
+
     func testGrabbingDuringSettleKeepsCurrentPositionAndIdleReleaseDropsMomentum() {
         var motion = FloatingVideoMotion(frame: CGRect(x: -900, y: 350, width: size.width, height: size.height), visibleFrame: screen)
         motion.begin(at: 0); motion.drag(by: CGVector(dx: 130, dy: 80), at: 0.01)

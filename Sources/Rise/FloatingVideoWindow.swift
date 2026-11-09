@@ -22,7 +22,15 @@ struct FloatingVideoScrollInput {
 @MainActor final class FloatingVideoWindow: NSPanel {
     override func makeFirstResponder(_ responder: NSResponder?) -> Bool { super.makeFirstResponder(pageFocusTarget(responder)) }
     let videoHost = FlippedView()
+    /// Holds the picture, so it blurs as the window tucks away.
+    private let picture = NSView()
     let overlay = FloatingVideoOverlay()
+    /// Over the window while it's tucked: takes its clicks, and shows a chevron under the pointer.
+    let tuckHandle = FloatingTuckHandle()
+    /// Where a floating window was, so it opens there again: its video's frame, and the side
+    /// it was tucked past.
+    struct Placement { var videoFrame: NSRect; var tucked: FloatingVideoMotion.Edge? }
+    private var appliedTuck: CGFloat = -1
     /// The last picture, shown while the page itself is back in its tab.
     private let frozenFrame = NSImageView()
     var showsFrozenFrame: Bool { !frozenFrame.isHidden }
@@ -75,19 +83,31 @@ struct FloatingVideoScrollInput {
     /// When the X started the window's close, which plays out before it goes.
     private var closeStarted: CFTimeInterval?
 
-    init(aspectRatio: CGFloat, screen: NSScreen, referenceWindow: NSWindow? = nil) {
+    init(aspectRatio: CGFloat, screen: NSScreen, referenceWindow: NSWindow? = nil, placement: Placement? = nil) {
         let aspect = min(3, max(0.45, aspectRatio))
         self.referenceWindow = referenceWindow
         let available = FloatingVideoMotion.placementArea(visibleFrame: screen.visibleFrame, browserFrame: referenceWindow?.frame)
-        var size = NSSize(width: min(360, available.width*0.30), height: 0)
+        var size = NSSize(width: placement?.videoFrame.width ?? min(360, available.width*0.30), height: 0)
         size.height = size.width/aspect
         if size.height > available.height*0.4 { size.height = available.height*0.4; size.width = size.height*aspect }
         let shadowInset = Self.shadowInset
         size.width += shadowInset*2; size.height += shadowInset*2
         let limits = FloatingVideoMotion.originBounds(size: size, visibleFrame: available, contentInset: shadowInset)
-        // Opens in the bottom-right corner.
-        let frame = NSRect(origin: NSPoint(x: limits.maxX, y: limits.minY), size: size)
-        motion = FloatingVideoMotion(frame: frame, visibleFrame: available, contentInset: shadowInset)
+        // Opens in the bottom-right corner, or where it last was, held by the edges it was against.
+        var origin = NSPoint(x: limits.maxX, y: limits.minY)
+        if let placement {
+            let was = placement.videoFrame, inner = NSSize(width: size.width-2*shadowInset, height: size.height-2*shadowInset)
+            let edges = available.insetBy(dx: FloatingVideoMotion.edgeInset, dy: FloatingVideoMotion.edgeInset)
+            let fx: CGFloat = abs(was.minX-edges.minX) < 16 ? 0 : abs(was.maxX-edges.maxX) < 16 ? 1 : 0.5
+            let fy: CGFloat = abs(was.minY-edges.minY) < 16 ? 0 : abs(was.maxY-edges.maxY) < 16 ? 1 : 0.5
+            origin = NSPoint(x: min(limits.maxX, max(limits.minX, was.minX+(was.width-inner.width)*fx-shadowInset)),
+                             y: min(limits.maxY, max(limits.minY, was.minY+(was.height-inner.height)*fy-shadowInset)))
+            if let edge = placement.tucked {
+                origin.x = FloatingVideoMotion.tuckedX(edge, width: size.width, visibleFrame: available, contentInset: shadowInset)
+            }
+        }
+        let frame = NSRect(origin: origin, size: size)
+        motion = FloatingVideoMotion(frame: frame, visibleFrame: available, contentInset: shadowInset, tucked: placement?.tucked)
         super.init(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         title = "YouTube Picture in Picture"
         isReleasedWhenClosed = false; isFloatingPanel = true; hidesOnDeactivate = false
@@ -115,7 +135,12 @@ struct FloatingVideoScrollInput {
         overlay.frame = surface.bounds
         frozenFrame.imageScaling = .scaleAxesIndependently; frozenFrame.isHidden = true
         frozenFrame.setAccessibilityElement(false)
-        surface.addSubview(videoHost); surface.addSubview(frozenFrame); surface.addSubview(overlay)
+        picture.frame = surface.bounds; picture.wantsLayer = true; picture.layerUsesCoreImageFilters = true
+        picture.addSubview(videoHost); picture.addSubview(frozenFrame)
+        tuckHandle.frame = surface.bounds
+        surface.addSubview(picture); surface.addSubview(overlay); surface.addSubview(tuckHandle)
+        tuckHandle.onClick = { [weak self] in self?.untuck() }
+        tuckHandle.mouseDrag = { [weak self] event in self?.handleMouse(event) }
         overlay.closeAction = { [weak self] in self?.onClose?() }
         overlay.returnAction = { [weak self] in self?.onReturn?() }
         overlay.togglePlayback = { [weak self] in self?.onTogglePlayback?() }
@@ -143,6 +168,7 @@ struct FloatingVideoScrollInput {
     private func placementArea(on screen: NSScreen) -> NSRect {
         FloatingVideoMotion.placementArea(visibleFrame: screen.visibleFrame, browserFrame: referenceWindow?.frame)
     }
+    private func tuckable(on screen: NSScreen) -> Set<FloatingVideoMotion.Edge> { FloatingTuckLook.tuckableEdges(of: screen) }
     private func resizing(on screen: NSScreen) -> FloatingVideoResizeMotion {
         FloatingVideoResizeMotion(videoFrame: videoFrame, visibleFrame: placementArea(on: screen), maximumSize: sourceViewport)
     }
@@ -157,6 +183,9 @@ struct FloatingVideoScrollInput {
         setFrame(aligned, display: true)
         if let content = contentView {
             surface.frame = content.bounds.insetBy(dx: Self.shadowInset, dy: Self.shadowInset)
+            // The tuck's scale goes while the picture's frame changes, and comes back below.
+            picture.layer?.transform = CATransform3DIdentity; appliedTuck = -1
+            picture.frame = surface.bounds; tuckHandle.frame = surface.bounds
             // Stretches the page's last picture to the new size until it redraws.
             videoHost.frame = surface.bounds; videoHost.bounds = NSRect(origin: canvasOrigin, size: canvasSize ?? surface.bounds.size)
             overlay.frame = surface.bounds
@@ -164,6 +193,7 @@ struct FloatingVideoScrollInput {
             content.layer?.shadowPath = CGPath(roundedRect: surface.frame, cornerWidth: 16, cornerHeight: 16, transform: nil)
         }
         CATransaction.commit()
+        applyTuck()
         // Redrawing at every step of a pinch would show each new size before
         // the page paints it, so the picture stretches until the size settles.
         if resizeMotion.map({ $0.phase == .idle }) ?? true { onVideoSizeChange?(surface.bounds.size, backingScaleFactor) }
@@ -306,7 +336,7 @@ struct FloatingVideoScrollInput {
     /// Called back before it has gone, the window shows as it was.
     private func resetClosing() {
         guard closeStarted != nil || overlay.isHidden else { return }
-        closeStarted = nil; overlay.isHidden = false
+        closeStarted = nil; overlay.isHidden = false; appliedTuck = -1
         guard let layer = contentView?.layer else { return }
         CATransaction.begin(); CATransaction.setDisableActions(true)
         FloatingClose.keys.forEach(layer.removeAnimation(forKey:))
@@ -411,6 +441,7 @@ struct FloatingVideoScrollInput {
     func updateMousePassThrough() {
         let takesKeys = takesSpace(at: pointerLocation())
         spaceShortcut.setEnabled(takesKeys); returnShortcut.setEnabled(takesKeys)
+        refreshTuckHover()
         if acceptsMouse, resizeMotion?.phase == .pinching || motion.phase == .dragging || overlay.progress.isTrackpadScrubbing { return }
         let pointer = pointerLocation()
         let over = acceptsMouse && NSBezierPath(roundedRect: videoFrame, xRadius: 16, yRadius: 16).contains(pointer)
@@ -438,7 +469,7 @@ struct FloatingVideoScrollInput {
             handleMagnification(0, phase: .ended); return event
         }
         // Even one addressed to this panel goes to the key window, so take it here.
-        guard event.type == .magnify, !isDismissing, isVisible, acceptsMouse else { return event }
+        guard event.type == .magnify, !isDismissing, isVisible, acceptsMouse, motion.tucked == nil else { return event }
         if resizeMotion?.phase != .pinching {
             let point = event.window.map { $0.convertPoint(toScreen: event.locationInWindow) } ?? event.locationInWindow
             guard event.phase.contains(.began) || event.phase.contains(.changed),
@@ -451,7 +482,9 @@ struct FloatingVideoScrollInput {
     /// Space plays or pauses while the pointer is over the video, and F returns it to its tab;
     /// neither reaches the page behind it. Returns nil when it was handled.
     var pointerLocation: () -> NSPoint = { NSEvent.mouseLocation }
-    private func takesSpace(at pointer: NSPoint) -> Bool { videoFrame.contains(pointer) && acceptsMouse && !isDismissing && isVisible }
+    private func takesSpace(at pointer: NSPoint) -> Bool {
+        videoFrame.contains(pointer) && acceptsMouse && !isDismissing && isVisible && motion.tucked == nil
+    }
     func routeSpace(_ event: NSEvent) -> NSEvent? { routeSpace(event, pointer: pointerLocation()) }
     func routeSpace(_ event: NSEvent, pointer: NSPoint) -> NSEvent? {
         guard event.type == .keyDown || event.type == .keyUp, [kVK_Space, kVK_ANSI_F].contains(Int(event.keyCode)),
@@ -479,7 +512,7 @@ struct FloatingVideoScrollInput {
         let progress = overlay.progress
         if input.phase.contains(.began) { progress.finishTrackpadScrub() }
         let point = progress.convert(convertPoint(fromScreen: pointer), from: nil)
-        let startsOnTrack = !progress.isHidden && progress.bounds.contains(point) && input.momentumPhase.isEmpty &&
+        let startsOnTrack = !progress.isHidden && motion.tucked == nil && progress.bounds.contains(point) && input.momentumPhase.isEmpty &&
             (input.phase.contains(.began) || input.phase.contains(.changed))
         if !isDragging, progress.isTrackpadScrubbing || startsOnTrack {
             if !progress.isTrackpadScrubbing { stopMotion() }
@@ -509,7 +542,7 @@ struct FloatingVideoScrollInput {
     }
 
     func handleMagnification(_ magnification: CGFloat, phase: NSEvent.Phase) {
-        guard !isDismissing, magnification.isFinite else { return }
+        guard !isDismissing, magnification.isFinite, motion.tucked == nil else { return }
         if phase.contains(.began) || (phase.contains(.changed) || phase.isEmpty) && resizeMotion?.phase != .pinching {
             guard let screen = screen ?? NSScreen.main else { return }
             stopMotion()
@@ -523,7 +556,7 @@ struct FloatingVideoScrollInput {
         }
         resizeMotion = resize; applyVideoFrame(resize.videoFrame)
         if let screen = screen ?? NSScreen.main {
-            motion = FloatingVideoMotion(frame: frame, visibleFrame: placementArea(on: screen), contentInset: Self.shadowInset)
+            motion = FloatingVideoMotion(frame: frame, visibleFrame: placementArea(on: screen), contentInset: Self.shadowInset, tucked: motion.tucked, tuckable: tuckable(on: screen))
         }
         if resize.phase == .settling { startClock() } else if resize.phase == .idle { updateMousePassThrough() }
     }
@@ -544,7 +577,7 @@ struct FloatingVideoScrollInput {
         guard !isDismissing else { return }
         guard let screen = self.screen ?? NSScreen.main ?? NSScreen.screens.first else { return }
         if var resize = resizeMotion { resize.finish(); resizeMotion = nil; applyVideoFrame(resize.videoFrame) }
-        motion = FloatingVideoMotion(frame: frame, visibleFrame: placementArea(on: screen), contentInset: Self.shadowInset)
+        motion = FloatingVideoMotion(frame: frame, visibleFrame: placementArea(on: screen), contentInset: Self.shadowInset, tucked: motion.tucked, tuckable: tuckable(on: screen))
         motion.begin(at: timestamp)
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
         startClock()
@@ -599,11 +632,12 @@ struct FloatingVideoScrollInput {
             resize.step(elapsed: elapsed, reduceMotion: reduced)
             resizeMotion = resize; applyVideoFrame(resize.videoFrame)
             if let screen = screen ?? NSScreen.main {
-                motion = FloatingVideoMotion(frame: frame, visibleFrame: placementArea(on: screen), contentInset: Self.shadowInset)
+                motion = FloatingVideoMotion(frame: frame, visibleFrame: placementArea(on: screen), contentInset: Self.shadowInset, tucked: motion.tucked, tuckable: tuckable(on: screen))
             }
         } else {
             motion.step(elapsed: elapsed, reduceMotion: reduced)
             setFrameOrigin(motion.frame.origin)
+            applyTuck()
         }
         if motion.phase == .idle && resizeMotion?.phase != .settling {
             displayLink?.invalidate(); displayLink = nil; lastFrameTime = nil
@@ -629,8 +663,65 @@ struct FloatingVideoScrollInput {
     private func fitToScreen() {
         guard !isDismissing, let screen = screen ?? NSScreen.main else { return }
         stopMotion()
+        let tucked = motion.tucked
         var resize = resizing(on: screen)
-        resize.finish(); resizeMotion = nil; applyVideoFrame(resize.videoFrame)
-        motion = FloatingVideoMotion(frame: frame, visibleFrame: placementArea(on: screen), contentInset: Self.shadowInset)
+        resize.finish(); resizeMotion = nil
+        // A tucked window stays tucked, past the same side, placed there at once: set on the screen
+        // first, it would show there until moved back, for as long as the page takes to resize.
+        var fitted = resize.videoFrame
+        if let tucked {
+            let inset = Self.shadowInset
+            fitted.origin.x = FloatingVideoMotion.tuckedX(tucked, width: fitted.width+2*inset, visibleFrame: placementArea(on: screen),
+                                                          contentInset: inset)+inset
+            Self.log.notice("Refitting tucked Picture in Picture: \(fitted.debugDescription)")
+        }
+        applyVideoFrame(fitted)
+        motion = FloatingVideoMotion(frame: frame, visibleFrame: placementArea(on: screen), contentInset: Self.shadowInset, tucked: tucked,
+                                     tuckable: tuckable(on: screen))
+        applyTuck()
+    }
+
+    // MARK: Tucking
+
+    /// Where it is now, and where it's coming to rest, to open there again.
+    var placement: Placement {
+        let origin = motion.restingOrigin
+        return Placement(videoFrame: NSRect(x: origin.x+Self.shadowInset, y: origin.y+Self.shadowInset,
+                                            width: videoFrame.width, height: videoFrame.height), tucked: motion.tucked)
+    }
+    var tuckedEdge: FloatingVideoMotion.Edge? { motion.tucked }
+    /// How far it shows tucked: 0 on the screen to 1 tucked, with the picture blurred to match.
+    var tuckProgress: CGFloat { max(0, appliedTuck) }
+    var pictureIsBlurred: Bool { picture.layer?.filters?.isEmpty == false }
+    /// Brings a tucked window back onto the screen, from wherever it is on its way.
+    func untuck() {
+        guard motion.tucked != nil, !isDismissing else { return }
+        motion.untuck(); startClock(); applyTuck()
+    }
+    /// The chevron shows only once the window is all but tucked, while the pointer is over it where
+    /// it is now (it moves out from under a still pointer as it's flicked away), and not while
+    /// fingers move it.
+    private func refreshTuckHover() {
+        guard let screen = screen ?? NSScreen.main else { return }
+        let tucked = FloatingVideoMotion.tuckProgress(content: videoFrame, visibleFrame: placementArea(on: screen)) > FloatingTuckHandle.showsFrom
+        tuckHandle.setHovered(tucked && acceptsMouse && !isDismissing && !isDragging && videoFrame.contains(pointerLocation()))
+    }
+    /// The picture blurs, and the controls fade, by how far the window is past the screen's side.
+    private func applyTuck() {
+        guard let screen = screen ?? NSScreen.main, let layer = picture.layer else { return }
+        let progress = FloatingVideoMotion.tuckProgress(content: videoFrame, visibleFrame: placementArea(on: screen))
+        // The chevron sits in the middle of the part on the screen.
+        let part = videoFrame.intersection(screen.frame)
+        tuckHandle.showing = part.isNull ? nil : part.offsetBy(dx: -videoFrame.minX, dy: -videoFrame.minY)
+        tuckHandle.edge = motion.tucked
+        refreshTuckHover()
+        overlay.isHidden = closeStarted != nil || motion.tucked != nil && progress > 0.33
+        guard abs(progress-appliedTuck) > 0.0005 else { return }
+        appliedTuck = progress
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        overlay.alphaValue = max(0, 1-progress*3)
+        // Grown enough that the blur's soft edge falls outside the rounded corners.
+        layer.transform = FloatingTuckLook.apply(progress, to: layer, size: surface.bounds.size)
+        CATransaction.commit()
     }
 }

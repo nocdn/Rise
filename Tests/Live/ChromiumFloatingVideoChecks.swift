@@ -66,9 +66,10 @@ import RiseChromium
             let other = browser.addTab(url: URL(string: "http://localhost:\(port)/other.html")!)
             browser.select(other.id)
             let floated = await waitUntil(8) { self.browser.pictureInPicture.panel?.alphaValue == 1 && self.browser.pictureInPicture.panel?.hasVideoFrame == true }
-            check(floated && browser.pictureInPicture.sourceTabID == video.id, "Leaving its tab floats it in Rise's panel")
+            check(floated && browser.pictureInPicture.sourceTabID == video.id, "Leaving its tab floats it in Rise's panel (alpha \(browser.pictureInPicture.panel?.alphaValue ?? -1), frame \(browser.pictureInPicture.panel?.hasVideoFrame ?? false))")
             guard floated, let panel = browser.pictureInPicture.panel else { finish(); return }
             try? await Task.sleep(for: .milliseconds(500))
+            await pause("floating", panel.videoFrame)
             shot(panel, "floating")
             let rect = panel.videoHost.bounds
             let first = pixels(await (video.page as? ChromiumPage)?.snapshot(rect: rect))
@@ -98,6 +99,7 @@ import RiseChromium
             }, "Two-finger scrubbing and native flick momentum seek the playing video")
             check(panel.frame == placement && !panel.isDragging, "Scrubbing never drags the PiP window")
             check(spread(pixels(await (video.page as? ChromiumPage)?.snapshot(rect: rect))) > 30, "The still picture for going back is the video")
+            await tuckChecks(panel, video: video, other: other)
             browser.pictureInPicture.returnToTab()
             let back = await waitUntil(4) { self.browser.pictureInPicture.panel == nil && video.page.view.window === self.browser.window }
             check(back && browser.selectedID == video.id, "Back-to-tab returns it to its tab")
@@ -195,6 +197,112 @@ import RiseChromium
             finish()
         }
     }
+    /// With RISE_TUCK_PAUSE set, says where `rect` is (screen points from the top left) and waits,
+    /// so the screen can be photographed from outside, which sees Chromium's drawing.
+    func pause(_ name: String, _ rect: NSRect) async {
+        guard ProcessInfo.processInfo.environment["RISE_TUCK_PAUSE"] != nil, let top = NSScreen.screens.first?.frame.maxY else { return }
+        let r = rect.insetBy(dx: -30, dy: -30)
+        print("SHOT \(name) \(Int(r.minX)),\(Int(top-r.maxY)),\(Int(r.width)),\(Int(r.height))")
+        try? await Task.sleep(for: .seconds(2.5))
+    }
+    /// Two fingers moving the panel, `steps` times by `by`, `interval` apart, then lifting.
+    func move(_ panel: FloatingVideoWindow, by: CGVector, steps: Int, interval: Double, at time: Double) {
+        panel.handleGesture(.init(phase: .began, timestamp: time))
+        for step in 1...steps { panel.handleGesture(.init(phase: .changed, translation: by, timestamp: time+Double(step)*interval)) }
+        panel.handleGesture(.init(phase: .ended, timestamp: time+Double(steps)*interval))
+    }
+    /// Moved, it floats there again; flicked off a side, it tucks away blurred, and comes back
+    /// out from its chevron, also on its way in; tucked, it floats tucked again.
+    func tuckChecks(_ panel: FloatingVideoWindow, video: BrowserTab, other: BrowserTab) async {
+        guard let screen = panel.screen else { check(false, "The panel has a screen"); return }
+        let area = screen.visibleFrame
+        move(panel, by: CGVector(dx: -6, dy: 4), steps: 50, interval: 1.0/60, at: 20)
+        _ = await waitUntil(3) { !panel.isDragging && self.browser.pictureInPicture.panel?.placement.videoFrame == panel.videoFrame }
+        try? await Task.sleep(for: .milliseconds(600))
+        let moved = panel.videoFrame
+        browser.pictureInPicture.returnToTab()
+        _ = await waitUntil(4) { self.browser.pictureInPicture.panel == nil && video.page.view.window === self.browser.window }
+        try? await Task.sleep(for: .milliseconds(500))
+        browser.select(other.id)
+        guard await waitUntil(8, { self.browser.pictureInPicture.panel?.alphaValue == 1 }), let again = browser.pictureInPicture.panel else {
+            check(false, "Leaving the tab floats the video again"); return
+        }
+        check(abs(again.videoFrame.minX-moved.minX) < 1.5 && abs(again.videoFrame.minY-moved.minY) < 1.5,
+              "It floats again where it was moved to (\(again.videoFrame) vs \(moved))")
+
+        // Flicked off the left side, Snap's way out.
+        move(again, by: CGVector(dx: -10, dy: 0), steps: 1, interval: 1.0/120, at: 30)
+        _ = await waitUntil(2) { !again.isDragging }
+        let start = again.videoFrame.minX-area.minX
+        // The pointer stays where the fingers flicked it from, as the window leaves it.
+        let flickedFrom = NSPoint(x: again.videoFrame.midX, y: again.videoFrame.midY)
+        again.pointerLocation = { flickedFrom }
+        var chevronInFlight = false
+        move(again, by: CGVector(dx: -(start/4+20), dy: 0), steps: 4, interval: 1.0/120, at: 31)
+        check(again.tuckedEdge == .left, "A quick flick off the left side tucks it")
+        var midway = false
+        let tucked = await waitUntil(3, pollMilliseconds: 8) {
+            let p = again.tuckProgress; if p > 0.1 && p < 0.9 && again.pictureIsBlurred { midway = true }
+            if again.tuckHandle.isShowingChevron { chevronInFlight = true }
+            return p > 0.999
+        }
+        check(tucked && midway, "It blurs by how far it has gone, all the way as it tucks")
+        let showing = again.videoFrame.intersection(area).width
+        check(abs(showing-again.videoFrame.width*FloatingVideoMotion.tuckedShowing) < 1.5, "A tenth of it stays on the screen (\(showing) of \(again.videoFrame.width))")
+        check(again.overlay.isHidden && again.pictureIsBlurred, "Tucked, it shows no controls, only a blur")
+        await pause("tucked", again.videoFrame)
+        check(!chevronInFlight && !again.tuckHandle.isShowingChevron, "No chevron as it goes, with the pointer left behind")
+        // The screen's arrangement changing (the Dock, the menu bar, a display) refits the window,
+        // which never passes back over the screen on the way.
+        var seen: [NSRect] = []
+        let watchers = [NSWindow.didMoveNotification, NSWindow.didResizeNotification].map {
+            NotificationCenter.default.addObserver(forName: $0, object: again, queue: nil) { _ in
+                MainActor.assumeIsolated { seen.append(again.videoFrame) }
+            }
+        }
+        NotificationCenter.default.post(name: NSApplication.didChangeScreenParametersNotification, object: NSApp)
+        try? await Task.sleep(for: .milliseconds(300))
+        watchers.forEach(NotificationCenter.default.removeObserver)
+        let worst = seen.map { FloatingVideoMotion.tuckProgress(content: $0, visibleFrame: area) }.min() ?? 1
+        check(worst > 0.999 && again.tuckProgress > 0.999, "A change to the screens keeps it tucked throughout (\(seen.count) moves, least \(worst))")
+        again.pointerLocation = { NSPoint(x: again.videoFrame.maxX-4, y: again.videoFrame.midY) }
+        again.updateMousePassThrough()
+        check(again.tuckHandle.isShowingChevron, "Under the pointer it shows the chevron")
+        again.tuckHandle.layoutSubtreeIfNeeded()
+        let part = again.videoFrame.intersection(screen.frame).offsetBy(dx: -again.videoFrame.minX, dy: -again.videoFrame.minY)
+        let center = again.tuckHandle.chevronCenter
+        check(abs(center.x-part.midX) <= 0.5 && abs(center.y-part.midY) <= 0.5,
+              "The chevron sits in the middle of the part showing (\(center) in \(part))")
+        await pause("chevron", again.videoFrame)
+        browser.pictureInPicture.returnToTab()
+        _ = await waitUntil(4) { self.browser.pictureInPicture.panel == nil && video.page.view.window === self.browser.window }
+        try? await Task.sleep(for: .milliseconds(500))
+        browser.select(other.id)
+        guard await waitUntil(8, { self.browser.pictureInPicture.panel?.alphaValue == 1 }), let third = browser.pictureInPicture.panel else {
+            check(false, "Leaving the tab floats the video again"); return
+        }
+        check(third.tuckedEdge == .left && third.tuckProgress > 0.999 && third.pictureIsBlurred, "Tucked, it floats tucked again")
+        _ = third.tuckHandle.accessibilityPerformPress()
+        check(third.tuckedEdge == nil && !third.tuckHandle.isShowingChevron, "The chevron brings it out, and goes")
+        var unblurring = false
+        let out = await waitUntil(3, pollMilliseconds: 8) {
+            let p = third.tuckProgress; if p > 0.1 && p < 0.9 && third.pictureIsBlurred { unblurring = true }
+            return p == 0 && !third.isDragging && area.contains(third.videoFrame)
+        }
+        check(out && unblurring && !third.pictureIsBlurred, "It unblurs as it comes back onto the screen")
+        try? await Task.sleep(for: .milliseconds(400))
+        check(!third.overlay.isHidden, "Its controls are back")
+
+        // Stopped on its way out, it turns round.
+        let edge = third.videoFrame.minX-area.minX
+        move(third, by: CGVector(dx: -(edge/4+20), dy: 0), steps: 4, interval: 1.0/120, at: 40)
+        try? await Task.sleep(for: .milliseconds(60))
+        let partway = third.tuckProgress
+        third.untuck()
+        let back = await waitUntil(3) { third.tuckProgress == 0 && area.contains(third.videoFrame) }
+        check(partway < 0.95 && back, "Brought back on its way out, it turns round (at \(partway))")
+    }
+
     func simultaneousChromeMotion(opening: Bool) async -> Bool {
         let end = Date().addingTimeInterval(0.7)
         while Date() < end {

@@ -26,6 +26,8 @@ import AppKit
     /// that, so these float again if they resume while hidden.
     private var ended = Set<UUID>()
     private var current: Session?
+    /// Where each tab's video last floated, so it floats there again: moved, resized or tucked.
+    private(set) var placements: [UUID: FloatingVideoWindow.Placement] = [:]
     private var departing: [UUID: Session] = [:]
     private var probeID = UUID()
     /// Rise has left the foreground. The shown tab's video floats until its
@@ -311,7 +313,8 @@ import AppKit
             departing[old.id] = old; current = nil
             restore(old, animated: true, pause: true)
         }
-        let session = Session(tab: tab, panel: FloatingVideoWindow(aspectRatio: aspect, screen: screen, referenceWindow: browser.window), target: target)
+        let session = Session(tab: tab, panel: FloatingVideoWindow(aspectRatio: aspect, screen: screen, referenceWindow: browser.window,
+                                                                  placement: placements[tab.id]), target: target)
         current = session
         session.panel.onClose = { [weak self] in self?.closeVideo() }
         session.panel.onReturn = { [weak self] in self?.returnToTab() }
@@ -467,6 +470,7 @@ import AppKit
     private func restore(_ session: Session, animated: Bool, pause: Bool, returning: Bool = false) {
         if pause { session.call("window.risePictureInPicture?.pause()") }
         guard !session.leaving else { return }
+        remember(session)
         endedTask?.cancel(); endedTask = nil
         stopPlaybackClock(session)
         session.returning = returning; session.handingBack = true
@@ -532,7 +536,7 @@ import AppKit
         if clearMedia(for: tab) { browser.attachVisiblePages(); browser.layoutChrome() }
     }
     func remove(_ tab: BrowserTab) {
-        previousVisible.remove(tab.id); clearMedia(for: tab)
+        previousVisible.remove(tab.id); clearMedia(for: tab); placements.removeValue(forKey: tab.id)
     }
     @discardableResult private func clearMedia(for tab: BrowserTab) -> Bool {
         states.removeValue(forKey: tab.id); frameVideos.removeValue(forKey: tab.id); nativeFloats.removeValue(forKey: tab.id); dismissed.remove(tab.id); ended.remove(tab.id)
@@ -549,7 +553,11 @@ import AppKit
         departing.values.forEach(dispose)
         current = nil; departing = [:]; removeStandIn(); away = false
     }
+    private func remember(_ session: Session) {
+        if let tab = session.tab, session.panel.isVisible, !session.panel.isDismissing { placements[tab.id] = session.panel.placement }
+    }
     private func dispose(_ session: Session) {
+        remember(session)
         stopPlaybackClock(session)
         session.firstFrameTimeout?.cancel()
         session.transitionID = UUID()

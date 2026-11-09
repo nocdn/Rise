@@ -3,7 +3,9 @@ import AppKit
 /// A page's own floating window (Meet's call, from Document Picture-in-Picture) is Chrome's, with
 /// its title bar along the top. Two fingers on that bar move it just as they move Rise's floating
 /// video: flicked, it springs to the nearest corner; let go slowly, it stays where it's left. It
-/// keeps its size throughout: only its place changes, every frame of the display.
+/// keeps its size throughout: only its place changes, every frame of the display. Flicked off the
+/// screen's left or right side, it tucks away past it, as the floating video does
+/// (`FloatingPageTuck`), and two fingers anywhere on it then move it.
 @MainActor final class FloatingPageGestures {
     static let shared = FloatingPageGestures()
     /// Chrome's picture-in-picture title bar (kTopControlsHeight, Rise's rise_pip::kTopBarHeight).
@@ -21,6 +23,7 @@ import AppKit
     func install() {
         guard monitor == nil else { return }
         FloatingPageEntrance.shared.install(); FloatingPageExit.shared.install()
+        FloatingPageTuck.shared.onUntuck = { [weak self] window in self?.untuck(window) }
         monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
             self?.route(.from(event), in: event.window, at: event.locationInWindow) == true ? nil : event
         }
@@ -36,8 +39,10 @@ import AppKit
             }
             swallowsMomentum = false
         }
+        // Tucked, the veil over the window takes the scroll, anywhere on it.
+        let veil = window as? FloatingPageVeil
         guard input.precise, input.momentumPhase.isEmpty, input.phase.contains(.began),
-              let window, Self.startsMove(at: point, in: window) else { return false }
+              let window = veil?.page ?? window, veil != nil || Self.startsMove(at: point, in: window) else { return false }
         begin(window, at: input.timestamp)
         handle(input)
         return true
@@ -77,7 +82,8 @@ import AppKit
         stopClock()
         FloatingPageEntrance.shared.finish(window)
         self.window = window
-        var motion = FloatingVideoMotion(frame: window.frame, visibleFrame: placementArea(on: screen))
+        var motion = FloatingVideoMotion(frame: window.frame, visibleFrame: placementArea(on: screen),
+                                         tucked: FloatingPageTuck.shared.edge(of: window), tuckable: FloatingTuckLook.tuckableEdges(of: screen))
         motion.begin(at: timestamp)
         self.motion = motion; swallowsMomentum = false
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
@@ -86,6 +92,18 @@ import AppKit
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
             MainActor.assumeIsolated { if self?.dragging == true { self?.handle(.from(event)) } }
         }
+    }
+    /// Brings a tucked window back onto the screen, from wherever it is on its way.
+    func untuck(_ window: NSWindow) {
+        guard let screen = window.screen ?? NSScreen.main ?? NSScreen.screens.first else { return }
+        if motion == nil || self.window !== window {
+            stopClock(); self.window = window
+            motion = FloatingVideoMotion(frame: window.frame, visibleFrame: placementArea(on: screen), tucked: FloatingPageTuck.shared.edge(of: window))
+        }
+        guard motion?.phase != .dragging else { return }
+        motion?.untuck()
+        FloatingPageTuck.shared.apply(window, edge: nil, area: placementArea(on: screen))
+        startClock()
     }
     private func end(at timestamp: TimeInterval, cancelled: Bool) {
         motion?.end(at: timestamp, cancelled: cancelled, reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
@@ -121,6 +139,9 @@ import AppKit
         motion?.step(elapsed: elapsed, reduceMotion: reduced)
         // Moving the window without resizing it leaves the page's layout and drawing alone.
         if let origin = motion?.frame.origin, origin != window.frame.origin { window.setFrameOrigin(origin) }
+        if let screen = window.screen ?? NSScreen.main {
+            FloatingPageTuck.shared.apply(window, edge: motion?.tucked, area: placementArea(on: screen), dragging: dragging)
+        }
         if motion?.phase == .idle { motion = nil }
         if motion == nil { stopClock() }
     }
