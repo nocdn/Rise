@@ -45,7 +45,7 @@ import WebKit
     }
 
     /// WebKit's own selection, in the page's coordinates, from any frame and at any zoom.
-    private static func nativeSelectionRect(in page: WKWebView) -> CGRect? {
+    static func nativeSelectionRect(in page: WKWebView) -> CGRect? {
         guard let input = page.scrollView.subviews.first(where: { $0 is UITextInput }),
               let text = input as? UITextInput, let range = text.selectedTextRange, !range.isEmpty else { return nil }
         let rects = text.selectionRects(for: range).map(\.rect).filter { $0.width > 0 && $0.height > 0 }

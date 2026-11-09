@@ -53,6 +53,12 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             GitHubStarAudit.run(in: controller)
             return
         }
+        if ProcessInfo.processInfo.arguments.contains(SelectionFontInfoAudit.argument) {
+            let controller = BrowserViewController(startURL: nil, websiteDataStore: .nonPersistent())
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            SelectionFontInfoAudit.run(in: controller)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains(PageImageActionsAudit.argument) {
             let controller = BrowserViewController(startURL: nil, websiteDataStore: .nonPersistent())
             window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()

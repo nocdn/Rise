@@ -36,6 +36,7 @@ final class RiseWebView: WKWebView {
         SelectionTimeMenu.build(builder, in: self)
         SelectionCurrencyMenu.build(builder, in: self)
         SelectionExplanation.build(builder, in: self)
+        SelectionFontInfo.build(builder, in: self)
         SelectionTimeNativeMenu.removeCopyLinkWithHighlight(from: builder)
         SelectionBase64Menu.build(builder, in: self)
         SelectionMenuIcons.build(builder)
@@ -65,6 +66,8 @@ final class RiseWebView: WKWebView {
     /// Encoding must preserve whitespace and selections beyond date parsing's limit.
     private var rawSelections: [String: String] = [:]
     private var latest: String?
+    /// Each frame's own handle, to read the selection where it is.
+    private var frames: [String: WKFrameInfo] = [:]
     /// Whether the page's amounts are rewritten into the person's currency (`SelectionCurrencyMenu`).
     private var currencyReplaced = false
     private lazy var timeConversion = TimePageConversion { [weak self] body, arguments in
@@ -116,6 +119,11 @@ final class RiseWebView: WKWebView {
         guard let menu = installed.object(forKey: page), let frame = menu.latest else { return "" }
         return menu.rawSelections[frame] ?? ""
     }
+    /// The frame the selection was made in last.
+    static func selectionFrame(in page: WKWebView) -> WKFrameInfo? {
+        guard let menu = installed.object(forKey: page), let frame = menu.latest else { return nil }
+        return menu.frames[frame]
+    }
 
     static func isCurrencyReplaced(in page: WKWebView) -> Bool { installed.object(forKey: page)?.currencyReplaced ?? false }
     static func setCurrencyReplaced(_ replaced: Bool, in page: WKWebView) { installed.object(forKey: page)?.currencyReplaced = replaced }
@@ -129,10 +137,11 @@ final class RiseWebView: WKWebView {
         if text.contains(where: \.isNumber) { ExchangeRateStore.shared.refreshIfStale() }
         let raw = body["raw"] as? String ?? text
         if raw.isEmpty || raw.utf8.count > SelectionBase64.maximumBytes {
-            selections[frame] = nil; rawSelections[frame] = nil
+            selections[frame] = nil; rawSelections[frame] = nil; frames[frame] = nil
             if latest == frame { latest = nil }
         } else {
             selections[frame] = text.isEmpty ? nil : text; rawSelections[frame] = raw; latest = frame
+            frames[frame] = message.frameInfo
         }
     }
 

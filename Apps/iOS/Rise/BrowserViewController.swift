@@ -988,6 +988,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
                 return bottomBar.privacyPolicy.canPullToClose(at: panelPan.location(in: bottomBar.privacyPolicy),
                                                             velocity: panelPan.velocity(in: view))
             }
+            if bottomBar.panel == .fontInfo {
+                return bottomBar.fontInfo.canPullToClose(at: panelPan.location(in: bottomBar.fontInfo),
+                                                       velocity: panelPan.velocity(in: view))
+            }
             return true
         }
         if gestureRecognizer === tabSwipe {
@@ -1089,7 +1093,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     var canReturnFromPanel: Bool {
         guard isPanelOpen else { return false }
         switch bottomBar.panel {
-        case .history, .downloads, .siteSettings, .appSettings, .aiOptions, .aiPrompt, .privacyPolicy: return true
+        case .history, .downloads, .siteSettings, .appSettings, .aiOptions, .aiPrompt, .privacyPolicy, .fontInfo: return true
         default: return false
         }
     }
@@ -1339,7 +1343,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         for button in [bottomBar.history.closeButton, bottomBar.downloads.closeButton,
                        bottomBar.siteSettings.closeButton, bottomBar.appSettings.closeButton,
                        bottomBar.aiOptions.closeButton, bottomBar.aiPrompt.closeButton,
-                       bottomBar.privacyPolicy.closeButton] {
+                       bottomBar.privacyPolicy.closeButton, bottomBar.fontInfo.closeButton] {
             button.addAction(UIAction { [weak self] _ in self?.returnFromPanel() }, for: .primaryActionTriggered)
         }
         for (row, prompt) in zip(bottomBar.aiOptions.promptRows, AIPrompt.allCases) {
@@ -1464,6 +1468,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         case .privacyPolicy: min(view.bounds.height-view.safeAreaInsets.top-12, BottomBar.privacyPolicyHeight(safeBottom: safeBottom))
         case .downloads: downloadsSheet.height(in: downloadsHeights)
         case .history: BottomBar.historyHeight(screenHeight: view.bounds.height, safeTop: view.safeAreaInsets.top)
+        case .fontInfo: BottomBar.fontInfoHeight(screenHeight: view.bounds.height, safeTop: view.safeAreaInsets.top)
         }
         return max(1, height-open)
     }
@@ -1698,6 +1703,13 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         guard isPanelOpen, bottomBar.panel == .aiPrompt else { return }
         bottomBar.aiPrompt.save()
         swapMenuPanel(to: .aiOptions)
+    }
+
+    /// Font info grows the bar from the page, as New Page does; its X closes it back into the bar.
+    func showFontInfo(_ info: FontInfo) {
+        guard allowsPeek, !isPanelOpen, presentedViewController == nil else { return }
+        bottomBar.fontInfo.show(info)
+        openPanel(.fontInfo)
     }
 
     /// Privacy is the next settings surface in the same toolbar, never a presented sheet.

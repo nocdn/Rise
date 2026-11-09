@@ -7,7 +7,7 @@ import UIKit
 /// page's address and a few actions, whose Find turns it into a find field above the keyboard.
 /// Either way the bar's contents swap with a quick, blurred crossfade.
 final class BottomBar: UIView {
-    enum Panel { case search, menu, tabMenu, find, siteSettings, appSettings, aiOptions, aiPrompt, privacyPolicy, downloads, history }
+    enum Panel { case search, menu, tabMenu, find, siteSettings, appSettings, aiOptions, aiPrompt, privacyPolicy, downloads, history, fontInfo }
 
     /// The buttons' row, and the space above it.
     static let rowHeight: CGFloat = 42
@@ -106,6 +106,8 @@ final class BottomBar: UIView {
     /// More's Downloads: the list of downloads.
     let downloads = DownloadsPanel()
     let history = HistoryPanel()
+    /// The selection menu's Font info.
+    let fontInfo = FontInfoPanel()
     /// Which panel the bar grows into.
     var panel = Panel.search
     /// The search's, and the address's, distance from the panel's top.
@@ -127,7 +129,7 @@ final class BottomBar: UIView {
     private var copySuccessTask: Task<Void, Never>?
     /// Whichever of the row, the search and the menu is showing, if any.
     private(set) var shown: UIView?
-    private var contents: [UIView] { [home, search, menu, tabMenu, find, siteSettings, appSettings, aiOptions, aiPrompt, privacyPolicy, downloads, history] }
+    private var contents: [UIView] { [home, search, menu, tabMenu, find, siteSettings, appSettings, aiOptions, aiPrompt, privacyPolicy, downloads, history, fontInfo] }
     /// Collapsed, only the strip remains; set it inside an animation to animate.
     var isCollapsed = false {
         didSet {
@@ -198,6 +200,11 @@ final class BottomBar: UIView {
         min(screenHeight*0.8, screenHeight-safeTop-12).rounded()
     }
 
+    /// Font info opens to half the screen, as a sheet's medium detent does, and scrolls for the rest.
+    static func fontInfoHeight(screenHeight: CGFloat, safeTop: CGFloat) -> CGFloat {
+        min((screenHeight*0.5).rounded(), screenHeight-safeTop-12)
+    }
+
     /// As Site settings, growing for a longer list.
     static func downloadsHeight(width: CGFloat, safeBottom: CGFloat, rows: Int) -> CGFloat {
         max(menuHeight(width: width, safeBottom: safeBottom)+48,
@@ -249,7 +256,7 @@ final class BottomBar: UIView {
         for button in [tabsButton, newPageButton] { row.addSubview(button) }
         row.addSubview(moreLanding)
         moreLanding.addSubview(moreButton)
-        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton, search.privateButton, tabMenu.incognitoRow, tabMenu.historyButton, history.closeButton]+menu.buttons+siteSettings.buttons+appSettings.buttons+aiOptions.buttons+aiPrompt.buttons+privacyPolicy.buttons+downloads.buttons+find.buttons+[find.modeButton, find.sendButton] {
+        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton, search.privateButton, tabMenu.incognitoRow, tabMenu.historyButton, history.closeButton]+menu.buttons+siteSettings.buttons+appSettings.buttons+aiOptions.buttons+aiPrompt.buttons+privacyPolicy.buttons+fontInfo.buttons+downloads.buttons+find.buttons+[find.modeButton, find.sendButton] {
             // A light, crisp tap as the finger lands, rather than a soft thud; actions wait for it to lift.
             button.addAction(UIAction { [weak self, weak button] _ in
                 guard let self else { return }
@@ -309,6 +316,7 @@ final class BottomBar: UIView {
         case .privacyPolicy: privacyPolicy
         case .downloads: downloads
         case .history: history
+        case .fontInfo: fontInfo
         case nil: home
         }
         show(view, animated: animated)
@@ -437,6 +445,8 @@ final class BottomBar: UIView {
         let safeBottom = window?.safeAreaInsets.bottom ?? 0
         place(aiPrompt, Self.searchTop, max(0, bounds.height-Self.searchTop-max(safeBottom, 16)))
         place(privacyPolicy, Self.searchTop, max(0, bounds.height-Self.searchTop-max(safeBottom,16)))
+        // To the bar's bottom edge, its last lines fading under it.
+        place(fontInfo, Self.searchTop, max(0, bounds.height-Self.searchTop))
         let historyHeight = Self.historyHeight(screenHeight: superview?.bounds.height ?? bounds.height,
                                                safeTop: window?.safeAreaInsets.top ?? 0)
         place(history, Self.searchTop, max(0, historyHeight-Self.searchTop-max(safeBottom,16)))
