@@ -93,7 +93,8 @@ final class AdBlockHTTPFixture: @unchecked Sendable {
                 : Data(body.utf8)
             let headers = Data("HTTP/1.1 200 OK\r\nContent-Type: \(type)\r\nContent-Length: \(bytes.count)\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n".utf8)
             // A short delay keeps the native spinner observable during a real reload.
-            let delay = route == "/preview/slow.js" || (slowIcons && route == "/preview/icon.png") ? 12.0 : 0.15
+            let delay = route == "/preview/precommit" ? 3.0
+                : route == "/preview/slow.js" || (slowIcons && route == "/preview/icon.png") ? 12.0 : 0.15
             queue.asyncAfter(deadline: .now()+delay) {
                 connection.send(content: headers+bytes, completion: .contentProcessed { _ in connection.cancel() })
             }

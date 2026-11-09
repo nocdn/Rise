@@ -4,6 +4,12 @@
 <dict>
     <key>NSSupportsLiveActivities</key><true/>
     <key>CFBundleDisplayName</key><string>Rise</string>
+    <!-- A browser must open third-party HTTP pages as well as HTTPS pages.
+         This exception applies to web content; URLSession keeps its default ATS policy. -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoadsInWebContent</key><true/>
+    </dict>
     <key>UIApplicationSceneManifest</key>
     <dict>
         <key>UIApplicationSupportsMultipleScenes</key><false/>

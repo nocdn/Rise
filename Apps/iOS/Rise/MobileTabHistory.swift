@@ -55,6 +55,10 @@ import WebKit
         return page.load(URLRequest(url: handler.baseURL))
     }
 
+    static func cancelRestore(in page: WKWebView) {
+        (page.configuration.urlSchemeHandler(forURLScheme: scheme) as? HistorySchemeHandler)?.bootstrap = nil
+    }
+
     static func permits(_ url: URL, in page: WKWebView) -> Bool {
         (page.configuration.urlSchemeHandler(forURLScheme: scheme) as? HistorySchemeHandler)?.permits(url) == true
     }

@@ -6,7 +6,7 @@ extension BrowserViewController {
         blocker(for: page).popups.noteNavigation("navigation.started", in: page, details: ["hasNavigationObject": String(navigation != nil)])
         // WebKit may omit the navigation object for a script-created blank window.
         if let navigation { tabs.first { $0.webView === page }?.didStart(navigation) }
-        if page === webView { updateNavigationStatus() }
+        if page === webView { pageLoadingStarted(in: page); updateNavigationStatus() }
     }
     func handlePageFailure(_ page: WKWebView, navigation: WKNavigation?, error: Error) {
         finishOpeningHere(page, navigation: navigation)

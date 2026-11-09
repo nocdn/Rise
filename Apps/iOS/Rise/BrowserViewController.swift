@@ -78,7 +78,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     lazy var quickActions = BrowserQuickActions(browser: self)
     lazy var pageTranslation: MobilePageTranslation = MobilePageTranslation(presenter: { [weak self] in self }, changed: { [weak self] in
         guard let self, isViewLoaded else { return }
-        updatePageTranslation()
+        updatePageIndicators()
     }, completed: { [weak self] page in
         guard let self, page === webView, viewIfLoaded?.window?.windowScene?.activationState == .foregroundActive else { return }
         bottomBar.showTranslationSuccess()
@@ -123,6 +123,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
     private var scrollObservation: NSKeyValueObservation?
     /// Keeps More's address and its Back and Forward up to date with the page.
+    private weak var loadingIndicatorPage: WKWebView?
+    private weak var hardReloadPage: WKWebView?
     private var addressObservations: [NSKeyValueObservation] = []
     private let regularAdBlocker: MobileAdBlocker
     var adBlocker: MobileAdBlocker { blocker(for: webView) }
@@ -367,7 +369,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         openPendingLinks()
         applyResumeSearch()
         applyPendingSharedTabs()
-        updatePageTranslation()
+        updatePageIndicators()
     }
 
     /// Opens links from other apps, each in a new tab after the current one, as Safari does.
@@ -877,6 +879,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         currentTab.loadFavicon()
         addressObservations = [
             webView.observe(\.url) { [weak self] _, _ in MainActor.assumeIsolated { self?.updateAddress() } },
+            webView.observe(\.estimatedProgress) { [weak self] _, _ in MainActor.assumeIsolated { self?.updatePageLoading() } },
             webView.observe(\.canGoBack) { [weak self] _, _ in MainActor.assumeIsolated { self?.updateAddress() } },
             webView.observe(\.canGoForward) { [weak self] _, _ in MainActor.assumeIsolated { self?.updateAddress() } },
         ]
@@ -888,8 +891,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     /// Back in More's panel also returns past the start of the page's history to the page it replaced.
     func updateAddress() {
+        updatePageLoading()
         updateAdBlockingSettings()
-        updatePageTranslation()
+        updatePageIndicators()
         let url = shareableURL
         bottomBar.menu.address.show(url, canGoBack: webView.canGoBack || !previousPages.isEmpty,
                                canGoForward: webView.canGoForward || !currentTab.forwardPages.isEmpty)
@@ -898,8 +902,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.menu.findTile.isEnabled = currentTab.hasCommittedDocument
     }
 
-    private func updatePageTranslation() {
+    private func updatePageIndicators() {
         let state = pageTranslation.state(for: webView)
+        let insecureDocument = currentTab.insecureConnectionHintID
+        if let hint = bottomBar.pageHint, hint.content == .insecureConnection, hint.documentID != insecureDocument {
+            bottomBar.cancelPageHint()
+        }
         if let popover = presentedViewController as? PageTranslationPopover,
            popover.page !== webView || popover.documentID != state.documentID || !state.busy {
             popover.finish()
@@ -911,10 +919,19 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let compact = !isPanelOpen && panelExpansion == 0 && !isTabSwitcherOpen && tabSwitcher.isHidden
             && summarise == nil && (presentedViewController == nil || presentedViewController is PageTranslationPopover) && !bottomBar.isCollapsed
             && bottomBar.shown === bottomBar.home && view.window?.windowScene?.activationState == .foregroundActive
-        bottomBar.updateTranslationStatus(state, visible: compact)
-        guard compact, let documentID = state.documentID,
-              (bottomBar.home.layer.presentation()?.opacity ?? 1) > 0.99,
-              pageTranslation.takeAvailableHint(for: webView) else { return }
+        bottomBar.updateTranslationStatus(state, visible: compact && bottomBar.pageHint?.content != .insecureConnection)
+        guard compact, (bottomBar.home.layer.presentation()?.opacity ?? 1) > 0.99 else { return }
+        // HTTP owns the discovery slot, even when the page also offers translation.
+        if insecureDocument != nil {
+            if let documentID = currentTab.takeInsecureConnectionHint() {
+                bottomBar.layoutIfNeeded()
+                bottomBar.announcePageHint(documentID: documentID, content: .insecureConnection) { [weak self] in
+                    self?.updatePageIndicators()
+                }
+            }
+            return
+        }
+        guard let documentID = state.documentID, pageTranslation.takeAvailableHint(for: webView) else { return }
         bottomBar.layoutIfNeeded()
         bottomBar.announceTranslation(documentID: documentID)
     }
@@ -1309,7 +1326,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             (address.translateButton, { $0.pressTranslation() }),
             // While editing the address, X clears it, or closes the dialog once it's empty.
             (address.reloadButton, {
-                if !$0.bottomBar.menu.address.isEditingURL { $0.closePanel(); $0.reloadPage() }
+                if !$0.bottomBar.menu.address.isEditingURL { $0.stopOrReloadPage() }
                 else if $0.bottomBar.search.siteSearch == nil && ($0.bottomBar.search.field.text ?? "").isEmpty { $0.closePanel() }
                 else { $0.bottomBar.search.clearAddress() }
             }),
@@ -1432,10 +1449,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             self.layoutBottomBar()
             self.bottomBar.layoutIfNeeded()
         }
-        guard animated, !UIAccessibility.isReduceMotionEnabled else { change(); updatePageTranslation(); return }
+        guard animated, !UIAccessibility.isReduceMotionEnabled else { change(); updatePageIndicators(); return }
         UIView.animate(springDuration: BottomBar.springDuration, bounce: 0, initialSpringVelocity: 0, delay: 0,
                        options: [.allowUserInteraction, .beginFromCurrentState], animations: change) { _ in
-            if !collapsed { self.updateTabsPreview(); self.updatePageTranslation() }
+            if !collapsed { self.updateTabsPreview(); self.updatePageIndicators() }
         }
     }
 
@@ -1612,7 +1629,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.find.end()
         bottomBar.showContents(of: nil)
         updatePrivacyAppearance(animated: true)
-        updatePageTranslation()
+        updatePageIndicators()
     }
 
     @objc private func closePanelOnTap() {
@@ -2335,7 +2352,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     private func prepareTabSwitcher() {
         hideLaunchCover(duration: 0)
-        bottomBar.cancelTranslationHint()
+        bottomBar.cancelPageHint()
         bottomBar.cancelTranslationStatus()
         if tabSwitcher.isHidden {
             setBottomBarCollapsed(false)
@@ -2676,15 +2693,37 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private var shareableURL: URL? { currentTab.addressURL.flatMap { Self.canPeek($0) ? $0 : nil } }
     func updateNavigationStatus() {
         navigationStatus.show(address: currentTab.addressURL, committed: currentTab.hasCommittedDocument,
-                              error: currentTab.navigationError)
+                              error: currentTab.navigationError, stopped: currentTab.wasStopped)
+    }
+    func pageLoadingStarted(in page: WKWebView) {
+        guard page === webView else { return }
+        loadingIndicatorPage = page
+        bottomBar.loadingLine.update(loading: false, progress: 0, reset: true)
+        updatePageLoading()
+    }
+    private func updatePageLoading() {
+        let changedPage = loadingIndicatorPage !== webView
+        loadingIndicatorPage = webView
+        let loading = webView.isLoading && webView.url?.scheme != MobileTabHistory.scheme
+        bottomBar.loadingLine.update(loading: loading, progress: webView.estimatedProgress,
+                                     hard: hardReloadPage === webView, reset: changedPage)
+        bottomBar.menu.address.showLoading(loading)
+        if !loading { hardReloadPage = nil }
+    }
+    private func stopOrReloadPage() {
+        let loading = webView.isLoading
+        closePanel()
+        if loading { currentTab.stopLoading(); updatePageLoading(); updateNavigationStatus() }
+        else { reloadPage() }
     }
     func reloadPage(ignoringCache: Bool = false) {
+        hardReloadPage = ignoringCache ? webView : nil
         currentTab.reload(ignoringCache: ignoringCache)
         updateNavigationStatus()
     }
 
     @objc private func holdReload(_ hold: UILongPressGestureRecognizer) {
-        guard hold.state == .began else { return }
+        guard hold.state == .began, !webView.isLoading, !bottomBar.menu.address.isEditingURL else { return }
         hardReloadClick.impactOccurred(intensity: 1)
         hardReload()
     }

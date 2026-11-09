@@ -1,7 +1,7 @@
 import UIKit
 
 /// The page's address at the top of More's panel, styled like the search field, with the Mac's
-/// controls: Back and Forward close together, each only if there's a page that way, the host behind a padlock on secure pages, then
+/// controls: Back and Forward close together, each only if there's a page that way, the host behind a transport padlock, then
 /// Reload.
 final class AddressBar: UIControl {
     static let buttonWidth: CGFloat = 30
@@ -21,6 +21,13 @@ final class AddressBar: UIControl {
     let host = UILabel()
     var buttons: [UIButton] { [backButton, forwardButton, translateButton, reloadButton] }
     private var offersTranslation = false
+    private var pageIsLoading = false
+    func showLoading(_ loading: Bool) {
+        pageIsLoading = loading
+        guard !isEditingURL else { return }
+        reloadButton.setSymbol(loading ? "xmark" : "arrow.clockwise")
+        reloadButton.accessibilityLabel = loading ? "Stop Loading" : "Reload"
+    }
     private(set) var isEditingURL = false
     private var editor: SearchField?
     private var editingContentsAligned = false
@@ -82,7 +89,7 @@ final class AddressBar: UIControl {
         translateButton.accessibilityValue = state.busy ? "Translating to English" : state.enabled ? "Translated to English" : nil
     }
 
-    /// Shows a page's host, without `www.` as Safari does, behind a padlock if it's HTTPS.
+    /// Shows the host and its transport: green/closed for HTTPS, red/open for HTTP.
     func show(_ url: URL?, canGoBack: Bool, canGoForward: Bool) {
         self.url = url
         self.canGoBack = canGoBack
@@ -91,8 +98,11 @@ final class AddressBar: UIControl {
         var name = url?.host() ?? ""
         if name.hasPrefix("www.") { name.removeFirst(4) }
         host.text = name
-        host.accessibilityLabel = url?.scheme == "https" ? "Secure, \(name)" : name
-        lock.isHidden = url?.scheme?.lowercased() != "https" || name.isEmpty
+        let connection = PageConnection(url)
+        host.accessibilityLabel = connection.map { "\($0.accessibilityLabel), \(name)" } ?? name
+        lock.image = connection?.image(pointSize: 12)
+        lock.tintColor = connection?.tint
+        lock.isHidden = connection == nil || name.isEmpty
         setNeedsLayout()
     }
 
@@ -209,8 +219,7 @@ final class AddressBar: UIControl {
         settleHistoryButtons()
         backButton.isUserInteractionEnabled = true
         forwardButton.isUserInteractionEnabled = true
-        reloadButton.setSymbol("arrow.clockwise")
-        reloadButton.accessibilityLabel = "Reload"
+        showLoading(pageIsLoading)
         show(url, canGoBack: canGoBack, canGoForward: canGoForward)
     }
 

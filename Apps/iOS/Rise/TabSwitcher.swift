@@ -9,7 +9,8 @@ import WebKit
         didSet {
             pendingURL = nil; restoreNavigation = nil; activeNavigation = nil
             cancellationRetries = 0
-            navigationError = nil; hasCommittedDocument = webView.url != nil
+            navigationError = nil; wasStopped = false; hasCommittedDocument = webView.url != nil
+            resetConnectionHint()
             rememberedURL = nil
             rememberedTitle = nil
             pendingHistory = nil; pendingInteractionState = nil; isRestoringHistory = false
@@ -67,7 +68,25 @@ import WebKit
     }
     #endif
     private(set) var hasCommittedDocument = false
+    private var connectionDocumentID = UUID().uuidString
+    private var committedConnection: PageConnection?
+    private var didAnnounceInsecureConnection = false
+    var insecureConnectionHintID: String? {
+        hasCommittedDocument && committedConnection == .insecure && PageConnection(webView.url) == .insecure
+            ? connectionDocumentID : nil
+    }
+    func takeInsecureConnectionHint() -> String? {
+        guard let id = insecureConnectionHintID, !didAnnounceInsecureConnection else { return nil }
+        didAnnounceInsecureConnection = true
+        return id
+    }
+    private func resetConnectionHint() {
+        connectionDocumentID = UUID().uuidString
+        committedConnection = PageConnection(webView.url)
+        didAnnounceInsecureConnection = false
+    }
     private(set) var navigationError: Error?
+    private(set) var wasStopped = false
     var addressURL: URL? {
         if isRestoringHistory { return rememberedURL }
         if let url = webView.url, let entry = MobileTabHistory.entry(for: url) { return URL(string: entry.url) }
@@ -105,6 +124,7 @@ import WebKit
         self.isPrivateBrowsing = isPrivateBrowsing
         self.webView = webView
         hasCommittedDocument = webView.url != nil
+        committedConnection = PageConnection(webView.url)
         id = tab?.id ?? UUID()
         isSyncPlaceholder = tab?.isSyncPlaceholder == true
         rememberedURL = (tab?.url ?? initialURL).flatMap { MobileBrowserSession.canRestore($0) ? $0 : nil }
@@ -157,6 +177,7 @@ import WebKit
         } else { restoreNavigation = webView.load(URLRequest(url: url)) }
     }
     func didStart(_ navigation: WKNavigation) {
+        wasStopped = false
         activeNavigation = navigation
         navigationError = nil
         if !isRestoringHistory, let restoring = restoreNavigation, restoring !== navigation {
@@ -170,6 +191,7 @@ import WebKit
         if let active = activeNavigation, active !== navigation { return }
         if !isRestoringHistory, let restoring = restoreNavigation, restoring !== navigation { return }
         hasCommittedDocument = true
+        resetConnectionHint()
         cancellationRetries = 0
         navigationError = nil
         isRestoringHistory = false; pendingHistory = nil; pendingInteractionState = nil
@@ -192,8 +214,19 @@ import WebKit
         if !cancelled || restoring { navigationError = error }
         return false
     }
+    /// An explicit Stop must not be mistaken for a cancelled startup to recover.
+    func stopLoading() {
+        wasStopped = true
+        pendingURL = nil; restoreNavigation = nil; activeNavigation = nil
+        pendingHistory = nil; pendingInteractionState = nil; isRestoringHistory = false
+        navigationError = nil; cancellationRetries = 1
+        MobileTabHistory.cancelRestore(in: webView)
+        webView.stopLoading()
+        onPageChange?()
+    }
     /// Ignoring the cache, as Safari's Reload Page From Origin does, revalidates the page and everything it loads.
     func reload(ignoringCache: Bool = false) {
+        wasStopped = false
         let failed = navigationError != nil
         navigationError = nil; cancellationRetries = 0
         if hasCommittedDocument && !failed, webView.url != nil {

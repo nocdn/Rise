@@ -69,18 +69,18 @@ import WebKit
         try await wait("a-foreign-page-announces-translation-in-the-compact-toolbar") { browser.bottomBar.translationHint != nil }
         let hint = browser.bottomBar.translationHint!, landing = browser.bottomBar.moreLanding
         try check("the-discovery-glyph-starts-close-to-the-menu", abs(hint.destination.x-hint.origin.x-40) < 0.1 && hint.origin.y == hint.destination.y)
-        try check("the-discovery-glyph-fades-and-grows-in-before-flying", hint.pose(at: 0).opacity == 0 && hint.pose(at: 0.05).opacity > 0 && hint.pose(at: PageTranslationHint.revealDuration).opacity == 1
-                  && hint.pose(at: 0).scale < hint.pose(at: 0.05).scale && hint.pose(at: PageTranslationHint.revealDuration).scale == 1)
-        let early = hint.pose(at: PageTranslationHint.flightStart+0.09).position.x-hint.origin.x,
-            late = hint.destination.x-hint.pose(at: PageTranslationHint.flightStart+0.27).position.x
+        try check("the-discovery-glyph-fades-and-grows-in-before-flying", hint.pose(at: 0).opacity == 0 && hint.pose(at: 0.05).opacity > 0 && hint.pose(at: ToolbarPageHint.revealDuration).opacity == 1
+                  && hint.pose(at: 0).scale < hint.pose(at: 0.05).scale && hint.pose(at: ToolbarPageHint.revealDuration).scale == 1)
+        let early = hint.pose(at: ToolbarPageHint.flightStart+0.09).position.x-hint.origin.x,
+            late = hint.destination.x-hint.pose(at: ToolbarPageHint.flightStart+0.27).position.x
         try check("the-discovery-flight-starts-slow-and-accelerates", late > early*2)
-        try check("the-discovery-glyph-shrinks-towards-the-menu", hint.pose(at: PageTranslationHint.flightStart+0.16).scale < 1 && hint.pose(at: PageTranslationHint.arrival).scale < 0.7)
+        try check("the-discovery-glyph-shrinks-towards-the-menu", hint.pose(at: ToolbarPageHint.flightStart+0.16).scale < 1 && hint.pose(at: ToolbarPageHint.arrival).scale < 0.7)
         try check("discovery-never-translates-or-intercepts-taps", !translation.state(for: page).enabled && calls == 0 && !hint.isUserInteractionEnabled && hint.accessibilityElementsHidden)
-        let untilCapture = hint.startTime+PageTranslationHint.flightStart+0.14-CACurrentMediaTime()
+        let untilCapture = hint.startTime+ToolbarPageHint.flightStart+0.14-CACurrentMediaTime()
         if untilCapture > 0 { try await Task.sleep(for: .seconds(untilCapture)) }
         try capture("translation-available-hint")
-        try check("the-hint-uses-render-server-animation-at-120-hz", hint.glyph.layer.animation(forKey: "translation.position")?.preferredFrameRateRange.preferred == 120)
-        let untilImpact = hint.startTime+PageTranslationHint.arrival+0.07-CACurrentMediaTime()
+        try check("the-hint-uses-render-server-animation-at-120-hz", hint.glyph.layer.animation(forKey: "page-hint.position")?.preferredFrameRateRange.preferred == 120)
+        let untilImpact = hint.startTime+ToolbarPageHint.arrival+0.07-CACurrentMediaTime()
         if untilImpact > 0 { try await Task.sleep(for: .seconds(untilImpact)) }
         let impact = landing.layer.presentation()?.transform ?? CATransform3DIdentity
         try check("the-menu-receives-a-small-rightward-impact", impact.m41 > 1 && impact.m41 < 4 && abs(impact.m42) < 0.01)
@@ -334,7 +334,7 @@ import WebKit
         browser.closePanel()
         try await wait("closing-the-panel-reveals-the-deferred-hint") { browser.bottomBar.translationHint != nil }
         browser.openPanel(.menu)
-        try check("opening-the-menu-cancels-the-flying-hint-and-its-impact", browser.bottomBar.translationHint == nil && landing.layer.animationKeys()?.contains(where: { $0.hasPrefix("translation-impact-") }) != true)
+        try check("opening-the-menu-cancels-the-flying-hint-and-its-impact", browser.bottomBar.translationHint == nil && landing.layer.animationKeys()?.contains(where: { $0.hasPrefix("page-hint-impact-") }) != true)
         browser.closePanel()
     }
 }

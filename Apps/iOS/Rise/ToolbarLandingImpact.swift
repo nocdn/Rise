@@ -1,6 +1,6 @@
 import UIKit
 
-/// A small incoming impulse shared by download arrivals and translation discovery.
+/// A small incoming impulse shared by download arrivals and page-status cues.
 @MainActor enum ToolbarLandingImpact {
     static let duration = 0.55
     private static let spring = SummariseSpring(2 * .pi/0.34, 0.6)

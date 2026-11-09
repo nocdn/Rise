@@ -163,7 +163,7 @@ final class SummariseTests: XCTestCase {
             controller.startSummarise(.pinch)
             var current: SummariseView? = try XCTUnwrap(controller.summarise)
             current?.manualTime = 0
-            current?.makeSummary = { summary }
+            current?.makeSummary = { _ in summary }
             current?.startFromMenu()
             for _ in 0..<100 where current?.summaryHeight == 0 { try await Task.sleep(for: .milliseconds(10)) }
             heights.append(try XCTUnwrap(current).summaryHeight)

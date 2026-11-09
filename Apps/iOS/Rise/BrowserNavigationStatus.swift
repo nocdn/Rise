@@ -23,14 +23,15 @@ final class BrowserNavigationStatus: UIView {
         [spinner, title, detail, retryButton].forEach(addSubview)
     }
     required init?(coder: NSCoder) { fatalError() }
-    func show(address: URL?, committed: Bool, error: Error?) {
+    func show(address: URL?, committed: Bool, error: Error?, stopped: Bool = false) {
         guard address != nil, !committed else { isHidden = true; spinner.stopAnimating(); return }
         isHidden = false
         let failed = error != nil
-        title.text = failed ? "Couldn't open this page" : nil
-        detail.text = error?.localizedDescription
-        retryButton.isHidden = !failed
-        if failed { spinner.stopAnimating() } else { spinner.startAnimating() }
+        title.text = stopped ? "Loading stopped" : failed ? "Couldn't open this page" : nil
+        detail.text = stopped ? nil : error?.localizedDescription
+        retryButton.setTitle(stopped ? "Reload" : "Try again", for: .normal)
+        retryButton.isHidden = !failed && !stopped
+        if failed || stopped { spinner.stopAnimating() } else { spinner.startAnimating() }
         setNeedsLayout()
     }
     override func layoutSubviews() {

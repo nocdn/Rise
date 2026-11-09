@@ -1,7 +1,19 @@
 import UIKit
 
-/// A once-per-document discovery cue. It never translates, intercepts taps or plays a haptic.
-@MainActor final class PageTranslationHint: UIView {
+/// A once-per-document toolbar cue. Both glyphs share the same entrance, flight,
+/// landing impact, cleanup and Reduce Motion path, without intercepting taps or haptics.
+@MainActor final class ToolbarPageHint: UIView {
+    @MainActor enum Content {
+        case translation, insecureConnection
+        var image: UIImage? {
+            switch self {
+            case .translation: UIImage(named: "ToolbarTranslate")
+            case .insecureConnection: PageConnection.insecure.image(pointSize: 14)
+            }
+        }
+        var tint: UIColor { self == .translation ? BottomBar.plusTint : PageConnection.insecure.tint }
+    }
+    let content: Content
     static let revealDuration = 0.14
     static let holdDuration = 0.18
     static let initialScale: CGFloat = 0.9
@@ -16,10 +28,10 @@ import UIKit
     static let duration = arrival+ToolbarLandingImpact.duration
     private static let acceleration = CubicEasing(0.42, 0, 0.72, 0.19)
     let documentID: String
-    let glyph = UIImageView(image: UIImage(named: "ToolbarTranslate"))
+    let glyph = UIImageView()
     let origin: CGPoint, destination: CGPoint
     private weak var landing: UIView?
-    private let impactKey = "translation-impact-\(UUID())"
+    private let impactKey = "page-hint-impact-\(UUID())"
     private var rate: CADisplayLink?
     private var background: NSObjectProtocol?
     private var finished: (() -> Void)?
@@ -35,8 +47,9 @@ import UIKit
                     scale: (Self.initialScale+(1-Self.initialScale)*reveal)*(1-0.32*p), opacity: Float(alpha))
     }
 
-    init(documentID: String, landing: UIView, in host: UIView) {
+    init(documentID: String, content: Content = .translation, landing: UIView, in host: UIView) {
         self.documentID = documentID
+        self.content = content
         self.landing = landing
         destination = landing.convert(CGPoint(x: landing.bounds.midX, y: landing.bounds.midY), to: host)
         origin = CGPoint(x: destination.x-Self.leadingDistance, y: destination.y)
@@ -44,7 +57,8 @@ import UIKit
         isUserInteractionEnabled = false
         accessibilityElementsHidden = true
         glyph.contentMode = .center
-        glyph.tintColor = BottomBar.plusTint
+        glyph.image = content.image
+        glyph.tintColor = content.tint
         glyph.bounds = CGRect(x: 0, y: 0, width: 32, height: 32)
         glyph.center = origin
         glyph.alpha = 0
@@ -92,7 +106,7 @@ import UIKit
             animation.calculationMode = .linear
             animation.isAdditive = additive
             animation.preferredFrameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
-            layer.add(animation, forKey: additive ? impactKey : "translation.\(key)")
+            layer.add(animation, forKey: additive ? impactKey : "page-hint.\(key)")
         }
         animate(glyph.layer, "position", positions)
         animate(glyph.layer, "transform.scale", scales)

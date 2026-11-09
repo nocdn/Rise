@@ -8,6 +8,12 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let scene = scene as? UIWindowScene else { return }
         let window = RiseWindow(windowScene: scene)
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains(PageLoadingAudit.argument) {
+            let controller = BrowserViewController(startURL: nil)
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            PageLoadingAudit.run(in: controller)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains(LinkPreviewAudit.argument) {
             let controller = BrowserViewController(startURL: nil, websiteDataStore: .nonPersistent())
             window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
@@ -71,10 +77,11 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             ImageContextMenuAudit.run(in: controller)
             return
         }
-        if ProcessInfo.processInfo.arguments.contains(PageTranslationAudit.argument) {
+        if ProcessInfo.processInfo.arguments.contains(PageTranslationAudit.argument) || ProcessInfo.processInfo.arguments.contains(PageConnectionAudit.argument) {
             let controller = BrowserViewController(startURL: nil)
             window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
-            PageTranslationAudit.run(in: controller)
+            if ProcessInfo.processInfo.arguments.contains(PageConnectionAudit.argument) { PageConnectionAudit.run(in: controller) }
+            else { PageTranslationAudit.run(in: controller) }
             return
         }
         if ProcessInfo.processInfo.arguments.contains(AIPromptsAudit.argument) {

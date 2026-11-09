@@ -33,19 +33,29 @@ final class BottomBar: UIView {
     let moreButton = AnimatedSymbolButton(symbol: "ellipsis", pointSize: 14)
     /// The download's landing kick stays independent of the button's normal press scale.
     let moreLanding = UIView()
-    private(set) var translationHint: PageTranslationHint?
+    private(set) var pageHint: ToolbarPageHint?
+    var translationHint: ToolbarPageHint? { pageHint?.content == .translation ? pageHint : nil }
 
     func announceTranslation(documentID: String) {
-        cancelTranslationHint()
-        let hint = PageTranslationHint(documentID: documentID, landing: moreLanding, in: home)
-        translationHint = hint
+        announcePageHint(documentID: documentID, content: .translation)
+    }
+    func announcePageHint(documentID: String, content: ToolbarPageHint.Content, completion: (() -> Void)? = nil) {
+        cancelPageHint()
+        if content == .insecureConnection { cancelTranslationStatus() }
+        let hint = ToolbarPageHint(documentID: documentID, content: content, landing: moreLanding, in: home)
+        pageHint = hint
         home.insertSubview(hint, belowSubview: row)
         hint.start { [weak self, weak hint] in
-            guard let self, translationHint === hint else { return }
-            translationHint = nil
+            guard let self, pageHint === hint else { return }
+            pageHint = nil
+            completion?()
         }
     }
-    func cancelTranslationHint() { translationHint?.cancel(); translationHint = nil }
+    func cancelPageHint() {
+        let previous = pageHint; pageHint = nil
+        previous?.cancel()
+    }
+    func cancelTranslationHint() { if translationHint != nil { cancelPageHint() } }
     private(set) var translationStatus: PageTranslationStatus?
     var showTranslationProgress: ((UIView) -> Void)?
     var configureTranslationSpinner: ((UIView) -> Void)?
@@ -119,6 +129,7 @@ final class BottomBar: UIView {
     /// How small New Page and More get while pressed.
     static let pressedScale: CGFloat = 0.94
     private let separator = UIView()
+    let loadingLine = PageLoadingLine()
     private let row = UIView()
     private let tap = UIImpactFeedbackGenerator(style: .rigid)
     private let successFeedback = UINotificationFeedbackGenerator()
@@ -133,7 +144,7 @@ final class BottomBar: UIView {
     /// Collapsed, only the strip remains; set it inside an animation to animate.
     var isCollapsed = false {
         didSet {
-            if isCollapsed { cancelTranslationHint(); cancelTranslationStatus() }
+            if isCollapsed { cancelPageHint(); cancelTranslationStatus() }
             row.alpha = isCollapsed ? 0 : 1
             row.transform = isCollapsed ? CGAffineTransform(translationX: 0, y: 10).scaledBy(x: 0.92, y: 0.92) : .identity
             row.isUserInteractionEnabled = !isCollapsed
@@ -227,6 +238,7 @@ final class BottomBar: UIView {
             view.accessibilityElementsHidden = true
         }
         show(home, animated: false)
+        addSubview(loadingLine)
 
         newPageButton.layer.cornerCurve = .continuous
         // Rounded like the search field it opens, in proportion.
@@ -362,7 +374,7 @@ final class BottomBar: UIView {
     }
 
     private func show(_ next: UIView?, animated: Bool) {
-        if next !== home { cancelTranslationHint(); cancelTranslationStatus() }
+        if next !== home { cancelPageHint(); cancelTranslationStatus() }
         guard next !== shown else { return }
         let previous = shown
         if previous === history { history.cancelSwipe() }
@@ -405,6 +417,7 @@ final class BottomBar: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        loadingLine.frame = bounds
         separator.frame = CGRect(x: 0, y: 0, width: bounds.width, height: 1/max(1, traitCollection.displayScale))
         // The row keeps its expanded place, so collapsing only fades it as the strip slides down.
         row.bounds = CGRect(x: 0, y: 0, width: bounds.width, height: Self.rowHeight)
@@ -423,7 +436,7 @@ final class BottomBar: UIView {
         moreLanding.bounds = CGRect(x: 0, y: 0, width: menuSide, height: menuSide)
         moreLanding.center = CGPoint(x: bounds.width-centre, y: midY)
         translationStatus?.bounds = CGRect(x: 0, y: 0, width: 44, height: 44)
-        translationStatus?.center = CGPoint(x: moreLanding.center.x-PageTranslationHint.leadingDistance, y: midY)
+        translationStatus?.center = CGPoint(x: moreLanding.center.x-ToolbarPageHint.leadingDistance, y: midY)
         moreButton.bounds = CGRect(x: 0, y: 0, width: menuSide, height: menuSide)
         moreButton.center = CGPoint(x: menuSide/2, y: menuSide/2)
         // The panels' contents keep their place from the top as the bar grows beneath them. By

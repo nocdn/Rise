@@ -45,11 +45,12 @@ import RiseCore
     /// A page loading shows along the hairline, from the left as far as it's got, its front a
     /// little thicker and narrowing back to the hairline behind it.
     struct ProgressStyle {
-        var color = NSColor(hex: 0x007AFF)
-        var thickness: CGFloat = 0.5
+        var color = NSColor(hex: PageLoadProgress.color)
+        var thickness = PageLoadProgress.Style().thickness
         /// The front's thickness, and how far behind it the line is back to `thickness`.
-        var frontThickness: CGFloat = 1, taper: CGFloat = 140
-        var glow: CGFloat = 1.5, glowOpacity: Float = 0.6
+        var frontThickness = PageLoadProgress.Style().frontThickness, taper = PageLoadProgress.Style().taper
+        var glow = PageLoadProgress.Style().glow
+        var glowOpacity = PageLoadProgress.Style().glowOpacity
     }
     var progressStyle = ProgressStyle() { didSet { layoutProgress() } }
     private let progressLine = CAShapeLayer()
@@ -65,12 +66,12 @@ import RiseCore
     private var loadLink: CADisplayLink?, lastTick: CFTimeInterval = 0
     static let loadFadeKey = "Rise.PlainLoadFade"
     /// A hard reload's line is red-pink rather than the accent.
-    static let hardReloadColor = NSColor(hex: 0xF03C64)
+    static let hardReloadColor = NSColor(hex: PageLoadProgress.hardReloadColor)
     /// How far past the end a finished load's front carries on, out of sight, so it doesn't
     /// slow to a stop there; it fades from the moment it reaches it.
-    static let overrun: CGFloat = 48
+    static let overrun = PageLoadProgress.overrun
     /// The spring's angular frequency: critically damped, it settles in about half a second.
-    static let stiffness: CGFloat = 11
+    static let stiffness = PageLoadProgress.stiffness
     func setLoading(_ loading: Bool, progress value: Double, hard: Bool = false) {
         if loading {
             progressStyle.color = hard ? Self.hardReloadColor : ProgressStyle().color
@@ -80,7 +81,7 @@ import RiseCore
                 CATransaction.begin(); CATransaction.setDisableActions(true); progressLine.opacity = 1; CATransaction.commit()
                 showProgress(0)
             }
-            loadTarget = max(loadTarget, min(0.97, max(0.07, CGFloat(value))))
+            loadTarget = max(loadTarget, PageLoadProgress.target(value))
             follow()
         } else if isLoading {
             // Aimed past the end, so it doesn't slow to a stop there; it fades on reaching it.
@@ -109,11 +110,8 @@ import RiseCore
     @objc private func tick(_ link: CADisplayLink) {
         let now = CACurrentMediaTime(), dt = CGFloat(min(1.0/30, max(0, now-lastTick))); lastTick = now
         // The exact step of a critically damped spring, never past where it's going.
-        let omega = Self.stiffness, front = progress ?? 0, offset = front-loadTarget, decay = exp(-omega*dt)
-        let carried = loadSpeed+omega*offset
-        var next = loadTarget+(offset+carried*dt)*decay
-        loadSpeed = (loadSpeed-omega*carried*dt)*decay
-        if next >= loadTarget { next = loadTarget; loadSpeed = 0 }
+        let step = PageLoadProgress.step(front: progress ?? 0, target: loadTarget, speed: loadSpeed, dt: dt)
+        let next = step.front; loadSpeed = step.speed
         showProgress(next)
         if finishing, next >= 1 { showProgress(1); stopFollowing(); finish(); return }
         if abs(next-loadTarget) < 0.0005 {
@@ -136,7 +134,7 @@ import RiseCore
         }
         progressLine.opacity = 0
         let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 1; fade.toValue = 0; fade.duration = 0.35; fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        fade.fromValue = 1; fade.toValue = 0; fade.duration = PageLoadProgress.fadeDuration; fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
         progressLine.add(fade, forKey: Self.loadFadeKey)
         CATransaction.commit()
     }
@@ -164,19 +162,11 @@ import RiseCore
     /// The line to `front`, centred on `centre`: the hairline's thickness, easing up over the
     /// taper to the front's, which ends round.
     static func progressPath(front: CGFloat, centre: CGFloat, style: ProgressStyle) -> CGPath {
-        let path = CGMutablePath(), thin = style.thickness/2
-        let thick = max(thin, style.frontThickness/2), capX = max(thick, front-thick)
-        let taperStart = max(0, capX-style.taper)
-        path.move(to: CGPoint(x: 0, y: centre-thin))
-        path.addLine(to: CGPoint(x: taperStart, y: centre-thin))
-        let middle = (taperStart+capX)/2
-        path.addCurve(to: CGPoint(x: capX, y: centre-thick), control1: CGPoint(x: middle, y: centre-thin), control2: CGPoint(x: middle, y: centre-thick))
-        path.addArc(center: CGPoint(x: capX, y: centre), radius: thick, startAngle: -.pi/2, endAngle: .pi/2, clockwise: false)
-        path.addCurve(to: CGPoint(x: taperStart, y: centre+thin), control1: CGPoint(x: middle, y: centre+thick), control2: CGPoint(x: middle, y: centre+thin))
-        path.addLine(to: CGPoint(x: 0, y: centre+thin))
-        path.closeSubpath()
-        return path
+        PageLoadProgress.path(front: front, centre: centre, style: PageLoadProgress.Style(
+            thickness: style.thickness, frontThickness: style.frontThickness, taper: style.taper,
+            glow: style.glow, glowOpacity: style.glowOpacity))
     }
+
     let text = PlainNavBarText(labelWithString: "")
     /// The page's buttons, left of the pinned extensions, which give way to developer mode's.
     private let addressHost = ContentHost()

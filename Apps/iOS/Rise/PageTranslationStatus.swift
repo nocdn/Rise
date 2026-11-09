@@ -27,7 +27,7 @@ import UIKit
         addSubview(symbol)
         alpha = 0
         if !UIAccessibility.isReduceMotionEnabled {
-            transform = CGAffineTransform(scaleX: PageTranslationHint.initialScale, y: PageTranslationHint.initialScale)
+            transform = CGAffineTransform(scaleX: ToolbarPageHint.initialScale, y: ToolbarPageHint.initialScale)
         }
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -74,11 +74,11 @@ import UIKit
             visibility.stopAnimation(false)
             visibility.finishAnimation(at: .current)
         }
-        let animation = UIViewPropertyAnimator(duration: PageTranslationHint.revealDuration,
-                                               timingParameters: PageTranslationHint.appearanceTiming)
+        let animation = UIViewPropertyAnimator(duration: ToolbarPageHint.revealDuration,
+                                               timingParameters: ToolbarPageHint.appearanceTiming)
         animation.addAnimations {
             self.alpha = shown ? 1 : 0
-            let scale: CGFloat = shown || UIAccessibility.isReduceMotionEnabled ? 1 : PageTranslationHint.initialScale
+            let scale: CGFloat = shown || UIAccessibility.isReduceMotionEnabled ? 1 : ToolbarPageHint.initialScale
             self.transform = CGAffineTransform(scaleX: scale, y: scale)
         }
         animation.addCompletion { [weak self] position in
