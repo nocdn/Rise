@@ -158,7 +158,7 @@ import WebKit
         guard let browser = responder as? BrowserViewController else { return }
         let glyph = picture.map { thumbnail(of: $0.image) } ?? UIImage(systemName: "exclamationmark.circle")
         // A picture in the icon's place is busier, so less past the text.
-        let toast = Toast(message: message, glyph: glyph, name: "page-image-\(UUID().uuidString)", trailingInset: picture == nil ? 22 : 14)
+        let toast = Toast(message: message, glyph: glyph, name: "page-image-\(UUID().uuidString)", trailingInset: picture == nil ? 22 : 15)
         browser.showToast(toast); toast.leave(after: 2)
         UIAccessibility.post(notification: .announcement, argument: message)
     }
