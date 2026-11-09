@@ -63,7 +63,7 @@ final class SiteControlsTests: XCTestCase {
         XCTAssertTrue(content.rows.isEmpty, "The Settings heading and all four toggles have moved out of the popover")
         XCTAssertFalse(content.view.subviews.contains { ($0 as? NSTextField)?.stringValue == "Settings" })
         XCTAssertLessThan(content.view.frame.height, 180, "The popover ends below its extension tiles")
-        XCTAssertEqual(browser.makeMoreSiteMenu().items.filter { !$0.isSeparatorItem }.map(\.title), ["Copy URL", "Site Information", "Save Page Screenshot…", "Split View", "Search Engine", "Theme", "AI Provider", "Gmail Preview Category", "Hide Notification Counts", "Show Repository Under Merge Request Tabs", "Live Page While Expanding Peek", "Animate Developer Tools", "Simulated Full Screen", "Clear Browsing History…", "Camera Permissions…", "Microphone Permissions…", "Location Permissions…"])
+        XCTAssertEqual(browser.makeMoreSiteMenu().items.filter { !$0.isSeparatorItem }.map(\.title), ["Copy URL", "Site Information", "Save Page Screenshot…", "Split View", "Search Engine", "Theme", "AI Provider", "Gmail Preview Category", "Hide Notification Counts", "Show Repository Under Pull and Merge Request Tabs", "Live Page While Expanding Peek", "Animate Developer Tools", "Simulated Full Screen", "Clear Browsing History…", "Camera Permissions…", "Microphone Permissions…", "Location Permissions…"])
         XCTAssertFalse(browser.cookieConsent.isEnabled(for: tab.url))
         let privacy = browser.riseSettingRows("privacy")
         XCTAssertEqual(privacy.first?["key"] as? String, "notificationPermission")

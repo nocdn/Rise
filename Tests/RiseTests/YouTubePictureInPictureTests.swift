@@ -59,7 +59,7 @@ final class YouTubePictureInPictureTests: XCTestCase {
 
     @MainActor func testTheRepositorySubtitleSettingIsOnByDefaultAndCanBeTurnedOff() throws {
         let browser = browser(); defer { clean(browser) }
-        let title = "Show Repository Under Merge Request Tabs"
+        let title = "Show Repository Under Pull and Merge Request Tabs"
         XCTAssertTrue(browser.showsRepositorySubtitle)
         let tab = browser.addTab()
         tab.requestedURL = URL(string: "https://gitlab.com/group/project/-/merge_requests/7")

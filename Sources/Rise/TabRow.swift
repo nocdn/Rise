@@ -123,7 +123,7 @@ import RiseCore
     /// starts a close's slide heavy enough to miss its first frames.
     private struct Shown: Equatable {
         var title: String, selected: Bool, theme: RiseTheme, renaming: Bool, splitMember: Bool
-        var subtitle: String?, subtitleColor: NSColor?, subtitleRange: NSRange?, constructionBorder: Bool
+        var subtitle: String?, subtitleColor: NSColor?, subtitleRange: NSRange?, subtitleIcon: ObjectIdentifier?, constructionBorder: Bool
         var accessory: ObjectIdentifier?, peekIcon: ObjectIdentifier?, peekTitle: String?
         var favicon: ObjectIdentifier?, host: String?
         var playing: Bool, muted: Bool, loading: Bool, progress: Double, hardReloading: Bool
@@ -132,7 +132,8 @@ import RiseCore
     func update(tab: BrowserTab, selected: Bool, theme: RiseTheme, configuration: TabRowConfiguration) {
         let now = Shown(title: tab.title, selected: selected, theme: theme, renaming: isRenaming, splitMember: isSplitMember,
                         subtitle: configuration.subtitle?.text, subtitleColor: configuration.subtitle?.color,
-                        subtitleRange: configuration.subtitle?.highlightRange, constructionBorder: configuration.constructionBorder,
+                        subtitleRange: configuration.subtitle?.highlightRange, subtitleIcon: configuration.subtitle?.icon.map(ObjectIdentifier.init),
+                        constructionBorder: configuration.constructionBorder,
                         accessory: configuration.subtitleAccessory.map(ObjectIdentifier.init),
                         peekIcon: configuration.peek?.favicon.map(ObjectIdentifier.init), peekTitle: configuration.peek?.title,
                         favicon: tab.favicon(for: theme).map(ObjectIdentifier.init), host: tab.url?.host,
@@ -175,7 +176,7 @@ import RiseCore
         setAudio(playing: tab.isPlayingAudio, muted: tab.isAudioMuted)
         badge.apply(theme, selected: selected)
         setPeek(configuration.peek)
-        setAccessibilityLabel(tab.title + (configuration.subtitle.map { ", \($0.text)" } ?? "") + (configuration.peek.map { ", Peek: \($0.title)" } ?? "") + (selected ? ", selected" : ""))
+        setAccessibilityLabel(tab.title + (configuration.subtitle.map { ", \($0.text)" } ?? "") + (configuration.pullRequestState.map { ", \($0.title)" } ?? "") + (configuration.peek.map { ", Peek: \($0.title)" } ?? "") + (selected ? ", selected" : ""))
         close.toolTip = "Close \(tab.title)"
         style(); needsLayout = true; needsDisplay = true
     }

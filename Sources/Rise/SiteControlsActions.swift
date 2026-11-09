@@ -33,7 +33,7 @@ import Vision
         menu.addItem(menuItem("Hide Notification Counts", checked: hidesNotificationCounts) { [weak self] in
             self?.setHidesNotificationCounts(!(self?.hidesNotificationCounts ?? true))
         })
-        menu.addItem(menuItem("Show Repository Under Merge Request Tabs", checked: showsRepositorySubtitle) { [weak self] in
+        menu.addItem(menuItem("Show Repository Under Pull and Merge Request Tabs", checked: showsRepositorySubtitle) { [weak self] in
             self?.setShowsRepositorySubtitle(!(self?.showsRepositorySubtitle ?? true))
         })
         menu.addItem(menuItem("Live Page While Expanding Peek", checked: livePeekResize) { [weak self] in

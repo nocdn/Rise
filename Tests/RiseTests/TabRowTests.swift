@@ -104,8 +104,58 @@ final class TabRowTests: XCTestCase {
         tab.developer = false
         tab.requestedURL = URL(string: "https://github.com/team/project/pull/7")
         row.update(tab: tab, selected: true, theme: .neutral, configuration: .forTab(tab, theme: .neutral))
+        XCTAssertEqual(row.subtitle.stringValue, "team/project", "GitHub's pull requests show theirs too")
+        XCTAssertEqual(row.rowHeight, TabAppearance.subtitleRowHeight)
+        tab.requestedURL = URL(string: "https://github.com/team/project/issues/7")
+        row.update(tab: tab, selected: true, theme: .neutral, configuration: .forTab(tab, theme: .neutral))
         XCTAssertTrue(row.subtitle.isHidden)
         XCTAssertEqual(row.rowHeight, TabAppearance.height)
+    }
+
+    @MainActor func testRequestStateIconLeadsTheRepositoryInItsSitesColors() throws {
+        _ = NSApplication.shared
+        let tab = BrowserTab()
+        tab.requestedURL = URL(string: "https://github.com/team/project/pull/7")
+        XCTAssertNil(TabRowConfiguration.forTab(tab, theme: .neutral).subtitle?.icon, "No icon before the state is known")
+        let merged = TabRowConfiguration.forTab(tab, theme: .neutral) { _ in .merged }
+        let subtitle = try XCTUnwrap(merged.subtitle)
+        let icon = try XCTUnwrap(subtitle.icon)
+        XCTAssertEqual(icon.size, NSSize(width: PullRequestStateIcon.size, height: PullRequestStateIcon.size))
+        XCTAssertTrue(icon === PullRequestStateIcon.image(.merged, forge: .github, dark: false), "The same image each time")
+        XCTAssertFalse(icon === PullRequestStateIcon.image(.merged, forge: .github, dark: true))
+        let value = subtitle.attributedString(font: .systemFont(ofSize: 11), defaultColor: RiseTheme.neutral.muted)
+        XCTAssertNotNil(value.attribute(.attachment, at: 0, effectiveRange: nil), "The icon is first")
+        XCTAssertEqual(value.string.dropFirst(2), "team/project")
+        let suffix = (value.string as NSString).range(of: "project", options: .backwards)
+        XCTAssertEqual(value.attribute(.foregroundColor, at: suffix.location, effectiveRange: nil) as? NSColor, subtitle.color)
+        XCTAssertEqual(value.attribute(.foregroundColor, at: suffix.location-1, effectiveRange: nil) as? NSColor, RiseTheme.neutral.muted)
+
+        // Drawn in the site's own color: Primer's merged purple, GitLab's merged blue.
+        func ink(_ image: NSImage) throws -> NSColor {
+            let rep = try XCTUnwrap(NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 48, pixelsHigh: 48, bitsPerSample: 8, samplesPerPixel: 4,
+                                                     hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0))
+            NSGraphicsContext.saveGraphicsState(); NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+            image.draw(in: NSRect(x: 0, y: 0, width: 48, height: 48)); NSGraphicsContext.restoreGraphicsState()
+            var best: NSColor?, alpha: CGFloat = 0
+            for x in 0..<48 { for y in 0..<48 { if let c = rep.colorAt(x: x, y: y), c.alphaComponent > alpha { alpha = c.alphaComponent; best = c } } }
+            return try XCTUnwrap(best?.usingColorSpace(.sRGB))
+        }
+        let purple = try ink(icon), blue = try ink(try XCTUnwrap(PullRequestStateIcon.image(.merged, forge: .gitlab(host: "gitlab.com"), dark: false)))
+        XCTAssertGreaterThan(purple.blueComponent, purple.greenComponent+0.4); XCTAssertGreaterThan(purple.redComponent, purple.greenComponent+0.1)
+        XCTAssertGreaterThan(blue.blueComponent, blue.redComponent+0.4)
+        let green = try ink(try XCTUnwrap(PullRequestStateIcon.image(.open, forge: .github, dark: true)))
+        XCTAssertGreaterThan(green.greenComponent, green.redComponent+0.3)
+        XCTAssertTrue(PullRequestStateIcon.image(.draft, forge: .gitlab(host: "gitlab.com"), dark: false) === PullRequestStateIcon.image(.open, forge: .gitlab(host: "gitlab.com"), dark: false),
+                      "GitLab shows a draft as open")
+
+        let row = TabRow(tab: tab, onClose: {})
+        row.update(tab: tab, selected: true, theme: .neutral, configuration: merged)
+        XCTAssertTrue(row.accessibilityLabel()?.contains("team/project, Merged") == true)
+        row.frame = NSRect(x: 0, y: 0, width: 240, height: row.rowHeight); row.layoutSubtreeIfNeeded()
+        XCTAssertTrue(row.bounds.contains(row.subtitle.frame))
+        row.update(tab: tab, selected: true, theme: .neutral, configuration: .forTab(tab, theme: .neutral) { _ in .closed })
+        XCTAssertTrue((row.subtitle.attributedStringValue.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment)?.image
+                      === PullRequestStateIcon.image(.closed, forge: .github, dark: false), "A new state redraws the row")
     }
 
     @MainActor func testDeveloperBorderDrawsOverTheChosenCardInFullYellow() throws {

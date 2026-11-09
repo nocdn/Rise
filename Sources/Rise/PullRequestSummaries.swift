@@ -239,6 +239,16 @@ enum GitHubAPI {
         }
         return (shown.title, shown.state)
     }
+    /// The same, through a github.com page signed in to see a private repository.
+    @MainActor static func status(_ pr: PullRequest, through page: WebPage) async throws -> (title: String, state: PullRequestDetails.State) {
+        let answer = await page.evaluate("""
+            const response = await fetch(url, { credentials: 'same-origin', headers: { Accept: 'text/html', 'X-Requested-With': 'XMLHttpRequest' } });
+            return [response.status, await response.text()];
+            """, arguments: ["url": "https://github.com/\(pr.project)/pull/\(pr.number)/hovercard"], world: nil) as? [Any]
+        guard let answer, answer.count == 2, (answer[0] as? NSNumber)?.intValue == 200, let html = answer[1] as? String,
+              let shown = hovercard(html) else { throw URLError(.badServerResponse) }
+        return (shown.title, shown.state)
+    }
     /// The title, state and start of the description in GitHub's hover card for a pull request.
     static func hovercard(_ html: String) -> (title: String, state: PullRequestDetails.State, body: String)? {
         func first(_ pattern: String) -> String? {
@@ -476,7 +486,8 @@ enum PullRequestSummarizer {
         var title: String?, summary: String?, shown = false
         var exists: Bool { title != nil || summary != nil }
     }
-    private struct Saved: Codable { var summary: String?; var details: PullRequestDetails?; var inputTokens: Int?; var custom: Custom? }
+    /// `state` alone is kept for a request whose card was never opened, for its tab's icon.
+    private struct Saved: Codable { var summary: String?; var details: PullRequestDetails?; var inputTokens: Int?; var custom: Custom?; var state: PullRequestDetails.State? }
     private(set) var entries: [String: Entry] = [:]
     private var saved: [String: Saved]
     private var tasks: [String: Task<Void, Never>] = [:]
@@ -497,6 +508,8 @@ enum PullRequestSummarizer {
     /// A page signed in to a server (by its host), to ask a private one through: an open one, or
     /// one opened offscreen for it.
     var signedInPage: (String) async -> WebPage? = { _ in nil }
+    /// Only an open page signed in to a server, for a state read without opening one offscreen.
+    var openSignedInPage: (String) -> WebPage? = { _ in nil }
     /// GitLab servers that only answered through a signed-in page: asked that way from then on.
     private var signedInHosts: Set<String> = []
     /// A title, state, pipeline and merge checks are checked again when the card shows, at most
@@ -504,6 +517,9 @@ enum PullRequestSummarizer {
     static let statusRefresh: TimeInterval = 10, pageRefresh: TimeInterval = 2
     private let storageURL: URL
     var onChange: ((String) -> Void)?
+    /// A request's state, as its tab shows it, changed.
+    var onStateChange: ((String) -> Void)?
+    private var shownStates: [String: PullRequestDetails.State] = [:]
     /// Which service writes descriptions.
     var provider: () -> ModelChoice = { .openRouter }
 
@@ -513,6 +529,25 @@ enum PullRequestSummarizer {
         saved = data.flatMap { try? JSONDecoder().decode([String: Saved].self, from: $0) }
             // Earlier files kept only descriptions.
             ?? data.flatMap { try? JSONDecoder().decode([String: String].self, from: $0) }?.mapValues { Saved(summary: $0) } ?? [:]
+    }
+    /// Its state as last seen: from its details, or read on its own for its tab.
+    func state(of pr: PullRequest) -> PullRequestDetails.State? {
+        entries[pr.key]?.details?.state ?? saved[pr.key]?.details?.state ?? saved[pr.key]?.state
+    }
+    /// Its state for its tab: as last seen, and read once a launch when it's never been seen.
+    func tabState(of pr: PullRequest) -> PullRequestDetails.State? {
+        if let state = state(of: pr) { return state }
+        if lookedUp.insert(pr.key).inserted { refreshStatus(pr, pageLoaded: true) }
+        return nil
+    }
+    private var lookedUp: Set<String> = []
+    /// What changed is shown, and the tab's icon follows its state.
+    private func changed(_ key: String) {
+        onChange?(key)
+        let state = entries[key]?.details?.state ?? saved[key]?.details?.state ?? saved[key]?.state
+        guard shownStates[key] != state else { return }
+        shownStates[key] = state
+        onStateChange?(key)
     }
     func entry(for pr: PullRequest) -> Entry {
         let saved = saved[pr.key]
@@ -527,12 +562,12 @@ enum PullRequestSummarizer {
         if let title { custom.title = title }
         if let summary { custom.summary = summary }
         custom.shown = true
-        saved[key, default: Saved()].custom = custom; save(); onChange?(key)
+        saved[key, default: Saved()].custom = custom; save(); changed(key)
     }
     /// Shows the edited title and description, or the request's own again.
     func showCustom(_ key: String, _ shown: Bool) {
         guard saved[key]?.custom?.exists == true else { return }
-        saved[key]?.custom?.shown = shown; save(); onChange?(key)
+        saved[key]?.custom?.shown = shown; save(); changed(key)
     }
     /// Fetches the details and, unless one is saved, writes the description. Keeps going
     /// when the card closes, so the description is ready next time.
@@ -608,12 +643,12 @@ enum PullRequestSummarizer {
             let breakdown = try? await GitHubAPI.breakdown(pr, details: details)
             guard let self else { return }
             self.breakdownTasks[key] = nil
-            guard let breakdown else { self.breakdownFailures[key] = Date(); self.onChange?(key); return }
+            guard let breakdown else { self.breakdownFailures[key] = Date(); self.changed(key); return }
             self.breakdownFailures[key] = nil
             self.update(key) { $0.details?.breakdown = breakdown }
             self.saved[key]?.details?.breakdown = breakdown; self.save()
         }
-        onChange?(key)
+        changed(key)
     }
     /// The split is on its way.
     func isLoadingBreakdown(_ pr: PullRequest) -> Bool { breakdownTasks[pr.key] != nil }
@@ -625,27 +660,47 @@ enum PullRequestSummarizer {
         saved[key]?.summary = nil; saved[key]?.inputTokens = nil; saved[key]?.custom?.shown = false; save()
         entries[key] = nil
         load(pr, title: title, page: page)
-        onChange?(key)
+        changed(key)
     }
     /// Its title, state, pipeline and merge checks move on after it's opened, unlike the rest; they're
     /// checked again each time its card shows and, in the background, each time its own page loads,
     /// as when it's reloaded to see it now. A merged one won't change again; a closed one is only
-    /// checked as its page loads, which is how one reopened would be seen.
-    func refreshStatus(_ pr: PullRequest, pageLoaded: Bool = false) {
+    /// checked as its page loads, which is how one reopened would be seen. One whose card was never
+    /// opened has its state read for its tab's icon, as its page loads or its tab is restored.
+    /// `every` sets how long since the last check, in place of `pageRefresh` or `statusRefresh`.
+    func refreshStatus(_ pr: PullRequest, pageLoaded: Bool = false, every interval: TimeInterval? = nil) {
         let key = pr.key
-        guard tasks[key] == nil, let known = entries[key]?.details ?? saved[key]?.details, Self.checksAgain(known.state, pageLoaded: pageLoaded),
-              Date().timeIntervalSince(statusChecks[key] ?? .distantPast) > (pageLoaded ? Self.pageRefresh : Self.statusRefresh) else { return }
+        guard tasks[key] == nil, state(of: pr).map({ Self.checksAgain($0, pageLoaded: pageLoaded) }) ?? pageLoaded,
+              Date().timeIntervalSince(statusChecks[key] ?? .distantPast) > interval ?? (pageLoaded ? Self.pageRefresh : Self.statusRefresh) else { return }
         statusChecks[key] = Date()
         Task { [weak self] in
             guard let self else { return }
             var status: GitLabAPI.Status?
             switch pr.forge {
-            case .gitlab: status = try? await GitLabAPI.status(pr, fetch: await self.gitLabFetch(pr))
-            case .github: status = (try? await GitHubAPI.status(pr)).map { ($0.title, $0.state, nil, nil) }
+            case .gitlab(let host):
+                status = try? await GitLabAPI.status(pr, fetch: await self.gitLabFetch(pr))
+                // A private server: through an open page signed in to it, as its card would be.
+                if status == nil, !self.signedInHosts.contains(host), let page = self.openSignedInPage(host),
+                   let read = try? await GitLabAPI.status(pr, fetch: GitLabAPI.fetch(through: page)) {
+                    self.signedInHosts.insert(host); status = read
+                }
+            case .github:
+                var read = try? await GitHubAPI.status(pr)
+                // A private repository's hover card only answers someone signed in.
+                if read == nil, let page = self.openSignedInPage("github.com") { read = try? await GitHubAPI.status(pr, through: page) }
+                status = read.map { ($0.title, $0.state, nil, nil) }
             }
             guard let status else { return }
             self.apply(status, to: key, checks: pr.forge != .github)
         }
+    }
+    /// Tabs' requests move on while their pages stay open, as when one is merged or closed from
+    /// its own page, which doesn't load it again. A tab in view is checked every `statusRefresh`
+    /// while Rise is in front, the others every `backgroundRefresh`; merged ones never again.
+    static let backgroundRefresh: TimeInterval = 5*60
+    func refreshTabs(inView: [PullRequest], others: [PullRequest], active: Bool) {
+        if active { for pr in inView { refreshStatus(pr, pageLoaded: true, every: Self.statusRefresh) } }
+        for pr in others + (active ? [] : inView) { refreshStatus(pr, pageLoaded: true, every: Self.backgroundRefresh) }
     }
     static func checksAgain(_ state: PullRequestDetails.State, pageLoaded: Bool) -> Bool {
         state != .merged && (state != .closed || pageLoaded)
@@ -664,8 +719,11 @@ enum PullRequestSummarizer {
             guard details != shown else { return }
             update(key) { $0.details = details }
             saved[key, default: Saved()].details = details; save()
-        } else if let old = saved[key]?.details, applied(old) != old {
-            saved[key]?.details = applied(old); save(); onChange?(key)
+        } else if let old = saved[key]?.details {
+            guard applied(old) != old else { return }
+            saved[key]?.details = applied(old); save(); changed(key)
+        } else if saved[key]?.state != status.state {
+            saved[key, default: Saved()].state = status.state; save(); changed(key)
         }
     }
     /// Through a signed-in page for a server that needs one; otherwise by itself.
@@ -675,7 +733,7 @@ enum PullRequestSummarizer {
     }
     private func update(_ key: String, _ change: (inout Entry) -> Void) {
         var entry = entries[key] ?? Entry(); change(&entry); entries[key] = entry
-        onChange?(key)
+        changed(key)
     }
     private func save() {
         try? FileManager.default.createDirectory(at: storageURL.deletingLastPathComponent(), withIntermediateDirectories: true)

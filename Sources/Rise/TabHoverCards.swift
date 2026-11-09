@@ -11,6 +11,8 @@ import AppKit
     /// Calendar refreshes more often, so a new event's countdown appears in time.
     static let calendarRefresh: TimeInterval = 120
     let pullRequestCard = PullRequestTooltip()
+    /// Checks pull and merge request tabs' states as they stay open, for their icons.
+    var pullRequestClock: Timer?
     let gmailCard = GmailTooltip()
     let chatCard = GoogleChatTooltip()
     let calendarCard = CalendarTooltip()
@@ -225,6 +227,18 @@ import AppKit
         hover.chatCard.dismiss()
         hover.calendarCard.dismiss()
         hover.titleCard.dismiss()
+    }
+    /// Pull and merge request tabs' states, for their icons: the ones in view soon after they come
+    /// into view and then while they stay there, the rest now and then.
+    func refreshPullRequestTabs() {
+        guard showsRepositorySubtitle else { return }
+        let shown = Set(shownPages.map(ObjectIdentifier.init))
+        var inView: [PullRequest] = [], others: [PullRequest] = []
+        for tab in tabs {
+            guard let pr = PullRequest(url: tab.url) else { continue }
+            if shown.contains(ObjectIdentifier(tab.page)) { inView.append(pr) } else { others.append(pr) }
+        }
+        tabHoverCards.summaries.refreshTabs(inView: inView, others: others, active: NSApp.isActive && window?.isVisible == true)
     }
     func pullRequestSummaryChanged(_ key: String) {
         linkCardSummaryChanged(key)

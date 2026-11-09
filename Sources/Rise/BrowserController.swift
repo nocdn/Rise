@@ -155,12 +155,21 @@ import RiseCore
     lazy var tabHoverCards: TabHoverCards = {
         let hover = TabHoverCards(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("pr-summaries.json"))
         hover.summaries.onChange = { [weak self] key in self?.pullRequestSummaryChanged(key) }
+        // The icon by a request tab's repository.
+        hover.summaries.onStateChange = { [weak self] _ in self?.update() }
+        hover.pullRequestClock = Timer.scheduledTimer(withTimeInterval: PullRequestSummaries.statusRefresh+1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshPullRequestTabs() }
+        }
         hover.summaries.provider = { [weak self] in self?.modelChoice ?? .openRouter }
         // A private GitLab answers through a page signed in to it: the one showing, else any open.
-        hover.summaries.signedInPage = { [weak self] host in
+        hover.summaries.openSignedInPage = { [weak self] host in
             guard let self else { return nil }
             let pages = ([self.selectedTab].compactMap { $0 } + self.tabs + self.allPeekTabs).map(\.page)
-            if let open = pages.first(where: { $0 is ChromiumPage && $0.url?.host?.lowercased() == host.lowercased() && !$0.isLoading }) { return open }
+            return pages.first { $0 is ChromiumPage && $0.url?.host?.lowercased() == host.lowercased() && !$0.isLoading }
+        }
+        hover.summaries.signedInPage = { [weak self] host in
+            guard let self else { return nil }
+            if let open = self.tabHoverCards.summaries.openSignedInPage(host) { return open }
             // None open: one offscreen, with the same session.
             self.signedInPages.host = self.root
             return await self.signedInPages.page(for: host)
@@ -492,6 +501,7 @@ import RiseCore
         sidebar.onTabHover = { [weak self] id, hovering in self?.tabHoverChanged(id, hovering: hovering) }
         sidebar.playbackState = { [weak self] id in self?.playbackPaused(id) }
         sidebar.peekState = { [weak self] id in self?.peek(for: id) }
+        sidebar.pullRequestState = { [weak self] pr in self?.tabHoverCards.summaries.tabState(of: pr) }
         sidebar.onTogglePlayback = { [weak self] id in self?.togglePlayback(id) }
         sidebar.onToggleMute = { [weak self] id in
             if let tab = self?.tabs.first(where: { $0.id == id }) { tab.setAudioMuted(!tab.isAudioMuted) }
@@ -716,7 +726,7 @@ import RiseCore
     }
     func windowDidResize(_ notification: Notification) { layoutChrome(); watchPlainBarColor(for: 0.5) }
     func windowDidChangeOcclusionState(_ notification: Notification) { if window?.occlusionState.contains(.visible) == true { watchPlainBarColor(for: 0.5) } }
-    func windowWillClose(_ notification: Notification) { githubLinkStatus.hover(nil); timeReplacement.cancelHold(); githubStarrer.tearDown(); signedInPages.tearDown(); linkPullRequests.summaries.tearDown(); plainBarTimer?.invalidate(); plainBarTimer = nil; plainBarMonitor.map(NSEvent.removeMonitor); plainBarMonitor = nil; tabPressed(); gmailInbox.tearDown(); protonMailInbox.tearDown(); chatInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); stopTabSleep(); saveNow() }
+    func windowWillClose(_ notification: Notification) { githubLinkStatus.hover(nil); timeReplacement.cancelHold(); githubStarrer.tearDown(); signedInPages.tearDown(); linkPullRequests.summaries.tearDown(); tabHoverCards.pullRequestClock?.invalidate(); tabHoverCards.pullRequestClock = nil; plainBarTimer?.invalidate(); plainBarTimer = nil; plainBarMonitor.map(NSEvent.removeMonitor); plainBarMonitor = nil; tabPressed(); gmailInbox.tearDown(); protonMailInbox.tearDown(); chatInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); stopTabSleep(); saveNow() }
     func windowDidResignKey(_ notification: Notification) {
         timeReplacement.cancelHold()
         cancelShortcutRecording()
@@ -930,7 +940,7 @@ import RiseCore
         sidebar.developerTabLook = developerTabLook
         sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: splitGroups)
         nowPlaying.setNeedsRefresh()
-        refreshTabHoverCard(); preloadGmailInbox(); preloadProtonMailInbox(); preloadChatInbox(); preloadCalendarAgenda()
+        refreshTabHoverCard(); refreshPullRequestTabs(); preloadGmailInbox(); preloadProtonMailInbox(); preloadChatInbox(); preloadCalendarAgenda()
         window?.title = (selectedTab?.title).map { "\($0) — Rise" } ?? "Rise"
         updateNavigationButtons()
         developerAddress.updateURL(selectedTab?.url?.absoluteString ?? "")

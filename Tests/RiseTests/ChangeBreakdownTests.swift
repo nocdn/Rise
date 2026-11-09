@@ -101,6 +101,26 @@ final class ChangeBreakdownTests: XCTestCase {
         XCTAssertTrue(PullRequestSummaries.checksAgain(.open, pageLoaded: false))
     }
 
+    @MainActor func testATabsStateIsKeptWithoutItsCardAndSaysWhenItChanges() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("pr-state-\(UUID()).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        let request = try XCTUnwrap(PullRequest(url: URL(string: "https://gitlab.example.com/team/app/-/merge_requests/9")))
+        let summaries = PullRequestSummaries(storageURL: file)
+        var changes: [String] = []
+        summaries.onStateChange = { changes.append($0) }
+        XCTAssertNil(summaries.state(of: request))
+        summaries.apply(("Add the banner", .open, nil, nil), to: request.key, checks: true)
+        XCTAssertEqual(summaries.state(of: request), .open)
+        summaries.apply(("Add the banner", .open, nil, nil), to: request.key, checks: true)
+        summaries.apply(("Add the banner", .merged, nil, nil), to: request.key, checks: true)
+        XCTAssertEqual(changes, [request.key, request.key], "Once for each new state")
+        XCTAssertNil(summaries.entries[request.key], "No card was opened for it")
+        XCTAssertEqual(summaries.entry(for: request).phase, .idle, "Its card still writes a description")
+        let reopened = PullRequestSummaries(storageURL: file)
+        XCTAssertEqual(reopened.state(of: request), .merged, "Kept across launches")
+        XCTAssertEqual(reopened.tabState(of: request), .merged)
+    }
+
     func testADiffIsReadFileByFileWithoutCountingItsHeaders() {
         let diff = """
         diff --git a/Sources/App.swift b/Sources/App.swift
