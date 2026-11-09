@@ -2,11 +2,13 @@ import AppKit
 
 /// The sidebar's Now Playing, over Downloads and Sort while a tab you've left plays: drawn as the
 /// chosen tab is, with the media's artwork, title and artist, and a waveform following its sound.
-/// Under the pointer it springs open upwards, quickly and without overshoot, to the floating
+/// Under the pointer it springs open upwards, fast and without overshoot, to the floating
 /// player's progress bar, a little slimmer, with the time either side beneath it, and a row of
 /// controls: show the tab (the player's arrows) at the left edge, back, play or pause (the
 /// player's) and forward in the middle, and the tab's mute button at the right edge. The waveform
-/// turns into the player's X, which pauses and puts the card away.
+/// turns into the player's X, which pauses and puts the card away. Media without a position, as a
+/// call, opens to the row alone, without back and forward. It's solid, so the tabs under it don't
+/// show through.
 @MainActor final class NowPlayingCard: FlippedView {
     /// The same space inside every edge, up to the ink of what's there: the artwork, the bar's
     /// ends, the times' digits and the glyphs at either end of the row, as the X's at the top.
@@ -19,10 +21,14 @@ import AppKit
     static let barMiddle: CGFloat = padding+artworkSize+12
     static let rowMiddle: CGFloat = barMiddle+34
     static let expandedHeight: CGFloat = (rowMiddle+7.25+padding).rounded()
+    /// Media without a position, as a call or a live stream, has no bar, times or skipping: the
+    /// row comes straight under the artwork.
+    static let compactRowMiddle: CGFloat = padding+artworkSize+6+buttonSize/2
+    static let compactExpandedHeight: CGFloat = (compactRowMiddle+7.25+padding).rounded()
     /// The buttons' boxes, which shade under the pointer.
     static let buttonSize: CGFloat = 26
     /// Opening and the quicker closing, neither overshooting.
-    static let openSpring = (response: 0.28, bounce: 0.0), closeSpring = (response: 0.16, bounce: 0.0)
+    static let openSpring = (response: 0.2, bounce: 0.0), closeSpring = (response: 0.16, bounce: 0.0)
 
     var onTogglePlayback: (() -> Void)?
     var onClose: (() -> Void)?
@@ -32,6 +38,13 @@ import AppKit
     var onSeek: ((Double, Bool) -> Void)?
 
     private(set) var isShown = false
+    /// Whether the media has a position to show and skip through.
+    private(set) var hasProgress = false
+    private var rowMiddle: CGFloat { hasProgress ? Self.rowMiddle : Self.compactRowMiddle }
+    var expandedHeight: CGFloat { hasProgress ? Self.expandedHeight : Self.compactExpandedHeight }
+    /// Under the tab's see-through look, the sidebar's own colour, so what scrolls under the open
+    /// card doesn't show through it.
+    private let base = CALayer()
     private let background = PlainTabBackground()
     /// Clips what lies past the card's height while it's closed or opening.
     private let content = FlippedView()
@@ -65,6 +78,8 @@ import AppKit
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true; layer?.masksToBounds = false
+        base.cornerRadius = TabAppearance.radius; base.cornerCurve = .continuous
+        layer?.addSublayer(base)
         content.wantsLayer = true
         content.layer?.masksToBounds = true; content.layer?.cornerRadius = TabAppearance.radius; content.layer?.cornerCurve = .continuous
         addSubview(background); addSubview(content)
@@ -75,6 +90,7 @@ import AppKit
         remaining.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium); remaining.alignment = .right
         [artwork, titleField, artistField, waveform, closeControl, controls].forEach(content.addSubview)
         [progress, elapsed, remaining, showTabControl, backButton, playButton, forwardButton, audio].forEach(controls.addSubview)
+        [backButton, forwardButton].forEach { $0.isHidden = true }
 
         // The floating player's bar, a little slimmer and growing a little less under the pointer.
         progress.restThickness = 4; progress.activeThickness = 7
@@ -90,7 +106,10 @@ import AppKit
         // Tabler's outlined pause (MIT, Paweł Kuna), with the row's line weight.
         playButton.pauseOutline = .init(path: "M6 6a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1zm8 0a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1h-2a1 1 0 0 1-1-1z",
                                         size: 22, lineWidth: 2*TabAudioButton.glyphSize/24)
-        closeControl.glyphBox = Self.buttonSize
+        // As tall as the volume icon below it: a 32 pt button's cross.
+        closeControl.glyphBox = 32
+        // A little lighter than the xmark's, nearer the row's outlines.
+        closeControl.crossStrokeWidth = 1.4
         // The same rounded shade as the row's other buttons.
         [playButton, backButton, forwardButton, audio].forEach { $0.layer?.cornerRadius = 7 }
         playButton.action = { [weak self] in
@@ -114,6 +133,7 @@ import AppKit
     func apply(_ theme: RiseTheme) {
         guard theme != self.theme else { return }
         self.theme = theme
+        base.backgroundColor = theme.background.cgColor
         background.dark = theme == .dark
         titleField.textColor = TabAppearance.text(theme, selected: true)
         artistField.textColor = theme.muted
@@ -153,6 +173,12 @@ import AppKit
     func showPosition(time: Double, duration: Double) {
         progress.show(time: time, duration: duration)
         updateTimes()
+        let shows = !progress.isHidden && progress.duration > 0
+        if shows != hasProgress {
+            hasProgress = shows
+            [backButton, forwardButton].forEach { $0.isHidden = !shows }
+            applyExpansion(); needsLayout = true
+        }
     }
     private func updateTimes() {
         let shows = !progress.isHidden && progress.duration > 0
@@ -210,8 +236,9 @@ import AppKit
         // The waveform's bars are exactly its width; the X's ink ends where they do.
         let barsWidth = 5*NowPlayingWaveform.barWidth+4*NowPlayingWaveform.gap
         waveform.frame = NSRect(x: w-p-barsWidth, y: middle-11, width: barsWidth, height: 22)
-        let closeBox: CGFloat = 22
-        closeControl.frame = NSRect(x: w-p-closeControl.inkHalfWidth-closeBox/2, y: middle-closeBox/2, width: closeBox, height: closeBox)
+        // The volume button's box, right above it, as far in from the edge.
+        let side = Self.buttonSize, endInset = expandedHeight-(rowMiddle+side/2)
+        closeControl.frame = NSRect(x: w-endInset-side, y: middle-side/2, width: side, height: side)
         let textX = artwork.frame.maxX+8, textWidth = max(0, waveform.frame.minX-8-textX)
         let titleHeight = ceil(titleField.intrinsicContentSize.height), artistHeight = ceil(artistField.intrinsicContentSize.height)
         let textY = (middle-(titleHeight+artistHeight)/2).rounded()
@@ -220,16 +247,16 @@ import AppKit
 
         // The controls start under the artwork, so the bar is inside them to take clicks.
         let top = artwork.frame.maxY
-        controls.frame = NSRect(x: 0, y: top, width: w, height: max(0, Self.expandedHeight-top))
+        controls.frame = NSRect(x: 0, y: top, width: w, height: max(0, expandedHeight-top))
         // The track runs from padding to padding and thickens about its centerline.
         progress.frame = NSRect(x: p, y: Self.barMiddle-top-7, width: w-2*p, height: 14)
         // A label's text sits 2 pt inside its frame, and the digits' ink half a point inside that.
         let timeHeight = ceil(elapsed.intrinsicContentSize.height), timeY = Self.barMiddle-top+6
         elapsed.frame = NSRect(x: p-2.5, y: timeY, width: (w-2*p)/2+2.5, height: timeHeight)
         remaining.frame = NSRect(x: w/2, y: timeY, width: (w-2*p)/2+2.5, height: timeHeight)
-        let side = Self.buttonSize, rowY = Self.rowMiddle-top-side/2
+        let rowY = rowMiddle-top-side/2
         // The row's end buttons sit as far in from the sides as their shade does from the bottom.
-        let inset = Self.expandedHeight-(Self.rowMiddle+side/2)
+        let inset = endInset
         showTabControl.frame = NSRect(x: inset, y: rowY, width: side, height: side)
         audio.frame = NSRect(x: w-inset-side, y: rowY, width: side, height: side)
         playButton.frame = NSRect(x: ((w-side)/2).rounded(), y: rowY, width: side, height: side)
@@ -239,10 +266,11 @@ import AppKit
 
     private func applyExpansion() {
         let e = expansion
-        let height = Self.collapsedHeight+(Self.expandedHeight-Self.collapsedHeight)*max(0, e)
+        let height = Self.collapsedHeight+(expandedHeight-Self.collapsedHeight)*max(0, e)
         let frame = NSRect(x: dock.x, y: dock.bottom-height, width: dock.width, height: height)
         if self.frame != frame { self.frame = frame }
         background.frame = bounds; content.frame = bounds
+        CATransaction.begin(); CATransaction.setDisableActions(true); base.frame = bounds; CATransaction.commit()
         // The controls come in as the card opens past a quarter, and leave before it's closed.
         let shown = min(1, max(0, (e-0.25)/0.6))
         controls.alphaValue = shown; controls.isHidden = e < 0.02
@@ -374,7 +402,7 @@ import AppKit
     private var phase = 0.0
     /// 0 to 1 as it fades in while playing and out while paused.
     private(set) var presence: CGFloat = 0
-    static let barWidth: CGFloat = 2.2, gap: CGFloat = 2, maximum: CGFloat = 16
+    static let barWidth: CGFloat = 1.8, gap: CGFloat = 2, maximum: CGFloat = 16
     var isAnimating: Bool { playing || values.contains { $0 > 0.002 } || presence > 0 }
     override init(frame: NSRect) {
         super.init(frame: frame)

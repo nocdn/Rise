@@ -104,7 +104,7 @@ import RiseCore
         let opened = await waitUntil(2) { peak = max(peak, card.expansion); return card.isExpanded && abs(card.expansion-1) < 0.001 }
         check(opened, "Under the pointer it opens")
         check(peak < 1.001, "Without overshooting: \(peak)")
-        check(abs(card.frame.height-NowPlayingCard.expandedHeight) < 0.5 && abs(card.frame.maxY-(browser.sidebar.bounds.height-46)) < 0.5,
+        check(abs(card.frame.height-card.expandedHeight) < 0.5 && abs(card.frame.maxY-(browser.sidebar.bounds.height-46)) < 0.5,
               "Upwards, from where it sits")
         check(card.closeControl.alphaValue > 0.99 && card.waveform.alphaValue < 0.01, "The waveform gives way to the X")
         shot(browser, "open-\(browser.theme)")

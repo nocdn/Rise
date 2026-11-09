@@ -39,6 +39,8 @@ enum SidebarScrollCues {
     private static let down = TablerIcon.image("M12 5v14m6-6l-6 6m-6-6l6 6", size: 16, strokeWidth: 1.25, description: "Below")
     let icon = FaviconView(frame: NSRect(x: 10, y: 5, width: 16, height: 16))
     let arrow = NSImageView(frame: NSRect(x: 28, y: 5, width: 16, height: 16))
+    /// The chosen tab's own look: its fill, Light's ring and Dark's lit edge and shadows.
+    private let tabLook = PlainTabBackground()
     /// Where it's pointing, or nil when it's gone or going.
     private(set) var direction: SidebarScrollCues.Direction?
     /// AppKit turns a button's clipping back on; its shadow lies outside it.
@@ -52,18 +54,20 @@ enum SidebarScrollCues {
         layer?.cornerRadius = Self.size.height/2; layer?.cornerCurve = .continuous
         layer?.shadowPath = CGPath(roundedRect: bounds, cornerWidth: Self.size.height/2, cornerHeight: Self.size.height/2, transform: nil)
         layer?.shadowColor = NSColor.black.cgColor; layer?.shadowOffset = CGSize(width: 0, height: 2)
-        layer?.shadowRadius = 6; layer?.borderWidth = KeroLitEdge.ringWidth
+        layer?.shadowRadius = 6
         arrow.imageScaling = .scaleNone
-        [icon, arrow].forEach(addSubview)
+        tabLook.frame = bounds; tabLook.radius = Self.size.height/2
+        tabLook.show(chosen: true, hovered: false, animated: false)
+        [tabLook, icon, arrow].forEach(addSubview)
     }
     required init?(coder: NSCoder) { fatalError() }
     /// Rows take a click through to the window's first mouse; so does this.
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     func apply(_ theme: RiseTheme) {
         CATransaction.begin(); CATransaction.setDisableActions(true)
-        // Solid, as the tooltips' cards are, as the rows pass under it.
-        layer?.backgroundColor = (theme == .dark ? theme.popup : TabAppearance.selectedFill(theme)).cgColor
-        layer?.borderColor = theme == .dark ? KeroLitEdge.text.withAlphaComponent(0.12).cgColor : KeroLitEdge.ringColor
+        // Drawn as the chosen tab is, over the sidebar's own colour, so it's solid as the rows pass under it.
+        layer?.backgroundColor = theme.background.cgColor
+        tabLook.dark = theme == .dark
         layer?.shadowOpacity = theme == .dark ? 0.32 : 0.12
         CATransaction.commit()
         arrow.contentTintColor = theme.sidebarIcon

@@ -141,11 +141,14 @@ import AppKit
         switch glyph {
         // The arrows' symbol is 14 pt wide at a 26 pt button, its ink 1.5 pt in from its left edge.
         case .arrows: return (7-1.5)*sizeScale/(26.0/30)
-        case .cross: return Self.crossArm.dx*sizeScale+Self.crossWidth*sizeScale/2
+        case .cross: return Self.crossArm.dx*sizeScale+crossLineWidth/2
         }
     }
     /// Matches the 13pt semibold xmark: ink 10 wide and 10.6 tall, strokes 1.9pt.
     private static let crossArm = CGVector(dx: 4.05, dy: 4.36), crossWidth: CGFloat = 1.9
+    /// The cross's strokes in points, where they're thinner than the xmark's at this size.
+    var crossStrokeWidth: CGFloat? { didSet { needsLayout = true } }
+    private var crossLineWidth: CGFloat { crossStrokeWidth ?? Self.crossWidth*sizeScale }
     init(glyph: Glyph, title: String) {
         self.glyph = glyph; self.title = title
         super.init(frame: NSRect(x: 0, y: 0, width: 30, height: 30))
@@ -199,7 +202,7 @@ import AppKit
         }
         pieces.forEach { $0.layer.position = CGPoint(x: bounds.midX, y: bounds.midY) }
         for (index, stroke) in strokes.enumerated() where glyph == .cross {
-            stroke.frame = bounds; stroke.lineWidth = Self.crossWidth*sizeScale
+            stroke.frame = bounds; stroke.lineWidth = crossLineWidth
             stroke.path = crossArm(index)
             stroke.opacity = minimizesInBackground && index == 1 ? 0 : 1
         }
