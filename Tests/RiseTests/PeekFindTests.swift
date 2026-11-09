@@ -38,9 +38,9 @@ import AppKit
         XCTAssertTrue(background.isPresented)
         XCTAssertEqual(background.input.stringValue, "Background")
         XCTAssertEqual(bar.frame, clip.bounds)
-        XCTAssertEqual(bar.topInset, 0)
+        XCTAssertEqual(bar.topInset, PlainNavBar.Metrics.height, "It comes down from under the Peek's bar")
         bar.reattached(); bar.layoutSubtreeIfNeeded()
-        XCTAssertEqual(bar.panel.frame.minY, FindBar.top, accuracy: 0.01)
+        XCTAssertEqual(bar.panel.frame.minY, PlainNavBar.Metrics.height+FindBar.top, accuracy: 0.01)
         XCTAssertEqual(bar.bounds.maxX-bar.panel.frame.maxX, FindBar.margin, accuracy: 0.01)
         XCTAssertTrue(browser.window?.firstResponder === bar.input.currentEditor())
 

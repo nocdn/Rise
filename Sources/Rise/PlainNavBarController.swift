@@ -1,16 +1,19 @@
 import AppKit
 
 @MainActor extension BrowserController {
-    /// The page bar follows the selected page, or each of a split's its own (`SplitNavBar.swift`):
-    /// its address and title, its zoom, its load and its colour.
+    /// The page bar follows the selected page, or each of a split's its own (`SplitNavBar.swift`),
+    /// and an open Peek's bar its page (`PeekBar.swift`): its address and title, its zoom, its load
+    /// and its colour.
     func updatePlainBar() {
-        let bars = pageBarTabs
-        let before = (plainBarTabID, splitBarTabID)
-        showPageBar(navBar, tab: bars.first?.tab, shown: &plainBarTabID)
-        if bars.count == 2 { showPageBar(splitBar, tab: bars[1].tab, shown: &splitBarTabID) } else if splitBar.superview === pageClip { splitBarTabID = nil }
-        if before != (plainBarTabID, splitBarTabID) {
+        let tabBars = pageBarTabs
+        let before = [plainBarTabID, splitBarTabID, peekBarTabID]
+        showPageBar(navBar, tab: tabBars.first?.tab, shown: &plainBarTabID)
+        if tabBars.count == 2 { showPageBar(splitBar, tab: tabBars[1].tab, shown: &splitBarTabID) } else if splitBar.superview === pageClip { splitBarTabID = nil }
+        updatePeekBar()
+        let bars = allPageBarTabs
+        if before != [plainBarTabID, splitBarTabID, peekBarTabID] {
             if plainBarColors.count > tabs.count+8 {
-                let ids = Set(tabs.map(\.id)); plainBarColors = plainBarColors.filter { ids.contains($0.key) }
+                let ids = Set(tabs.map(\.id) + [peekTab?.id].compactMap { $0 }); plainBarColors = plainBarColors.filter { ids.contains($0.key) }
             }
             samplePlainBarColor()
         }
@@ -38,7 +41,7 @@ import AppKit
                 guard let self else { timer.invalidate(); return }
                 self.samplePlainBarColor()
                 // The last look is after it has settled.
-                if Date() > self.plainBarWatchedUntil, !self.pageBarTabs.contains(where: { $0.tab.isLoading }) {
+                if Date() > self.plainBarWatchedUntil, !self.allPageBarTabs.contains(where: { $0.tab.isLoading }) {
                     timer.invalidate(); self.plainBarTimer = nil
                 }
             }
@@ -49,7 +52,7 @@ import AppKit
     func samplePlainBarColor() {
         guard !plainBarSampling, window?.occlusionState.contains(.visible) == true else { return }
         var pages: [(bar: PlainNavBar, tab: BrowserTab)] = []
-        for (bar, tab) in pageBarTabs {
+        for (bar, tab) in allPageBarTabs {
             if tab.url != nil, tab.page is ChromiumPage { pages.append((bar, tab)) } else { bar.setColor(theme.page, animated: true) }
         }
         guard !pages.isEmpty else { return }
@@ -61,7 +64,8 @@ import AppKit
                 // Nothing drawn to look at, as a hidden page: the bar keeps the colour it has.
                 guard let color else { continue }
                 self.plainBarColors[tab.id] = color
-                if (bar === self.navBar ? self.plainBarTabID : self.splitBarTabID) == tab.id { bar.setColor(color, animated: true) }
+                let shown = bar === self.navBar ? self.plainBarTabID : bar === self.splitBar ? self.splitBarTabID : self.peekBarTabID
+                if shown == tab.id { bar.setColor(color, animated: true) }
             }
             self?.plainBarSampling = false
         }

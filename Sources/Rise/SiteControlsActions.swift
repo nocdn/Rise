@@ -11,7 +11,7 @@ import Vision
         siteControlsPopover.contentSize = controller.view.frame.size
     }
     @objc func shareCurrentPage() {
-        guard let url = selectedTab?.url else { return }
+        guard let url = commandTab?.url else { return }
         let anchor = (siteControlsPopover.contentViewController as? SiteControlsController)?.quickActions.first ?? selectedBar.settingsButton
         sharingPicker = NSSharingServicePicker(items: [url])
         sharingPicker?.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
@@ -83,7 +83,7 @@ import Vision
         update()
     }
     func permissionSettingMenu(_ capability: SiteCapability) {
-        guard let origin = SitePermissions.origin(selectedTab?.url), let view = siteControlsPopover.contentViewController?.view else { return }
+        guard let origin = SitePermissions.origin(commandTab?.url), let view = siteControlsPopover.contentViewController?.view else { return }
         let row = (siteControlsPopover.contentViewController as? SiteControlsController)?.rows[capability.title]
         let menu = NSMenu()
         for permission in SitePermission.allCases {
@@ -111,7 +111,7 @@ import Vision
         }
     }
     @objc func toggleAutomaticPictureInPicture() {
-        guard let origin = SitePermissions.origin(selectedTab?.url) else { return }
+        guard let origin = SitePermissions.origin(commandTab?.url) else { return }
         sitePermissions.setAutomaticPictureInPicture(!sitePermissions.automaticPictureInPicture(origin: origin), origin: origin)
         pictureInPicture.reconcile(visibleIDs: Set(visibleTabIDs))
     }
@@ -123,7 +123,7 @@ import Vision
         }
     }
     func copyTextFromPageImage() {
-        guard let page = selectedTab?.page else { return }
+        guard let page = commandTab?.page else { return }
         Task { [weak self] in
             let image = await page.snapshot(width: nil)
             guard let self else { return }

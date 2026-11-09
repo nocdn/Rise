@@ -921,7 +921,8 @@ class FindInputCell: NSTextFieldCell {
         defer { timeReplacement.layoutPanel() }
         guard let tab = peekTab, let bar = findBars[tab.id], let clip = peekCard?.subviews.first else { return }
         if bar.superview !== clip { clip.addSubview(bar) }
-        bar.frame = clip.bounds; bar.topInset = 0
+        // Under the Peek's bar, as the page's comes down from under the page bar.
+        bar.frame = clip.bounds; bar.topInset = peekContentInset; bar.tuckedInset = peekContentInset
     }
     /// ⌘F opens the bar or focuses and selects its input without losing an answer.
     @objc func showFind() {

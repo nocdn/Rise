@@ -23,7 +23,7 @@ import RiseCore
     }
     @objc func closeOtherTabs() { for tab in otherClosableTabs.reversed() { closeTab(tab.id) } }
     @objc func closeTabsBelow() { for tab in closableTabsBelow.reversed() { closeTab(tab.id) } }
-    @objc func stopLoadingPage() { selectedTab?.cancelLoad(); update() }
+    @objc func stopLoadingPage() { commandTab?.cancelLoad(); update() }
     @objc func savePageScreenshot() { capturePage() }
     @objc func capturePageImage() { captureWholePage(.jpeg) }
     @objc func capturePagePDF() { captureWholePage(.pdf) }
@@ -32,7 +32,7 @@ import RiseCore
     /// The page's site is asked again for its camera, microphone, location and notifications, at
     /// once, as if it had never asked; the page bar says so.
     @objc func resetSitePermissions() {
-        guard let url = (peekTab ?? selectedTab)?.url, let origin = SitePermissions.origin(url) else { return }
+        guard let url = commandTab?.url, let origin = SitePermissions.origin(url) else { return }
         sitePermissions.reset(origin: origin)
         selectedBar.showNotice("Reset Permissions for \(url.host ?? origin)", image: BarNotice.resetImage)
     }
@@ -45,8 +45,10 @@ import RiseCore
 /// availability follow the current tab instead of the state when the menu bar was made.
 extension BrowserController: NSMenuItemValidation {
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        let tab = selectedTab
-        let hasPage = tab?.url != nil
+        // The selected tab for what's done to tabs; the page commands act on, an open Peek's
+        // included, for what's done to pages.
+        let tab = selectedTab, page = commandTab
+        let tabHasPage = tab?.url != nil, hasPage = page?.url != nil
         switch item.action {
         case #selector(selectNumberedTab(_:)):
             guard tabs.indices.contains(item.tag) else {
@@ -65,7 +67,7 @@ extension BrowserController: NSMenuItemValidation {
         case #selector(moveCurrentTabToTop): return canMoveCurrentTabToTop
         case #selector(moveCurrentTabUp): return canMoveCurrentTab(by: -1)
         case #selector(moveCurrentTabDown): return canMoveCurrentTab(by: 1)
-        case #selector(duplicateCurrentTab), #selector(duplicateIntoSplit): return hasPage
+        case #selector(duplicateCurrentTab), #selector(duplicateIntoSplit): return tabHasPage
         case #selector(pinCurrentTab):
             item.title = tab?.pinned == true ? "Unpin Tab" : "Pin Tab"
             return tab.map { tab in tab.pinned || canPinTab && !splitGroups.contains { $0.contains(tab.id) } } ?? false
@@ -77,13 +79,13 @@ extension BrowserController: NSMenuItemValidation {
             item.title = downloadsPopover.isShown ? "Hide Downloads" : "Show Downloads"; return true
         case #selector(toggleSplit):
             item.title = activeSplitGroup == nil ? "Split View" : "Separate Split Tabs"
-            return tab != nil && (tabs.count > 1 || hasPage)
+            return tab != nil && (tabs.count > 1 || tabHasPage)
         case #selector(toggleDeveloper): item.state = tab?.developer == true ? .on : .off; return tab != nil
         case #selector(toggleCookieConsent):
-            item.state = cookieConsent.isEnabled(for: tab?.url) ? .on : .off
-            return CookieConsentPolicy.site(tab?.url) != nil
+            item.state = cookieConsent.isEnabled(for: page?.url) ? .on : .off
+            return CookieConsentPolicy.site(page?.url) != nil
         case #selector(toggleAutomaticPictureInPicture):
-            let origin = SitePermissions.origin(tab?.url)
+            let origin = SitePermissions.origin(page?.url)
             item.state = sitePermissions.automaticPictureInPicture(origin: origin) ? .on : .off
             return origin != nil
         case #selector(toggleLinkPreloading): item.state = linkPreloader.enabled ? .on : .off; return true
@@ -92,22 +94,22 @@ extension BrowserController: NSMenuItemValidation {
             item.title = devTools.isOpen && devTools.tabID == tab?.id ? "Hide Developer Tools" : "Show Developer Tools"
             return tab?.page is ChromiumPage
         case #selector(toggleSimulatedFullscreen): item.state = pageFullscreen.isSimulated ? .on : .off; return true
-        case #selector(stopLoadingPage): return tab?.isLoading == true
-        case #selector(zoomIn): return hasPage && (tab?.page.zoom ?? 1) < 3
-        case #selector(zoomOut): return hasPage && (tab?.page.zoom ?? 1) > 0.3
+        case #selector(stopLoadingPage): return page?.isLoading == true
+        case #selector(zoomIn): return hasPage && (page?.page.zoom ?? 1) < 3
+        case #selector(zoomOut): return hasPage && (page?.page.zoom ?? 1) > 0.3
         case #selector(actualSize): return hasPage
         case #selector(toggleLocalTimes):
             item.state = (findTab?.page as? ChromiumPage).map { timeReplacement.isActive(in: $0) } == true ? .on : .off
             return findTab?.page is ChromiumPage && palette.isHidden
-        case #selector(copyURL), #selector(shareCurrentPage): return hasPage && tab?.url?.absoluteString != "about:blank"
-        case #selector(showPageSource): return ["http", "https", "file"].contains(tab?.url?.scheme ?? "")
-        case #selector(javascriptConsole): return tab?.page is ChromiumPage
+        case #selector(copyURL), #selector(shareCurrentPage): return hasPage && page?.url?.absoluteString != "about:blank"
+        case #selector(showPageSource): return ["http", "https", "file"].contains(page?.url?.scheme ?? "")
+        case #selector(javascriptConsole): return page?.page is ChromiumPage
         case #selector(showSettings), #selector(manageExtensions): return ChromiumEngine.isRunning
         case #selector(showFind), #selector(findNext), #selector(findPrevious), #selector(skipToNextMatch), #selector(skipToPreviousMatch): return findTab?.url != nil
-        case #selector(reload), #selector(hardReload),
-             #selector(peekCurrentPage), #selector(savePageScreenshot), #selector(capturePageImage), #selector(capturePagePDF),
+        case #selector(peekCurrentPage): return tabHasPage
+        case #selector(reload), #selector(hardReload), #selector(savePageScreenshot), #selector(capturePageImage), #selector(capturePagePDF),
              #selector(showSiteInformation): return hasPage
-        case #selector(resetSitePermissions): return SitePermissions.origin((peekTab ?? selectedTab)?.url) != nil
+        case #selector(resetSitePermissions): return SitePermissions.origin(page?.url) != nil
         case #selector(toggleCardMotionTester):
             item.state = CardMotionTester.shared.isOn ? .on : .off; return true
         case #selector(toggleLinkPulseTester):

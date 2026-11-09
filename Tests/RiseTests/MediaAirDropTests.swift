@@ -48,6 +48,8 @@ final class MediaAirDropTests: XCTestCase {
         let item = AirDropMenuItem.item(title: "AirDrop Image") {}
         XCTAssertEqual(item.title, "AirDrop Image")
         XCTAssertTrue(item.image === AirDropMenuItem.icon)
+        #if compiler(>=6.4)
         if #available(macOS 27, *) { XCTAssertEqual(item.preferredImageVisibility, .visible) }
+        #endif
     }
 }

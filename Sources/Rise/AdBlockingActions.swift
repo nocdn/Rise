@@ -4,7 +4,7 @@ import AppKit
     /// The shield: turns blocking off or on for the site showing. With blocking off everywhere, it
     /// turns it back on, for this site too.
     func toggleAdBlockingHere() {
-        let url = selectedTab?.url
+        let url = commandTab?.url
         let allowed = adBlocker.allowedSite(for: url)
         if !adBlocker.enabled {
             toggleAdBlocking()
@@ -26,7 +26,7 @@ import AppKit
                 try await change.value
                 guard self.blockingChangeGeneration == generation else { return }
                 // Switched in the site controls, they stay open through the reload it takes.
-                if self.siteControlsPopover.isShown, let tab = self.selectedTab, let url = tab.page.url {
+                if self.siteControlsPopover.isShown, let tab = self.commandTab, let url = tab.page.url {
                     self.siteControlsReload = (tab.id, url, Date().addingTimeInterval(5))
                 }
                 let visible = Set(self.visibleTabIDs)

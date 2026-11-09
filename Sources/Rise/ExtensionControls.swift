@@ -37,11 +37,13 @@ import RiseChromium
     var extensionActions: [RCExtensionAction] { (extensionWindow as? ExtensionWindow)?.actions ?? [] }
     /// The page extensions act on: the selected tab's, when it's Chromium's.
     var selectedChromiumView: RCBrowserView? { (selectedTab?.page as? ChromiumPage)?.browserView }
+    /// The page extensions are run on from the menus, the site controls and their shortcuts: an open Peek's.
+    var commandChromiumView: RCBrowserView? { (commandTab?.page as? ChromiumPage)?.browserView }
 
     /// Clicks extension `id`'s button for the selected tab; its popup, if any, opens under
     /// `anchor` (in the page bar), or the site controls button.
     func runExtension(_ id: String, anchor: NSView? = nil) {
-        guard let tab = selectedChromiumView, let action = extensionActions.first(where: { $0.extensionID == id }) else { return }
+        guard let tab = commandChromiumView, let action = extensionActions.first(where: { $0.extensionID == id }) else { return }
         siteControlsPopover.close()
         guard let url = action.click(inTab: tab) else { return }
         showExtensionPopup(url, extensionID: id, anchor: anchor)
@@ -58,7 +60,9 @@ import RiseChromium
             completion?(false); return
         }
         siteControlsPopover.close()
-        let anchorView: NSView = anchor ?? navBar.settingsButton
+        // An open Peek's comes out of its own bar's site controls, and stays inside its card.
+        let anchorView: NSView = showsPeekBar ? (anchor.flatMap { $0.isDescendant(of: peekBar) ? $0 : nil } ?? peekBar.settingsButton)
+            : anchor ?? selectedBar.settingsButton
         guard anchorView.window != nil else {
             AuthenticationDiagnostics.popups.notice("Popup refused missingWindow=1")
             completion?(false); return
@@ -91,6 +95,10 @@ import RiseChromium
             self?.addTab(url: url, background: background); return true
         }
         extensionPopup = popup
+        popup.bounds = { [weak self] in
+            guard let self, self.showsPeekBar, let card = self.peekCard else { return nil }
+            return card.convert(card.bounds, to: self.root)
+        }
         raiseHoverCard(popup.card)
         popup.show(under: anchorView)
         popup.load(url)
@@ -134,7 +142,7 @@ import RiseChromium
         if shortcut.clicksButton {
             runExtension(shortcut.extensionID, anchor: navBar.extensionButtons.first { $0.extensionID == shortcut.extensionID })
         } else {
-            shortcut.run(inTab: selectedChromiumView)
+            shortcut.run(inTab: commandChromiumView)
         }
         return true
     }
@@ -303,6 +311,8 @@ import RiseChromium
     /// The page's size, which the card takes as far as the window allows.
     private(set) var contentSize = NSSize.zero
     private(set) weak var anchor: NSView?
+    /// Where the card must stay, in its host's coordinates, as an open Peek's card; the window's otherwise.
+    var bounds: (() -> NSRect?)?
     /// `leaving` from the moment it's asked to close, so nothing opens it again on its way out.
     private var closed = false, leaving = false, loaded = false, sized = false, revealing = false
     private var monitor: Any?
@@ -360,9 +370,10 @@ import RiseChromium
     private func frame(for size: NSSize) -> NSRect? {
         guard let anchor, let host = card.superview, anchor.window != nil, anchor.window === host.window else { return nil }
         let button = anchor.convert(anchor.bounds, to: host)
+        let area = bounds?() ?? host.bounds
         let top = button.maxY+Self.gap
-        let width = min(size.width, max(Self.minimum.width, button.maxX-Self.margin))
-        let height = min(size.height, max(Self.minimum.height, host.bounds.height-top-Self.margin))
+        let width = min(size.width, max(Self.minimum.width, button.maxX-area.minX-Self.margin))
+        let height = min(size.height, max(Self.minimum.height, area.maxY-top-Self.margin))
         return NSRect(x: button.maxX-width, y: top, width: width, height: height)
     }
     /// The middle of the button's bottom edge, in the card's coordinates: where it grows from.

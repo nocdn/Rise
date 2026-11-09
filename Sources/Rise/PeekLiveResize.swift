@@ -65,9 +65,13 @@ import QuartzCore
         let spring = Self.peekPromoteSpring
         let source = tabs.first { $0.id == peekSourceTabID } ?? selectedTab
         let from = card.frame
-        // Where the page settles; view geometry leaves out the page's recede.
-        let target = (activeSplitGroup == nil ? source?.page.view : nil).map { $0.convert($0.bounds, to: root) }
-            ?? pageClip.convert(pageClip.bounds, to: root)
+        // Where the page settles, with the Peek's bar landing over the page bar; view geometry
+        // leaves out the page's recede.
+        let target = (activeSplitGroup == nil ? source?.page.view : nil).map { page in
+            var frame = page.convert(page.bounds, to: root)
+            frame.origin.y -= peekContentInset; frame.size.height += peekContentInset
+            return frame
+        } ?? pageClip.convert(pageClip.bounds, to: root)
         (peekBackdrop as? PeekBackdrop)?.dismiss = nil
         if let backdrop = peekBackdrop {
             NSAnimationContext.runAnimationGroup { $0.duration = spring.perceptualDuration*0.7; backdrop.animator().alphaValue = 0 }
@@ -110,12 +114,11 @@ import QuartzCore
     }
     /// Ends a live resize still under way, as if it had run its course, before another starts.
     func finishPeekLiveMotion() { if let motion = peekLiveMotion, motion.isRunning { motion.finish() } }
-    /// Places the card with its real page filling it, laid out again at every size.
+    /// Places the card with its real page under its bar, laid out again at every size.
     func placeLivePeek(_ card: Surface, web: NSView, at frame: NSRect) {
         CATransaction.begin(); CATransaction.setDisableActions(true)
         card.frame = frame
-        card.subviews.first?.frame = card.bounds
-        if web.superview === card.subviews.first { web.frame = card.bounds }
+        layoutPeekContents(card, web: web)
         for case let bar as FindBar in card.subviews.first?.subviews ?? [] { bar.frame = card.bounds }
         (card as? PageSurface)?.refreshOutline()
         CATransaction.commit()

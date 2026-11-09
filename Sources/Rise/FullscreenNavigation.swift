@@ -123,7 +123,7 @@ import AppKit
             let top = min(frame.minY, pageClip.convert(.zero, from: root).y)
             let reveal = NSRect(x: frame.minX, y: top, width: frame.width, height: frame.maxY-top)
             let overlays = overlaysFullscreenNavigation(for: tab)
-            bar.fullscreenSlide.companion = bar === selectedBar ? developerBar : nil
+            bar.fullscreenSlide.companion = bar === tabBar ? developerBar : nil
             // Keep animating the return after fullscreen has ended as well.
             bar.setFullscreenHidden(overlays && !held && !reveal.contains(point), animated: true)
         }

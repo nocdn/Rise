@@ -252,6 +252,20 @@ final class PinnedTabsTests: XCTestCase {
         XCTAssertTrue(grid.tiles.values.filter { !$0.selected }.allSatisfy { ($0.layer?.backgroundColor?.alpha ?? 1) < 1 }, "At rest, the sidebar shows through")
     }
 
+    @MainActor func testCommandZPinsAnUnpinnedTabBackInItsSlotAndRedoUnpinsItAgain() throws {
+        let browser = browser(); defer { clean(browser) }
+        let a = browser.addTab(), b = browser.addTab(); _ = browser.addTab()
+        browser.pinTab(a.id); browser.pinTab(b.id)
+        let pinned = browser.tabs.filter(\.pinned).map(\.id)
+        browser.unpinTab(a.id)
+        XCTAssertFalse(a.pinned)
+        let commandZ = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+            windowNumber: browser.window!.windowNumber, context: nil, characters: "z", charactersIgnoringModifiers: "z", isARepeat: false, keyCode: 6))
+        XCTAssertTrue(browser.handleTabOrderUndoKey(commandZ))
+        XCTAssertTrue(a.pinned); XCTAssertEqual(browser.tabs.filter(\.pinned).map(\.id), pinned, "Back in its tile's slot")
+        browser.window?.undoManager?.redo()
+        XCTAssertFalse(a.pinned)
+    }
     /// Pin and Unpin from the menu carry the tab to its new place rather than jumping.
     @MainActor func testMenuPinningCarriesTheTabThereAndBack() async throws {
         let browser = browser(); defer { clean(browser) }

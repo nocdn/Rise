@@ -686,9 +686,18 @@ import RiseCore
 
     // MARK: Hovering the address
 
+    /// Under a Peek: AppKit shows a view's cursor wherever it is, even covered, so a bar the Peek's
+    /// card covers sets none, nor hovers, leaving the Peek's own bar its cursor.
+    var isCovered = false {
+        didSet {
+            guard isCovered != oldValue else { return }
+            if isCovered { setHovered(false) }
+            window?.invalidateCursorRects(for: self)
+        }
+    }
     override func resetCursorRects() {
         super.resetCursorRects()
-        guard url != nil, developerProgress == 0, !isFullscreenHidden, !fieldRect.isEmpty else { return }
+        guard !isCovered, url != nil, developerProgress == 0, !isFullscreenHidden, !fieldRect.isEmpty else { return }
         addCursorRect(fieldRect, cursor: .iBeam)
     }
     override func updateTrackingAreas() {
@@ -696,7 +705,7 @@ import RiseCore
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self))
     }
     override func mouseMoved(with event: NSEvent) {
-        setHovered(hoverArea(contains: convert(event.locationInWindow, from: nil)) && isFrontmost(at: event.locationInWindow))
+        setHovered(!isCovered && hoverArea(contains: convert(event.locationInWindow, from: nil)) && isFrontmost(at: event.locationInWindow))
     }
     /// The address, and the page's buttons out past its end to the copy button, which show
     /// while the pointer's on either and fade as it leaves, as they did in the field.
@@ -964,7 +973,9 @@ import RiseCore
     }
     override func mouseEntered(with event: NSEvent) { isHovered = true }
     override func mouseExited(with event: NSEvent) { isHovered = false }
-    override func cursorUpdate(with event: NSEvent) { NSCursor.pointingHand.set() }
+    override func cursorUpdate(with event: NSEvent) {
+        if (superview?.superview as? PlainNavBar ?? superview as? PlainNavBar)?.isCovered == true { NSCursor.arrow.set() } else { NSCursor.pointingHand.set() }
+    }
     override func mouseDown(with event: NSEvent) {}
     override func mouseUp(with event: NSEvent) {
         if bounds.contains(convert(event.locationInWindow, from: nil)) { perform() }

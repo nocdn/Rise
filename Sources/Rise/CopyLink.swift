@@ -5,7 +5,7 @@ import AppKit
     /// pasteboard and say so in the page bar, in the address's place, with the copy button's
     /// confirmation glyph. Copying again while it says so holds it longer.
     @objc func copyURL() {
-        guard let url = selectedTab?.url, url.absoluteString != "about:blank" else { return }
+        guard let url = commandTab?.url, url.absoluteString != "about:blank" else { return }
         linkPasteboard.clearContents()
         guard linkPasteboard.setString(url.absoluteString, forType: .string) else { return }
         selectedBar.copyButton.showCopied()
@@ -16,8 +16,8 @@ import AppKit
     /// so in the bar as ⇧⌘C does; going to the address on the pasteboard; and editing the address.
     /// A split's other page becomes the selected one first, as a click on its bar makes it.
     func addressMenu(for bar: PlainNavBar) -> NSMenu? {
-        guard let tab = pageBarTabs.first(where: { $0.bar === bar })?.tab ?? selectedTab, tab.url != nil else { return nil }
-        if tab.id != selectedID { select(tab.id) }
+        guard let tab = allPageBarTabs.first(where: { $0.bar === bar })?.tab ?? selectedTab, tab.url != nil else { return nil }
+        if tab !== peekTab, tab.id != selectedID { select(tab.id) }
         let menu = NSMenu()
         func add(_ title: String, _ id: String?, enabled: Bool = true, _ action: @escaping () -> Void) {
             let item = menuItem(title, action: action)
@@ -38,7 +38,7 @@ import AppKit
     }
     /// The page as a Markdown link, `[title](address)`, its title the address where it has none.
     @objc func copyMarkdownLink() {
-        guard let tab = selectedTab, let url = tab.url, url.absoluteString != "about:blank" else { return }
+        guard let tab = commandTab, let url = tab.url, url.absoluteString != "about:blank" else { return }
         let words = tab.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = (words.isEmpty ? AddressDisplay.text(url.absoluteString) : words)
             .replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "[", with: "\\[").replacingOccurrences(of: "]", with: "\\]")

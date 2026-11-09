@@ -6,6 +6,8 @@ import AppKit
     func updatePeekCovers() {
         for tab in tabs { setCovered(peekTab != nil, tab) }
         if let peekTab { setCovered(false, peekTab) }
+        // And the tab's bars under its card, whose cursors would otherwise show through it.
+        for bar in [navBar, splitBar] { bar.isCovered = peekTab != nil && bar !== peekBar }
         // The split's handle isn't for a page under a Peek.
         layoutSplitHandle()
     }

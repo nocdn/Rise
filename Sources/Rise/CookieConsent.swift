@@ -80,11 +80,11 @@ import RiseCore
 
 @MainActor extension BrowserController {
     @objc func toggleCookieConsent() {
-        guard let url = selectedTab?.url, CookieConsentPolicy.site(url) != nil else { return }
+        guard let url = commandTab?.url, CookieConsentPolicy.site(url) != nil else { return }
         historySwipe.cancel(); linkPreloader.cancelAll()
         cookieConsent.setEnabled(!cookieConsent.isEnabled(for: url), for: url)
         // Switched in the site controls, they stay open through the reload it takes.
-        if siteControlsPopover.isShown, let tab = selectedTab { siteControlsReload = (tab.id, url, Date().addingTimeInterval(5)) }
+        if siteControlsPopover.isShown, let tab = commandTab { siteControlsReload = (tab.id, url, Date().addingTimeInterval(5)) }
         let visible = Set(visibleTabIDs)
         for tab in tabs + allPeekTabs where CookieConsentPolicy.site(tab.url) == CookieConsentPolicy.site(url) {
             if visible.contains(tab.id) || tab === peekTab { tab.page.reload(); tab.needsBlockingReload = false }

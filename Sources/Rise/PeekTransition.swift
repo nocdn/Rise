@@ -21,9 +21,19 @@ final class PeekGhost: Surface {
     var companions: [NSView] = []
     let clip: Surface
     let page = FlippedView()
+    /// The Peek's bar across its top, as a still over its colour, the page under it.
+    let bar = FlippedView()
     let link = FlippedView()
     /// Height/width of each snapshot, fixed up front so late snapshots never stretch.
     var pageAspect: CGFloat?
+    /// The bar's height to the card's width, which it keeps as the card grows and shrinks; none without one.
+    var barAspect: CGFloat = 0
+    var barStill: PeekBarStill? {
+        didSet {
+            bar.layer?.contents = barStill?.image; bar.layer?.backgroundColor = barStill?.color.cgColor
+            bar.isHidden = barStill == nil
+        }
+    }
     var pageImage: NSImage? { didSet { page.layer?.contents = pageImage } }
     var linkImage: NSImage? { didSet { link.layer?.contents = linkImage } }
     /// The page and the link themselves, live, where the engine can show them so: they take the
@@ -43,7 +53,8 @@ final class PeekGhost: Surface {
         clip.layer?.masksToBounds = true; clip.clipsToBounds = true
         // Smoothed corners, as the Peek card it hands over to.
         layer?.cornerCurve = .continuous; clip.layer?.cornerCurve = .continuous
-        for view in [page, link] { view.wantsLayer = true; view.layer?.contentsGravity = .resize; clip.addSubview(view) }
+        for view in [page, bar, link] { view.wantsLayer = true; view.layer?.contentsGravity = .resize; clip.addSubview(view) }
+        bar.isHidden = true
         addSubview(clip)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -72,9 +83,11 @@ final class PeekGhost: Surface {
     func place(_ frame: NSRect, spring: CASpringAnimation? = nil) {
         let linkAspect = linkImage.map { $0.size.height / max(1, $0.size.width) }
             ?? linkLive.map { $0.bounds.height / max(1, $0.bounds.width) }
-        let size = frame.size
+        let size = frame.size, barHeight = size.width*barAspect
         for (view, target) in [(self, frame), (clip, NSRect(origin: .zero, size: size)),
-                               (page, NSRect(x: 0, y: 0, width: size.width, height: size.width*(pageAspect ?? size.height/max(1, size.width)))),
+                               (bar, NSRect(x: 0, y: 0, width: size.width, height: barHeight)),
+                               (page, NSRect(x: 0, y: barHeight, width: size.width,
+                                             height: size.width*(pageAspect ?? max(0, size.height-barHeight)/max(1, size.width)))),
                                (link, NSRect(x: 0, y: 0, width: size.width, height: size.width*(linkAspect ?? size.height/max(1, size.width))))] {
             if let spring { view.spring(to: target, along: spring) } else { view.frame = target }
         }
@@ -286,7 +299,7 @@ extension NSView {
             shrinkIntoPeekLive(card: card, web: page.view, from: start); return
         }
         let ghost = PeekGhost(color: theme.page)
-        ghost.pageAspect = target.height/max(1, target.width); ghost.page.alphaValue = 0
+        shapePeekGhost(ghost, like: target, bar: peekBarStill()); ghost.page.alphaValue = 0
         root.addSubview(ghost, positioned: .above, relativeTo: card)
         showPeekLink(origin, in: ghost)
         ghost.place(start ?? target.insetBy(dx: target.width*0.04, dy: target.height*0.04))
@@ -316,13 +329,13 @@ extension NSView {
 
     /// Snapshots the closing Peek, then shrinks it back into the link it came from.
     /// `hold` gives the controls a head start going back in before the card moves away.
-    func dismissPeek(card: Surface, backdrop: Surface?, page web: WebPage, origin: PeekOrigin?, hold: TimeInterval = 0) {
+    func dismissPeek(card: Surface, backdrop: Surface?, page web: WebPage, origin: PeekOrigin?, bar: PeekBarStill? = nil, hold: TimeInterval = 0) {
         peekLeftovers = [backdrop, card].compactMap { $0 }
         let token = UUID(); peekMotionToken = token
         let earliest = CACurrentMediaTime()+hold
         // Closing should feel immediate; never wait long for the snapshots.
         DispatchQueue.main.asyncAfter(deadline: .now()+max(0.08, hold)) { [weak self] in
-            self?.playPeekClose(card: card, backdrop: backdrop, page: nil, live: web, origin: origin, token: token)
+            self?.playPeekClose(card: card, backdrop: backdrop, page: nil, live: web, origin: origin, bar: bar, token: token)
         }
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -333,16 +346,16 @@ extension NSView {
             let (image, found) = await (page, link)
             let wait = earliest-CACurrentMediaTime()
             if wait > 0 { try? await Task.sleep(for: .seconds(wait)) }
-            self.playPeekClose(card: card, backdrop: backdrop, page: image, live: web, origin: found ?? origin, token: token)
+            self.playPeekClose(card: card, backdrop: backdrop, page: image, live: web, origin: found ?? origin, bar: bar, token: token)
         }
     }
     /// How long a closing card waits for its controls to start going back in.
     static let peekCloseHold: TimeInterval = 0.05
-    func playPeekClose(card: Surface, backdrop: Surface?, page: NSImage?, live: WebPage?, origin: PeekOrigin?, token: UUID) {
+    func playPeekClose(card: Surface, backdrop: Surface?, page: NSImage?, live: WebPage?, origin: PeekOrigin?, bar: PeekBarStill? = nil, token: UUID) {
         guard token == peekMotionToken else { return }
         peekMotionToken = nil; peekLeftovers = []
         let ghost = PeekGhost(color: theme.page); ghost.pageImage = page
-        ghost.pageAspect = card.frame.height/max(1, card.frame.width); ghost.link.alphaValue = 0
+        shapePeekGhost(ghost, like: card.frame, bar: bar); ghost.link.alphaValue = 0
         let start = visiblePeekFrame(card)
         root.addSubview(ghost, positioned: .above, relativeTo: card)
         if let live, let layer = live.liveLayer(showing: nil) { ghost.holds.append(live); ghost.pageLive = layer }

@@ -136,7 +136,7 @@ enum PageZoom {
         case "Capture Page":
             return .init(placeholder: "Capture as…", symbol: "camera", rows: [row("JPEG", "photo", "Capture:jpeg"), row("PDF", "doc.richtext", "Capture:pdf")], picked: 0)
         case "Zoom":
-            let zoom = selectedTab?.page.zoom ?? 1
+            let zoom = commandTab?.page.zoom ?? 1
             return .init(placeholder: "Zoom to…", symbol: "plus.magnifyingglass",
                          rows: PageZoom.listed.map { row(PageZoom.text($0), "plus.magnifyingglass", "Zoom:\($0)") },
                          picked: PageZoom.listed.firstIndex { abs($0-zoom) < 0.001 })
@@ -162,7 +162,7 @@ enum PageZoom {
         case "Archived Tabs": showArchivedTabs()
         case "Duplicate Tab": duplicateCurrentTab()
         case "Toggle Pin": pinCurrentTab()
-        case "Toggle Mute": if let tab = selectedTab { tab.setAudioMuted(!tab.isAudioMuted) }
+        case "Toggle Mute": if let tab = commandTab { tab.setAudioMuted(!tab.isAudioMuted) }
         case "Close Tabs Below": closeTabsBelow()
         case "Close Tabs Above": closeTabsAbove()
         case "Sort Tabs by Domain": cleanUpTabs()

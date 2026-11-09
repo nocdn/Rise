@@ -338,16 +338,16 @@ final class SiteOptionRow: NSButton {
         ]
         for (index, action) in actions.enumerated() {
             let button = action.0 == AdBlockButton.symbol
-                ? AdBlockButton(isBlocking: browser.adBlocker.isBlocking(on: browser.selectedTab?.url), size: 17, scale: scale, theme: theme)
+                ? AdBlockButton(isBlocking: browser.adBlocker.isBlocking(on: browser.commandTab?.url), size: 17, scale: scale, theme: theme)
                 : PopoverActionButton(symbol: action.0, size: action.0 == "ellipsis" ? 18 : 17, scale: scale, title: action.1, theme: theme,
                                       shareLift: PopoverActionButton.popoverShareLift, action: action.2)
             button.frame = NSRect(x: 10+CGFloat(index)*56+(52-52*scale)/2, y: 10+(34-34*scale)/2, width: 52*scale, height: 34*scale)
             if action.0 == "camera" { button.actionBlock = { [weak browser, weak button] in if let button { browser?.showCaptureChoices(from: button) } } }
             if let adBlock = button as? AdBlockButton {
                 // Only a web page has a site to turn it off for, unless it's off everywhere.
-                adBlock.isEnabled = !browser.adBlocker.enabled || AdBlocker.site(of: browser.selectedTab?.url) != nil
+                adBlock.isEnabled = !browser.adBlocker.enabled || AdBlocker.site(of: browser.commandTab?.url) != nil
                 adBlock.actionBlock = { [weak browser, weak adBlock] in
-                    browser?.toggleAdBlockingHere(); adBlock?.show(blocking: browser?.adBlocker.isBlocking(on: browser?.selectedTab?.url) ?? true)
+                    browser?.toggleAdBlockingHere(); adBlock?.show(blocking: browser?.adBlocker.isBlocking(on: browser?.commandTab?.url) ?? true)
                 }
             }
             view.addSubview(button); quickActions.append(button)
@@ -364,7 +364,7 @@ final class SiteOptionRow: NSButton {
             row.frame = NSRect(x: 11, y: y, width: 218, height: SiteOptionRow.height); view.addSubview(row); rows[title] = row
             y += SiteOptionRow.height
         }
-        let origin = SitePermissions.origin(browser.selectedTab?.url)
+        let origin = SitePermissions.origin(browser.commandTab?.url)
         let permissions = [SiteCapability.camera, .microphone, .location].filter { browser.sitePermissions.hasDecision($0, origin: origin) }
         if !permissions.isEmpty { heading("Permissions", y: y); y += 26 }
         for capability in permissions {
@@ -400,7 +400,7 @@ final class SiteOptionRow: NSButton {
                 let button = PopoverActionButton(symbol: "puzzlepiece.extension", size: 15, scale: scale, title: action.name, theme: theme) { [weak browser] in
                     browser?.runExtension(id)
                 }
-                if let icon = action.icon(forTab: browser.selectedChromiumView) {
+                if let icon = action.icon(forTab: browser.commandChromiumView) {
                     icon.size = NSSize(width: 18*scale, height: 18*scale); button.image = icon
                 }
                 button.menu = browser.extensionMenu(for: action)
@@ -427,8 +427,8 @@ final class SiteOptionRow: NSButton {
             view.addSubview(button)
         }
         var y = 78+CGFloat((buttons.count+3)/4)*42+5
-        if ChromiumEngine.isRunning, let id = BrowserController.webStoreExtensionID(browser.selectedTab?.url), !browser.isExtensionInstalled(id) {
-            let name = (browser.selectedTab?.title ?? "").replacingOccurrences(of: " - Chrome Web Store", with: "")
+        if ChromiumEngine.isRunning, let id = BrowserController.webStoreExtensionID(browser.commandTab?.url), !browser.isExtensionInstalled(id) {
+            let name = (browser.commandTab?.title ?? "").replacingOccurrences(of: " - Chrome Web Store", with: "")
             let row = SiteSettingRow(title: "Add to Rise", subtitle: name.isEmpty ? "From the Chrome Web Store" : name, symbol: "plus",
                                      active: true, theme: theme) { [weak browser] in browser?.addFromWebStore(id) }
             row.frame = NSRect(x: 14, y: y-4, width: 216, height: 43); view.addSubview(row); row.toolTip = "Add to Rise"

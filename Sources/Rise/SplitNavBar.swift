@@ -30,15 +30,19 @@ import AppKit
         }
         return selectedTab.map { [(navBar, $0)] } ?? []
     }
-    /// The bar over the selected page, where its popovers open from.
-    var selectedBar: PlainNavBar {
+    /// The bar over the selected tab's page, which developer mode's bar takes the place of.
+    var tabBar: PlainNavBar {
         activeSplitGroup?.rightID == selectedID && !splitBar.isHidden && splitBar.superview === pageClip ? splitBar : navBar
     }
+    /// The bar over the page commands act on, where its notices and popovers show: an open Peek's own.
+    var selectedBar: PlainNavBar { showsPeekBar ? peekBar : tabBar }
     var selectedReloadButton: ReloadButton? {
-        (selectedBar === splitBar ? splitBarButtons.last : toolbarButtons[3]) as? ReloadButton
+        let bar = selectedBar
+        return (bar === peekBar ? peekBarButtons.last : bar === splitBar ? splitBarButtons.last : toolbarButtons[3]) as? ReloadButton
     }
     func selectedHistoryArrow(_ direction: HistoryDirection) -> HistoryArrowButton? {
-        let arrows = selectedBar === splitBar ? Array(splitBarButtons.prefix(2)) : Array(toolbarButtons[1...2])
+        let bar = selectedBar
+        let arrows = bar === peekBar ? Array(peekBarButtons.prefix(2)) : bar === splitBar ? Array(splitBarButtons.prefix(2)) : Array(toolbarButtons[1...2])
         return arrows[direction == .back ? 0 : 1] as? HistoryArrowButton
     }
 
@@ -60,7 +64,7 @@ import AppKit
         }
     }
 
-    /// Back, forward and reload for each bar's page; with a Peek open, the window's act on the Peek.
+    /// Back, forward and reload for each bar's page; a Peek's are on its own bar (`updatePeekBar`).
     func updateNavigationButtons() {
         func apply(_ buttons: ArraySlice<ChromeButton>, page: WebPage?, loading: Bool) {
             let buttons = Array(buttons)
@@ -70,7 +74,7 @@ import AppKit
         }
         let bars = pageBarTabs
         let left = bars.first?.tab
-        apply(toolbarButtons[1...3], page: peekTab?.page ?? (bars.count == 2 ? left?.page : historyPage),
+        apply(toolbarButtons[1...3], page: bars.count == 2 ? left?.page : showsPeekBar ? selectedTab?.page : historyPage,
               loading: (bars.count == 2 ? left : selectedTab)?.isLoading == true)
         if bars.count == 2 { apply(splitBarButtons[0...2], page: bars[1].tab.page, loading: bars[1].tab.isLoading) }
     }

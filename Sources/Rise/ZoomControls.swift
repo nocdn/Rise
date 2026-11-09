@@ -41,7 +41,7 @@ import SwiftUI
     }
     /// The zoom now, with each way off at its end.
     func refresh() {
-        guard isViewLoaded, let zoom = browser?.selectedTab?.page.zoom else { return }
+        guard isViewLoaded, let zoom = browser?.commandTab?.page.zoom else { return }
         if self.zoom.value != zoom {
             let first = self.zoom.value == nil
             withAnimation(first || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? nil : .snappy(duration: 0.3)) { self.zoom.value = zoom }
@@ -70,7 +70,7 @@ struct ZoomPercentLabel: View {
     var zoomControls: ZoomControlsController? { zoomPopover.isShown ? zoomPopover.contentViewController as? ZoomControlsController : nil }
     func showZoomControls() {
         if zoomPopover.isShown { zoomPopover.close(); return }
-        guard selectedTab != nil else { return }
+        guard commandTab != nil else { return }
         siteControlsPopover.close(); siteInfoPopover.close()
         let controller = ZoomControlsController(browser: self)
         zoomPopover.behavior = .transient

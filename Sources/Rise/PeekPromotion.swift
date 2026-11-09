@@ -114,14 +114,17 @@ struct PeekUndo {
     func promotePeek(_ tab: BrowserTab, modifiers: NSEvent.ModifierFlags, snapshots: (peek: NSImage?, under: NSImage?)) {
         let source = tabs.first { $0.id == peekSourceTabID } ?? selectedTab
         let opensNewTab = peekOpensNewTab, origin = peekOrigin
+        let bar = peekBarStill()
         let views = takePeekViews()
-        let ghost = snapshots.peek.flatMap { image in views.card.map { coverPeek($0, with: image) } }
+        let ghost = snapshots.peek.flatMap { image in views.card.map { coverPeek($0, with: image, bar: bar) } }
         if !modifiers.contains(.command), !opensNewTab, let source {
             // The tab keeps its place and history, as a normal link click would, and takes the
             // Peek's live page; `tab` now holds the tab's page from before, for Back and ⌘Z.
             if selectedID != source.id { select(source.id) }
             findBars.removeValue(forKey: tab.id)?.discard()
             handOff(tab, into: source)
+            // The page bar takes on the Peek's bar's colour with its page.
+            if let color = plainBarColors[tab.id] { plainBarColors[source.id] = color; tabBar.setColor(color, animated: false) }
             // The page from before stays drawn around the growing card until it covers it all.
             let cover = ghost == nil ? nil : snapshots.under.map { freeze(source.page.view, as: $0) }
             registerPeekUndo(.sameTab, tab: tab, sourceID: source.id, opensNewTab: false, origin: origin)
@@ -161,10 +164,10 @@ struct PeekUndo {
         return cover
     }
     /// A still of the card, standing in for it while it grows.
-    private func coverPeek(_ card: Surface, with image: NSImage) -> PeekGhost {
+    private func coverPeek(_ card: Surface, with image: NSImage, bar: PeekBarStill?) -> PeekGhost {
         let ghost = PeekGhost(color: theme.page)
         ghost.pageImage = image; ghost.link.alphaValue = 0
-        ghost.pageAspect = card.frame.height/max(1, card.frame.width)
+        shapePeekGhost(ghost, like: card.frame, bar: bar)
         // Terminal, so a Peek closing meanwhile leaves the page's return to this card.
         ghost.phase = .closing
         root.addSubview(ghost, positioned: .above, relativeTo: card)
@@ -188,7 +191,10 @@ struct PeekUndo {
         guard motion, let ghost else { ghost?.dismantle(); cover?.removeFromSuperview(); return }
         layoutChrome()
         // View geometry leaves out the page's recede, so this is where it settles.
-        let target = page.convert(page.bounds, to: root)
+        var target = page.convert(page.bounds, to: root)
+        // Its bar lands over the page's, where the page bar is.
+        let bar = target.width*ghost.barAspect
+        target.origin.y -= bar; target.size.height += bar
         ghost.fadeShadow(to: 0, duration: spring.perceptualDuration)
         ghost.place(target, spring: spring)
         let promotion = PeekPromotion(ghost: ghost); promotion.cover = cover
@@ -269,8 +275,10 @@ struct PeekUndo {
         guard peekMotionAllowed, let shown, shown.window === window, !shown.isHiddenOrHasHiddenAncestor else {
             restorePeek(undo, source: source, from: nil); return true
         }
-        // Where the page is on screen, and what it shows, for the Peek to shrink back out of.
-        let frame = shown.convert(shown.bounds, to: root)
+        // Where the page is on screen with its bar above it, and what it shows, for the Peek and its
+        // bar to shrink back out of.
+        var frame = shown.convert(shown.bounds, to: root)
+        frame.origin.y -= Self.peekBarHeight; frame.size.height += Self.peekBarHeight
         // Live, the page itself shrinks, so there's no still to wait for.
         if livePeekResize {
             restorePeek(undo, source: source, from: PeekOrigin(page: nil, rect: .zero, image: nil, rootFrame: frame)); return true

@@ -40,13 +40,13 @@ import AppKit
         func shortcut(_ id: String) -> String { keyboardShortcuts.bindings(id).first?.display ?? "" }
         for (button, id) in [(sidebar.titlebarNewTab, "newTab"), (sidebar.cleanUpButton, "cleanUpTabs"),
                              (sidebar.archiveButton, "toggleDownloads"), (toolbarButtons[0], "toggleSidebar"),
-                             (navBar.copyButton, "copyURL"), (splitBar.copyButton, "copyURL")] as [(ChromeButton, String)] {
+                             (navBar.copyButton, "copyURL"), (splitBar.copyButton, "copyURL"), (peekBar.copyButton, "copyURL")] as [(ChromeButton, String)] {
             button.hoverHint?.setShortcut(shortcut(id))
         }
         permissionCoordinator.panel.setShortcuts(allow: shortcut("allowPermission"), deny: shortcut("denyPermission"))
         adBlockPrompt.panel.setShortcuts(allow: shortcut("allowPermission"), deny: shortcut("denyPermission"), allowHint: "Disable ad-blocking", denyHint: "Keep blocking")
         (extensionWindow as? ExtensionWindow)?.refreshButtons()
-        for buttons in [Array(toolbarButtons.dropFirst()), splitBarButtons] {
+        for buttons in [Array(toolbarButtons.dropFirst()), splitBarButtons, peekBarButtons] {
             buttons[0].hoverHint?.setShortcut(shortcut("goBack"))
             buttons[1].hoverHint?.setShortcut(shortcut("goForward"))
             (buttons[2] as? ReloadButton)?.setHintShortcuts(reload: shortcut("reload"), stop: shortcut("stopLoadingPage"))

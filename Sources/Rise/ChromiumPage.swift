@@ -146,7 +146,7 @@ enum RisePages {
                                  completion: @escaping (Bool) -> Void) {
         MainActor.assumeIsolated {
             guard let browser = view.window?.windowController as? BrowserController,
-                  browser.selectedChromiumView === view else { completion(false); return }
+                  browser.commandChromiumView === view else { completion(false); return }
             browser.showExtensionPopup(url, extensionID: extensionID, completion: completion)
         }
     }

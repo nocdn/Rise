@@ -62,7 +62,8 @@ import AppKit
         if event.phase.contains(.began) {
             cancel()
             guard let page = pageAt(event) else { return false }
-            peekGesture = isPeekPage?(page) == true
+            // A Peek's pages swipe through its history as a tab's do; on its first page, a swipe back closes it.
+            peekGesture = isPeekPage?(page) == true && !canNavigate(page, .back)
             guard peekGesture || canNavigate(page, .back) || canNavigate(page, .forward) else { return false }
             self.page = page; probing = true; pending = []
             hold(event)
@@ -268,9 +269,6 @@ import AppKit
         guard let hit = root.hitTest(point) else { return nil }
         let pages = [peekTab?.page, selectedTab?.page, splitTab?.page].compactMap { $0 }
         guard let page = pages.first(where: { $0.view.superview != nil && (hit === $0.view || hit.isDescendant(of: $0.view)) }) else { return nil }
-        // A Peek that has gone somewhere doesn't swipe: it neither goes back nor closes, so
-        // browsing inside it can't throw it away. Its history is on the toolbar arrows.
-        if page === peekTab?.page, peekHasNavigated { return nil }
         if let tab = tabs.first(where: { $0.page === page }), selectedID != tab.id { select(tab.id) }
         return page
     }

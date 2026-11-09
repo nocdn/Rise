@@ -84,17 +84,19 @@ import AppKit
         }
         return false
     }
+    /// The tab changes ⌘Z and ⇧⌘Z take back and redo before a page or a text field can.
+    static let tabUndoNames = ["Move Tab", "Move Tab to Top", "Sort Tabs by Domain", "Unpin Tab"]
     /// What ⌘Z or ⇧⌘Z would do to the tabs' order, in words after "to".
     func tabOrderUndoAction(redo: Bool) -> String? {
         guard tabOrderUndoPending, let undo = window?.undoManager else { return nil }
-        let names = ["Move Tab", "Move Tab to Top", "Sort Tabs by Domain"]
+        let names = Self.tabUndoNames
         if redo { return undo.canRedo && names.contains(undo.redoActionName) ? "redo \(undo.redoActionName)" : nil }
         return undo.canUndo && names.contains(undo.undoActionName) ? "undo \(undo.undoActionName)" : nil
     }
     func handleTabOrderUndoKey(_ event: NSEvent) -> Bool {
         guard tabOrderUndoPending, event.type == .keyDown,
               let undo = window?.undoManager else { return false }
-        let names = ["Move Tab", "Move Tab to Top", "Sort Tabs by Domain"]
+        let names = Self.tabUndoNames
         if keyboardShortcuts.matches("undo:", event), undo.canUndo, names.contains(undo.undoActionName) { tabMoveSequence = nil; undo.undo(); return true }
         if keyboardShortcuts.matches("redo:", event), undo.canRedo, names.contains(undo.redoActionName) { tabMoveSequence = nil; undo.redo(); return true }
         return false
@@ -113,20 +115,49 @@ import AppKit
     }
     /// Unpins a tab into the list at `index` among its rows, or at its top.
     /// Dropped into the list, the rows have already made room; from a menu, they make it now.
-    func unpinTab(_ id: UUID, at index: Int = 0, animated: Bool = false) {
+    /// ⌘Z pins it back where its tile was.
+    func unpinTab(_ id: UUID, at index: Int = 0, animated: Bool = false, flies: Bool = false) {
         guard let tab = tabs.first(where: { $0.id == id }), tab.pinned else { update(); return }
+        let slot = tabs.filter(\.pinned).firstIndex { $0.id == id } ?? 0
+        let start = flies ? sidebar.pinFlightStart(for: id) : nil
         tab.pinned = false
         var order = sidebar.orderedIDs.filter { $0 != id }
         order.insert(id, at: min(index, order.count))
         reorderTabs(order, animated: animated)
         update()
+        if let start { sidebar.flyPinChange(id, from: start) }
+        registerUnpinUndo(id, slot: slot, row: sidebar.orderedIDs.firstIndex(of: id) ?? index)
     }
     /// From a menu: the tab travels to the tiles, or back to the top of the list.
     func togglePin(_ id: UUID) {
         guard let tab = tabs.first(where: { $0.id == id }) else { return }
-        let wasPinned = tab.pinned, start = sidebar.pinFlightStart(for: id)
-        if wasPinned { unpinTab(id, animated: true) } else { pinTab(id) }
-        if tab.pinned != wasPinned, let start { sidebar.flyPinChange(id, from: start) }
+        if tab.pinned { unpinTab(id, animated: true, flies: true); return }
+        let start = sidebar.pinFlightStart(for: id)
+        pinTab(id)
+        if tab.pinned, let start { sidebar.flyPinChange(id, from: start) }
+    }
+    /// ⌘Z travels an unpinned tab back to its tile at `slot`, and ⇧⌘Z back to its row at `row`.
+    private func registerUnpinUndo(_ id: UUID, slot: Int, row: Int) {
+        guard let undoManager = window?.undoManager else { return }
+        let ownGroup = undoManager.groupingLevel == 0
+        if ownGroup { undoManager.beginUndoGrouping() }
+        defer { if ownGroup { undoManager.endUndoGrouping() } }
+        undoManager.registerUndo(withTarget: self) { browser in
+            MainActor.assumeIsolated {
+                guard let tab = browser.tabs.first(where: { $0.id == id }), !tab.pinned else { return }
+                let start = browser.sidebar.pinFlightStart(for: id)
+                browser.pinTab(id, at: slot)
+                guard tab.pinned else { return }
+                if let start { browser.sidebar.flyPinChange(id, from: start) }
+                undoManager.registerUndo(withTarget: browser) { browser in
+                    MainActor.assumeIsolated { browser.unpinTab(id, at: row, animated: true, flies: true) }
+                }
+                undoManager.setActionName("Unpin Tab")
+                browser.tabOrderUndoPending = true
+            }
+        }
+        undoManager.setActionName("Unpin Tab")
+        tabOrderUndoPending = true
     }
     func reorderPinnedTabs(_ order: [UUID]) {
         let byID = Dictionary(uniqueKeysWithValues: tabs.map { ($0.id, $0) })

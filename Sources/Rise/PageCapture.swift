@@ -32,8 +32,8 @@ import UniformTypeIdentifiers
     }
 
     func captureWholePage(_ format: PageCaptureFormat) {
-        guard let page = selectedTab?.page else { return }
-        let title = selectedTab?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard let page = commandTab?.page else { return }
+        let title = commandTab?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         Task { [weak self] in
             let data = await page.capture(format)
             guard let self else { return }

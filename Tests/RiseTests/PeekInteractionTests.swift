@@ -123,11 +123,11 @@ final class PeekInteractionTests: XCTestCase {
         peek.load(urls[2])
         try await wait { !peek.page.isLoading && peek.page.title == "second.html" }
         XCTAssertTrue(browser.peekHasNavigated)
-        XCTAssertTrue(browser.toolbarButtons[1].isEnabled, "Back follows the Peek's own pages")
+        XCTAssertTrue(browser.peekBarButtons[0].isEnabled, "The Peek's bar's Back follows its own pages")
         browser.goBack()
         try await wait { !peek.page.isLoading && peek.page.title == "first.html" }
         XCTAssertEqual(source.page.title, "source.html", "The tab underneath stays where it was")
-        XCTAssertTrue(browser.toolbarButtons[2].isEnabled)
+        XCTAssertTrue(browser.peekBarButtons[1].isEnabled)
         browser.goForward()
         try await wait { !peek.page.isLoading && peek.page.title == "second.html" }
 
@@ -268,6 +268,44 @@ final class PeekInteractionTests: XCTestCase {
         XCTAssertTrue(router.handle(event([], x: 300, momentum: 3)))
         XCTAssertEqual(releases.count, 3); XCTAssertEqual(clicks, 4)
         XCTAssertEqual(page.title, "Peek"); XCTAssertFalse(page.canGoBack)
+    }
+
+    @MainActor func testThePeekHasItsOwnBarAndPageCommandsActOnItsPage() throws {
+        let browser = browser(); defer { clean(browser) }
+        browser.showWindow(nil)
+        let source = browser.addTab()
+        browser.showPeek(url: URL(string: "about:blank")!, from: source.page.view, animated: false)
+        let peek = try XCTUnwrap(browser.peekTab), card = try XCTUnwrap(browser.peekCard)
+        XCTAssertTrue(browser.peekBar.superview === card.subviews.first, "Its bar is across the card's top")
+        XCTAssertEqual(browser.peekBar.frame.minY, 0)
+        XCTAssertEqual(peek.page.view.frame.minY, PlainNavBar.Metrics.height, "Its page starts under it")
+        XCTAssertFalse(browser.peekBar.navigation.contains(browser.toolbarButtons[0]), "No sidebar button")
+        XCTAssertTrue(browser.selectedBar === browser.peekBar, "Notices and popovers show on the Peek's bar")
+        XCTAssertTrue(browser.navBar.isCovered, "The bar under the card sets no cursor through it"); XCTAssertFalse(browser.peekBar.isCovered)
+        browser.setPageZoom(1.25)
+        XCTAssertEqual(peek.page.zoom, 1.25); XCTAssertEqual(source.page.zoom, 1, "The tab underneath keeps its zoom")
+        browser.closePeek()
+        XCTAssertTrue(browser.selectedBar === browser.navBar); XCTAssertFalse(browser.navBar.isCovered)
+    }
+    @MainActor func testASwipeGoesBackThroughThePeeksPagesThenClosesItOnItsFirst() async throws {
+        let browser = browser(); defer { clean(browser) }
+        let page = BlankPage()
+        page.scriptAnswer = { $0 == HistorySwipeController.scrollProbe ? true : nil }
+        page.load(URL(string: "about:blank#first")!); page.load(URL(string: "about:blank#second")!)
+        let router = HistorySwipeController(window: browser.window as! BrowserWindow, pageAt: { _ in page }, feedback: { _, _, _, _ in })
+        defer { router.cancel() }
+        router.isPeekPage = { $0 === page }
+        var releases = [Bool]()
+        router.dragPeek = { _ in }; router.releasePeek = { releases.append($0) }
+        XCTAssertTrue(router.handle(event(.began, x: 130)))
+        try await wait { router.gesture.isArmed }
+        XCTAssertTrue(router.handle(event(.ended)))
+        XCTAssertEqual(page.url?.fragment, "first", "Back through its own pages, as a tab's"); XCTAssertEqual(releases, [])
+        XCTAssertTrue(router.handle(event(.began, x: 130)))
+        try await wait { router.gesture.isArmed }
+        XCTAssertTrue(router.handle(event(.ended)))
+        XCTAssertEqual(releases, [true], "On its first page, the swipe closes it")
+        XCTAssertEqual(page.url?.fragment, "first")
     }
 
     @MainActor private func commandZEvent(_ browser: BrowserController) -> NSEvent {

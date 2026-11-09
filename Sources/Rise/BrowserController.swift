@@ -22,6 +22,11 @@ import RiseCore
                                                  zoom: { [weak self] in self?.showZoomControls() }, permission: { [weak self] in self?.permissionCoordinator.togglePrompt() },
                                                  currency: { [weak self] in if let self { currencyReplacement.toggle(from: splitBar) } })
     var splitBarButtons: [ChromeButton] = [], splitBarTabID: UUID?
+    /// The Peek's own bar, across its card's top (`PeekBar.swift`), its buttons, and the page it shows.
+    private(set) lazy var peekBar: PlainNavBar = PlainNavBar(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() },
+                                                zoom: { [weak self] in self?.showZoomControls() }, permission: { [weak self] in self?.permissionCoordinator.togglePrompt() },
+                                                currency: { [weak self] in if let self { currencyReplacement.toggle(from: peekBar) } })
+    var peekBarButtons: [ChromeButton] = [], peekBarTabID: UUID?
     let pageShadow = PageSurface(color: NSColor(hex: 0xFDFCFC), radius: PageAppearance.radius)
     let pageClip = PageSurface(color: NSColor(hex: 0xFDFCFC), radius: PageAppearance.radius)
     let emptyPage = Surface(color: NSColor(hex: 0xFDFCFC))
@@ -522,7 +527,7 @@ import RiseCore
         }
         // The page bar's, drawn as Dia's: chevrons, and a smaller sidebar glyph.
         navBar.navigation = toolbarButtons
-        installSplitBar()
+        installSplitBar(); installPeekBar()
         developerAddress.font = IoskeleyMonoFont.developerAddress
         developerAddress.textColor = NSColor(hex: 0x393134); developerBar.addSubview(developerAddress)
         navBar.developerAddress = developerAddress; splitBar.developerAddress = developerAddress
@@ -689,7 +694,7 @@ import RiseCore
     func layoutDeveloperBar() {
         let enabled = selectedTab?.developer == true
         let progress = developerMotion.progress(for: selectedID, enabled: enabled)
-        let bar = selectedBar
+        let bar = tabBar
         // The bars share developer mode's address: the other gives it up before this one takes it.
         for each in [bar === navBar ? splitBar : navBar, bar] {
             each.setDeveloper(each === bar ? progress : 0, enabled: each === bar && enabled, surface: theme.developerSurface)
@@ -941,7 +946,8 @@ import RiseCore
         if !sidebarVisible { revealFloatingSidebar() }
         sidebar.beginTabSearch()
     }
-    @objc func focusAddress() { paletteCreatesTab = false; showPalette(text: selectedTab?.url?.absoluteString == "about:blank" ? "" : selectedTab?.url?.absoluteString ?? "") }
+    /// ⌘L and a click on a page bar's address edit the page commands act on, an open Peek's included.
+    @objc func focusAddress() { paletteCreatesTab = false; showPalette(text: commandTab?.url?.absoluteString == "about:blank" ? "" : commandTab?.url?.absoluteString ?? "") }
     func showPalette(text: String) {
         sidebar.endTabSearch()
         if searchProvider.isGoogle { googleSearchSuggestions.warmUp() }
@@ -964,7 +970,7 @@ import RiseCore
         guard paletteLab == nil else { return }
         googleSearchSuggestions.cancel(); suggestionFavicons.cancelPreview()
         guard palette.isPresented else { return }
-        palette.hide(); dismissArea.isHidden = true; veil.hide(); window?.makeFirstResponder(selectedTab?.page.view)
+        palette.hide(); dismissArea.isHidden = true; veil.hide(); window?.makeFirstResponder(commandTab?.page.view)
         refreshFullscreenNavigation()
         DispatchQueue.main.async { [weak self] in self?.applyPendingSharedTabs() }
     }
@@ -982,7 +988,8 @@ import RiseCore
         // Resolve again at activation time: an open tab may have navigated or
         // closed since the result was built. Never create an exact duplicate.
         if let existing = openTab(for: url) { select(existing.id); return }
-        if paletteCreatesTab || selectedTab == nil { addTab(url: url) }
+        if paletteCreatesTab || commandTab == nil { addTab(url: url) }
+        else if let peek = peekTab { peek.load(url) }
         else { errorWebView = nil; selectedTab?.load(url) }
     }
     @objc func closeCurrentTab() { closeSelectedTab(confirmingPinned: true) }
@@ -1050,7 +1057,7 @@ import RiseCore
         // swipe surface and arrow spring before navigation starts.
         historySwipe.cancel()
         developerMotion.cancel()
-        (toolbarButtons+splitBarButtons).compactMap { $0 as? HistoryArrowButton }.forEach { $0.restore() }
+        (toolbarButtons+splitBarButtons+peekBarButtons).compactMap { $0 as? HistoryArrowButton }.forEach { $0.restore() }
         errorWebView = nil
         if let peek = peekTab {
             // Pages visited inside a Peek have their own history.
@@ -1069,11 +1076,11 @@ import RiseCore
     /// Reloads without the cache, refetching the page and everything it loads.
     @objc func hardReload() {
         adBlockPrompt.noteReload(); historySwipe.cancel(); errorWebView = nil; selectedReloadButton?.armAnimation()
-        selectedTab?.isHardReloading = true
-        if let tab = selectedTab, tab.page.url == nil, let url = tab.requestedURL { tab.load(url) } else { selectedTab?.page.reloadIgnoringCache() }
+        commandTab?.isHardReloading = true
+        if let tab = commandTab, tab.page.url == nil, let url = tab.requestedURL { tab.load(url) } else { commandTab?.page.reloadIgnoringCache() }
         update()
     }
-    @objc func reload() { adBlockPrompt.noteReload(); historySwipe.cancel(); errorWebView = nil; selectedReloadButton?.armAnimation(); if selectedTab?.isLoading == true { selectedTab?.cancelLoad() } else if let tab = selectedTab, tab.page.url == nil, let url = tab.requestedURL { tab.load(url) } else { selectedTab?.page.reload() }; update() }
+    @objc func reload() { adBlockPrompt.noteReload(); historySwipe.cancel(); errorWebView = nil; selectedReloadButton?.armAnimation(); if commandTab?.isLoading == true { commandTab?.cancelLoad() } else if let tab = commandTab, tab.page.url == nil, let url = tab.requestedURL { tab.load(url) } else { commandTab?.page.reload() }; update() }
     @objc func retry() { errorWebView = nil; if let url = selectedTab?.url { selectedTab?.load(url) }; update() }
     @objc func toggleSidebar() {
         if keepPeekedSidebar() { return }
@@ -1120,12 +1127,12 @@ import RiseCore
     @objc func nextTab() { cycleTab(1) }
     @objc func previousTab() { cycleTab(-1) }
     func cycleTab(_ direction: Int) { guard !tabs.isEmpty else { return }; let index = tabs.firstIndex { $0.id == selectedID } ?? 0; select(tabs[(index+direction+tabs.count)%tabs.count].id) }
-    @objc func zoomIn() { setPageZoom(PageZoom.next(after: selectedTab?.page.zoom ?? 1)) }
-    @objc func zoomOut() { setPageZoom(PageZoom.previous(before: selectedTab?.page.zoom ?? 1)) }
+    @objc func zoomIn() { setPageZoom(PageZoom.next(after: commandTab?.page.zoom ?? 1)) }
+    @objc func zoomOut() { setPageZoom(PageZoom.previous(before: commandTab?.page.zoom ?? 1)) }
     @objc func actualSize() { setPageZoom(1) }
     /// The page's zoom, shown by the page bar's zoom button while it isn't 100%.
     func setPageZoom(_ zoom: CGFloat) {
-        guard let tab = selectedTab else { return }
+        guard let tab = commandTab else { return }
         tab.page.zoom = zoom
         selectedBar.pageZoom = zoom; zoomControls?.refresh()
     }

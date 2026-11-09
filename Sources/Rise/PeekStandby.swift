@@ -36,7 +36,9 @@ final class PeekStandbyView: FlippedView {
     }
     func layoutPeekStandby() {
         peekStandbyView.frame = peekCardFrame
-        peekStandby?.tab.page.view.frame = peekStandbyView.bounds
+        // At the size it will have in the card, under the Peek's bar.
+        let bar = Self.peekBarHeight, bounds = peekStandbyView.bounds
+        peekStandby?.tab.page.view.frame = NSRect(x: 0, y: bar, width: bounds.width, height: max(0, bounds.height-bar))
     }
     /// Hands over the standby page if it is the one being Peeked; otherwise drops it.
     func takePeekStandby(for url: URL) -> BrowserTab? {

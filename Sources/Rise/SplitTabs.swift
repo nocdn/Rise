@@ -187,7 +187,13 @@ import RiseCore
         showPageBar(bar, tab: tab, shown: &splitBarTabID)
         splitBarButtons[0].isEnabled = canNavigate(tab.page, .back); splitBarButtons[1].isEnabled = canNavigate(tab.page, .forward)
         (splitBarButtons[2] as? ReloadButton)?.setMode(tab.isLoading ? .stop : .reload)
-        if let clip = card.subviews.first { bar.isHidden = false; clip.addSubview(bar) }
+        // The Peek's own bar is already across the card's top; the split's, alike, takes its place there.
+        let barShown = showsPeekBar
+        if let clip = card.subviews.first {
+            bar.isHidden = false
+            if barShown { bar.setColor(peekBar.color, animated: false); clip.addSubview(bar, positioned: .above, relativeTo: peekBar); peekBar.removeFromSuperview() }
+            else { clip.addSubview(bar) }
+        }
         if let page = tab.page as? ChromiumPage {
             Task { [weak self, weak tab] in
                 guard let color = await page.topColor(), let self, let tab else { return }
@@ -215,8 +221,8 @@ import RiseCore
             card.layer?.cornerRadius = radius; clip?.layer?.cornerRadius = radius
             CATransaction.commit()
             self.placeLivePeek(card, web: tab.page.view, at: cardFrom.interpolated(to: cardTo, by: progress).limited(to: page, edges: edges))
-            // The bar comes down into the card's top as the page makes room under it.
-            let inset = barHeight*min(1, max(0, progress))
+            // The bar comes down into the card's top as the page makes room under it, unless it's there already.
+            let inset = barShown ? barHeight : barHeight*min(1, max(0, progress))
             CATransaction.begin(); CATransaction.setDisableActions(true)
             if bar.superview === card.subviews.first {
                 bar.frame = NSRect(x: 0, y: inset-barHeight, width: card.bounds.width, height: barHeight)

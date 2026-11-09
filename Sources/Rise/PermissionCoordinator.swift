@@ -69,7 +69,7 @@ import UserNotifications
         }
         question = PermissionQuestion(host: url.host ?? origin, capabilities: capabilities)
         // Its icon shows in the bar over the asking page, and the prompt comes down under it.
-        let bar = browser.pageBarTabs.first { $0.tab.page.view === web }?.bar ?? browser.selectedBar
+        let bar = browser.allPageBarTabs.first { $0.tab.page.view === web }?.bar ?? browser.selectedBar
         requestingBar = bar
         bar.requestedPermission = (capabilities.first?.tablerIcon ?? TablerIcon.camera, question?.heading ?? "")
         browser.layoutChrome(); bar.layoutSubtreeIfNeeded()
@@ -125,7 +125,7 @@ import UserNotifications
                 if let find, find.superview === clip { clip.addSubview(panel, positioned: .below, relativeTo: find) }
                 else { clip.addSubview(panel) }
             }
-            panel.frame = clip.bounds; panel.topInset = 0
+            panel.frame = clip.bounds; panel.topInset = browser.peekContentInset
             panel.stackOffset = find?.isPresented == true ? (find?.panel.frame.height ?? 0)+FindBar.top : 0
             return
         }

@@ -25,7 +25,7 @@ import RiseCore
     }
     func siteMenu() {
         if siteControlsPopover.isShown { siteControlsPopover.close(); return }
-        guard selectedTab != nil else { return }
+        guard commandTab != nil else { return }
         permissionCoordinator.cancel(); siteInfoPopover.close(); historySwipe.cancel()
         let controller = SiteControlsController(browser: self)
         siteControlsPopover.appearance = theme.appearance
@@ -122,6 +122,7 @@ import RiseCore
         card.layer?.shadowRadius = 8; card.layer?.shadowOffset = NSSize(width: 0, height: -2)
         let clip = PageSurface(color: theme.page, radius: 8); clip.layer?.masksToBounds = true; clip.clipsToBounds = true; clip.layer?.cornerCurve = .continuous; clip.autoresizingMask = [.width, .height]
         card.addSubview(clip); clip.addSubview(tab.page.view)
+        attachPeekBar(to: clip, above: tab.page.view)
         root.addSubview(card, positioned: .below, relativeTo: dismissArea); peekCard = card
         for (glyph, title, action) in [
             (PeekControl.Glyph.cross, "Close Peek", { [weak self] in self?.closePeek(animated: true) }),
@@ -153,8 +154,7 @@ import RiseCore
             recedePage(true, along: nil)
         }
         (peekCard as? PageSurface)?.refreshOutline()
-        peekCard.subviews.first?.frame = peekCard.bounds
-        peekTab.page.view.frame = peekCard.bounds
+        layoutPeekContents(peekCard, web: peekTab.page.view)
         layoutPeekFindBar()
         for (i, button) in peekControls.enumerated() { button.frame = PeekControl.frame(cardMaxX: peekCard.frame.maxX, top: 20+CGFloat(i)*44) }
         if peekSwipePull > 0 { applyPeekSwipeTransform() }
@@ -166,6 +166,10 @@ import RiseCore
     /// `still`, a picture of it, as the page itself is going elsewhere.
     func closePeek(animated: Bool = false, replacing: Bool = false, keepingPage: Bool = false, still: NSImage? = nil) {
         if let page = peekTab?.page { historySwipe.cancel(for: page) }
+        // An extension's popup opened from the Peek's bar goes with it.
+        if let popup = extensionPopup, popup.anchor?.isDescendant(of: peekBar) == true { popup.close() }
+        // The card's stand-in carries the bar away with it.
+        let bar = animated ? peekBarStill() : nil
         // An interrupted live resize leaves the pages for layout to put back.
         let interrupted = peekLiveMotion?.isRunning == true
         // A hold of the pages' layout is a motion's, let go with it; ⌘Z's for a split holds the
@@ -193,10 +197,10 @@ import RiseCore
             if let growing { shrinkPeek(growing, into: peekFrame(of: origin), backdrop: backdrop); retire(card, behind: growing) }
             else if keepingPage, card.alphaValue == 1 {
                 let token = UUID(); peekMotionToken = token
-                playPeekClose(card: card, backdrop: backdrop, page: still, live: nil, origin: origin, token: token)
+                playPeekClose(card: card, backdrop: backdrop, page: still, live: nil, origin: origin, bar: bar, token: token)
             }
             else if card.alphaValue == 1, let web {
-                dismissPeek(card: card, backdrop: backdrop, page: web, origin: origin, hold: peekControls.isEmpty ? 0 : Self.peekCloseHold)
+                dismissPeek(card: card, backdrop: backdrop, page: web, origin: origin, bar: bar, hold: peekControls.isEmpty ? 0 : Self.peekCloseHold)
             }
             else { backdrop?.removeFromSuperview(); card.removeFromSuperview() }
         } else {
@@ -219,12 +223,12 @@ import RiseCore
     }
     func siteInformation() {
         if siteInfoPopover.isShown { siteInfoPopover.performClose(nil); return }
-        guard let url = selectedTab?.url else { return }
+        guard let url = commandTab?.url else { return }
         let content = SiteInformationController(url: url)
         content.view.appearance = theme.appearance
         siteInfoPopover.contentViewController = content
         siteInfoPopover.contentSize = content.view.fittingSize
-        let anchor: NSView = selectedTab?.developer == true ? devButtons[4] : selectedBar.settingsButton
+        let anchor: NSView = !showsPeekBar && selectedTab?.developer == true ? devButtons[4] : selectedBar.settingsButton
         let rect = anchor.bounds
         siteInfoPopover.show(relativeTo: rect, of: anchor, preferredEdge: .minY)
     }
@@ -234,7 +238,7 @@ import RiseCore
         window?.makeFirstResponder(tab.page.view)
     }
     func capturePage() {
-        guard let page = selectedTab?.page else { return }
+        guard let page = commandTab?.page else { return }
         Task { [weak self] in
             let image = await page.snapshot(width: nil)
             guard let self else { return }
@@ -249,7 +253,7 @@ import RiseCore
         }
     }
     @objc func javascriptConsole() {
-        guard let tab = selectedTab, let window else { return }
+        guard let tab = commandTab, let window else { return }
         let alert = NSAlert(); alert.messageText = "JavaScript Console"
         alert.informativeText = "Evaluate JavaScript in the current page. The full DevTools open with ⌥⌘J."
         let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 440, height: 28)); input.font = .monospacedSystemFont(ofSize: 12, weight: .regular); input.placeholderString = "document.title"
@@ -263,8 +267,10 @@ import RiseCore
     }
     /// The source as the server sent it, in a tab of its own.
     func viewSource() {
-        guard let tab = selectedTab, let url = tab.page.url, ["http", "https", "file"].contains(url.scheme ?? ""),
+        guard let tab = commandTab, let url = tab.page.url, ["http", "https", "file"].contains(url.scheme ?? ""),
               let source = URL(string: "view-source:" + url.absoluteString) else { return }
-        addTab(url: source, opener: tab.id).returnsTo = tab.id
+        // A Peek's page isn't a tab to go back to; the tab it's over opened it.
+        let opener = tab === peekTab ? selectedID : tab.id
+        addTab(url: source, opener: opener).returnsTo = opener
     }
 }
