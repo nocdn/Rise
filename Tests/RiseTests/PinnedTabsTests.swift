@@ -266,6 +266,14 @@ final class PinnedTabsTests: XCTestCase {
         browser.window?.undoManager?.redo()
         XCTAssertFalse(a.pinned)
     }
+    @MainActor func testClosingATabOpenedFromAPinnedTabGoesBackToIt() {
+        let browser = browser(); defer { clean(browser) }
+        let pinned = browser.addTab(); _ = browser.addTab(); browser.pinTab(pinned.id); browser.select(pinned.id)
+        let opened = browser.addTab(opener: pinned.id)
+        XCTAssertEqual(browser.selectedID, opened.id)
+        browser.closeTab(opened.id)
+        XCTAssertEqual(browser.selectedID, pinned.id, "Back to the pinned tab it came from, not the list's first")
+    }
     /// Pin and Unpin from the menu carry the tab to its new place rather than jumping.
     @MainActor func testMenuPinningCarriesTheTabThereAndBack() async throws {
         let browser = browser(); defer { clean(browser) }

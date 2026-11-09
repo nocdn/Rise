@@ -867,6 +867,7 @@ import RiseCore
     /// Given an `opener`, it goes right above that tab (or its split pair), so the two stay together.
     @discardableResult func addTab(url: URL? = nil, background: Bool = false, opener: UUID? = nil, page: WebPage? = nil) -> BrowserTab {
         let tab = configure(BrowserTab(page: page))
+        tab.openedFrom = opener
         tabs.insert(tab, at: newTabIndex(opener: opener))
         if background { update() } else { select(tab.id) }
         if let url { tab.load(url) }; return tab
@@ -1021,7 +1022,11 @@ import RiseCore
         findBars.removeValue(forKey: id)?.discard()
         if selectedID == id {
             selectedID = nil
+            // Straight back to the tab it was opened from, as a pinned tab's links open at the list's
+            // top rather than beside it, when that's where the user came from.
+            let opener = tab.openedFrom.flatMap { id in recentTabIDs.first == id ? tabs.first { $0.id == id } : nil }
             if let partner, tabs.contains(where: { $0.id == partner }) { select(partner) }
+            else if let opener { select(opener.id) }
             else if !tabs.isEmpty { select(tabs[min(index, tabs.count-1)].id) }
         }
         attachVisiblePages(); update()
