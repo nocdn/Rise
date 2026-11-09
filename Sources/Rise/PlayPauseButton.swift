@@ -14,6 +14,10 @@ import AppKit
     /// radius, and how far apart their middles are.
     struct PauseBars { var width: CGFloat, height: CGFloat, radius: CGFloat, spacing: CGFloat }
     var pauseBars: PauseBars? { didSet { renderedKey = nil; needsLayout = true } }
+    /// A stroked Tabler icon (its 24-unit path data) for pause instead: drawn `size` points square
+    /// with lines `lineWidth` thick.
+    struct PauseOutline { var path: String, size: CGFloat, lineWidth: CGFloat }
+    var pauseOutline: PauseOutline? { didSet { renderedKey = nil; needsLayout = true } }
     /// Holds both symbols. It doesn't shrink while pressed; with `growsOnHover`, it grows slightly under the pointer.
     private let glyph = CALayer()
     private let playLayer = CALayer()
@@ -47,11 +51,13 @@ import AppKit
                let image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?.withSymbolConfiguration(
                    NSImage.SymbolConfiguration(pointSize: size, weight: weight).applying(.init(paletteColors: [color]))) {
                 let rasterScale = scale*2, pause = symbol == "pause.fill"
-                let bars = pause ? pauseBars : nil
-                let imageSize = NSSize(width: image.size.width, height: max(image.size.height*(pause ? 1.06 : 1), bars?.height ?? 0))
+                let bars = pause ? pauseBars : nil, outline = pause ? pauseOutline : nil
+                let imageSize = outline.map { NSSize(width: $0.size, height: $0.size) }
+                    ?? NSSize(width: image.size.width, height: max(image.size.height*(pause ? 1.06 : 1), bars?.height ?? 0))
                 symbolLayer.contentsScale = rasterScale
                 effectiveAppearance.performAsCurrentDrawingAppearance {
-                    symbolLayer.contents = bars.map { Self.rasterize($0, color: color, size: imageSize, scale: rasterScale) }
+                    symbolLayer.contents = outline.map { Self.rasterize($0, color: color, scale: rasterScale) }
+                        ?? bars.map { Self.rasterize($0, color: color, size: imageSize, scale: rasterScale) }
                         ?? Self.rasterize(image, size: imageSize, scale: rasterScale, pause: pause)
                 }
                 symbolLayer.bounds = CGRect(origin: .zero, size: imageSize)
@@ -81,6 +87,21 @@ import AppKit
                 context.restoreGState()
             }
         } else { image.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1) }
+        return context.makeImage()
+    }
+    private static func rasterize(_ outline: PauseOutline, color: NSColor, scale: CGFloat) -> CGImage? {
+        let side = Int(ceil(outline.size*scale))
+        guard let context = CGContext(data: nil, width: side, height: side, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.scaleBy(x: scale, y: scale)
+        // SVG coordinates run downward.
+        let unit = outline.size/24
+        var transform = CGAffineTransform(translationX: 0, y: outline.size).scaledBy(x: unit, y: -unit)
+        guard let path = TablerIcon.path(outline.path).copy(using: &transform) else { return nil }
+        context.addPath(path)
+        context.setStrokeColor(color.cgColor); context.setLineWidth(outline.lineWidth)
+        context.setLineCap(.round); context.setLineJoin(.round)
+        context.strokePath()
         return context.makeImage()
     }
     private static func rasterize(_ bars: PauseBars, color: NSColor, size: NSSize, scale: CGFloat) -> CGImage? {

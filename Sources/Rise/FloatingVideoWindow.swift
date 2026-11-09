@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import os
 
 /// Snap's finger-phase adapter. System momentum is consumed, since the copied
@@ -52,6 +53,10 @@ struct FloatingVideoScrollInput {
     private lazy var spaceShortcut = FloatingVideoSpaceShortcut(available: { [weak self] in
         guard let self else { return false }; return self.takesSpace(at: self.pointerLocation())
     }, action: { [weak self] in self?.overlay.toggle() })
+    /// F returns the video to its tab while the pointer is over it, as Space plays or pauses.
+    private lazy var returnShortcut = FloatingVideoSpaceShortcut(keyCode: kVK_ANSI_F, identifier: FloatingVideoSpaceShortcut.returnIdentifier, available: { [weak self] in
+        guard let self else { return false }; return self.takesSpace(at: self.pointerLocation())
+    }, action: { [weak self] in self?.overlay.returnAction?() })
     private var localPointerMonitor: Any?
     private var globalPointerMonitor: Any?
     /// Whether the video takes clicks at all. Even then, the transparent
@@ -404,7 +409,8 @@ struct FloatingVideoScrollInput {
     /// strays into the margin continues; so does a pinch or a two-finger drag,
     /// whose gesture would otherwise reach the page beneath.
     func updateMousePassThrough() {
-        spaceShortcut.setEnabled(takesSpace(at: pointerLocation()))
+        let takesKeys = takesSpace(at: pointerLocation())
+        spaceShortcut.setEnabled(takesKeys); returnShortcut.setEnabled(takesKeys)
         if acceptsMouse, resizeMotion?.phase == .pinching || motion.phase == .dragging || overlay.progress.isTrackpadScrubbing { return }
         let pointer = pointerLocation()
         let over = acceptsMouse && NSBezierPath(roundedRect: videoFrame, xRadius: 16, yRadius: 16).contains(pointer)
@@ -417,7 +423,7 @@ struct FloatingVideoScrollInput {
     private static let pinchTypes: NSEvent.EventTypeMask = [.magnify, .beginGesture, .endGesture]
 
     private func removeEventMonitors() {
-        spaceShortcut.setEnabled(false)
+        spaceShortcut.setEnabled(false); returnShortcut.setEnabled(false)
         overlay.hideHoverHints()
         if let localPointerMonitor { NSEvent.removeMonitor(localPointerMonitor); self.localPointerMonitor = nil }
         if let globalPointerMonitor { NSEvent.removeMonitor(globalPointerMonitor); self.globalPointerMonitor = nil }
@@ -442,13 +448,13 @@ struct FloatingVideoScrollInput {
         return nil
     }
 
-    /// Space plays or pauses while the pointer is over the video, and never
-    /// reaches the page behind it. Returns nil when it was handled.
+    /// Space plays or pauses while the pointer is over the video, and F returns it to its tab;
+    /// neither reaches the page behind it. Returns nil when it was handled.
     var pointerLocation: () -> NSPoint = { NSEvent.mouseLocation }
     private func takesSpace(at pointer: NSPoint) -> Bool { videoFrame.contains(pointer) && acceptsMouse && !isDismissing && isVisible }
     func routeSpace(_ event: NSEvent) -> NSEvent? { routeSpace(event, pointer: pointerLocation()) }
     func routeSpace(_ event: NSEvent, pointer: NSPoint) -> NSEvent? {
-        guard event.type == .keyDown || event.type == .keyUp, event.keyCode == 49,
+        guard event.type == .keyDown || event.type == .keyUp, [kVK_Space, kVK_ANSI_F].contains(Int(event.keyCode)),
               event.modifierFlags.intersection([.command, .control, .option]).isEmpty else { return event }
         guard takesSpace(at: pointer) else {
             // Only near the video, so ordinary Space presses elsewhere stay quiet.
@@ -457,7 +463,9 @@ struct FloatingVideoScrollInput {
             }
             return event
         }
-        if event.type == .keyDown, !event.isARepeat { overlay.toggle() }
+        if event.type == .keyDown, !event.isARepeat {
+            if Int(event.keyCode) == kVK_ANSI_F { overlay.returnAction?() } else { overlay.toggle() }
+        }
         return nil
     }
     private static let log = Logger(subsystem: "Rise", category: "PictureInPicture")

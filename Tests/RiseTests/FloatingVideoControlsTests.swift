@@ -27,6 +27,28 @@ final class FloatingVideoControlsTests: XCTestCase {
         try send(UInt32(kEventHotKeyPressed)); XCTAssertEqual(toggles, 2)
         shortcut.setEnabled(false); XCTAssertFalse(shortcut.isRegistered)
         available = true; try send(UInt32(kEventHotKeyPressed)); XCTAssertEqual(toggles, 2)
+
+        // F's shortcut takes only its own presses, beside Space's.
+        var returns = 0
+        let space = FloatingVideoSpaceShortcut(available: { true }, action: { toggles += 1 })
+        let f = FloatingVideoSpaceShortcut(keyCode: kVK_ANSI_F, identifier: FloatingVideoSpaceShortcut.returnIdentifier, available: { true }, action: { returns += 1 })
+        defer { space.setEnabled(false); f.setEnabled(false) }
+        space.setEnabled(true); f.setEnabled(true)
+        XCTAssertTrue(f.isRegistered)
+        func press(_ identifier: EventHotKeyID) throws {
+            for kind in [UInt32(kEventHotKeyPressed), UInt32(kEventHotKeyReleased)] {
+                var event: EventRef?
+                XCTAssertEqual(CreateEvent(nil, OSType(kEventClassKeyboard), kind, 0, EventAttributes(kEventAttributeNone), &event), noErr)
+                let ref = try XCTUnwrap(event); defer { ReleaseEvent(ref) }
+                var id = identifier
+                XCTAssertEqual(SetEventParameter(ref, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID), MemoryLayout<EventHotKeyID>.size, &id), noErr)
+                _ = SendEventToEventTarget(ref, GetApplicationEventTarget())
+            }
+        }
+        try press(FloatingVideoSpaceShortcut.returnIdentifier)
+        XCTAssertEqual(returns, 1); XCTAssertEqual(toggles, 2)
+        try press(FloatingVideoSpaceShortcut.identifier)
+        XCTAssertEqual(returns, 1); XCTAssertEqual(toggles, 3)
     }
 
     @MainActor func testSpaceCoversTheWholePictureAndCornerButtonsSitNearerTheEdges() throws {
@@ -48,6 +70,13 @@ final class FloatingVideoControlsTests: XCTestCase {
         XCTAssertNil(panel.routeSpace(try key(repeating: true), pointer: panel.videoFrame.origin)); XCTAssertEqual(toggles, 3)
         XCTAssertNotNil(panel.routeSpace(try key(modifiers: .command), pointer: panel.videoFrame.origin))
         XCTAssertNotNil(panel.routeSpace(try key(), pointer: .zero))
+        // F returns the video to its tab, as the arrows do, only over the picture too.
+        var returns = 0; panel.onReturn = { returns += 1 }
+        let f = try XCTUnwrap(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: 0,
+            context: nil, characters: "f", charactersIgnoringModifiers: "f", isARepeat: false, keyCode: UInt16(kVK_ANSI_F)))
+        XCTAssertNotNil(panel.routeSpace(f, pointer: .zero)); XCTAssertEqual(returns, 0)
+        XCTAssertNil(panel.routeSpace(f, pointer: NSPoint(x: panel.videoFrame.midX, y: panel.videoFrame.midY)))
+        XCTAssertEqual(returns, 1); XCTAssertEqual(toggles, 3, "F doesn't play or pause")
         let controls = panel.overlay.subviews.compactMap { $0 as? FloatingVideoControl }
         XCTAssertEqual(controls.count, 2)
         XCTAssertLessThan(controls[0].frame.minX, 10*FloatingVideoOverlay.controlScale(width: panel.overlay.bounds.width))

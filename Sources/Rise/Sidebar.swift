@@ -35,6 +35,8 @@ import RiseCore
     var onTabSearchEnded: (() -> Void)?
     var selectedTabID: UUID?
     let archiveButton: DownloadsButton
+    /// What a tab you've left plays, over Downloads and Sort (`NowPlaying.swift`).
+    let nowPlaying = NowPlayingCard()
     let cleanUpButton: HoverHintButton
     /// The minimal New Tab: a plus in the titlebar, level with the traffic lights and over the
     /// downloads button, in place of the New Tab row. The titlebar holds it, as it takes clicks
@@ -99,7 +101,7 @@ import RiseCore
         scroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(listScrolled), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
         chosenPill.target = self; chosenPill.action = #selector(revealChosenTab)
-        [pinnedView, newTab, scroll, chosenPill, archiveButton, cleanUpButton].forEach(addSubview)
+        [pinnedView, newTab, scroll, chosenPill, archiveButton, cleanUpButton, nowPlaying].forEach(addSubview)
     }
     required init?(coder: NSCoder) { fatalError() }
     @objc func createTab() { onNewTab?() }
@@ -109,7 +111,7 @@ import RiseCore
         if appliedTheme != theme {
             appliedTheme = theme
             fill = theme.background
-            newTab.theme = theme; searchRow.apply(theme); chosenPill.apply(theme)
+            newTab.theme = theme; searchRow.apply(theme); chosenPill.apply(theme); nowPlaying.apply(theme)
             (scroll.verticalScroller as? ThinScroller)?.dark = theme == .dark
             for button in [archiveButton, cleanUpButton, titlebarNewTab] as [ChromeButton] {
                 button.hoverHint?.appearance = theme.appearance
@@ -230,7 +232,9 @@ import RiseCore
             searchRow.frame = NSRect(x: TabAppearance.inset, y: scrollY, width: w-2*TabAppearance.inset, height: TabAppearance.height)
             scrollY = searchRow.frame.maxY+TabSearchRow.gap
         }
-        scroll.frame = NSRect(x: 0, y: scrollY, width: w, height: max(0, bounds.height-scrollY-44))
+        // The card takes room from the list's end closed; open, it lies over the list.
+        let nowPlayingRoom = nowPlaying.isShown ? NowPlayingCard.collapsedHeight+6 : 0
+        scroll.frame = NSRect(x: 0, y: scrollY, width: w, height: max(0, bounds.height-scrollY-44-nowPlayingRoom))
         // The grid grows and shrinks as tabs are pinned; what's below it slides to make room.
         if shift != 0, animatesRows, window != nil, newTab.frame.width > 0 {
             [newTab, searchRow, scroll].forEach { PinnedLayout.slideVertically($0, from: -shift) }
@@ -249,6 +253,7 @@ import RiseCore
         leavingRows.frame = rowsHost.bounds
         archiveButton.frame = NSRect(x: downloadsCentreX-14, y: bounds.height-39, width: 28, height: 28)
         cleanUpButton.frame = NSRect(x: 10, y: bounds.height-39, width: 28, height: 28)
+        nowPlaying.dock(x: TabAppearance.inset, width: w-2*TabAppearance.inset, bottom: bounds.height-46)
         updateScrollCues()
     }
     /// A closed tab's row fades out quickly where it was, under the rows sliding into its place,

@@ -53,8 +53,10 @@ import RiseCore
     lazy var tabMedia: TabMedia = {
         let media = TabMedia(browser: self)
         media.onChange = { [weak self] id in self?.refreshPlayback(id) }
+        media.onReport = { [weak self] _ in self?.nowPlaying.setNeedsRefresh() }
         return media
     }()
+    lazy var nowPlaying = NowPlaying(browser: self)
     var sharingPicker: NSSharingServicePicker?
     var selectionItemReceipts: [SelectionItemReceipt] = []
     var selectionItemExpiry: Timer?
@@ -921,6 +923,7 @@ import RiseCore
         }
         sidebar.developerTabLook = developerTabLook
         sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: splitGroups)
+        nowPlaying.setNeedsRefresh()
         refreshTabHoverCard(); preloadGmailInbox(); preloadProtonMailInbox(); preloadChatInbox(); preloadCalendarAgenda()
         window?.title = (selectedTab?.title).map { "\($0) — Rise" } ?? "Rise"
         updateNavigationButtons()
@@ -1150,5 +1153,5 @@ import RiseCore
     func togglePlayback(_ id: UUID) {
         if pictureInPicture.playbackPaused(id) != nil { pictureInPicture.togglePlayback(id) } else { tabMedia.togglePlayback(id) }
     }
-    func refreshPlayback(_ id: UUID) { sidebar.rows[id]?.setPlayback(paused: playbackPaused(id)) }
+    func refreshPlayback(_ id: UUID) { sidebar.rows[id]?.setPlayback(paused: playbackPaused(id)); nowPlaying.setNeedsRefresh() }
 }

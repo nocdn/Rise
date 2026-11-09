@@ -105,6 +105,10 @@ import AppKit
     enum Glyph { case cross, arrows }
     var action: (() -> Void)?
     var alternateAction: (() -> Void)?
+    /// The glyph's ink: white over the video, the sidebar's text in Now Playing.
+    var tint: NSColor = .white { didSet { if tint != oldValue { applyTint() } } }
+    /// A rounded shade under the pointer, which the video's controls go without.
+    var hoverBackground: NSColor? { didSet { applyHoverBackground() } }
     private let glyph: Glyph
     private let title: String
     private(set) var hoverHint: ButtonHoverHint?
@@ -113,7 +117,7 @@ import AppKit
     /// Holds the glyph, so the whole button shrinks slightly while pressed.
     private let body = CALayer()
     private var hovering = false {
-        didSet { updateCloseMode(); updateGlyph(); hoverHint?.setHovered(hovering) }
+        didSet { updateCloseMode(); updateGlyph(); applyHoverBackground(); hoverHint?.setHovered(hovering) }
     }
     private var pressed = false {
         didSet {
@@ -129,7 +133,17 @@ import AppKit
     private var renderedScale: CGFloat = 0
     private var renderedPointSize: CGFloat = 0
     /// The glyphs are sized for a 30pt button and grow or shrink with it.
-    private var sizeScale: CGFloat { max(bounds.width, 1)/30 }
+    private var sizeScale: CGFloat { max(glyphBox ?? bounds.width, 1)/30 }
+    /// Draws the glyph as a button this wide would, in a box of another size.
+    var glyphBox: CGFloat? { didSet { renderedScale = 0; needsLayout = true } }
+    /// How far the glyph's ink reaches either side of the middle.
+    var inkHalfWidth: CGFloat {
+        switch glyph {
+        // The arrows' symbol is 14 pt wide at a 26 pt button, its ink 1.5 pt in from its left edge.
+        case .arrows: return (7-1.5)*sizeScale/(26.0/30)
+        case .cross: return Self.crossArm.dx*sizeScale+Self.crossWidth*sizeScale/2
+        }
+    }
     /// Matches the 13pt semibold xmark: ink 10 wide and 10.6 tall, strokes 1.9pt.
     private static let crossArm = CGVector(dx: 4.05, dy: 4.36), crossWidth: CGFloat = 1.9
     init(glyph: Glyph, title: String) {
@@ -163,12 +177,13 @@ import AppKit
         super.layout()
         CATransaction.begin(); CATransaction.setDisableActions(true)
         body.bounds = bounds; body.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        body.cornerRadius = min(7, bounds.height/2); body.cornerCurve = .continuous
         let scale = window?.backingScaleFactor ?? 2
         // Redrawn in quarter-point steps, so a pinch doesn't redraw it every frame.
         let pointSize = (13*sizeScale*4).rounded()/4
         if glyph == .arrows, scale != renderedScale || pointSize != renderedPointSize,
            let image = NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: nil)?.withSymbolConfiguration(
-               NSImage.SymbolConfiguration(pointSize: pointSize, weight: .semibold).applying(.init(paletteColors: [.white]))) {
+               NSImage.SymbolConfiguration(pointSize: pointSize, weight: .semibold).applying(.init(paletteColors: [tint]))) {
             renderedScale = scale; renderedPointSize = pointSize
             let size = image.size
             for (piece, direction) in pieces {
@@ -191,6 +206,17 @@ import AppKit
         CATransaction.commit()
     }
     override func viewDidChangeBackingProperties() { super.viewDidChangeBackingProperties(); renderedScale = 0; needsLayout = true }
+    private func applyTint() {
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        strokes.forEach { $0.strokeColor = tint.cgColor }
+        CATransaction.commit()
+        renderedScale = 0; needsLayout = true
+    }
+    private func applyHoverBackground() {
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        body.backgroundColor = hovering ? hoverBackground?.cgColor : nil
+        CATransaction.commit()
+    }
     private static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
     /// One arm of the cross through the center.
     private func crossArm(_ index: Int) -> CGPath {
@@ -309,19 +335,29 @@ import AppKit
     private(set) var fraction: Double = 0
     private(set) var isScrubbing = false
     private(set) var isTrackpadScrubbing = false
-    private var duration: Double = 0
+    private(set) var duration: Double = 0
+    /// The track's thickness at rest, and under the pointer or while scrubbing.
+    var restThickness: CGFloat = 5 { didSet { needsLayout = true } }
+    var activeThickness: CGFloat = 9 { didSet { needsLayout = true } }
+    var trackColor: NSColor = .white.withAlphaComponent(0.3) { didSet { applyColors() } }
+    var fillColor: NSColor = .white.withAlphaComponent(0.92) { didSet { applyColors() } }
+    /// Takes two-finger swipes over itself; the floating player routes them from its window instead.
+    var scrubsWithScrollWheel = false
+    /// The position changed: from the page, a click or drag, or a swipe.
+    var onPosition: (() -> Void)?
+    /// A click, drag or swipe on the bar ended.
+    var interactionEnded: (() -> Void)?
     private var scrollEnd: DispatchWorkItem?
     private var seekTarget: (fraction: Double, until: CFTimeInterval)?
     private let track = CALayer()
     private let fill = CALayer()
     private var hovering = false
-    private var thickness: CGFloat { hovering || isScrubbing ? 9 : 5 }
+    private var thickness: CGFloat { hovering || isScrubbing ? activeThickness : restThickness }
     override var isFlipped: Bool { true }
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        track.backgroundColor = NSColor.white.withAlphaComponent(0.3).cgColor
-        fill.backgroundColor = NSColor.white.withAlphaComponent(0.92).cgColor
+        applyColors()
         fill.anchorPoint = CGPoint(x: 0, y: 0.5)
         layer?.addSublayer(track); track.addSublayer(fill); track.masksToBounds = true
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
@@ -329,6 +365,11 @@ import AppKit
     }
     required init?(coder: NSCoder) { fatalError() }
     override func layout() { super.layout(); applyGeometry(animated: false) }
+    private func applyColors() {
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        track.backgroundColor = trackColor.cgColor; fill.backgroundColor = fillColor.cgColor
+        CATransaction.commit()
+    }
     private func applyGeometry(animated: Bool) {
         let size = CGSize(width: bounds.width, height: thickness)
         CATransaction.begin()
@@ -354,6 +395,7 @@ import AppKit
         CATransaction.begin(); CATransaction.setDisableActions(true)
         fill.transform = CATransform3DMakeScale(CGFloat(fraction), 1, 1)
         CATransaction.commit()
+        onPosition?()
     }
     /// The page's position. Ignored while scrubbing, and briefly after a seek
     /// until the page reaches it, so the fill never jumps back.
@@ -413,11 +455,18 @@ import AppKit
             seekTarget = (fraction, CACurrentMediaTime()+1.5)
             seek?(fraction, true)
         }
-        scrollFinished?()
+        scrollFinished?(); interactionEnded?()
         (superview as? FloatingVideoOverlay)?.refreshHover()
     }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     override func magnify(with event: NSEvent) { superview?.magnify(with: event) }
+    override func scrollWheel(with event: NSEvent) {
+        guard scrubsWithScrollWheel, event.hasPreciseScrollingDeltas, !isHidden else { super.scrollWheel(with: event); return }
+        // A mostly vertical swipe that isn't already scrubbing is left to what's around the bar.
+        if !isTrackpadScrubbing, abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX) { super.scrollWheel(with: event); return }
+        if event.phase.contains(.began) { finishTrackpadScrub() }
+        handleScroll(.from(event))
+    }
     override func mouseEntered(with event: NSEvent) { setHovering(true) }
     override func mouseExited(with event: NSEvent) { setHovering(false) }
     override func mouseDown(with event: NSEvent) { finishTrackpadScrub(); setScrubbing(true); scrub(to: event, final: false) }
@@ -426,6 +475,7 @@ import AppKit
         scrub(to: event, final: true)
         setScrubbing(false)
         seekTarget = (fraction, CACurrentMediaTime()+1.5)
+        interactionEnded?()
         (superview as? FloatingVideoOverlay)?.refreshHover()
     }
     override func accessibilityPerformIncrement() -> Bool { step(0.05) }
