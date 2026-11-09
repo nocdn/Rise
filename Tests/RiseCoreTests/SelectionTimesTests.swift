@@ -44,14 +44,14 @@ final class SelectionTimesTests: XCTestCase {
 
     func testZoneOnlySelectionsShowCurrentTimeThereAndTheDifferenceFromHere() throws {
         let cases: [(String, Int, String)] = [
-            ("UTC+14:00", 14*3600, "Tomorrow at 04:00 there · 13 hours ahead"),
-            ("UTC−12:00", -12*3600, "02:00 there · 13 hours behind"),
-            ("utc + 5:45", 5*3600+45*60, "19:45 there · 4 hr 45 min ahead"),
-            ("GMT–0330", -(3*3600+30*60), "10:30 there · 4 hr 30 min behind"),
-            ("(GMT+1)", 3600, "15:00 there · same time as here"),
-            ("UTC+00:30", 1800, "14:30 there · 30 min behind"),
-            ("GMT-0", 0, "14:00 there · 1 hour behind"),
-            ("UTC\u{00a0}+\u{202f}0545.", 5*3600+45*60, "19:45 there · 4 hr 45 min ahead"),
+            ("UTC+14:00", 14*3600, "Tomorrow at 04:00 there (13 hours ahead)"),
+            ("UTC−12:00", -12*3600, "02:00 there (13 hours behind)"),
+            ("utc + 5:45", 5*3600+45*60, "19:45 there (4 hr 45 min ahead)"),
+            ("GMT–0330", -(3*3600+30*60), "10:30 there (4 hr 30 min behind)"),
+            ("(GMT+1)", 3600, "15:00 there (same as here)"),
+            ("UTC+00:30", 1800, "14:30 there (30 min behind)"),
+            ("GMT-0", 0, "14:00 there (1 hour behind)"),
+            ("UTC\u{00a0}+\u{202f}0545.", 5*3600+45*60, "19:45 there (4 hr 45 min ahead)"),
         ]
         for (text, offset, expected) in cases {
             let times = SelectionTimes.find(in: text, now: now, local: london)
@@ -67,7 +67,7 @@ final class SelectionTimesTests: XCTestCase {
 
     func testOffsetsWithinTheScreenshotSubtitleKeepTheirOrderAndDistinctZones() {
         let text = "Live UTC clock showing the current Coordinated Universal Time, today's UTC date, and the current time in every UTC offset from UTC−12:00 to UTC+14:00."
-        XCTAssertEqual(labels(text), ["UTC−12:00 → 02:00 there · 13 hours behind", "UTC+14:00 → Tomorrow at 04:00 there · 13 hours ahead"])
+        XCTAssertEqual(labels(text), ["UTC−12:00 → 02:00 there (13 hours behind)", "UTC+14:00 → Tomorrow at 04:00 there (13 hours ahead)"])
         XCTAssertEqual(SelectionTimes.find(in: "UTC+14:00 GMT+1400 UTC+14", now: now, local: london).count, 1)
         XCTAssertEqual(SelectionTimes.find(in: "🌎 UTC+14 UTC−12 GMT+5:45 UTC+1", now: now, local: london).map(\.written), ["UTC+14", "UTC−12", "GMT+5:45"])
     }
@@ -103,11 +103,11 @@ final class SelectionTimesTests: XCTestCase {
         for (stamp, difference) in [("2026-10-25T00:30:00Z", "13 hours ahead"), ("2026-10-25T01:30:00Z", "14 hours ahead")] {
             let instant = try XCTUnwrap(iso.date(from: stamp))
             let time = try XCTUnwrap(SelectionTimes.find(in: "UTC+14:00", now: instant, local: london).first)
-            XCTAssertTrue(SelectionTimes.label(time, now: instant, local: london, locale: locale).hasSuffix(difference))
+            XCTAssertTrue(SelectionTimes.label(time, now: instant, local: london, locale: locale).hasSuffix("(\(difference))"))
         }
         let local = try XCTUnwrap(TimeZone(secondsFromGMT: 14*3600))
         let time = try XCTUnwrap(SelectionTimes.find(in: "UTC−12:00", now: now, local: local).first)
-        XCTAssertEqual(SelectionTimes.label(time, now: now, local: local, locale: locale), "Yesterday at 02:00 there · 26 hours behind")
+        XCTAssertEqual(SelectionTimes.label(time, now: now, local: local, locale: locale), "Yesterday at 02:00 there (26 hours behind)")
     }
 
     func testCopyingAZoneOnlyTimeKeepsItsSnapshotDateAndZone() throws {

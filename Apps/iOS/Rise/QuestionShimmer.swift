@@ -5,6 +5,7 @@ final class QuestionShimmer: UIView {
     private let band = CAGradientLayer()
     private weak var field: UITextField?
     private(set) var isRunning = false
+    static let sweep = 1.0, pause = 0.5
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -40,10 +41,14 @@ final class QuestionShimmer: UIView {
         band.locations = [0, 0.5, 1]
         band.startPoint = CGPoint(x: 0, y: 0.5); band.endPoint = CGPoint(x: 1, y: 0.5)
         band.frame = CGRect(x: rect.minX-80, y: 0, width: 80, height: bounds.height)
+        // Each sweep takes a second, then the band rests off the glyphs for `pause` before the next.
         let sweep = CABasicAnimation(keyPath: "transform.translation.x")
         sweep.fromValue = 0; sweep.toValue = rect.width+80
-        sweep.duration = 1; sweep.repeatCount = .infinity
-        band.add(sweep, forKey: "questionSweep")
+        sweep.duration = Self.sweep
+        let cycle = CAAnimationGroup()
+        cycle.animations = [sweep]
+        cycle.duration = Self.sweep+Self.pause; cycle.repeatCount = .infinity
+        band.add(cycle, forKey: "questionSweep")
         field.textColor = .secondaryLabel
         alpha = 0; isHidden = false; isRunning = true
         UIView.animate(withDuration: 0.15) { self.alpha = 1 }

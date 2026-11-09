@@ -336,10 +336,19 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         privateRemote = nil
     }
     /// Late icons, learned templates and remote results never replace the person's text/selection.
+    /// Background changes ask for this often, most at launch: icons arriving one by one, history
+    /// and iCloud. Those within a tenth of a second share one update, and typing's own update
+    /// makes a waiting one unneeded, so a keystroke never queues behind a pile of them.
     func refresh() {
-        guard active else { return }
-        updateResults(allowCompletion: false)
+        guard active, !refreshPending else { return }
+        refreshPending = true
+        DispatchQueue.main.asyncAfter(deadline: .now()+0.1) { [weak self] in
+            guard let self, refreshPending else { return }
+            refreshPending = false
+            if active { updateResults(allowCompletion: false) }
+        }
     }
+    private var refreshPending = false
     private func queryChanged() {
         guard active else { return }
         editingAddress?.finishEditing()
@@ -368,6 +377,9 @@ final class SearchPanel: UIView, UITextFieldDelegate {
         }
     }
     private func updateResults(allowCompletion: Bool) {
+        refreshPending = false
+        let updating = LaunchSignposts.signposter.beginInterval("Search results")
+        defer { LaunchSignposts.signposter.endInterval("Search results", updating) }
         guard let source else { candidates = []; suggestions = []; return }
         if siteSearch != nil {
             // Freeze the suggestions from the original query, including their view identities

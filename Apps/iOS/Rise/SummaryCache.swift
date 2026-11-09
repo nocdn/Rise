@@ -17,21 +17,35 @@ enum SummaryCache {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
+    /// As kept on disk: the paragraphs, and the questions asked under them since 8 November
+    /// 2026. Earlier files are a plain list of paragraphs.
+    private struct Kept: Codable {
+        let paragraphs: [String]
+        var conversation: [SummaryTurn]?
+    }
+
     static func summary(for key: String) -> PageSummary? {
         let file = folder.appendingPathComponent(key+".json")
-        guard let data = try? Data(contentsOf: file),
-              let paragraphs = try? JSONDecoder().decode([String].self, from: data), !paragraphs.isEmpty else { return nil }
+        guard let data = try? Data(contentsOf: file) else { return nil }
+        let kept = (try? JSONDecoder().decode(Kept.self, from: data))
+            ?? (try? JSONDecoder().decode([String].self, from: data)).map { Kept(paragraphs: $0) }
+        guard let kept, !kept.paragraphs.isEmpty else { return nil }
         // Used now, so kept over older ones.
         try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: file.path)
-        return PageSummary(paragraphs: paragraphs)
+        return PageSummary(paragraphs: kept.paragraphs, conversation: kept.conversation ?? [])
     }
 
     static func store(_ summary: PageSummary, for key: String) {
         let manager = FileManager.default
         try? manager.createDirectory(at: folder, withIntermediateDirectories: true)
-        guard let data = try? JSONEncoder().encode(summary.paragraphs) else { return }
+        let kept = Kept(paragraphs: summary.paragraphs, conversation: summary.conversation.isEmpty ? nil : summary.conversation)
+        guard let data = try? JSONEncoder().encode(kept) else { return }
         try? data.write(to: folder.appendingPathComponent(key+".json"), options: .atomic)
         prune()
+    }
+
+    static func remove(_ key: String) {
+        try? FileManager.default.removeItem(at: folder.appendingPathComponent(key+".json"))
     }
 
     private static func prune() {

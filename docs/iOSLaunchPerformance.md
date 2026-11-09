@@ -1,5 +1,37 @@
 # iOS cold-launch performance audit
 
+## November 2026: measured on the phone and implemented
+
+Measured on 8 November 2026 on the iPhone 14 Pro (iOS 27.2) with real data: a 6.2 MB sync cache, 2,000 history entries, 128 saved suggestion icons. Builds were Release with the Production CloudKit environment. Each figure is the median of five cold launches under Time Profiler, timed in milliseconds from process start to `UIKeyboardDidShowNotification`. That notification fires after the keyboard's slide-up animation of about 350 ms, so the keys are on screen sooner than these numbers suggest.
+
+| Build | Focus requested | Keyboard shown |
+| --- | ---: | ---: |
+| Release, unstripped, before | — | 1,266 |
+| Release, stripped, before | — | 1,173 |
+| + sync deferred, persist coalesced, earlier focus | 329 | 899 |
+| + lazy icons, glows later, lazy `CIContext`, faster history IDs | 283 | 813 |
+| + sync cache decoded off the main thread | 256 | **799** |
+
+What changed, in order of effect:
+
+- **Sync no longer competes with the keyboard.** `SharedTabsSync.start` waits until the first keyboard has appeared, or 2 s. Previously its first fetch merged records and re-encoded the whole 6.2 MB cache on the main thread after every event and status change: about 150–200 ms between focus and keyboard in Release, and 538 ms in Debug. Writes are now coalesced over 0.5 s and encoded on the writer queue; `flush()` writes whatever is pending. The cache is decoded on another core during scene connection (`CacheLoad`), and its first use waits for it.
+- **Search is focused in `viewIsAppearing`** rather than `viewDidAppear`, before the first frame. The panel's opening (contents crossfade and the spring up from the bar) still waits for `viewDidAppear`; otherwise it would play unseen under the system's launch zoom. If the field isn't first responder by then, it is focused again ("Focus retried"). Incoming links are handed over before `makeKeyAndVisible` so that they still suppress the launch search.
+- **Search results refresh at most every 100 ms** while nothing is typed. Icon loads and sync changes had caused 26–50 refreshes per launch.
+- **Suggestion icons** decode on first display rather than all 128 in `init` (24 ms). Writes are coalesced over 2 s and encoded off the main thread. Each icon now records when it was `checked`. Icons with no dark variant used to be refetched on every launch: 123 of 128. Now they are refetched only after a week.
+- **Summarise's glow images** are drawn 1.5 s after launch instead of while the keyboard comes up (about 35 ms). The answer view's `CIContext` is created lazily; it cost 34 ms for each panel that embeds one.
+- **Popup rules** compile on a background queue from `didFinishLaunching` (31 ms).
+- **History record IDs** are hex-encoded by hand instead of with `String(format:)` per byte (21 ms at launch, more on each sync). `testRecordIDsKeepTheirSyncedFormat` pins the format.
+
+What remains on the main thread before focus, about 250 ms: dyld and UIKit startup (about 70 ms), `BottomBar` building every panel (about 50 ms), the selected `WKWebView`, and `openPanel`. From focus to the keyboard (about 540 ms including the animation), the time is mostly UIKit's own work: keyboard scene pairing, input view setup, and `_UIKBHTVerifyFrameworkDepth` calling `dladdr` (about 60 ms on system frameworks). An app can't shorten these. Stripping the app binary matters: unstripped, the same `dladdr` checks scan the app's symbol table too, which adds about 90 ms.
+
+**Launch cover.** When the app goes to the background, the selected regular tab's page and the strip above it are drawn and saved to `Caches/LaunchCover` (`LaunchCover.swift`). On a cold launch, the picture is read and decoded on another core from `didFinishLaunching`. It is shown over the page from the first frame if the tab, URL, size and appearance all match. It fades out 0.3 s after that page finishes loading behind it, which gives WebKit time to restore the scroll position. It goes at once if the page is scrolled, a load fails, another site commits, the tab changes, the switcher opens or Summarise starts, and in any case after 15 s. On the phone it appeared about 240 ms into launch and was replaced at about 1.5 s, without changing keyboard timing.
+
+`LaunchSignposts` (`AppDelegate.swift`) marks *Did finish launching*, *Scene connect*, *Tab sync cache*, *Browser init*, *Focus search*, *Browser appeared*, *Search results*, *Launch cover shown*/*hidden* and *Keyboard shown* as Points of Interest. Any Time Profiler or App Launch recording shows them.
+
+Still open from the list below: lazy panels (3), restoring tabs as data (2) for people with many tabs, and keeping download setup out of launch (7).
+
+## October 2026 audit
+
 Code review and simulator measurements on 23–24 October 2026 use commit `6af97296ba58fc62bccfccd94f2a0835444aef33`. The physical trace uses the existing installed Debug binary, without rebuilding it for this audit.
 
 The best next change is a dedicated **search-first launch path**: attach and focus search earlier, then prepare the rest of the browser as it becomes useful. The other large structural improvement is to restore inactive tabs as data rather than eagerly constructing a `WKWebView` for each one.

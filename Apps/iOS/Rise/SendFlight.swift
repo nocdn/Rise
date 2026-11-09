@@ -27,21 +27,23 @@ enum SendMotion {
     static let contextLines = 4
 }
 
-/// A question asked under the summary, as in the ChatGPT app: blue text in a light blue bubble on
-/// the right, measured from the recording (#E6F3FF; the text, #3B5576 there, with the colour the
-/// video's compression takes out of thin strokes put back, at the same hue).
+/// A question asked under the summary, in a bubble on the right as in the ChatGPT app. It stands
+/// out against the page's colours: near black with white text in light mode, near white with
+/// near-black text in dark mode (the summary's own inks, swapped). Blue until 8 November 2026.
 enum SendBubble {
-    /// In dark mode, a deep blue bubble with pale blue text.
-    static let fill = UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 30/255, green: 50/255, blue: 82/255, alpha: 1)
-        : UIColor(red: 230/255, green: 243/255, blue: 255/255, alpha: 1) }
-    static let ink = UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 160/255, green: 202/255, blue: 255/255, alpha: 1)
-        : UIColor(red: 45/255, green: 91/255, blue: 159/255, alpha: 1) }
-    /// The band sweeping the text while it's being answered: deeper, or in dark mode brighter.
-    static let shimmer = UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 228/255, green: 241/255, blue: 255/255, alpha: 1)
-        : UIColor(red: 20/255, green: 52/255, blue: 108/255, alpha: 1) }
+    static let fill = UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 236/255, green: 236/255, blue: 241/255, alpha: 1)
+        : UIColor(red: 28/255, green: 28/255, blue: 30/255, alpha: 1) }
+    static let ink = UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 28/255, green: 28/255, blue: 30/255, alpha: 1)
+        : .white }
+    /// The band sweeping the text while it's being answered: a mid grey either way, dimmer than
+    /// the white text, or lighter than the dark one.
+    static let shimmer = UIColor { $0.userInterfaceStyle == .dark ? UIColor(white: 0.55, alpha: 1)
+        : UIColor(white: 0.5, alpha: 1) }
     static let horizontalPadding: CGFloat = 18
     static let verticalPadding: CGFloat = 14
-    static let radius: CGFloat = 20
+    /// Half a one-line bubble's height, so a one-line question is a full pill and a longer one
+    /// keeps the same round ends.
+    static let radius: CGFloat = (UIFont.systemFont(ofSize: 17).lineHeight+2*verticalPadding)/2
     /// From the screen's right edge, a little further out than the paragraphs' 24.
     static let edgeInset: CGFloat = 16
     /// The widest a bubble gets, as a share of the screen's width.

@@ -13,6 +13,9 @@ import UIKit
     private var preview: Task<Void, Never>?
     private let writer = DispatchQueue(label: "Rise.SuggestionIcons", qos: .utility)
     var onLoad: (() -> Void)?
+    private var dirty = false
+    private var savePending = false
+    static let recheckInterval: TimeInterval = 7*24*60*60
 
     init(storageURL: URL?, session: URLSession? = nil, allowsNetwork: Bool = true) {
         self.allowsNetwork = allowsNetwork
@@ -23,10 +26,11 @@ import UIKit
         self.session = session ?? URLSession(configuration: config)
         if let storageURL, let data = try? Data(contentsOf: storageURL), data.count <= 16_000_000 {
             if let saved = try? JSONDecoder().decode([String: MobileFavicon.Saved].self, from: data) {
+                // Decoded when first shown (`cached`): decoding all of them held up launch.
                 for (key, value) in saved.sorted(by: { $0.key < $1.key }).prefix(128) {
-                    if let image = value.image {
-                        bytes[key] = value; images[key] = image
-                        if value.dark != nil { attempted.insert(key) }
+                    bytes[key] = value
+                    if value.dark != nil || value.checked.map({ -$0.timeIntervalSinceNow < Self.recheckInterval }) == true {
+                        attempted.insert(key)
                     }
                 }
             } else if let saved = try? JSONDecoder().decode([String: Data].self, from: data) {
@@ -42,17 +46,23 @@ import UIKit
         return site.absoluteString
     }
     func remember(_ image: UIImage?, for url: URL?) {
-        guard let image, let origin = Self.origin(url), let saved = MobileFavicon.Saved(image) else { return }
+        guard let image, let origin = Self.origin(url), cached(origin) !== image else { return }
         // A late /favicon.ico or a restored tab must not replace sharper artwork.
-        if let known = images[origin], Self.pixels(known) > Self.pixels(image) { return }
+        if let known = cached(origin), Self.pixels(known) > Self.pixels(image) { return }
+        guard var saved = MobileFavicon.Saved(image) else { return }
+        let checked = bytes[origin]?.checked
         // A restored tab may still have a single icon; keep any dark artwork already learned.
         if saved.dark == nil, let dark = bytes[origin]?.dark.flatMap(MobileFavicon.decode) {
             let combined = MobileFavicon.adaptive(light: image, dark: dark)
-            images[origin] = combined; bytes[origin] = MobileFavicon.Saved(combined)
+            guard let merged = MobileFavicon.Saved(combined) else { return }
+            images[origin] = combined; saved = merged
         } else {
-            images[origin] = image; bytes[origin] = saved
+            images[origin] = image
         }
-        while images.count > 128, let oldest = images.keys.sorted().first { images[oldest] = nil; bytes[oldest] = nil }
+        // Same artwork again, as from a restored tab: nothing to write.
+        if let known = bytes[origin], known.light == saved.light, known.dark == saved.dark { return }
+        saved.checked = checked; bytes[origin] = saved; dirty = true
+        while bytes.count > 128, let oldest = bytes.keys.sorted().first { images[oldest] = nil; bytes[oldest] = nil }
     }
     private static func pixels(_ image: UIImage) -> Int {
         let image = MobileFavicon.variant(image, style: .light)
@@ -61,7 +71,7 @@ import UIKit
     /// Typing a literal address waits for a quiet moment before fetching its public site's icon.
     func previewCandidate(_ url: URL?) {
         preview?.cancel(); preview = nil
-        guard allowsNetwork, let url, let origin = Self.origin(url), images[origin] == nil,
+        guard allowsNetwork, let url, let origin = Self.origin(url), bytes[origin] == nil,
               !AddressResolver.isLocal(url), let host = url.host,
               let suffix = host.split(separator: ".").last, suffix.count >= 2 else { return }
         preview = Task { [weak self] in
@@ -76,12 +86,13 @@ import UIKit
         guard fetch, allowsNetwork, !AddressResolver.isLocal(url), let host = url.host, host.contains("."),
               !host.hasSuffix(".test"), !host.hasSuffix(".example"), !host.hasSuffix(".invalid"),
               tasks[origin] == nil, (retryAfter[origin] ?? .distantPast) <= Date(),
-              attempted.insert(origin).inserted else { return images[origin] }
+              attempted.insert(origin).inserted else { return cached(origin) }
         tasks[origin] = Task { [weak self] in
             guard let self else { return }
             defer {
                 tasks[origin] = nil
-                if images[origin] == nil {
+                if bytes[origin] != nil, !Task.isCancelled { bytes[origin]?.checked = Date(); scheduleSave() }
+                if bytes[origin] == nil {
                     attempted.remove(origin)
                     retryAfter[origin] = Date().addingTimeInterval(60)
                 }
@@ -95,10 +106,10 @@ import UIKit
                     store(MobileFavicon.adaptive(light: light, dark: pair.1), origin: origin); return
                 }
             }
-            var light = images[origin]
+            var light = cached(origin)
             if light == nil, let fallback = URL(string: "/favicon.ico", relativeTo: root)?.absoluteURL {
                 light = await load(fallback)
-                if let light { remember(light, for: root); onLoad?() }
+                if let light { remember(light, for: root); dirty = true; onLoad?() }
             }
             // Even when favicon.ico loads, metadata can declare a separate dark icon.
             var dark: UIImage?
@@ -110,7 +121,14 @@ import UIKit
             }
             if let light = light ?? dark { store(MobileFavicon.adaptive(light: light, dark: dark), origin: origin) }
         }
-        return images[origin]
+        return cached(origin)
+    }
+    private func cached(_ origin: String) -> UIImage? {
+        if let image = images[origin] { return image }
+        guard let saved = bytes[origin] else { return nil }
+        guard let image = saved.image else { bytes[origin] = nil; dirty = true; return nil }
+        images[origin] = image
+        return image
     }
     private func firstIcon(_ urls: [URL]) async -> UIImage? {
         for url in urls {
@@ -132,17 +150,29 @@ import UIKit
     }
     private func store(_ image: UIImage, origin: String) {
         remember(image, for: URL(string: origin))
-        save(); onLoad?()
+        scheduleSave(); onLoad?()
     }
+    /// Icons arrive in bursts after launch; one write covers the burst.
+    private func scheduleSave() {
+        dirty = true
+        guard !savePending else { return }
+        savePending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            MainActor.assumeIsolated { self?.savePending = false; self?.save() }
+        }
+    }
+    /// Writes changed icons. Encoding happens on the writer queue, off the main thread.
     func save() {
-        guard let storageURL, let data = try? JSONEncoder().encode(bytes) else { return }
-        let file = storageURL
+        guard dirty, let storageURL else { return }
+        dirty = false
+        let snapshot = bytes, file = storageURL
         writer.async {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
             try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
             try? data.write(to: file, options: .atomic)
         }
     }
-    func flush() { writer.sync {} }
+    func flush() { save(); writer.sync {} }
     /// The strongest non-neutral pixels supply a learned site's brand colour.
     static func color(in image: UIImage?) -> UIColor? {
         guard let image = image?.cgImage else { return nil }

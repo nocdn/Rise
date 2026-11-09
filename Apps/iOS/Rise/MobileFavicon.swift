@@ -8,6 +8,9 @@ enum MobileFavicon {
     struct Saved: Codable {
         let light: Data
         let dark: Data?
+        /// When the site was last asked for appearance variants. A site with no dark icon
+        /// is asked again after a week rather than on every launch.
+        var checked: Date?
 
         init?(_ image: UIImage) {
             guard let light = MobileFavicon.variant(image, style: .light).pngData(), light.count <= 100_000 else { return nil }

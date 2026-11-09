@@ -85,6 +85,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     })
     private let sessionStore: MobileBrowserSessionStore?
     private var lastSavedSession: MobileBrowserSession?
+    /// Waits for the launch keyboard to start iCloud sync (`startTabSyncAfterLaunch`).
+    private var tabSyncLaunchObserver: NSObjectProtocol?
     let addressSuggestions: MobileAddressSuggestions
     let tabSync: SharedTabsSync?
     let tabPreviews: BackgroundTabPreviews?
@@ -106,7 +108,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private let previewBackdrop = UIView()
     let navigationStatus = BrowserNavigationStatus()
     /// Darkens the receded page; tapping it closes the panel.
-    private let dimming = UIView()
+    private let dimming = PanelDimming()
+    /// With Find open, the page under it scrolls and zooms; a tap on it still closes Find.
+    private lazy var findPageTap = UITapGestureRecognizer(target: self, action: #selector(closePanelOnTap))
     private lazy var tint = PageEdgeTint { [weak self] color in self?.setTopColor(color, animated: true) }
     private(set) lazy var pullToReload = PullToReload { [weak self] in self?.reloadPage() }
     /// Only the main page has one; Peek pages are closed and opened by their handle.
@@ -201,6 +205,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         self.allowsPeek = allowsPeek
         let restored = self.sessionStore?.load()
         self.opensSearchOnFirstAppearance = opensSearchOnFirstAppearance
+        checksLaunchCover = restored != nil
         if let restored {
             tabs = restored.tabs.map { BrowserTab(webView: Self.makeWebView(dataStore: dataStore, videoPlayback: videoPlayback), restoring: $0) }
             tabIndex = restored.tabs.firstIndex { $0.id == restored.selectedTabID } ?? 0
@@ -567,18 +572,120 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     required init?(coder: NSCoder) { fatalError("Use init(startURL:)") }
 
+    override func viewIsAppearing(_ animated: Bool) {
+        super.viewIsAppearing(animated)
+        if checksLaunchCover {
+            checksLaunchCover = false
+            view.layoutIfNeeded()
+            LaunchCover.take { [weak self] info, image in self?.showLaunchCover(image, info: info) }
+        }
+        // Only a freshly created scene opts in. Consume it once, so returning to the app or
+        // dismissing a presented controller preserves whatever the person was doing. The view
+        // has its window and geometry here, before the first frame: asking for the keyboard now
+        // rather than after the appearance transition lets someone start typing sooner.
+        guard opensSearchOnFirstAppearance else { return }
+        opensSearchOnFirstAppearance = false
+        openedSearchOnAppearance = true
+        view.layoutIfNeeded()
+        openPanel(motionLater: true)
+    }
+    private var openedSearchOnAppearance = false
+
+    // MARK: Launch cover
+
+    private var checksLaunchCover = false
+    private var launchCover: UIImageView?
+    private var launchCoverInfo: LaunchCover.Info?
+    private weak var launchCoverPage: WKWebView?
+    /// The cover waits for its page to load, a little more for WebKit to put back where it had
+    /// been scrolled to, and goes away regardless after this long.
+    private static let launchCoverSettle: TimeInterval = 0.3
+    private static let launchCoverLimit: TimeInterval = 15
+
+    /// Draws the page as it is now for the next cold launch, when the app goes to the background.
+    /// The page and the strip above it are drawn by themselves, without a panel's dimming or the
+    /// page receding behind it. Private tabs are never drawn.
+    func saveLaunchCover() {
+        guard allowsPeek, sessionStore != nil, isViewLoaded, !currentTab.isPrivateBrowsing, let url = currentTab.sessionTab.url,
+              launchCover == nil, webView.window != nil, webView.superview === content, tabSwitcher.isHidden, summarise == nil,
+              !PagePaintWatcher.shared.isTransparent(webView), content.bounds.width > 0 else { return }
+        let bounds = content.bounds, strip = topStrip.frame, page = pageFrame
+        let image = UIGraphicsImageRenderer(bounds: bounds).image { context in
+            (content.backgroundColor ?? .systemBackground).resolvedColor(with: traitCollection).setFill()
+            context.fill(bounds)
+            topStrip.drawHierarchy(in: strip, afterScreenUpdates: false)
+            webView.drawHierarchy(in: page, afterScreenUpdates: false)
+        }
+        LaunchCover.save(image, info: .init(tab: currentTab.id, url: url, width: bounds.width, height: bounds.height,
+                                            dark: traitCollection.userInterfaceStyle == .dark))
+    }
+
+    /// Shows the page saved when Rise last went to the background, if it's of the tab that's open
+    /// and drawn at the same size and appearance, until that page has loaded again behind it.
+    private func showLaunchCover(_ image: UIImage, info: LaunchCover.Info) {
+        guard isViewLoaded, launchCover == nil, launchCoverPage == nil, !currentTab.isPrivateBrowsing,
+              currentTab.id == info.tab, currentTab.sessionTab.url == info.url, !hasLoadedPage(webView),
+              tabSwitcher.isHidden, summarise == nil,
+              abs(view.bounds.width-info.width) < 1, abs(view.bounds.height-info.height) < 1,
+              (traitCollection.userInterfaceStyle == .dark) == info.dark else { return }
+        let cover = UIImageView(image: image)
+        cover.contentMode = .scaleToFill
+        cover.frame = view.bounds
+        cover.isUserInteractionEnabled = false
+        cover.accessibilityElementsHidden = true
+        content.insertSubview(cover, aboveSubview: topStrip)
+        launchCover = cover; launchCoverInfo = info; launchCoverPage = webView
+        LaunchSignposts.event("Launch cover shown")
+        // Scrolling the page underneath means the picture no longer matches it.
+        webView.scrollView.panGestureRecognizer.addTarget(self, action: #selector(launchCoverPagePanned(_:)))
+        DispatchQueue.main.asyncAfter(deadline: .now()+Self.launchCoverLimit) { [weak self, weak cover] in
+            if let self, let cover, launchCover === cover { hideLaunchCover() }
+        }
+    }
+
+    /// A page that has finished loading a document of its own, rather than one still on its way.
+    private func hasLoadedPage(_ page: WKWebView) -> Bool {
+        page.url != nil && !page.isLoading && page.url?.scheme != MobileTabHistory.scheme
+    }
+
+    @objc private func launchCoverPagePanned(_ pan: UIPanGestureRecognizer) {
+        if pan.state == .began { hideLaunchCover(duration: 0.12) }
+    }
+
+    /// Fades the cover out to show the page underneath.
+    private func hideLaunchCover(duration: TimeInterval = 0.25) {
+        guard let cover = launchCover else { return }
+        launchCover = nil; launchCoverInfo = nil
+        LaunchSignposts.event("Launch cover hidden")
+        launchCoverPage?.scrollView.panGestureRecognizer.removeTarget(self, action: #selector(launchCoverPagePanned(_:)))
+        guard duration > 0 else { cover.removeFromSuperview(); return }
+        UIView.animate(withDuration: duration, delay: 0, options: [.beginFromCurrentState, .allowUserInteraction]) {
+            cover.alpha = 0
+        } completion: { _ in cover.removeFromSuperview() }
+    }
+
+    /// The covered page loaded: it shows itself once WebKit has had a moment to restore its scroll.
+    private func launchCoverPageFinished(_ page: WKWebView) {
+        guard page === launchCoverPage, launchCover != nil else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now()+Self.launchCoverSettle) { [weak self] in self?.hideLaunchCover() }
+    }
+
+    /// Anything other than the covered page's own load, such as an error or a different site, shows at once.
+    func launchCoverPageFailed(_ page: WKWebView, error: Error) {
+        guard page === launchCoverPage, (error as NSError).code != NSURLErrorCancelled else { return }
+        hideLaunchCover(duration: 0.15)
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        LaunchSignposts.event("Browser appeared")
+        startPendingPanelMotion()
         updateAIAvailability()
         if allowsPeek { setUpDownloads() }
         applyPendingChanges()
         tabPreviews?.setActive(true)
         refreshTabPreviews()
-        // Only a freshly created scene opts in. Consume it once, so returning to the app or
-        // dismissing a presented controller preserves whatever the person was doing.
-        guard opensSearchOnFirstAppearance else { warmKeyboard(); return }
-        opensSearchOnFirstAppearance = false
-        openPanel()
+        if openedSearchOnAppearance { openedSearchOnAppearance = false } else { warmKeyboard() }
     }
 
     /// A second after the browser first shows, with nothing else going on, the keyboard is
@@ -657,8 +764,18 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         CGRect(x: 0, y: stripHeight, width: view.bounds.width, height: view.bounds.height-stripHeight)
     }
 
+    /// What the last full layout was for.
+    private var laidOutFor: (bounds: CGRect, safeArea: UIEdgeInsets, keyboard: CGFloat)?
+
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        // Summarise moves the bar and its underfill every frame, both directly in this view, and
+        // Core Animation lays a layer out again whenever a sublayer's geometry changes: this ran
+        // every frame, laying out the tab switcher, the pages and the bar again, about 60 ms over
+        // a summary's first 0.75 s (8 November). While it's up, only a real change lays out.
+        let now = (bounds: view.bounds, safeArea: view.safeAreaInsets, keyboard: keyboardHeight)
+        if summarise != nil, let laidOutFor, laidOutFor == now { return }
+        laidOutFor = now
         // Frames ignore transforms, so lay out the content, which recedes, by bounds and center.
         content.bounds = view.bounds
         content.center = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
@@ -998,6 +1115,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         dimming.isUserInteractionEnabled = false
         dimming.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(closePanelOnTap)))
         view.addSubview(dimming)
+        findPageTap.isEnabled = false
+        content.addGestureRecognizer(findPageTap)
         bottomBarUnderfill.backgroundColor = bottomBar.backgroundColor
         bottomBarUnderfill.isUserInteractionEnabled = false
         view.addSubview(bottomBarUnderfill)
@@ -1257,11 +1376,11 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let bounds = view.bounds, safeBottom = view.window?.safeAreaInsets.bottom ?? 0
         var height = BottomBar.height(collapsed: bottomBar.isCollapsed, safeBottom: safeBottom)
         if panelExpansion != 0 { height += panelTravel*panelExpansion }
-        // Summarise slides the bar off by its transform, which frames don't account for.
-        let offset = bottomBar.transform
-        bottomBar.transform = .identity
+        // Summarise slides the bar off by its layer's transform, which frames don't account for.
+        let offset = bottomBar.layer.transform
+        bottomBar.layer.transform = CATransform3DIdentity
         bottomBar.frame = CGRect(x: 0, y: bounds.maxY-height, width: bounds.width, height: height)
-        bottomBar.transform = offset
+        bottomBar.layer.transform = offset
         layoutBottomBarUnderfill()
         bottomBar.search.visibleHeight = min(SearchPanel.height, max(SearchPanel.fieldHeight,
             fullSearchHeight-keyboardHeight-BottomBar.searchTop))
@@ -1364,8 +1483,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         panelExpansion = expansion
         bottomBar.panelExpansion = expansion
         dimming.alpha = min(1, max(0, expansion))
-        // Find's page stays clear, though a tap on it still closes the panel.
-        dimming.backgroundColor = UIColor.black.withAlphaComponent(bottomBar.panel == .find ? 0 : 0.2)
+        // Find's page stays clear and can be scrolled to look through its matches; a tap on it
+        // still closes the panel, recognised on the page rather than the dimming over it.
+        let finding = bottomBar.panel == .find
+        dimming.backgroundColor = UIColor.black.withAlphaComponent(finding ? 0 : 0.2)
+        dimming.passesTouches = finding
+        findPageTap.isEnabled = finding && isPanelOpen
         layoutBottomBar()
         bottomBar.layoutIfNeeded()
         if recedingPage { PageRecede.apply(expansion*panelRecede, to: content) }
@@ -1374,7 +1497,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// New Page grows the bar into a panel, as quickly and springily as a Peek opens, with an empty
     /// search field focused so the keyboard comes up alongside it. More grows it a little, into the
     /// page's address and a few actions. The bar's buttons swap for the panel's contents as it grows.
-    func openPanel(_ requested: BottomBar.Panel = .search, privateBrowsing: Bool? = nil) {
+    /// `motionLater` focuses search straight away but leaves the panel's opening for
+    /// `startPendingPanelMotion`: launch asks for the keyboard before the first frame, and the
+    /// panel then rises once the browser is on screen, rather than unseen under the launch zoom.
+    func openPanel(_ requested: BottomBar.Panel = .search, privateBrowsing: Bool? = nil, motionLater: Bool = false) {
         guard allowsPeek, !isPanelOpen, presentedViewController == nil else { return }
         let panel: BottomBar.Panel = requested == .menu && isTabSwitcherOpen ? .tabMenu : requested
         isPanelOpen = true
@@ -1389,13 +1515,27 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         else { updateAddress() }
         dimming.isUserInteractionEnabled = true
         bottomBar.accessibilityViewIsModal = true
-        bottomBar.showContents(of: panel)
-        settlePanelOpen()
+        if motionLater { pendingPanelMotion = true; bottomBar.search.isUserInteractionEnabled = true }
+        else { bottomBar.showContents(of: panel); settlePanelOpen() }
         if panel == .search {
             // The keyboard holds up the main thread for a while: the panel's spring goes to the
             // render server first, so it opens smoothly through that, and anything else in flight
             // on Core Animation, such as the tab switcher's page, carries on too.
             CATransaction.flush()
+            LaunchSignposts.interval("Focus search") { bottomBar.search.focus() }
+        }
+    }
+    private var pendingPanelMotion = false
+    /// The opening `openPanel(motionLater:)` left: the bar's contents swap and it springs up.
+    private func startPendingPanelMotion() {
+        guard pendingPanelMotion else { return }
+        pendingPanelMotion = false
+        guard isPanelOpen else { return }
+        bottomBar.showContents(of: bottomBar.panel)
+        settlePanelOpen()
+        // Focus asked for before the first frame can occasionally not take: ask again on screen.
+        if bottomBar.panel == .search, !bottomBar.search.field.isFirstResponder {
+            LaunchSignposts.event("Focus retried")
             bottomBar.search.focus()
         }
     }
@@ -1426,10 +1566,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// Shrinks the panel back into the bar, carrying on at `velocity`, in points per second downwards.
     func closePanel(velocity: CGFloat = 0) {
         guard isPanelOpen else { return }
+        pendingPanelMotion = false
         bottomBar.aiOptions.endEditing(true)
         bottomBar.aiPrompt.endEditing(true)
         historyReturnPanel = nil
         isPanelOpen = false
+        findPageTap.isEnabled = false
         dimming.isUserInteractionEnabled = false
         bottomBar.accessibilityViewIsModal = false
         guard !UIAccessibility.isReduceMotionEnabled else {
@@ -1921,20 +2063,39 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// Summarise in More: the panel goes at once and the whole page shrinks into the card.
     func summariseFromMenu() {
         guard isPanelOpen, bottomBar.panel == .menu, canSummarise else { return }
+        // Before the panel goes, which moves the page and would have its top edge sampled.
+        tint.paused = true
         isPanelOpen = false
         bottomBar.search.end()
         bottomBar.find.end()
         dimming.isUserInteractionEnabled = false
         bottomBar.accessibilityViewIsModal = false
-        setPanel(0)
-        bottomBar.showContents(of: nil, animated: false)
+        // The page is back at once, as Summarise starts from a picture of it. The menu shrinks
+        // back into the bar on a normal close's spring as the bar slides away under Summarise,
+        // rather than snapping shut (asked for on 9 November).
+        PageRecede.apply(0, to: content)
+        PageRecede.settle(content)
+        if UIAccessibility.isReduceMotionEnabled {
+            setPanel(0, recedingPage: false)
+            bottomBar.showContents(of: nil, animated: false)
+        } else {
+            let close = PeekPresentationController.closeSpring
+            UIView.animate(springDuration: close.duration, bounce: close.bounce, initialSpringVelocity: 0, delay: 0,
+                           options: [.beginFromCurrentState]) {
+                self.setPanel(0, recedingPage: false)
+            }
+            bottomBar.showContents(of: nil)
+        }
         startSummarise(.menu)
         setNeedsStatusBarAppearanceUpdate()
     }
 
     /// Lays Summarise over the page, under the bar, from a picture of the page as it is.
     func startSummarise(_ path: SummariseView.Path, at point: CGPoint = .zero) {
-        guard canSummarise else { return }
+        guard canSummarise else { tint.paused = false; return }
+        // The page's top edge isn't sampled while Summarise covers it (`PageEdgeTint.paused`).
+        tint.paused = true
+        hideLaunchCover(duration: 0)
         let page = webView
         let title = [page.title, page.url?.host()].compactMap { $0 }.first { !$0.isEmpty } ?? ""
         let size = view.bounds.size
@@ -1951,10 +2112,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let tab = currentTab, url = page.url, item = page.backForwardList.currentItem
         let keeps = !isPrivateBrowsing
         let loaded = tab.fingerprint(of: page)
-        summarise.makeSummary = { [weak tab, weak summarise] in
+        summarise.makeSummary = { [weak tab, weak summarise] fresh in
             let snapshot = try await PageAssistant.snapshot(of: page)
             let key = SummaryCache.key(of: snapshot)
-            if keeps, let kept = SummaryCache.summary(for: key) {
+            if keeps, !fresh, let kept = SummaryCache.summary(for: key) {
                 summarise?.log?.event("summary cache", "on disk, by the text as it is now")
                 tab?.fingerprint(key, of: page, url: url, item: item)
                 return kept
@@ -1982,13 +2143,23 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
                 }
             }
         }
+        // Kept with the questions asked under it, in memory and on disk under the page's
+        // fingerprints, so summarising the page again brings the conversation back.
         summarise.onSummary = { [weak tab, weak page] summary in
             guard let page else { return }
             tab?.remember(summary, of: page, url: url, item: item)
+            guard keeps else { return }
+            for key in Set([tab?.fingerprint(of: page), loaded].compactMap { $0 }) { SummaryCache.store(summary, for: key) }
+        }
+        summarise.onForget = { [weak tab, weak page] in
+            guard let page else { return }
+            tab?.forgetSummary(of: page)
+            for key in Set([tab?.fingerprint(of: page), loaded].compactMap { $0 }) { SummaryCache.remove(key) }
         }
         summarise.voice = voice
-        summarise.answerFollowUp = { question, summary, history in
-            try await PageSummary.answer(question, after: summary, history: history, of: PageAssistant.snapshot(of: page), provider: MobileAISettings.shared.modelChoice)
+        summarise.answerFollowUp = { question, summary, history, streamed in
+            try await PageSummary.answer(question, after: summary, history: history, of: PageAssistant.snapshot(of: page),
+                                         provider: MobileAISettings.shared.modelChoice, streamed: streamed)
         }
         let log = SummariseLog(path: path == .pinch ? "pinch" : "menu", page: isPrivateBrowsing ? "Private" : page.url?.host() ?? "no page", enabled: !isPrivateBrowsing)
         summarise.log = log
@@ -2006,7 +2177,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let scroll = page.scrollView, zoom = scroll.zoomScale, offset = scroll.contentOffset
         summarise.onBar = { [weak self] offset in
             guard let self else { return }
-            bottomBar.transform = offset == 0 ? .identity : CGAffineTransform(translationX: 0, y: offset*(bottomBar.bounds.height+4))
+            // The layer's transform, not the view's: a view's tells everything in the bar its
+            // safe area may have changed, laying out the search panel, its rows and the settings
+            // panels again, about 50 ms in Summarise's first frames (8 November).
+            bottomBar.layer.transform = offset == 0 ? CATransform3DIdentity : CATransform3DMakeTranslation(0, offset*(bottomBar.bounds.height+4), 0)
             layoutBottomBarUnderfill()
         }
         summarise.onStatusBar = { [weak self] in self?.setNeedsStatusBarAppearanceUpdate() }
@@ -2024,7 +2198,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             view.insertSubview(summaryHost.view, belowSubview: content)
             summarise.removeFromSuperview()
             self.summarise = nil
-            bottomBar.transform = .identity
+            tint.paused = false
+            // Laid out in full again, as it was held back while Summarise was up.
+            view.setNeedsLayout()
+            bottomBar.layer.transform = CATransform3DIdentity
             layoutBottomBarUnderfill()
             bottomBar.isUserInteractionEnabled = true
             setNeedsStatusBarAppearanceUpdate()
@@ -2144,6 +2321,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
 
     private func prepareTabSwitcher() {
+        hideLaunchCover(duration: 0)
         bottomBar.cancelTranslationHint()
         bottomBar.cancelTranslationStatus()
         if tabSwitcher.isHidden {
@@ -2219,6 +2397,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     /// Puts a tab's page in place, under the switcher.
     private func switchTab(to index: Int) {
+        hideLaunchCover(duration: 0)
         drawPendingCard()
         let previous = webView
         tabIndex = index
@@ -2555,12 +2734,30 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             pullToReload.onGapHeld = { [weak self] held in self?.tint.gapHeld = held }
             pageChanged()
             VoiceInput.prepare()
-            DispatchQueue.main.async { SummariseView.prepareGlows() }
+            // Drawing them takes about 35 ms on the main thread: after launch's keyboard rather
+            // than while it comes up, and still well before anyone can ask for a summary.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { SummariseView.prepareGlows() }
         }
         currentTab.loadIfNeeded()
         updateAppSettings()
-        tabSync?.start(tabs: sharedTabsSnapshot, learnedSearches: addressSuggestions.learner.searches, browsingHistory: addressSuggestions.history)
+        startTabSyncAfterLaunch()
         startTabArchiving()
+    }
+
+    /// iCloud sync starts once search can be typed into, the keyboard up: its first fetch brings
+    /// merges and saves that would otherwise hold the keyboard back. A launch that doesn't bring
+    /// up the keyboard starts it two seconds after the browser loads.
+    private func startTabSyncAfterLaunch() {
+        guard tabSync != nil else { return }
+        tabSyncLaunchObserver = NotificationCenter.default.addObserver(forName: UIResponder.keyboardDidShowNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.startTabSync() }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now()+2) { [weak self] in self?.startTabSync() }
+    }
+    private func startTabSync() {
+        tabSyncLaunchObserver.map(NotificationCenter.default.removeObserver); tabSyncLaunchObserver = nil
+        guard let tabSync, !tabSync.isStarted else { return }
+        tabSync.start(tabs: sharedTabsSnapshot, learnedSearches: addressSuggestions.learner.searches, browsingHistory: addressSuggestions.history)
     }
 
     @objc private func holdNewPage(_ hold: UILongPressGestureRecognizer) {
@@ -2648,6 +2845,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         if let navigation { tabs.first { $0.webView === webView }?.didCommit(navigation) }
         addressSuggestions.committed(webView)
         if webView === self.webView { updateNavigationStatus(); updateAddress() }
+        if webView === launchCoverPage, let info = launchCoverInfo, webView.url?.host != info.url.host { hideLaunchCover(duration: 0.15) }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -2663,6 +2861,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         addressSuggestions.changed(webView)
         tabs.first { $0.webView === webView }?.loadFavicon(afterNavigation: true)
         fingerprintPage(webView)
+        launchCoverPageFinished(webView)
         guard webView === self.webView else { return }
         updateTabsPreview()
         // Images and late layout land after the load finishes.
@@ -2828,5 +3027,15 @@ extension BrowserViewController {
         switchTab(to: 0)
         updateTabsCount()
         tabSync?.recordUse(of: tab.id)
+    }
+}
+
+/// The dimming over the page behind a panel, which takes a tap to close it. Behind Find it lets
+/// touches through to the page instead.
+final class PanelDimming: UIView {
+    var passesTouches = false
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        let hit = super.hitTest(point, with: event)
+        return passesTouches && hit === self ? nil : hit
     }
 }

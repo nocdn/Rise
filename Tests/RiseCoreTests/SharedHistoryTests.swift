@@ -13,6 +13,11 @@ final class SharedHistoryTests: XCTestCase {
         let left = a.snapshot, right = b.snapshot
         a.merge(right); b.merge(left)
     }
+    func testRecordIDsKeepTheirSyncedFormat() {
+        // Both devices and every saved zone name records by this ID: its text must never change.
+        XCTAssertEqual(SharedHistoryRecord.id(for: "https://example.com/"),
+                       "history-0f115db062b7c0dd030b16878c99dea5c354b49dc37b38eb8846179c7783e9d7")
+    }
     func testConcurrentVisitsSumOnceAndBothDevicesPreferTheSameAccountPage() {
         let a = history(), b = history()
         for _ in 0..<8 { a.record(account, title: "Account") }

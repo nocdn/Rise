@@ -89,7 +89,16 @@ enum SummariseMotion {
     static let blurTau = 0.15
     static let fadeTau = 0.12
     /// The summary's first paragraph below the card; 26 in the playground.
-    static let textGap = 38.0
+    /// The "Summary" heading and its menu sit `headingGap` under the card, `headingHeight` tall,
+    /// with the first paragraph `headingSpacing` under them: 54 pt from the card in all (the
+    /// paragraph was `textGap` 38 pt under it until the heading came on 8 November 2026).
+    static let headingGap = 10.0
+    static let headingHeight = 30.0
+    static let headingSpacing = 14.0
+    /// Re-generate: the summary and its questions fade over `clearFade`, and are gone at `clearHold`,
+    /// as the scroll goes back to the top.
+    static let clearFade = 0.2
+    static let clearHold = 0.4
 
     // The backdrop's glows, circling each other until the reveal.
     static let orbitPeriod = 4.0
@@ -215,9 +224,17 @@ private func lerp(_ a: Double, _ b: Double, _ t: Double) -> Double { a+(b-a)*t }
 private func easeOut(_ x: Double, _ k: Double) -> Double { let x = clamp(x); return (1-k)*x+k*(1-(1-x)*(1-x)) }
 private let degrees = Double.pi/180
 
-/// A page's summary: two short paragraphs of plain text.
+/// A question asked under a summary, and its answer's paragraphs.
+struct SummaryTurn: Codable, Equatable {
+    let question: String
+    let answer: [String]
+}
+
+/// A page's summary: two short paragraphs of plain text, and the questions asked under it since,
+/// kept with it so summarising the page again brings the conversation back.
 struct PageSummary: Equatable {
     let paragraphs: [String]
+    var conversation: [SummaryTurn] = []
 
     static let systemPrompt = """
     You summarise web pages in Rise, a web browser, for someone deciding whether to read the page. The page's text is below.
@@ -254,9 +271,11 @@ struct PageSummary: Equatable {
         return try decode(try await reply(to: messages, provider: provider, session: session))
     }
 
-    /// Answers a question asked under the summary, after the ones before it, all at once.
+    /// Answers a question asked under the summary, after the ones before it, handing over the
+    /// answer's text so far as it streams in (`streamed`, cleaned as `paragraphs` cleans it).
     @MainActor static func answer(_ question: String, after summary: PageSummary, history: [PageAssistant.Turn],
-                                  of page: PageAssistant.Page, provider: ModelChoice = .openRouter, session: URLSession = .shared) async throws -> [String] {
+                                  of page: PageAssistant.Page, provider: ModelChoice = .openRouter, session: URLSession = .shared,
+                                  streamed: @MainActor (String) -> Void = { _ in }) async throws -> [String] {
         var messages: [[String: Any]] = [
             ["role": "system", "content": followUpPrompt+"\n\n"+context(of: page)],
             ["role": "user", "content": "Summarise this page."],
@@ -267,9 +286,24 @@ struct PageSummary: Equatable {
             messages.append(["role": "assistant", "content": turn.answer])
         }
         messages.append(["role": "user", "content": question])
-        let paragraphs = paragraphs(in: try await reply(to: messages, provider: provider, session: session))
+        var reply = ""
+        try await ModelService.run(messages, provider: provider, session: session) { event in
+            guard case .text(let text) = event else { return }
+            reply += text
+            streamed(streamText(reply))
+        }
+        try Task.checkCancellation()
+        let paragraphs = paragraphs(in: reply)
         guard !paragraphs.isEmpty else { throw Failure.unreadable }
         return paragraphs
+    }
+
+    /// A reply so far as it shows while it streams: its paragraphs one to a line, as `paragraphs`
+    /// will give them, keeping a space after the last word so it counts as whole.
+    static func streamText(_ reply: String) -> String {
+        let text = paragraphs(in: reply).joined(separator: "\n")
+        guard let last = reply.last, last.isWhitespace, !text.isEmpty else { return text }
+        return text+" "
     }
 
     @MainActor private static func reply(to messages: [[String: Any]], provider: ModelChoice, session: URLSession) async throws -> String {
@@ -327,14 +361,19 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         }
     }
 
-    /// Fetches the page's summary, from when it's committed to.
-    var makeSummary: (@MainActor () async throws -> PageSummary)?
+    /// Fetches the page's summary, from when it's committed to; `fresh` asks the model again
+    /// rather than taking one kept on disk, for Re-generate.
+    var makeSummary: (@MainActor (_ fresh: Bool) async throws -> PageSummary)?
     /// The page's summary from before, if it hasn't changed since: shown at once, without asking.
     var memorised: PageSummary?
-    /// A summary that came back, to remember for the page.
+    /// A summary that came back, or its conversation changed, to remember for the page.
     var onSummary: ((PageSummary) -> Void)?
-    /// Answers a question asked under the summary, after the ones before it.
-    var answerFollowUp: (@MainActor (_ question: String, _ summary: PageSummary, _ history: [PageAssistant.Turn]) async throws -> [String])?
+    /// Re-generate: whatever was kept for the page is out of date.
+    var onForget: (() -> Void)?
+    /// Answers a question asked under the summary, after the ones before it, handing over its
+    /// text as it streams in.
+    var answerFollowUp: (@MainActor (_ question: String, _ summary: PageSummary, _ history: [PageAssistant.Turn],
+                                     _ streamed: @escaping @MainActor (String) -> Void) async throws -> [String])?
     /// New Page's voice input: holding the field's microphone dictates into it the same way.
     var voice: VoiceInput?
     /// Focused, the field has a plus on its left (it does nothing yet) and a microphone on its
@@ -409,9 +448,6 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     private var haptics: CHHapticEngine?
     private var hum: CHHapticAdvancedPatternPlayer?
     private var hapticsReady = false, wantsHum = false, preparingHaptics = false
-    /// Core Haptics supports worker queues. Playback stays on MainActor; a worker only owns
-    /// preparation or shutdown, and never operates on an engine still being used by the scene.
-    private struct HapticEngineTransfer: @unchecked Sendable { let engine: CHHapticEngine }
 
     // The backdrop, which stays put as everything else scrolls over it.
     private let backdrop = UIView()
@@ -436,6 +472,16 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     /// Asking the model about a question sent from the field, and when its answer was revealed.
     private var followUpTask: Task<Void, Never>?
     private var followUpReveals: [(followUp: SummaryFollowUp, t0: Double)] = []
+    /// The heading's menu: Re-generate and Clear conversation. Over the heading's place in the
+    /// summary, in its hosting view, so it scrolls, fades and sinks back with it.
+    private let summaryMenu = PanelListMenu.button(label: "Summary options")
+    /// Re-generate: when the summary started to fade, and the glows' strength then, coming back up.
+    private var clearT: Double?
+    private var glowsFrom: (t0: Double, cool: Double, warm: Double)?
+    /// Re-generate starts the swing again from rest: when, so it grows in, and when the card
+    /// first settled, for the card behind it, which stays.
+    private var swingRampT: Double?
+    private var backT0: Double?
     /// Holds the field at the bottom of the screen, on the keyboard's layout guide, so it rides
     /// on the keyboard as it opens, closes or is dragged away.
     private let dock = UIView()
@@ -609,6 +655,18 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         cardElement.accessibilityHint = "Returns to the page."
         cardElement.accessibilityTraits = .button
         scroll.accessibilityElements = [cardElement, summaryHost.view!]
+        summaryMenu.tintColor = SummaryBlocks.uiInk(0.55)
+        summaryMenu.alpha = 0
+        summaryMenu.menu = UIMenu(children: [UIDeferredMenuElement.uncached { [weak self] completion in
+            MainActor.assumeIsolated {
+                guard let self else { completion([]); return }
+                completion([
+                    UIAction(title: "Re-generate", image: UIImage(systemName: "arrow.clockwise")) { [weak self] _ in self?.regenerate() },
+                    UIAction(title: "Clear conversation", image: UIImage(systemName: "eraser"),
+                             attributes: reveal.followUps.isEmpty ? .disabled : []) { [weak self] _ in self?.clearConversation() },
+                ])
+            }
+        }])
 
         let link = CADisplayLink(target: ticker, selector: #selector(FrameTicker.tick))
         link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
@@ -625,6 +683,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         // same window, avoiding a detach/reattach and SwiftUI environment rebuild at each end.
         content.addSubview(summaryHost.view)
         content.layer.addSublayer(group)
+        summaryHost.view.addSubview(summaryMenu)
     }
 
     private static func color(_ hex: Int, alpha: CGFloat = 1) -> CGColor {
@@ -636,7 +695,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     private var height: Double { Double(size.height) }
     private var cardHeight: Double { width*M.cardAspect }
     /// The summary's top in the content, under the revealed card.
-    private var summaryTop: Double { M.revealTop+cardHeight*M.revealScale*cos(M.restTilt*degrees)+M.textGap }
+    private var summaryTop: Double { M.revealTop+cardHeight*M.revealScale*cos(M.restTilt*degrees)+M.headingGap }
     /// How far the summary has sunk back as the card grows back over it.
     private func closeRecede(_ t: Double) -> Double { 1-M.closeRecede*clamp(M.close(t-(closeT ?? t)), 0, 1.2) }
 
@@ -782,11 +841,11 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         render(t)
     }
 
-    private func startSummary() {
+    private func startSummary(fresh: Bool = false) {
         guard task == nil else { return }
         // Caught on its way back, or summarised before with the page unchanged, it has the summary
-        // already; a failed one is asked for again.
-        if let known = summaryFailed ? memorised : reveal.summary ?? memorised { recall(known); return }
+        // already, with the questions asked under it; a failed one is asked for again.
+        if !fresh, let known = summaryFailed ? memorised : currentSummary() ?? memorised { recall(known); return }
         guard let makeSummary else { return }
         startHum()
         let asked = log?.now
@@ -794,7 +853,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
             let summary: PageSummary, failed: Bool
             do {
                 try await Task.sleep(for: .seconds(M.requestDelay))
-                summary = try await makeSummary(); failed = false
+                summary = try await makeSummary(fresh); failed = false
             } catch {
                 if Task.isCancelled { return }
                 summary = .failure(error); failed = true
@@ -809,7 +868,9 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
 
     private func summaryArrived(_ summary: PageSummary) {
         guard mode != .closing, mode != .done else { return }
+        finishClearing()
         reveal.summary = summary
+        reveal.followUps = followUps(from: summary.conversation); followUpReveals = []
         measureSummary()
         summaryHost.view.isHidden = false
         readyT = tick()
@@ -820,9 +881,10 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     /// shows it, and the text comes forward as it fades in.
     private func recall(_ summary: PageSummary) {
         let t = tick(), started = CACurrentMediaTime()
-        if reveal.summary != summary || !reveal.followUps.isEmpty || summaryHeight == 0 {
+        let shown = currentSummary()
+        if shown != summary || reveal.followUps.count != summary.conversation.count || summaryHeight == 0 {
             reveal.summary = summary
-            reveal.followUps = []; followUpReveals = []
+            reveal.followUps = followUps(from: summary.conversation); followUpReveals = []
             measureSummary()
         }
         summaryFailed = false
@@ -830,6 +892,110 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         recallT = t
         log?.event("summary recalled", String(format: "%.0f pt tall, laid out in %.1f ms", summaryHeight,
                                               (CACurrentMediaTime()-started)*1000))
+    }
+
+    /// The summary as it shows, with the questions answered under it.
+    private func currentSummary(withStreamed: Bool = false) -> PageSummary? {
+        guard var summary = reveal.summary else { return nil }
+        summary.conversation = reveal.followUps.compactMap { asked in
+            (asked.answer ?? (withStreamed ? asked.finished : nil)).map { SummaryTurn(question: asked.question, answer: $0) }
+        }
+        return summary
+    }
+
+    /// Each question's text size in its bubble, by screen width, as drawing it to measure it takes
+    /// a few milliseconds a question, more the first time: a recalled conversation is laid out
+    /// before Summarise's first frame.
+    private static var bubbleTextSizes: [String: CGSize] = [:]
+    private func bubbleTextSize(_ question: String, measured: CGSize? = nil) -> CGSize {
+        let key = "\(Int(size.width))|\(question)"
+        if let measured { Self.bubbleTextSizes[key] = measured; return measured }
+        if let known = Self.bubbleTextSizes[key] { return known }
+        let scale = max(1, window?.screen.scale ?? traitCollection.displayScale)
+        let drawn = SendBubble.render(question, screen: size.width, scale: scale).size
+        Self.bubbleTextSizes[key] = drawn
+        return drawn
+    }
+
+    /// Questions asked before, answered, laid out as they were.
+    private func followUps(from conversation: [SummaryTurn]) -> [SummaryFollowUp] {
+        conversation.map { turn in
+            let asked = SummaryFollowUp(question: turn.question, textSize: bubbleTextSize(turn.question))
+            asked.answer = turn.answer
+            asked.elapsed = .infinity
+            return asked
+        }
+    }
+
+    // MARK: The heading's menu
+
+    /// Asks for the page's summary afresh, as the first time: the summary and its questions fade,
+    /// the card goes back to where it waits and swings, the glows circle and the hum plays, and
+    /// the new summary is revealed with the thud.
+    func regenerate() {
+        guard mode == .card, revealT != nil, task == nil, clearT == nil else { return }
+        let t = tick()
+        log?.event("regenerate")
+        endSend()
+        followUpTask?.cancel(); followUpTask = nil
+        stopDictating(keep: false)
+        followUp.resignFirstResponder()
+        followUp.isUserInteractionEnabled = false
+        memorised = nil; summaryFailed = false
+        onForget?()
+        glowsFrom = (t, Double(coolGlow.opacity), Double(warmGlow.opacity))
+        clearT = t
+        revealT = nil; pendingReveal = nil; recallT = nil; readyT = .infinity
+        tween(.scale, to: M.loadScale, .spring(M.menuShrink), t)
+        tween(.top, to: M.loadTop, .spring(M.menuShrink), t)
+        tween(.x, to: 0, .spring(M.menuShrink), t)
+        backT0 = backT0 ?? swingT0
+        swingT0 = t; swingRampT = t; swingDirection = Bool.random() ? 1 : -1
+        // The glows carry on from where they stopped.
+        let angle = orbitAngle(t)
+        orbitStop = nil; orbitT0 = t-(angle-Double.pi)/(2*Double.pi)*M.orbitPeriod
+        if scroll.contentOffset.y > 0 {
+            UIView.animate(withDuration: M.clearHold-0.05, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState]) {
+                self.scroll.contentOffset = .zero
+            }
+        }
+        startSummary(fresh: true)
+    }
+
+    /// The faded summary goes, for the new one.
+    private func finishClearing() {
+        guard clearT != nil else { return }
+        clearT = nil
+        reveal.summary = nil
+        reveal.followUps = []; followUpReveals = []
+        reveal.elapsed = -1
+        summaryHost.view.isHidden = true
+        summaryHeight = 0
+        followUpShown = nil
+        scroll.layer.removeAllAnimations()
+        scroll.contentOffset = .zero
+    }
+
+    /// Takes away the questions asked under the summary, leaving the summary itself.
+    func clearConversation() {
+        guard mode == .card, revealT != nil, clearT == nil, !reveal.followUps.isEmpty else { return }
+        log?.event("conversation cleared")
+        let t = tick()
+        endSend()
+        if followUpTask != nil { followUpTask?.cancel(); followUpTask = nil; stopHum() }
+        followUp.isUserInteractionEnabled = true
+        UIView.transition(with: summaryHost.view, duration: 0.25, options: [.transitionCrossDissolve, .allowUserInteraction]) {
+            self.reveal.followUps = []; self.followUpReveals = []
+            self.measureSummary()
+        }
+        render(t)
+        let end = maxScroll(inset: bottomInset)
+        if Double(scroll.contentOffset.y) > end {
+            UIView.animate(withDuration: 0.35, delay: 0, options: [.curveEaseInOut, .beginFromCurrentState]) {
+                self.scroll.contentOffset.y = CGFloat(end)
+            }
+        }
+        if let summary = currentSummary() { onSummary?(summary) }
     }
 
     /// Measured with what's changed in place, which the hosting controller only takes up on its next update.
@@ -895,6 +1061,8 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
             amount = 1-M.reveal(t-revealT)
         }
         if let closeT, t >= closeT { amount *= 1-M.close(t-closeT) }
+        // Re-generate starts it again from a resting card: it grows in rather than jumping.
+        if let swingRampT, revealT == nil { amount *= clamp(M.menuShrink(t-swingRampT), 0, 1) }
         let s = sin(phase)*swingDirection
         return (M.swingX*s*amount, M.swingTilt*s*amount, M.swingY*cos(2*phase)*amount)
     }
@@ -917,7 +1085,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         stopOrbit(t)
         stopHum()
         playRevealHaptic()
-        if !reveal.followUps.isEmpty { reveal.followUps = []; followUpReveals = []; measureSummary() }
+        glowsFrom = nil
         restFollowUp(t, after: reveal.blockCount)
     }
 
@@ -959,14 +1127,11 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         link?.invalidate(); link = nil
         task?.cancel()
         stopHum()
-        // Releasing the engine also tears down its audio session, including synchronous XPC.
-        // Keep it alive through the stop on a worker so that cannot hold up the live page.
-        if let engine = haptics {
-            let transfer = HapticEngineTransfer(engine: engine)
-            haptics = nil
-            Task.detached(priority: .utility) { try? await transfer.engine.stop() }
-        }
+        // The engine is the app's (`SummariseHaptics`), kept running for the next Summarise.
+        haptics = nil
         onBar?(0)
+        // The hosting view is the browser's, kept for the next summary.
+        summaryMenu.removeFromSuperview()
         let started = CACurrentMediaTime()
         onFinish?()
         log?.event("finish", String(format: "after %@, cleanup %.1f ms", ending, (CACurrentMediaTime()-started)*1000))
@@ -995,7 +1160,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
         if gestureRecognizer === micHold { return true }
         guard let view = touch.view else { return true }
-        return ![followUp, plusSlot, micSlot].contains { view.isDescendant(of: $0) }
+        return ![followUp, plusSlot, micSlot, summaryMenu].contains { view.isDescendant(of: $0) }
     }
 
     /// A finger landing on the field focuses it at once, without waiting for it to lift.
@@ -1258,7 +1423,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         }
         let scale = window?.screen.scale ?? traitCollection.displayScale
         let drawn = SendBubble.render(question, screen: size.width, scale: max(1, scale))
-        let asked = SummaryFollowUp(question: question, textSize: drawn.size)
+        let asked = SummaryFollowUp(question: question, textSize: bubbleTextSize(question, measured: drawn.size))
         // Where the typed text sits in the field, on screen, and where the bubble's text will, in the content.
         let shown = Double(scroll.layer.presentation()?.bounds.minY ?? scroll.contentOffset.y)
         let field = followUpTop+M.followUpHeight/2-Double(SummaryBlocks.font.lineHeight)/2
@@ -1267,8 +1432,11 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         let to = CGPoint(x: size.width-SendBubble.edgeInset-bubble.width+SendBubble.horizontalPadding,
                          y: asked.bubbleTop+Double(SendBubble.verticalPadding))
         asked.flying = !reducesMotion
-        // The field stays, empty, until the answer has come.
-        followUp.text = nil
+        // The field stays, empty, until the answer has come. Its text is hidden now and cleared
+        // once the keyboard has gone: cleared under the keyboard, the keyboard lays itself out
+        // again, holding up the main thread about 66 ms before the question could fly.
+        let ink = followUp.textColor
+        followUp.textColor = .clear
         followUp.isUserInteractionEnabled = false
         reveal.followUps.append(asked)
         measureSummary()
@@ -1291,21 +1459,28 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
                 ghost = SendGhost(mask: drawn.image, textSize: drawn.size, scale: max(1, scale))
                 // Over the field and the summary's fade, so it lifts off the field where it shows.
                 layer.addSublayer(ghost.layer)
-                ghost.fly(flight, startInk: followUp.textColor ?? .label, scroll: scroll.layer, onScreen: true)
+                ghost.fly(flight, startInk: ink ?? .label, scroll: scroll.layer, onScreen: true)
             }
             sending = (flight, t, asked, ghost)
             // On the render server before the keyboard's teardown holds up the main thread.
             CATransaction.flush()
         }
         followUp.resignFirstResponder()
+        followUp.text = nil
+        followUp.textColor = ink
         startHum()
         followUpTask = Task { [weak self] in
-            let answer: [String]
+            var answer: [String]
             do {
-                answer = try await answerFollowUp(question, summary, history)
+                answer = try await answerFollowUp(question, summary, history) { [weak self, weak asked] text in
+                    guard let self, let asked else { return }
+                    followUpStreamed(asked, text)
+                }
             } catch {
                 if Task.isCancelled { return }
-                answer = ["Rise couldn’t answer that. \(error.localizedDescription)"]
+                // What had come stays, with why the rest didn't.
+                answer = PageSummary.paragraphs(in: asked.stream.text)
+                answer.append("Rise couldn’t answer that. \(error.localizedDescription)")
             }
             guard !Task.isCancelled, let self else { return }
             followUpAnswered(asked, answer)
@@ -1332,23 +1507,66 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         if mode != .card { scroll.layer.removeAllAnimations() }
     }
 
-    /// The answer fades in and sharpens under its question's bubble as the summary did, with the
-    /// same thud, in the room left under it; the field comes back under it.
+    /// The answer streams in under its question's bubble a word at a time, as Find's Ask does:
+    /// each word fades in from a slight blur and shift, rose at first, settling into the text's
+    /// ink. Its first words end the hum in the reveal's thud.
+    private func followUpStreamed(_ asked: SummaryFollowUp, _ text: String) {
+        guard mode == .card, !text.isEmpty, reveal.followUps.contains(where: { $0 === asked }) else { return }
+        let t = tick()
+        if asked.streaming == nil {
+            log?.event("follow-up answering")
+            stopHum()
+            playRevealHaptic()
+            asked.stream.base = OKLab(SummaryBlocks.uiInk(0.85).resolvedColor(with: traitCollection))
+        }
+        let lines = asked.stream.text
+        asked.stream.receive(text)
+        asked.stream.place(in: asked.stream.text as NSString, at: t)
+        if reducesMotion { asked.stream.revealAll(at: t) }
+        asked.publish()
+        // Laid out in full as it arrives, words not shown yet painted clear, so lines don't rewrap.
+        if asked.stream.text != lines { measureSummary() }
+    }
+
+    /// All of it has come. Streamed, it plays out and settles into plain paragraphs; otherwise
+    /// it fades in and sharpens under its question's bubble as the summary did, with the same
+    /// thud, in the room left under it. The field comes back under it.
     private func followUpAnswered(_ asked: SummaryFollowUp, _ answer: [String]) {
         guard mode == .card, reveal.followUps.contains(where: { $0 === asked }) else { return }
         let t = tick()
         log?.event("follow-up answered")
         followUpTask = nil
-        asked.answer = answer
-        measureSummary()
-        followUpReveals.append((asked, t))
-        stopHum()
-        playRevealHaptic()
+        if asked.streaming != nil {
+            asked.stream.receive(answer.joined(separator: "\n"))
+            asked.stream.finish()
+            asked.stream.place(in: asked.stream.text as NSString, at: t)
+            if reducesMotion { asked.stream.revealAll(at: t) }
+            asked.finished = answer
+            asked.publish()
+            measureSummary()
+        } else {
+            asked.answer = answer
+            measureSummary()
+            followUpReveals.append((asked, t))
+            stopHum()
+            playRevealHaptic()
+        }
         followUp.isUserInteractionEnabled = true
+        if let summary = currentSummary(withStreamed: true) { onSummary?(summary) }
         render(t)
     }
 
     private func stepFollowUpReveals(_ t: Double) {
+        for asked in reveal.followUps where asked.streaming != nil {
+            _ = asked.stream.step(at: t)
+            if reducesMotion { asked.stream.revealAll(at: t) }
+            // Played out and settled: plain paragraphs from here, which look the same.
+            if let finished = asked.finished, !asked.stream.needsFrames {
+                asked.answer = finished; asked.elapsed = .infinity
+                asked.streaming = nil; asked.finished = nil
+                measureSummary()
+            } else { asked.publish() }
+        }
         followUpReveals.removeAll { asked, t0 in
             let elapsed = t-t0
             let settled = M.textDelay+M.stagger*Double(asked.answer?.count ?? 0)+6*max(M.blurTau, M.fadeTau)
@@ -1397,7 +1615,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     /// The field at the bottom of the screen. It fades in after what was just revealed, comes
     /// forward with a recalled summary, and sinks back with the summary on closing.
     private func renderFollowUp(_ t: Double, fadingOut: Double, forward: (scale: Double, alpha: Double)?) {
-        guard revealT != nil, let shown = followUpShown, mode == .card || mode == .closing else { dock.isHidden = true; return }
+        guard revealT != nil || clearT != nil, let shown = followUpShown, mode == .card || mode == .closing else { dock.isHidden = true; return }
         dock.isHidden = false
         layOutFollowUpRow()
         if let called = keyboardCalled, followUpTop < called.top-0.5 {
@@ -1467,28 +1685,16 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
 
     // MARK: Haptics
 
-    /// Makes and starts the haptic engine away from the main thread as the page is picked up,
-    /// since that takes a moment that would otherwise hold up the pinch's first frames.
+    /// Takes the app's haptic engine as the page is picked up, started then if it isn't running.
     private func prepareHaptics() {
         guard !preparingHaptics else { return }
         preparingHaptics = true
-        Task.detached { [weak self] in
-            guard CHHapticEngine.capabilitiesForHardware().supportsHaptics, let engine = try? CHHapticEngine() else { return }
-            engine.playsHapticsOnly = true
-            engine.isAutoShutdownEnabled = false
-            guard (try? await engine.start()) != nil else { return }
-            let transfer = HapticEngineTransfer(engine: engine)
-            let accepted = await MainActor.run {
-                guard let self, self.mode != .done else { return false }
-                self.log?.event("haptics ready")
-                self.haptics = transfer.engine
-                self.hapticsReady = true
-                self.playHum()
-                return true
-            }
-            // The scene may have ended while the engine was starting. Stop it here, rather
-            // than creating and releasing an audio session on the main actor's rejection path.
-            if !accepted { try? await transfer.engine.stop() }
+        SummariseHaptics.engine { [weak self] engine in
+            guard let self, mode != .done else { return }
+            log?.event("haptics ready")
+            haptics = engine
+            hapticsReady = true
+            playHum()
         }
     }
 
@@ -1564,6 +1770,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         if mode == .cancel, t-t0 > 7/(M.cancel.w*M.cancel.z) { finish(); return }
         if mode == .card {
             if let pendingReveal { if t >= pendingReveal { revealSummary(t) } } else { maybeReveal(t) }
+            if let clearT, t-clearT > M.clearHold { finishClearing() }
             stepSend(t)
             stepFollowUpReveals(t)
         }
@@ -1632,13 +1839,14 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
             shadowWide.shadowOpacity = Float(shadow); shadowNear.shadowOpacity = Float(shadow*0.8)
 
             // The card behind fades in once the card has settled.
-            let cardT = swingT0.map { t-$0 } ?? 0
+            let cardT = (backT0 ?? swingT0).map { t-$0 } ?? 0
             let fadingOut = closing ? clamp((t-(closeT ?? t))/M.contentsOut) : 0
             back.cornerRadius = radius
             back.opacity = Float(clamp((cardT-M.backDelay)/M.backDuration)*(1-fadingOut))
             let backShown = M.backPeek*s
             cardArea = CGRect(x: cx-w*s/2, y: cy-shown/2-backShown, width: w*s, height: shown+backShown)
-            renderSummary(t, fadingOut: fadingOut)
+            let clearing = clearT.map { clamp((t-$0)/M.clearFade) } ?? 0
+            renderSummary(t, fadingOut: max(fadingOut, clearing))
         }
         cardElement.accessibilityFrameInContainerSpace = scroll.convert(cardArea.isNull ? .zero : cardArea, from: content)
         onBar?(currentBar(t))
@@ -1681,9 +1889,15 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         view.alpha = (1-fadingOut)*(forward?.alpha ?? 1)
         let elapsed = revealed ? t-(revealT ?? t) : -1
         // Past the last block's settling, it stays as it is; a recalled summary is settled already.
+        // Fading for Re-generate, it stays as it was.
         let settled = M.textDelay+M.stagger*Double(reveal.blockCount)+6*max(M.blurTau, M.fadeTau)
         let shown = recallT != nil || elapsed > settled ? Double.infinity : elapsed
-        if reveal.elapsed != shown { reveal.elapsed = shown; reveal.reducesMotion = reducesMotion }
+        if clearT == nil, reveal.elapsed != shown { reveal.elapsed = shown; reveal.reducesMotion = reducesMotion }
+        // The menu comes in with the heading, as its first block does, without the blur.
+        let heading = reveal.elapsed-M.textDelay
+        summaryMenu.frame = reveal.menuFrame
+        summaryMenu.alpha = heading <= 0 ? 0 : reducesMotion ? 1 : 1-exp(-heading/M.fadeTau)
+        summaryMenu.isUserInteractionEnabled = revealed && mode == .card && clearT == nil && summaryMenu.alpha > 0.5
         scroll.isScrollEnabled = revealed && mode == .card
         // Clear of the field from the first summary on, not only once the keyboard has moved.
         let inset = bottomInset
@@ -1706,7 +1920,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     private func maxScroll(inset: Double) -> Double { max(0, contentEnd(inset: inset)+inset-height) }
 
     private func layOutContent(inset: Double) {
-        let scrolls = revealT != nil && mode == .card
+        let scrolls = (revealT != nil || clearT != nil) && mode == .card
         let contentHeight = scrolls ? max(height-inset, contentEnd(inset: inset)) : height
         if content.bounds.height != contentHeight {
             content.frame = CGRect(x: 0, y: 0, width: size.width, height: contentHeight)
@@ -1723,6 +1937,10 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         if let revealT, mode == .card {
             coolAlpha = lerp(1, M.coolGlowRest, easeOut((t-revealT)/M.settle, 1))
             warmAlpha = 1-easeOut((t-revealT)/M.warmGlowFade, 0.6)
+        } else if let glowsFrom, mode == .card {
+            // Re-generate: back up to full strength from where they rested.
+            let k = easeOut((t-glowsFrom.t0)/M.settle, 1)
+            coolAlpha = lerp(glowsFrom.cool, 1, k); warmAlpha = lerp(glowsFrom.warm, 1, k)
         }
         coolGlow.opacity = Float(coolAlpha); warmGlow.opacity = Float(warmAlpha)
     }
@@ -1783,6 +2001,8 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     /// Questions asked under the summary, in turn.
     var followUps: [SummaryFollowUp] = []
     var blockCount: Int { summary?.paragraphs.count ?? 0 }
+    /// Where the heading leaves room for its menu, in the summary's own space, for the button over it.
+    @ObservationIgnored var menuFrame = CGRect.zero
 }
 
 /// A question asked under the summary, and its answer once it comes.
@@ -1791,6 +2011,21 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     /// Its text's size in the bubble, as its flying copy was drawn.
     let textSize: CGSize
     var answer: [String]?
+    /// The answer streaming in, played out a word at a time with Find's Ask's motion
+    /// (`TokenStream`), and what it shows this frame. Once it has all come (`finished`) and
+    /// settled, it becomes `answer`.
+    @ObservationIgnored var stream = TokenStream()
+    var streaming: StreamedWords?
+    @ObservationIgnored var finished: [String]?
+    /// Still waiting for the answer's first words, shimmering.
+    var isWaiting: Bool { answer == nil && streaming == nil }
+    /// Shows the stream as it is now, if that's changed.
+    func publish() {
+        let words = StreamedWords(text: stream.text, hiddenFrom: stream.hiddenFrom,
+                                  tints: stream.tints.map { StreamedWords.Tint(range: $0.range, color: $0.color) },
+                                  entrances: stream.entrances)
+        if streaming != words { streaming = words }
+    }
     /// Seconds since the answer's reveal; negative before it.
     var elapsed = -1.0
     /// Its copy is still flying to the bubble, which waits hidden in its place.
@@ -1824,9 +2059,15 @@ struct SummaryBlocks: View {
     /// Below the last paragraph's text.
     static var trailingSpace: Double { Double(endSpacing+paragraphSpacing) }
 
+    /// The heading's coordinate space: the summary's own, as its hosting view lays it out.
+    static let space = "summary"
+
     var body: some View {
         if let summary = reveal.summary {
             VStack(alignment: .leading, spacing: 0) {
+                SummaryHeading(reveal: reveal)
+                    .modifier(BlockReveal(reveal: reveal, followUp: nil, index: 0))
+                    .padding(.bottom, SummariseMotion.headingSpacing)
                 ForEach(Array(summary.paragraphs.enumerated()), id: \.offset) { index, paragraph in
                     SummaryParagraph(text: paragraph)
                         .modifier(BlockReveal(reveal: reveal, followUp: nil, index: index))
@@ -1840,7 +2081,34 @@ struct SummaryBlocks: View {
             .padding(.bottom, Self.endSpacing)
             .frame(maxWidth: .infinity, alignment: .leading)
             .blur(radius: reveal.recallBlur)
+            .coordinateSpace(.named(Self.space))
         }
+    }
+}
+
+/// "Summary" under the card, and beside it room for the menu, a button the summary lays over it.
+private struct SummaryHeading: View {
+    let reveal: SummaryReveal
+    static let menuSize: CGFloat = 30
+
+    var body: some View {
+        HStack(spacing: 2) {
+            Text("Summary")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(SummaryBlocks.ink.opacity(0.55))
+            Color.clear
+                .frame(width: Self.menuSize, height: Self.menuSize)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(SummaryBlocks.space)) } action: { reveal.menuFrame = $0 }
+                // The host is the browser's, kept from one Summarise to the next with a new
+                // reveal each time: a frame unchanged since the last one would never reach this
+                // one, leaving the menu with no size (reported 8 November). New for each reveal,
+                // it reports its frame as it appears.
+                .id(ObjectIdentifier(reveal))
+        }
+        .frame(height: SummariseMotion.headingHeight)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
     }
 }
 
@@ -1866,7 +2134,7 @@ private struct FollowUpBlocks: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 0) {
                 Spacer(minLength: 0)
-                QuestionText(question: followUp.question, asking: followUp.answer == nil, reducesMotion: reveal.reducesMotion)
+                QuestionText(question: followUp.question, asking: followUp.isWaiting, reducesMotion: reveal.reducesMotion)
                     // As its flying copy was drawn, so it lands on the same lines.
                     .frame(width: followUp.textSize.width, height: followUp.textSize.height, alignment: .topLeading)
                     .padding(.horizontal, SendBubble.horizontalPadding)
@@ -1884,12 +2152,18 @@ private struct FollowUpBlocks: View {
                         .modifier(BlockReveal(reveal: reveal, followUp: followUp, index: index))
                         .padding(.bottom, SummaryBlocks.paragraphSpacing)
                 }
+            } else if let words = followUp.streaming {
+                ForEach(Array(words.paragraphs.enumerated()), id: \.offset) { _, range in
+                    StreamedParagraph(words: words, range: range)
+                        .padding(.bottom, SummaryBlocks.paragraphSpacing)
+                }
             }
         }
     }
 }
 
-/// The bubble's blue, with a deeper band sweeping across its glyphs once a second while it's being answered.
+/// The bubble's text, with a band sweeping across its glyphs while it's being answered: a second's
+/// sweep, then half a second's rest.
 private struct QuestionText: View {
     let question: String
     let asking: Bool
@@ -1905,7 +2179,9 @@ private struct QuestionText: View {
             .overlay {
                 TimelineView(.animation(paused: !asking || reducesMotion)) { context in
                     GeometryReader { geometry in
-                        let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 1)
+                        // A second's sweep, then a rest off the glyphs, as Find's question does.
+                        let cycle = QuestionShimmer.sweep+QuestionShimmer.pause
+                        let phase = context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: cycle)/QuestionShimmer.sweep
                         LinearGradient(colors: [Self.shimmer.opacity(0), Self.shimmer, Self.shimmer.opacity(0)],
                                        startPoint: .leading, endPoint: .trailing)
                             .frame(width: Self.band)
@@ -1935,6 +2211,102 @@ private struct BlockReveal: ViewModifier {
         content
             .opacity(opacity)
             .blur(radius: blur > 0.05 ? blur : 0)
+    }
+}
+
+/// A streaming answer as it shows this frame: its text so far, one paragraph to a line, laid out in
+/// full; where the words not shown yet start; the newest words' colours; and those still coming in.
+struct StreamedWords: Equatable {
+    struct Tint: Equatable { let range: NSRange; let color: OKLab }
+    let text: String
+    let hiddenFrom: Int?
+    let tints: [Tint]
+    let entrances: [TokenStream.Entrance]
+
+    /// Each paragraph's range in `text`.
+    var paragraphs: [NSRange] {
+        let string = text as NSString
+        var ranges: [NSRange] = [], start = 0
+        while start < string.length {
+            let line = string.range(of: "\n", range: NSRange(location: start, length: string.length-start))
+            let end = line.location == NSNotFound ? string.length : line.location
+            if end > start { ranges.append(NSRange(location: start, length: end-start)) }
+            start = end+1
+        }
+        return ranges
+    }
+}
+
+/// A paragraph of a streaming answer, in the summary's type, its words as `StreamedWords` has
+/// them: not shown yet, clear; arriving, tinted and fading in from a blur and a little to the
+/// right (`TokenEntranceRenderer`), as Find's Ask draws them; otherwise in the summary's ink.
+private struct StreamedParagraph: View {
+    let words: StreamedWords
+    let range: NSRange
+
+    var body: some View {
+        styled
+            .font(Font(SummaryBlocks.font))
+            .lineSpacing(SummaryBlocks.lineSpacing)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .modifier(TokenEntranceRendering())
+    }
+
+    /// The paragraph cut into runs wherever a word's look changes.
+    private var styled: Text {
+        let string = words.text as NSString, end = NSMaxRange(range)
+        var cuts = Set([range.location, end])
+        if let hidden = words.hiddenFrom { cuts.insert(hidden) }
+        for tint in words.tints { cuts.insert(tint.range.location); cuts.insert(NSMaxRange(tint.range)) }
+        for entrance in words.entrances { cuts.insert(entrance.range.location); cuts.insert(NSMaxRange(entrance.range)) }
+        let points = cuts.filter { $0 >= range.location && $0 <= end }.sorted()
+        var result = Text(verbatim: "")
+        for (from, to) in zip(points, points.dropFirst()) where to > from {
+            var piece = Text(verbatim: string.substring(with: NSRange(location: from, length: to-from)))
+            if let hidden = words.hiddenFrom, from >= hidden {
+                piece = piece.foregroundStyle(Color.clear)
+            } else if let tint = words.tints.first(where: { NSLocationInRange(from, $0.range) }) {
+                piece = piece.foregroundStyle(Color(uiColor: tint.color.color))
+            } else {
+                piece = piece.foregroundStyle(SummaryBlocks.ink.opacity(0.85))
+            }
+            if #available(iOS 18.0, *), let entrance = words.entrances.first(where: { NSLocationInRange(from, $0.range) }) {
+                piece = piece.customAttribute(TokenEntranceAttribute(progress: entrance.progress))
+            }
+            result = Text("\(result)\(piece)")
+        }
+        return result
+    }
+}
+
+/// A word still coming in, and how far: from blurred and shifted right, to sharp and in place.
+@available(iOS 18.0, *)
+private struct TokenEntranceAttribute: TextAttribute {
+    let progress: Double
+}
+
+/// Draws arriving words blurred by up to `TokenMotion.blur`, easing away as they come in. Unlike
+/// Find's Ask (`AskTokenLayout`), they don't slide in from the right: they come in where they
+/// stay (asked for on 8 November).
+@available(iOS 18.0, *)
+private struct TokenEntranceRenderer: TextRenderer {
+    func draw(layout: Text.Layout, in context: inout GraphicsContext) {
+        for line in layout {
+            for run in line {
+                guard let entrance = run[TokenEntranceAttribute.self] else { context.draw(run); continue }
+                let remaining = 1-entrance.progress
+                var copy = context
+                if remaining > 0.02 { copy.addFilter(.blur(radius: TokenMotion.blur*remaining)) }
+                copy.draw(run)
+            }
+        }
+    }
+}
+
+private struct TokenEntranceRendering: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) { content.textRenderer(TokenEntranceRenderer()) } else { content }
     }
 }
 

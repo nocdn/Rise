@@ -96,7 +96,7 @@ import UIKit
         controller.startSummarise(.pinch, at: start)
         guard let summarise = controller.summarise, let window = controller.view.window else { return result }
         var arrival: CheckedContinuation<PageSummary, Error>?
-        summarise.makeSummary = { try await withCheckedThrowingContinuation { arrival = $0 } }
+        summarise.makeSummary = { _ in try await withCheckedThrowingContinuation { arrival = $0 } }
         summarise.manualTime = 0
         // As two fingers would, panning the page under the card.
         let pageOffset = controller.webView.scrollView.contentOffset
@@ -172,7 +172,7 @@ import UIKit
         controller.startSummarise(.pinch, at: start)
         guard let summarise = controller.summarise, let window = controller.view.window else { return result }
         var asked = false
-        summarise.makeSummary = { asked = true; return summary }
+        summarise.makeSummary = { _ in asked = true; return summary }
         summarise.manualTime = 0
         let pinchStart = 0.05, pinchEnd = pinchStart+pinch.duration
         var began = false, ended = false
@@ -252,7 +252,7 @@ import UIKit
             controller.startSummarise(.pinch, at: start)
             guard let summarise = controller.summarise else { return result }
             var asked = false
-            summarise.makeSummary = { asked = true; return summary }
+            summarise.makeSummary = { _ in asked = true; return summary }
             summarise.beginPinch(at: start)
             for step in 1...30 {
                 try? await Task.sleep(for: .milliseconds(10))
@@ -270,7 +270,7 @@ import UIKit
         controller.summariseFromMenu()
         guard let summarise = controller.summarise else { return result }
         var asked = false
-        summarise.makeSummary = { asked = true; return summary }
+        summarise.makeSummary = { _ in asked = true; return summary }
         try? await Task.sleep(for: .seconds(2.5))
         result.revealed = summarise.isRevealed
         result.finished = summarise.isRevealed && !asked
@@ -402,10 +402,18 @@ import UIKit
         controller.summariseFromMenu()
         guard let summarise = controller.summarise, let window = controller.view.window else { return result }
         if let folder { try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true) }
-        summarise.answerFollowUp = { _, _, _ in
+        summarise.answerFollowUp = { _, _, _, streamed in
+            let answer = ["zt parses each template at compile time with Zig's comptime, so a typo in a tag or a missing closing element is a build error rather than a broken page.",
+                          "Values are escaped for the context they land in, attribute or text, unless a template asks for raw output by name."]
             try await Task.sleep(for: .seconds(1.2))
-            return ["zt parses each template at compile time with Zig's comptime, so a typo in a tag or a missing closing element is a build error rather than a broken page.",
-                    "Values are escaped for the context they land in, attribute or text, unless a template asks for raw output by name."]
+            // Streamed as a model does, a few words at a time.
+            let words = answer.joined(separator: "\n").split(separator: " ", omittingEmptySubsequences: false)
+            var sent = ""
+            for (index, word) in words.enumerated() {
+                sent += (index == 0 ? "" : " ")+word
+                if index % 3 == 2 { streamed(PageSummary.streamText(sent+" ")); try await Task.sleep(for: .milliseconds(60)) }
+            }
+            return answer
         }
         try? await Task.sleep(for: .seconds(2.5))
         result.revealed = summarise.isRevealed
@@ -458,6 +466,21 @@ import UIKit
         print("send replay: keyboard-open offset \(open.offset) of max \(open.max)")
         controller.view.endEditing(true)
         try? await Task.sleep(for: .seconds(1))
+        // With "actions": the summary menu's Clear conversation, and then Re-generate, its summary
+        // a stand-in that comes 2 s after asking.
+        if ProcessInfo.processInfo.arguments.contains("actions") {
+            summarise.clearConversation()
+            try? await Task.sleep(for: .seconds(1))
+            if let folder { await save(window, to: folder.appendingPathComponent("cleared.png")) }
+            summarise.makeSummary = { _ in try await Task.sleep(for: .seconds(2)); return summary }
+            summarise.regenerate()
+            for step in 1...12 {
+                try? await Task.sleep(for: .milliseconds(250))
+                if let folder { await save(window, to: folder.appendingPathComponent(String(format: "r-%.2f.png", Double(step)*0.25))) }
+            }
+            try? await Task.sleep(for: .seconds(1))
+            if let folder { await save(window, to: folder.appendingPathComponent("regenerated.png")) }
+        }
         result.finished = true
         return result
     }
@@ -530,7 +553,7 @@ import UIKit
         if let folder { await save(window, to: folder.appendingPathComponent("m-open.png")) }
         controller.summariseFromMenu()
         guard let summarise = controller.summarise else { return result }
-        summarise.makeSummary = { try await withCheckedThrowingContinuation { _ in } }
+        summarise.makeSummary = { _ in try await withCheckedThrowingContinuation { _ in } }
         summarise.manualTime = 0
         for step in 0...120 {
             let t = Double(step)/120
@@ -883,7 +906,7 @@ import UIKit
         for round in 0..<3 {
             // Install the fixture before committing starts its request.
             controller.startSummarise(.pinch)
-            controller.summarise?.makeSummary = { longSummary }
+            controller.summarise?.makeSummary = { _ in longSummary }
             controller.summarise?.startFromMenu()
             controller.summarise?.log?.event("replay", "close \(round)")
             for _ in 0..<250 where controller.summarise?.isRevealed != true {
@@ -940,7 +963,7 @@ import UIKit
                 start = now
                 controller.startSummarise(.pinch, at: point)
                 startCost = CACurrentMediaTime()-now
-                controller.summarise?.makeSummary = { summary }
+                controller.summarise?.makeSummary = { _ in summary }
                 return
             }
             let t = now-start, summarise = controller.summarise

@@ -61,7 +61,29 @@ import Foundation
     private let cloudAvailable: Bool
     private let automaticallySync: Bool
     private let writer = DispatchQueue(label: "Rise.SharedTabs.Cache", qos: .utility)
-    private var cache: Cache
+    /// Decoded on another core while the browser is built, as it's several megabytes of JSON
+    /// that nothing at launch needs before search has its keyboard. The first use waits for it.
+    private var cache: Cache {
+        _read { loadCache(); yield loadedCache! }
+        _modify { loadCache(); yield &loadedCache! }
+    }
+    private var loadedCache: Cache?
+    private let cacheLoad: CacheLoad
+    private func loadCache() {
+        if loadedCache == nil { loadedCache = cacheLoad.wait() ?? Cache() }
+    }
+    private final class CacheLoad: @unchecked Sendable {
+        private let done = DispatchSemaphore(value: 0)
+        private var result: Cache?
+        init(_ url: URL) {
+            // The main thread may wait on this, so it runs at the main thread's priority.
+            DispatchQueue.global(qos: .userInteractive).async { [self] in
+                result = (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(Cache.self, from: $0) }
+                done.signal()
+            }
+        }
+        func wait() -> Cache? { done.wait(); return result }
+    }
     private var engine: CKSyncEngine?
     private var connection: Task<Void, Never>?
     private var generation = 0
@@ -75,7 +97,7 @@ import Foundation
         zoneID = CKRecordZone.ID(zoneName: zoneName)
         self.cacheURL = cacheURL; self.preferences = preferences; self.cloudAvailable = cloudAvailable
         self.automaticallySync = automaticallySync
-        cache = (try? Data(contentsOf: cacheURL)).flatMap { try? JSONDecoder().decode(Cache.self, from: $0) } ?? Cache()
+        cacheLoad = CacheLoad(cacheURL)
     }
 
     public func start(tabs: [SharedBrowserTab], learnedSearches: LearnedSearches? = nil, browsingHistory: BrowsingHistory? = nil) {
@@ -227,8 +249,10 @@ import Foundation
         connect(allowAccountChange: enabled)
     }
 
+    public var isStarted: Bool { started }
+    /// Nothing until `start`, which iOS holds back until its launch has search ready.
     public func refresh() {
-        guard isEnabled else { return }
+        guard started, isEnabled else { return }
         guard let engine else { connect(); return }
         Task { [weak self] in _ = await self?.fetchAndSend(using: engine) }
     }
@@ -271,7 +295,8 @@ import Foundation
         status = Self.status(for: error)
     }
 
-    public func flush() { writer.sync {} }
+    /// Writes what's waiting at once and waits for it, for a suspension or a quit.
+    public func flush() { writeCache(); writer.sync {} }
 
     private func connect(allowAccountChange: Bool = false) {
         generation += 1; let request = generation
@@ -319,10 +344,28 @@ import Foundation
         engine?.state.add(pendingRecordZoneChanges: ids.map { .saveRecord(recordID($0)) })
     }
     private func recordID(_ id: UUID) -> CKRecord.ID { .init(recordName: id.uuidString, zoneID: zoneID) }
+    /// How long changes gather before one write. A launch's sync brings a burst of them (state
+    /// updates, fetched batches, status changes), and the cache holds every tab's and history
+    /// entry's CloudKit fields, megabytes once a device has synced for a while.
+    static let persistDelay: TimeInterval = 0.5
+    private var persistPending = false
+    /// Notes a change to save. Changes within `persistDelay` share one write, encoded off the main
+    /// thread, so neither the keyboard nor typing waits on it. `flush` writes at once.
     private func persist() {
-        guard let data = try? JSONEncoder().encode(cache) else { return }
+        guard !persistPending else { return }
+        persistPending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.persistDelay) { [weak self] in
+            MainActor.assumeIsolated { self?.writeCache() }
+        }
+    }
+    private func writeCache() {
+        guard persistPending else { return }
+        persistPending = false
+        // A copy: the main thread carries on changing its own while this one is encoded.
+        nonisolated(unsafe) let snapshot = cache
         let file = cacheURL
         writer.async {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
             do {
                 try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
                 #if os(iOS)

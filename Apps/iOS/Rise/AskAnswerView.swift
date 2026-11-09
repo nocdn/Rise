@@ -140,7 +140,9 @@ private final class AskTokenLayout: NSLayoutManager {
     var reducesMotion = false
     var displayScale: CGFloat = 2
     var entrances: [TokenStream.Entrance] = []
-    private let imageContext = CIContext(options: [.cacheIntermediates: false])
+    // Created when a token first blurs in: making one costs about 30 ms, which at launch
+    // held up the browser for every panel built with an answer view.
+    private lazy var imageContext = CIContext(options: [.cacheIntermediates: false])
 
     override func drawGlyphs(forGlyphRange range: NSRange, at origin: CGPoint) {
         guard !reducesMotion, !entrances.isEmpty else {

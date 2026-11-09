@@ -222,8 +222,11 @@ gets its speed by finite difference over 1/240 s. Never restart from a fixed pos
   - WebKit's own pinch and pan recognisers are turned off and on again to end them (they moved the
     page underneath and cost frames).
   - The page's scroll offset and zoom are saved, and put back before the real page shows again.
-- **Summarise in More:** the panel goes at once, and the page shrinks to the card on `menuShrink`
-  and `menuCrop` from rest.
+- **Summarise in More:** the page comes back from behind the panel at once (Summarise starts
+  from a picture of it) and shrinks to the card on `menuShrink` and `menuCrop` from rest. The
+  panel shrinks back into the bar on a normal close's spring as the bar slides off on `barExit`,
+  its contents fading to the bar's: about 130 ms in sight. It used to snap shut into the bar
+  first, which Bartosz noticed (9 November).
 
 ### The card while the model works
 
@@ -282,8 +285,9 @@ fades in `backDelay` 0.38 s after the card starts settling, over `backDuration` 
   hues taken down to the bar's dark grey, #282017 → #13272A → #251B32 (umber, deep teal, plum),
   settling to #18181B at the bottom. The glows are deeper and more saturated: cool mint (56, 172,
   160) / blue (66, 112, 204), warm amber (204, 138, 58) / plum (194, 70, 142), at the same 0.55.
-  The summary's ink goes near white (236, 236, 241), the question bubble deep blue #1E3252 with
-  #A0CAFF text, the card's back #3A3A3C, and the status bar light. The appearance is fixed as
+  The summary's ink goes near white (236, 236, 241), the question bubble light, (236, 236, 241) with
+  #1C1C1E text (dark blue #1E3252 with #A0CAFF until 8 November, when Bartosz asked for light
+  bubbles in dark mode and dark ones in light), the card's back #3A3A3C, and the status bar light. The appearance is fixed as
   Summarise opens.
 - **Glows:** a cool one (460 pt; mint inner (197, 242, 239), blue outer (206, 231, 251)) and a
   warm one (480 pt; cream inner (254, 234, 202), blush outer (254, 208, 232)). Bartosz asked for
@@ -317,8 +321,17 @@ fades in `backDelay` 0.38 s after the card starts settling, over `backDuration` 
 - **Typography:**
   - Body: 17 pt system on 22 pt lines, #1C1C1E at 85%.
   - Spacing: 24 pt side padding, 18 pt between paragraphs, 64 at the bottom.
-  - Placement: the first paragraph sits `textGap` 38 pt under the card (26 in Arc and the
-    playground; he asked for more).
+  - Placement: a "Summary" heading (15 pt semibold, ink at 55%, centred) sits `headingGap` 10 pt
+    under the card in a `headingHeight` 30 pt row, with the summary's ⋯ menu just to its right;
+    the first paragraph comes `headingSpacing` 14 pt below that row (asked for on 8 November).
+    Before, the first paragraph sat `textGap` 38 pt under the card. The heading reveals with the
+    paragraphs, as their first block; the menu fades in with it.
+  - The ⋯ menu (`PanelListMenu.button`, Liquid Glass on iOS 26) offers Re-generate
+    (`arrow.clockwise`) and Clear conversation (`eraser`, off without follow-ups). Re-generate
+    forgets the kept summary, fades the text over `clearFade` 0.2 s, and sends the card back to
+    its loading size and swing, with the glows and hum, for a summary made from scratch; the old
+    one is cleared after `clearHold` 0.4 s or when the new one comes. Clear conversation
+    cross-dissolves every follow-up away and keeps the summary.
 - **Scrolling:** everything (card and summary) scrolls together over the fixed backdrop.
 
 ### Closing (tapping the card)
@@ -421,22 +434,25 @@ fades in `backDelay` 0.38 s after the card starts settling, over `backDuration` 
   behind the keyboard and let it cover the field for a moment. The keyboard dismisses interactively, and a tap anywhere but the field lets
   it go (only that: a tap on the card with the keyboard up doesn't also return to the page).
 - **Asking (Return):** the question flies up as in the ChatGPT app (see "The send" below) as the
-  keyboard goes, into a blue bubble on the right, the last `contextLines` 4 lines before it left
+  keyboard goes, into a bubble on the right, the last `contextLines` 4 lines before it left
   in sight above (asked for on 20 October, over the bubble going to the very top). It shimmers there
-  with Find's Ask shimmer in a deeper blue (an 80 pt band sweeping its glyphs once a second)
+  with Find's Ask shimmer (an 80 pt band sweeping its glyphs over a second, then resting 0.5 s
+  before the next, asked for on 8 November)
   while the summary's hum plays and the model answers. `PageSummary.answer` sends the page, the
   summary as the model's first reply, and the earlier questions and answers.
 - **The answer:** the shimmer fades over 0.15 s, its opacity alone (`animation(_:body:)`): an
   `.animation(value:)` on the whole overlay also eased it along with the answer's layout landing
   under the bubble, so a clipped copy of the question, the band's, slid up there as it faded
-  (reported 20 October). The answer's paragraphs reveal under the bubble
-  as the summary's (same delay, stagger, blur and fade), plain text as the summary is, with the
-  reveal's thud ending the hum. The bubble is already where it goes, so nothing scrolls (the old
+  (reported 20 October). The answer streams in under the bubble token by token, with Find's
+  Ask entrance (`TokenStream`: each word fades in, unblurs and goes from a tint to the ink; Find's slide in from the right was taken out on 8 November),
+  asked for on 8 November; the first words' thud ends the hum. Before, the whole answer
+  revealed at once as the summary's paragraphs do. The bubble is already where it goes, so nothing scrolls (the old
   scroll on to keep the question 110 pt down went). The field stays at the bottom throughout,
   empty, and takes taps again once the answer has come.
 - **Closing:** the field fades and sinks back with the summary, and a pending question is
   cancelled. The fade over the text stays as it was, sinking back with them; it used to be
-  dropped at the close, so the text under the field showed in full at once (reported 21 October). Caught and revealed again, the summary starts without its questions.
+  dropped at the close, so the text under the field showed in full at once (reported 21 October). Caught and revealed again, the summary comes back with its questions and answers, which are
+  kept with it on the tab and on disk (`SummaryCache`).
 
 ### The send (20 October 2026)
 
@@ -474,9 +490,8 @@ sends and fitting springs (under 0.5% RMS; the second send agreed):
   and `questionSpacing` 30 pt over its answer; 18 and 24 until 21 October, when a little more was
   asked for.
 - **The bubble:** right-aligned 16 pt from the screen's edge, at most 72% of its width; 18 by
-  14 pt padding (16 by 10 measured from ChatGPT; a little more was asked for on 20 and 21 October, to 18 by 14), 20 pt continuous corners; fill #E6F3FF and text #2D5B9F (sampled from the
-  recording's blue bubble; its text measured #3B5576, with the colour the video's compression
-  takes out of thin strokes put back at the same hue). Summary type, 17 pt on 22 pt lines.
+  14 pt padding (16 by 10 measured from ChatGPT; a little more was asked for on 20 and 21 October, to 18 by 14), continuous corners of half a one-line bubble's height, so one line is a full pill (20 pt until 8 November); in light mode fill #1C1C1E and white text (8 November; the
+  blue #E6F3FF with #2D5B9F text before, sampled from ChatGPT's recording). Summary type, 17 pt on 22 pt lines.
 - **How it runs:** the copy (the text drawn once by `ImageRenderer` as a mask over a colour, and
   the fill) and the scroll fly on Core Animation keyframes sampled at 120 a second, flushed
   before the keyboard's teardown, which holds the main thread about 47 ms. The bubble lays its
@@ -702,6 +717,31 @@ Measured on the iPhone (ProMotion, iOS 27.2) unless noted.
       renders inside 3D transform layers.
     - The haptics engine is made and started on a detached task.
   - Starting now costs about 8 ms, at most one dropped frame.
+  - Stalls of 105–125 ms at the start on heavy pages (Wikipedia's Popemobile), by pinch or from
+    More, measured on 8 November with a System Trace; Time Profiler alone missed the worst, as
+    the main thread was blocked rather than busy:
+    - The page's top-edge colour (`PageEdgeTint`) sampled as Summarise moved the page: a
+      `takeSnapshot` that waits for WebKit's next paint and then the render server, on the main
+      thread, 118 ms on that page. Sampling is paused while Summarise is open and catches up as
+      it closes.
+    - The bar slid off by `UIView.transform`, which has everything in it recompute its safe
+      area: the search panel, its rows and the settings panels laid out again, about 50 ms in
+      the first frames. It slides by its layer's transform instead.
+    - The browser's view was laid out in every Summarise frame: Core Animation lays a layer out
+      again when a sublayer's geometry changes, and the bar and its underfill move every frame.
+      Each pass set the tab switcher's insets, which laid its deck out again, and updated safe
+      areas across the window (14 ms of an opening's first 0.75 s, now 3). While Summarise is
+      up, `viewDidLayoutSubviews` returns early unless the bounds, safe area or keyboard changed.
+    - A recalled conversation drew each question to an image to measure its bubble; the sizes
+      are now kept for the session.
+    - Left as measured with Animation Hitches on 9 November: a warm reopen of Popemobile (2159 pt
+      with three follow-ups) misses 0–2 single frames at its start, flagged as an expensive app
+      update (laying the summary out, about 9 ms) and an expensive render (the page's replica);
+      the first after launch about 21 ms, paging in SwiftUI and fonts. Moving the summary's host
+      in a plain container, or out of view controller containment, changed nothing measurable.
+    - Haptics were suspected first, as "haptics ready" was logged as each stall ended, but it was
+      only held up by them. Each Summarise did start its own engine; one is now kept for the app
+      (`SummariseHaptics`).
 - **Keep work out of the release.** The model request waits 0.35 s; the haptic engine is already
   running.
 - **Measuring the summary** (SwiftUI `sizeThatFits` for a 1355 pt summary) took about 40 ms.

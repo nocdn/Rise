@@ -147,11 +147,13 @@ extension BrowserViewController {
 
     func webView(_ page: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         finishAdBlockingReload(on: page, navigation: navigation)
+        launchCoverPageFailed(page, error: error)
         handlePageFailure(page, navigation: navigation, error: error)
     }
 
     func webView(_ page: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         finishAdBlockingReload(on: page, navigation: navigation)
+        launchCoverPageFailed(page, error: error)
         handlePageFailure(page, navigation: navigation, error: error)
     }
 

@@ -86,7 +86,7 @@ import WebKit
             "idempotent": SelectionTimeNativeMenu.relocatingDateActions(in: result) === result,
             "incompleteNativeActionsPreserved": SelectionTimeNativeMenu.relocatingDateActions(in: incomplete) === incomplete,
             "directSubmenuHasAllActions": own?.children.count == 5,
-            "zoneOnlyShowsCurrentTimeAndDifference": zoneOnly?.title.contains("there ·") == true,
+            "zoneOnlyShowsCurrentTimeAndDifference": zoneOnly?.title.contains("there (") == true,
             "zoneOnlyOffersOnlyCopy": zoneOnly?.children.count == 1 && zoneOnly?.children.first?.title.hasPrefix("Copy “") == true,
             "zoneOnlyKeepsNativeDateActionsSeparate": SelectionTimeNativeMenu.relocatingDateActions(in: zoneRoot) === zoneRoot,
             "noDateHasNoCustomMenu": SelectionTimeMenu.elements(for: "ordinary words", in: nil).isEmpty

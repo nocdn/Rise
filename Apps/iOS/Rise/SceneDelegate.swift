@@ -233,18 +233,23 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             return
         }
         #endif
+        let connecting = LaunchSignposts.signposter.beginInterval("Scene connect")
+        defer { LaunchSignposts.signposter.endInterval("Scene connect", connecting) }
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        let sync = SharedTabsSync(cacheURL: support.appendingPathComponent("SharedTabs.json"))
+        let sync = LaunchSignposts.interval("Tab sync cache") { SharedTabsSync(cacheURL: support.appendingPathComponent("SharedTabs.json")) }
         let urls = connectionOptions.urlContexts.map(\.url)
         let action = connectionOptions.shortcutItem.flatMap(HomeScreenAction.init(shortcut:))
             ?? (urls.contains(where: Self.isDownloadsLink) ? .downloads : nil)
-        let browser = BrowserViewController(opensSearchOnFirstAppearance: action == nil, sessionStore: .shared, tabSync: sync,
-            previewCacheURL: URL.cachesDirectory.appendingPathComponent("TabPreviews"))
+        let browser = LaunchSignposts.interval("Browser init") {
+            BrowserViewController(opensSearchOnFirstAppearance: action == nil, sessionStore: .shared, tabSync: sync,
+                previewCacheURL: URL.cachesDirectory.appendingPathComponent("TabPreviews"))
+        }
         window.rootViewController = browser
         self.window = window
         if let action { browser.quickActions.open(action) }
-        window.makeKeyAndVisible()
+        // Links go first: search opens as the window appears, and an incoming link replaces it.
         browser.openLinks(urls.filter { $0.scheme?.lowercased() != "rise" })
+        window.makeKeyAndVisible()
     }
 
     func windowScene(_ windowScene: UIWindowScene, performActionFor shortcutItem: UIApplicationShortcutItem,
@@ -282,6 +287,7 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     private static let reconnectAfter: TimeInterval = 60
     func sceneDidEnterBackground(_ scene: UIScene) {
         enteredBackground = Date()
+        (window?.rootViewController as? BrowserViewController)?.saveLaunchCover()
         (window?.rootViewController as? BrowserViewController)?.backgroundSearch.enteredBackground()
         (window?.rootViewController as? BrowserViewController)?.lockPrivateTabs()
         saveSession()

@@ -43,7 +43,7 @@ import UIKit
                     guard let scene = browser.summarise else { throw Failure(name: name+" did not start") }
                     // Each case asks afresh, rather than recalling the summary an earlier case got.
                     scene.memorised = nil
-                    scene.makeSummary = {
+                    scene.makeSummary = { _ in
                         if revealed { return SummariseReplay.summary }
                         try await Task.sleep(for: .seconds(60))
                         throw CancellationError()

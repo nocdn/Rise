@@ -13,7 +13,12 @@ struct SharedHistoryRecord: Codable, Equatable, Sendable {
 
     var id: String { Self.id(for: url) }
     static func id(for url: String) -> String {
-        "history-" + SHA256.hash(data: Data(url.utf8)).map { String(format: "%02x", $0) }.joined()
+        // Hex by hand: `String(format:)` for each byte made hashing a full history take tens of ms.
+        let digits = Array("0123456789abcdef".utf8)
+        var hex = Array("history-".utf8)
+        hex.reserveCapacity(8+64)
+        for byte in SHA256.hash(data: Data(url.utf8)) { hex.append(digits[Int(byte >> 4)]); hex.append(digits[Int(byte & 15)]) }
+        return String(decoding: hex, as: UTF8.self)
     }
     var visits: Int { min(1_000_000, counts.values.reduce(0, +)) }
     var isValid: Bool {

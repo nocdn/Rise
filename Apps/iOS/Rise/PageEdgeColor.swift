@@ -99,6 +99,14 @@ import WebKit
     /// A page that was see-through until it painted is sampled as it first paints.
     private var paintObserver: NSObjectProtocol?
     private var sampling = false, sampleAgain = false
+    /// Held while something covers the page, such as Summarise: a sample waits for WebKit's next
+    /// paint and the render server on the main thread, about 120 ms on a heavy page (Wikipedia's
+    /// Popemobile), so one taken as Summarise opened froze its first frames (8 November). What's
+    /// asked for meanwhile is sampled once it's let go.
+    var paused = false {
+        didSet { if !paused, oldValue, pausedSample { pausedSample = false; sample() } }
+    }
+    private var pausedSample = false
     private let onChange: @MainActor (UIColor) -> Void
 
     init(edge: Edge = .top, onChange: @escaping @MainActor (UIColor) -> Void) {
@@ -149,6 +157,7 @@ import WebKit
     /// Samples again once the current sample finishes, so bursts of changes cost one snapshot each.
     /// While the page is pulled past its top, its edge is the gap above it, so nothing is sampled.
     func sample() {
+        guard !paused else { pausedSample = true; return }
         guard let webView, !gapShowing else { return }
         guard !sampling else { sampleAgain = true; return }
         sampling = true

@@ -33,6 +33,11 @@ import WebKit
         guard page === webView, page.url == url, page.backForwardList.currentItem === item else { return }
         self.summary = (url, item, summary)
     }
+    /// Re-generate: the page's summary is asked for afresh.
+    func forgetSummary(of page: WKWebView) {
+        guard page === webView else { return }
+        summary = nil
+    }
     /// The page's text, fingerprinted as it was sent to the model or once it loaded
     /// (`SummaryCache.key`), for finding its summary on disk after a relaunch. Kept as long as the
     /// summary in memory is.
@@ -878,8 +883,9 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
     var pageSize = CGSize(width: 1, height: 1)
     var stripHeight: CGFloat = 0
     /// Clear of the status bar, and of the bottom bar.
-    var topInset: CGFloat = 0 { didSet { setNeedsLayout() } }
-    var bottomInset: CGFloat = 0 { didSet { setNeedsLayout() } }
+    // Set on every layout of the browser, so only a change lays the deck out again.
+    var topInset: CGFloat = 0 { didSet { if topInset != oldValue { setNeedsLayout() } } }
+    var bottomInset: CGFloat = 0 { didSet { if bottomInset != oldValue { setNeedsLayout() } } }
     var onSelect: (Int) -> Void = { _ in }
     var onClose: (Int) -> Void = { _ in }
     /// "Incognito mode", just under the Dynamic Island, while the private tabs show.
