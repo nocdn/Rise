@@ -146,6 +146,11 @@ import RiseChromium
         // A link's own text isn't a selection to look up, as on WebKit.
         if !selection.isEmpty, info.linkURL == nil {
             group()
+            if !info.editable {
+                add("Ask About Selection…") { [weak self, weak page] in
+                    if let page { self?.annotations.create(in: page, fallback: selection) }
+                }
+            }
             let shown = selection.count > 30 ? selection.prefix(30).trimmingCharacters(in: .whitespaces) + "…" : selection
             add("Look Up “\(shown)”") { info.lookUp() }
             let provider = searchProvider

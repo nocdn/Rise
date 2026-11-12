@@ -12,19 +12,19 @@ import RiseCore
     let pageEdge = PageEdge()
     /// The bar over the page, as Dia's.
     private(set) lazy var navBar: PlainNavBar = PlainNavBar(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() },
-                                               zoom: { [weak self] in self?.showZoomControls() }, permission: { [weak self] in self?.permissionCoordinator.togglePrompt() },
+                                               zoom: { [weak self] in self?.actualSize() }, permission: { [weak self] in self?.permissionCoordinator.togglePrompt() },
                                                currency: { [weak self] in if let self { currencyReplacement.toggle(from: navBar) } })
     var plainBarTimer: Timer?, plainBarColors: [UUID: NSColor] = [:], plainBarTabID: UUID?, plainBarSampling = false
     /// When the page bar's colour was last seen changing, by what (`PlainNavBarController.swift`).
     var plainBarWatchedUntil = Date.distantPast, plainBarPages = "", plainBarMonitor: Any?
     /// A split's right page's own bar (`SplitNavBar.swift`), its buttons, and the page it shows.
     private(set) lazy var splitBar: PlainNavBar = PlainNavBar(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() },
-                                                 zoom: { [weak self] in self?.showZoomControls() }, permission: { [weak self] in self?.permissionCoordinator.togglePrompt() },
+                                                 zoom: { [weak self] in self?.actualSize() }, permission: { [weak self] in self?.permissionCoordinator.togglePrompt() },
                                                  currency: { [weak self] in if let self { currencyReplacement.toggle(from: splitBar) } })
     var splitBarButtons: [ChromeButton] = [], splitBarTabID: UUID?
     /// The Peek's own bar, across its card's top (`PeekBar.swift`), its buttons, and the page it shows.
     private(set) lazy var peekBar: PlainNavBar = PlainNavBar(copy: { [weak self] in self?.copyURL() }, settings: { [weak self] in self?.siteMenu() },
-                                                zoom: { [weak self] in self?.showZoomControls() }, permission: { [weak self] in self?.permissionCoordinator.togglePrompt() },
+                                                zoom: { [weak self] in self?.actualSize() }, permission: { [weak self] in self?.permissionCoordinator.togglePrompt() },
                                                 currency: { [weak self] in if let self { currencyReplacement.toggle(from: peekBar) } })
     var peekBarButtons: [ChromeButton] = [], peekBarTabID: UUID?
     let pageShadow = PageSurface(color: NSColor(hex: 0xFDFCFC), radius: PageAppearance.radius)
@@ -32,6 +32,8 @@ import RiseCore
     let emptyPage = Surface(color: NSColor(hex: 0xFDFCFC))
     let linkStatus = LinkStatusPill()
     private(set) lazy var githubLinkStatus = makeGitHubLinkStatus()
+    lazy var annotations = PageAnnotations(browser: self)
+    lazy var smartTabSearch = SmartTabSearch(browser: self)
     /// The page whose link is under the pointer, as its view.
     weak var hoveredWebView: NSView?
     let developerBar = DeveloperHeader(color: NSColor(hex: 0xFCF6F7))
@@ -43,8 +45,6 @@ import RiseCore
     weak var siteControlsBar: PlainNavBar?
     /// A reload switching a setting in the site controls asked for, which leaves them open.
     var siteControlsReload: (tab: UUID, url: URL, until: Date)?
-    /// The sidebar zoom button's: smaller, larger and back to 100%.
-    let zoomPopover = NSPopover()
     /// The camera button's JPEG and PDF.
     let capturePopover = NSPopover()
     var linkPasteboard: NSPasteboard = .general
@@ -152,6 +152,8 @@ import RiseCore
     let sidebarPeek = SidebarPeek()
     let sidebarFloat = SidebarFloat()
     let devTools = DevToolsPanel()
+    /// The AI chat docked at the window's right (`AIChatPanel.swift`).
+    let aiChat = AIChatPanel()
     lazy var tabHoverCards: TabHoverCards = {
         let hover = TabHoverCards(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("pr-summaries.json"))
         hover.summaries.onChange = { [weak self] key in self?.pullRequestSummaryChanged(key) }
@@ -440,6 +442,7 @@ import RiseCore
             // Escape in a card being edited cancels the edit, not Find.
             let editingCard = self.tabHoverCards.pullRequestCard.isEditing || self.linkPullRequests.card.isEditing
             guard self.palette.isHidden, !self.isSwitchingTabs, self.sidebar.drag == nil, !editingCard else { return false }
+            if self.annotations.activeID != nil && self.annotations.bar.superview != nil { self.annotations.collapse(); return true }
             if self.findBar.isPresented { swallowingEscape = true; self.findBar.handleEscape(); return true }
             // Escape closes a Peek before its page can keep it, as most pages do, so it never comes back
             // to `escapeAction`; but a page full screen leaves that first, and text being composed ends it.
@@ -461,6 +464,7 @@ import RiseCore
                 else { self.palette.dismiss?() }
                 return true
             }
+            if self.annotations.activeID != nil && self.annotations.bar.superview != nil { self.annotations.collapse(); return true }
             if self.findBar.isPresented { self.findBar.handleEscape(); return true }
             if self.peekTab != nil { self.closePeek(animated: true); return true }
             return false
@@ -487,6 +491,9 @@ import RiseCore
     required init?(coder: NSCoder) { fatalError() }
     func buildChrome() {
         sidebar = SidebarView(archive: { [weak self] in self?.showDownloads() }, cleanUp: { [weak self] in self?.cleanUpTabs() })
+        sidebar.onSearchQuestion = { [weak self] query in self?.smartTabSearch.search(query) }
+        sidebar.onSearchChanged = { [weak self] in self?.smartTabSearch.cancel() }
+        sidebar.searchMetadata = { [weak self] tab in self?.smartTabSearch.detail(tab) ?? "" }
         // Recently closed tabs stay one right-click away on the downloads button.
         sidebar.archiveButton.secondaryAction = { [weak self] in self?.archiveMenu() }
         sidebar.onNewTab = { [weak self] in self?.newTab() }
@@ -519,6 +526,7 @@ import RiseCore
         navBar.addressMenu = { [weak self] bar in self?.addressMenu(for: bar) }
         installSidebarEdge()
         installDevTools()
+        installAIChat()
         root.addSubview(grip)
         grip.resize = { [weak self] x in self?.resizeSidebar(to: x) }
         let actions: [(String, String, () -> Void)] = [
@@ -631,10 +639,11 @@ import RiseCore
         toolbarHost.frame.size.width = shown ? max(112, sidebar.frame.width-toolbarX-8)+room : 28
         carryTitlebarControls(by: carry)
         placeTitlebarNewTab()
-        // The selected tab's DevTools take the window's right side.
-        let devToolsRoom = layoutDevTools(in: b, pageLeft: pageLeft)
+        // The chat takes the window's right side, and the selected tab's DevTools go beside it.
+        let chatRoom = layoutAIChat(in: b, pageLeft: pageLeft)
+        let devToolsRoom = layoutDevTools(in: NSRect(x: b.minX, y: b.minY, width: b.width-chatRoom, height: b.height), pageLeft: pageLeft)
         pageShadow.frame = PageAppearance.frame(in: b, sidebarWidth: pageLeft, sidebarVisible: true)
-        pageShadow.frame.size.width = max(0, pageShadow.frame.width-devToolsRoom)
+        pageShadow.frame.size.width = max(0, pageShadow.frame.width-devToolsRoom-chatRoom)
         // The page is lifted as Kero lifts its cards: in Light, a soft pair of shadows for its
         // edge; in Dark, a lit edge over three tight shadows.
         let keroCard = theme == .dark
@@ -701,6 +710,7 @@ import RiseCore
         layoutFullscreenNavigation()
         layoutLinkStatus()
         layoutTabScrollArrow()
+        annotations.layout()
         if !tabSwitcher.isHidden { tabSwitcher.place(in: b) }
     }
     /// Developer mode's bar is under the selected page's bar, in its place, and the bar becomes
@@ -731,7 +741,7 @@ import RiseCore
     }
     func windowDidResize(_ notification: Notification) { layoutChrome(); watchPlainBarColor(for: 0.5) }
     func windowDidChangeOcclusionState(_ notification: Notification) { if window?.occlusionState.contains(.visible) == true { watchPlainBarColor(for: 0.5) } }
-    func windowWillClose(_ notification: Notification) { cancelTabScroll(); githubLinkStatus.hover(nil); timeReplacement.cancelHold(); githubStarrer.tearDown(); signedInPages.tearDown(); linkPullRequests.summaries.tearDown(); tabHoverCards.pullRequestClock?.invalidate(); tabHoverCards.pullRequestClock = nil; plainBarTimer?.invalidate(); plainBarTimer = nil; plainBarMonitor.map(NSEvent.removeMonitor); plainBarMonitor = nil; tabPressed(); gmailInbox.tearDown(); protonMailInbox.tearDown(); chatInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); stopTabSleep(); saveNow() }
+    func windowWillClose(_ notification: Notification) { annotations.close(); smartTabSearch.tearDown(); cancelTabScroll(); githubLinkStatus.hover(nil); timeReplacement.cancelHold(); githubStarrer.tearDown(); signedInPages.tearDown(); linkPullRequests.summaries.tearDown(); tabHoverCards.pullRequestClock?.invalidate(); tabHoverCards.pullRequestClock = nil; plainBarTimer?.invalidate(); plainBarTimer = nil; plainBarMonitor.map(NSEvent.removeMonitor); plainBarMonitor = nil; tabPressed(); gmailInbox.tearDown(); protonMailInbox.tearDown(); chatInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); stopTabSleep(); saveNow() }
     func windowDidResignKey(_ notification: Notification) {
         cancelTabScroll()
         timeReplacement.cancelHold()
@@ -749,6 +759,7 @@ import RiseCore
         // The page reports hovers, new tabs and its menu.
         // The page, not the tab, is captured: it can move to another tab when a Peek becomes one.
         let page = tab.page
+        annotations.install(on: page)
         page.onHoverLink = { [weak self, weak page] url in
             guard let self, let page else { return }
             self.showHoveredLink(url, in: page.view)
@@ -876,6 +887,7 @@ import RiseCore
         tab.onFullscreenChange = { [weak self] in self?.attachVisiblePages(); self?.update() }
         // A pull request's page loading, as when it's reloaded to see it now, brings its card up to date.
         tab.onLoadFinished = { [weak self, weak tab] in
+            if let self, let tab { self.smartTabSearch.collect(tab); Task { await self.annotations.restore(in: tab.page) } }
             if let pr = PullRequest(url: tab?.url) { self?.tabHoverCards.summaries.refreshStatus(pr, pageLoaded: true) }
         }
         return tab
@@ -947,11 +959,13 @@ import RiseCore
         }
         sidebar.developerTabLook = developerTabLook
         sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: splitGroups)
+        annotations.layout()
         refreshTabScroll()
         nowPlaying.setNeedsRefresh()
         refreshTabHoverCard(); refreshPullRequestTabs(); preloadGmailInbox(); preloadProtonMailInbox(); preloadChatInbox(); preloadCalendarAgenda()
         window?.title = (selectedTab?.title).map { "\($0) — Rise" } ?? "Rise"
         updateNavigationButtons()
+        refreshAIChatPage()
         developerAddress.updateURL(selectedTab?.url?.absoluteString ?? "")
         errorSurface.isHidden = errorWebView == nil || errorWebView !== selectedTab?.page.view
         updatePlainBar()
@@ -1159,12 +1173,15 @@ import RiseCore
     func cycleTab(_ direction: Int) { guard !tabs.isEmpty else { return }; let index = tabs.firstIndex { $0.id == selectedID } ?? 0; select(tabs[(index+direction+tabs.count)%tabs.count].id) }
     @objc func zoomIn() { setPageZoom(PageZoom.next(after: commandTab?.page.zoom ?? 1)) }
     @objc func zoomOut() { setPageZoom(PageZoom.previous(before: commandTab?.page.zoom ?? 1)) }
-    @objc func actualSize() { setPageZoom(1) }
+    @objc func actualSize() { setPageZoom(1, resetting: true) }
     /// The page's zoom, shown by the page bar's zoom button while it isn't 100%.
-    func setPageZoom(_ zoom: CGFloat) {
+    func setPageZoom(_ zoom: CGFloat, resetting: Bool = false) {
         guard let tab = commandTab else { return }
         tab.page.zoom = zoom
-        selectedBar.pageZoom = zoom; zoomControls?.refresh()
+        let applied = tab.page.zoom
+        selectedBar.setPageZoom(applied, animated: true)
+        selectedBar.showNotice("\(resetting ? "Reset" : "Set") page zoom to \(PageZoom.text(applied))",
+                               image: TablerIcon.image(TablerIcon.zoomIn, size: 12, description: "Page zoom"))
     }
     func scheduleSave() {
         saveWork?.cancel(); let work = DispatchWorkItem { [weak self] in self?.saveNow() }; saveWork = work

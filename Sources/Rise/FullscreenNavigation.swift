@@ -112,7 +112,7 @@ import AppKit
         // Follow the sidebar's destination, not its still-visible closing frames,
         // so both bars start leaving on the same fullscreen change.
         let held = isSidebarShown || palette.isPresented ||
-            siteControlsPopover.isShown || siteInfoPopover.isShown || zoomPopover.isShown || capturePopover.isShown || extensionPopup != nil
+            siteControlsPopover.isShown || siteInfoPopover.isShown || capturePopover.isShown || extensionPopup != nil
         // A split's old bar may still be finishing its slide after selection changes.
         // Only the currently selected bar can carry the shared developer header.
         for bar in [navBar, splitBar] { bar.fullscreenSlide.companion = nil }

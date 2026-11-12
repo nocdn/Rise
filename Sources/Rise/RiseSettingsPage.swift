@@ -40,6 +40,7 @@ import RiseChromium
                 select("gmailCategory", "Gmail preview category", "Which emails the Gmail tab's hover card shows", gmailCategory.rawValue,
                        GmailCategory.allCases.map { ($0.rawValue, $0.title) }),
                 toggle("goToOpenTabs", "Go to tabs that are already open", "Clicking a link you have open in another tab switches to that tab. ⌘-click still opens it in a new one.", openTabLinks.enabled),
+                toggle("reuseExternalLinks", "Reuse open tabs for links from other apps", "Links from Mail, Messages and other apps switch to the same page if it is already open, instead of opening a duplicate", openTabLinks.reusesExternalLinks),
                 select("tabArchiveHours", "Archive unused tabs",
                        "Search pages and duplicates go sooner, tabs you keep returning to stay longer. Pinned and renamed tabs stay",
                        "\(tabArchiveHours)", Self.tabArchiveChoices),
@@ -114,6 +115,7 @@ import RiseChromium
         case "tabScrollModifier": if let modifier = TabScrollModifier(rawValue: text) { setTabScrollModifier(modifier) }
         case "gmailCategory": if let category = GmailCategory(rawValue: text) { selectGmailCategory(category) }
         case "goToOpenTabs": openTabLinks.setEnabled(on); openTabLinks.refresh(shownPages)
+        case "reuseExternalLinks": openTabLinks.setReusesExternalLinks(on)
         case "tabArchiveHours": if let hours = Int(text) { setTabArchiveHours(hours) }
         case "showReopenedTabs": setShowsReopenedTabs(on)
         case "hideNotificationCounts": setHidesNotificationCounts(on)

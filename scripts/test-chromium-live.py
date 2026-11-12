@@ -89,7 +89,7 @@ subprocess.run(["swiftc", "-target", f"{platform.machine()}-apple-macos14.0", "-
                 "-Xcc", f"-fmodule-map-file={debug / 'RiseChromium.build/module.modulemap'}",
                 "-I", str(root / "Sources/RiseChromium/include"), *objects, *engine_linking,
                 *linker, "-o", str(executable)], cwd=root, check=True)
-if check in ("passkeys", "certificates"):
+if check in ("passkeys", "certificates") or os.environ.get("RISE_LIVE_STABLE_SIGNING") == "1":
     # An ad-hoc probe cannot exercise macOS's real keychain entitlement checks. Use Rise's
     # normal certificate and provisioning profile, including RISE_SIGNING_* overrides.
     # For certificates, its team is what the test keychain grants its keys to: an ad-hoc

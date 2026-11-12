@@ -50,6 +50,9 @@ extension BrowserController: NSMenuItemValidation {
         let tab = selectedTab, page = commandTab
         let tabHasPage = tab?.url != nil, hasPage = page?.url != nil
         switch item.action {
+        case #selector(annotateSelection): return PageAnnotationStore.key(for: page?.url) != nil
+        case #selector(removePageAnnotations):
+            return PageAnnotationStore.key(for: page?.url).map { !annotations.store.document(for: $0).annotations.isEmpty } ?? false
         case #selector(selectNumberedTab(_:)):
             guard tabs.indices.contains(item.tag) else {
                 item.title = "Tab \(item.tag+1)"; item.toolTip = nil; item.state = .off; return false
@@ -90,6 +93,7 @@ extension BrowserController: NSMenuItemValidation {
             return origin != nil
         case #selector(toggleLinkPreloading): item.state = linkPreloader.enabled ? .on : .off; return true
         case #selector(toggleYouTubeAutoplay): item.state = youTubeAutoplay.isEnabled ? .on : .off; return true
+        case #selector(toggleAIChat): item.title = aiChat.isOpen ? "Hide Chat" : "Show Chat"; return true
         case #selector(toggleDevTools):
             item.title = devTools.isOpen && devTools.tabID == tab?.id ? "Hide Developer Tools" : "Show Developer Tools"
             return tab?.page is ChromiumPage

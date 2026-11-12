@@ -224,7 +224,7 @@ class FindInputCell: NSTextFieldCell {
     private let placeholders = FlippedView()
     let findPlaceholder = label("Find on page", size: 13)
     var cannotSearchPage: (() -> Bool)?
-    private let askPlaceholder = label("Ask a model about the page", size: 13)
+    let askPlaceholder = label("Ask a model about the page", size: 13)
     let previous: ChromeButton
     let next: ChromeButton
     let close: ChromeButton
@@ -263,6 +263,10 @@ class FindInputCell: NSTextFieldCell {
     var dismiss: (() -> Void)?
     /// Streams an answer to a question about the page, given the conversation so far.
     var answer: ((String, [Turn]) -> AsyncThrowingStream<String, Error>)?
+    /// Annotation cards reuse the complete Ask presentation and streaming pipeline.
+    var annotationMode = false
+    var anchoredOrigin: ((NSSize) -> NSPoint)?
+    var didCompleteAnswer: ((String, String) -> Void)?
     /// Which service answers, named in the footer.
     var provider: () -> ModelChoice = { .openRouter }
     private(set) var inputTokenCount: Int?
@@ -489,10 +493,36 @@ class FindInputCell: NSTextFieldCell {
         if find { shimmer.cancel() } else if answerTask != nil { shimmer.start() }
         updateSend(); retarget(); animate()
     }
-    func toggleMode() { setMode(mode == .find ? .ask : .find, animated: true) }
+    func toggleMode() { if !annotationMode { setMode(mode == .find ? .ask : .find, animated: true) } }
+    func presentAnnotation(number: Int, draft: String, turns: [Turn]) {
+        annotationMode = true
+        input.stringValue = ""
+        present(); setMode(.ask, animated: false)
+        askPlaceholder.stringValue = "Ask about this selection…"
+        input.setAccessibilityLabel("Ask about annotation \(number)")
+        conversation = turns; input.stringValue = draft
+        placeholders.isHidden = !draft.isEmpty
+        if let last = turns.last {
+            answerText = last.answer; hasSubmittedQuestion = true
+            lastQuestion = (last.question, last.question)
+            answeredText = last.question; badge.caption = draft == last.question ? .close : .send
+            renderAnswer()
+        }
+        retarget(); reattached(); window?.makeFirstResponder(input)
+    }
+    /// Opening motion belongs to the annotation surface, not Find's slide from the page bar.
+    func animateAnnotationIn(from point: NSPoint) {
+        CardMotionAnimator.animateIn(panel, CardMotion.selected, tab: NSPoint(x: point.x-panel.frame.minX, y: point.y-panel.frame.minY))
+    }
+    func annotationSnapshot() -> NSImage? {
+        guard let rep = content.bitmapImageRepForCachingDisplay(in: content.bounds) else { return nil }
+        content.cacheDisplay(in: content.bounds, to: rep)
+        let image = NSImage(size: content.bounds.size); image.addRepresentation(rep); return image
+    }
     /// Before submission, Escape returns to the search without losing the draft.
     /// After submission it closes the dialog, including while an answer is streaming.
     func handleEscape() {
+        if annotationMode { dismiss?(); return }
         if mode == .ask && !hasSubmittedQuestion {
             setMode(.find, animated: true); window?.makeFirstResponder(input)
         } else { dismiss?() }
@@ -696,7 +726,7 @@ class FindInputCell: NSTextFieldCell {
     }
     private func finishAnswer(question: String, asked: String, answer: String) {
         answerTask = nil; shimmer.finish(); stream.finish(); layOutStream()
-        if !answer.isEmpty { conversation.append(Turn(question: question, answer: answer)) }
+        if !answer.isEmpty { conversation.append(Turn(question: question, answer: answer)); didCompleteAnswer?(question, answer) }
         else { resetSend(); stream = TokenStream(); answerText = "No answer came back."; answerFailed = true; renderAnswer() }
         animate()
     }
@@ -712,24 +742,7 @@ class FindInputCell: NSTextFieldCell {
         stream.revealAll(at: CACurrentMediaTime()); paintTokens(); followAnswer()
     }
     /// Colors the words still fading in or highlighted, and hides the ones not shown yet.
-    /// Temporary attributes redraw them without restyling the answer every frame.
-    private func paintTokens() {
-        guard let manager = answerView.layoutManager else { return }
-        let length = answerView.textStorage?.length ?? 0
-        if paintedFrom < length {
-            manager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: paintedFrom, length: length-paintedFrom))
-        }
-        paintedFrom = length
-        if let hidden = stream.hiddenFrom, hidden < length {
-            manager.addTemporaryAttribute(.foregroundColor, value: NSColor.clear, forCharacterRange: NSRange(location: hidden, length: length-hidden))
-            paintedFrom = hidden
-        }
-        for tint in stream.tints where NSMaxRange(tint.range) <= length {
-            manager.addTemporaryAttribute(.foregroundColor, value: tint.color.color, forCharacterRange: tint.range)
-            paintedFrom = min(paintedFrom, tint.range.location)
-        }
-        answerView.tokenLayout.setEntrances(stream.entrances)
-    }
+    private func paintTokens() { answerView.paint(stream, from: &paintedFrom) }
     /// Keeps the newest shown word in view once the panel has stopped growing, then the end of the answer.
     private func followAnswer() {
         guard height.target < contentHeight else { return }
@@ -803,9 +816,16 @@ class FindInputCell: NSTextFieldCell {
         height.target = target; animate()
     }
     private var panelOrigin: NSPoint {
-        Self.panelOrigin(in: bounds, width: Self.width, height: height.value, slide: slide.value, topInset: topInset, tuckedInset: tuckedInset)
+        if let anchoredOrigin {
+            let origin = anchoredOrigin(NSSize(width: Self.width, height: height.value))
+            return origin
+        }
+        return Self.panelOrigin(in: bounds, width: Self.width, height: height.value, slide: slide.value, topInset: topInset, tuckedInset: tuckedInset)
     }
     private func render() {
+        // An anchored card is themed before it is attached to its page. Wait for the host's
+        // size rather than asking AppKit to resize it inside zero-sized bounds.
+        if anchoredOrigin != nil && bounds.isEmpty { return }
         renderInputColor()
         let width = Self.width
         panel.frame = NSRect(origin: panelOrigin, size: NSSize(width: width, height: height.value))

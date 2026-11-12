@@ -27,6 +27,31 @@ final class TokenTextView: NSTextView {
         if event.clickCount == 2, !isEditable, let onDoubleClick { onDoubleClick(); return }
         super.mouseDown(with: event)
     }
+    /// Colors the words of `stream` still fading in or highlighted, and hides the ones not shown
+    /// yet, along with any fill behind them such as a code span's. `paintedFrom` is where the last
+    /// paint's colors start, moved to where this one's do. Temporary attributes redraw the words
+    /// without restyling the text every frame.
+    func paint(_ stream: TokenStream, from paintedFrom: inout Int) {
+        guard let manager = layoutManager else { return }
+        let length = textStorage?.length ?? 0
+        if paintedFrom < length {
+            let painted = NSRange(location: paintedFrom, length: length-paintedFrom)
+            manager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: painted)
+            manager.removeTemporaryAttribute(.backgroundColor, forCharacterRange: painted)
+        }
+        paintedFrom = length
+        if let hidden = stream.hiddenFrom, hidden < length {
+            let waiting = NSRange(location: hidden, length: length-hidden)
+            manager.addTemporaryAttribute(.foregroundColor, value: NSColor.clear, forCharacterRange: waiting)
+            manager.addTemporaryAttribute(.backgroundColor, value: NSColor.clear, forCharacterRange: waiting)
+            paintedFrom = hidden
+        }
+        for tint in stream.tints where NSMaxRange(tint.range) <= length {
+            manager.addTemporaryAttribute(.foregroundColor, value: tint.color.color, forCharacterRange: tint.range)
+            paintedFrom = min(paintedFrom, tint.range.location)
+        }
+        tokenLayout.setEntrances(stream.entrances)
+    }
 }
 
 final class TokenLayoutManager: NSLayoutManager {

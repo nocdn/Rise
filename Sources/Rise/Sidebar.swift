@@ -11,7 +11,7 @@ import RiseCore
     /// Where the address palette opens beside the page, at the sidebar's top.
     var paletteAnchor: NSRect { NSRect(x: TabAppearance.inset, y: 50, width: bounds.width-2*TabAppearance.inset, height: 36) }
     let newTab = NewTabButton()
-    let scroll = NSScrollView()
+    let scroll = SidebarScrollView()
     let rowsHost = FlippedView()
     /// Masks the list's edges where more tabs lie past them (`SidebarScrollCues.swift`).
     let scrollFade = CAGradientLayer()
@@ -27,6 +27,10 @@ import RiseCore
     /// with the arrow keys; and the list before it was filtered.
     let searchRow = TabSearchRow()
     var tabSearch: String?
+    var modelSearchIDs: [UUID]?
+    var onSearchQuestion: ((String) -> Void)?
+    var onSearchChanged: (() -> Void)?
+    var searchMetadata: ((BrowserTab) -> String)?
     var searchFocusID: UUID?
     /// Whether the pointer, rather than the arrow keys, last moved the search's focus.
     var searchFocusByPointer = false
@@ -234,7 +238,7 @@ import RiseCore
         var scrollY = minimalNewTab ? start : newTab.frame.maxY+TabAppearance.spacing
         // Searching tabs, the search row heads the list, a little apart from the first tab.
         if isSearchingTabs {
-            searchRow.frame = NSRect(x: TabAppearance.inset, y: scrollY, width: w-2*TabAppearance.inset, height: TabAppearance.height)
+            searchRow.frame = NSRect(x: TabAppearance.inset, y: scrollY, width: w-2*TabAppearance.inset, height: TabAppearance.height+searchRow.statusHeight)
             scrollY = searchRow.frame.maxY+TabSearchRow.gap
         }
         // The card takes room from the list's end closed; open, it lies over the list.

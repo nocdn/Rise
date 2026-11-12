@@ -86,7 +86,8 @@ enum PageAssistant {
         }
     }
 
-    @MainActor private static func streamAnswer(_ messages: [[String: Any]], provider: ModelChoice, session: URLSession,
+    /// A caller with a page-wide conversation can reuse the same header parser and token stream.
+    @MainActor static func streamAnswer(_ messages: [[String: Any]], provider: ModelChoice, session: URLSession,
                                      highlight: @escaping @MainActor (String) async -> Bool,
                                      inputTokens: @escaping @MainActor (Int) -> Void,
                                      yield: (String) -> Void) async throws {

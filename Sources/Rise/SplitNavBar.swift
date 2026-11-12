@@ -85,7 +85,7 @@ import AppKit
         let sameTab = shown == tab?.id
         bar.show(url: tab?.url, title: tab?.title ?? "")
         bar.setReplacedCurrency(currencyReplacement.shownCode(for: tab), animated: sameTab)
-        bar.pageZoom = tab?.page.zoom ?? 1
+        bar.setPageZoom(tab?.page.zoom ?? 1, animated: sameTab)
         if shown != tab?.id {
             shown = tab?.id
             bar.resetLoading(tab?.isLoading == true, progress: tab?.page.estimatedProgress ?? 0, hard: tab?.isHardReloading == true)

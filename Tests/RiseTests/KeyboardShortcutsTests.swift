@@ -77,14 +77,16 @@ final class KeyboardShortcutsTests: XCTestCase {
         try withBrowser { browser, preferences in
             XCTAssertEqual(Array(NSApp.mainMenu!.items.prefix(5).map(\.title)), ["Rise", "File", "Edit", "Page", "View"])
             let page = try XCTUnwrap(NSApp.mainMenu?.items.first { $0.title == "Page" }?.submenu)
-            XCTAssertEqual(page.items.map(\.title), ["Dismiss Cookie Banners", "Automatic PiP", "Preload Links on Hover", "Autoplay YouTube Videos"])
+            let toggles = Array(page.items.dropFirst(3))
+            XCTAssertEqual(Array(page.items.prefix(2).map(\.title)), ["Annotate Selection", "Remove All Annotations on This Page"])
+            XCTAssertEqual(toggles.map(\.title), ["Dismiss Cookie Banners", "Automatic PiP", "Preload Links on Hover", "Autoplay YouTube Videos"])
             let first = browser.addTab(); first.requestedURL = URL(string: "https://example.com/path")!
             func states() -> [NSControl.StateValue] {
-                for item in page.items { item.isEnabled = browser.validateMenuItem(item) }
-                return page.items.map(\.state)
+                for item in toggles { item.isEnabled = browser.validateMenuItem(item) }
+                return toggles.map(\.state)
             }
             XCTAssertEqual(states(), [.off, .on, .on, .off])
-            for item in page.items { XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item)) }
+            for item in toggles { XCTAssertTrue(NSApp.sendAction(try XCTUnwrap(item.action), to: item.target, from: item)) }
             XCTAssertEqual(states(), [.on, .off, .off, .on])
             XCTAssertTrue(CookieConsent(preferences: preferences).isEnabled(for: first.url))
             XCTAssertFalse(SitePermissions(preferences: preferences).automaticPictureInPicture(origin: SitePermissions.origin(first.url)))
@@ -96,8 +98,8 @@ final class KeyboardShortcutsTests: XCTestCase {
             XCTAssertEqual(states(), [.on, .off, .off, .on])
             second.requestedURL = URL(string: "rise://settings")!; browser.select(second.id)
             XCTAssertEqual(states(), [.off, .off, .off, .on])
-            XCTAssertFalse(page.items[0].isEnabled); XCTAssertFalse(page.items[1].isEnabled)
-            XCTAssertTrue(page.items[2].isEnabled); XCTAssertTrue(page.items[3].isEnabled)
+            XCTAssertFalse(toggles[0].isEnabled); XCTAssertFalse(toggles[1].isEnabled)
+            XCTAssertTrue(toggles[2].isEnabled); XCTAssertTrue(toggles[3].isEnabled)
         }
     }
     @MainActor func testNativeDispatchCoversDeleteFunctionAndShiftedKeys() throws {

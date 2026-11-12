@@ -9,6 +9,10 @@ import AppKit
     let field = NSTextField()
     let icon = NSImageView(image: TablerIcon.image(TablerIcon.tabSearch, size: 16))
     let close: ChromeButton
+    let shimmer = InputShimmer()
+    let statusLabel = label("", size: 11)
+    private(set) var thinking = false
+    var statusHeight: CGFloat { statusLabel.isHidden ? 0 : 34 }
     var onChange: ((String) -> Void)?
     var onMove: ((Int) -> Void)?
     var onSubmit: (() -> Void)?
@@ -21,12 +25,18 @@ import AppKit
         field.font = .systemFont(ofSize: 13); field.cell?.usesSingleLineMode = true; field.cell?.isScrollable = true
         field.delegate = self; field.setAccessibilityLabel("Search tabs")
         close.actionBlock = { [weak self] in self?.onEnd?() }
-        addSubview(icon); addSubview(field); addSubview(close)
+        shimmer.field = field
+        statusLabel.isHidden = true; statusLabel.maximumNumberOfLines = 2
+        statusLabel.lineBreakMode = .byTruncatingTail
+        field.toolTip = "Type to filter. Enter a description to search with your page assistant."
+        addSubview(icon); addSubview(field); addSubview(shimmer); addSubview(close); addSubview(statusLabel)
     }
     required init?(coder: NSCoder) { fatalError() }
     func apply(_ theme: RiseTheme) {
         icon.contentTintColor = theme.sidebarIcon
         field.textColor = TabAppearance.text(theme, selected: true)
+        statusLabel.textColor = theme.muted
+        shimmer.baseColor = theme.muted; shimmer.bandColor = theme.text
         field.placeholderAttributedString = NSAttributedString(string: "Search tabs", attributes: [
             .font: field.font ?? .systemFont(ofSize: 13), .foregroundColor: theme.muted])
         close.contentTintColor = theme == .dark ? NSColor.white.withAlphaComponent(0.8) : theme.sidebarIcon
@@ -35,11 +45,16 @@ import AppKit
     // Where a tab row puts its favicon, title and close button.
     override func layout() {
         super.layout()
-        icon.frame = NSRect(x: 8, y: (bounds.height-16)/2, width: 16, height: 16)
+        let rowHeight = TabAppearance.height
+        icon.frame = NSRect(x: 8, y: (rowHeight-16)/2, width: 16, height: 16)
         let height = ceil(field.intrinsicContentSize.height)
-        field.frame = NSRect(x: 30, y: (bounds.height-height)/2, width: max(0, bounds.width-62), height: height)
-        close.frame = NSRect(x: bounds.width-28.5, y: (bounds.height-24)/2-0.5, width: 24, height: 24)
+        field.frame = NSRect(x: 30, y: (rowHeight-height)/2, width: max(0, bounds.width-62), height: height)
+        shimmer.frame = field.frame
+        close.frame = NSRect(x: bounds.width-28.5, y: (rowHeight-24)/2-0.5, width: 24, height: 24)
+        statusLabel.frame = NSRect(x: 8, y: rowHeight, width: max(0,bounds.width-16), height: statusHeight)
     }
+    func setThinking(_ value: Bool) { thinking = value; if value { shimmer.start() } else { shimmer.finish() } }
+    func setStatus(_ text: String?) { statusLabel.stringValue = text ?? ""; statusLabel.isHidden = text == nil; needsLayout = true }
     func controlTextDidChange(_ notification: Notification) { onChange?(field.stringValue) }
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
         switch selector {
@@ -67,6 +82,7 @@ import AppKit
             searchRow.onEnd = { [weak self] in self?.endTabSearch(); self?.onTabSearchEnded?() }
         }
         if !isSearchingTabs {
+            modelSearchIDs = nil; searchRow.setStatus(nil)
             cancelTabInteractions()
             if let appliedTheme { searchRow.apply(appliedTheme) }
             searchRow.field.stringValue = ""; searchRow.isHidden = false
@@ -80,6 +96,7 @@ import AppKit
     /// Shows every tab again and closes the row, the list sliding back up under it.
     func endTabSearch() {
         guard isSearchingTabs else { return }
+        onSearchChanged?(); modelSearchIDs = nil; searchRow.setStatus(nil)
         tabSearch = nil; searchFocusID = nil; searchFocusByPointer = false; searchRow.isHidden = true
         rows.values.forEach { $0.hoverFocuses = false }
         if window?.firstResponder === searchRow.field.currentEditor() { window?.makeFirstResponder(nil) }
@@ -87,6 +104,7 @@ import AppKit
     }
     func searchTabs(for text: String) {
         guard isSearchingTabs else { return }
+        onSearchChanged?(); modelSearchIDs = nil; searchRow.setStatus(nil)
         tabSearch = text
         relayoutForSearch(sliding: false)
     }
@@ -97,13 +115,19 @@ import AppKit
             guard let tab = tabsByID[id] else { return false }
             var address = tab.url?.absoluteString ?? ""
             if let scheme = address.range(of: "://") { address = String(address[scheme.upperBound...]) }
-            let text = tab.title + " " + address
+            let text = tab.title + " " + address + " " + (searchMetadata?(tab) ?? "")
             return words.allSatisfy { text.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) != nil }
         }
         var rows: [NSView] = [], ids: [UUID] = []
-        for (row, id) in zip(unfilteredRows, unfilteredIDs) {
+        var source = Array(zip(unfilteredRows, unfilteredIDs))
+        func rank(_ row: NSView, _ id: UUID) -> Int {
+            let right = (row as? SplitTabRow)?.right.tabID
+            return min(modelSearchIDs?.firstIndex(of: id) ?? Int.max, right.flatMap { modelSearchIDs?.firstIndex(of: $0) } ?? Int.max)
+        }
+        if modelSearchIDs != nil { source.sort { rank($0.0,$0.1) < rank($1.0,$1.1) } }
+        for (row, id) in source {
             let pair = row as? SplitTabRow
-            let shown = words.isEmpty || matches(id) || pair.map { matches($0.right.tabID) } == true
+            let shown = modelSearchIDs != nil ? rank(row,id) < Int.max : words.isEmpty || matches(id) || pair.map { matches($0.right.tabID) } == true
             row.isHidden = !shown
             if shown { rows.append(row); ids.append(id) }
         }
@@ -120,8 +144,19 @@ import AppKit
     }
     /// Enter chooses the lit tab, or the first that matches what's typed.
     func chooseSearchedTab() {
+        guard !searchRow.thinking else { return }
+        if searchFocusID == nil, modelSearchIDs == nil, let query = tabSearch?.trimmingCharacters(in: .whitespacesAndNewlines), !query.isEmpty,
+           let onSearchQuestion, orderedIDs.isEmpty || query.split(whereSeparator: \.isWhitespace).count >= 4 || query.hasSuffix("?") {
+            onSearchQuestion(query); return
+        }
         guard let id = searchFocusID ?? (tabSearch?.isEmpty == false ? orderedIDs.first : nil) else { return }
-        onSelect?(id)
+        let selected = modelSearchIDs?.first(where: { candidate in candidate == id || (displayedRow(for:id) as? SplitTabRow)?.right.tabID == candidate }) ?? id
+        onSelect?(selected)
+    }
+    func applyModelSearch(_ ids: [UUID]) {
+        guard isSearchingTabs else { return }
+        modelSearchIDs = ids; searchFocusID = nil
+        relayoutForSearch(sliding:false)
     }
     /// The pointer moving on a tab, or a split's half, focuses it, taking over from the keys.
     func pointerMovedOverSearchedTab(_ id: UUID) {

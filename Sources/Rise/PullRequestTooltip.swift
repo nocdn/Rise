@@ -704,23 +704,7 @@ final class PullRequestMetaRow: CardLinkRow {
         paintedFrom = 0; paint()
     }
     /// Colors the words fading in and hides the ones not shown yet, as the find bar does.
-    private func paint() {
-        guard let manager = summaryView.layoutManager else { return }
-        let length = summaryView.textStorage?.length ?? 0
-        if paintedFrom < length {
-            manager.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: paintedFrom, length: length-paintedFrom))
-        }
-        paintedFrom = length
-        if let hidden = stream.hiddenFrom, hidden < length {
-            manager.addTemporaryAttribute(.foregroundColor, value: NSColor.clear, forCharacterRange: NSRange(location: hidden, length: length-hidden))
-            paintedFrom = hidden
-        }
-        for tint in stream.tints where NSMaxRange(tint.range) <= length {
-            manager.addTemporaryAttribute(.foregroundColor, value: tint.color.color, forCharacterRange: tint.range)
-            paintedFrom = min(paintedFrom, tint.range.location)
-        }
-        summaryView.tokenLayout.setEntrances(stream.entrances)
-    }
+    private func paint() { summaryView.paint(stream, from: &paintedFrom) }
 
     // MARK: Layout and motion
 

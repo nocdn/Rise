@@ -68,6 +68,9 @@ import AppKit
         item(edit, "Skip to Previous Match Above", #selector(BrowserController.skipToPreviousMatch), "G", modifiers: [.command, .option, .shift], target: browser).isAlternate = true
 
         let page = addMenu("Page")
+        item(page, "Annotate Selection", #selector(BrowserController.annotateSelection), "a", modifiers: [.command, .control], target: browser)
+        item(page, "Remove All Annotations on This Page", #selector(BrowserController.removePageAnnotations), target: browser)
+        page.addItem(.separator())
         item(page, "Dismiss Cookie Banners", #selector(BrowserController.toggleCookieConsent), target: browser)
         item(page, "Automatic PiP", #selector(BrowserController.toggleAutomaticPictureInPicture), target: browser)
         item(page, "Preload Links on Hover", #selector(BrowserController.toggleLinkPreloading), target: browser)
@@ -87,6 +90,7 @@ import AppKit
         item(view, "Actual Size", #selector(BrowserController.actualSize), "0", target: browser)
         view.addItem(.separator())
         item(view, "Show Downloads", #selector(BrowserController.toggleDownloads), "l", modifiers: [.command, .option], target: browser)
+        item(view, "Show Chat", #selector(BrowserController.toggleAIChat), "e", target: browser)
         let theme = browser.makeThemeMenu()
         theme.submenu?.identifier = NSUserInterfaceItemIdentifier("browserTheme"); theme.submenu?.delegate = self
         view.addItem(theme)

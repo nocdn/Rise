@@ -8,6 +8,7 @@ import AppKit
 /// before the page acts on it.
 @MainActor final class OpenTabLinks {
     static let preferenceKey = "Rise.GoToOpenTabs"
+    static let externalPreferenceKey = "Rise.ReuseExternalLinks"
     static let worldName = "Rise.OpenTabLinks"
     private let preferences: UserDefaults
     /// What's open in tabs other than a page's: their addresses, and the requests among them by
@@ -25,6 +26,20 @@ import AppKit
     /// On unless turned off in rise://settings.
     var enabled: Bool { preferences.object(forKey: Self.preferenceKey) as? Bool ?? true }
     func setEnabled(_ on: Bool) { preferences.set(on, forKey: Self.preferenceKey) }
+    /// Separate from in-page clicks: links received from Mail, Messages and other apps.
+    var reusesExternalLinks: Bool { preferences.object(forKey: Self.externalPreferenceKey) as? Bool ?? true }
+    func setReusesExternalLinks(_ on: Bool) { preferences.set(on, forKey: Self.externalPreferenceKey) }
+
+    /// Preserve the page, query and fragment. Only normalize equivalent HTTP origins and an
+    /// empty root path, since an app may send `https://example.com` for an open `…com/` tab.
+    static func externalAddress(_ url: URL) -> String {
+        guard var parts = URLComponents(url: url, resolvingAgainstBaseURL: true),
+              let scheme = parts.scheme?.lowercased(), ["http", "https"].contains(scheme) else { return url.absoluteString }
+        parts.scheme = scheme; parts.host = parts.host?.lowercased()
+        if parts.percentEncodedPath.isEmpty { parts.percentEncodedPath = "/" }
+        if parts.port == (scheme == "https" ? 443 : 80) { parts.port = nil }
+        return parts.string ?? url.absoluteString
+    }
 
     func install(on page: WebPage) {
         // A new document asks for the list as it starts; changes are sent to it after.
@@ -74,6 +89,25 @@ import AppKit
 }
 
 @MainActor extension BrowserController {
+    /// An external link reuses its exact page, without reloading it or losing scroll and forms.
+    /// Unlike in-page request links, a request's Files and Overview remain distinct here.
+    @discardableResult func openExternalURL(_ url: URL) -> BrowserTab {
+        guard openTabLinks.reusesExternalLinks else { return addTab(url: url) }
+        let address = OpenTabLinks.externalAddress(url)
+        func matches(_ tab: BrowserTab) -> Bool { tab.url.map(OpenTabLinks.externalAddress) == address }
+        if let peekTab, matches(peekTab) {
+            hidePalette(); window?.makeFirstResponder(peekTab.page.view)
+            return peekTab
+        }
+        guard let tab = selectedTab.flatMap({ matches($0) ? $0 : nil }) ?? tabs.first(where: matches) else { return addTab(url: url) }
+        select(tab.id)
+        // A restored Peek mustn't obscure the page the other app asked to show. Keep it with
+        // its owner so its forms and navigation are still there when reopened.
+        if peekTab != nil { suspendPeek(); update() }
+        window?.makeFirstResponder(tab.page.view)
+        return tab
+    }
+
     /// What's open in tabs other than `page`'s, leaving out the address it's on and, on a request,
     /// the request's other pages: a link to the page itself, or between its request's own pages,
     /// behaves as usual.

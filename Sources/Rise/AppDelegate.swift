@@ -4,7 +4,7 @@ import AppKit
     var browser: BrowserController!
     func applicationDidFinishLaunching(_ notification: Notification) {
         MediaAirDrop.clearLeftovers()
-        browser = BrowserController(sessionURL: RiseProfile.directory?.appendingPathComponent("session.json")); buildMenu()
+        prepareBrowser()
         if PaletteLab.isOn { browser.installPaletteLab() }
         browser.showWindow(nil)
         FloatingPageGestures.shared.install()
@@ -14,15 +14,22 @@ import AppKit
         NSApp.activate(ignoringOtherApps: true)
     }
     func applicationWillTerminate(_ notification: Notification) {
-        browser?.pictureInPicture.tearDown(); browser?.saveNow()
+        browser?.annotations.close(); browser?.smartTabSearch.tearDown(); browser?.pictureInPicture.tearDown(); browser?.saveNow()
         ChromiumEngine.shutdown()
     }
     func applicationDidBecomeActive(_ notification: Notification) { browser?.applyPendingSharedTabs(); browser?.tabSync?.refresh() }
     func application(_ application: NSApplication, didReceiveRemoteNotification userInfo: [String: Any]) { browser?.tabSync?.refresh() }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
     func application(_ application: NSApplication, open urls: [URL]) {
-        if browser == nil { browser = BrowserController(); buildMenu(); browser.showWindow(nil) }
-        for url in urls { browser.addTab(url: url) }
+        prepareBrowser()
+        for url in urls { browser.openExternalURL(url) }
+        browser.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+    /// URL delivery can precede didFinishLaunching. Restore once, before matching incoming links.
+    private func prepareBrowser() {
+        guard browser == nil else { return }
+        browser = BrowserController(sessionURL: RiseProfile.directory?.appendingPathComponent("session.json")); buildMenu()
     }
     @objc func showBrowser() { browser.showWindow(nil); browser.newTab() }
     @objc func toggleTabSync() {

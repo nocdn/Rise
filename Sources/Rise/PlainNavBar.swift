@@ -294,8 +294,30 @@ import RiseCore
     private var shownInk: Ink { developerInk ?? ink }
     private(set) var isHovered = false
     private var url: URL?, title = ""
-    var pageZoom: CGFloat = 1 { didSet { if pageZoom != oldValue { needsLayout = true; updateFieldControls(animated: true) } } }
+    private(set) var pageZoom: CGFloat = 1
     var showsZoom: Bool { url != nil && !PageZoom.isActual(pageZoom) }
+    private var zoomLeaving: UUID?, animateZoomLayout = false
+    /// Remove its slot immediately, keeping only the fading icon at its old position. The
+    /// surrounding controls spring into their new slots, including when they're not hovered.
+    func setPageZoom(_ zoom: CGFloat, animated: Bool) {
+        guard pageZoom != zoom else { return }
+        layoutSubtreeIfNeeded()
+        let wasShown = showsZoom
+        pageZoom = zoom
+        let motion = animated && window != nil && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if wasShown != showsZoom {
+            animateZoomLayout = motion
+            zoomLeaving = nil
+            if !showsZoom, motion, zoomButton.alphaValue > 0 {
+                let token = UUID(); zoomLeaving = token
+                DispatchQueue.main.asyncAfter(deadline: .now()+0.12) { [weak self] in
+                    guard let self, self.zoomLeaving == token else { return }
+                    self.zoomLeaving = nil; self.needsLayout = true
+                }
+            }
+        }
+        needsLayout = true; updateFieldControls(animated: motion)
+    }
 
     init(copy: @escaping () -> Void, settings: @escaping () -> Void, zoom: @escaping () -> Void, permission: @escaping () -> Void = {},
          currency: @escaping () -> Void = {}) {
@@ -305,6 +327,8 @@ import RiseCore
         settingsButton.image = TablerIcon.image(TablerIcon.adjustments, size: 16, description: "Site controls")
         zoomButton = SidebarHoverButton(symbol: "plus.magnifyingglass", size: 14, title: "Zoom", action: zoom)
         zoomButton.image = TablerIcon.image(TablerIcon.zoomIn, size: 16, description: "Zoom")
+        zoomButton.setHoverHint("Reset page zoom to 100%")
+        zoomButton.setAccessibilityLabel("Reset page zoom to 100%")
         permissionButton = SidebarHoverButton(symbol: "camera", size: 14, title: "Permission request", action: permission)
         currencyButton = SidebarHoverButton(symbol: "dollarsign.circle", size: 14, title: "Prices replaced", action: currency)
         currencyButton.image = TablerIcon.coinsImage(size: 16)
@@ -413,17 +437,25 @@ import RiseCore
     /// is, its controls and its address's copy, for any page with an address.
     private var pageButtons: [SidebarHoverButton] {
         guard url != nil else { return [] }
-        return (showsZoom ? [zoomButton] : []) + (showsPermission ? [permissionButton] : []) + [settingsButton, copyButton]
+        return (showsPermission ? [permissionButton] : []) + [settingsButton, copyButton] + (showsZoom ? [zoomButton] : [])
             + (showsCurrency ? [currencyButton] : [])
     }
 
     override func layout() {
         super.layout()
+        let moveControls = animateZoomLayout
+        animateZoomLayout = false
         let scale = window?.backingScaleFactor ?? 2, mid = Metrics.midY
+        let oldField = field.presentation() ?? field
+        let fieldPosition = oldField.position, fieldWidth = oldField.bounds.width
         CATransaction.begin(); CATransaction.setDisableActions(true)
         hairline.frame = NSRect(x: 0, y: bounds.height-1/scale, width: bounds.width, height: 1/scale)
         field.frame = fieldRect
         CATransaction.commit()
+        if moveControls {
+            springControl(field, keyPath: "position", from: fieldPosition, to: field.position)
+            springControl(field, keyPath: "bounds.size.width", from: fieldWidth, to: field.bounds.width)
+        }
         addressHost.frame = bounds
         layoutProgress()
         for (button, centre) in zip(navigation, navigationCentres) {
@@ -431,9 +463,16 @@ import RiseCore
         }
         layoutExtensions()
         for (index, button) in pageButtons.enumerated() {
+            let from = button.layer?.presentation()?.position ?? button.layer?.position
             button.frame = NSRect(x: rowCentre(index)-14, y: mid-14, width: 28, height: 28)
+            if moveControls, button !== zoomButton, let layer = button.layer, let from {
+                // A fast reversal can already be at its new destination. Retire the old trip
+                // even then, rather than let it carry on towards the previous slot and snap back.
+                springControl(layer, keyPath: "position", from: from, to: layer.position)
+            }
         }
-        zoomButton.isHidden = !showsZoom; permissionButton.isHidden = !showsPermission; currencyButton.isHidden = !showsCurrency
+        zoomButton.isHidden = !showsZoom && zoomLeaving == nil
+        permissionButton.isHidden = !showsPermission; currencyButton.isHidden = !showsCurrency
         if developerProgress > 0.5, let start = developerControlsMinX {
             // Leftwards from developer mode's buttons, the prices' icon nearest them.
             let staying = (showsPermission ? [permissionButton] : []) + (showsCurrency ? [currencyButton] : [])
@@ -449,6 +488,16 @@ import RiseCore
         text.frame = NSRect(x: textX, y: round((mid-line/2)*2)/2, width: max(0, textEnd-textX), height: line)
         for case let notice as BarNotice in subviews { place(notice) }
         window?.invalidateCursorRects(for: self)
+    }
+    /// The field and its controls share one spring and commit, so their edges travel together.
+    private func springControl(_ layer: CALayer, keyPath: String, from: Any, to: Any) {
+        let key = keyPath == "position" ? "Rise.PageControlPosition" : "Rise.PageControlWidth"
+        layer.removeAnimation(forKey: key)
+        let slide = CASpringAnimation(keyPath: keyPath)
+        slide.fromValue = from; slide.toValue = to
+        slide.stiffness = PermissionMotion.stiffness; slide.damping = PermissionMotion.damping
+        slide.duration = slide.settlingDuration
+        layer.add(slide, forKey: key)
     }
 
     // MARK: Saying something in the address's place
@@ -702,7 +751,7 @@ import RiseCore
     private func hoverArea(contains point: NSPoint) -> Bool {
         if fieldRect.contains(point) { return true }
         // Up to the copy button, or the prices' icon past it, which shows them as hovering them does.
-        let end = showsCurrency ? max(copyButton.frame.maxX, currencyButton.frame.maxX) : copyButton.frame.maxX
+        let end = max(copyButton.frame.maxX, showsZoom ? zoomButton.frame.maxX : 0, showsCurrency ? currencyButton.frame.maxX : 0)
         guard url != nil, end > fieldRect.maxX else { return false }
         return NSRect(x: fieldRect.maxX, y: 0, width: end-fieldRect.maxX, height: bounds.height).contains(point)
     }
@@ -733,7 +782,7 @@ import RiseCore
     }
     private func updateFieldControls(animated: Bool) {
         for button in fieldControls + [permissionButton, currencyButton] {
-            let on = url != nil && (isHovered && button !== currencyButton || (button === zoomButton && showsZoom)
+            let on = url != nil && (isHovered && button !== currencyButton && (button !== zoomButton || showsZoom) || (button === zoomButton && showsZoom)
                 || (button === permissionButton && showsPermission) || (button === currencyButton && showsCurrency))
             // A leaving icon shows until it has gone, but can't be pressed.
             button.allowsInteraction = on && !(button === permissionButton && permissionLeaving) && !(button === currencyButton && currencyLeaving)
@@ -741,7 +790,8 @@ import RiseCore
             guard button.alphaValue != target else { continue }
             if animated, window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
                 NSAnimationContext.runAnimationGroup { context in
-                    context.duration = on ? 0.14 : 0.12; button.animator().alphaValue = target
+                    context.duration = on ? (button === zoomButton ? 0.18 : 0.14) : 0.12
+                    button.animator().alphaValue = target
                 }
             } else { button.alphaValue = target }
         }
