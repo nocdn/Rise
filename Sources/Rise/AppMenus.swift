@@ -160,6 +160,7 @@ import AppKit
         item(help, "Report an Issue…", #selector(BrowserController.reportIssue), target: browser)
         browser.keyboardShortcuts.applyToMenus()
         browser.keyboardShortcutsChanged()
+        bar.separatingIconSections()
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {

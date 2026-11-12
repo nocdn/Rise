@@ -81,7 +81,7 @@ import AppKit
     override func cursorUpdate(with event: NSEvent) { NSCursor.resizeLeftRight.set() }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
     /// Only a split, which a Peek can come back from, has a menu.
-    override func menu(for event: NSEvent) -> NSMenu? { canReturnToPeek == nil ? nil : makeContextMenu() }
+    override func menu(for event: NSEvent) -> NSMenu? { canReturnToPeek == nil ? nil : makeContextMenu().separatingIconSections() }
     func makeContextMenu() -> NSMenu {
         let menu = NSMenu(); menu.autoenablesItems = false
         let item = NSMenuItem(title: "Return to Peek state", action: #selector(returnToPeek), keyEquivalent: "")

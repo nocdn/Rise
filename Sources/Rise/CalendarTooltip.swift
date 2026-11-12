@@ -42,7 +42,7 @@ final class CalendarEventChip: NSButton {
         ].merging(name.font.map { [.font: $0] } ?? [:]) { a, _ in a })
         needsDisplay = true
     }
-    override func menu(for event: NSEvent) -> NSMenu? { onMenu?() }
+    override func menu(for event: NSEvent) -> NSMenu? { onMenu?()?.separatingIconSections() }
     /// A quick side-to-side shake, for an answer Calendar didn't take.
     func shake() {
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, let layer else { return }

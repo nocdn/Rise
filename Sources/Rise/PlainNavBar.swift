@@ -810,14 +810,14 @@ import RiseCore
     /// The address opens the address panel, as ⌘L does; the rest of the bar moves the window, as
     /// a title bar would. A Control-click on the address is a right-click.
     override func mouseDown(with event: NSEvent) {
-        if event.modifierFlags.contains(.control), let menu = menu(for: event) { NSMenu.popUpContextMenu(menu, with: event, for: self); return }
+        if event.modifierFlags.contains(.control), let menu = menu(for: event) { NSMenu.popUpContextMenu(menu.separatingIconSections(), with: event, for: self); return }
         if fieldRect.contains(convert(event.locationInWindow, from: nil)) { onOpenAddress?() } else { window?.performDrag(with: event) }
     }
     /// What right-clicking the address offers, for this bar's page.
     var addressMenu: ((PlainNavBar) -> NSMenu?)?
     override func menu(for event: NSEvent) -> NSMenu? {
         guard url != nil, developerProgress == 0, fieldRect.contains(convert(event.locationInWindow, from: nil)) else { return nil }
-        return addressMenu?(self)
+        return addressMenu?(self)?.separatingIconSections()
     }
 }
 

@@ -160,7 +160,7 @@ import RiseChromium
         menu.addItem(.separator())
         menu.addItem(menuItem(pinned ? "Unpin from Sidebar" : "Pin to Sidebar") { [weak self] in self?.setExtension(id, pinned: !pinned) })
         menu.addItem(menuItem("Manage Extension…") { [weak self] in self?.showExtensions(id) })
-        return menu
+        return menu.separatingIconSections()
     }
     /// Chrome's extensions page, as rise://extensions; open on one extension, given its id.
     func showExtensions(_ id: String? = nil) {

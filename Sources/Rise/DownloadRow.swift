@@ -229,7 +229,7 @@ final class DownloadRow: NSView {
             menu.addItem(picker.standardShareMenuItem)
             if let airDrop = AirDropMenuItem.make(for: [item.record.url], in: { [weak self] in self?.window }) { menu.addItem(airDrop) }
         }
-        return menu
+        return menu.separatingIconSections()
     }
     /// Kept while its Share item can still be chosen.
     private var sharingPicker: NSSharingServicePicker?

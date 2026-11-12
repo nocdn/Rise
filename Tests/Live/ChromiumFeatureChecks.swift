@@ -250,6 +250,7 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         let link = await rightClick(center("#link"), in: menus.page, "a link")
         check(["Open Link", "Open Link in New Tab", "Open Link in Peek", "Download Linked File", "Copy Link", "Share…", "Inspect Element"]
               .allSatisfy(titles(link).contains), "A link's menu: \(titles(link))")
+        check(link?.mixesIconsInASection == false, "Items without icons aren't indented beside ones with: \(titles(link))")
         choose("Copy Link", in: link)
         check(pasteboard.string(forType: .string) == "https://example.com/linked", "Copy Link copies its address")
         // AirDrop, right under Share in its section, with an icon like Share's, sends the link straight there.

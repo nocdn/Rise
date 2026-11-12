@@ -21,7 +21,7 @@ import Vision
         // tests, the menu stands in.
         if ChromiumEngine.isRunning { siteControlsPopover.close(); showSettings(); return }
         guard let anchor = (siteControlsPopover.contentViewController as? SiteControlsController)?.quickActions.last else { return }
-        makeMoreSiteMenu().popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.maxY), in: anchor)
+        makeMoreSiteMenu().separatingIconSections().popUp(positioning: nil, at: NSPoint(x: 0, y: anchor.bounds.maxY), in: anchor)
     }
     func makeMoreSiteMenu() -> NSMenu {
         let menu = makeSiteMenu()
@@ -93,7 +93,7 @@ import Vision
             })
         }
         let anchor = row ?? view
-        menu.popUp(positioning: nil, at: NSPoint(x: 40, y: anchor.bounds.maxY), in: anchor)
+        menu.separatingIconSections().popUp(positioning: nil, at: NSPoint(x: 40, y: anchor.bounds.maxY), in: anchor)
     }
     /// The popover and rise://settings use the same authorization and revocation path.
     func setSitePermission(_ permission: SitePermission, for capability: SiteCapability, origin: String) {

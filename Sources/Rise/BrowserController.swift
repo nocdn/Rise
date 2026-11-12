@@ -298,7 +298,7 @@ import RiseCore
     let aiKeys = AIKeys()
     /// Shows a page's menu at a point in its view; replaced in tests, as the menu tracks modally.
     var presentContextMenu: (NSMenu, NSPoint, NSView) -> Void = { menu, point, view in
-        menu.popUp(positioning: nil, at: point, in: view)
+        menu.separatingIconSections().popUp(positioning: nil, at: point, in: view)
     }
     /// macOS's certificate choosers showing for pages that asked for a certificate, by page.
     var clientCertificateChoosers: [ObjectIdentifier: ClientCertificateChooser] = [:]

@@ -116,10 +116,12 @@ final class DownloadControlsTests: XCTestCase {
         list.finish(id); row.update()
         let finished = try XCTUnwrap(row.menu(for: event)?.items)
         XCTAssertEqual(finished.prefix(3).map(\.title), ["Reveal in Finder", "Delete from disk", "Smart Rename"])
-        XCTAssertTrue(finished[3].title.hasPrefix("Share"), "Share follows them: \(finished[3].title)")
+        // Share, after a divider, so the items without icons aren't indented beside its icon.
+        XCTAssertTrue(finished[3].isSeparatorItem)
+        XCTAssertTrue(finished[4].title.hasPrefix("Share"), "Share follows them: \(finished[4].title)")
         // AirDrop, right under Share, where the Mac can send the file with it.
         let airDrop = NSSharingService(named: .sendViaAirDrop)?.canPerform(withItems: [file]) == true
-        XCTAssertEqual(finished.dropFirst(4).map(\.title), airDrop ? ["AirDrop"] : [])
+        XCTAssertEqual(finished.dropFirst(5).map(\.title), airDrop ? ["AirDrop"] : [])
         var revealed: URL?
         row.reveal = { revealed = $0 }
         let menu = try XCTUnwrap(row.menu(for: event)); menu.performActionForItem(at: 0)

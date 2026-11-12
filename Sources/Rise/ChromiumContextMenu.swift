@@ -113,9 +113,7 @@ import RiseChromium
             // The system's own, as Safari's: the share sheet, from the menu, for the link.
             let picker = NSSharingServicePicker(items: [link])
             sharingPicker = picker
-            let share = picker.standardShareMenuItem
-            share.image = nil
-            menu.addItem(share)
+            menu.addItem(picker.standardShareMenuItem)
             if let airDrop = AirDropMenuItem.make(for: [link], in: { [weak page] in page?.view.window }) { menu.addItem(airDrop) }
             // A repository's link: starred as the person signed in to GitHub, in a section of its own.
             if let repository = GitHubRepository(url: link) {
@@ -193,7 +191,7 @@ import RiseChromium
                 self.inspectElement(info, in: page)
             }
         }
-        return menu
+        return menu.separatingIconSections()
     }
 
     /// An extension's entry, or one of the page's own (as DevTools gives), as a menu item.

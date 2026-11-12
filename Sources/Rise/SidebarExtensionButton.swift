@@ -46,7 +46,7 @@ final class SidebarExtensionButton: SidebarHoverButton {
         guard let press = controlPress else { return }
         controlPress = nil
         if dragging { dragging = false; onDragEnd?(); refreshHoverState() }
-        else if let menu { NSMenu.popUpContextMenu(menu, with: press, for: self) }
+        else if let menu { NSMenu.popUpContextMenu(menu.separatingIconSections(), with: press, for: self) }
     }
 
     /// What it shows now: the icon (a puzzle piece until it loads), its name in the toolbar's

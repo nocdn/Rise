@@ -295,7 +295,7 @@ enum AnnotationConversation {
         let menu = NSMenu()
         menu.addItem(browser.menuItem("Remove Annotation") { [weak self, weak page] in if let page { self?.remove(id, key: key, in: page) } })
         let y = page.view.isFlipped ? anchorRect.maxY : page.view.bounds.height-anchorRect.maxY
-        menu.popUp(positioning:nil, at:NSPoint(x:anchorRect.minX,y:y), in:page.view)
+        menu.separatingIconSections().popUp(positioning:nil, at:NSPoint(x:anchorRect.minX,y:y), in:page.view)
     }
     private func reportSaveError() {
         if store.saveError != nil { browser?.selectedBar.showNotice("Couldn’t save annotations to disk", image:BarNotice.warningImage, hold:3) }

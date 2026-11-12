@@ -57,7 +57,7 @@ import RiseCore
         }
         menu.addItem(.separator())
         menu.addItem(menuItem("Archived Tabs…") { [weak self] in self?.showArchivedTabs() })
-        menu.popUp(positioning: nil, at: NSPoint(x: 12, y: sidebar.bounds.height-42), in: sidebar)
+        menu.separatingIconSections().popUp(positioning: nil, at: NSPoint(x: 12, y: sidebar.bounds.height-42), in: sidebar)
     }
     /// For now only the title's shimmer, standing in for the rename to come.
     func smartRename(_ id: UUID) { sidebar.rows[id]?.shimmerTitle() }
@@ -73,7 +73,7 @@ import RiseCore
     }
     func tabMenu(_ id: UUID, event: NSEvent) {
         guard let menu = makeTabMenu(id), let row = sidebar.anchor(for: id) else { return }
-        NSMenu.popUpContextMenu(menu, with: event, for: row)
+        NSMenu.popUpContextMenu(menu.separatingIconSections(), with: event, for: row)
     }
     func makeTabMenu(_ id: UUID) -> NSMenu? {
         guard let tab = tabs.first(where: { $0.id == id }) else { return nil }

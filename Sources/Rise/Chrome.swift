@@ -149,7 +149,7 @@ final class MenuButton: ChromeButton {
         guard let menu = makeMenu?() else { return }
         menuWillOpen?()
         // Called while the press is under way, the menu follows it to an item and picks it on release.
-        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: isFlipped ? bounds.maxY+4 : -4), in: self)
+        menu.separatingIconSections().popUp(positioning: nil, at: NSPoint(x: 0, y: isFlipped ? bounds.maxY+4 : -4), in: self)
         menuDidClose?()
         refreshHoverState()
     }
