@@ -8,6 +8,8 @@ import AppKit
     view.textContainerInset = .zero; view.textContainer?.lineFragmentPadding = 0
     view.textContainer?.widthTracksTextView = false
     view.isVerticallyResizable = false; view.isHorizontallyResizable = false
+    // Words fade and sharpen into place without sliding in.
+    view.tokenLayout.travels = false
     return view
 }
 extension NSTextView {
@@ -29,9 +31,9 @@ extension NSTextView {
     private let fill = Surface(radius: AIChatStyle.chipRadius)
     private let tile = Surface(radius: AIChatStyle.tileRadius)
     private let icon = NSImageView()
-    private let title = label("", size: 13, weight: .medium)
+    private let title = label("", size: 13)
     private let site = label("", size: 13)
-    private var removeButton: ChromeButton?
+    private(set) var removeButton: AIChatRemoveButton?
     private var hovering = false
     var onRemove: (() -> Void)?
 
@@ -51,9 +53,12 @@ extension NSTextView {
         tile.addSubview(icon)
         [fill, tile, title, site].forEach(addSubview)
         if removable {
-            let button = ChromeButton(symbol: "xmark", size: 8, title: "Remove Page", action: {})
+            // Dia's: a disc over the top-right corner, its cross 6.5 pt across with 1.5 pt strokes,
+            // shown while the pointer is on the page.
+            let button = AIChatRemoveButton(symbol: "xmark", size: 8, title: "Remove Page", action: {})
+            button.image = TablerIcon.image(TablerIcon.cross, size: 10, strokeWidth: 1.5, description: "Remove Page")
             button.actionBlock = { [weak self] in self?.onRemove?() }
-            button.layer?.cornerRadius = 9; button.isHidden = true
+            button.layer?.cornerRadius = Self.removeSize/2; button.isHidden = true
             addSubview(button); removeButton = button
         }
         setAccessibilityElement(true); setAccessibilityRole(.group)
@@ -65,9 +70,11 @@ extension NSTextView {
         fill.fill = colors.chip; tile.fill = colors.tile; tile.layer?.borderColor = colors.tileBorder.cgColor
         title.textColor = colors.text; site.textColor = colors.dark ? colors.muted : NSColor(hex: 0x797A7A)
         if attachment.favicon == nil { icon.contentTintColor = colors.muted }
-        removeButton?.contentTintColor = colors.text; removeButton?.baseColor = colors.panel
-        removeButton?.hoverColor = colors.panel.blended(withFraction: 0.08, of: colors.text) ?? colors.panel
-        removeButton?.layer?.backgroundColor = colors.panel.cgColor
+        if let button = removeButton {
+            button.baseColor = colors.remove; button.hoverColor = colors.removeHover
+            button.tint = colors.removeIcon; button.hoverTint = colors.removeHoverIcon
+            button.refreshHoverState()
+        }
     }
     override func layout() {
         super.layout()
@@ -76,22 +83,45 @@ extension NSTextView {
         tile.frame = tileFrame
         tile.layer?.shadowPath = CGPath(roundedRect: tile.bounds, cornerWidth: AIChatStyle.tileRadius, cornerHeight: AIChatStyle.tileRadius, transform: nil)
         icon.frame = NSRect(x: (tileFrame.width-16)/2, y: (tileFrame.height-16)/2, width: 16, height: 16)
-        let textX = tileFrame.maxX+8, textWidth = max(0, bounds.width-textX-10)
+        // Labels draw 2 pt in from their frames.
+        let textX = tileFrame.maxX+6, textWidth = max(0, bounds.width-textX-10)
         title.frame = NSRect(x: textX, y: 9.5, width: textWidth, height: 17)
         site.frame = NSRect(x: textX, y: 27.5, width: textWidth, height: 17)
-        removeButton?.frame = NSRect(x: bounds.width-14, y: -4, width: 18, height: 18)
+        removeButton?.frame = removeFrame
+    }
+    /// The remove button's disc, centred 4 pt in from the chip's top-right corner.
+    static let removeSize: CGFloat = 18, removeInset: CGFloat = 4
+    /// How far it reaches past the chip's top and right edges.
+    static let removeOverhang = removeSize/2-removeInset
+    private var removeFrame: NSRect {
+        NSRect(x: bounds.width-Self.removeInset-Self.removeSize/2, y: Self.removeInset-Self.removeSize/2, width: Self.removeSize, height: Self.removeSize)
     }
     override func updateTrackingAreas() {
         super.updateTrackingAreas(); removeOwnTrackingAreas()
         guard removeButton != nil else { return }
-        addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
+        // The chip and the part of the button past its corner, so moving onto the button keeps it.
+        addTrackingArea(NSTrackingArea(rect: bounds.union(removeFrame), options: [.mouseEnteredAndExited, .activeAlways], owner: self))
     }
-    override func mouseEntered(with event: NSEvent) { removeButton?.isHidden = false }
+    override func mouseEntered(with event: NSEvent) {
+        removeButton?.isHidden = false
+        // The pointer may have come straight onto the button, which took no entry while hidden.
+        removeButton?.refreshHoverState()
+    }
     override func mouseExited(with event: NSEvent) { removeButton?.isHidden = true }
     // The remove button pokes out past the top-right corner.
     override func hitTest(_ point: NSPoint) -> NSView? {
         if let button = removeButton, !button.isHidden, button.frame.contains(convert(point, from: superview)) { return button }
         return super.hitTest(point)
+    }
+}
+
+/// A page chip's remove button, whose cross changes color along with its disc on hover.
+@MainActor final class AIChatRemoveButton: ChromeButton {
+    var tint = NSColor.black, hoverTint = NSColor.white
+    override func refreshHoverState(at point: NSPoint? = nil) {
+        super.refreshHoverState(at: point)
+        let color = hover ? hoverTint : tint
+        if contentTintColor != color { contentTintColor = color }
     }
 }
 
@@ -113,7 +143,8 @@ extension NSTextView {
         guard colors != self.colors else { return }
         self.colors = colors
         fill.fill = colors.bubble
-        textView.textStorage?.setAttributedString(NSAttributedString(string: text, attributes: AIChatStyle.attributes(color: colors.text)))
+        textView.textStorage?.setAttributedString(NSAttributedString(string: text, attributes: AIChatStyle.attributes(
+            AIChatStyle.font(AIChatStyle.bubbleFontSize), color: colors.text, lineHeight: AIChatStyle.bubbleLineHeight)))
         textView.selectedTextAttributes = [.backgroundColor: colors.dark ? NSColor(hex: 0x3A3A3A) : NSColor(hex: 0xDADADA)]
     }
     /// Its size at most `width` wide, wrapping the question as needed.
@@ -143,7 +174,7 @@ extension NSTextView {
     private let copyButton = ChromeButton(symbol: "square.on.square", size: 13, title: "Copy", action: {})
     private let regenerateButton = ChromeButton(symbol: "arrow.clockwise", size: 13, title: "Regenerate", action: {})
     private var actions = MotionSpring(0)
-    private var colors = AIChatColors(.neutral)
+    private var colors = AIChatColors(.neutral), applied: AIChatColors?
     private let started = CACurrentMediaTime()
     var onCopy: (() -> Void)?
     var onRegenerate: (() -> Void)?
@@ -166,8 +197,8 @@ extension NSTextView {
     var hasThoughtRow: Bool { thinkingItem.shown || thoughtItem.shown }
 
     func applyColors(_ colors: AIChatColors) {
-        guard colors != self.colors else { return }
-        self.colors = colors
+        guard colors != applied else { return }
+        self.colors = colors; applied = colors
         [thinking, thought].forEach { $0.textColor = colors.muted }
         shimmer.baseColor = colors.muted; shimmer.bandColor = colors.text
         shimmer.setRestingColor(colors.muted)
@@ -245,7 +276,8 @@ extension NSTextView {
     override func layout() { super.layout(); render(at: CACurrentMediaTime()) }
     private func render(at now: Double) {
         let width = bounds.width
-        let row = NSRect(x: 0, y: 0, width: width, height: 16)
+        // A label's own 2 pt inset would put its text right of the answer's.
+        let row = NSRect(x: -2, y: 0, width: width+2, height: 16)
         thinkingItem.render(at: row); thoughtItem.render(at: row)
         shimmer.frame = thinking.frame.insetBy(dx: 0, dy: -3)
         let top = hasThoughtRow ? 16+AIChatStyle.answerGap : 0

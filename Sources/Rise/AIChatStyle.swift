@@ -1,9 +1,10 @@
 import AppKit
 
 /// The AI chat panel's measurements and colors, taken from Dia's chat panel at 2× (see
-/// `docs/AIChat.md`): 15 pt text on 25 pt lines, content 20 pt in from the panel's left, the
-/// question's bubble and the attached pages 11 pt in from its right, and a composer 8 pt in from
-/// the panel's sides and bottom. The panel itself opens and closes on DevTools' springs.
+/// `docs/AIChat.md`): answers in 15 pt on 25 pt lines, questions in 14 pt on 24, typed in 16,
+/// content 20 pt in from the panel's left, the question's bubble and the attached pages 11 pt in
+/// from its right, and a composer 8 pt in from the panel's sides and bottom. The panel itself
+/// opens and closes on DevTools' springs.
 enum AIChatStyle {
     /// Dia's default width and the narrowest it can be dragged to.
     static let defaultWidth: CGFloat = 480, minimumWidth: CGFloat = 320
@@ -14,7 +15,11 @@ enum AIChatStyle {
     /// From the header's bottom to the first message.
     static let contentTop: CGFloat = 15
     static let fontSize: CGFloat = 15, lineHeight: CGFloat = 25, paragraphSpacing: CGFloat = 14
-    static let bubbleRadius: CGFloat = 17, bubblePadding = NSSize(width: 16, height: 10)
+    static let bubbleRadius: CGFloat = 17, bubblePadding = NSSize(width: 16, height: 10.75)
+    static let bubbleFontSize: CGFloat = 14, bubbleLineHeight: CGFloat = 24
+    static let inputFontSize: CGFloat = 16, inputLineHeight: CGFloat = 24
+    /// The caret in the composer, centred on its 24 pt line as Dia's is.
+    static let caretSize = NSSize(width: 2, height: 18)
     /// A question's bubble is at most this much of the composer's width.
     static let bubbleWidthFraction: CGFloat = 0.75
     static let chipSize = NSSize(width: 184, height: 54), chipRadius: CGFloat = 12, chipGap: CGFloat = 12
@@ -31,7 +36,9 @@ enum AIChatStyle {
     static let rowMid: CGFloat = 30
     /// An attached page's chip and the space under it, above the text.
     static let composerChipRow: CGFloat = 70
-    static let composerTextLeading: CGFloat = 24
+    static let composerTextLeading: CGFloat = 24.5
+    /// The attached pages from the composer's left, where a sent question's bubble starts too.
+    static let composerChipInset: CGFloat = 16
     /// Lines the question can grow to before it scrolls.
     static let maximumInputLines = 8
     static let sendSize: CGFloat = 32
@@ -60,6 +67,9 @@ enum AIChatStyle {
 struct AIChatColors: Equatable {
     let panel, text, muted, headerIcon, toolbarIcon, placeholder, bubble, chip, tile, tileBorder: NSColor
     let composer, composerBorder, sendOn, sendOnIcon, sendOff, sendOffIcon, actionIcon, hairline, code, hover: NSColor
+    /// A page chip's remove button: muted while the pointer is on the page, and high-contrast
+    /// while it's on the button.
+    let remove, removeIcon, removeHover, removeHoverIcon: NSColor
     let dark: Bool
     init(_ theme: RiseTheme) {
         dark = theme == .dark
@@ -73,6 +83,8 @@ struct AIChatColors: Equatable {
             sendOff = NSColor(hex: 0x333333); sendOffIcon = NSColor(hex: 0x6E6E6E)
             actionIcon = NSColor(hex: 0x6F6F6F); hairline = NSColor.white.withAlphaComponent(0.08)
             code = NSColor.white.withAlphaComponent(0.08); hover = NSColor.white.withAlphaComponent(0.07)
+            remove = NSColor(hex: 0x505050); removeIcon = NSColor(hex: 0xF0F0F0)
+            removeHover = NSColor(hex: 0xEDEDED); removeHoverIcon = NSColor(hex: 0x121212)
         } else {
             panel = NSColor(hex: 0xFAFAFA); text = NSColor(hex: 0x252525); muted = NSColor(hex: 0x757575)
             headerIcon = NSColor(hex: 0x7C7C7C); toolbarIcon = NSColor(hex: 0xBCBCBC); placeholder = NSColor(hex: 0x989999)
@@ -83,6 +95,8 @@ struct AIChatColors: Equatable {
             sendOff = NSColor(hex: 0xF2F3F3); sendOffIcon = NSColor(hex: 0xB3B4B4)
             actionIcon = NSColor(hex: 0xAEAEAE); hairline = NSColor(hex: 0xE4E4E4)
             code = NSColor.black.withAlphaComponent(0.045); hover = NSColor.black.withAlphaComponent(0.05)
+            remove = NSColor(hex: 0xC7C7C7); removeIcon = NSColor(hex: 0x151515)
+            removeHover = NSColor(hex: 0x171717); removeHoverIcon = .white
         }
     }
 }

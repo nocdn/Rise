@@ -6,11 +6,10 @@ import AppKit
     let chips: [AIChatPageChip]
     let bubble: AIChatBubble
     let answer: AIChatAnswerView
-    /// Where the question's bubble is drawn from its place, while it lifts off the composer.
-    var bubbleOffset = CGPoint.zero { didSet { if bubbleOffset != oldValue { placeBubble() } } }
-    /// How far the pages and question have faded in as they arrive.
-    var arrival: CGFloat = 1 { didSet { if arrival != oldValue { chips.forEach { $0.alphaValue = arrival } } } }
-    private var bubbleFrame = NSRect.zero
+    /// While the question and its pages lift off the composer they're drawn by the panel, over
+    /// it, and only their places here are kept.
+    var isFlying = false
+    private(set) var bubblePlace = NSRect.zero, answerPlace = NSRect.zero, chipPlaces: [NSRect] = []
     init(_ turn: AIChatTurn, thinking: Bool) {
         id = turn.id
         chips = turn.pages.map { AIChatPageChip($0, removable: false) }
@@ -27,28 +26,36 @@ import AppKit
     @discardableResult func place(width: CGFloat, composerWidth: CGFloat) -> CGFloat {
         var y: CGFloat = 0
         let right = width-AIChatStyle.trailing
+        chipPlaces = []
         if !chips.isEmpty {
             // Right-aligned, as many to a row as fit.
             var rowRight = right
-            for chip in chips {
+            for _ in chips {
                 let size = AIChatStyle.chipSize
                 if rowRight-size.width < AIChatStyle.leading && rowRight < right { y += size.height+8; rowRight = right }
-                chip.frame = NSRect(x: rowRight-size.width, y: y, width: size.width, height: size.height)
+                chipPlaces.append(NSRect(x: rowRight-size.width, y: y, width: size.width, height: size.height))
                 rowRight -= size.width+8
             }
             y += AIChatStyle.chipSize.height+AIChatStyle.chipGap
         }
         let size = bubble.fit(maxWidth: floor(composerWidth*AIChatStyle.bubbleWidthFraction))
-        bubbleFrame = NSRect(x: right-size.width, y: y, width: size.width, height: size.height)
-        placeBubble()
+        bubblePlace = NSRect(x: right-size.width, y: y, width: size.width, height: size.height)
+        if !isFlying {
+            for (chip, place) in zip(chips, chipPlaces) { chip.frame = place }
+            bubble.frame = bubblePlace
+        }
         y += size.height+AIChatStyle.thoughtGap
         let answerWidth = width-AIChatStyle.leading-AIChatStyle.textTrailing
         let answerHeight = answer.height(for: answerWidth)
-        answer.frame = NSRect(x: AIChatStyle.leading, y: y, width: answerWidth, height: answerHeight)
+        answerPlace = NSRect(x: AIChatStyle.leading, y: y, width: answerWidth, height: answerHeight)
+        answer.frame = answerPlace
         return y+answerHeight
     }
-    var bubblePlace: NSRect { bubbleFrame }
-    private func placeBubble() { bubble.frame = bubbleFrame.offsetBy(dx: bubbleOffset.x, dy: bubbleOffset.y) }
+}
+
+/// Draws its subviews without taking clicks from what's under them.
+private final class PassthroughView: FlippedView {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 /// Dia's chat panel, inside its docked card: New Chat and Close above the conversation, which
@@ -63,12 +70,16 @@ import AppKit
     let composer = AIChatComposer()
     private(set) var turns: [AIChatTurn] = []
     private var turnViews: [AIChatTurnView] = []
-    private var colors = AIChatColors(.neutral)
+    private var colors = AIChatColors(.neutral), applied: AIChatColors?
     private var link: CADisplayLink?
     private var lastTick: CFTimeInterval?
-    /// A question on its way up from the composer: from where, and the scroll it brings with it.
+    /// A question and its pages on their way up from the composer: where each starts, and the
+    /// scroll they bring with them.
+    private struct Flight { let turn: UUID, bubble: NSRect, chips: [NSRect], scrollFrom: CGFloat, scrollTo: CGFloat }
     private var lift = MotionSpring(1)
-    private var liftPath: (turn: UUID, start: NSRect, scrollFrom: CGFloat, scrollTo: CGFloat)?
+    private var flight: Flight?
+    /// Over the composer, so what lifts off it isn't drawn under its card.
+    private let flightLayer = PassthroughView()
     private var answerTask: Task<Void, Never>?
     var isAnswering: Bool { answerTask != nil }
 
@@ -103,8 +114,8 @@ import AppKit
         }
         newChatButton.actionBlock = { [weak self] in self?.newChat() }
         closeButton.actionBlock = { [weak self] in self?.onClose?() }
-        newChatButton.image = AIChatComposer.symbol("square.and.pencil", size: 16)
-        closeButton.image = AIChatComposer.symbol("xmark", size: 14)
+        newChatButton.image = AIChatComposer.symbol("square.and.pencil", size: 16, weight: .regular)
+        closeButton.image = AIChatComposer.symbol("xmark", size: 15, weight: .regular)
         composer.onSend = { [weak self] question in self?.send(question) }
         composer.onStop = { [weak self] in self?.stop() }
         composer.onRemove = { [weak self] page in self?.remove(page) }
@@ -116,15 +127,15 @@ import AppKit
         composer.plusButton.makeMenu = { [weak self] in self?.makeAddMenu() }
         composer.moreButton.makeMenu = { [weak self] in self?.makeMoreMenu() }
         composer.cameraButton.isEnabled = false; composer.cameraButton.toolTip = "Screenshots aren’t supported yet"
-        [scroll, hairline, newChatButton, closeButton, composer].forEach(addSubview)
+        [scroll, hairline, newChatButton, closeButton, composer, flightLayer].forEach(addSubview)
         lift.configure(response: 0.28, bounce: 0)
         updateHeader()
     }
     required init?(coder: NSCoder) { fatalError() }
 
     func applyColors(_ colors: AIChatColors) {
-        guard colors != self.colors else { return }
-        self.colors = colors
+        guard colors != applied else { return }
+        self.colors = colors; applied = colors
         hairline.fill = colors.hairline
         [newChatButton, closeButton].forEach { $0.hoverColor = colors.hover }
         updateHeader()
@@ -134,7 +145,7 @@ import AppKit
     }
     private func updateHeader() {
         // New Chat is pale until there's a chat to leave.
-        newChatButton.contentTintColor = turns.isEmpty ? colors.headerIcon.withAlphaComponent(0.5) : colors.headerIcon
+        newChatButton.contentTintColor = turns.isEmpty ? colors.headerIcon.withAlphaComponent(0.55) : colors.headerIcon
         newChatButton.isEnabled = !turns.isEmpty
         closeButton.contentTintColor = colors.headerIcon
         composer.hasConversation = !turns.isEmpty
@@ -160,7 +171,8 @@ import AppKit
         composer.setAttachments(pages)
     }
     private func remove(_ page: AIChatAttachment) {
-        if let current = currentPage, page.isSamePage(as: current), !addedPages.contains(where: page.isSamePage) { removedPageURL = page.url }
+        // The page in front stays off, even if it was added from the + menu as well.
+        if let current = currentPage, page.isSamePage(as: current) { removedPageURL = page.url }
         addedPages.removeAll { $0.isSamePage(as: page) }
         refreshAttachments(); composer.focus()
     }
@@ -203,9 +215,9 @@ import AppKit
     // MARK: Conversation
 
     func newChat() {
-        cancelAnswer()
+        cancelAnswer(); land()
         turns = []; turnViews.forEach { $0.removeFromSuperview() }; turnViews = []
-        addedPages = []; removedPageURL = nil; liftPath = nil
+        addedPages = []; removedPageURL = nil
         composer.clear(); composer.isAnswering = false
         refreshAttachments(); updateHeader()
         scroll.contentView.scroll(to: .zero); scroll.reflectScrolledClipView(scroll.contentView)
@@ -221,11 +233,13 @@ import AppKit
         configure(view, for: turn.id)
         stack.addSubview(view); turnViews.append(view)
         addedPages = []
-        let start = composer.textFrame
+        land()
+        let text = convert(composer.textFrame, from: composer)
+        let chips = composer.chipFrames.map { convert($0, from: composer) }
         composer.clear(); composer.isAnswering = true
         refreshAttachments(); updateHeader()
         layOutConversation()
-        liftOff(view, from: start)
+        liftOff(view, text: text, chips: chips)
         view.answer.beginThinking()
         ask(turn, history: history, in: view)
     }
@@ -290,6 +304,7 @@ import AppKit
     /// Asks the last question again, with the pages as they read then.
     private func regenerate(_ id: UUID) {
         guard !isAnswering, let last = turns.last, last.id == id, let old = turnViews.last else { return }
+        land()
         turns.removeLast(); old.removeFromSuperview(); turnViews.removeLast()
         var turn = AIChatTurn(question: last.question, pages: last.pages)
         turn.snapshots = last.snapshots
@@ -315,6 +330,7 @@ import AppKit
         closeButton.frame = NSRect(x: width-41, y: AIChatStyle.headerIconMid-14, width: 28, height: 28)
         hairline.frame = NSRect(x: 0, y: AIChatStyle.headerHeight-0.5, width: width, height: 0.5)
         scroll.frame = NSRect(x: 0, y: AIChatStyle.headerHeight, width: width, height: max(0, bounds.height-AIChatStyle.headerHeight))
+        flightLayer.frame = bounds
         placeComposer()
         layOutConversation()
     }
@@ -337,39 +353,74 @@ import AppKit
         let viewport = scroll.contentSize.height
         let height = max(viewport, bottom, turnViews.isEmpty ? 0 : lastTop-AIChatStyle.contentTop+viewport)
         if stack.frame.size != NSSize(width: width, height: height) { stack.frame = NSRect(x: 0, y: 0, width: width, height: height) }
-        if let path = liftPath { placeLift(path) }
+        if let flight { place(flight) }
         updateHairline()
     }
-    /// Sends the question's bubble up from just above the composer to its place, scrolling the
-    /// conversation so it lands at the top, on Dia's measured lift (90% of the way in 0.17 s).
-    private func liftOff(_ view: AIChatTurnView, from start: NSRect) {
+    /// Lifts the question and its pages off the composer to their places, scrolling the
+    /// conversation so they land at the top. As in Dia, the bubble rises from where the question
+    /// was typed, starting as wide as the composer and drawing in to its own width ahead of the
+    /// climb (90% of the way up in 0.17 s). The pages go with it, from the left of the composer
+    /// to the right of the panel. The answer's "Thinking…" fades in as they land.
+    private func liftOff(_ view: AIChatTurnView, text: NSRect, chips: [NSRect]) {
         let target = max(0, view.frame.minY-AIChatStyle.contentTop)
-        let from = scroll.contentView.bounds.minY
-        let bubble = view.bubblePlace
-        let composerTop = composer.frame.minY
-        let startFrame = NSRect(x: bubble.minX, y: min(composerTop-12-bubble.height, start.minY), width: bubble.width, height: bubble.height)
         guard window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
             scroll(to: target); return
         }
-        liftPath = (view.id, startFrame, from, target)
+        let landed = view.bubblePlace
+        // The bubble's text over the typed question's first line, its left edge with the pages'.
+        let left = composer.frame.minX+AIChatStyle.composerChipInset
+        // Its width is worked out as it goes, from its landing place's right edge.
+        let bubble = NSRect(x: left, y: text.minY-AIChatStyle.bubblePadding.height-(AIChatStyle.bubbleLineHeight-AIChatStyle.inputLineHeight)/2,
+                            width: landed.width, height: landed.height)
+        let flight = Flight(turn: view.id, bubble: bubble, chips: chips, scrollFrom: scroll.contentView.bounds.minY, scrollTo: target)
+        view.isFlying = true
+        // The conversation scrolls on its own meanwhile; its scroller would flash for it.
+        scroll.hasVerticalScroller = false
+        (view.chips as [NSView]+[view.bubble]).forEach(flightLayer.addSubview)
         lift.value = 0; lift.velocity = 0; lift.target = 1
-        view.arrival = 0
-        placeLift(liftPath!)
+        self.flight = flight
+        place(flight)
         animate()
     }
-    private func placeLift(_ path: (turn: UUID, start: NSRect, scrollFrom: CGFloat, scrollTo: CGFloat)) {
-        guard let view = turnViews.first(where: { $0.id == path.turn }) else { liftPath = nil; return }
-        let p = CGFloat(min(1.2, max(0, lift.value)))
-        let scrollY = path.scrollFrom+(path.scrollTo-path.scrollFrom)*p
-        scroll(to: scrollY)
-        // In the panel: where the bubble rests, and where it lands once the scroll is done.
-        let resting = view.bubblePlace.offsetBy(dx: 0, dy: view.frame.minY+AIChatStyle.headerHeight)
-        let natural = resting.offsetBy(dx: 0, dy: -scrollY)
-        let landed = resting.offsetBy(dx: 0, dy: -path.scrollTo)
-        let visual = NSPoint(x: path.start.minX+(landed.minX-path.start.minX)*p, y: path.start.minY+(landed.minY-path.start.minY)*p)
-        view.bubbleOffset = CGPoint(x: visual.x-natural.minX, y: visual.y-natural.minY)
-        view.bubble.alphaValue = min(1, p*5)
-        view.arrival = min(1, p*3)
+    private func place(_ flight: Flight) {
+        guard let view = turnViews.first(where: { $0.id == flight.turn }) else { self.flight = nil; return }
+        let p = CGFloat(min(1, max(0, lift.value)))
+        // Across sooner than up: Dia's bubble has drawn in by the time it's two thirds of the way.
+        let across = 1-pow(1-p, 3)
+        scroll(to: flight.scrollFrom+(flight.scrollTo-flight.scrollFrom)*p)
+        // Where each lands in the panel once the scroll is done.
+        let offset = NSPoint(x: scroll.frame.minX+view.frame.minX, y: scroll.frame.minY+view.frame.minY-flight.scrollTo)
+        func landed(_ place: NSRect) -> NSRect { place.offsetBy(dx: offset.x, dy: offset.y) }
+        func between(_ start: NSRect, _ end: NSRect) -> NSRect {
+            NSRect(x: start.minX+(end.minX-start.minX)*across, y: start.minY+(end.minY-start.minY)*p,
+                   width: start.width+(end.width-start.width)*across, height: start.height+(end.height-start.height)*p)
+        }
+        let bubbleEnd = landed(view.bubblePlace)
+        // It keeps its right edge, so it draws in from the left.
+        var bubbleStart = flight.bubble
+        bubbleStart.size.width = max(bubbleEnd.width, bubbleEnd.maxX-bubbleStart.minX)
+        view.bubble.frame = between(bubbleStart, bubbleEnd)
+        view.bubble.fill.alphaValue = min(1, p*4)
+        for (index, chip) in view.chips.enumerated() where index < view.chipPlaces.count {
+            let end = landed(view.chipPlaces[index])
+            chip.frame = between(index < flight.chips.count ? flight.chips[index] : end, end)
+        }
+        // The answer keeps its place under the bubble, coming in as they land.
+        view.answer.frame.origin.y = view.answerPlace.minY+view.bubble.frame.minY-bubbleEnd.minY
+        view.answer.alphaValue = min(1, max(0, (p-0.6)*2.5))
+    }
+    /// Puts a question still in the air in its place.
+    private func land() {
+        guard let flight else { return }
+        self.flight = nil
+        lift.value = 1; lift.velocity = 0
+        scroll.hasVerticalScroller = true
+        guard let view = turnViews.first(where: { $0.id == flight.turn }) else { flightLayer.subviews.forEach { $0.removeFromSuperview() }; return }
+        scroll(to: flight.scrollTo)
+        view.isFlying = false
+        view.bubble.fill.alphaValue = 1; view.answer.alphaValue = 1
+        (view.chips as [NSView]+[view.bubble]).forEach(view.addSubview)
+        layOutConversation()
     }
     private func scroll(to y: CGFloat) {
         let limit = max(0, stack.frame.height-scroll.contentSize.height)
@@ -388,9 +439,8 @@ import AppKit
     /// Everything where it's going, for a panel that isn't animating.
     func settle() {
         link?.invalidate(); link = nil
-        composer.settle(); lift.value = 1; lift.velocity = 0
-        if let path = liftPath { placeLift(path); liftPath = nil }
-        turnViews.forEach { $0.bubbleOffset = .zero; $0.bubble.alphaValue = 1; $0.arrival = 1; $0.answer.revealAll() }
+        composer.settle(); land()
+        turnViews.forEach { $0.answer.revealAll() }
         needsLayout = true
     }
     @objc private func tick(_ link: CADisplayLink) {
@@ -399,10 +449,8 @@ import AppKit
         var moving = false
         for view in turnViews where view.answer.step(dt, now: now) { moving = true }
         placeComposer(); layOutConversation()
-        if liftPath != nil && lift.isResting(within: 0.001) {
-            lift.value = 1; if let path = liftPath { placeLift(path) }; liftPath = nil
-        }
-        if !moving && composer.isResting && liftPath == nil { link.invalidate(); self.link = nil }
+        if flight != nil && lift.isResting(within: 0.001) { land() }
+        if !moving && composer.isResting && flight == nil { link.invalidate(); self.link = nil }
     }
 }
 
