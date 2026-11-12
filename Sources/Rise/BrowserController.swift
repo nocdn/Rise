@@ -217,6 +217,7 @@ import RiseCore
     var shortcutRecordedKeyCode: UInt16?
     var tabMoveHeldModifiers: NSEvent.ModifierFlags = [.command, .option]
     var tabSwitchHeldModifiers: NSEvent.ModifierFlags = .control
+    let tabScroll = TabScrollSelection()
     /// Arrow presses while ⌥⌘ stays held share one tab-order undo step.
     var tabMoveSequence: (tabID: UUID, order: [UUID])?
     /// Route undo to the sidebar until the next editing key goes to the page or a text field.
@@ -372,6 +373,7 @@ import RiseCore
             self.update()
         }
         window.tabSwitchEvent = { [weak self] event in self?.handleTabSwitchEvent(event) ?? false }
+        window.tabScrollEvent = { [weak self] event in self?.handleTabScrollEvent(event) ?? false }
         window.shortcutEvent = { [weak self] event in self?.handleKeyboardShortcut(event) ?? false }
         window.addressPaletteEvent = { [weak self] event in
             guard let self else { return false }; return self.palette.handleKeyEquivalent(event, shortcuts: self.keyboardShortcuts)
@@ -499,6 +501,7 @@ import RiseCore
         sidebar.onReorderPinned = { [weak self] in self?.reorderPinnedTabs($0) }
         sidebar.onRename = { [weak self] id, title in self?.renameTab(id, title: title) }
         sidebar.onTabHover = { [weak self] id, hovering in self?.tabHoverChanged(id, hovering: hovering) }
+        sidebar.onScrollFocusChanged = { [weak self] in self?.layoutTabScrollArrow() }
         sidebar.playbackState = { [weak self] id in self?.playbackPaused(id) }
         sidebar.peekState = { [weak self] id in self?.peek(for: id) }
         sidebar.pullRequestState = { [weak self] pr in self?.tabHoverCards.summaries.tabState(of: pr) }
@@ -696,6 +699,7 @@ import RiseCore
         layoutPeek()
         layoutFullscreenNavigation()
         layoutLinkStatus()
+        layoutTabScrollArrow()
         if !tabSwitcher.isHidden { tabSwitcher.place(in: b) }
     }
     /// Developer mode's bar is under the selected page's bar, in its place, and the bar becomes
@@ -726,8 +730,9 @@ import RiseCore
     }
     func windowDidResize(_ notification: Notification) { layoutChrome(); watchPlainBarColor(for: 0.5) }
     func windowDidChangeOcclusionState(_ notification: Notification) { if window?.occlusionState.contains(.visible) == true { watchPlainBarColor(for: 0.5) } }
-    func windowWillClose(_ notification: Notification) { githubLinkStatus.hover(nil); timeReplacement.cancelHold(); githubStarrer.tearDown(); signedInPages.tearDown(); linkPullRequests.summaries.tearDown(); tabHoverCards.pullRequestClock?.invalidate(); tabHoverCards.pullRequestClock = nil; plainBarTimer?.invalidate(); plainBarTimer = nil; plainBarMonitor.map(NSEvent.removeMonitor); plainBarMonitor = nil; tabPressed(); gmailInbox.tearDown(); protonMailInbox.tearDown(); chatInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); stopTabSleep(); saveNow() }
+    func windowWillClose(_ notification: Notification) { cancelTabScroll(); githubLinkStatus.hover(nil); timeReplacement.cancelHold(); githubStarrer.tearDown(); signedInPages.tearDown(); linkPullRequests.summaries.tearDown(); tabHoverCards.pullRequestClock?.invalidate(); tabHoverCards.pullRequestClock = nil; plainBarTimer?.invalidate(); plainBarTimer = nil; plainBarMonitor.map(NSEvent.removeMonitor); plainBarMonitor = nil; tabPressed(); gmailInbox.tearDown(); protonMailInbox.tearDown(); chatInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); stopTabSleep(); saveNow() }
     func windowDidResignKey(_ notification: Notification) {
+        cancelTabScroll()
         timeReplacement.cancelHold()
         cancelShortcutRecording()
         pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch(); endSidebarPeek(); tabPressed()
@@ -849,6 +854,7 @@ import RiseCore
         pictureInPicture.install(on: tab.page)
         tabMedia.install(on: tab.page)
         youTubeAutoplay.install(on: tab.page)
+        RiseRelaunch.install(on: tab.page)
         suggestionFavicons.remember(tab)
         tab.onChange = { [weak self, weak tab] in
             guard let self, let tab else { return }
@@ -888,6 +894,7 @@ import RiseCore
         return members.compactMap { id in tabs.firstIndex { $0.id == id } }.min() ?? 0
     }
     func select(_ id: UUID) {
+        cancelTabScroll()
         if selectedID != id { timeReplacement.cancelHold() }
         if selectedID != id { cancelShortcutRecording() }
         let wasSelecting = isSelectingTab
@@ -939,6 +946,7 @@ import RiseCore
         }
         sidebar.developerTabLook = developerTabLook
         sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: splitGroups)
+        refreshTabScroll()
         nowPlaying.setNeedsRefresh()
         refreshTabHoverCard(); refreshPullRequestTabs(); preloadGmailInbox(); preloadProtonMailInbox(); preloadChatInbox(); preloadCalendarAgenda()
         window?.title = (selectedTab?.title).map { "\($0) — Rise" } ?? "Rise"
@@ -953,6 +961,7 @@ import RiseCore
     @objc func newTab() { paletteCreatesTab = true; showPalette(text: "") }
     /// Searches the sidebar's tabs (`TabSearch.swift`), bringing a hidden sidebar out to do it.
     @objc func searchTabs() {
+        cancelTabScroll()
         hidePalette()
         if !sidebarVisible { revealFloatingSidebar() }
         sidebar.beginTabSearch()
@@ -960,6 +969,7 @@ import RiseCore
     /// ⌘L and a click on a page bar's address edit the page commands act on, an open Peek's included.
     @objc func focusAddress() { paletteCreatesTab = false; showPalette(text: commandTab?.url?.absoluteString == "about:blank" ? "" : commandTab?.url?.absoluteString ?? "") }
     func showPalette(text: String) {
+        cancelTabScroll()
         sidebar.endTabSearch()
         if searchProvider.isGoogle { googleSearchSuggestions.warmUp() }
         historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus()
@@ -1013,6 +1023,7 @@ import RiseCore
     }
     /// With `remembering` off, ⌘⇧T won't bring it back, as for a tab that's archived instead.
     func closeTab(_ id: UUID, remembering: Bool = true) {
+        cancelTabScroll()
         historySwipe.cancel()
         cancelTabSwitch()
         discardPeek(for: id)

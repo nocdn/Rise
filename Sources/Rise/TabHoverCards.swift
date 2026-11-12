@@ -50,6 +50,7 @@ import AppKit
 
 @MainActor extension BrowserController {
     func tabHoverChanged(_ id: UUID, hovering: Bool) {
+        guard !isScrollingTabs else { return }
         let hover = tabHoverCards
         if hovering {
             hover.timer?.invalidate()
@@ -134,7 +135,7 @@ import AppKit
     }
     func showTabHoverCard(_ id: UUID) {
         let hover = tabHoverCards
-        guard hover.hoveredID == id, sidebar.drag == nil, sidebar.pinnedDrag == nil, isSidebarShown, window?.isVisible == true,
+        guard !isScrollingTabs, hover.hoveredID == id, sidebar.drag == nil, sidebar.pinnedDrag == nil, isSidebarShown, window?.isVisible == true,
               let tab = tabs.first(where: { $0.id == id }), let row = sidebar.anchor(for: id), row.window != nil, !sidebar.isRenaming(id) else { return }
         if GmailAccount(url: tab.url) != nil {
             showGmailTooltip(id); return

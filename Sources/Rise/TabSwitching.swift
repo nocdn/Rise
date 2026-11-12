@@ -61,6 +61,7 @@ import AppKit
         return false
     }
     func advanceTabSwitch(_ direction: Int) {
+        cancelTabScroll()
         guard tabs.count > 1 else { return }
         let starting = !isSwitchingTabs
         if starting {

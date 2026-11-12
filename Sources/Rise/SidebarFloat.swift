@@ -244,6 +244,7 @@ final class SidebarShadowView: NSView {
     /// Menus, drags, popovers and the address palette opened from the sidebar hold it out,
     /// as does the pointer anywhere left of its right edge, even outside the window.
     var holdsFloatingSidebar: Bool {
+        if isScrollingTabs { return true }
         guard let window else { return false }
         if RunLoop.current.currentMode == .eventTracking || NSEvent.pressedMouseButtons != 0 { return true }
         if palette.isPresented || sidebar.drag != nil || tabHoverCards.shownID != nil { return true }

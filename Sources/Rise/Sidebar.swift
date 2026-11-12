@@ -34,6 +34,8 @@ import RiseCore
     var unfilteredIDs: [UUID] = []
     var onTabSearchEnded: (() -> Void)?
     var selectedTabID: UUID?
+    var scrollFocusID: UUID?
+    var onScrollFocusChanged: (() -> Void)?
     let archiveButton: DownloadsButton
     /// What a tab you've left plays, over Downloads and Sort (`NowPlaying.swift`).
     let nowPlaying = NowPlayingCard()
@@ -107,7 +109,7 @@ import RiseCore
     }
     required init?(coder: NSCoder) { fatalError() }
     @objc func createTab() { onNewTab?() }
-    @objc private func listScrolled() { updateScrollCues() }
+    @objc private func listScrolled() { updateScrollCues(); onScrollFocusChanged?() }
     func update(tabs: [BrowserTab], selected: BrowserTab?, theme: RiseTheme, splits: [SplitTabGroup] = []) {
         // This runs on every change to any tab; only what changed is set, as each set is redrawn.
         if appliedTheme != theme {
@@ -274,6 +276,7 @@ import RiseCore
         cleanUpButton.frame = NSRect(x: 10, y: bounds.height-39, width: 28, height: 28)
         nowPlaying.dock(x: TabAppearance.inset, width: w-2*TabAppearance.inset, bottom: bounds.height-46)
         updateScrollCues()
+        onScrollFocusChanged?()
     }
     /// Whether the list is long enough to scroll and is scrolled to its end.
     var isScrolledToEnd: Bool {

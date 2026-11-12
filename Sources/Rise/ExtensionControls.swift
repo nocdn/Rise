@@ -60,6 +60,11 @@ import RiseChromium
             completion?(false); return
         }
         siteControlsPopover.close()
+        // One the extension opens itself (chrome.action.openPopup) comes from its pinned button
+        // too, as a click on it does; or the site controls, as when it isn't pinned.
+        let anchor = anchor ?? navBar.extensionButtons.first {
+            $0.extensionID == extensionID && $0.window != nil && !$0.isHiddenOrHasHiddenAncestor && $0.frame.width > 0
+        }
         // An open Peek's comes out of its own bar's site controls, and stays inside its card.
         let anchorView: NSView = showsPeekBar ? (anchor.flatMap { $0.isDescendant(of: peekBar) ? $0 : nil } ?? peekBar.settingsButton)
             : anchor ?? selectedBar.settingsButton

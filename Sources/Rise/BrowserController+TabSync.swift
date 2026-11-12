@@ -30,7 +30,7 @@ import RiseCore
     }
 
     var canApplySharedTabs: Bool {
-        !isApplyingSharedTabs && !isSelectingTab && !palette.isPresented && peekTab == nil && !isSwitchingTabs
+        !isApplyingSharedTabs && !isSelectingTab && !palette.isPresented && peekTab == nil && !isSwitchingTabs && !isScrollingTabs
             && sidebar.drag == nil && !historySwipe.isActive && window?.attachedSheet == nil
     }
 

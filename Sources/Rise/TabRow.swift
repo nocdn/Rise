@@ -63,6 +63,14 @@ import RiseCore
     private var hover = false
     /// Chosen with the arrow keys while searching tabs: lit as a hovered row is, close button aside.
     var isKeyboardFocused = false { didSet { if isKeyboardFocused != oldValue { style() } } }
+    /// Nil follows the pointer; while scroll-choosing, only its candidate has the hover fill.
+    var scrollFocus: Bool? {
+        didSet {
+            guard scrollFocus != oldValue else { return }
+            if scrollFocus != nil { setHovered(false) }
+            style()
+        }
+    }
     /// While searching tabs, the pointer lights a row by focusing it, as the arrow keys do, so
     /// only one row is ever lit: the one the pointer or the keys moved to last.
     var hoverFocuses = false { didSet { if hoverFocuses != oldValue { style() } } }
@@ -245,7 +253,7 @@ import RiseCore
         layer?.cornerRadius = isSplitMember ? 8 : TabAppearance.radius
         // The chosen row and hover are their own layers, fading; a dragged row keeps its fill.
         // A split's halves are inside its row's, so theirs are plain fills.
-        let plain = !isSplitMember, lit = hover && !hoverFocuses || isKeyboardFocused
+        let plain = !isSplitMember, lit = scrollFocus ?? (hover && !hoverFocuses || isKeyboardFocused)
         plainBackground.isHidden = !plain
         let background = (plain ? (selected ? nil : dragFill) ?? .clear
             : selected ? theme.pill : dragFill ?? (lit ? TabAppearance.hoverFill(theme) : .clear)).cgColor
@@ -345,6 +353,7 @@ import RiseCore
         refreshHover()
     }
     private func setHovered(_ hovered: Bool) {
+        let hovered = scrollFocus == nil && hovered
         guard hover != hovered else { return }
         hover = hovered; style(); onHover?(hovered)
     }

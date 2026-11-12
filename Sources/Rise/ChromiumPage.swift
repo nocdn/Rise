@@ -13,9 +13,10 @@ enum RiseProfile {
 }
 
 /// Chrome's own pages Rise shows as its own: rise://settings is chrome://settings, with every page
-/// under it. Only Rise opens them; to sites they're another app's addresses.
+/// under it, as are rise://extensions and rise://flags. Only Rise opens them; to sites they're
+/// another app's addresses.
 enum RisePages {
-    static let hosts: Set<String> = ["settings", "extensions"]
+    static let hosts: Set<String> = ["settings", "extensions", "flags"]
     static let settings = URL(string: "rise://settings")!
     /// The Chrome page to load for a Rise address. Settings open on their first section Rise shows,
     /// as Chrome's first, You and Google, isn't one.
@@ -47,6 +48,7 @@ enum RisePages {
         let profile = ChromiumProfileLayout.prepare(RiseProfile.directory
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Rise"))
         try? FileManager.default.createDirectory(at: profile, withIntermediateDirectories: true)
+        if RiseProfile.directory == nil { ChromiumFlags.prepare(profile) }
         AuthenticationDiagnostics.engine.notice("Chromium profile at \(profile.lastPathComponent, privacy: .public)")
         let packaged = FileManager.default.fileExists(atPath: framework.path)
         AuthenticationDiagnostics.startup(isolated: RiseProfile.directory != nil, packaged: packaged)

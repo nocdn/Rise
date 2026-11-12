@@ -35,6 +35,8 @@ import RiseChromium
                 toggle("minimalNewTab", "Minimal New Tab button", "A plus beside the window buttons opens a new tab, in place of the New Tab row above your tabs", minimalNewTab),
                 select("tabSwitcherLimit", "Tabs in the Control-Tab switcher", "The most it shows, the current tab first, five to a row",
                        "\(tabSwitcherLimit)", Self.tabSwitcherLimits.map { ("\($0)", "\($0)") }),
+                select("tabScrollModifier", "Scroll to choose a tab", "Hold this key and scroll to highlight a tab. Release to switch; Escape cancels",
+                       tabScrollModifier.rawValue, TabScrollModifier.allCases.map { ($0.rawValue, $0.title) }),
                 select("gmailCategory", "Gmail preview category", "Which emails the Gmail tab's hover card shows", gmailCategory.rawValue,
                        GmailCategory.allCases.map { ($0.rawValue, $0.title) }),
                 toggle("goToOpenTabs", "Go to tabs that are already open", "Clicking a link you have open in another tab switches to that tab. ⌘-click still opens it in a new one.", openTabLinks.enabled),
@@ -109,6 +111,7 @@ import RiseChromium
         case "hideAddressWWW": setHidesAddressWWW(on)
         case "minimalNewTab": setMinimalNewTab(on)
         case "tabSwitcherLimit": if let limit = Int(text) { setTabSwitcherLimit(limit) }
+        case "tabScrollModifier": if let modifier = TabScrollModifier(rawValue: text) { setTabScrollModifier(modifier) }
         case "gmailCategory": if let category = GmailCategory(rawValue: text) { selectGmailCategory(category) }
         case "goToOpenTabs": openTabLinks.setEnabled(on); openTabLinks.refresh(shownPages)
         case "tabArchiveHours": if let hours = Int(text) { setTabArchiveHours(hours) }

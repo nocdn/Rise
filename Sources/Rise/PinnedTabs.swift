@@ -88,6 +88,13 @@ enum PinnedLayout {
     private(set) var selected = false
     private var theme = RiseTheme.neutral, accent: NSColor?
     private var hovered = false, pressEvent: NSEvent?, dragging = false
+    var scrollFocus: Bool? {
+        didSet {
+            guard scrollFocus != oldValue else { return }
+            if scrollFocus != nil { setHovered(false) }
+            style()
+        }
+    }
     /// From picking up until it has sprung back into place, when it may cross other tiles.
     private var lifted = false
     /// While dragged out of the grid: a row's shape, favicon and title. It changes shape on
@@ -318,7 +325,7 @@ enum PinnedLayout {
         // Settling into a row, the held row's fill gives way to that row's own.
         let row = restingFill.map { held.blended(withFraction: settled, of: $0) ?? $0 } ?? held
         // A breath of the favicon's colour, more under the pointer and more again chosen.
-        let shown = PinnedLayout.tint(accent, theme: theme, selected: selected, hovered: hovered && !dragging)
+        let shown = PinnedLayout.tint(accent, theme: theme, selected: selected, hovered: (scrollFocus ?? hovered) && !dragging)
         let fill = lifted || !takesClicks ? PinnedLayout.solid(shown, on: theme) : shown
         layer?.backgroundColor = (fill.blended(withFraction: r, of: row) ?? fill).cgColor
         // Chosen, a border in the favicon's colour; at rest, a faint one in it.
@@ -364,6 +371,7 @@ enum PinnedLayout {
         setHovered(visibleRect.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)))
     }
     private func setHovered(_ value: Bool) {
+        let value = scrollFocus == nil && value
         guard hovered != value else { return }
         hovered = value; style(); onHover?(value)
     }

@@ -138,7 +138,7 @@ extension SidebarView {
     func updateScrollCues() {
         let clip = scroll.contentView
         updateScrollFade(SidebarScrollCues.Edges(offset: clip.bounds.minY, contentHeight: rowsHost.frame.height, viewHeight: clip.bounds.height))
-        guard !isRevealingChosenTab, drag == nil, !isSearchingTabs, let id = selectedTabID, let row = displayedRow(for: id), !row.isHidden,
+        guard !isRevealingChosenTab, drag == nil, !isSearchingTabs, scrollFocusID == nil, let id = selectedTabID, let row = displayedRow(for: id), !row.isHidden,
               let direction = SidebarScrollCues.direction(of: row.frame, visible: clip.bounds) else {
             chosenPill.show(nil, at: nil); return
         }

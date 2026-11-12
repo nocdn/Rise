@@ -255,8 +255,12 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         // AirDrop, right under Share in its section, with an icon like Share's, sends the link straight there.
         let shared = link?.items ?? []
         let airDrop = shared.firstIndex { $0.title == "Share…" }.flatMap { shared.indices.contains($0+1) ? shared[$0+1] : nil }
-        check(airDrop?.title == "AirDrop" && airDrop?.image?.isTemplate == true && airDrop?.image?.size == NSSize(width: 15, height: 15)
-                && { if #available(macOS 27, *) { airDrop?.preferredImageVisibility == .visible } else { true } }(),
+        #if compiler(>=6.4)
+        let iconShows = { if #available(macOS 27, *) { airDrop?.preferredImageVisibility == .visible } else { true } }()
+        #else
+        let iconShows = true
+        #endif
+        check(airDrop?.title == "AirDrop" && airDrop?.image?.isTemplate == true && airDrop?.image?.size == NSSize(width: 15, height: 15) && iconShows,
               "AirDrop follows Share: \(titles(link))")
 
         // An image in a link: the link's items and the image's.

@@ -177,6 +177,7 @@ final class BrowserWindow: NSWindow {
     /// Sees Escape before the first responder does, so an open find bar can keep it from the page.
     var escapeEvent: ((NSEvent) -> Bool)?
     var tabSwitchEvent: ((NSEvent) -> Bool)?
+    var tabScrollEvent: ((NSEvent) -> Bool)?
     var shortcutEvent: ((NSEvent) -> Bool)?
     var addressPaletteEvent: ((NSEvent) -> Bool)?
     var pageMouseDown: ((NSEvent) -> Void)?
@@ -194,6 +195,7 @@ final class BrowserWindow: NSWindow {
     var extensionShortcutEvent: ((NSEvent) -> Bool)?
     override func makeFirstResponder(_ responder: NSResponder?) -> Bool { super.makeFirstResponder(pageFocusTarget(responder)) }
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if tabScrollEvent?(event) == true { return true }
         if shortcutEvent?(event) == true { return true }
         if undoEvent?(event) == true { return true }
         if smartRenameEvent?(event) == true { return true }
@@ -207,6 +209,7 @@ final class BrowserWindow: NSWindow {
             if isDraggingTab { NSCursor.arrow.set() }
         }
         if isDraggingTab, event.type == .cursorUpdate { return }
+        if tabScrollEvent?(event) == true { return }
         if shortcutEvent?(event) == true { return }
         if addressPaletteEvent?(event) == true { return }
         if tabSwitchEvent?(event) != true {

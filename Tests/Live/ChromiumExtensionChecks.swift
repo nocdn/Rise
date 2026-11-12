@@ -337,6 +337,14 @@ import RiseChromium
         let listed = browser.siteControlsPopover.contentViewController?.view.subviews.compactMap { ($0 as? NSButton)?.toolTip } ?? []
         check(listed.contains("Rise Test Extension"), "The site controls list it: \(listed)")
         browser.siteControlsPopover.close()
+        // Pinned, its own request opens the popup under its button, as clicking it does.
+        if let button = browser.navBar.extensionButtons.first(where: { $0.extensionID == id }) {
+            _ = await ask(["cmd": "popup"], in: second.page)
+            _ = await waitUntil("Its own request opens its popup", 3) { self.browser.extensionPopup?.isShown == true }
+            check(browser.extensionPopup?.anchor === button, "Under its pinned button")
+            browser.extensionPopup?.close()
+            _ = await waitUntil("And it closes") { self.browser.extensionPopup == nil }
+        }
         browser.setExtension(id, pinned: false)
         _ = await waitUntil("Unpinning takes its button away") { self.browser.navBar.extensionButtons.isEmpty }
         // Password managers use this API to return to their popup after their desktop app
