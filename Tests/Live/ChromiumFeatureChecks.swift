@@ -558,6 +558,12 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         if await waitUntil("Rise asks first", 10, { self.browser.permissionCoordinator.isShowingPrompt }) {
             browser.permissionCoordinator.resolve(true)
             _ = await waitUntil("And the site may notify") { await self.value("return window.answer", in: notifying.page) as? String == "granted" }
+            if ChromiumEngine.showsSiteNotifications {
+                notifying.page.reload()
+                _ = await waitUntil("Chrome keeps it, to show the site's notifications later") {
+                    await self.value("return Notification.permission", in: notifying.page) as? String == "granted"
+                }
+            }
         }
 
         // A pull request's merge checks are scrolled to.

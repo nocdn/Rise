@@ -72,6 +72,20 @@ enum RisePages {
     }
     static var isRunning: Bool { RCEngine.isRunning }
     static func shutdown() { RCEngine.shutdown() }
+    /// Whether Chrome shows sites' notifications itself, in Notification Centre as Rise's (patch
+    /// 0039): it asks Rise's prompt, and keeps Rise's choices.
+    static var showsSiteNotifications: Bool {
+        isRunning && (RCEngine.self as AnyObject).responds(to: #selector(RCEngine.setNotificationPermission(_:forOrigin:)))
+    }
+    /// Tells Chrome what a site may do with notifications, as Rise's site settings say.
+    static func setNotifications(_ permission: SitePermission, origin: String) {
+        guard showsSiteNotifications else { return }
+        RCEngine.setNotificationPermission(permission == .allow ? 1 : permission == .block ? -1 : 0, forOrigin: origin)
+    }
+    static func setNotificationsAsk(_ ask: Bool) {
+        guard showsSiteNotifications else { return }
+        RCEngine.setNotificationsAsk(ask)
+    }
 }
 
 /// Focusing a page's view focuses the page itself, as Chrome does: the view holding it takes no keys.
@@ -250,6 +264,7 @@ enum RisePages {
             if permissions.contains(.camera) { capabilities.append(.camera) }
             if permissions.contains(.microphone) { capabilities.append(.microphone) }
             if permissions.contains(.location) { capabilities.append(.location) }
+            if permissions.contains(.notifications) { capabilities.append(.notifications) }
             guard let onPermissionRequest else { decide([]); return }
             onPermissionRequest(capabilities, SitePermissions.origin(URL(string: origin))) { decide($0 ? permissions : []) }
         }

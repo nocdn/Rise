@@ -335,6 +335,7 @@ import RiseCore
         self.preferences = preferences
         googleSearchSuggestions = searchSuggestions ?? GoogleSearchSuggestions()
         sitePermissions = SitePermissions(preferences: preferences)
+        sitePermissions.shareNotificationChoices()
         cookieConsent = CookieConsent(preferences: preferences)
         adBlocker = AdBlocker(preferences: preferences)
         linkPreloader = LinkPreloader(preferences: preferences)

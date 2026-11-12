@@ -47,15 +47,29 @@ enum SitePermission: String, CaseIterable {
     }
     var defaultNotifications: SitePermission {
         get { preferences.string(forKey: Self.notificationDefaultKey) == "block" ? .block : .ask }
-        set { preferences.set(newValue == .block ? "block" : "ask", forKey: Self.notificationDefaultKey) }
+        set {
+            preferences.set(newValue == .block ? "block" : "ask", forKey: Self.notificationDefaultKey)
+            ChromiumEngine.setNotificationsAsk(newValue != .block)
+        }
     }
     func set(_ value: SitePermission, for capability: SiteCapability, origin: String) {
         decisions[origin, default: [:]][capability.rawValue] = value.rawValue
         preferences.set(decisions, forKey: Self.preferenceKey)
+        if capability == .notifications { ChromiumEngine.setNotifications(value, origin: origin) }
+    }
+    /// Chrome shows sites' notifications, so it's told every choice Rise keeps for them.
+    func shareNotificationChoices() {
+        ChromiumEngine.setNotificationsAsk(defaultNotifications != .block)
+        for (origin, site) in decisions {
+            if let value = site[SiteCapability.notifications.rawValue].flatMap(SitePermission.init(rawValue:)) {
+                ChromiumEngine.setNotifications(value, origin: origin)
+            }
+        }
     }
     /// Forgets what the site was allowed or refused, so it's asked again; its other settings stay.
     func reset(origin: String) {
         guard var site = decisions[origin] else { return }
+        if site[SiteCapability.notifications.rawValue] != nil { ChromiumEngine.setNotifications(.ask, origin: origin) }
         SiteCapability.allCases.forEach { site.removeValue(forKey: $0.rawValue) }
         decisions[origin] = site.isEmpty ? nil : site
         preferences.set(decisions, forKey: Self.preferenceKey)

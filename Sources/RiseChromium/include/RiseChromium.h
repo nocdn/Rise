@@ -35,6 +35,13 @@ RC_EXPORT @interface RCEngine : NSObject
 /// before `startWithCachePath:keychain:`.
 + (void)setKeychainService:(NSString *)service account:(NSString *)account;
 @property (class, readonly) BOOL isRunning;
+/// Whether `origin` (`scheme://host:port`) may show notifications, as Rise's site settings
+/// say: allowed (1), blocked (-1), or to ask (0), forgetting what Chrome kept. Chrome shows a
+/// site's notifications itself, in Notification Centre as Rise's, so it needs Rise's choices.
+/// Before Chromium starts, this waits for it.
++ (void)setNotificationPermission:(NSInteger)permission forOrigin:(NSString *)origin;
+/// Whether sites without a choice may ask to show notifications (YES) or are refused (NO).
++ (void)setNotificationsAsk:(BOOL)ask;
 /// Stops Chromium; call as the app terminates.
 + (void)shutdown;
 @end
@@ -98,6 +105,9 @@ typedef NS_OPTIONS(NSUInteger, RCPermission) {
   RCPermissionCamera = 1 << 0,
   RCPermissionMicrophone = 1 << 1,
   RCPermissionLocation = 1 << 2,
+  /// Showing notifications, which once allowed Chrome keeps for the site, as it must to show
+  /// them later, from the site's service worker too.
+  RCPermissionNotifications = 1 << 3,
 };
 
 /// A dialog a page asks for: `alert()`, `confirm()`, `prompt()`, or, leaving or reloading a page

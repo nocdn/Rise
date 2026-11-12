@@ -25,8 +25,9 @@ import UserNotifications
         panel.onGone = { [weak self] in self?.panelGone() }
     }
     private let pages = NSHashTable<AnyObject>.weakObjects()
+    /// Only for an engine from before Chrome showed sites' notifications itself (patch 0039).
     func install(on page: WebPage) {
-        guard !pages.contains(page) else { return }
+        guard !ChromiumEngine.showsSiteNotifications, !pages.contains(page) else { return }
         pages.add(page)
         page.addMessageHandler("riseSiteControls", world: .page) { [weak self] message, reply in
             let origin = message.frame.origin.flatMap(URL.init(string:))
