@@ -118,7 +118,11 @@ where the clear button would be until what was said lands in the field, ready fo
 transcribed on the device by iOS's newest speech-to-text model, `SpeechAnalyzer` with
 `SpeechTranscriber` (iOS 26 and later; `DictationTranscriber` where that model isn't available),
 whose assets are fetched at launch. The first hold asks for the microphone and speech recognition
-instead of listening. More, the ellipsis
+instead of listening. Web pages' fields get the same dictation from a microphone added to WebKit's
+own bar above the keyboard, just before its ✓ (`FormAccessoryDictation.swift`; ↑, ↓ and ✓ stay
+WebKit's): tapping it swaps the microphone for the waveform, with the same click and hum, and tapping
+again swaps in a spinner until the transcription is typed at the caret, after a space when it
+follows a word. Holding it listens until let go instead. More, the ellipsis
 circle on the right, grows the bar the same way into a smaller panel, the page
 behind receding only as far as that growth takes it at the same rate. Holding More for 0.35 seconds
 copies the page's link instead, More's ellipsis turning to a checkmark with a success haptic, as

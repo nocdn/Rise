@@ -6,6 +6,12 @@ import WebKit
 /// Rise's pages: WebKit's own, with a time selected in another zone and an amount in another
 /// currency leading the selection menu, Explain in Context beside Look Up, and no Copy Link with Highlight.
 final class RiseWebView: WKWebView {
+    /// WebKit's bar above the keyboard, with a microphone before its ✓ (`FormAccessoryDictation`).
+    override var inputAccessoryView: UIView? {
+        let accessory = super.inputAccessoryView
+        if let accessory { FormAccessoryDictation.install(in: accessory, for: self) }
+        return accessory
+    }
     override var keyCommands: [UIKeyCommand]? {
         var commands = super.keyCommands ?? []
         if let receipt = selectionItemBrowser?.selectionItemReceipt, receipt.allowsUndo {
@@ -21,14 +27,7 @@ final class RiseWebView: WKWebView {
         }
         return commands
     }
-    private var selectionItemBrowser: BrowserViewController? {
-        var responder: UIResponder? = self
-        while let next = responder?.next {
-            if let browser = next as? BrowserViewController { return browser }
-            responder = next
-        }
-        return nil
-    }
+    private var selectionItemBrowser: BrowserViewController? { browser }
     @objc private func undoSelectionItem() { selectionItemBrowser?.changeSelectionItem(redo: false) }
     @objc private func redoSelectionItem() { selectionItemBrowser?.changeSelectionItem(redo: true) }
     override func buildMenu(with builder: UIMenuBuilder) {
