@@ -1,4 +1,5 @@
 import AppKit
+import RiseCore
 
 /// Keeps the actual page, rather than its address, so a tab switch preserves forms, scroll,
 /// navigation history and a load still in progress. The surrounding card is rebuilt on return.
@@ -41,6 +42,32 @@ struct SuspendedPeek {
         peekOrigin = saved.origin
         saved.tab.page.setMediaSuspended(false)
         if saved.tab.needsBlockingReload { saved.tab.needsBlockingReload = false; saved.tab.page.reloadIgnoringCache() }
+        // A Peek kept from last time loads its page, with its history, once it shows.
+        let tab = saved.tab
+        if tab.page.url == nil, !tab.hasAttemptedNavigation, !tab.page.isLoading, let url = tab.requestedURL { tab.load(url) }
+    }
+
+    /// Every tab's Peek, the one open and those waiting behind their tabs, for the session.
+    var savedPeeks: [SavedPeek] {
+        var peeks = suspendedPeeks.map { owner, peek in
+            SavedPeek(ownerID: owner, tab: peek.tab.saved, sourceID: peek.sourceID, opensNewTab: peek.opensNewTab)
+        }
+        if let peekTab, let owner = peekOwnerID, tabs.contains(where: { $0.id == owner }) {
+            peeks.removeAll { $0.ownerID == owner }
+            peeks.append(SavedPeek(ownerID: owner, tab: peekTab.saved, sourceID: peekSourceTabID, opensNewTab: peekOpensNewTab))
+        }
+        return peeks.sorted { a, b in
+            (tabs.firstIndex { $0.id == a.ownerID } ?? 0) < (tabs.firstIndex { $0.id == b.ownerID } ?? 0)
+        }
+    }
+
+    /// Puts the session's Peeks back behind their tabs, unloaded; selecting a tab shows its own,
+    /// as after switching away from it, and loads it then.
+    func restorePeeks(_ peeks: [SavedPeek]) {
+        for peek in SavedPeek.valid(peeks, tabIDs: tabs.map(\.id)) {
+            let tab = configure(BrowserTab(saved: peek.tab))
+            suspendedPeeks[peek.ownerID] = SuspendedPeek(tab: tab, sourceID: peek.sourceID, opensNewTab: peek.opensNewTab, origin: nil)
+        }
     }
 
     /// Closing an owner tab also releases its Peek, including one currently out of sight.

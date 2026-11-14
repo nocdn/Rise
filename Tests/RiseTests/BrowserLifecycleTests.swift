@@ -91,6 +91,39 @@ final class BrowserLifecycleTests: XCTestCase {
         XCTAssertEqual(restored.theme, .dark)
         XCTAssertEqual(restored.sidebarWidth, 260)
     }
+    @MainActor func testSessionRestoresEachTabsPeekOpenOrWaiting() throws {
+        let browser = makeBrowser()
+        defer { browser.closePeek(); for owner in Array(browser.suspendedPeeks.keys) { browser.discardPeek(for: owner) }; clean(browser) }
+        let first = browser.addTab(url: URL(string: "https://example.com/first")!)
+        browser.showPeek(url: URL(string: "https://example.com/waiting")!, from: first.page.view, animated: false)
+        let second = browser.addTab(url: URL(string: "https://example.com/second")!)
+        XCTAssertNotNil(browser.suspendedPeeks[first.id], "Leaving the first tab keeps its Peek behind it")
+        browser.showPeek(url: URL(string: "https://example.com/open")!, from: second.page.view, animated: false)
+        browser.saveNow()
+        let restored = BrowserController(sessionURL: browser.sessionURL)
+        defer { restored.closePeek(); for owner in Array(restored.suspendedPeeks.keys) { restored.discardPeek(for: owner) }; clean(restored) }
+        XCTAssertEqual(restored.tabs.map(\.id), browser.tabs.map(\.id), "Peeks don't come back as tabs")
+        XCTAssertEqual(restored.selectedID, second.id)
+        XCTAssertEqual(restored.peekOwnerID, second.id)
+        XCTAssertEqual(restored.peekTab?.url?.absoluteString, "https://example.com/open", "The Peek open at quit is open again")
+        XCTAssertTrue(try XCTUnwrap(restored.peekTab).hasAttemptedNavigation, "and loads its page")
+        XCTAssertEqual(restored.suspendedPeeks[first.id]?.tab.url?.absoluteString, "https://example.com/waiting")
+        restored.select(first.id)
+        XCTAssertEqual(restored.peekTab?.url?.absoluteString, "https://example.com/waiting", "A tab's waiting Peek shows when it's chosen")
+        XCTAssertEqual(restored.suspendedPeeks[second.id]?.tab.url?.absoluteString, "https://example.com/open")
+        restored.closePeek(); restored.saveNow()
+        let again = try XCTUnwrap(SessionStorage.read(from: restored.sessionURL))
+        XCTAssertEqual(again.peeks.map(\.ownerID), [second.id], "A closed Peek is forgotten")
+    }
+    @MainActor func testSessionsWithoutPeeksAndPeeksOfClosedTabsAreRead() throws {
+        let tab = SavedTab(url: "https://example.com", title: "Example"), peek = SavedTab(url: "https://example.com/peek", title: "Peek")
+        let old = #"{"tabs":[{"id":"\#(tab.id.uuidString)","url":"https://example.com","title":"Example","pinned":false,"developer":false}],"theme":"neutral","sidebarWidth":215}"#
+        XCTAssertEqual(try JSONDecoder().decode(BrowserSession.self, from: Data(old.utf8)).peeks, [])
+        let session = BrowserSession(tabs: [tab], peeks: [SavedPeek(ownerID: tab.id, tab: peek), SavedPeek(ownerID: UUID(), tab: peek),
+                                                          SavedPeek(ownerID: tab.id, tab: SavedTab(url: "https://example.com/second", title: ""))])
+        let decoded = try JSONDecoder().decode(BrowserSession.self, from: JSONEncoder().encode(session))
+        XCTAssertEqual(decoded.peeks, [SavedPeek(ownerID: tab.id, tab: peek)], "One Peek per tab still open")
+    }
     @MainActor func testAutomaticThemeFollowsMacOSAndIsRestored() {
         let browser = makeBrowser(); defer { clean(browser); NSApp.appearance = nil }
         browser.chooseTheme(nil)

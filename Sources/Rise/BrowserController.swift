@@ -481,6 +481,7 @@ import RiseCore
             tabPictures.keepOnly(Set(tabs.map(\.id)))
             // The metadata queue fills dormant pages' missing titles and icons in bounded batches.
             splitGroups = saved.splitGroups
+            restorePeeks(saved.peeks)
             selectedID = saved.selectedID.flatMap { id in tabs.contains { $0.id == id } ? id : nil } ?? tabs.first?.id
         }
         if let selectedID { select(selectedID) }
@@ -1193,7 +1194,7 @@ import RiseCore
         suggestionFavicons.save(); tabPictures.save()
         do { try browsingHistory.save(); try siteSearchLearner.searches.save() }
         catch { NSLog("Rise history save failed: %@", error.localizedDescription) }
-        let state = BrowserSession(tabs: tabs.map(\.saved), selectedID: selectedID, theme: automaticTheme ? Self.automaticThemeName : theme.rawValue, sidebarWidth: sidebarWidth, splitGroups: splitGroups)
+        let state = BrowserSession(tabs: tabs.map(\.saved), selectedID: selectedID, theme: automaticTheme ? Self.automaticThemeName : theme.rawValue, sidebarWidth: sidebarWidth, splitGroups: splitGroups, peeks: savedPeeks)
         guard state != lastSaved else { return }
         do { try SessionStorage.write(state, to: sessionURL); lastSaved = state }
         catch { NSLog("Rise session save failed: %@", error.localizedDescription) }

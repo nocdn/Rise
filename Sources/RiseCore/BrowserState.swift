@@ -85,16 +85,37 @@ public struct SplitTabGroup: Codable, Equatable {
         }
     }
 }
+/// A tab's Peek, open or waiting behind it, with the page it shows.
+public struct SavedPeek: Codable, Equatable {
+    /// The tab the Peek belongs to, which shows it again when selected.
+    public var ownerID: UUID
+    public var tab: SavedTab
+    /// The tab whose link opened it, when another tab's.
+    public var sourceID: UUID?
+    public var opensNewTab: Bool
+    public init(ownerID: UUID, tab: SavedTab, sourceID: UUID? = nil, opensNewTab: Bool = false) {
+        self.ownerID = ownerID; self.tab = tab; self.sourceID = sourceID; self.opensNewTab = opensNewTab
+    }
+    /// One for each tab still there, the first saved for it.
+    public static func valid(_ peeks: [SavedPeek], tabIDs: [UUID]) -> [SavedPeek] {
+        let available = Set(tabIDs)
+        var owners = Set<UUID>()
+        return peeks.filter { available.contains($0.ownerID) && !available.contains($0.tab.id) && owners.insert($0.ownerID).inserted }
+    }
+}
 public struct BrowserSession: Codable, Equatable {
     public var tabs: [SavedTab]
     public var selectedID: UUID?
     public var theme: String
     public var sidebarWidth: Double
     public var splitGroups: [SplitTabGroup]
-    public init(tabs: [SavedTab] = [], selectedID: UUID? = nil, theme: String = "neutral", sidebarWidth: Double = 215, splitGroups: [SplitTabGroup] = []) {
+    /// Tabs' Peeks, open or waiting behind them; none in sessions from before they were kept.
+    public var peeks: [SavedPeek]
+    public init(tabs: [SavedTab] = [], selectedID: UUID? = nil, theme: String = "neutral", sidebarWidth: Double = 215, splitGroups: [SplitTabGroup] = [], peeks: [SavedPeek] = []) {
         self.tabs = tabs; self.selectedID = selectedID; self.theme = theme; self.sidebarWidth = sidebarWidth; self.splitGroups = splitGroups
+        self.peeks = peeks
     }
-    private enum CodingKeys: String, CodingKey { case tabs, selectedID, theme, sidebarWidth, splitGroups }
+    private enum CodingKeys: String, CodingKey { case tabs, selectedID, theme, sidebarWidth, splitGroups, peeks }
     public init(from decoder: Decoder) throws {
         let data = try decoder.container(keyedBy: CodingKeys.self)
         tabs = try data.decode([SavedTab].self, forKey: .tabs)
@@ -102,6 +123,7 @@ public struct BrowserSession: Codable, Equatable {
         theme = try data.decode(String.self, forKey: .theme)
         sidebarWidth = try data.decode(Double.self, forKey: .sidebarWidth)
         splitGroups = SplitTabGroup.valid(try data.decodeIfPresent([SplitTabGroup].self, forKey: .splitGroups) ?? [], tabIDs: tabs.map(\.id))
+        peeks = SavedPeek.valid((try? data.decodeIfPresent([SavedPeek].self, forKey: .peeks)) ?? [], tabIDs: tabs.map(\.id))
     }
 }
 public enum SessionStorage {
