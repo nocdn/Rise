@@ -31,7 +31,41 @@ enum PageAssistant {
     It is planned for **March 3, 2027**.
     """
 
-    struct Page: Sendable { let title: String, url: String, selection: String, text: String }
+    struct Page: Sendable {
+        let title: String, url: String, selection: String, text: String
+        /// Where the page's links go, so the model follows the page's own link to, say, its pricing
+        /// rather than guessing the address.
+        var links: [Link] = []
+        struct Link: Sendable, Equatable { let text: String, url: String }
+        /// The links as the model reads them, after the page's text; empty for none.
+        var linksText: String {
+            guard !links.isEmpty else { return "" }
+            return "Links on the page (text: address):\n"+links.map { "- \($0.text): \($0.url)" }.joined(separator: "\n")
+        }
+    }
+    /// The most links a page gives the model, and the most of each one's text.
+    static let linkLimit = 150, linkTextLimit = 80
+    /// Each web link once, by its text (or label) and its address without its fragment, skipping
+    /// links to the page itself; hidden ones too, such as a menu's, whose text is still there.
+    static let linksScript = #"""
+    const out = [], seen = new Set([location.href.split('#')[0]]);
+    for (const a of document.querySelectorAll('a[href]')) {
+      let url; try { url = new URL(a.href, location.href); } catch { continue; }
+      if (!/^https?:$/.test(url.protocol)) continue;
+      url.hash = '';
+      if (seen.has(url.href)) continue;
+      const text = (a.innerText || a.textContent || a.getAttribute('aria-label') || a.title || '').replace(/\s+/g, ' ').trim().slice(0, limit);
+      if (!text) continue;
+      seen.add(url.href); out.push([text, url.href]);
+      if (out.length >= count) break;
+    }
+    return JSON.stringify(out);
+    """#
+    @MainActor static func links(of webPage: any ScriptablePage) async -> [Page.Link] {
+        guard let json = try? await webPage.runScript(linksScript, arguments: ["limit": linkTextLimit, "count": linkLimit], world: "Rise.ChatLinks") as? String,
+              let pairs = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [[String]] else { return [] }
+        return pairs.compactMap { $0.count == 2 ? Page.Link(text: $0[0], url: $0[1]) : nil }
+    }
 
     enum Failure: LocalizedError {
         case service(String)
@@ -44,7 +78,8 @@ enum PageAssistant {
         let script = "return [fallback && document.body ? document.body.innerText : '', String(window.getSelection() || '')]"
         let parts = try await webPage.runScript(script, arguments: ["fallback": source == nil], world: nil) as? [String] ?? []
         return Page(title: webPage.title ?? "", url: webPage.url?.absoluteString ?? "",
-                    selection: parts.count > 1 ? parts[1] : "", text: String((source ?? parts.first ?? "").prefix(pageCharacterLimit)))
+                    selection: parts.count > 1 ? parts[1] : "", text: String((source ?? parts.first ?? "").prefix(pageCharacterLimit)),
+                    links: await links(of: webPage))
     }
 
     /// `fill` may place the page in the instructions itself, in which case it isn't added after.

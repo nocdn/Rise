@@ -113,6 +113,12 @@ private final class PassthroughView: FlippedView {
     var respond: (([[String: Any]]) -> AsyncThrowingStream<AIChatAgentEvent, Error>)?
     /// A step about a tab or a page was clicked: it goes there.
     var onStep: ((AIChatStep.Target) -> Void)?
+    /// An email's Open in Gmail.
+    var openEmail: ((AIChatEmailDraft) -> Void)?
+    /// An event's Add: to Google Calendar or Calendar, from its button, saying when it's in.
+    var addEvent: ((AIChatEventDraft, AIChatEventDraft.Calendar, NSView, @escaping () -> Void) -> Void)?
+    /// Where the event cards remember the calendar last picked.
+    var preferences = UserDefaults.standard
     /// Open pages the + menu offers, and the More menu's provider choice.
     var openPages: (() -> [AIChatAttachment])?
     var providerMenu: (() -> NSMenuItem)?
@@ -341,6 +347,28 @@ private final class PassthroughView: FlippedView {
         }
         view.answer.onRegenerate = { [weak self] in self?.regenerate(id) }
         view.answer.onStep = { [weak self] target in self?.onStep?(target) }
+        view.answer.preferences = preferences
+        view.answer.onDraftChange = { [weak self] step, draft in self?.setDraft(draft, step: step, turn: id) }
+        view.answer.onAddEvent = { [weak self] draft, calendar, button, added in self?.addEvent?(draft, calendar, button, added) }
+        view.answer.onResize = { [weak self] in self?.layOutConversation() }
+        view.answer.onOpenEmail = { [weak self] draft in self?.openEmail?(draft) }
+    }
+    /// Only the latest email in the conversation stays open, and the events of the latest answer
+    /// that made any, which may be several; those before them fold up.
+    func foldEarlierCards() {
+        var kept = Set<String>()
+        if let view = turnViews.last(where: { $0.answer.cards.contains { $0.card is AIChatEmailCard } }),
+           let email = view.answer.cards.last(where: { $0.card is AIChatEmailCard }) { kept.insert(email.id) }
+        if let view = turnViews.last(where: { $0.answer.cards.contains { $0.card is AIChatEventCard } }) {
+            kept.formUnion(view.answer.cards.filter { $0.card is AIChatEventCard }.map(\.id))
+        }
+        for view in turnViews { view.answer.supersedeCards(keeping: kept) }
+    }
+    /// Keeps a turn's email or event as it now reads, for the model's follow-ups.
+    private func setDraft(_ draft: AIChatDraft, step: String, turn id: UUID) {
+        guard let index = turns.firstIndex(where: { $0.id == id }) else { return }
+        if let at = turns[index].drafts.firstIndex(where: { $0.id == step }) { turns[index].drafts[at].draft = draft }
+        else { turns[index].drafts.append((step, draft)) }
     }
     private func ask(_ turn: AIChatTurn, history: [AIChatTurn], in view: AIChatTurnView) {
         let snapshot = self.snapshot, respond = self.respond
@@ -368,7 +396,9 @@ private final class PassthroughView: FlippedView {
                         if afterTools, !text.isEmpty { text += "\n\n" }
                         afterTools = false
                         text += piece; view?.answer.receive(text)
-                    case .step(let id, let step): afterTools = true; view?.answer.setStep(id, step)
+                    case .step(let id, let step):
+                        afterTools = true; view?.answer.setStep(id, step)
+                        if let draft = step.draft { self.setDraft(draft, step: id, turn: turn.id); self.foldEarlierCards() }
                     }
                     self.layOutConversation(); self.animate()
                 }
@@ -387,7 +417,7 @@ private final class PassthroughView: FlippedView {
         if let error {
             turns[index].failed = text.isEmpty
             view.answer.fail((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
-        } else if text.isEmpty {
+        } else if text.isEmpty && turns[index].drafts.isEmpty {
             turns[index].failed = true
             view.answer.fail("No answer came back.")
         } else { view.answer.finish() }
@@ -408,6 +438,7 @@ private final class PassthroughView: FlippedView {
         guard !isAnswering, let last = turns.last, last.id == id, let old = turnViews.last else { return }
         land()
         turns.removeLast(); old.removeFromSuperview(); turnViews.removeLast()
+        foldEarlierCards()
         var turn = AIChatTurn(parts: last.parts, pages: last.pages)
         turn.snapshots = last.snapshots
         turns.append(turn)
@@ -690,6 +721,9 @@ private final class PassthroughView: FlippedView {
             }
         }
         view.onStep = { [weak self] target in self?.openAIChatStep(target) }
+        view.openEmail = { [weak self] draft in self?.openGmailCompose(draft) }
+        view.addEvent = { [weak self] draft, calendar, button, added in self?.addAIChatEvent(draft, to: calendar, from: button, added: added) }
+        view.preferences = preferences
         view.openPages = { [weak self] in
             guard let self else { return [] }
             return self.tabs.compactMap(self.aiChatAttachment)

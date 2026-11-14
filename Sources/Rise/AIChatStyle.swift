@@ -16,7 +16,7 @@ enum AIChatStyle {
     static let contentTop: CGFloat = 15
     static let fontSize: CGFloat = 15, lineHeight: CGFloat = 25, paragraphSpacing: CGFloat = 14
     static let bubbleRadius: CGFloat = 17, bubblePadding = NSSize(width: 16, height: 10.75)
-    static let bubbleFontSize: CGFloat = 14, bubbleLineHeight: CGFloat = 24
+    static let bubbleFontSize: CGFloat = 15, bubbleLineHeight: CGFloat = 22
     static let inputFontSize: CGFloat = 16, inputLineHeight: CGFloat = 24
     /// The caret in the composer, centred on its 24 pt line as Dia's is.
     static let caretSize = NSSize(width: 2, height: 18)
@@ -44,6 +44,8 @@ enum AIChatStyle {
     static let composerTextLeading: CGFloat = 21
     /// The attached pages from the composer's left, where a sent question's bubble starts too.
     static let composerChipInset: CGFloat = 16
+    /// Between attached pages in the composer, and how far a mouse wheel's notch scrolls them.
+    static let composerChipGap: CGFloat = 8, chipWheelStep: CGFloat = 12
     /// Lines the question can grow to before it scrolls.
     static let maximumInputLines = 8
     static let sendSize: CGFloat = 32

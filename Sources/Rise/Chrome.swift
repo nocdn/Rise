@@ -131,11 +131,14 @@ class ChromeButton: NSButton {
 /// the moment the button is pressed: let go at once and it stays open, or drag onto an item and
 /// let go to pick it, as macOS's own pop-up buttons do. The icon keeps its color throughout, and
 /// the pointer is a hand over it.
-final class MenuButton: ChromeButton {
+class MenuButton: ChromeButton {
     /// The menu to show, made fresh each time.
     var makeMenu: (() -> NSMenu?)?
     var menuWillOpen: (() -> Void)?
     var menuDidClose: (() -> Void)?
+    /// The menu's right edge under the button's, so a button near the window's right edge opens
+    /// it leftwards rather than out to the edge.
+    var alignsMenuTrailing = false
     init(title: String = "More") {
         super.init(symbol: "ellipsis", size: 10, title: title, action: {})
         (cell as? NSButtonCell)?.highlightsBy = []
@@ -150,7 +153,9 @@ final class MenuButton: ChromeButton {
         guard let menu = makeMenu?() else { return }
         menuWillOpen?()
         // Called while the press is under way, the menu follows it to an item and picks it on release.
-        menu.separatingIconSections().popUp(positioning: nil, at: NSPoint(x: 0, y: isFlipped ? bounds.maxY+4 : -4), in: self)
+        let shown = menu.separatingIconSections()
+        let x = alignsMenuTrailing ? bounds.maxX-shown.size.width : 0
+        shown.popUp(positioning: nil, at: NSPoint(x: x, y: isFlipped ? bounds.maxY+4 : -4), in: self)
         menuDidClose?()
         refreshHoverState()
     }

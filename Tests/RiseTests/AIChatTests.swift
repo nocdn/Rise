@@ -121,6 +121,9 @@ import AppKit
         for chip in view.composer.chips {
             let button = try XCTUnwrap(chip.removeButton)
             XCTAssertTrue(button.isHidden, "Shown only while the pointer is on the page")
+            // Pages past the row's ends scroll into view first.
+            chip.scrollToVisible(chip.bounds.insetBy(dx: -AIChatStyle.composerChipInset, dy: 0))
+            XCTAssertTrue(button.isHidden, "Scrolling the row under no pointer shows none")
             button.isHidden = false
             // An 18 pt disc in a 2 pt ring, centred 4 pt in from the corner.
             XCTAssertEqual(button.frame.width, 22)
@@ -353,6 +356,55 @@ import AppKit
         // The waveform sits between ⋯ and the microphone, hidden until it listens.
         XCTAssertTrue(composer.waveform.isHidden)
         XCTAssertEqual(composer.dictation.phase, .idle)
+    }
+
+    func testAttachedPagesKeepTheirWidthAndScrollAcrossWithTheSidebarsFade() throws {
+        let composer = AIChatComposer(frame: NSRect(x: 0, y: 0, width: 464, height: 160))
+        func attached(_ count: Int) { composer.setAttachments((0..<count).map { AIChatAttachment(tabID: nil, title: "Page \($0)", url: URL(string: "https://example.com/\($0)"), favicon: nil) }); composer.settle(); composer.layout() }
+        attached(2)
+        XCTAssertEqual(composer.chips.map(\.frame.width), [AIChatStyle.chipSize.width, AIChatStyle.chipSize.width])
+        XCTAssertEqual(composer.chipEdges, .init(top: 0, bottom: 0), "Two fit, so neither end fades")
+        XCTAssertNil(composer.chipsScroll.layer?.mask)
+        // Four don't fit, but keep their width; the newest is scrolled to, its row fading on the left.
+        attached(4)
+        XCTAssertEqual(Set(composer.chips.map(\.frame.width)), [AIChatStyle.chipSize.width])
+        let clip = composer.chipsScroll.contentView
+        XCTAssertEqual(clip.bounds.maxX, composer.chipsView.frame.width, accuracy: 0.5)
+        XCTAssertEqual(composer.chipEdges, .init(top: 1, bottom: 0))
+        XCTAssertNotNil(composer.chipsScroll.layer?.mask)
+        // Scrolled back a little, both ends fade, the left in proportion to how far it's scrolled.
+        clip.scroll(to: NSPoint(x: 48, y: 0)); composer.chipsScroll.reflectScrolledClipView(clip)
+        XCTAssertEqual(composer.chipEdges, .init(top: 0.5, bottom: 1))
+        clip.scroll(to: .zero); composer.chipsScroll.reflectScrolledClipView(clip)
+        XCTAssertEqual(composer.chipEdges, .init(top: 0, bottom: 1))
+        XCTAssertEqual(composer.chips[0].frame.minX, AIChatStyle.composerChipInset)
+    }
+
+    func testPastingPutsTheCopiedTextInAsPlainWords() throws {
+        let composer = AIChatComposer(frame: NSRect(x: 0, y: 0, width: 464, height: 100))
+        let window = NSWindow(contentRect: composer.frame, styleMask: [.titled], backing: .buffered, defer: true)
+        window.isReleasedWhenClosed = false
+        window.contentView?.addSubview(composer)
+        defer { window.close() }
+        window.makeFirstResponder(composer.input)
+        let board = NSPasteboard.general, saved = board.pasteboardItems?.map { item in item.types.compactMap { type in item.data(forType: type).map { (type, $0) } } } ?? []
+        defer {
+            board.clearContents()
+            board.writeObjects(saved.map { pairs in let item = NSPasteboardItem(); pairs.forEach { item.setData($0.1, forType: $0.0) }; return item })
+        }
+        board.clearContents()
+        let bold = NSAttributedString(string: "Copied words", attributes: [.font: NSFont.boldSystemFont(ofSize: 30)])
+        board.writeObjects([bold])
+        composer.input.string = "Hi "; composer.input.setSelectedRange(NSRange(location: 3, length: 0))
+        composer.input.paste(nil)
+        XCTAssertEqual(composer.text, "Hi Copied words")
+        let font = composer.input.textStorage?.attribute(.font, at: 5, effectiveRange: nil) as? NSFont
+        XCTAssertEqual(font?.pointSize, AIChatStyle.inputFontSize, "In the composer's own style")
+        for paste in [#selector(NSTextView.pasteAsRichText(_:)), #selector(NSTextView.pasteAsPlainText(_:)), Selector(("pasteAndMatchStyle:"))] {
+            composer.input.string = ""
+            composer.input.perform(paste, with: nil)
+            XCTAssertEqual(composer.text, "Copied words", "\(paste)")
+        }
     }
 
     func testDictatedWordsGoInAtTheCursorOrOverTheSelection() throws {

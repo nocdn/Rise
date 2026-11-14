@@ -2,7 +2,7 @@ import AppKit
 
 /// What the tab list's scrolling shows: its edges dissolving where more tabs lie past them, as
 /// shadcn's scroll-fade (ui.shadcn.com/docs/utils/scroll-fade), and a pill for the chosen tab once
-/// it's scrolled out of the list.
+/// it's scrolled out of the list. The AI chat's attached pages fade the same way across.
 enum SidebarScrollCues {
     /// As deep as scroll-fade's: 12% of the list, up to 40 points.
     static func fadeDepth(height: CGFloat) -> CGFloat { min(40, height*0.12) }
@@ -17,6 +17,20 @@ enum SidebarScrollCues {
             top = min(1, max(0, offset)/reveal)
             bottom = min(1, max(0, contentHeight-viewHeight-offset)/reveal)
         }
+    }
+    /// Masks `view` with `mask`, its edges dissolving by `edges`: the top and bottom, or the left
+    /// and right across a `horizontal` list. With no fade, the view needn't draw through a mask.
+    @MainActor static func fade(_ view: NSView, with mask: CAGradientLayer, edges: Edges, horizontal: Bool = false) {
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        mask.frame = view.bounds
+        mask.startPoint = horizontal ? CGPoint(x: 0, y: 0.5) : CGPoint(x: 0.5, y: 0)
+        mask.endPoint = horizontal ? CGPoint(x: 1, y: 0.5) : CGPoint(x: 0.5, y: 1)
+        let length = max(1, horizontal ? view.bounds.width : view.bounds.height), depth = fadeDepth(height: length)/length
+        mask.locations = [0, NSNumber(value: Double(depth)), NSNumber(value: Double(1-depth)), 1]
+        mask.colors = [NSColor.black.withAlphaComponent(1-edges.top).cgColor, NSColor.black.cgColor,
+                       NSColor.black.cgColor, NSColor.black.withAlphaComponent(1-edges.bottom).cgColor]
+        view.layer?.mask = edges.top == 0 && edges.bottom == 0 ? nil : mask
+        CATransaction.commit()
     }
     enum Direction: Equatable { case above, below }
     /// A row showing less than this much, inside the fade, reads as gone.
@@ -151,15 +165,7 @@ extension SidebarView {
     private func updateScrollFade(_ edges: SidebarScrollCues.Edges) {
         guard scrollFade.frame != scroll.bounds || shownEdges != edges else { return }
         shownEdges = edges
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        scrollFade.frame = scroll.bounds
-        let height = max(1, scroll.bounds.height), depth = SidebarScrollCues.fadeDepth(height: height)/height
-        scrollFade.locations = [0, NSNumber(value: Double(depth)), NSNumber(value: Double(1-depth)), 1]
-        scrollFade.colors = [NSColor.black.withAlphaComponent(1-edges.top).cgColor, NSColor.black.cgColor,
-                             NSColor.black.cgColor, NSColor.black.withAlphaComponent(1-edges.bottom).cgColor]
-        // Without a fade, the list needn't draw through a mask.
-        scroll.layer?.mask = edges.top == 0 && edges.bottom == 0 ? nil : scrollFade
-        CATransaction.commit()
+        SidebarScrollCues.fade(scroll, with: scrollFade, edges: edges)
     }
     /// Scrolls the chosen tab to the middle of the list, or as near as the list's ends allow, clear
     /// of its fading edges: a quick ease out, with the pill fading away first rather than following.

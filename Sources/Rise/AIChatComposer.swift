@@ -52,8 +52,15 @@ import RiseCore
     /// Pasted or dropped in, text comes as plain words in the composer's own style.
     override var readablePasteboardTypes: [NSPasteboard.PasteboardType] { [.string] }
     override var acceptableDragTypes: [NSPasteboard.PasteboardType] { [.string] }
-    override func paste(_ sender: Any?) { pasteAsPlainText(sender) }
-    override func pasteAsRichText(_ sender: Any?) { pasteAsPlainText(sender) }
+    /// Read as a string itself: NSTextView's `pasteAsPlainText` pastes nothing into this view.
+    override func paste(_ sender: Any?) { pastePlainText() }
+    override func pasteAsPlainText(_ sender: Any?) { pastePlainText() }
+    override func pasteAsRichText(_ sender: Any?) { pastePlainText() }
+    @objc func pasteAndMatchStyle(_ sender: Any?) { pastePlainText() }
+    private func pastePlainText() {
+        guard NSPasteboard.general.string(forType: .string) != nil, readSelection(from: .general, type: .string) else { NSSound.beep(); return }
+        scrollRangeToVisible(selectedRange())
+    }
     /// No bold, italic or underline from the keyboard.
     override func changeFont(_ sender: Any?) {}
     override func underline(_ sender: Any?) {}
@@ -206,12 +213,32 @@ import RiseCore
 /// Dia's composer: a white card at the panel's foot. Empty and away from the keyboard it's one
 /// row, the buttons beside the placeholder; written in, it's the text over a row of buttons; and
 /// with pages attached, their chips sit above the text. It springs between them, growing upward.
+/// The attached pages' row: it scrolls across, a mouse's wheel turning it too, and a trackpad's
+/// swipe up or down passes on.
+@MainActor final class AIChatChipScroll: NSScrollView {
+    override func scrollWheel(with event: NSEvent) {
+        let across = abs(event.scrollingDeltaX), down = abs(event.scrollingDeltaY)
+        guard down > across else { super.scrollWheel(with: event); return }
+        guard !event.hasPreciseScrollingDeltas else { nextResponder?.scrollWheel(with: event); return }
+        let clip = contentView, limit = max(0, (documentView?.frame.width ?? 0)-clip.bounds.width)
+        let x = min(limit, max(0, clip.bounds.minX-event.scrollingDeltaY*AIChatStyle.chipWheelStep))
+        clip.scroll(to: NSPoint(x: x, y: clip.bounds.minY)); reflectScrolledClipView(clip)
+    }
+}
+
 @MainActor final class AIChatComposer: FlippedView, NSTextViewDelegate {
     private let card = Surface(radius: AIChatStyle.composerRadius)
     private let content = FlippedView()
     let input = AIChatInputView()
     private let inputScroll = NSScrollView()
-    private let chipsView = FlippedView()
+    /// The attached pages, each its full width in a row that scrolls across, its ends dissolving
+    /// where more lie past them, as the sidebar's tabs do (`SidebarScrollCues`).
+    let chipsScroll = AIChatChipScroll()
+    let chipsView = FlippedView()
+    private let chipsFade = CAGradientLayer()
+    private(set) var chipEdges = SidebarScrollCues.Edges(top: 0, bottom: 0)
+    /// A page just attached, to scroll to once it's laid out.
+    private var revealedChip: AIChatPageChip?
     private(set) var chips: [AIChatPageChip] = []
     let plusButton = MenuButton(title: "Add Pages")
     let moreButton = MenuButton(title: "More")
@@ -298,7 +325,13 @@ import RiseCore
         dictation.onLevel = { [weak self] level in self?.waveform.hear(level) }
         dictation.onWords = { [weak self] words in self?.insertDictated(words) }
         dictation.onFailure = { [weak self] reason in self?.showDictationNote(reason) }
-        [chipsView, inputScroll, plusButton, moreButton, waveform, dictationNote, micButton, sendButton].forEach(content.addSubview)
+        chipsScroll.drawsBackground = false; chipsScroll.borderType = .noBorder
+        chipsScroll.hasVerticalScroller = false; chipsScroll.hasHorizontalScroller = false
+        chipsScroll.verticalScrollElasticity = .none; chipsScroll.horizontalScrollElasticity = .allowed
+        chipsScroll.documentView = chipsView; chipsScroll.wantsLayer = true
+        chipsScroll.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(chipsScrolled), name: NSView.boundsDidChangeNotification, object: chipsScroll.contentView)
+        [chipsScroll, inputScroll, plusButton, moreButton, waveform, dictationNote, micButton, sendButton].forEach(content.addSubview)
         [card, content].forEach(addSubview)
         for spring in [\AIChatComposer.height, \.expansion, \.chipRow] { self[keyPath: spring].configure(response: FindMotion.swapResponse, bounce: 0) }
         updatePlaceholder(); retarget(); settle()
@@ -345,6 +378,7 @@ import RiseCore
     /// The pages the next question goes with.
     func setAttachments(_ attachments: [AIChatAttachment]) {
         guard attachments != self.attachments else { return }
+        let before = self.attachments
         chips.forEach { $0.removeFromSuperview() }
         chips = attachments.map { attachment in
             let chip = AIChatPageChip(attachment, removable: true)
@@ -352,6 +386,7 @@ import RiseCore
             chip.applyColors(colors); chipsView.addSubview(chip)
             return chip
         }
+        revealedChip = chips.last { !before.contains($0.attachment) }
         updatePlaceholder(); retarget(); needsLayout = true
     }
     func clear() {
@@ -586,12 +621,31 @@ import RiseCore
         content.frame = bounds
         let chipsTop = AIChatStyle.composerInset*2
         // Room above and to the right for each chip's remove button, which reaches past its corner.
-        let overhang = AIChatPageChip.removeOverhang, room = width-2*AIChatStyle.composerChipInset
-        chipsView.frame = NSRect(x: AIChatStyle.composerChipInset, y: chipsTop-overhang, width: room+overhang, height: AIChatStyle.chipSize.height+overhang)
-        chipsView.alphaValue = CGFloat(min(1, max(0, chipRow.value/Double(AIChatStyle.composerChipRow))))
-        var x: CGFloat = 0
-        let chipWidth = chips.isEmpty ? 0 : min(AIChatStyle.chipSize.width, (room-CGFloat(chips.count-1)*8)/CGFloat(chips.count))
-        for chip in chips { chip.frame = NSRect(x: x, y: overhang, width: chipWidth, height: AIChatStyle.chipSize.height); x += chipWidth+8 }
+        let overhang = AIChatPageChip.removeOverhang
+        // The row reaches the card's sides so pages scroll out under its edges; at rest the first
+        // starts the inset in, and the last ends as far from the right once scrolled to.
+        let inset = AIChatStyle.composerChipInset, rowHeight = AIChatStyle.chipSize.height+overhang
+        let chipsFrame = NSRect(x: 0, y: chipsTop-overhang, width: width, height: rowHeight)
+        if chipsScroll.frame != chipsFrame { chipsScroll.frame = chipsFrame }
+        chipsScroll.alphaValue = CGFloat(min(1, max(0, chipRow.value/Double(AIChatStyle.composerChipRow))))
+        var x = inset
+        for chip in chips {
+            let frame = NSRect(x: x, y: overhang, width: AIChatStyle.chipSize.width, height: AIChatStyle.chipSize.height)
+            if chip.frame != frame { chip.frame = frame }
+            x += AIChatStyle.chipSize.width+AIChatStyle.composerChipGap
+        }
+        let rowWidth = max(width, chips.isEmpty ? 0 : x-AIChatStyle.composerChipGap+inset)
+        if chipsView.frame.size != NSSize(width: rowWidth, height: rowHeight) { chipsView.frame.size = NSSize(width: rowWidth, height: rowHeight) }
+        if let chip = revealedChip {
+            revealedChip = nil
+            let clip = chipsScroll.contentView, limit = max(0, rowWidth-clip.bounds.width)
+            if chip.frame.maxX+inset > clip.bounds.maxX || chip.frame.minX-inset < clip.bounds.minX {
+                let target = min(limit, max(0, chip.frame.maxX+inset-clip.bounds.width))
+                clip.scroll(to: NSPoint(x: target, y: 0)); chipsScroll.reflectScrolledClipView(clip)
+            }
+        }
+        updateChipFade()
+        chips.forEach { $0.refreshHover() }
 
         // The buttons' row is always 30 pt up from the bottom; + and ⋯ move from beside the microphone to the left.
         let mid = bounds.height-AIChatStyle.rowMid
@@ -617,6 +671,15 @@ import RiseCore
         if input.frame.width != inputScroll.contentSize.width { input.frame.size.width = inputScroll.contentSize.width }
         input.textContainer?.containerSize = NSSize(width: max(0, inputScroll.contentSize.width-2*caretRoom), height: .greatestFiniteMagnitude)
         input.sizeToFit()
+    }
+
+    @objc private func chipsScrolled() { updateChipFade(); chips.forEach { $0.refreshHover() } }
+    private func updateChipFade() {
+        let clip = chipsScroll.contentView
+        let edges = SidebarScrollCues.Edges(offset: clip.bounds.minX, contentHeight: chipsView.frame.width, viewHeight: clip.bounds.width)
+        guard chipsFade.frame != chipsScroll.bounds || chipEdges != edges else { return }
+        chipEdges = edges
+        SidebarScrollCues.fade(chipsScroll, with: chipsFade, edges: edges, horizontal: true)
     }
 
     static func mentionKey(for selector: Selector) -> MentionKey? {

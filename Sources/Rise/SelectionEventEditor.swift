@@ -38,14 +38,15 @@ import RiseCore
     }
 
     /// Calendar's or Reminders' access, asked for once, and then the editor, from where the menu opened.
-    func editSelectionEvent(_ event: SelectionEvent, as kind: SelectionEventEditor.Kind, source: URL?, at point: NSPoint, in view: NSView) {
+    func editSelectionEvent(_ event: SelectionEvent, as kind: SelectionEventEditor.Kind, source: URL?, at point: NSPoint, in view: NSView,
+                            added: ((EKCalendarItem) -> Void)? = nil) {
         let store = CalendarStore.shared
         Task { @MainActor [weak self, weak view] in
             let access = await SelectionEventEditor.access(for: kind, in: store)
             guard let self, let view, view.window != nil else { return }
             let editor = SelectionEventEditor(kind: kind, event: event, source: source, store: store, access: access,
                                               preferences: preferences, theme: theme)
-            editor.onAdded = { [weak self] item in self?.didAddSelectionItem(item, store: store) }
+            editor.onAdded = { [weak self] item in self?.didAddSelectionItem(item, store: store); added?(item) }
             editor.present(at: point, in: view, appearance: theme.appearance)
         }
     }

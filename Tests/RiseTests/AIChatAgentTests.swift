@@ -22,8 +22,13 @@ final class AIChatStreamProtocol: URLProtocol {
             while stream.hasBytesAvailable { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; body.append(buffer, count: count) }
         }
         Self.bodies.append((try? JSONSerialization.jsonObject(with: body)) as? [String: Any] ?? [:])
-        let reply = Self.replies.isEmpty ? "data: [DONE]\n\n" : Self.replies.removeFirst()
-        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "text/event-stream"])!,
+        var reply = Self.replies.isEmpty ? "data: [DONE]\n\n" : Self.replies.removeFirst()
+        // "HTTP 404\n" and a body: the service turning the request down.
+        var status = 200
+        if reply.hasPrefix("HTTP "), let line = reply.split(separator: "\n", maxSplits: 1).first, let code = Int(line.dropFirst(5)) {
+            status = code; reply = String(reply.dropFirst(line.count+1))
+        }
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "text/event-stream"])!,
                             cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: Data(reply.utf8))
         client?.urlProtocolDidFinishLoading(self)

@@ -98,12 +98,24 @@ extension NSTextView {
         // The chip and the part of the button past its corner, so moving onto the button keeps it.
         addTrackingArea(NSTrackingArea(rect: bounds.union(removeFrame), options: [.mouseEnteredAndExited, .activeAlways], owner: self))
     }
-    override func mouseEntered(with event: NSEvent) {
-        removeButton?.isHidden = false
+    override func mouseEntered(with event: NSEvent) { refreshHover() }
+    override func mouseExited(with event: NSEvent) { refreshHover() }
+    /// Shows the remove button while the pointer is on the page, and in view, worked out from
+    /// where the pointer is now: a row scrolling under a still pointer sends no exits, which left
+    /// every page it passed over with its button.
+    func refreshHover() {
+        guard let removeButton else { return }
+        var on = false
+        if let window, window.isVisible, !isHiddenOrHasHiddenAncestor {
+            let point = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+            let shown = superview.map { $0.visibleRect.contains($0.convert(point, from: self)) } ?? true
+            on = shown && (bounds.contains(point) || removeFrame.contains(point))
+        }
+        guard removeButton.isHidden == on else { return }
+        removeButton.isHidden = !on
         // The pointer may have come straight onto the button, which took no entry while hidden.
-        removeButton?.refreshHoverState()
+        if on { removeButton.refreshHoverState() }
     }
-    override func mouseExited(with event: NSEvent) { removeButton?.isHidden = true }
     /// A middle click takes the page off, as it closes a tab in the sidebar: pressed and let go
     /// on the same chip, anywhere on it, its button included.
     private var middlePressed = false
@@ -253,6 +265,18 @@ extension NSTextView {
     let status = AIChatStatusView()
     private var statusShown: Bool
     private(set) var steps: [AIChatStepRow] = []
+    /// Emails and events the model made, by their step's id, under the steps and above the words.
+    private(set) var cards: [(id: String, card: AIChatCard)] = []
+    /// An email or event was edited.
+    var onDraftChange: ((String, AIChatDraft) -> Void)?
+    /// An email's Open in Gmail was clicked.
+    var onOpenEmail: ((AIChatEmailDraft) -> Void)?
+    /// An event's Add was clicked: where to, the button, and what to call once it's in.
+    var onAddEvent: ((AIChatEventDraft, AIChatEventDraft.Calendar, NSView, @escaping () -> Void) -> Void)?
+    /// Where an event card keeps the calendar last picked.
+    var preferences = UserDefaults.standard
+    /// Its height changed without the answer coming in, as an email is edited.
+    var onResize: (() -> Void)?
     let textView = makeAIChatTextView()
     private var stream = TokenStream(), laidOut = "", paintedFrom = 0, failure = ""
     /// The model's answer so far, as Markdown.
@@ -292,6 +316,7 @@ extension NSTextView {
         self.colors = colors; applied = colors
         status.applyColors(colors)
         steps.forEach { $0.applyColors(colors) }
+        cards.forEach { $0.card.applyColors(colors) }
         [copyButton, regenerateButton].forEach { $0.contentTintColor = colors.actionIcon; $0.hoverColor = colors.hover }
         textView.selectedTextAttributes = [.backgroundColor: colors.dark ? NSColor(hex: 0x3A3A3A) : NSColor(hex: 0xDADADA)]
         textView.linkTextAttributes = [.foregroundColor: colors.text, .underlineStyle: NSUnderlineStyle.single.rawValue,
@@ -319,6 +344,7 @@ extension NSTextView {
     }
     /// A step the model took, new or changed.
     func setStep(_ id: String, _ step: AIChatStep) {
+        if let draft = step.draft { showDraft(id, draft) }
         if let row = steps.first(where: { $0.id == id }) { row.update(step); return }
         let row = AIChatStepRow(id: id, step: step)
         row.applyColors(colors)
@@ -327,6 +353,37 @@ extension NSTextView {
         steps.append(row); addSubview(row)
         render(at: CACurrentMediaTime())
         superview?.needsLayout = true
+    }
+    /// An email or event the model made, as a card the user can edit.
+    func showDraft(_ id: String, _ draft: AIChatDraft) {
+        let existing = cards.first(where: { $0.id == id })?.card
+        switch draft {
+        case .email(let email):
+            if let card = existing as? AIChatEmailCard { card.show(email) } else {
+                let card = AIChatEmailCard(email)
+                card.onChange = { [weak self] draft in self?.onDraftChange?(id, .email(draft)) }
+                card.onOpen = { [weak self] draft in self?.onOpenEmail?(draft) }
+                add(card, id: id)
+            }
+        case .event(let event):
+            if let card = existing as? AIChatEventCard { card.show(event) } else {
+                let card = AIChatEventCard(event, preferences: preferences)
+                card.onChange = { [weak self] draft in self?.onDraftChange?(id, .event(draft)) }
+                card.onAdd = { [weak self] draft, calendar, button, added in self?.onAddEvent?(draft, calendar, button, added) }
+                add(card, id: id)
+            }
+        }
+        render(at: CACurrentMediaTime())
+        superview?.needsLayout = true
+    }
+    private func add(_ card: AIChatCard, id: String) {
+        card.applyColors(colors)
+        card.onResize = { [weak self] in self?.needsLayout = true; self?.onResize?() }
+        cards.append((id, card)); addSubview(card)
+    }
+    /// Folds every card but those in `kept`, by their step's id, which stay open.
+    func supersedeCards(keeping kept: Set<String>) {
+        for (id, card) in cards { card.isSuperseded = !kept.contains(id) }
     }
     /// Steps still going when the answer stops end where they are.
     private func endSteps() {
@@ -396,13 +453,17 @@ extension NSTextView {
         let rows = steps.reduce(CGFloat(0)) { $0+CGFloat(min(1, max(0, $1.presence.value)))*(AIChatStepRow.height+AIChatStepRow.gap) }
         return AIChatStyle.stepsGap-AIChatStepRow.gap+rows
     }
-    private var textTop: CGFloat {
-        let top = (hasThoughtRow ? 16 : 0)+stepsHeight
+    /// The cards, each with the gap above it.
+    private func cardsHeight(width: CGFloat) -> CGFloat {
+        cards.reduce(CGFloat(0)) { $0+AIChatStyle.answerGap+$1.card.height(for: width) }
+    }
+    private func textTop(width: CGFloat) -> CGFloat {
+        let top = (hasThoughtRow ? 16 : 0)+stepsHeight+cardsHeight(width: width)
         return top > 0 ? top+AIChatStyle.answerGap : 0
     }
     func height(for width: CGFloat) -> CGFloat {
         let text = textView.usedSize(width: width)
-        var height = textTop+text.height
+        var height = textTop(width: width)+text.height
         if phase == .done || phase == .failed, !markdown.isEmpty { height += AIChatStyle.actionsGap+24 }
         return height
     }
@@ -417,7 +478,15 @@ extension NSTextView {
             row.alphaValue = p
             y += p*(AIChatStepRow.height+AIChatStepRow.gap)
         }
-        let top = textTop
+        var cardY = (hasThoughtRow ? 16 : 0)+stepsHeight
+        for (_, card) in cards {
+            cardY += AIChatStyle.answerGap
+            let height = card.height(for: width)
+            let frame = NSRect(x: 0, y: cardY, width: width, height: height)
+            if card.frame != frame { card.frame = frame }
+            cardY += height
+        }
+        let top = textTop(width: width)
         let text = textView.usedSize(width: width)
         textView.frame = NSRect(x: 0, y: top, width: width, height: text.height)
         let actionsY = top+text.height+AIChatStyle.actionsGap

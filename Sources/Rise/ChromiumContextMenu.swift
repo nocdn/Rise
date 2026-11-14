@@ -108,8 +108,13 @@ import RiseChromium
             }
             addMap()
             group()
-            add("Download Linked File") { info.download(link) }
-            add("Copy Link") { copy(link) }
+            // An email address or phone number on its own, not the link that writes or rings it.
+            let copies = LinkCopy(link)
+            if copies.isDownloadable { add("Download Linked File") { info.download(link) } }
+            add(copies.title) {
+                guard let text = copies.text else { copy(link); return }
+                NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string)
+            }
             // The system's own, as Safari's: the share sheet, from the menu, for the link.
             let picker = NSSharingServicePicker(items: [link])
             sharingPicker = picker

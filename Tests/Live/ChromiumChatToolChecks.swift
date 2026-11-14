@@ -91,6 +91,33 @@ import RiseChromium
         let found = try await searchTabs.run(["query": "marmalade"], searchTabs.step(["query": "marmalade"]))
         check(found.output.contains(AIChatBrowserTools.shortID(loaded.id)) && found.output.contains("In its text: …"), "Searching tabs finds words in their text: \(found.output)")
 
+        // Looking at pages: out of sight, a tab not showing, and a screen further down.
+        func color(_ jpeg: Data, x: Double, y: Double) -> (r: Double, g: Double, b: Double)? {
+            guard let rep = NSBitmapImageRep(data: jpeg), let pixel = rep.colorAt(x: Int(Double(rep.pixelsWide)*x), y: Int(Double(rep.pixelsHigh)*y))?.usingColorSpace(.sRGB) else { return nil }
+            return (pixel.redComponent, pixel.greenComponent, pixel.blueComponent)
+        }
+        func isRed(_ c: (r: Double, g: Double, b: Double)?) -> Bool { c.map { $0.r > 0.8 && $0.g < 0.3 && $0.b < 0.3 } ?? false }
+        func isBlue(_ c: (r: Double, g: Double, b: Double)?) -> Bool { c.map { $0.b > 0.8 && $0.r < 0.3 && $0.g < 0.3 } ?? false }
+        let viewPage = try XCTUnwrapTool(tools, "view_page")
+        let unseen = try await viewPage.run(["url": site+"/chart.html"], viewPage.step(["url": site+"/chart.html"]))
+        let unseenPicture = unseen.images.first?.jpeg ?? Data()
+        let unseenRep = NSBitmapImageRep(data: unseenPicture)
+        check(unseen.images.count == 1 && (unseenRep?.pixelsWide ?? 0) > 0 && (unseenRep?.pixelsWide ?? 0) <= 1280, "A page out of sight is pictured, at most 1280 across: \(unseenRep?.pixelsWide ?? 0)×\(unseenRep?.pixelsHigh ?? 0)")
+        check(isRed(color(unseenPicture, x: 0.5, y: 0.25)), "Its first screen, as drawn by its script: \(String(describing: color(unseenPicture, x: 0.5, y: 0.25)))")
+        check(unseen.output.contains("screen 1 of 4"), "It says where on the page it is: \(unseen.output)")
+        let below = try await viewPage.run(["url": site+"/chart.html", "screen": 2], viewPage.step([:]))
+        check(isBlue(color(below.images.first?.jpeg ?? Data(), x: 0.5, y: 0.5)), "Its second screen: \(String(describing: color(below.images.first?.jpeg ?? Data(), x: 0.5, y: 0.5)))")
+        let behind = browser.addTab(url: URL(string: site+"/chart.html")!, background: true)
+        let behindLoaded = Date()+10
+        while (behind.page.isLoading || behind.page.url == nil), Date() < behindLoaded { try await Task.sleep(for: .milliseconds(100)) }
+        check(behind.page.view.superview == nil, "The tab isn't showing")
+        let tabShot = try await viewPage.run(["tab": AIChatBrowserTools.shortID(behind.id)], viewPage.step(["tab": AIChatBrowserTools.shortID(behind.id)]))
+        check(isRed(color(tabShot.images.first?.jpeg ?? Data(), x: 0.5, y: 0.25)), "A tab not showing is drawn out of sight and pictured: \(String(describing: color(tabShot.images.first?.jpeg ?? Data(), x: 0.5, y: 0.25)))")
+        check(behind.page.view.superview == nil, "And goes back out of sight after")
+        let thirdOfTab = try await viewPage.run(["tab": AIChatBrowserTools.shortID(behind.id), "screen": 3], viewPage.step([:]))
+        check(thirdOfTab.output.contains("screen 3 of 4"), "A tab's screen further down: \(thirdOfTab.output)")
+        try (unseenPicture).write(to: folder.appendingPathComponent("view-page.jpg"))
+
         // The real search engine, out of sight: whatever it shows a fresh profile.
         let web = try await tools.reader.search(browser.searchProvider.searchURL("sea otter")!)
         print("INFO \(browser.searchProvider.title) gave \(web.results.count) results: \(web.results.prefix(3).map(\.title)); text \(web.text.prefix(120))")
@@ -111,6 +138,32 @@ import RiseChromium
             }
             print("INFO steps: \(steps); answer: \(answer)")
             check(answer.localizedCaseInsensitiveContains("marmalade"), "The model reads a page with the engine and answers from it")
+
+            var looked = AIChatPrompt.messages(history: [], current: AIChatTurn(question: "Look at \(site)/chart.html. What colour is the big square at its top? One word.", pages: []))
+            looked[0]["content"] = (looked[0]["content"] as! String)+"\n\n"+AIChatBrowserTools.instructions+"\n\n"+tools.context()
+            var seen = "", seenSteps: [String] = []
+            try await AIChatAgent.run(AIChatModels.model(for: .openRouter, messages: looked), tools: tools.tools) { event in
+                switch event {
+                case .text(let piece): seen += piece
+                case .step(_, let step) where step.state != .running: seenSteps.append(step.text)
+                default: break
+                }
+            }
+            print("INFO steps: \(seenSteps); answer: \(seen)")
+            check(seen.localizedCaseInsensitiveContains("red"), "The model looks at a page drawn by its script and sees it")
+
+            var asked = AIChatPrompt.messages(history: [], current: AIChatTurn(question: "Put lunch with Priya at Dishoom on Friday at 1pm in my Apple calendar.", pages: []))
+            asked[0]["content"] = (asked[0]["content"] as! String)+"\n\n"+AIChatBrowserTools.instructions+"\n\n"+tools.context()
+            var event: AIChatEventDraft?
+            try await AIChatAgent.run(AIChatModels.model(for: .openRouter, messages: asked), tools: tools.tools) { update in
+                if case .step(_, let step) = update, case .event(let made)? = step.draft { event = made }
+            }
+            print("INFO event: \(String(describing: event))")
+            let parts = event.map { Calendar.current.dateComponents([.weekday, .hour, .minute], from: $0.start) }
+            check(event != nil && parts?.weekday == 6 && parts?.hour == 13 && parts?.minute == 0 && event!.start > Date()
+                  && event!.end == event!.start.addingTimeInterval(3600) && event!.calendar == .apple
+                  && event!.location.contains("Dishoom") && !event!.isAllDay,
+                  "The model makes an event for the coming Friday at 1pm, in the calendar the user named")
         }
     }
 
@@ -149,6 +202,13 @@ import RiseChromium
         try write("article.html", """
         <!doctype html><title>Otter facts</title><body><main id="main">Loading…</main>
         <script>setTimeout(() => { document.getElementById('main').innerHTML = '<h1>Otter facts</h1><p>Otters hold hands. The secret word is marmalade.</p>'; }, 150)</script>
+        """)
+        // Four screens tall, drawn by its script, so only a picture shows what's on it.
+        try write("chart.html", """
+        <!doctype html><title>Chart</title><style>body { margin: 0; } canvas { display: block; }</style><body>
+        <canvas id="c" width="1280" height="3200" style="width: 100%; height: 3200px"></canvas>
+        <script>const c = document.getElementById('c').getContext('2d'); c.fillStyle = '#fff'; c.fillRect(0, 0, 1280, 3200);
+        c.fillStyle = '#e00'; c.fillRect(0, 0, 1280, 450); c.fillStyle = '#00e'; c.fillRect(0, 900, 1280, 900);</script>
         """)
         try write("recipe.html", "<!doctype html><title>Recipe</title><p>Spread the toast thickly with marmalade and serve.</p>")
         try write("asleep.html", "<!doctype html><title>Asleep</title><p>Woken up to be read.</p>")

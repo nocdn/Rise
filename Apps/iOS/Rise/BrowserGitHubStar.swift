@@ -5,11 +5,11 @@ extension BrowserViewController {
     func nativeLinkMenu(in page: WKWebView, url: URL?, actions suggested: [UIMenuElement]) -> UIMenu {
         githubRepositoryMenu?.cancel(); githubRepositoryMenu = nil
         let actions = addingOpenHere(to: suggested, url: url, in: page)
-        guard let repository = GitHubRepository(url: url) else { return ImageContextMenus.menu(in: page, actions: actions, link: url) }
+        guard let repository = GitHubRepository(url: url) else { return LinkCopyMenu.menu(ImageContextMenus.menu(in: page, actions: actions, link: url), link: url) }
         let store = page.configuration.websiteDataStore
         let menu = GitHubRepositoryMenu(browser: self,page: page,repository: repository,store: store)
         githubRepositoryMenu = menu
-        return ImageContextMenus.menu(in: page, actions: actions+[menu.element()], link: url)
+        return LinkCopyMenu.menu(ImageContextMenus.menu(in: page, actions: actions+[menu.element()], link: url), link: url)
     }
 
     func githubStarAction(_ repository: GitHubRepository, store: WKWebsiteDataStore,action: MobileGitHubStarrer.Action = .star) -> UIAction {

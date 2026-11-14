@@ -24,6 +24,8 @@ struct AIChatStep: Equatable, @unchecked Sendable {
     var favicon: NSImage?
     var state = State.running
     var target: Target?
+    /// An email or event the step made, shown in the answer as a card (`AIChatCard.swift`).
+    var draft: AIChatDraft?
     /// Shown done: what it did, "Searched the web for “otters”".
     func done(_ text: String? = nil) -> AIChatStep {
         var step = self; step.state = .done; if let text { step.text = text }; return step
@@ -55,10 +57,25 @@ struct AIChatTool {
     }
 }
 
-/// What a tool gives back: text for the model, and the step as it ends.
+/// What a tool gives back: text for the model, any pictures for it to look at, and the step as it ends.
 struct AIChatToolResult {
     var output: String
     var step: AIChatStep?
+    var images: [AIChatImage] = []
+}
+
+/// A picture for the model, as a page's screenshot: a JPEG, and what it's of.
+struct AIChatImage: Equatable, Sendable {
+    let jpeg: Data
+    let caption: String
+    var dataURL: String { "data:image/jpeg;base64,\(jpeg.base64EncodedString())" }
+    /// Said in its place where the model can't take pictures.
+    static let refused = "[The screenshot couldn't be shown: this model doesn't take images. Read the page's text instead.]"
+    /// Whether a model's error is its refusing a picture.
+    static func isRefusal(_ error: Error) -> Bool {
+        let message = ((error as? LocalizedError)?.errorDescription ?? error.localizedDescription).lowercased()
+        return message.contains("image")
+    }
 }
 
 /// A tool that couldn't do what it was asked: why, for the model, and the step as it shows it.
@@ -99,6 +116,11 @@ enum AIChatModelDelta: Equatable {
     func reply(tools: [AIChatTool], mayCall: Bool, handle: (AIChatModelDelta) async throws -> Void) async throws -> AIChatReply
     /// The results of the last reply's calls, in its order.
     func append(results: [(call: AIChatToolCall, output: String)])
+    /// Pictures the calls took, for the model to look at next, after their results.
+    func append(images: [AIChatImage])
+}
+extension AIChatModel {
+    func append(images: [AIChatImage]) {}
 }
 
 /// The chat's agent: it asks the model, runs the tools it calls, and gives it their results, round
@@ -127,14 +149,16 @@ enum AIChatModelDelta: Equatable {
             guard mayCall, !reply.calls.isEmpty else { return }
             let results = try await perform(reply.calls, tools: tools, handle: handle)
             try Task.checkCancellation()
-            model.append(results: results)
+            model.append(results: results.map { ($0.call, $0.output) })
+            let images = results.flatMap(\.images)
+            if !images.isEmpty { model.append(images: images) }
             round += 1
         }
     }
 
     /// Runs one reply's calls, every step shown first, and gives each output in the calls' order.
     static func perform(_ calls: [AIChatToolCall], tools: [AIChatTool],
-                        handle: (AIChatAgentEvent) async throws -> Void) async throws -> [(call: AIChatToolCall, output: String)] {
+                        handle: (AIChatAgentEvent) async throws -> Void) async throws -> [(call: AIChatToolCall, output: String, images: [AIChatImage])] {
         struct Job { let call: AIChatToolCall; let tool: AIChatTool?; let arguments: [String: Any]?; let step: AIChatStep }
         var jobs: [Job] = []
         for call in calls {
@@ -143,49 +167,49 @@ enum AIChatModelDelta: Equatable {
             jobs.append(Job(call: call, tool: tool, arguments: arguments, step: step))
             try await handle(.step(call.id, step))
         }
-        var outcomes = [(output: String, step: AIChatStep)?](repeating: nil, count: jobs.count)
+        var outcomes = [(output: String, step: AIChatStep, images: [AIChatImage])?](repeating: nil, count: jobs.count)
         if jobs.allSatisfy({ $0.tool?.readsOnly ?? true }) {
-            await withTaskGroup(of: (Int, String, AIChatStep).self) { group in
+            await withTaskGroup(of: (Int, String, AIChatStep, [AIChatImage]).self) { group in
                 for (index, job) in jobs.enumerated() {
                     group.addTask { @MainActor in
-                        let (output, step) = await attempt(job.call, tool: job.tool, arguments: job.arguments, step: job.step)
-                        return (index, output, step)
+                        let (output, step, images) = await attempt(job.call, tool: job.tool, arguments: job.arguments, step: job.step)
+                        return (index, output, step, images)
                     }
                 }
-                for await (index, output, step) in group {
-                    outcomes[index] = (output, step)
+                for await (index, output, step, images) in group {
+                    outcomes[index] = (output, step, images)
                     try? await handle(.step(jobs[index].call.id, step))
                 }
             }
         } else {
             for (index, job) in jobs.enumerated() {
                 try Task.checkCancellation()
-                let (output, step) = await attempt(job.call, tool: job.tool, arguments: job.arguments, step: job.step)
-                outcomes[index] = (output, step)
+                let (output, step, images) = await attempt(job.call, tool: job.tool, arguments: job.arguments, step: job.step)
+                outcomes[index] = (output, step, images)
                 try await handle(.step(job.call.id, step))
             }
         }
         try Task.checkCancellation()
-        return zip(jobs, outcomes).map { job, outcome in (job.call, outcome?.output ?? "Error: the tool didn't finish.") }
+        return zip(jobs, outcomes).map { job, outcome in (job.call, outcome?.output ?? "Error: the tool didn't finish.", outcome?.images ?? []) }
     }
 
     /// One call, its failures told to the model rather than ending the answer.
-    private static func attempt(_ call: AIChatToolCall, tool: AIChatTool?, arguments: [String: Any]?, step: AIChatStep) async -> (String, AIChatStep) {
+    private static func attempt(_ call: AIChatToolCall, tool: AIChatTool?, arguments: [String: Any]?, step: AIChatStep) async -> (String, AIChatStep, [AIChatImage]) {
         guard let tool else {
-            return ("Error: there's no tool called \(call.name). The tools are the ones listed.", step.failed())
+            return ("Error: there's no tool called \(call.name). The tools are the ones listed.", step.failed(), [])
         }
         guard let arguments else {
-            return ("Error: the arguments weren't a JSON object: \(call.arguments.prefix(200))", step.failed())
+            return ("Error: the arguments weren't a JSON object: \(call.arguments.prefix(200))", step.failed(), [])
         }
         do {
             let result = try await tool.run(arguments, step)
-            return (limited(result.output), result.step ?? step.done())
+            return (limited(result.output), result.step ?? step.done(), result.images)
         } catch let failure as AIChatToolFailure {
-            return ("Error: \(failure.message)", step.failed(failure.step))
+            return ("Error: \(failure.message)", step.failed(failure.step), [])
         } catch is CancellationError {
-            return ("Error: stopped.", step.failed())
+            return ("Error: stopped.", step.failed(), [])
         } catch {
-            return ("Error: \(error.localizedDescription)", step.failed())
+            return ("Error: \(error.localizedDescription)", step.failed(), [])
         }
     }
     static func limited(_ output: String) -> String {
@@ -267,7 +291,13 @@ enum AIChatModelDelta: Equatable {
             body["tool_choice"] = mayCall ? "auto" : "none"
             body["parallel_tool_calls"] = true
         }
-        let bytes = try await AIChatModels.post(endpoint, key: key, body: body, session: session)
+        let bytes: URLSession.AsyncBytes
+        do { bytes = try await AIChatModels.post(endpoint, key: key, body: body, session: session) }
+        catch where hasImages && AIChatImage.isRefusal(error) {
+            // A model that doesn't take pictures: they're taken out, and it's told, and asked again.
+            dropImages(); body["messages"] = messages
+            bytes = try await AIChatModels.post(endpoint, key: key, body: body, session: session)
+        }
         var text = "", calls: [Int: (id: String, name: String, arguments: String)] = [:], details: [[String: Any]] = []
         for try await event in AIChatModels.events(bytes) {
             try Task.checkCancellation()
@@ -302,6 +332,26 @@ enum AIChatModelDelta: Equatable {
     }
     func append(results: [(call: AIChatToolCall, output: String)]) {
         for (call, output) in results { messages.append(["role": "tool", "tool_call_id": call.id, "content": output]) }
+    }
+    /// Tools' results take text alone, so pictures come after them as the user's.
+    func append(images: [AIChatImage]) {
+        var content: [[String: Any]] = []
+        for image in images {
+            content.append(["type": "text", "text": image.caption])
+            content.append(["type": "image_url", "image_url": ["url": image.dataURL]])
+        }
+        messages.append(["role": "user", "content": content])
+        hasImages = true
+    }
+    private var hasImages = false
+    private func dropImages() {
+        messages = messages.map { message in
+            guard let parts = message["content"] as? [[String: Any]] else { return message }
+            var message = message
+            message["content"] = parts.map { $0["type"] as? String == "image_url" ? ["type": "text", "text": AIChatImage.refused] : $0 }
+            return message
+        }
+        hasImages = false
     }
 
     /// Streamed reasoning arrives a piece at a time: pieces of one detail share its type and index,
@@ -342,7 +392,12 @@ enum AIChatModelDelta: Equatable {
             body["tool_choice"] = mayCall ? "auto" : "none"
             body["parallel_tool_calls"] = true
         }
-        let bytes = try await AIChatModels.post(Self.endpoint, key: key, body: body, session: session)
+        let bytes: URLSession.AsyncBytes
+        do { bytes = try await AIChatModels.post(Self.endpoint, key: key, body: body, session: session) }
+        catch where hasImages && AIChatImage.isRefusal(error) {
+            dropImages(); body["input"] = input
+            bytes = try await AIChatModels.post(Self.endpoint, key: key, body: body, session: session)
+        }
         var text = "", output: [[String: Any]]?
         for try await event in AIChatModels.events(bytes) {
             try Task.checkCancellation()
@@ -373,6 +428,25 @@ enum AIChatModelDelta: Equatable {
     }
     func append(results: [(call: AIChatToolCall, output: String)]) {
         for (call, output) in results { input.append(["type": "function_call_output", "call_id": call.id, "output": output]) }
+    }
+    func append(images: [AIChatImage]) {
+        var content: [[String: Any]] = []
+        for image in images {
+            content.append(["type": "input_text", "text": image.caption])
+            content.append(["type": "input_image", "image_url": image.dataURL, "detail": "auto"])
+        }
+        input.append(["role": "user", "content": content])
+        hasImages = true
+    }
+    private var hasImages = false
+    private func dropImages() {
+        input = input.map { item in
+            guard let parts = item["content"] as? [[String: Any]] else { return item }
+            var item = item
+            item["content"] = parts.map { $0["type"] as? String == "input_image" ? ["type": "input_text", "text": AIChatImage.refused] : $0 }
+            return item
+        }
+        hasImages = false
     }
 }
 

@@ -54,6 +54,11 @@ import RiseCore
     /// The whole page, beyond what shows: a JPEG of it, or a PDF of it as one long page, as it
     /// shows on screen. Nil if it couldn't be taken.
     func capture(_ format: PageCaptureFormat) async -> Data?
+    /// Where the page is scrolled and how big it and its window onto it are, in CSS pixels.
+    func layoutMetrics() async -> PageLayoutMetrics?
+    /// A JPEG of `clip` of the page, in CSS pixels from its top, drawn `scale` times, beyond what
+    /// shows where it reaches past it. Nil if it couldn't be taken.
+    func screenshot(clip: CGRect, scale: Double, beyondViewport: Bool) async -> Data?
 
     /// Runs `body` as the body of an async function taking `arguments`, in Rise's own script
     /// world `world` (nil: the one Rise's page tools share), which the page can't see.
@@ -111,6 +116,8 @@ struct PageScriptError: Error, LocalizedError {
 }
 
 extension WebPage {
+    func layoutMetrics() async -> PageLayoutMetrics? { nil }
+    func screenshot(clip: CGRect, scale: Double, beyondViewport: Bool) async -> Data? { nil }
     var navigationHistory: TabNavigationHistory? { nil }
     var backForwardList: TabNavigationHistory? { nil }
     func restoreNavigationHistory(_ history: TabNavigationHistory, fallback url: URL) -> Bool { false }
@@ -142,3 +149,8 @@ enum WebPageChange {
 
 /// How a whole page is captured.
 enum PageCaptureFormat { case jpeg, pdf }
+
+/// Where a page is scrolled and how big it is, in CSS pixels.
+struct PageLayoutMetrics: Equatable {
+    var scrollY: Double, viewportWidth: Double, viewportHeight: Double, contentWidth: Double, contentHeight: Double
+}

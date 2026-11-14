@@ -105,7 +105,6 @@ import RiseCore
         scroll.verticalScroller = ThinScroller(); scroll.scrollerStyle = .overlay
         scroll.documentView = rowsHost
         scroll.wantsLayer = true
-        scrollFade.startPoint = CGPoint(x: 0.5, y: 0); scrollFade.endPoint = CGPoint(x: 0.5, y: 1)
         scroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(listScrolled), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
         chosenPill.target = self; chosenPill.action = #selector(revealChosenTab)

@@ -438,12 +438,26 @@ enum RisePages {
         guard let crop = cg.cropping(to: pixels) else { return nil }
         return NSImage(cgImage: crop, size: rect.size)
     }
-    func capture(_ format: PageCaptureFormat) async -> Data? {
-        func send(_ method: String, _ params: [String: Any] = [:]) async -> [String: Any]? {
-            await withCheckedContinuation { continuation in
-                browserView.devTools(method, params: params) { continuation.resume(returning: $0) }
-            }
+    /// A DevTools command to the page's engine, and its result.
+    private func send(_ method: String, _ params: [String: Any] = [:]) async -> [String: Any]? {
+        await withCheckedContinuation { continuation in
+            browserView.devTools(method, params: params) { continuation.resume(returning: $0) }
         }
+    }
+    func layoutMetrics() async -> PageLayoutMetrics? {
+        guard let metrics = await send("Page.getLayoutMetrics"),
+              let viewport = metrics["cssVisualViewport"] as? [String: Any], let content = metrics["cssContentSize"] as? [String: Any] else { return nil }
+        func number(_ dictionary: [String: Any], _ key: String) -> Double { (dictionary[key] as? NSNumber)?.doubleValue ?? 0 }
+        return PageLayoutMetrics(scrollY: number(viewport, "pageY"), viewportWidth: number(viewport, "clientWidth"), viewportHeight: number(viewport, "clientHeight"),
+                                 contentWidth: number(content, "width"), contentHeight: number(content, "height"))
+    }
+    func screenshot(clip: CGRect, scale: Double, beyondViewport: Bool) async -> Data? {
+        guard clip.width > 0, clip.height > 0 else { return nil }
+        let result = await send("Page.captureScreenshot", ["format": "jpeg", "quality": 85, "captureBeyondViewport": beyondViewport, "fromSurface": true,
+                                                           "clip": ["x": clip.minX, "y": clip.minY, "width": clip.width, "height": clip.height, "scale": scale]])
+        return (result?["data"] as? String).flatMap { Data(base64Encoded: $0) }
+    }
+    func capture(_ format: PageCaptureFormat) async -> Data? {
         guard let metrics = await send("Page.getLayoutMetrics"), let content = metrics["cssContentSize"] as? [String: Any],
               let width = (content["width"] as? NSNumber)?.doubleValue, let height = (content["height"] as? NSNumber)?.doubleValue,
               width > 0, height > 0 else { return nil }
