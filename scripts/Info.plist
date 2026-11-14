@@ -15,7 +15,7 @@
 <key>NSPrincipalClass</key><string>NSApplication</string>
 <key>NSAppTransportSecurity</key><dict><key>NSAllowsArbitraryLoadsInWebContent</key><true/></dict>
 <key>NSCameraUsageDescription</key><string>Allow websites you choose to use your camera.</string>
-<key>NSMicrophoneUsageDescription</key><string>Allow websites you choose to use your microphone.</string>
+<key>NSMicrophoneUsageDescription</key><string>Allow websites you choose to use your microphone, and dictate in the chat.</string>
 <key>NSLocationUsageDescription</key><string>Allow websites you choose to use your location.</string>
 <!-- Only fields marked for one-time codes are offered them; otherwise macOS checks every field focused, which flashes the first time. -->
 <key>NSAutoFillRequiresTextContentTypeForOneTimeCodeOnMac</key><true/>

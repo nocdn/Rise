@@ -138,7 +138,8 @@ import AppKit
 
         let develop = addMenu("Develop")
         item(develop, "Developer Mode", #selector(BrowserController.toggleDeveloper), "d", modifiers: .control, target: browser)
-        item(develop, "Show Developer Tools", #selector(BrowserController.toggleDevTools), "j", modifiers: [.command, .option], target: browser)
+        item(develop, "Inspect Elements", #selector(BrowserController.toggleDevTools), "j", modifiers: [.command, .option], target: browser)
+        item(develop, "Show Console", #selector(BrowserController.toggleDevToolsConsole), "k", modifiers: [.command, .option], target: browser)
         item(develop, "JavaScript Console…", #selector(BrowserController.javascriptConsole), target: browser)
         item(develop, "Show Page Source", #selector(BrowserController.showPageSource), "u", modifiers: [.command, .option], target: browser)
         develop.addItem(.separator())

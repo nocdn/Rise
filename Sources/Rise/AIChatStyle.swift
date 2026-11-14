@@ -27,8 +27,13 @@ enum AIChatStyle {
     /// From a question's bubble to "Thinking…" under it, from that to the answer, and from the
     /// answer's last line to its actions.
     static let thoughtGap: CGFloat = 44, answerGap: CGFloat = 12, actionsGap: CGFloat = 12
+    /// From "Thought for N seconds" to the first of the steps the model took with its tools.
+    static let stepsGap: CGFloat = 10
     /// Between one exchange and the next question.
     static let turnGap: CGFloat = 36
+    /// Room kept between the end of the answer coming in and the composer, and between the
+    /// scroller's end and the composer.
+    static let followRoom: CGFloat = 24, scrollerGap: CGFloat = 6
     static let composerInset: CGFloat = 8, composerRadius: CGFloat = 18
     /// One row with the buttons beside the text, or the text over a row of buttons.
     static let compactHeight: CGFloat = 60, expandedHeight: CGFloat = 100
@@ -36,7 +41,7 @@ enum AIChatStyle {
     static let rowMid: CGFloat = 30
     /// An attached page's chip and the space under it, above the text.
     static let composerChipRow: CGFloat = 70
-    static let composerTextLeading: CGFloat = 24.5
+    static let composerTextLeading: CGFloat = 21
     /// The attached pages from the composer's left, where a sent question's bubble starts too.
     static let composerChipInset: CGFloat = 16
     /// Lines the question can grow to before it scrolls.
@@ -67,8 +72,9 @@ enum AIChatStyle {
 struct AIChatColors: Equatable {
     let panel, text, muted, headerIcon, toolbarIcon, placeholder, bubble, chip, tile, tileBorder: NSColor
     let composer, composerBorder, sendOn, sendOnIcon, sendOff, sendOffIcon, actionIcon, hairline, code, hover: NSColor
-    /// A page chip's remove button: muted while the pointer is on the page, and high-contrast
-    /// while it's on the button.
+    /// A page chip's remove button: muted while the pointer is on the page (in Light, paler than
+    /// it was, if not as pale as the page), and high-contrast while it's on the button. Its ring
+    /// is the composer's colour.
     let remove, removeIcon, removeHover, removeHoverIcon: NSColor
     let dark: Bool
     init(_ theme: RiseTheme) {
@@ -95,7 +101,7 @@ struct AIChatColors: Equatable {
             sendOff = NSColor(hex: 0xF2F3F3); sendOffIcon = NSColor(hex: 0xB3B4B4)
             actionIcon = NSColor(hex: 0xAEAEAE); hairline = NSColor(hex: 0xE4E4E4)
             code = NSColor.black.withAlphaComponent(0.045); hover = NSColor.black.withAlphaComponent(0.05)
-            remove = NSColor(hex: 0xC7C7C7); removeIcon = NSColor(hex: 0x151515)
+            remove = NSColor(hex: 0xD6D6D6); removeIcon = NSColor(hex: 0x151515)
             removeHover = NSColor(hex: 0x171717); removeHoverIcon = .white
         }
     }

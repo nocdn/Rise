@@ -1,5 +1,6 @@
 // DevTools in a real Rise window, as Chrome's work: their menus, their close button, filling
-// their panel, device mode around the page, their downloads, saving and choosing files.
+// their panel, device mode around the page, their downloads, saving and choosing files, and
+// ⌥⌘J and ⌥⌘K switching between Elements and the console or putting them away.
 // Run with python3 scripts/test-chromium-live.py devtools.
 import AppKit
 @testable import Rise
@@ -212,5 +213,29 @@ import RiseChromium
         await waitUntil("DevTools show their close button, which closes them", 10) { await self.value(close, in: frontend) as? Bool == true }
         await waitUntil("They close") { panel.shadow.isHidden && panel.tabID == nil && panel.toolbox == nil }
         check(page.frame == browser.pageBody, "The page has its place back")
+
+        // ⌥⌘K opens them on the console; ⌥⌘J switches to Elements, picking; ⌥⌘K back to the
+        // console, not picking; and each, on its own panel, puts them away.
+        browser.toggleDevToolsConsole()
+        await waitUntil("⌥⌘K slides them in") { panel.isOpen && panel.progress == 1 }
+        guard let console = panel.clip.subviews.first as? RCBrowserView else { check(false, "DevTools are in the panel again"); return }
+        await waitUntil("They open on the console", 20) { await self.value(selectedTab, in: console) as? String == "console" }
+        await waitUntil("Rise hears they show the console") { panel.shownPanel == "console" }
+        browser.toggleDevTools()
+        await waitUntil("⌥⌘J on the console switches to Elements") { await self.value(selectedTab, in: console) as? String == "elements" }
+        await waitUntil("Ready to select an element there", 10) { await self.value(picking, in: console) as? Bool == true }
+        check(panel.isOpen, "Switching leaves them open")
+        browser.toggleDevToolsConsole()
+        await waitUntil("⌥⌘K on Elements switches to the console") { await self.value(selectedTab, in: console) as? String == "console" }
+        check(await value(picking, in: console) as? Bool == false, "The console doesn't pick an element")
+        browser.toggleDevToolsConsole()
+        await waitUntil("⌥⌘K on the console puts them away") { panel.shadow.isHidden && panel.tabID == nil }
+        browser.toggleDevTools()
+        await waitUntil("⌥⌘J opens them again") { panel.isOpen && panel.progress == 1 && panel.shownPanel == "elements" }
+        if let elements = panel.clip.subviews.first as? RCBrowserView {
+            await waitUntil("On Elements, picking", 20) { await self.value(picking, in: elements) as? Bool == true }
+        }
+        browser.toggleDevTools()
+        await waitUntil("⌥⌘J on Elements puts them away") { panel.shadow.isHidden && panel.tabID == nil }
     }
 }

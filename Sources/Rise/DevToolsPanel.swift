@@ -30,6 +30,11 @@ import RiseChromium
     /// Where DevTools last laid out the page in their toolbox, from its top left: at the origin
     /// it fills it, and otherwise device mode has it on its screen.
     fileprivate(set) var inspectedBounds: NSRect?
+    /// The panel the DevTools show ("elements", "console", "network"…), as they tell it, or as
+    /// asked of them until they do.
+    fileprivate(set) var shownPanel: String?
+    /// Showing `tool` in the selected tab: its shortcut puts them away.
+    func shows(_ tool: DevToolsTool, in tabID: UUID?) -> Bool { isOpen && tabID != nil && self.tabID == tabID && shownPanel == tool.rawValue }
     /// Device mode is on: the page is on its screen, in DevTools' toolbox.
     var isInDeviceMode: Bool { toolbox != nil && (inspectedBounds.map { $0.minX > 0.5 || $0.minY > 0.5 } ?? false) }
     var isOpen: Bool { slide.target > 0 }
@@ -61,24 +66,57 @@ import RiseChromium
     };
     if (document.readyState === 'complete') quiet(); else addEventListener('load', quiet);
     """
-    /// Turns on "Select an element", as ⌘⇧C does, once DevTools are ready, unless it's on already.
-    static let pickElement = """
-    const pick = async () => {
-      for (let tries = 0; tries < 150; tries++) {
-        try {
-          const [UI, SDK] = await Promise.all([import('./ui/legacy/legacy.js'), import('./core/sdk/sdk.js')]);
-          const registry = UI.ActionRegistry.ActionRegistry.instance(), id = 'elements.toggle-element-search';
-          if (registry.hasAction(id) && SDK.TargetManager.TargetManager.instance().primaryPageTarget()) {
-            const action = registry.getAction(id);
-            if (!action.toggled()) await action.execute();
-            return action.toggled();
-          }
-        } catch {}
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-      return false;
-    };
-    """
+    /// The panel DevTools show, told to Rise as it changes (`shownPanel`), and
+    /// `riseDevTools.show(panel)` to change it: Elements picking an element in the page, as ⌘⇧C
+    /// has them, and anywhere else not; `riseDevTools.toggle(panel)` says "shown" instead where
+    /// it shows already. `opening` shows first, once DevTools are ready.
+    static func panels(opening: DevToolsTool?) -> String {
+        """
+        (() => {
+          const ready = (async () => {
+            for (let tries = 0; tries < 150; tries++) {
+              try {
+                const [UI, SDK] = await Promise.all([import('./ui/legacy/legacy.js'), import('./core/sdk/sdk.js')]);
+                const inspector = UI.InspectorView.InspectorView.maybeGetInspectorViewInstance();
+                const registry = UI.ActionRegistry.ActionRegistry.instance();
+                if (inspector && registry.hasAction('elements.toggle-element-search') && SDK.TargetManager.TargetManager.instance().primaryPageTarget())
+                  return {UI, inspector, registry};
+              } catch {}
+              await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            return null;
+          })();
+          const show = async panel => {
+            const found = await ready;
+            if (!found) return false;
+            const search = found.registry.getAction('elements.toggle-element-search');
+            await found.UI.ViewManager.ViewManager.instance().showView(panel);
+            if ((panel === 'elements') !== search.toggled()) await search.execute();
+            return true;
+          };
+          // Showing `panel` already, says so for Rise to put them away; otherwise shows it.
+          const toggle = async panel => {
+            const found = await ready;
+            if (!found) return 'missing';
+            if (found.inspector.tabbedPane.selectedTabId === panel) return 'shown';
+            await show(panel);
+            return 'switched';
+          };
+          globalThis.riseDevTools = {show, toggle};
+          const report = panel => { try { riseHandlers.\(handler).postMessage(panel ?? ''); } catch {} };
+          (async () => {
+            const found = await ready;
+            if (!found) return;
+            const opening = \(opening.map { "'\($0.rawValue)'" } ?? "null");
+            if (opening) await show(opening);
+            const pane = found.inspector.tabbedPane;
+            pane.addEventListener('TabSelected', event => report(event.data.tabId));
+            report(pane.selectedTabId);
+          })();
+        })();
+        """
+    }
+    static let handler = "riseDevToolsPanel"
     /// Rise's DevTools are undocked, filling their panel (docked, they keep room beside themselves
     /// for a page Chrome lays under them), but can dock, which gives them device mode. Undocked,
     /// they'd hide their close button and offer places to dock in their menu: they keep the
@@ -96,6 +134,13 @@ import RiseChromium
     fileprivate func configureCollapse() { slide.configure(response: 0.17, bounce: 0.15) }
 }
 
+/// What ⌥⌘J and ⌥⌘K open DevTools to.
+enum DevToolsTool: String {
+    /// The Elements panel, picking an element in the page.
+    case elements
+    case console
+}
+
 @MainActor extension BrowserController {
     /// DevTools slide in and out unless turned off in the site controls' More menu.
     var animatesDevTools: Bool { preferences.object(forKey: DevToolsPanel.animatesKey) as? Bool ?? true }
@@ -104,6 +149,10 @@ import RiseChromium
     func installDevTools() {
         let panel = devTools
         panel.events.onContextMenu = { [weak self] menu, view in self?.showDevToolsMenu(menu, in: view) }
+        panel.events.onPanel = { [weak self] view, name in
+            guard let self, view === self.devTools.frontend else { return }
+            self.devTools.shownPanel = name.isEmpty ? nil : name
+        }
         panel.events.onClose = { [weak self] view in
             guard let self, view === self.devTools.frontend else { return }
             self.closeDevTools()
@@ -157,16 +206,38 @@ import RiseChromium
         addTab(url: RisePages.settings)
     }
 
-    /// ⌥⌘J: opens the selected tab's DevTools, or closes them.
-    @objc func toggleDevTools() {
+    /// ⌥⌘J: the selected tab's DevTools, on Elements picking an element; on Elements already,
+    /// puts them away.
+    @objc func toggleDevTools() { switchDevTools(to: .elements) }
+    /// ⌥⌘K: the selected tab's DevTools, on the console; on the console already, puts them away.
+    @objc func toggleDevToolsConsole() { switchDevTools(to: .console) }
+    /// Opens the DevTools to `tool`, switches them to it from another panel, or, showing it
+    /// already, closes them.
+    func switchDevTools(to tool: DevToolsTool) {
         guard let tab = selectedTab else { return }
         let panel = devTools
-        if panel.isOpen, panel.tabID == tab.id { closeDevTools(); return }
-        guard let page = tab.page as? ChromiumPage else { NSSound.beep(); return }
-        if panel.tabID != tab.id || panel.frontend == nil { showDevTools(for: tab, page: page, picking: true) }
-        // Opened again before they'd gone, they're ready to pick an element again too.
+        guard let page = tab.page as? ChromiumPage else { if panel.isOpen, panel.tabID == tab.id { closeDevTools() } else { NSSound.beep() }; return }
+        if panel.isOpen, panel.tabID == tab.id, let frontend = panel.frontend as? RCBrowserView {
+            // DevTools know best which panel they show, whatever was clicked in them since.
+            frontend.evaluateFunctionBody("return await globalThis.riseDevTools?.toggle(panel) ?? 'missing';", arguments: ["panel": tool.rawValue],
+                                          frame: nil, world: nil) { [weak self, weak frontend] result, _ in
+                guard let self, let frontend, self.devTools.frontend === frontend, self.devTools.isOpen else { return }
+                switch result as? String {
+                case "switched": self.devTools.shownPanel = tool.rawValue
+                case "shown": self.closeDevTools()
+                // Not ready to say, as Rise last heard.
+                default: if self.devTools.shownPanel == tool.rawValue { self.closeDevTools() }
+                }
+            }
+            window?.makeFirstResponder(frontend)
+            return
+        }
+        if panel.tabID != tab.id || panel.frontend == nil { showDevTools(for: tab, page: page, opening: tool) }
+        // Opened again before they'd gone.
         else if let frontend = panel.frontend as? RCBrowserView {
-            frontend.evaluateFunctionBody(DevToolsPanel.pickElement + "return await pick();", arguments: [:], frame: nil, world: nil) { _, _ in }
+            frontend.evaluateFunctionBody("return await globalThis.riseDevTools?.show(panel) ?? false;", arguments: ["panel": tool.rawValue],
+                                          frame: nil, world: nil) { _, _ in }
+            panel.shownPanel = tool.rawValue
         }
         openDevTools()
     }
@@ -181,7 +252,7 @@ import RiseChromium
         guard let tab = tabs.first(where: { $0.page === page }) else { return }
         if tab.id != selectedID { select(tab.id) }
         let panel = devTools
-        if panel.tabID != tab.id || panel.frontend == nil { showDevTools(for: tab, page: page, picking: false) }
+        if panel.tabID != tab.id || panel.frontend == nil { showDevTools(for: tab, page: page, opening: nil) }
         info.inspect()
         openDevTools()
     }
@@ -196,7 +267,8 @@ import RiseChromium
         animateDevTools()
     }
 
-    private func showDevTools(for tab: BrowserTab, page: ChromiumPage, picking: Bool) {
+    /// DevTools for `tab`, on `opening` once they're ready, or as they open (Elements).
+    private func showDevTools(for tab: BrowserTab, page: ChromiumPage, opening: DevToolsTool?) {
         let panel = devTools
         tearDownDevTools()
         let frontend = page.browserView.makeDevTools()
@@ -207,14 +279,13 @@ import RiseChromium
         frontend.addUserScript(DevToolsPanel.quietResizes, world: nil, mainFrameOnly: true, handlers: [])
         frontend.addUserScript(DevToolsPanel.undocked, world: nil, mainFrameOnly: true, handlers: [])
         frontend.delegate = panel.events
-        // They open ready to pick an element in the page, unless one was picked to open them.
-        if picking {
-            frontend.addUserScript(DevToolsPanel.pickElement + "if (document.readyState === 'complete') pick(); else addEventListener('load', pick);",
-                                   world: nil, mainFrameOnly: true, handlers: [])
-        }
+        // They open ready to pick an element in the page, or on the console, unless an element
+        // was picked to open them; and say which panel they show from then on.
+        frontend.addMessageHandler(DevToolsPanel.handler, world: nil, replies: false)
+        frontend.addUserScript(DevToolsPanel.panels(opening: opening), world: nil, mainFrameOnly: true, handlers: [DevToolsPanel.handler])
         frontend.frame = panel.clip.bounds
         panel.clip.addSubview(frontend)
-        panel.tabID = tab.id; panel.frontend = frontend
+        panel.tabID = tab.id; panel.frontend = frontend; panel.shownPanel = opening?.rawValue ?? DevToolsTool.elements.rawValue
         panel.close = { [weak frontend] in frontend?.close() }
     }
     /// A menu DevTools show: the » past their tabs, a toolbar's menu, a node's or a request's
@@ -285,7 +356,7 @@ import RiseChromium
         panel.toolbox?.delegate = nil; panel.toolbox?.close(); panel.toolbox?.removeFromSuperview()
         panel.toolbox = nil; panel.inspectedBounds = nil
         panel.close?(); panel.frontend?.removeFromSuperview()
-        panel.frontend = nil; panel.close = nil; panel.tabID = nil
+        panel.frontend = nil; panel.close = nil; panel.tabID = nil; panel.shownPanel = nil
     }
 
     /// Places the DevTools in `bounds`, and returns how much of the window's right side they take
@@ -357,6 +428,8 @@ import RiseChromium
 @MainActor final class DevToolsEvents: NSObject, RCBrowserViewDelegate {
     var onContextMenu: ((RCContextMenu, RCBrowserView) -> Void)?
     var onClose: ((RCBrowserView) -> Void)?
+    /// The panel they show, as they change it.
+    var onPanel: ((RCBrowserView, String) -> Void)?
     var onPopup: ((_ opener: RCBrowserView, _ popup: RCBrowserView, URL) -> Bool)?
     var onInspectedBounds: ((RCBrowserView, NSRect) -> Void)?
     var onDownload: ((RCDownload, _ suggestedName: String) -> URL?)?
@@ -376,6 +449,13 @@ import RiseChromium
         MainActor.assumeIsolated {
             guard let onChooseFiles else { completion(nil); return }
             onChooseFiles(mode, defaultPath, completion)
+        }
+    }
+    nonisolated func browserView(_ browserView: RCBrowserView, didReceiveMessage body: Any, handler: String, frame: RCFrame,
+                                 reply: ((Any?, String?) -> Void)?) {
+        MainActor.assumeIsolated {
+            if handler == DevToolsPanel.handler, let name = body as? String { onPanel?(browserView, name) }
+            reply?(nil, nil)
         }
     }
     nonisolated func browserViewDidChange(_ browserView: RCBrowserView) {}

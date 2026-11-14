@@ -13,7 +13,7 @@ import AppKit
     init(_ turn: AIChatTurn, thinking: Bool) {
         id = turn.id
         chips = turn.pages.map { AIChatPageChip($0, removable: false) }
-        bubble = AIChatBubble(turn.question)
+        bubble = AIChatBubble(turn.parts)
         answer = AIChatAnswerView(thinking: thinking)
         super.init(frame: .zero)
         (chips as [NSView] + [bubble, answer]).forEach(addSubview)
@@ -69,7 +69,7 @@ private final class PassthroughView: FlippedView {
     private let stack = FlippedView()
     let composer = AIChatComposer()
     private(set) var turns: [AIChatTurn] = []
-    private var turnViews: [AIChatTurnView] = []
+    private(set) var turnViews: [AIChatTurnView] = []
     private var colors = AIChatColors(.neutral), applied: AIChatColors?
     private var link: CADisplayLink?
     private var lastTick: CFTimeInterval?
@@ -78,6 +78,15 @@ private final class PassthroughView: FlippedView {
     private struct Flight { let turn: UUID, bubble: NSRect, chips: [NSRect], scrollFrom: CGFloat, scrollTo: CGFloat }
     private var lift = MotionSpring(1)
     private var flight: Flight?
+    /// While an answer comes in and the conversation is at its end, it stays there, scrolling
+    /// along as the answer grows. Scrolled up, it stays where it's put; scrolled back to the end,
+    /// it follows again.
+    private(set) var followsAnswer = false
+    /// The conversation's own scrolls, which aren't the user's.
+    private var scrollingItself = false
+    /// A trackpad's scroll or the scroller's drag, which following leaves alone until it's done.
+    private var liveScrolling = false
+    private var lastScroll: CGFloat = 0
     /// Over the composer, so what lifts off it isn't drawn under its card.
     private let flightLayer = PassthroughView()
     private var answerTask: Task<Void, Never>?
@@ -88,14 +97,22 @@ private final class PassthroughView: FlippedView {
     private var addedPages: [AIChatAttachment] = []
     private var currentPage: AIChatAttachment?
     private var removedPageURL: URL?
+    /// Pages mentioned with @ in the question, attached while they're mentioned.
+    private var mentionedPages: [AIChatAttachment] = []
+    /// The open pages to mention, over the composer while an @ is typed.
+    let mentionMenu = AIChatMentionMenu()
+    /// The @ being typed, in the panel.
+    private(set) var mentionAnchor = NSRect.zero
 
     var onClose: (() -> Void)?
     /// Hands the keyboard back to the page.
     var onLeave: (() -> Void)?
     /// What the model needs from a page as the question is sent.
     var snapshot: ((AIChatAttachment) async -> PageAssistant.Page?)?
-    /// The model's answer to the conversation, as text so far.
-    var respond: (([[String: Any]]) -> AsyncThrowingStream<String, Error>)?
+    /// The model's answer to the conversation: its words, and the steps it takes with its tools.
+    var respond: (([[String: Any]]) -> AsyncThrowingStream<AIChatAgentEvent, Error>)?
+    /// A step about a tab or a page was clicked: it goes there.
+    var onStep: ((AIChatStep.Target) -> Void)?
     /// Open pages the + menu offers, and the More menu's provider choice.
     var openPages: (() -> [AIChatAttachment])?
     var providerMenu: (() -> NSMenuItem)?
@@ -107,16 +124,33 @@ private final class PassthroughView: FlippedView {
         scroll.drawsBackground = false; scroll.borderType = .noBorder
         scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true; scroll.scrollerStyle = .overlay
         scroll.verticalScrollElasticity = .allowed; scroll.horizontalScrollElasticity = .none
+        // The calendar card's scroller: a thin, light bar with no track, darker under the pointer.
+        scroll.verticalScroller = GmailScroller(); scroll.verticalScroller?.controlSize = .small
         scroll.documentView = stack
         scroll.contentView.postsBoundsChangedNotifications = true
-        NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.updateHairline() }
+        // At once, rather than queued, to tell the user's scrolls from the conversation's own.
+        NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: scroll.contentView, queue: nil) { [weak self] _ in
+            MainActor.assumeIsolated { self?.scrolled() }
+        }
+        NotificationCenter.default.addObserver(forName: NSScrollView.willStartLiveScrollNotification, object: scroll, queue: nil) { [weak self] _ in
+            MainActor.assumeIsolated { self?.liveScrolling = true }
+        }
+        NotificationCenter.default.addObserver(forName: NSScrollView.didEndLiveScrollNotification, object: scroll, queue: nil) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.liveScrolling = false
+                if self.followsAnswer { self.animate() }
+            }
         }
         newChatButton.actionBlock = { [weak self] in self?.newChat() }
         closeButton.actionBlock = { [weak self] in self?.onClose?() }
         newChatButton.image = AIChatComposer.symbol("square.and.pencil", size: 16, weight: .regular)
         closeButton.image = AIChatComposer.symbol("xmark", size: 15, weight: .regular)
-        composer.onSend = { [weak self] question in self?.send(question) }
+        composer.onSend = { [weak self] parts in self?.send(parts: parts) }
+        composer.onMentionQuery = { [weak self] query, anchor in self?.showMentions(query, at: anchor) }
+        composer.onMentionKey = { [weak self] key in self?.mentionKey(key) ?? false }
+        composer.onMentionsChanged = { [weak self] pages in self?.mentionedPages = pages; self?.refreshAttachments() }
+        mentionMenu.onPick = { [weak self] page in self?.composer.completeMention(with: page) }
         composer.onStop = { [weak self] in self?.stop() }
         composer.onRemove = { [weak self] page in self?.remove(page) }
         composer.onMotion = { [weak self] in self?.animate() }
@@ -126,8 +160,7 @@ private final class PassthroughView: FlippedView {
         }
         composer.plusButton.makeMenu = { [weak self] in self?.makeAddMenu() }
         composer.moreButton.makeMenu = { [weak self] in self?.makeMoreMenu() }
-        composer.cameraButton.isEnabled = false; composer.cameraButton.toolTip = "Screenshots aren’t supported yet"
-        [scroll, hairline, newChatButton, closeButton, composer, flightLayer].forEach(addSubview)
+        [scroll, hairline, newChatButton, closeButton, composer, flightLayer, mentionMenu].forEach(addSubview)
         lift.configure(response: 0.28, bounce: 0)
         updateHeader()
     }
@@ -140,6 +173,9 @@ private final class PassthroughView: FlippedView {
         [newChatButton, closeButton].forEach { $0.hoverColor = colors.hover }
         updateHeader()
         composer.applyColors(colors)
+        mentionMenu.applyColors(colors)
+        // Its grey follows the chat's theme, whatever the system's is.
+        scroll.verticalScroller?.appearance = NSAppearance(named: colors.dark ? .darkAqua : .aqua)
         turnViews.forEach { $0.applyColors(colors) }
         needsLayout = true
     }
@@ -164,6 +200,7 @@ private final class PassthroughView: FlippedView {
     }
     private func refreshAttachments() {
         var pages = addedPages
+        for page in mentionedPages where !pages.contains(where: { $0.isSamePage(as: page) || $0 == page }) { pages.append(page) }
         let asked = turns.flatMap(\.pages)
         if let page = currentPage, page.url != removedPageURL, !asked.contains(where: page.isSamePage), !pages.contains(where: page.isSamePage) {
             pages.append(page)
@@ -174,8 +211,59 @@ private final class PassthroughView: FlippedView {
         // The page in front stays off, even if it was added from the + menu as well.
         if let current = currentPage, page.isSamePage(as: current) { removedPageURL = page.url }
         addedPages.removeAll { $0.isSamePage(as: page) }
+        // Its mentions stay as words, its title.
+        composer.unmention(page)
+        mentionedPages.removeAll { $0.isSamePage(as: page) || $0 == page }
         refreshAttachments(); composer.focus()
     }
+    // MARK: Mentions
+
+    /// The open pages matching what's typed after @, over the composer, or nothing.
+    private func showMentions(_ query: String?, at anchor: NSRect) {
+        guard let query else { mentionMenu.hide(); return }
+        let pages = AIChatAttachment.mentionable(mentionCandidates, query: query)
+        // Nothing matching, the @ is just a word, until something does again.
+        guard !pages.isEmpty else { mentionMenu.hide(); return }
+        mentionAnchor = convert(composer.mentionAt ?? anchor, from: composer)
+        // As many rows as fit between the header and the @.
+        let room = mentionAnchor.minY-AIChatMentionMenu.gap-AIChatStyle.headerHeight-AIChatMentionMenu.margin
+        mentionMenu.rowLimit = max(1, Int((room-mentionMenu.size(rows: 0).height)/AIChatMentionMenu.rowHeight))
+        mentionMenu.show(pages)
+        placeMentionMenu()
+    }
+    /// Every open page, the one in front first.
+    var mentionCandidates: [AIChatAttachment] {
+        var pages = openPages?() ?? []
+        if let current = currentPage {
+            pages.removeAll { $0.isSamePage(as: current) || $0 == current }
+            pages.insert(current, at: 0)
+        }
+        return pages
+    }
+    private func mentionKey(_ key: AIChatComposer.MentionKey) -> Bool {
+        guard mentionMenu.isShown else { return false }
+        switch key {
+        case .up: mentionMenu.move(-1)
+        case .down: mentionMenu.move(1)
+        case .pick: return mentionMenu.pickSelected()
+        case .dismiss: mentionMenu.hide()
+        }
+        return true
+    }
+    /// Just above the @'s line, its favicons starting where the @ is, within the composer's right edge.
+    private func placeMentionMenu() {
+        guard mentionMenu.isShown else { return }
+        // The composer grows upwards as lines are added, taking the @ with it.
+        composer.layoutSubtreeIfNeeded()
+        if let at = composer.mentionAt { mentionAnchor = convert(at, from: composer) }
+        let size = mentionMenu.preferredSize, margin = AIChatMentionMenu.margin
+        // Its favicons start where the @ is, as far right as the composer goes.
+        let left = mentionAnchor.minX-AIChatMentionMenu.padding-AIChatMentionMenu.Row.inset
+        let x = max(margin, min(left, composer.frame.maxX-size.width))
+        let y = max(AIChatStyle.headerHeight+margin, mentionAnchor.minY-AIChatMentionMenu.gap-size.height)
+        mentionMenu.frame = NSRect(x: round(x), y: round(y), width: size.width, height: size.height)
+    }
+
     private func makeAddMenu() -> NSMenu {
         let menu = NSMenu()
         let attached = composer.attachments
@@ -217,28 +305,31 @@ private final class PassthroughView: FlippedView {
     func newChat() {
         cancelAnswer(); land()
         turns = []; turnViews.forEach { $0.removeFromSuperview() }; turnViews = []
-        addedPages = []; removedPageURL = nil
+        addedPages = []; removedPageURL = nil; mentionedPages = []
         composer.clear(); composer.isAnswering = false
         refreshAttachments(); updateHeader()
-        scroll.contentView.scroll(to: .zero); scroll.reflectScrolledClipView(scroll.contentView)
+        followsAnswer = false; scroll(to: 0)
         needsLayout = true; composer.focus()
     }
-    func send(_ question: String) {
+    func send(_ question: String) { send(parts: [.text(question)]) }
+    func send(parts: [AIChatQuestionPart]) {
         guard !isAnswering else { return }
-        let turn = AIChatTurn(question: question, pages: composer.attachments)
+        mentionMenu.hide()
+        let turn = AIChatTurn(parts: parts, pages: composer.attachments)
         let history = turns
         turns.append(turn)
         let view = AIChatTurnView(turn, thinking: true)
         view.applyColors(colors)
         configure(view, for: turn.id)
         stack.addSubview(view); turnViews.append(view)
-        addedPages = []
+        addedPages = []; mentionedPages = []
         land()
         let text = convert(composer.textFrame, from: composer)
         let chips = composer.chipFrames.map { convert($0, from: composer) }
         composer.clear(); composer.isAnswering = true
         refreshAttachments(); updateHeader()
         layOutConversation()
+        followsAnswer = true
         liftOff(view, text: text, chips: chips)
         view.answer.beginThinking()
         ask(turn, history: history, in: view)
@@ -249,6 +340,7 @@ private final class PassthroughView: FlippedView {
             self.pasteboard.clearContents(); self.pasteboard.setString(view.answer.textView.string, forType: .string)
         }
         view.answer.onRegenerate = { [weak self] in self?.regenerate(id) }
+        view.answer.onStep = { [weak self] target in self?.onStep?(target) }
     }
     private func ask(_ turn: AIChatTurn, history: [AIChatTurn], in view: AIChatTurnView) {
         let snapshot = self.snapshot, respond = self.respond
@@ -263,12 +355,22 @@ private final class PassthroughView: FlippedView {
             guard !Task.isCancelled, let self else { return }
             if let index = self.turns.firstIndex(where: { $0.id == turn.id }) { self.turns[index].snapshots = current.snapshots }
             guard let respond else { self.finish(turn.id, text: "", error: PageAssistant.Failure.service("There’s no model to ask.")); return }
-            var text = ""
+            var text = "", afterTools = false
             do {
-                for try await token in respond(AIChatPrompt.messages(history: history, current: current)) {
+                for try await event in respond(AIChatPrompt.messages(history: history, current: current)) {
                     guard !Task.isCancelled else { return }
-                    text += token
-                    if !token.isEmpty { view?.answer.receive(text); self.layOutConversation(); self.animate() }
+                    switch event {
+                    case .responded: view?.answer.responded()
+                    case .thinking: view?.answer.thinkAgain()
+                    case .text(let piece):
+                        guard !piece.isEmpty else { continue }
+                        // What the model wrote before its tools stays a paragraph of its own.
+                        if afterTools, !text.isEmpty { text += "\n\n" }
+                        afterTools = false
+                        text += piece; view?.answer.receive(text)
+                    case .step(let id, let step): afterTools = true; view?.answer.setStep(id, step)
+                    }
+                    self.layOutConversation(); self.animate()
                 }
                 guard !Task.isCancelled else { return }
                 self.finish(turn.id, text: text, error: nil)
@@ -306,14 +408,14 @@ private final class PassthroughView: FlippedView {
         guard !isAnswering, let last = turns.last, last.id == id, let old = turnViews.last else { return }
         land()
         turns.removeLast(); old.removeFromSuperview(); turnViews.removeLast()
-        var turn = AIChatTurn(question: last.question, pages: last.pages)
+        var turn = AIChatTurn(parts: last.parts, pages: last.pages)
         turn.snapshots = last.snapshots
         turns.append(turn)
         let view = AIChatTurnView(turn, thinking: true)
         view.applyColors(colors); configure(view, for: turn.id)
         stack.addSubview(view); turnViews.append(view)
         composer.isAnswering = true
-        layOutConversation(); view.answer.beginThinking()
+        layOutConversation(); followsAnswer = true; view.answer.beginThinking()
         ask(turn, history: Array(turns.dropLast()), in: view)
     }
     private func updateRegenerate() {
@@ -337,24 +439,57 @@ private final class PassthroughView: FlippedView {
     private func placeComposer() {
         let height = composer.currentHeight
         composer.frame = NSRect(x: AIChatStyle.composerInset, y: bounds.height-AIChatStyle.composerInset-height, width: composerWidth, height: height)
+        // The scroller ends just above the composer rather than running on behind it.
+        let under = max(0, scroll.frame.maxY-composer.frame.minY+AIChatStyle.scrollerGap)
+        if scroll.scrollerInsets.bottom != under { scroll.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: under, right: 0) }
+        // The @ menu keeps above it as it grows.
+        placeMentionMenu()
     }
-    /// The exchanges top to bottom, with room under the last so it can sit at the top of the
-    /// panel and so the end of it can scroll up clear of the composer.
+    /// The exchanges top to bottom, with room under the last so the end of it can scroll up clear
+    /// of the composer.
     private func layOutConversation() {
         let width = scroll.contentSize.width
         guard width > 0 else { return }
-        var y = AIChatStyle.contentTop, lastTop: CGFloat = 0
+        var y = AIChatStyle.contentTop
         for view in turnViews {
             let height = view.place(width: width, composerWidth: composerWidth)
             view.frame = NSRect(x: 0, y: y, width: width, height: height)
-            lastTop = y; y += height+AIChatStyle.turnGap
+            y += height+AIChatStyle.turnGap
         }
-        let bottom = turnViews.isEmpty ? 0 : y-AIChatStyle.turnGap+composer.targetHeight+AIChatStyle.composerInset+24
+        let bottom = turnViews.isEmpty ? 0 : y-AIChatStyle.turnGap+composer.targetHeight+AIChatStyle.composerInset+AIChatStyle.followRoom
         let viewport = scroll.contentSize.height
-        let height = max(viewport, bottom, turnViews.isEmpty ? 0 : lastTop-AIChatStyle.contentTop+viewport)
-        if stack.frame.size != NSSize(width: width, height: height) { stack.frame = NSRect(x: 0, y: 0, width: width, height: height) }
+        let height = max(viewport, bottom)
+        // A shorter conversation can pull the scroll back with it, which isn't the user's doing.
+        if stack.frame.size != NSSize(width: width, height: height) { itself { stack.frame = NSRect(x: 0, y: 0, width: width, height: height) } }
         if let flight { place(flight) }
+        // Not animating, the answer's end is brought into sight at once.
+        if link == nil, flight == nil, followsAnswer, !liveScrolling, let last = turnViews.last { scroll(to: followTarget(for: last)) }
         updateHairline()
+    }
+    /// How far the conversation scrolls to show `view` to its end just above the composer, the end
+    /// of the conversation, and never back up. Sending scrolls the question up only as far as it
+    /// needs, leaving what came before in sight above it.
+    func followTarget(for view: AIChatTurnView) -> CGFloat {
+        let current = scroll.contentView.bounds.minY
+        let visible = scroll.contentSize.height-(composer.targetHeight+AIChatStyle.composerInset+AIChatStyle.followRoom)
+        return max(current, view.frame.maxY-visible)
+    }
+    /// The furthest the conversation scrolls.
+    private var scrollLimit: CGFloat { max(0, stack.frame.height-scroll.contentSize.height) }
+    /// The conversation scrolled, by the user or itself. Reaching the end while an answer comes in,
+    /// whether by wheel, trackpad or scroller, it follows the answer again; scrolling up stops it.
+    private func scrolled() {
+        updateHairline()
+        let current = scroll.contentView.bounds.minY
+        defer { lastScroll = current }
+        guard !scrollingItself, flight == nil, isAnswering || followsAnswer else { return }
+        if current >= scrollLimit-1 {
+            if !followsAnswer { followsAnswer = true; animate() }
+        } else if current < lastScroll-0.5 { followsAnswer = false }
+    }
+    private func itself(_ change: () -> Void) {
+        let was = scrollingItself; scrollingItself = true
+        change(); scrollingItself = was
     }
     /// Lifts the question and its pages off the composer to their places, scrolling the
     /// conversation so they land at the top. As in Dia, the bubble rises from where the question
@@ -362,7 +497,7 @@ private final class PassthroughView: FlippedView {
     /// climb (90% of the way up in 0.17 s). The pages go with it, from the left of the composer
     /// to the right of the panel. The answer's "Thinking…" fades in as they land.
     private func liftOff(_ view: AIChatTurnView, text: NSRect, chips: [NSRect]) {
-        let target = max(0, view.frame.minY-AIChatStyle.contentTop)
+        let target = followTarget(for: view)
         guard window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
             scroll(to: target); return
         }
@@ -423,10 +558,9 @@ private final class PassthroughView: FlippedView {
         layOutConversation()
     }
     private func scroll(to y: CGFloat) {
-        let limit = max(0, stack.frame.height-scroll.contentSize.height)
-        let point = NSPoint(x: 0, y: min(max(0, y), limit))
+        let point = NSPoint(x: 0, y: min(max(0, y), scrollLimit))
         guard scroll.contentView.bounds.origin != point else { return }
-        scroll.contentView.scroll(to: point); scroll.reflectScrolledClipView(scroll.contentView)
+        itself { scroll.contentView.scroll(to: point); scroll.reflectScrolledClipView(scroll.contentView) }
     }
 
     func animate() {
@@ -450,6 +584,12 @@ private final class PassthroughView: FlippedView {
         for view in turnViews where view.answer.step(dt, now: now) { moving = true }
         placeComposer(); layOutConversation()
         if flight != nil && lift.isResting(within: 0.001) { land() }
+        // Keeping up with the answer, a little of the way each frame so new lines glide into sight.
+        if followsAnswer, flight == nil, !liveScrolling, let last = turnViews.last {
+            let current = scroll.contentView.bounds.minY, target = followTarget(for: last)
+            if target-current > 0.5 { scroll(to: current+(target-current)*min(1, dt*14)); moving = true }
+            else if !isAnswering { followsAnswer = false }
+        }
         if !moving && composer.isResting && flight == nil { link.invalidate(); self.link = nil }
     }
 }
@@ -462,6 +602,8 @@ private final class PassthroughView: FlippedView {
     let shadow = PageSurface(color: NSColor(hex: 0xFAFAFA), radius: PageAppearance.radius)
     let clip = PageSurface(color: NSColor(hex: 0xFAFAFA), radius: PageAppearance.radius)
     let view = AIChatView()
+    /// What the model can do in the browser.
+    var tools: AIChatBrowserTools?
     /// In the gap between the page and the chat: dragged, it resizes them.
     let handle = SplitHandle()
     var chosenWidth: CGFloat?
@@ -527,20 +669,27 @@ private final class PassthroughView: FlippedView {
             guard let id = page.tabID, let tab = self?.tabs.first(where: { $0.id == id }) else { return nil }
             return try? await PageAssistant.snapshot(of: tab.page)
         }
+        let tools = AIChatBrowserTools(browser: self)
+        panel.tools = tools
         view.respond = { [weak self] messages in
-            let provider = self?.modelChoice ?? .openRouter
+            let choice = self?.modelChoice ?? .openRouter
             return AsyncThrowingStream { continuation in
                 let task = Task { @MainActor in
                     do {
-                        try await ModelService.run(messages, provider: provider) { event in
-                            if case .text(let text) = event { continuation.yield(text) }
+                        var messages = messages
+                        // Told about the tools, and the browser as it is now, where the model has them.
+                        if AIChatModels.hasTools(choice), let system = messages.first?["content"] as? String {
+                            messages[0]["content"] = system+"\n\n"+AIChatBrowserTools.instructions+"\n\n"+tools.context()
                         }
+                        let model = AIChatModels.model(for: choice, messages: messages)
+                        try await AIChatAgent.run(model, tools: tools.tools) { event in continuation.yield(event) }
                         continuation.finish()
                     } catch { continuation.finish(throwing: error) }
                 }
                 continuation.onTermination = { _ in task.cancel() }
             }
         }
+        view.onStep = { [weak self] target in self?.openAIChatStep(target) }
         view.openPages = { [weak self] in
             guard let self else { return [] }
             return self.tabs.compactMap(self.aiChatAttachment)
@@ -555,6 +704,13 @@ private final class PassthroughView: FlippedView {
     func aiChatAttachment(_ tab: BrowserTab) -> AIChatAttachment? {
         guard let url = tab.url, ["http", "https", "file"].contains(url.scheme?.lowercased() ?? "") else { return nil }
         return AIChatAttachment(tabID: tab.id, title: tab.title, url: url, favicon: tab.favicon(for: theme))
+    }
+    /// A step's tab comes to the front; its page opens in a tab of its own, or the one it's open in.
+    func openAIChatStep(_ target: AIChatStep.Target) {
+        switch target {
+        case .tab(let id): if tabs.contains(where: { $0.id == id }) { select(id) }
+        case .url(let url): if let open = openTab(for: url) { select(open.id) } else { addTab(url: url) }
+        }
     }
     /// The page in front is the one a new question is about, as in Dia.
     func refreshAIChatPage() {
@@ -575,6 +731,9 @@ private final class PassthroughView: FlippedView {
     func closeAIChat() {
         let panel = aiChat
         guard panel.isOpen else { return }
+        // Put away, it stops listening, and lets go of the pages it read out of sight.
+        panel.view.composer.cancelDictation()
+        panel.tools?.reader.close()
         panel.configureCollapse(); panel.slide.target = 0
         if let responder = window?.firstResponder as? NSView, responder.isDescendant(of: panel.view), let page = selectedTab?.page.view {
             window?.makeFirstResponder(page)

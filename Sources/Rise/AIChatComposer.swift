@@ -1,4 +1,5 @@
 import AppKit
+import RiseCore
 
 /// The question being written. TextKit 1, so its lines can be counted as it grows; it draws its
 /// own placeholder in the same line box as the text, and says when it takes and gives up the keyboard.
@@ -48,6 +49,21 @@ import AppKit
     override func setNeedsDisplay(_ rect: NSRect, avoidAdditionalLayout flag: Bool) {
         super.setNeedsDisplay(rect.insetBy(dx: -AIChatStyle.caretSize.width, dy: 0), avoidAdditionalLayout: flag)
     }
+    /// Pasted or dropped in, text comes as plain words in the composer's own style.
+    override var readablePasteboardTypes: [NSPasteboard.PasteboardType] { [.string] }
+    override var acceptableDragTypes: [NSPasteboard.PasteboardType] { [.string] }
+    override func paste(_ sender: Any?) { pasteAsPlainText(sender) }
+    override func pasteAsRichText(_ sender: Any?) { pasteAsPlainText(sender) }
+    /// No bold, italic or underline from the keyboard.
+    override func changeFont(_ sender: Any?) {}
+    override func underline(_ sender: Any?) {}
+    /// Copied or dragged, a mention is its page's title.
+    override func writeSelection(to pboard: NSPasteboard, types: [NSPasteboard.PasteboardType]) -> Bool {
+        guard let storage = textStorage, !storage.mentions.isEmpty else { return super.writeSelection(to: pboard, types: types) }
+        let text = selectedRanges.map { storage.attributedSubstring(from: $0.rangeValue).plainMentionText }.joined(separator: "\n")
+        pboard.clearContents()
+        return pboard.setString(text, forType: .string)
+    }
     /// Lines the text takes, at least one.
     var lineCount: Int {
         guard let manager = layoutManager, let container = textContainer else { return 1 }
@@ -70,6 +86,8 @@ import AppKit
     private let icon = NSImageView()
     private var colors = AIChatColors(.neutral)
     private var hovering = false, pressed = false
+    /// Rise's hover hint, as the toolbar's buttons have.
+    private(set) lazy var hoverHint = ButtonHoverHint(button: self, text: "Send", shortcut: "↩")
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true; layer?.addSublayer(circle)
@@ -78,8 +96,11 @@ import AppKit
         update()
     }
     required init?(coder: NSCoder) { fatalError() }
-    func applyColors(_ colors: AIChatColors) { self.colors = colors; update() }
+    func applyColors(_ colors: AIChatColors) {
+        self.colors = colors; hoverHint.appearance = NSAppearance(named: colors.dark ? .darkAqua : .aqua); update()
+    }
     private func update() {
+        hoverHint.update(text: mode == .send ? "Send" : "Stop answering", shortcut: mode == .send ? "↩" : "⎋")
         let symbol = mode == .send ? "arrow.up" : "stop.fill"
         let size: CGFloat = mode == .send ? 14 : 10
         icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
@@ -104,16 +125,82 @@ import AppKit
         super.updateTrackingAreas(); removeOwnTrackingAreas()
         addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self))
     }
-    override func mouseEntered(with event: NSEvent) { hovering = true; update() }
-    override func mouseExited(with event: NSEvent) { hovering = false; update() }
+    override func mouseEntered(with event: NSEvent) { hovering = true; hoverHint.setHovered(true); update() }
+    override func mouseExited(with event: NSEvent) { hovering = false; hoverHint.setHovered(false); update() }
+    override func viewDidHide() { super.viewDidHide(); hoverHint.setHovered(false) }
+    override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); if window == nil { hoverHint.setHovered(false) } }
     override func resetCursorRects() { addCursorRect(bounds, cursor: .pointingHand) }
-    override func mouseDown(with event: NSEvent) { pressed = true; PressScale.set(circle, to: 0.92) }
+    override func mouseDown(with event: NSEvent) { hoverHint.hide(); pressed = true; PressScale.set(circle, to: 0.92) }
     override func mouseUp(with event: NSEvent) {
         guard pressed else { return }
         pressed = false; PressScale.set(circle, to: 1)
         if bounds.contains(convert(event.locationInWindow, from: nil)) { action?() }
     }
     override func accessibilityPerformPress() -> Bool { action?(); return true }
+}
+
+/// The microphone: a tap starts dictating and another stops it; held, it dictates until it's let
+/// go. Its glyph turns into the stop button and back as SF Symbols' replace does.
+@MainActor final class AIChatMicButton: ChromeButton {
+    /// Held this long, letting go stops it.
+    static let holdDuration: TimeInterval = 0.35
+    /// Whether letting go stops dictating: only after holding it to talk, not after a tap, nor
+    /// after the press that stopped it.
+    static func releaseStops(startedByPress: Bool, held: TimeInterval) -> Bool { startedByPress && held >= holdDuration }
+    private final class Glyph: NSImageView { override func hitTest(_ point: NSPoint) -> NSView? { nil } }
+    private let glyph = Glyph()
+    var glyphImage: NSImage? { glyph.image }
+    var onPress: (() -> Void)?
+    /// Let go, after being held this long.
+    var onRelease: ((TimeInterval) -> Void)?
+    private var pressedAt: TimeInterval?
+    override var contentTintColor: NSColor? { didSet { glyph.contentTintColor = contentTintColor } }
+    init() {
+        super.init(symbol: "mic", size: 15, title: "Dictate", action: {})
+        image = nil
+        glyph.imageScaling = .scaleNone; glyph.setAccessibilityElement(false)
+        addSubview(glyph)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func layout() { super.layout(); glyph.frame = bounds }
+    func setGlyph(_ image: NSImage?, animated: Bool) {
+        guard glyph.image !== image else { return }
+        SymbolReplacement.setImage(image, in: glyph, animated: animated && window != nil)
+    }
+    override func mouseDown(with event: NSEvent) {
+        hoverHint?.hide()
+        guard isEnabled else { return }
+        pressedAt = event.timestamp
+        onPress?()
+    }
+    override func mouseUp(with event: NSEvent) {
+        guard let pressedAt else { return }
+        self.pressedAt = nil
+        onRelease?(event.timestamp-pressedAt)
+    }
+
+    /// Solar's stop (480 Design, CC BY 4.0): a ring and a rounded square, drawn 18 pt so its
+    /// 1.5-in-24 strokes come to the microphone glyph's 1.125, with the square filled in red.
+    static let stopSquare = "M8 12c0-1.886 0-2.828.586-3.414S10.114 8 12 8s2.828 0 3.414.586S16 10.114 16 12s0 2.828-.586 3.414S13.886 16 12 16s-2.828 0-3.414-.586S8 13.886 8 12Z"
+    static let stopSize: CGFloat = 18
+    static func stopImage(ring: NSColor, red: NSColor) -> NSImage {
+        let size = stopSize, scale = size/24
+        let image = NSImage(size: NSSize(width: size, height: size), flipped: true) { _ in
+            guard let context = NSGraphicsContext.current?.cgContext else { return false }
+            context.scaleBy(x: scale, y: scale)
+            context.setLineWidth(1.5); context.setLineCap(.round); context.setLineJoin(.round)
+            context.setStrokeColor(ring.cgColor)
+            context.strokeEllipse(in: CGRect(x: 2, y: 2, width: 20, height: 20))
+            let square = TablerIcon.path(stopSquare)
+            context.setFillColor(red.cgColor); context.setStrokeColor(red.cgColor)
+            context.addPath(square); context.fillPath()
+            context.addPath(square); context.strokePath()
+            return true
+        }
+        image.isTemplate = false; image.accessibilityDescription = "Stop Dictating"
+        return image
+    }
+    static let micImage = AIChatComposer.symbol("mic", size: 15, weight: .regular)
 }
 
 /// Dia's composer: a white card at the panel's foot. Empty and away from the keyboard it's one
@@ -128,22 +215,39 @@ import AppKit
     private(set) var chips: [AIChatPageChip] = []
     let plusButton = MenuButton(title: "Add Pages")
     let moreButton = MenuButton(title: "More")
-    let cameraButton = ChromeButton(symbol: "camera", size: 15, title: "Attach a Screenshot of the Page", action: {})
-    let micButton = ChromeButton(symbol: "mic", size: 15, title: "Dictate", action: {})
+    let micButton = AIChatMicButton()
+    /// Dictation's dots, between ⋯ and the microphone, and why it couldn't listen, in their place.
+    let waveform = AIChatWaveform()
+    private let dictationNote = label("", size: 13)
+    private var noteTimer: Timer?
+    let dictation = AIChatDictation()
     let sendButton = AIChatSendButton()
     private var height = MotionSpring(AIChatStyle.compactHeight), expansion = MotionSpring(0), chipRow = MotionSpring(0)
     private var colors = AIChatColors(.neutral)
     private var keyObservers: [NSObjectProtocol] = []
     private(set) var isFocused = false
 
-    var onSend: ((String) -> Void)?
+    var onSend: (([AIChatQuestionPart]) -> Void)?
+    /// What's typed after an @ (nil once it isn't), and where the @ is, in the composer.
+    var onMentionQuery: ((String?, NSRect) -> Void)?
+    /// A key for the @ menu while it shows: true if it took it.
+    var onMentionKey: ((MentionKey) -> Bool)?
+    enum MentionKey { case up, down, pick, dismiss }
+    /// The pages mentioned in the text, in order, as they change.
+    var onMentionsChanged: (([AIChatAttachment]) -> Void)?
+    /// Where the @ being typed is, while it is.
+    private(set) var mentionStart: Int?
+    private var reportedMentions: [AIChatAttachment] = []
     var onStop: (() -> Void)?
     var onRemove: ((AIChatAttachment) -> Void)?
     /// Its height or layout is moving; the panel follows.
     var onMotion: (() -> Void)?
     var onEscape: (() -> Void)?
     var attachments: [AIChatAttachment] { chips.map(\.attachment) }
-    var text: String { input.string }
+    /// The text as it reads, each mention by its page's title.
+    var text: String { input.textStorage?.plainMentionText ?? input.string }
+    /// The pages mentioned, in the order they are.
+    var mentions: [AIChatAttachment] { input.textStorage?.mentions.map(\.page) ?? [] }
     /// "Ask another question…" once there's a conversation.
     var hasConversation = false { didSet { if hasConversation != oldValue { updatePlaceholder() } } }
     var isAnswering = false { didSet { sendButton.mode = isAnswering ? .stop : .send } }
@@ -163,7 +267,10 @@ import AppKit
         content.wantsLayer = true; content.layer?.masksToBounds = true
         content.layer?.cornerRadius = AIChatStyle.composerRadius; content.layer?.cornerCurve = .continuous
 
-        input.isRichText = false; input.allowsUndo = true; input.drawsBackground = false
+        // Rich, so undo brings a deleted mention back as itself; what's pasted or dropped in is
+        // still plain text (`AIChatInputView`).
+        input.isRichText = true; input.importsGraphics = false; input.usesFontPanel = false; input.usesRuler = false
+        input.allowsUndo = true; input.drawsBackground = false
         input.font = AIChatStyle.font(AIChatStyle.inputFontSize); input.textContainer?.lineFragmentPadding = 0
         // Room for the caret either side of the text, which starts where it would without it.
         input.textContainerInset = NSSize(width: AIChatStyle.caretSize.width, height: 0)
@@ -178,10 +285,20 @@ import AppKit
         inputScroll.verticalScrollElasticity = .none; inputScroll.documentView = input
 
         plusButton.image = Self.symbol("plus", size: 15, weight: .regular); moreButton.image = Self.symbol("ellipsis", size: 15)
-        cameraButton.image = Self.symbol("camera", size: 15, weight: .regular); micButton.image = Self.symbol("mic", size: 15, weight: .regular)
+        micButton.setGlyph(AIChatMicButton.micImage, animated: false)
+        // Pressed, it listens; let go after holding it, it stops. VoiceOver's press toggles.
+        micButton.onPress = { [weak self] in self?.micPressed() }
+        micButton.onRelease = { [weak self] held in self?.micReleased(held) }
         micButton.actionBlock = { [weak self] in self?.dictate() }
+        // Rise's own hover hints, not the system's tooltips.
+        plusButton.setHoverHint("Add pages", shortcut: "@"); moreButton.setHoverHint("More")
         sendButton.action = { [weak self] in self?.sendOrStop() }
-        [chipsView, inputScroll, plusButton, moreButton, cameraButton, micButton, sendButton].forEach(content.addSubview)
+        dictationNote.alphaValue = 0; dictationNote.lineBreakMode = .byTruncatingTail
+        dictation.onPhase = { [weak self] phase in self?.dictationChanged(phase) }
+        dictation.onLevel = { [weak self] level in self?.waveform.hear(level) }
+        dictation.onWords = { [weak self] words in self?.insertDictated(words) }
+        dictation.onFailure = { [weak self] reason in self?.showDictationNote(reason) }
+        [chipsView, inputScroll, plusButton, moreButton, waveform, dictationNote, micButton, sendButton].forEach(content.addSubview)
         [card, content].forEach(addSubview)
         for spring in [\AIChatComposer.height, \.expansion, \.chipRow] { self[keyPath: spring].configure(response: FindMotion.swapResponse, bounce: 0) }
         updatePlaceholder(); retarget(); settle()
@@ -200,9 +317,18 @@ import AppKit
         input.defaultParagraphStyle = AIChatStyle.paragraph(lineHeight: AIChatStyle.inputLineHeight)
         input.selectedTextAttributes = [.backgroundColor: colors.dark ? NSColor(hex: 0x3A3A3A) : NSColor(hex: 0xDADADA)]
         if let storage = input.textStorage, storage.length > 0 {
+            // Mentions keep their pills, in the new colours.
+            let mentions = storage.mentions
             storage.setAttributes(inputAttributes(colors.text), range: NSRange(location: 0, length: storage.length))
+            for (range, page) in mentions { storage.addAttribute(.attachment, value: AIChatMentionAttachment(page, style: .composer(colors)), range: range) }
         }
-        [plusButton, moreButton, cameraButton, micButton].forEach { $0.contentTintColor = colors.toolbarIcon; $0.hoverColor = colors.hover }
+        [plusButton, moreButton, micButton].forEach {
+            $0.contentTintColor = colors.toolbarIcon; $0.hoverColor = colors.hover
+            $0.hoverHint?.appearance = NSAppearance(named: colors.dark ? .darkAqua : .aqua)
+        }
+        waveform.color = colors.dark ? NSColor(hex: 0x6A6A6A) : NSColor(hex: 0xC4C4C4)
+        dictationNote.textColor = colors.muted
+        updateMic()
         sendButton.applyColors(colors)
         chips.forEach { $0.applyColors(colors) }
         updatePlaceholder()
@@ -230,31 +356,199 @@ import AppKit
     }
     func clear() {
         input.string = ""; input.undoManager?.removeAllActions(); input.needsDisplay = true
+        endMention(); mentionsMayHaveChanged()
         retarget()
     }
     func focus() { window?.makeFirstResponder(input) }
 
     private func sendOrStop() {
+        // Listening, it's the words that go in first.
+        if dictation.phase == .listening { dictation.stop(); return }
         if isAnswering { onStop?(); return }
-        let question = input.string.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !question.isEmpty else { focus(); return }
-        onSend?(question)
+        let parts = input.textStorage?.questionParts ?? []
+        guard !parts.isEmpty else { focus(); return }
+        endMention()
+        onSend?(parts)
     }
+    /// The microphone: starts listening, or stops and works out what was said. Before macOS 26,
+    /// the system's own dictation.
     private func dictate() {
         focus()
-        NSApp.sendAction(Selector(("startDictation:")), to: nil, from: self)
+        guard AIChatDictation.isAvailable else { NSApp.sendAction(Selector(("startDictation:")), to: nil, from: self); return }
+        dictation.toggle()
+    }
+    /// Pressed, it starts listening, or stops if it was.
+    private var heldToTalk = false
+    private func micPressed() {
+        focus()
+        guard AIChatDictation.isAvailable else { NSApp.sendAction(Selector(("startDictation:")), to: nil, from: self); return }
+        heldToTalk = dictation.phase == .idle
+        switch dictation.phase {
+        case .idle: dictation.start()
+        case .listening: dictation.stop()
+        case .transcribing: break
+        }
+    }
+    /// Held, it listened until let go; tapped, it listens on until tapped again.
+    private func micReleased(_ held: TimeInterval) {
+        defer { heldToTalk = false }
+        if AIChatMicButton.releaseStops(startedByPress: heldToTalk, held: held), dictation.phase == .listening { dictation.stop() }
+    }
+    /// Stops listening, or working the words out, with nothing to show for it.
+    func cancelDictation() { dictation.cancel() }
+    private func dictationChanged(_ phase: AIChatDictation.Phase) {
+        switch phase {
+        case .listening: hideDictationNote(); waveform.start()
+        case .transcribing: waveform.transcribe()
+        case .idle: waveform.stop()
+        }
+        updateMic(); retarget(); needsLayout = true
+    }
+    /// The stop button while it listens, its square red; the microphone otherwise, dimmed while
+    /// it works the words out.
+    private var stopImage: (image: NSImage, colors: AIChatColors)?
+    private func updateMic() {
+        let listening = dictation.phase == .listening
+        if listening {
+            if stopImage?.colors != colors {
+                let red = NSColor(hex: colors.dark ? 0xFF453A : 0xFF3B30)
+                stopImage = (AIChatMicButton.stopImage(ring: colors.toolbarIcon, red: red), colors)
+            }
+            micButton.setGlyph(stopImage?.image, animated: true)
+        } else { micButton.setGlyph(AIChatMicButton.micImage, animated: true) }
+        micButton.isEnabled = dictation.phase != .transcribing
+        micButton.alphaValue = dictation.phase == .transcribing ? 0.5 : 1
+        micButton.setHoverHint(listening ? "Stop dictating" : "Dictate", shortcut: listening ? "↩" : "Hold to talk")
+        micButton.hoverHint?.appearance = NSAppearance(named: colors.dark ? .darkAqua : .aqua)
+    }
+    /// What was said, where the cursor is, or over what's selected.
+    func insertDictated(_ words: String) {
+        focus()
+        let range = input.selectedRange()
+        let text = DictationInsertion.text(words, in: input.string, replacing: range)
+        guard !text.isEmpty else { return }
+        // Each dictation its own undo, apart from typing just before it.
+        input.breakUndoCoalescing()
+        input.insertText(text, replacementRange: range)
+        input.breakUndoCoalescing()
+    }
+    private func showDictationNote(_ reason: String) {
+        dictationNote.stringValue = reason; needsLayout = true
+        NSAnimationContext.runAnimationGroup { $0.duration = 0.15; dictationNote.animator().alphaValue = 1 }
+        noteTimer?.invalidate()
+        noteTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.hideDictationNote() }
+        }
+    }
+    private func hideDictationNote() {
+        noteTimer?.invalidate(); noteTimer = nil
+        NSAnimationContext.runAnimationGroup { $0.duration = 0.15; dictationNote.animator().alphaValue = 0 }
     }
 
     // MARK: Text
 
-    func textDidChange(_ notification: Notification) { input.needsDisplay = true; retarget() }
+    func textDidChange(_ notification: Notification) {
+        input.needsDisplay = true; retarget()
+        updateMention(); mentionsMayHaveChanged()
+    }
+    func textViewDidChangeSelection(_ notification: Notification) { updateMention() }
+    /// An @ typed at a word's start begins a mention.
+    func textView(_ textView: NSTextView, shouldChangeTextIn range: NSRange, replacementString text: String?) -> Bool {
+        guard text == "@", !isApplyingMention else { return true }
+        let string = input.string as NSString
+        let before = range.location > 0 ? string.character(at: range.location-1) : nil
+        if before.map({ Self.opensMention(Character(UnicodeScalar($0) ?? " ")) }) ?? true { pendingMention = range.location }
+        return true
+    }
+    private var pendingMention: Int?, isApplyingMention = false
+    /// After nothing, a space, a new line or an opening bracket or quote.
+    static func opensMention(_ character: Character) -> Bool { character.isWhitespace || "([{\"'“‘".contains(character) }
+
+    // MARK: Mentions
+
+    /// What's typed after the @, from it to the cursor, while the cursor's there.
+    private func updateMention() {
+        if let pending = pendingMention { pendingMention = nil; mentionStart = pending }
+        guard let start = mentionStart else { return }
+        let string = input.string as NSString, selection = input.selectedRange()
+        guard start < string.length, string.character(at: start) == 0x40, selection.length == 0,
+              selection.location > start, selection.location-start <= 60 else { endMention(); return }
+        let query = string.substring(with: NSRange(location: start+1, length: selection.location-start-1))
+        guard !query.contains(where: \.isNewline) else { endMention(); return }
+        onMentionQuery?(query, mentionAnchor(at: start))
+    }
+    /// The @ being typed, in the composer's coordinates.
+    /// Where the @ being typed is now, in the composer, as the text grows and scrolls.
+    var mentionAt: NSRect? { mentionStart.map(mentionAnchor(at:)) }
+    private func mentionAnchor(at index: Int) -> NSRect {
+        guard let manager = input.layoutManager, let container = input.textContainer else { return .zero }
+        let glyphs = manager.glyphRange(forCharacterRange: NSRange(location: index, length: 1), actualCharacterRange: nil)
+        var rect = manager.boundingRect(forGlyphRange: glyphs, in: container)
+        rect.origin.x += input.textContainerOrigin.x; rect.origin.y += input.textContainerOrigin.y
+        return convert(rect, from: input)
+    }
+    /// No longer typing a mention: the @ and what follows stay as they were typed.
+    func endMention() {
+        guard mentionStart != nil || pendingMention != nil else { return }
+        mentionStart = nil; pendingMention = nil
+        onMentionQuery?(nil, .zero)
+    }
+    /// The @ and what's typed after it become a mention of `page`, with a space after it.
+    func completeMention(with page: AIChatAttachment) {
+        guard let start = mentionStart, let storage = input.textStorage else { return }
+        let end = max(start, min(input.selectedRange().location, storage.length))
+        let range = NSRange(location: start, length: end-start)
+        endMention()
+        insertMention(page, replacing: range)
+    }
+    /// A mention of `page` over `range`, as one undo.
+    func insertMention(_ page: AIChatAttachment, replacing range: NSRange) {
+        guard let storage = input.textStorage else { return }
+        let mention = AIChatQuestionPart.attributed([.mention(page)], attributes: inputAttributes(colors.text), style: .composer(colors))
+        let token = NSMutableAttributedString(attributedString: mention)
+        let next = NSMaxRange(range) < storage.length ? (storage.string as NSString).character(at: NSMaxRange(range)) : nil
+        let spaced = next.map { Character(UnicodeScalar($0) ?? " ").isWhitespace } ?? false
+        if !spaced { token.append(NSAttributedString(string: " ", attributes: inputAttributes(colors.text))) }
+        isApplyingMention = true; defer { isApplyingMention = false }
+        input.breakUndoCoalescing()
+        guard input.shouldChangeText(in: range, replacementString: token.string) else { return }
+        storage.replaceCharacters(in: range, with: token)
+        input.didChangeText()
+        input.breakUndoCoalescing()
+        // Past the mention and its space.
+        input.setSelectedRange(NSRange(location: range.location+token.length+(spaced ? 1 : 0), length: 0))
+        input.typingAttributes = inputAttributes(colors.text)
+        focus()
+    }
+    /// A page's mentions become its title, as words, once it's taken off.
+    func unmention(_ page: AIChatAttachment) {
+        guard let storage = input.textStorage else { return }
+        let ranges = storage.mentions.filter { $0.page.isSamePage(as: page) || $0.page == page }.map(\.range)
+        guard !ranges.isEmpty else { return }
+        for range in ranges.reversed() where input.shouldChangeText(in: range, replacementString: AIChatQuestionPart.title(of: page)) {
+            storage.replaceCharacters(in: range, with: NSAttributedString(string: AIChatQuestionPart.title(of: page), attributes: inputAttributes(colors.text)))
+            input.didChangeText()
+        }
+    }
+    private func mentionsMayHaveChanged() {
+        let mentions = self.mentions
+        guard mentions != reportedMentions else { return }
+        reportedMentions = mentions
+        onMentionsChanged?(mentions)
+    }
+
     func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        if mentionStart != nil, let key = Self.mentionKey(for: selector), onMentionKey?(key) == true {
+            if key == .dismiss { endMention() }
+            return true
+        }
         switch selector {
         case #selector(NSResponder.insertNewline(_:)):
             // Shift-Return starts a new line, as Option-Return does.
             if NSApp.currentEvent?.modifierFlags.contains(.shift) == true { textView.insertNewlineIgnoringFieldEditor(nil); return true }
             sendOrStop(); return true
         case #selector(NSResponder.cancelOperation(_:)):
+            if dictation.phase != .idle { dictation.cancel(); return true }
             onEscape?(); return true
         default: return false
         }
@@ -263,7 +557,7 @@ import AppKit
     // MARK: Layout and motion
 
     /// One row while there's nothing to show but the placeholder.
-    var isCompact: Bool { chips.isEmpty && input.string.isEmpty && !isFocused }
+    var isCompact: Bool { chips.isEmpty && input.string.isEmpty && !isFocused && dictation.phase == .idle }
     private var visibleLines: Int { min(AIChatStyle.maximumInputLines, input.lineCount) }
     private func retarget() {
         let chipsHeight: CGFloat = chips.isEmpty ? 0 : AIChatStyle.composerChipRow
@@ -299,19 +593,24 @@ import AppKit
         let chipWidth = chips.isEmpty ? 0 : min(AIChatStyle.chipSize.width, (room-CGFloat(chips.count-1)*8)/CGFloat(chips.count))
         for chip in chips { chip.frame = NSRect(x: x, y: overhang, width: chipWidth, height: AIChatStyle.chipSize.height); x += chipWidth+8 }
 
-        // The buttons' row is always 30 pt up from the bottom; + and ⋯ move from beside the camera to the left.
+        // The buttons' row is always 30 pt up from the bottom; + and ⋯ move from beside the microphone to the left.
         let mid = bounds.height-AIChatStyle.rowMid
         func place(_ view: NSView, _ center: CGFloat, size: CGFloat = 28) {
             view.frame = NSRect(x: round(center-size/2), y: round(mid-size/2), width: size, height: size)
         }
-        place(plusButton, width-177+(30-(width-177))*open)
-        place(moreButton, width-141+(66-(width-141))*open)
-        place(cameraButton, width-108); place(micButton, width-71.5)
+        place(plusButton, width-144+(30-(width-144))*open)
+        place(moreButton, width-108+(66-(width-108))*open)
+        place(micButton, width-71.5)
         place(sendButton, width-30, size: AIChatStyle.sendSize)
+        // Dictation's dots fill the row between ⋯ and the microphone.
+        let between = NSRect(x: moreButton.frame.maxX+6, y: round(mid-14), width: max(0, micButton.frame.minX-6-moreButton.frame.maxX-6), height: 28)
+        waveform.frame = between
+        let note = ceil(dictationNote.intrinsicContentSize.height)
+        dictationNote.frame = NSRect(x: between.minX+4, y: round(mid-note/2), width: max(0, between.width-8), height: note)
 
         let lines = CGFloat(isCompact ? 1 : visibleLines)
         let top = CGFloat(chipRow.value)+AIChatStyle.rowMid-AIChatStyle.inputLineHeight/2
-        let compactWidth = width-177-14-AIChatStyle.composerTextLeading-8
+        let compactWidth = width-144-14-AIChatStyle.composerTextLeading-8
         let fieldWidth = compactWidth+(width-2*AIChatStyle.composerTextLeading-compactWidth)*open
         let caretRoom = AIChatStyle.caretSize.width
         inputScroll.frame = NSRect(x: AIChatStyle.composerTextLeading-caretRoom, y: top, width: max(40, fieldWidth)+2*caretRoom, height: lines*AIChatStyle.inputLineHeight)
@@ -320,10 +619,20 @@ import AppKit
         input.sizeToFit()
     }
 
+    static func mentionKey(for selector: Selector) -> MentionKey? {
+        switch selector {
+        case #selector(NSResponder.moveUp(_:)): .up
+        case #selector(NSResponder.moveDown(_:)): .down
+        case #selector(NSResponder.insertTab(_:)), #selector(NSResponder.insertNewline(_:)): .pick
+        case #selector(NSResponder.cancelOperation(_:)): .dismiss
+        default: nil
+        }
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         keyObservers.forEach(NotificationCenter.default.removeObserver); keyObservers = []
-        guard let window else { return }
+        guard let window else { dictation.cancel(); return }
         for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
             keyObservers.append(NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.sendButton.isActive = self?.window?.isKeyWindow ?? false }

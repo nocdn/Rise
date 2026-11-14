@@ -95,7 +95,10 @@ extension BrowserController: NSMenuItemValidation {
         case #selector(toggleYouTubeAutoplay): item.state = youTubeAutoplay.isEnabled ? .on : .off; return true
         case #selector(toggleAIChat): item.title = aiChat.isOpen ? "Hide Chat" : "Show Chat"; return true
         case #selector(toggleDevTools):
-            item.title = devTools.isOpen && devTools.tabID == tab?.id ? "Hide Developer Tools" : "Show Developer Tools"
+            item.title = devTools.shows(.elements, in: tab?.id) ? "Hide Developer Tools" : "Inspect Elements"
+            return tab?.page is ChromiumPage
+        case #selector(toggleDevToolsConsole):
+            item.title = devTools.shows(.console, in: tab?.id) ? "Hide Developer Tools" : "Show Console"
             return tab?.page is ChromiumPage
         case #selector(toggleSimulatedFullscreen): item.state = pageFullscreen.isSimulated ? .on : .off; return true
         case #selector(stopLoadingPage): return page?.isLoading == true

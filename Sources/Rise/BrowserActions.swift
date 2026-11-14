@@ -255,7 +255,7 @@ import RiseCore
     @objc func javascriptConsole() {
         guard let tab = commandTab, let window else { return }
         let alert = NSAlert(); alert.messageText = "JavaScript Console"
-        alert.informativeText = "Evaluate JavaScript in the current page. The full DevTools open with ⌥⌘J."
+        alert.informativeText = "Evaluate JavaScript in the current page. The full DevTools open with ⌥⌘J, or on their console with ⌥⌘K."
         let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 440, height: 28)); input.font = .monospacedSystemFont(ofSize: 12, weight: .regular); input.placeholderString = "document.title"
         alert.accessoryView = input; alert.addButton(withTitle: "Run"); alert.addButton(withTitle: "Cancel")
         alert.beginSheetModal(for: window) { [weak self] result in

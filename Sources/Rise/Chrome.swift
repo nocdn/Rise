@@ -146,6 +146,7 @@ final class MenuButton: ChromeButton {
     override func highlight(_ flag: Bool) {}
     override func mouseDown(with event: NSEvent) { if isEnabled { openMenu() } }
     func openMenu() {
+        hoverHint?.hide()
         guard let menu = makeMenu?() else { return }
         menuWillOpen?()
         // Called while the press is under way, the menu follows it to an item and picks it on release.
