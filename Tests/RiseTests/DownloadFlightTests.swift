@@ -53,7 +53,7 @@ final class DownloadFlightTests: XCTestCase {
         browser.downloads.finish(id)
         if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
             XCTAssertEqual(glyph.state, .progress(1), "Completion fills before the icon returns to idle")
-            try await Task.sleep(for: .milliseconds(350))
+            try await Task.sleep(for: .milliseconds(800))
         }
         XCTAssertEqual(glyph.state, .idle, "Done, the circle is whole again")
     }
@@ -77,8 +77,26 @@ final class DownloadFlightTests: XCTestCase {
         let id = browser.downloads.begin(URL(fileURLWithPath: "/tmp/instant-download.bin"), progress: nil)
         browser.downloads.finish(id)
         XCTAssertEqual(glyph.state, .progress(1), "Unknown-size instant downloads also animate their completion")
-        try await Task.sleep(for: .milliseconds(350))
+        try await Task.sleep(for: .milliseconds(800))
         XCTAssertEqual(glyph.state, .idle)
+    }
+
+    @MainActor func testCompletionUnderAFlightClosesTheRingOnceTheIconShowsAgainWithinThreeQuartersOfASecond() async throws {
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { throw XCTSkip("Reduce Motion") }
+        let browser = browser(); defer { clean(browser) }
+        browser.window?.setFrameOrigin(NSPoint(x: 80, y: 80))
+        let button = browser.sidebar.archiveButton, glyph = button.glyph
+        button.isGlyphHidden = true
+        glyph.complete(); glyph.setState(.idle)
+        try await Task.sleep(for: .milliseconds(800))
+        XCTAssertEqual(glyph.displayed.state, .idle, "Hidden under the flight, the ring waits rather than closing unseen")
+        button.isGlyphHidden = false
+        XCTAssertEqual(glyph.state, .progress(1), "Shown again, it closes the ring")
+        try await Task.sleep(for: .milliseconds(300))
+        guard case .progress(let fraction) = glyph.displayed.state else { return XCTFail("The closing ended early") }
+        XCTAssertGreaterThan(fraction, 0)
+        try await Task.sleep(for: .milliseconds(450))
+        XCTAssertEqual(glyph.state, .idle, "Even from idle, the ring closes and turns grey within 0.75 s")
     }
 
     @MainActor func testFastCompletedRowRetainsItsRingUntilTheFillFinishes() async throws {

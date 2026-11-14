@@ -28,11 +28,17 @@ enum DownloadGlyph {
         path.addArc(center: c, radius: radius, startAngle: from, endAngle: from+length*2 * .pi, clockwise: false)
         return path
     }
+    /// The track's opacity while downloads run, of the tint's.
+    static let faintTrack = 0.32
     /// Draws the icon in `rect` (y down), with `spin` turns into an unknown download's loop.
-    static func draw(in context: CGContext, rect: CGRect, state: State, tint: NSColor, spin: Double = 0) {
+    /// `faint` is how far the track has gone from the tint to its faint grey (by default, all
+    /// the way unless idle), and `closing` how far a full ring has turned from blue to the tint.
+    static func draw(in context: CGContext, rect: CGRect, state: State, tint: NSColor, spin: Double = 0,
+                     faint: Double? = nil, closing: Double = 0) {
         let center = CGPoint(x: rect.midX, y: rect.midY)
         context.setLineWidth(lineWidth); context.setLineCap(.round); context.setLineJoin(.round)
-        let track = state == .idle ? tint : tint.withAlphaComponent(tint.alphaComponent*0.32)
+        let faintness = faint ?? (state == .idle ? 0 : 1)
+        let track = tint.withAlphaComponent(tint.alphaComponent*(1-(1-faintTrack)*faintness))
         context.setStrokeColor(track.cgColor)
         context.addEllipse(in: CGRect(x: center.x-radius, y: center.y-radius, width: 2*radius, height: 2*radius))
         context.strokePath()
@@ -43,7 +49,8 @@ enum DownloadGlyph {
         case .indeterminate: done = (spin, unknownLength)
         }
         if let done {
-            context.setStrokeColor(blue.cgColor)
+            let ring = closing > 0 ? (blue.usingColorSpace(.sRGB)?.blended(withFraction: closing, of: tint.usingColorSpace(.sRGB) ?? tint) ?? tint) : blue
+            context.setStrokeColor(ring.cgColor)
             context.addPath(arc(center: center, start: done.start, length: done.length)); context.strokePath()
         }
         context.setStrokeColor(tint.cgColor)
@@ -67,13 +74,23 @@ final class DownloadGlyphView: FlippedView {
     private var shown = 0.0, from = 0.0, to = 0.0, glideStart: CFTimeInterval = 0
     private var spinStart = CACurrentMediaTime()
     private var link: CADisplayLink?
-    private var completing = false
+    /// A finished download's closing, under way: from when, and from the track's faintness and
+    /// the fraction shown as it began.
+    private var closing: (start: CFTimeInterval, faint: Double, shown: Double)?
+    /// Finished while hidden under a download's flight: closes once it shows again.
+    private var closesWhenShown = false
+    private var completing: Bool { closing != nil || closesWhenShown }
     static let glide = 0.22
+    /// However quickly a download finishes, the icon closes its ring in these steps, 0.7 s at
+    /// most: the track fades to its faint grey (unless it's there already), the blue goes the
+    /// rest of the way round (a whole turn taking `closeFill`), and the full ring turns from
+    /// blue back to the icon's grey.
+    static let closeFade = 0.12, closeFill = 0.38, closeBlend = 0.2
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     func setState(_ state: DownloadGlyph.State) {
         if completing, state == .idle { return }
-        completing = false
+        closing = nil; closesWhenShown = false
         guard state != self.state else { return }
         let animated = window != nil && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         if case .progress(let fraction) = state {
@@ -91,9 +108,40 @@ final class DownloadGlyphView: FlippedView {
     /// Even a transfer which finishes before the first display frame fills
     /// smoothly before returning to the idle icon. A new transfer can take over.
     func complete() {
-        setState(.progress(1))
-        guard window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, shown < 1 else { setState(.idle); return }
-        completing = true; startLink()
+        guard window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { setState(.idle); return }
+        if isHidden { closesWhenShown = true; return }
+        beginClosing()
+    }
+    private func beginClosing() {
+        let faint: Double, from: Double
+        switch state {
+        case .idle: faint = 0; from = 0
+        case .progress: faint = 1; from = shown
+        case .indeterminate: faint = 1; from = DownloadGlyph.unknownLength
+        }
+        closesWhenShown = false
+        closing = (CACurrentMediaTime(), faint, min(1, max(0, from)))
+        state = .progress(1); shown = closing!.shown
+        needsDisplay = true
+        startLink()
+    }
+    override var isHidden: Bool {
+        didSet { if !isHidden, closesWhenShown { beginClosing() } }
+    }
+    /// Where a closing is at `now`: the track's faintness, the fraction shown, how far the ring
+    /// has turned grey, and whether it's over.
+    private func closingPose(at now: CFTimeInterval) -> (faint: Double, shown: Double, blend: Double, over: Bool)? {
+        guard let closing else { return nil }
+        let elapsed = now-closing.start
+        let fade = closing.faint < 1 ? Self.closeFade*(1-closing.faint) : 0
+        let fill = Self.closeFill*(1-closing.shown)
+        func progress(_ from: Double, _ duration: Double) -> Double { duration > 0 ? min(1, max(0, (elapsed-from)/duration)) : (elapsed >= from ? 1 : 0) }
+        let easeOut = { (t: Double) in 1-pow(1-t, 3) }
+        let easeInOut = { (t: Double) in t < 0.5 ? 4*t*t*t : 1-pow(-2*t+2, 3)/2 }
+        let faint = closing.faint+(1-closing.faint)*easeOut(progress(0, fade))
+        let shown = closing.shown+(1-closing.shown)*easeInOut(progress(fade, fill))
+        let blend = easeInOut(progress(fade+fill, Self.closeBlend))
+        return (faint, shown, blend, elapsed >= fade+fill+Self.closeBlend)
     }
     /// What it shows now, for a stand-in to copy.
     var displayed: (state: DownloadGlyph.State, spin: Double) {
@@ -107,23 +155,30 @@ final class DownloadGlyphView: FlippedView {
     }
     private func stopLink() { link?.invalidate(); link = nil }
     @objc private func tick() {
+        if let pose = closingPose(at: CACurrentMediaTime()) {
+            shown = pose.shown
+            needsDisplay = true
+            if pose.over { closing = nil; state = .idle; stopLink() }
+            return
+        }
         let t = min(1, (CACurrentMediaTime()-glideStart)/Self.glide)
         shown = from+(to-from)*(1-pow(1-t, 3))
         needsDisplay = true
-        if state != .indeterminate, t >= 1 {
-            stopLink()
-            if completing { completing = false; state = .idle }
-        }
+        if state != .indeterminate, t >= 1 { stopLink() }
     }
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window == nil { stopLink(); if completing { completing = false; state = .idle } }
+        if window == nil { stopLink(); if completing { closing = nil; closesWhenShown = false; state = .idle } }
         else if state == .indeterminate || from != to { startLink() }
     }
     override func draw(_ dirtyRect: NSRect) {
         guard let context = NSGraphicsContext.current?.cgContext else { return }
         let shownState: DownloadGlyph.State
         if case .progress = state { shownState = .progress(shown) } else { shownState = state }
+        if let pose = closingPose(at: CACurrentMediaTime()) {
+            DownloadGlyph.draw(in: context, rect: bounds, state: .progress(pose.shown), tint: tint, faint: pose.faint, closing: pose.blend)
+            return
+        }
         DownloadGlyph.draw(in: context, rect: bounds, state: shownState, tint: tint, spin: spin)
     }
 }
