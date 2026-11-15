@@ -28,6 +28,7 @@ import AppKit
         liftDraggedTab(drag)
         if let shadow = drag.overlay?.shadowView { TabDragMotion.showShadow(shadow) }
         (window as? BrowserWindow)?.isDraggingTab = true
+        onTabDragBegan?(drag)
         dragScrollTimer = Timer(timeInterval: 1/60, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.autoscrollDraggedTab() }
         }
@@ -35,6 +36,7 @@ import AppKit
     }
     func moveTabDrag(_ event: NSEvent) {
         guard let drag else { return }; drag.event = event
+        defer { if self.drag === drag { onTabDragMoved?(drag) } }
         let pinning = updatePinning(drag, event: event)
         if pinning == .pinning { return }
         defer { followRow(drag) }
@@ -116,6 +118,11 @@ import AppKit
         guard let drag else { return }
         self.drag = nil; dragScrollTimer?.invalidate(); dragScrollTimer = nil
         (window as? BrowserWindow)?.isDraggingTab = false
+        // Let go on a split's target, it goes into the page rather than back to its place.
+        if !cancelled, drag.pinSlot == nil, drag.isDetached, let location, onTabDrop?(drag, location) == true {
+            finishDroppedTab(drag); return
+        }
+        onTabDragEnded?(drag)
         if drag.pinSlot != nil {
             if !cancelled { landPinnedRow(drag); return }
             pinnedView.setOpening(nil); drag.pinSlot = nil
@@ -147,6 +154,24 @@ import AppKit
             finishReturningTab()
             clearDragAppearance(drag.view)
         }
+    }
+    /// A tab let go into the page: its row is already in the split it formed, or goes back to its
+    /// place at once, out of sight, while what was dragged fades over the page.
+    private func finishDroppedTab(_ drag: SidebarDrag) {
+        drag.view.layer?.removeAnimation(forKey: TabDragMotion.springKey)
+        if drag.view.superview === drag.overlay {
+            if let target = targetFrames[drag.id], displayedRows.contains(where: { $0 === drag.view }) {
+                rowsHost.addSubview(drag.view, positioned: .above, relativeTo: nil)
+                TabListMotion.move(drag.view, to: target, animated: false)
+            } else { drag.view.removeFromSuperview() }
+        }
+        drag.view.alphaValue = 1
+        clearDragAppearance(drag.view)
+        layoutDragSlots()
+        guard let overlay = drag.overlay else { return }
+        overlay.shadowView.isHidden = true
+        NSAnimationContext.runAnimationGroup({ $0.duration = 0.15; overlay.animator().alphaValue = 0 },
+                                             completionHandler: { overlay.removeFromSuperview() })
     }
     func finishReturningTab() {
         guard let drag = returningDrag else { return }

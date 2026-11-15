@@ -250,6 +250,12 @@ import RiseCore
     var peekLiveMotion: PeekLiveMotion?
     /// ⇧⌘D's copy lifting off the page into the right half (`SplitDuplicate.swift`).
     var duplicateMotion: PeekLiveMotion?
+    /// The targets over the page while a tab is dragged from the sidebar, and a tab let go on one
+    /// coming into its half (`SplitDrop.swift`).
+    let splitDrop = SplitDropTargets()
+    var splitDropMotion: PeekLiveMotion?
+    /// The split a dropped tab is forming, shown in the sidebar while the pages move into it.
+    var pendingSplitDrop: SplitTabGroup?
     /// The pill between split pages, which drags the split.
     let splitHandle = SplitHandle()
     /// The split springing back to the middle after a double click on its handle.
@@ -505,6 +511,7 @@ import RiseCore
         sidebar.onClose = { [weak self] id in self?.closeTab(id) }
         sidebar.onTabMenu = { [weak self] id, event in self?.tabMenu(id, event: event) }
         sidebar.onReorder = { [weak self] in self?.reorderTabs($0) }
+        installSplitDrop()
         sidebar.onPin = { [weak self] id, slot in self?.pinTab(id, at: slot) }
         sidebar.onUnpin = { [weak self] id, index in self?.unpinTab(id, at: index) }
         sidebar.onReorderPinned = { [weak self] in self?.reorderPinnedTabs($0) }
@@ -959,7 +966,7 @@ import RiseCore
             tabs = tabs.filter(\.pinned) + tabs.filter { !$0.pinned }
         }
         sidebar.developerTabLook = developerTabLook
-        sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: splitGroups)
+        sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: sidebarSplitGroups)
         annotations.layout()
         refreshTabScroll()
         nowPlaying.setNeedsRefresh()

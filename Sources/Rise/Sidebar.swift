@@ -72,6 +72,12 @@ import RiseCore
     var targetFrames: [UUID: NSRect] = [:]
     var drag: SidebarDrag?
     var returningDrag: SidebarDrag?
+    /// A tab's drag began, moved, or ended without being let go somewhere else; and where it was let
+    /// go, which takes it if it can (Split View's targets over the page, `SplitDrop.swift`).
+    var onTabDragBegan: ((SidebarDrag) -> Void)?
+    var onTabDragMoved: ((SidebarDrag) -> Void)?
+    var onTabDragEnded: ((SidebarDrag) -> Void)?
+    var onTabDrop: ((SidebarDrag, NSPoint) -> Bool)?
     var dragScrollTimer: Timer?
     var crossingClick: () -> Void = { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
     var detachmentClick: () -> Void = { NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .now) }

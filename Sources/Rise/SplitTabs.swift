@@ -18,8 +18,9 @@ import RiseCore
         let visible = Set(visibleTabIDs)
         pictureInPicture.reconcile(visibleIDs: visible)
         for tab in tabs {
-            // The engine's full-screen window holds the page until it hands it back.
-            if pictureInPicture.owns(tab) || tab.isInNativeFullscreen { continue }
+            // The engine's full-screen window holds the page until it hands it back, and a tab let go
+            // on a split's target is in the card bringing it into its half.
+            if pictureInPicture.owns(tab) || tab.isInNativeFullscreen || isDroppingIntoSplit(tab) { continue }
             if !visible.contains(tab.id) {
                 if tab.page.view.superview !== switcherPictureHost { tab.page.view.removeFromSuperview() }
                 continue

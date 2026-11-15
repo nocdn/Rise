@@ -122,7 +122,7 @@ import RiseCore
     }
 
     /// The still of the page fades to the copy once the copy has loaded, or soon regardless.
-    private func fadeDuplicateStandIn(_ standIn: NSImageView, over copy: BrowserTab) {
+    func fadeDuplicateStandIn(_ standIn: NSImageView, over copy: BrowserTab) {
         guard copy.page.view.superview === pageClip else { return }
         standIn.frame = copy.page.view.frame
         pageClip.addSubview(standIn, positioned: .above, relativeTo: copy.page.view)

@@ -252,11 +252,12 @@ import RiseCore
     func style() {
         layer?.cornerRadius = isSplitMember ? 8 : TabAppearance.radius
         // The chosen row and hover are their own layers, fading; a dragged row keeps its fill.
-        // A split's halves are inside its row's, so theirs are plain fills.
+        // A split's halves are inside its row's, so theirs are plain fills: none, even for the page
+        // in front, until one's hovered, as any other tab is.
         let plain = !isSplitMember, lit = scrollFocus ?? (hover && !hoverFocuses || isKeyboardFocused)
         plainBackground.isHidden = !plain
         let background = (plain ? (selected ? nil : dragFill) ?? .clear
-            : selected ? theme.pill : dragFill ?? (lit ? TabAppearance.hoverFill(theme) : .clear)).cgColor
+            : dragFill ?? (lit ? TabAppearance.hoverFill(theme) : .clear)).cgColor
         if layer?.backgroundColor != background { layer?.removeAnimation(forKey: TabDragMotion.backgroundKey) }
         layer?.backgroundColor = background
         if plain {
