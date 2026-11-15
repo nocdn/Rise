@@ -444,6 +444,8 @@ enum RisePages {
             browserView.devTools(method, params: params) { continuation.resume(returning: $0) }
         }
     }
+    func devTools(_ method: String, _ params: [String: Any]) async -> [String: Any]? { await send(method, params) }
+    func setKeepsVisible(_ keeps: Bool) { if browserView.keepsVisible != keeps { browserView.keepsVisible = keeps } }
     func layoutMetrics() async -> PageLayoutMetrics? {
         guard let metrics = await send("Page.getLayoutMetrics"),
               let viewport = metrics["cssVisualViewport"] as? [String: Any], let content = metrics["cssContentSize"] as? [String: Any] else { return nil }

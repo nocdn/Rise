@@ -10,6 +10,7 @@ import WebKit
             pendingURL = nil; restoreNavigation = nil; activeNavigation = nil
             cancellationRetries = 0
             navigationError = nil; wasStopped = false; hasCommittedDocument = webView.url != nil
+            openedFor = nil
             resetConnectionHint()
             rememberedURL = nil
             rememberedTitle = nil
@@ -68,6 +69,8 @@ import WebKit
     }
     #endif
     private(set) var hasCommittedDocument = false
+    /// The address a new window was opened for, until its first document.
+    private var openedFor: URL?
     private var connectionDocumentID = UUID().uuidString
     private var committedConnection: PageConnection?
     private var didAnnounceInsecureConnection = false
@@ -124,6 +127,7 @@ import WebKit
         self.isPrivateBrowsing = isPrivateBrowsing
         self.webView = webView
         hasCommittedDocument = webView.url != nil
+        openedFor = tab == nil ? initialURL : nil
         committedConnection = PageConnection(webView.url)
         id = tab?.id ?? UUID()
         isSyncPlaceholder = tab?.isSyncPlaceholder == true
@@ -262,7 +266,7 @@ import WebKit
         if let title = webView.title, !title.isEmpty { rememberedTitle = title }
         pageObservations = [
             webView.observe(\.url) { [weak self] _, _ in
-                MainActor.assumeIsolated { self?.pageDidChange() }
+                MainActor.assumeIsolated { self?.pageDidChange(); self?.adoptWrittenDocumentSoon() }
             },
             webView.observe(\.title) { [weak self] _, _ in
                 MainActor.assumeIsolated { self?.pageDidChange() }
@@ -272,12 +276,28 @@ import WebKit
             webView.observe(\.isLoading, options: [.old, .new]) { [weak self] _, change in
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    if change.oldValue == true && change.newValue == false { self.loadingStopped() }
+                    if change.oldValue == true && change.newValue == false { self.loadingStopped(); self.adoptWrittenDocumentSoon() }
                     self.onPageChange?()
                 }
             },
         ]
         onPageChange?()
+    }
+
+    /// A window its opener wrote into, with document.open() and write(), as print and preview
+    /// buttons do, has a document but no navigation of its own to commit: it takes the opener's
+    /// address and stops loading. Without this it would show the loading spinner for good. Checked
+    /// after the navigation callbacks have landed, so a failed load still shows its error.
+    private func adoptWrittenDocumentSoon() {
+        guard !hasCommittedDocument, openedFor != nil || webView.url != nil else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !hasCommittedDocument, !isRestoringHistory, pendingURL == nil, navigationError == nil,
+                  !wasStopped, !webView.isLoading, let url = webView.url, url != openedFor else { return }
+            hasCommittedDocument = true
+            openedFor = nil
+            resetConnectionHint()
+            onPageChange?()
+        }
     }
 
     /// An early stop can leave WebKit idle without a navigation failure callback. Let
@@ -830,7 +850,8 @@ final class TabSwitcherView: UIView, UIScrollViewDelegate {
     private let flightContainer = TabFlightContainer()
     private(set) var cells: [TabCell] = []
     private(set) var current = 0
-    private var recentIDs: [UUID] = []
+    /// The deck's order, least recently used first. The session saves it, so a relaunch shows it again.
+    var recentIDs: [UUID] = []
     private var tabIDs: [UUID] = []
     private var slots: [Int: Int] = [:]
     private(set) var displayOrder: [Int] = [] {

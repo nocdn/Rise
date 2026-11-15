@@ -1,0 +1,89 @@
+--- a/chrome/browser/rise/RiseChromium.h
++++ b/chrome/browser/rise/RiseChromium.h
+@@ -368,6 +368,10 @@
+ /// Under something else, such as a Peek: the page takes no hover and sets no cursor, though
+ /// mouse tracking would otherwise reach it through whatever covers it.
+ @property (nonatomic) BOOL covered;
++/// Runs as a page on screen, drawing and taking input, even out of sight or in a covered window,
++/// as a page being captured does: while Rise's agent uses it. Off, Chromium hides a page out of
++/// sight and stops drawing it, and input sent to it then never arrives.
++@property (nonatomic) BOOL keepsVisible;
+ /// The page's own view, which takes the keyboard: focusing the page is making it first
+ /// responder, as Chrome does, not this view.
+ @property (nonatomic, readonly, nullable) NSView *focusView;
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -24,6 +24,7 @@
+ 
+ #include "base/check_is_test.h"
+ #include "base/containers/flat_set.h"
++#include "base/functional/callback_helpers.h"
+ #include "base/pickle.h"
+ #include "base/files/file_enumerator.h"
+ #include "base/strings/string_util.h"
+@@ -2046,6 +2047,8 @@
+   std::unique_ptr<PageDialogHost> _dialogHost;
+   // Chromium's tracking areas, set aside while the page is covered.
+   NSMapTable<NSView*, NSArray<NSTrackingArea*>*>* _parkedAreas;
++  // Held while the page keeps visible, as a capture of it would.
++  base::ScopedClosureRunner _visibleCapture;
+ }
+ 
+ @synthesize delegate = _delegate;
+@@ -2063,6 +2066,30 @@
+ }
+ @synthesize extensionPopup = _extensionPopup;
+ @synthesize covered = _covered;
++@synthesize keepsVisible = _keepsVisible;
++
++// Kept visible: Chromium runs the page as one on screen, drawing and taking
++// input, though it's out of sight or its window is covered, as it does a page
++// being captured. A page hidden or occluded otherwise stops drawing, and input
++// sent to it, as by DevTools, waits on a frame that never comes.
++- (void)setKeepsVisible:(BOOL)keepsVisible {
++  if (keepsVisible == _keepsVisible) {
++    return;
++  }
++  _keepsVisible = keepsVisible;
++  [self holdVisibleCapture];
++}
++- (void)holdVisibleCapture {
++  if (_keepsVisible && _contents) {
++    if (!_visibleCapture) {
++      _visibleCapture = _contents->IncrementCapturerCount(
++          gfx::Size(), /*stay_hidden=*/false, /*stay_awake=*/true,
++          /*is_activity=*/false);
++    }
++  } else {
++    _visibleCapture.RunAndReset();
++  }
++}
+ 
+ // Under something else, such as a Peek or a notice: Chromium's mouse tracking
+ // is set aside, so the page takes no hover and sets no cursor through it.
+@@ -2283,6 +2310,9 @@
+ 
+ // What a page takes as soon as it's the view's.
+ - (void)tookContents {
++  // A hold on earlier contents is theirs; the page keeps visible in these.
++  _visibleCapture.RunAndReset();
++  [self holdVisibleCapture];
+   // Its permission requests are asked in Rise's prompt.
+   if (auto* permissions =
+           permissions::PermissionRequestManager::FromWebContents(_contents)) {
+@@ -2334,6 +2364,7 @@
+ }
+ 
+ - (void)contentsGone {
++  _visibleCapture.RunAndReset();
+   _observer.reset();
+   [Views() removeObjectForKey:[NSValue valueWithPointer:_contents]];
+   _contents = nullptr;
+@@ -3111,6 +3142,7 @@
+     return;
+   }
+   _closed = YES;
++  _visibleCapture.RunAndReset();
+   _observer.reset();
+   content::WebContents* contents = _contents;
+   _contents = nullptr;

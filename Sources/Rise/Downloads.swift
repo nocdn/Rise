@@ -27,6 +27,8 @@ private final class DownloadsListView: NSView {
 @MainActor final class DownloadsController: NSViewController, NSPopoverDelegate {
     private let list: DownloadList
     private let stack = FlippedView(), scroll = PopoverScrollView(), listView = DownloadsListView()
+    /// The list's edges dissolving where more rows lie past them, as the sidebar's do.
+    private let fade = CAGradientLayer()
     private(set) var rows: [DownloadRow] = []
     private(set) var highlightedID: UUID? { didSet { applyHighlight() } }
     private(set) var usesKeyboard = false
@@ -43,6 +45,13 @@ private final class DownloadsListView: NSView {
     static let outerRadius: CGFloat = 12
 
     init(list: DownloadList) { self.list = list; super.init(nibName: nil, bundle: nil) }
+    deinit { NotificationCenter.default.removeObserver(self) }
+    /// The fade at each end comes in as the list scrolls away from it, as the sidebar's does.
+    @objc private func scrolled() {
+        let clip = scroll.contentView
+        let edges = SidebarScrollCues.Edges(offset: clip.bounds.minY, contentHeight: stack.frame.height, viewHeight: clip.bounds.height)
+        SidebarScrollCues.fade(scroll, with: fade, edges: edges)
+    }
     required init?(coder: NSCoder) { fatalError() }
     func popoverDidClose(_ notification: Notification) {
         if let closed = notification.object as? NSPopover, closed === errorPopover {
@@ -62,6 +71,9 @@ private final class DownloadsListView: NSView {
         view = listView
         scroll.drawsBackground = false; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
         scroll.scrollerStyle = .overlay; scroll.documentView = stack
+        scroll.wantsLayer = true
+        scroll.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(self, selector: #selector(scrolled), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
         view.addSubview(scroll)
         reload()
     }
@@ -116,11 +128,12 @@ private final class DownloadsListView: NSView {
             row.bottomRadius = index == rows.count-1 ? Self.outerRadius : 8
         }
         let content = CGFloat(max(1, rows.count))*DownloadRow.height
-        let height = min(content, CGFloat(Self.visibleRows)*DownloadRow.height)
+        // Five rows, or with more, five and a half: the half row says there are more to scroll to.
+        let height = rows.count > Self.visibleRows ? (CGFloat(Self.visibleRows)+0.5)*DownloadRow.height : content
         stack.frame = NSRect(x: 0, y: 0, width: Self.width, height: content)
-        // Padding sits outside the scrolling viewport so exactly five rows fit,
-        // without a sliver of a sixth showing through the bottom inset.
+        // Padding sits outside the scrolling viewport, so the rows meet the fade, not the inset.
         scroll.frame = NSRect(x: 0, y: inset, width: Self.width, height: height)
+        scrolled()
         let size = NSSize(width: Self.width, height: height+2*inset)
         if let popover, popover.isShown, popover.contentSize != size, NSEvent.modifierFlags.contains(.shift) {
             // AppKit plays a popover's resize in slow motion while Shift is down, a debugging aid

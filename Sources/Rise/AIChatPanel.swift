@@ -713,6 +713,8 @@ private final class PassthroughView: FlippedView {
                             messages[0]["content"] = system+"\n\n"+AIChatBrowserTools.instructions+"\n\n"+tools.context()
                         }
                         let model = AIChatModels.model(for: choice, messages: messages)
+                        // Pages the model used go back as they were once it has answered.
+                        defer { tools.driver.releaseAll() }
                         try await AIChatAgent.run(model, tools: tools.tools) { event in continuation.yield(event) }
                         continuation.finish()
                     } catch { continuation.finish(throwing: error) }

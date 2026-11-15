@@ -34,11 +34,14 @@ struct MobileBrowserSession: Codable, Equatable, Sendable {
     let version: Int
     let tabs: [Tab]
     let selectedTabID: UUID
+    /// Tabs' order in the switcher's deck, least recently used first. Absent in older sessions.
+    let recentTabIDs: [UUID]?
 
-    init(tabs: [Tab], selectedTabID: UUID) {
+    init(tabs: [Tab], selectedTabID: UUID, recentTabIDs: [UUID]? = nil) {
         version = 1
         self.tabs = tabs
         self.selectedTabID = selectedTabID
+        self.recentTabIDs = recentTabIDs
     }
 
     static func canRestore(_ url: URL) -> Bool {
@@ -57,7 +60,9 @@ struct MobileBrowserSession: Codable, Equatable, Sendable {
         }
         guard let first = usable.first else { return nil }
         let selected = usable.contains { $0.id == selectedTabID } ? selectedTabID : first.id
-        return MobileBrowserSession(tabs: usable, selectedTabID: selected)
+        let kept = Set(usable.map(\.id))
+        return MobileBrowserSession(tabs: usable, selectedTabID: selected,
+                                    recentTabIDs: recentTabIDs?.filter { kept.contains($0) })
     }
 }
 

@@ -1,0 +1,150 @@
+--- a/chrome/browser/printing/print_preview_dialog_controller.cc
++++ b/chrome/browser/printing/print_preview_dialog_controller.cc
+@@ -24,6 +24,7 @@
+ #include "chrome/common/webui_url_constants.h"
+ #include "chrome/grit/generated_resources.h"
+ #include "components/guest_view/browser/guest_view_base.h"
++#include "components/tabs/public/tab_interface.h"
+ #include "components/web_modal/web_contents_modal_dialog_host.h"
+ #include "content/public/browser/host_zoom_map.h"
+ #include "content/public/browser/navigation_controller.h"
+@@ -134,7 +135,14 @@
+   BrowserWindowInterface* browser =
+       GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(
+           outermost_web_contents);
+-  if (browser)
++  // The host for the page's own tab, where the dialog shows: an embedder can
++  // show a tab other than its tab strip's active one, as Rise does.
++  tabs::TabInterface* tab =
++      browser ? tabs::TabInterface::MaybeGetFromContents(outermost_web_contents)
++              : nullptr;
++  if (tab)
++    host = browser->GetWebContentsModalDialogHostForTab(tab);
++  else if (browser)
+     host = browser->GetWebContentsModalDialogHostForWindow();
+ 
+   if (host)
+--- a/chrome/browser/rise/RiseChromium.h
++++ b/chrome/browser/rise/RiseChromium.h
+@@ -207,6 +207,9 @@
+ - (void)lookUp;
+ /// Has the page's DevTools select the element clicked, once they're attached if they aren't yet.
+ - (void)inspect;
++/// Prints as Chrome's menu does: an image or video clicked on its own, or else the page, or its
++/// selection when there is one, in Chrome's print preview.
++- (void)printPage;
+ /// Extensions' entries for what was clicked.
+ @property (nonatomic, readonly) NSArray<RCExtensionMenuItem *> *extensionItems;
+ /// The page's own entries, as DevTools gives for every menu it shows (its tabs' overflow, its
+@@ -388,6 +391,16 @@
+ - (void)reload;
+ - (void)reloadIgnoringCache;
+ - (void)stopLoading;
++/// Whether the page can print now, as Chrome's File > Print checks: printing is on, the page
++/// hasn't crashed, no dialog of its own (print preview, say) is over it, and it doesn't forbid it,
++/// as a PDF without the right to print does.
++@property (nonatomic, readonly) BOOL canPrint;
++/// Prints the page as Chrome's File > Print does, in Chrome's print preview over the page: the
++/// frame with focus, or the PDF a PDF viewer shows rather than the viewer.
++- (void)printPage;
++/// Prints with the system's print dialog, as Chrome's Print Using System Dialog does, from the
++/// page or its print preview.
++- (void)printPageUsingSystemDialog;
+ - (void)setAudioMuted:(BOOL)muted;
+ /// Whether Chromium has the page's sound muted.
+ @property (nonatomic, readonly) BOOL isAudioMuted;
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -90,6 +90,10 @@
+ #include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
+ #include "content/public/browser/web_contents_delegate.h"
+ #include "components/web_modal/web_contents_modal_dialog_host.h"
++#include "components/web_modal/web_contents_modal_dialog_manager.h"
++#include "chrome/browser/printing/print_view_manager_common.h"
++#include "chrome/browser/ui/tab_contents/core_tab_helper.h"
++#include "chrome/common/content_restriction.h"
+ #include "base/observer_list.h"
+ #include "extensions/browser/install_prompt_data.h"
+ #include "extensions/common/extension.h"
+@@ -103,6 +107,7 @@
+ #include "chrome/browser/spellchecker/spellcheck_factory.h"
+ #include "chrome/browser/spellchecker/spellcheck_service.h"
+ #include "chrome/common/pref_names.h"
++#include "components/prefs/pref_service.h"
+ #include "components/prefs/scoped_user_pref_update.h"
+ #include "components/spellcheck/browser/spellcheck_platform.h"
+ #include "components/spellcheck/common/spellcheck_features.h"
+@@ -2660,7 +2665,48 @@
+ - (void)stopLoading {
+   if (_contents) {
+     _contents->Stop();
++  }
++}
++// As chrome::CanPrint and chrome::Print, for this page rather than the active tab of Chrome's
++// tab strip, which needn't be the one Rise shows.
++- (BOOL)canPrint {
++  if (!_contents || _contents->IsCrashed()) {
++    return NO;
++  }
++  PrefService* prefs =
++      Profile::FromBrowserContext(_contents->GetBrowserContext())->GetPrefs();
++  if (!prefs->GetBoolean(prefs::kPrintingEnabled)) {
++    return NO;
++  }
++  if (auto* dialogs =
++          web_modal::WebContentsModalDialogManager::FromWebContents(_contents);
++      dialogs && dialogs->IsDialogActive()) {
++    return NO;
++  }
++  CoreTabHelper* helper = CoreTabHelper::FromWebContents(_contents);
++  return !helper ||
++         !(helper->content_restrictions() & CONTENT_RESTRICTION_PRINT);
++}
++- (void)printPage {
++  if (![self canPrint]) {
++    return;
++  }
++  printing::StartPrint(
++      _contents,
++      Profile::FromBrowserContext(_contents->GetBrowserContext())
++          ->GetPrefs()
++          ->GetBoolean(prefs::kPrintPreviewDisabled),
++      /*has_selection=*/false);
++}
++- (void)printPageUsingSystemDialog {
++  if (!_contents || _contents->IsCrashed() ||
++      !Profile::FromBrowserContext(_contents->GetBrowserContext())
++           ->GetPrefs()
++           ->GetBoolean(prefs::kPrintingEnabled)) {
++    return;
+   }
++  // From the print preview too, as Chrome's command is, which hands its job to the system's.
++  printing::StartBasicPrint(_contents);
+ }
+ - (void)setAudioMuted:(BOOL)muted {
+   if (_contents) {
+@@ -3824,6 +3870,24 @@
+     frame->CopyImageAt(_x, _y);
+   }
+ }
++// As RenderViewContextMenu::ExecPrint.
++- (void)printPage {
++  content::WebContents* contents = [self contents];
++  content::RenderFrameHost* frame = content::RenderFrameHost::FromID(_frame);
++  if (!contents || !frame || ![_view canPrint]) {
++    return;
++  }
++  const bool previewDisabled =
++      Profile::FromBrowserContext(contents->GetBrowserContext())
++          ->GetPrefs()
++          ->GetBoolean(prefs::kPrintPreviewDisabled);
++  if (_mediaKind != RCMediaKindNone) {
++    printing::StartPrintNodeUnderContextMenu(frame, previewDisabled);
++    return;
++  }
++  printing::StartPrint(contents, previewDisabled,
++                       /*has_selection=*/_selectionText.length > 0);
++}
+ - (void)lookUp {
+   content::WebContents* contents = [self contents];
+   if (contents && contents->GetRenderWidgetHostView()) {

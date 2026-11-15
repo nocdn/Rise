@@ -125,6 +125,48 @@ final class BrowserSessionTests: XCTestCase {
         XCTAssertEqual(fixture.pageRequests, requests+2)
     }
 
+    @MainActor func testNewPageOpensItsTabLastEvenFromAnEarlierTab() async throws {
+        let fixture = try AdBlockHTTPFixture(); try await fixture.start()
+        defer { fixture.stop() }
+        let store = store()
+        let entries = (0..<3).map { MobileBrowserSession.Tab(url: URL(string: fixture.url.absoluteString+"#tab\($0)"), title: "Tab \($0)") }
+        store.save(MobileBrowserSession(tabs: entries, selectedTabID: entries[0].id)); store.flush()
+        let browser = BrowserViewController(sessionStore: store), window = try host(browser)
+        defer { window.isHidden = true }
+        try await waitForPage(browser.webView)
+        try await open(URL(string: fixture.url.absoluteString+"#new")!, in: browser)
+        XCTAssertEqual(browser.tabs.map(\.id).prefix(3), entries.map(\.id)[...], "The tabs already open keep their places")
+        XCTAssertEqual(browser.tabIndex, 3, "The new tab is last, rightmost in Tabs")
+    }
+
+    @MainActor func testTabsDeckOrderSurvivesRelaunch() async throws {
+        let fixture = try AdBlockHTTPFixture(); try await fixture.start()
+        defer { fixture.stop() }
+        let store = store()
+        let entries = (0..<3).map { MobileBrowserSession.Tab(url: URL(string: fixture.url.absoluteString+"#tab\($0)"), title: "Tab \($0)") }
+        store.save(MobileBrowserSession(tabs: entries, selectedTabID: entries[1].id)); store.flush()
+        var browser: BrowserViewController? = BrowserViewController(sessionStore: store)
+        let window = try host(try XCTUnwrap(browser))
+        defer { window.isHidden = true }
+        try await waitForPage(try XCTUnwrap(browser).webView)
+        // Used in the order 1, 0, 2: the deck runs 1, 0, 2 from left to right.
+        try await select(0, in: try XCTUnwrap(browser))
+        try await select(2, in: try XCTUnwrap(browser))
+        try XCTUnwrap(browser).showTabSwitcher()
+        let order = try XCTUnwrap(browser).tabSwitcher.displayOrder
+        XCTAssertEqual(order, [1, 0, 2])
+        try XCTUnwrap(browser).saveSession(flush: true)
+        window.rootViewController = nil
+        browser = nil
+
+        let restored = BrowserViewController(sessionStore: MobileBrowserSessionStore(fileURL: store.fileURL))
+        window.rootViewController = restored
+        restored.view.layoutIfNeeded()
+        try await waitForPage(restored.webView)
+        restored.showTabSwitcher()
+        XCTAssertEqual(restored.tabSwitcher.displayOrder, order, "A relaunch shows the deck as it was, not in the tabs' opening order")
+    }
+
     @MainActor func testClosingTabsPersistsTheSurvivingSelectionAndDoesNotReopenClosedTabs() async throws {
         let fixture = try AdBlockHTTPFixture(); try await fixture.start()
         defer { fixture.stop() }

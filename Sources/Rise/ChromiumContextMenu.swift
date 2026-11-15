@@ -173,12 +173,16 @@ import RiseChromium
         } else if !selection.isEmpty, info.linkURL == nil {
             group()
             add("Copy") { info.perform(.copy) }
+            // Chrome's preview offers just the selection, as its menu does here.
+            add("Print…", enabled: page.browserView.canPrint) { info.printPage() }
         }
         // Nothing in particular: the page itself.
         if menu.items.isEmpty {
             add("Back", enabled: page.canGoBack) { page.goBack() }
             add("Forward", enabled: page.canGoForward) { page.goForward() }
             add("Reload") { page.reload() }
+            group()
+            add("Print…", enabled: page.browserView.canPrint) { info.printPage() }
         }
         // Selection utilities share a section near the end, after lookup and editing.
         let utilities = [base64DecodeItem(for: info.selectionText), base64EncodeItem(for: info.selectionText)].compactMap { $0 }

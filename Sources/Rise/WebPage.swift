@@ -59,6 +59,12 @@ import RiseCore
     /// A JPEG of `clip` of the page, in CSS pixels from its top, drawn `scale` times, beyond what
     /// shows where it reaches past it. Nil if it couldn't be taken.
     func screenshot(clip: CGRect, scale: Double, beyondViewport: Bool) async -> Data?
+    /// A DevTools protocol command to the page's engine, as DevTools sends it, and its result; nil
+    /// if it failed or the engine takes none.
+    func devTools(_ method: String, _ params: [String: Any]) async -> [String: Any]?
+    /// Runs the page as one on screen, drawing and taking input, though it's out of sight or its
+    /// window is covered, as a captured page runs: while the chat's model uses it.
+    func setKeepsVisible(_ keeps: Bool)
 
     /// Runs `body` as the body of an async function taking `arguments`, in Rise's own script
     /// world `world` (nil: the one Rise's page tools share), which the page can't see.
@@ -118,6 +124,8 @@ struct PageScriptError: Error, LocalizedError {
 extension WebPage {
     func layoutMetrics() async -> PageLayoutMetrics? { nil }
     func screenshot(clip: CGRect, scale: Double, beyondViewport: Bool) async -> Data? { nil }
+    func devTools(_ method: String, _ params: [String: Any]) async -> [String: Any]? { nil }
+    func setKeepsVisible(_ keeps: Bool) {}
     var navigationHistory: TabNavigationHistory? { nil }
     var backForwardList: TabNavigationHistory? { nil }
     func restoreNavigationHistory(_ history: TabNavigationHistory, fallback url: URL) -> Bool { false }

@@ -577,7 +577,7 @@ import RiseCore
         ]
         for (symbol, title, action) in devActions {
             let button = ChromeButton(symbol: symbol, size: 15, title: title, action: action)
-            button.contentTintColor = NSColor(hex: 0xDE3453); developerBar.addSubview(button); devButtons.append(button)
+            button.contentTintColor = PlainNavBar.developerRed; developerBar.addSubview(button); devButtons.append(button)
         }
         errorTitle.alignment = .center; errorMessage.alignment = .center
         errorMessage.maximumNumberOfLines = 3
@@ -814,6 +814,8 @@ import RiseCore
             }
             chromium.onDialog = { [weak self, weak chromium] dialog, finish in
                 guard let self, let chromium else { finish(false, nil); return nil }
+                // A page the chat's model is using asks it, not the person.
+                if self.aiChat.tools?.driver.take(dialog, from: chromium, finish: finish) == true { return nil }
                 return self.showDialog(dialog, from: chromium, finish: finish)
             }
             chromium.onPageUsedKey = { [weak self] code in self?.pageUsedKey(code: code) }
@@ -826,8 +828,10 @@ import RiseCore
                 guard let self, let chromium else { return }
                 self.cancelClientCertificate(for: chromium)
             }
-            chromium.onChooseFiles = { [weak self] mode, path, finish in
+            chromium.onChooseFiles = { [weak self, weak chromium] mode, path, finish in
                 guard let self else { finish(nil); return }
+                // One the chat's model opened, using the page: its to answer, with upload_file.
+                if let chromium, self.aiChat.tools?.driver.takeChooser(mode, from: chromium, finish: finish) == true { return }
                 self.chooseFiles(mode, defaultPath: path, finish: finish)
             }
             chromium.onPopup = { [weak self, weak chromium] popup, url in

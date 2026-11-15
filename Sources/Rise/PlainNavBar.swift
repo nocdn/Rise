@@ -382,12 +382,19 @@ import RiseCore
         hairline.backgroundColor = ink.hairline.cgColor; field.backgroundColor = ink.field.cgColor
         CATransaction.commit()
         // The buttons that stay over developer mode's bar take its ink.
-        let staying: [ChromeButton] = navigation + extensionButtons + [permissionButton, currencyButton], field: [ChromeButton] = fieldControls
+        let staying: [ChromeButton] = extensionButtons + [permissionButton, currencyButton], field: [ChromeButton] = fieldControls
         for (buttons, ink) in [(staying, shownInk), (field, ink)] {
             for button in buttons {
                 if button.contentTintColor != ink.strong { button.contentTintColor = ink.strong }
                 button.hoverColor = ink.hover
             }
+        }
+        // The sidebar, back, forward and reload buttons take developer mode's red, as its own buttons have it.
+        let red = min(1, max(0, developerProgress))
+        let navigationTint = red > 0 ? (shownInk.strong.blended(withFraction: red, of: Self.developerRed) ?? Self.developerRed) : shownInk.strong
+        for button in navigation {
+            if button.contentTintColor != navigationTint { button.contentTintColor = navigationTint }
+            button.hoverColor = shownInk.hover
         }
         for case let notice as BarNotice in subviews { notice.tint(noticeInk) }
         updateText()
@@ -617,6 +624,8 @@ import RiseCore
         addressHost.alphaValue = DeveloperModeMotion.leaving(progress)
         applyInk()
     }
+    /// Developer mode's buttons' red.
+    static let developerRed = NSColor(hex: 0xDE3453)
     private var background: CGColor { color.withAlphaComponent(color.alphaComponent*DeveloperModeMotion.covering(developerProgress)).cgColor }
     /// Where developer mode's buttons can run to: up to the pinned extensions.
     var developerControlsMaxX: CGFloat { extensionButtons.isEmpty ? bounds.width : extensionCentre(0)-14 }

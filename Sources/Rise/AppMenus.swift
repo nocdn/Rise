@@ -50,6 +50,9 @@ import AppKit
         item(file, "Save Page Screenshot…", #selector(BrowserController.savePageScreenshot), target: browser)
         item(file, "Capture Full Page as Image", #selector(BrowserController.capturePageImage), target: browser)
         item(file, "Capture Full Page as PDF", #selector(BrowserController.capturePagePDF), target: browser)
+        file.addItem(.separator())
+        item(file, "Print…", #selector(BrowserController.printPage), "p", target: browser)
+        item(file, "Print Using System Dialog…", #selector(BrowserController.printPageUsingSystemDialog), target: browser)
 
         let edit = addMenu("Edit")
         item(edit, "Undo", Selector(("undo:")))

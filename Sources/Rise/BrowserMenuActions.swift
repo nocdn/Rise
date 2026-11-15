@@ -27,6 +27,9 @@ import RiseCore
     @objc func savePageScreenshot() { capturePage() }
     @objc func capturePageImage() { captureWholePage(.jpeg) }
     @objc func capturePagePDF() { captureWholePage(.pdf) }
+    /// Chrome's print preview over the page commands act on, as Chrome's File > Print shows it.
+    @objc func printPage() { (commandTab?.page as? ChromiumPage)?.browserView.printPage() }
+    @objc func printPageUsingSystemDialog() { (commandTab?.page as? ChromiumPage)?.browserView.printPageUsingSystemDialog() }
     @objc func showPageSource() { viewSource() }
     @objc func showSiteInformation() { siteInformation() }
     /// The page's site is asked again for its camera, microphone, location and notifications, at
@@ -102,6 +105,9 @@ extension BrowserController: NSMenuItemValidation {
             return tab?.page is ChromiumPage
         case #selector(toggleSimulatedFullscreen): item.state = pageFullscreen.isSimulated ? .on : .off; return true
         case #selector(stopLoadingPage): return page?.isLoading == true
+        case #selector(printPage): return (page?.page as? ChromiumPage)?.browserView.canPrint == true
+        // From the print preview too, which hands its job to the system's dialog.
+        case #selector(printPageUsingSystemDialog): return hasPage && page?.page is ChromiumPage
         case #selector(zoomIn): return hasPage && (page?.page.zoom ?? 1) < 3
         case #selector(zoomOut): return hasPage && (page?.page.zoom ?? 1) > 0.3
         case #selector(actualSize): return hasPage

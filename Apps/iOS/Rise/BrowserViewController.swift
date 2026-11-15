@@ -215,6 +215,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             tabs = [BrowserTab(webView: Self.makeWebView(dataStore: dataStore, videoPlayback: videoPlayback), restoring: .init(url: startURL), isPrivateBrowsing: isPrivateBrowsing)]
         }
         super.init(nibName: nil, bundle: nil)
+        if let recent = restored?.recentTabIDs { tabSwitcher.recentIDs = recent }
         for tab in tabs { track(tab) }
         addressSuggestions.onChange = { [weak self] in
             self?.tabSync?.captureSearches()
@@ -262,7 +263,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let regularTabs = tabs.filter { !$0.isPrivateBrowsing }
         let selected = regularTabs.first { $0.id == currentTab.id }
             ?? regularTabs.first { $0.id == lastRegularTabID } ?? regularTabs.first
-        let session = MobileBrowserSession(tabs: regularTabs.map(\.sessionTab), selectedTabID: selected?.id ?? lastRegularTabID ?? UUID())
+        let saved = Set(regularTabs.map(\.id))
+        let session = MobileBrowserSession(tabs: regularTabs.map(\.sessionTab), selectedTabID: selected?.id ?? lastRegularTabID ?? UUID(),
+                                           recentTabIDs: tabSwitcher.recentIDs.filter { saved.contains($0) })
         if flush || session != lastSavedSession {
             sessionStore.save(session)
             lastSavedSession = session
@@ -2314,15 +2317,17 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     // MARK: Tabs
 
-    /// Opens a page chosen in New Page's panel in a new tab after this one.
-    private func openInNewTab(_ page: WKWebView, topColor: UIColor?, initialURL: URL?, privateBrowsing: Bool) {
+    /// Opens a page in a new tab. One the user opens, from New Page or another app, goes last, so the
+    /// newest is rightmost in Tabs; one a page opens, `besideCurrent`, goes just after its opener.
+    private func openInNewTab(_ page: WKWebView, topColor: UIColor?, initialURL: URL?, privateBrowsing: Bool,
+                              besideCurrent: Bool = false) {
         if !tabSwitcher.isHidden { closeTabSwitcherAtOnce() } else { currentTab.snapshot = snapshotPage() }
         tabPreviews?.save(currentTab)
         let previous = webView
         let tab = BrowserTab(webView: page, initialURL: initialURL, isPrivateBrowsing: privateBrowsing)
         track(tab)
-        tabs.insert(tab, at: tabIndex+1)
-        tabIndex += 1
+        tabIndex = besideCurrent ? tabIndex+1 : tabs.count
+        tabs.insert(tab, at: tabIndex)
         updateTabsCount()
         page.transform = .identity
         install(page)
@@ -2770,7 +2775,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     private func share() {
         guard let url = shareableURL else { return }
-        let share = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        // The page's print formatter gives the sheet Print, as Safari's has.
+        let items: [Any] = webView.url == nil ? [url] : [url, webView.viewPrintFormatter()]
+        let share = UIActivityViewController(activityItems: items, applicationActivities: nil)
         share.completionWithItemsHandler = { [weak self] _, _, _, _ in
             DispatchQueue.main.async { self?.applyPendingChanges() }
         }
@@ -2879,7 +2886,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         blocker.popups.prepare(page, for: navigationAction.request.url ?? webView.url)
         blocker.popups.protectPopup(page, openedFrom: webView.url, opener: webView)
         openInNewTab(page, topColor: nil, initialURL: navigationAction.request.url,
-                     privateBrowsing: isPrivateBrowsing)
+                     privateBrowsing: isPrivateBrowsing, besideCurrent: true)
         return page
     }
 

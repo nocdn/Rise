@@ -128,7 +128,7 @@ extension AIChatModel {
 /// reply run together when they only read, and in order when any of them changes something. After
 /// `maximumRounds` it's asked to answer with what it has.
 @MainActor enum AIChatAgent {
-    nonisolated static let maximumRounds = 20
+    nonisolated static let maximumRounds = 50
     /// The most a tool gives the model at once.
     static let outputLimit = 60_000
 

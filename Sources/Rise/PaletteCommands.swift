@@ -91,6 +91,8 @@ enum PageZoom {
             tab != nil ? PaletteCommand(id: "Find in Page", title: "Find in Page", symbol: "text.magnifyingglass", keywords: ["search", "text", "locate"]) : nil,
             hasPage ? PaletteCommand(id: "Capture Page", title: "Capture Page", symbol: "camera",
                                      keywords: ["screenshot", "screen shot", "snapshot", "save page", "export page", "image", "jpeg", "pdf"]) : nil,
+            (commandTab?.page as? ChromiumPage)?.browserView.canPrint == true
+                ? PaletteCommand(id: "Print", title: "Print…", symbol: "printer", keywords: ["printer", "paper", "pdf", "save as pdf", "print preview"]) : nil,
             tab != nil ? PaletteCommand(id: "Zoom", title: "Zoom", symbol: "plus.magnifyingglass",
                                         keywords: ["in", "out", "bigger", "smaller", "magnify", "enlarge", "shrink", "scale", "text size"]) : nil,
             tab.flatMap { PageZoom.isActual($0.page.zoom) ? nil : PaletteCommand(id: "Actual Size", title: "Actual Size", symbol: "1.magnifyingglass",
@@ -170,6 +172,7 @@ enum PageZoom {
         case "Swap Sides": swapSplitSides()
         case "Reload": reload()
         case "Copy Link": copyURL()
+        case "Print": printPage()
         case "Find in Page": showFind()
         case "Actual Size": actualSize()
         case "Change Theme": toggleTheme()

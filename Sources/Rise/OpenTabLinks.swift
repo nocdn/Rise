@@ -56,6 +56,11 @@ import AppKit
         }
         page.addUserScript(Self.script, world: .named(Self.worldName), mainFrameOnly: true, handlers: ["riseOpenTabs", "riseOpenTabLink"])
     }
+    /// While the chat's model clicks in `page`, its links go where they lead, in the page, rather
+    /// than to the tab that has the page open: the model is using this one.
+    func hold(_ held: Bool, on page: WebPage) {
+        page.evaluate("globalThis.riseOpenTabsHeld = held", arguments: ["held": held], in: nil, world: .named(Self.worldName)) { _ in }
+    }
     private func open(for page: WebPage) -> Open { enabled ? openLinks?(page) ?? Open() : Open() }
     private func remember(_ open: Open, for page: WebPage) { sent.setObject(open.message as NSDictionary, forKey: page) }
     /// Brings the lists of `pages`, those on screen, up to date.
@@ -78,7 +83,7 @@ import AppKit
       // Capturing on the window, before the page's own handlers, so a site that routes its links
       // itself doesn't act on the click first.
       addEventListener('click', event => {
-        if (!event.isTrusted || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || !open.size && !requests.length) return;
+        if (globalThis.riseOpenTabsHeld || !event.isTrusted || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || !open.size && !requests.length) return;
         const link = event.composedPath().find(node => (node instanceof HTMLAnchorElement || node instanceof HTMLAreaElement) && node.href);
         if (!link || link.hasAttribute('download') || !isOpen(link.href)) return;
         event.preventDefault(); event.stopImmediatePropagation();

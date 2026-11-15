@@ -207,6 +207,9 @@ RC_EXPORT @interface RCContextMenu : NSObject
 - (void)lookUp;
 /// Has the page's DevTools select the element clicked, once they're attached if they aren't yet.
 - (void)inspect;
+/// Prints as Chrome's menu does: an image or video clicked on its own, or else the page, or its
+/// selection when there is one, in Chrome's print preview.
+- (void)printPage;
 /// Extensions' entries for what was clicked.
 @property (nonatomic, readonly) NSArray<RCExtensionMenuItem *> *extensionItems;
 /// The page's own entries, as DevTools gives for every menu it shows (its tabs' overflow, its
@@ -368,6 +371,10 @@ RC_EXPORT @interface RCBrowserView : NSView
 /// Under something else, such as a Peek: the page takes no hover and sets no cursor, though
 /// mouse tracking would otherwise reach it through whatever covers it.
 @property (nonatomic) BOOL covered;
+/// Runs as a page on screen, drawing and taking input, even out of sight or in a covered window,
+/// as a page being captured does: while Rise's agent uses it. Off, Chromium hides a page out of
+/// sight and stops drawing it, and input sent to it then never arrives.
+@property (nonatomic) BOOL keepsVisible;
 /// The page's own view, which takes the keyboard: focusing the page is making it first
 /// responder, as Chrome does, not this view.
 @property (nonatomic, readonly, nullable) NSView *focusView;
@@ -384,6 +391,16 @@ RC_EXPORT @interface RCBrowserView : NSView
 - (void)reload;
 - (void)reloadIgnoringCache;
 - (void)stopLoading;
+/// Whether the page can print now, as Chrome's File > Print checks: printing is on, the page
+/// hasn't crashed, no dialog of its own (print preview, say) is over it, and it doesn't forbid it,
+/// as a PDF without the right to print does.
+@property (nonatomic, readonly) BOOL canPrint;
+/// Prints the page as Chrome's File > Print does, in Chrome's print preview over the page: the
+/// frame with focus, or the PDF a PDF viewer shows rather than the viewer.
+- (void)printPage;
+/// Prints with the system's print dialog, as Chrome's Print Using System Dialog does, from the
+/// page or its print preview.
+- (void)printPageUsingSystemDialog;
 - (void)setAudioMuted:(BOOL)muted;
 /// Whether Chromium has the page's sound muted.
 @property (nonatomic, readonly) BOOL isAudioMuted;
