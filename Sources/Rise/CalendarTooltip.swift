@@ -173,8 +173,11 @@ final class CalendarTimeline: FlippedView {
     /// How much taller (or, below zero, shorter) a pinch has made it, only while it's open.
     private(set) var pinchedHeight: CGFloat = 0
     private var pinchMonitor: Any?
-    /// The shortest a pinch makes it.
-    static let minimumPinchedHeight: CGFloat = 160
+    /// The shortest and tallest a pinch makes it, about twice its usual height at most.
+    static let minimumPinchedHeight: CGFloat = 160, maximumPinchedHeight: CGFloat = 540
+    /// How near the top a pinch takes its top: as far from it as the card is from the sidebar.
+    private var pinchTopLimit: CGFloat = 8
+    private var highestTop: CGFloat { pinchedHeight > 0 ? pinchTopLimit : 8 }
     private var background: NSColor { theme == .dark ? theme.popup : TabAppearance.selectedFill(theme) }
 
     init() {
@@ -307,15 +310,16 @@ final class CalendarTimeline: FlippedView {
     }
 
     /// `growsFrom` is where it comes out of its tab, in the superview, when that isn't beside the tab's middle.
+    /// `topLimit` is as near the top as a pinch takes it.
     func present(key: String, agenda: CalendarAgenda, left: CGFloat, anchorTop: CGFloat, maxBottom: CGFloat, theme: RiseTheme,
-                 glides: Bool = false, growsFrom: NSPoint? = nil) {
+                 glides: Bool = false, growsFrom: NSPoint? = nil, topLimit: CGFloat = 8) {
         let appearing = self.key == nil, switching = self.key != key
         if appearing || switching { slidesDays = false; finishDaySlide() }
         if appearing { CardMotionAnimator.cancelOut(self) }
         self.key = key; self.theme = theme; isHidden = false
         self.agenda = agenda
         if appearing || switching { daySwipe = CalendarDaySwipe(); ownsScroll = false; lastScroll = nil; lastDayScroll = nil; agenda.selectDay(nil) }
-        frame.origin.x = left; self.anchorTop = anchorTop; self.maxBottom = maxBottom; tabPoint = growsFrom
+        frame.origin.x = left; self.anchorTop = anchorTop; self.maxBottom = maxBottom; tabPoint = growsFrom; pinchTopLimit = topLimit
         appearance = theme.appearance
         panel.fill = background; dayBody.fill = background
         navigation.fill = background; dayLabel.textColor = theme.text; todayButton.contentTintColor = theme.text
@@ -452,8 +456,8 @@ final class CalendarTimeline: FlippedView {
     private var allDayHeaderHeight: CGFloat { allDayRows == 0 ? 0 : CGFloat(allDayRows)*(Self.allDayHeight+Self.allDayGap)+Self.allDayGap+4 }
     private func layoutCard() {
         height.target = min(Self.preferredHeight+allDayHeaderHeight+pinchedHeight, max(120, maxBottom-8))
-        // Its top moves half as far as its foot as a pinch resizes it.
-        top.target = max(8, min(anchorTop-pinchedHeight/3, maxBottom-height.target))
+        // Its top moves a quarter as far as its foot as a pinch resizes it.
+        top.target = max(highestTop, min(anchorTop-pinchedHeight/5, maxBottom-height.target))
         timeline.setFrameSize(NSSize(width: Self.width, height: CalendarTimeline.contentHeight))
         let columnsWidth = Self.width-CalendarTimeline.labelWidth-CalendarTimeline.trailing
         let minimum = 18/CalendarTimeline.hourHeight*60
@@ -494,8 +498,8 @@ final class CalendarTimeline: FlippedView {
         // Its spring can travel above the clipping edge on the way out, but
         // that mustn't take space away from the all-day rows or timeline.
         let navigationSpace = max(0, (Self.navigationHeight-overlap)*navigationSlide.value)
-        let shownHeight = max(0, min(height.value+navigationSpace, maxBottom-8))
-        frame = NSRect(x: frame.minX, y: max(8, min(top.value, maxBottom-shownHeight)), width: Self.width, height: shownHeight)
+        let shownHeight = max(0, min(height.value+navigationSpace, maxBottom-highestTop))
+        frame = NSRect(x: frame.minX, y: max(highestTop, min(top.value, maxBottom-shownHeight)), width: Self.width, height: shownHeight)
         panel.frame = bounds; clip.frame = bounds
         let header = allDayHeaderHeight+navigationSpace
         navigation.frame = NSRect(x: 0, y: navigationHeight-Self.navigationHeight, width: Self.width, height: Self.navigationHeight)
@@ -531,11 +535,11 @@ final class CalendarTimeline: FlippedView {
         }
     }
     /// Spreading the fingers makes it taller and pinching them shorter, at once under them: its
-    /// foot moves twice as far as its top, and the timeline stays put on the screen as its edges move.
+    /// foot moves four times as far as its top, and the timeline stays put on the screen as its edges move.
     func pinch(by magnification: CGFloat) {
         guard key != nil, magnification.isFinite else { return }
         let usual = Self.preferredHeight+allDayHeaderHeight
-        let tallest = max(Self.minimumPinchedHeight, maxBottom-8-Self.navigationHeight*navigationSlide.target)
+        let tallest = max(Self.minimumPinchedHeight, min(Self.maximumPinchedHeight, maxBottom-pinchTopLimit-Self.navigationHeight*navigationSlide.target))
         pinchedHeight = max(Self.minimumPinchedHeight, min(tallest, usual+pinchedHeight+magnification*(usual+pinchedHeight)))-usual
         let before = frame.minY
         layoutCard(); height.settle(); top.settle(); render()

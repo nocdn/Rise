@@ -574,10 +574,10 @@ import AppKit
         raiseHoverCard(hover.calendarCard)
         trackPointer(true)
         calendarAgenda.prepare(account: account, source: tab.page, host: root)
-        let anchor = previewAnchor(row)
+        let anchor = previewAnchor(row), gap: CGFloat = 6
         hover.calendarCard.present(key: account.baseURL.absoluteString, agenda: calendarAgenda,
-                                   left: sidebar.frame.maxX+6, anchorTop: anchor.top, maxBottom: root.bounds.height-8,
-                                   theme: theme, growsFrom: anchor.growsFrom)
+                                   left: sidebar.frame.maxX+gap, anchorTop: anchor.top, maxBottom: root.bounds.height-8,
+                                   theme: theme, growsFrom: anchor.growsFrom, topLimit: gap)
     }
     func calendarAnswerFailed(_ event: CalendarEvent) {
         guard tabHoverCards.kind == .calendar, tabHoverCards.shownID != nil else { return }

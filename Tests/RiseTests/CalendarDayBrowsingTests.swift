@@ -114,7 +114,7 @@ import XCTest
         XCTAssertEqual(agenda.displayedDay, day(1))
     }
 
-    func testPinchingResizesTheCardWhileItsOpenItsTopMovingHalfAsFarAsItsFoot() async throws {
+    func testPinchingResizesTheCardWhileItsOpenItsTopMovingAQuarterAsFarAsItsFoot() async throws {
         let agenda = try await loadedAgenda(), card = CalendarTooltip()
         let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 600, height: 900), styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView?.addSubview(card); window.orderFront(nil)
@@ -129,12 +129,17 @@ import XCTest
         card.pinch(by: 0.3)
         let grown = card.frame
         XCTAssertGreaterThan(grown.height, usual.height+60)
-        XCTAssertEqual(grown.maxY-usual.maxY, 2*(usual.minY-grown.minY), accuracy: 1.5, "The foot moves twice as far as the top")
+        XCTAssertEqual(grown.maxY-usual.maxY, 4*(usual.minY-grown.minY), accuracy: 1.5, "The foot moves four times as far as the top")
         XCTAssertEqual(card.convert(NSPoint(x: 0, y: 0), from: card.timeline).y-(usual.minY-grown.minY), hour, accuracy: 0.5, "The timeline stays put")
         card.pinch(by: -0.9)
         XCTAssertEqual(card.frame.height, CalendarTooltip.minimumPinchedHeight, accuracy: 0.5)
         card.dismiss(animated: false); open()
         XCTAssertEqual(card.frame, usual, "Opened again, it's its usual size")
+        card.dismiss(animated: false)
+        card.present(key: "test", agenda: agenda, left: 10, anchorTop: 40, maxBottom: 880, theme: .neutral, topLimit: 6)
+        for _ in 0..<20 { card.pinch(by: 0.3) }
+        XCTAssertEqual(card.frame.minY, 6, accuracy: 0.5, "As far from the top as from the sidebar")
+        XCTAssertLessThanOrEqual(card.frame.height, CalendarTooltip.maximumPinchedHeight+CalendarTooltip.navigationHeight+0.5)
     }
 
     func testFailedInvitationAnswerIsRestoredEvenAfterSwipingToAnotherDay() async throws {
