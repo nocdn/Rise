@@ -133,7 +133,9 @@ final class CalendarTimeline: FlippedView {
 @MainActor final class CalendarTooltip: FlippedView, NSMenuDelegate {
     static let width: CGFloat = 264, preferredHeight: CGFloat = 268
     static let allDayHeight: CGFloat = 22, allDayGap: CGFloat = 4
-    static let navigationHeight: CGFloat = 28
+    /// The day's name and the Today button, centred in it. Over all-day events, its foot is the gap
+    /// above them, so the header sits the same on every day.
+    static let navigationHeight: CGFloat = 34
     let scroll = CardScrollView()
     let timeline = CalendarTimeline(frame: .zero)
     private let panel = Surface(radius: FindBar.radius)
@@ -465,19 +467,19 @@ final class CalendarTimeline: FlippedView {
     private func render() {
         let origin = scroll.contentView.bounds.origin
         let navigationHeight = Self.navigationHeight*navigationSlide.value
+        let overlap = allDayHeaderHeight > 0 ? Self.allDayGap+2 : 0
         // Its spring can travel above the clipping edge on the way out, but
         // that mustn't take space away from the all-day rows or timeline.
-        let navigationSpace = max(0, navigationHeight)
+        let navigationSpace = max(0, (Self.navigationHeight-overlap)*navigationSlide.value)
         let shownHeight = max(0, min(height.value+navigationSpace, maxBottom-8))
         frame = NSRect(x: frame.minX, y: max(8, min(top.value, maxBottom-shownHeight)), width: Self.width, height: shownHeight)
         panel.frame = bounds; clip.frame = bounds
         let header = allDayHeaderHeight+navigationSpace
         navigation.frame = NSRect(x: 0, y: navigationHeight-Self.navigationHeight, width: Self.width, height: Self.navigationHeight)
         navigation.isHidden = navigationSlide.value == 0 && navigationSlide.target == 0
-        // Centred in the room above the day: down to its all-day events, past the gap over them.
-        let room = Self.navigationHeight+(allDayHeaderHeight > 0 ? Self.allDayGap+2 : 0)
-        dayLabel.frame = NSRect(x: 12, y: ((room-17)/2).rounded(), width: Self.width-100, height: 17)
-        todayButton.frame = NSRect(x: Self.width-80, y: ((room-22)/2).rounded(), width: 68, height: 22)
+        // The button's right edge lines up with the all-day events'.
+        dayLabel.frame = NSRect(x: 9, y: ((Self.navigationHeight-17)/2).rounded(), width: Self.width-100, height: 17)
+        todayButton.frame = NSRect(x: Self.width-CalendarTimeline.trailing-68, y: ((Self.navigationHeight-22)/2).rounded(), width: 68, height: 22)
         dayClip.frame = NSRect(x: 0, y: navigationSpace, width: Self.width, height: max(0, bounds.height-navigationSpace))
         dayBody.frame = dayClip.bounds.offsetBy(dx: dayDirection*Self.width*daySlide.value, dy: 0)
         if let outgoingDay { outgoingDay.frame.origin.x = dayDirection*Self.width*(daySlide.value-1) }

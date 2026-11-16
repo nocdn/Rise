@@ -157,7 +157,7 @@ import XCTest
         agenda.onChange = { card.update(agenda) }
         card.present(key: "test", agenda: agenda, left: 10, anchorTop: 20, maxBottom: 680, theme: .dark)
         let body = try XCTUnwrap(card.scroll.superview)
-        XCTAssertLessThan(CalendarTooltip.navigationHeight, 32)
+        XCTAssertLessThanOrEqual(CalendarTooltip.navigationHeight, 34)
         XCTAssertNotNil(card.todayButton.image)
         XCTAssertGreaterThan(card.todayButton.layer?.backgroundColor?.alpha ?? 0, 0)
         card.browseDay(by: 1)
