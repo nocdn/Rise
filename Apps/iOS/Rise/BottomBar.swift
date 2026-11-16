@@ -7,7 +7,7 @@ import UIKit
 /// page's address and a few actions, whose Find turns it into a find field above the keyboard.
 /// Either way the bar's contents swap with a quick, blurred crossfade.
 final class BottomBar: UIView {
-    enum Panel { case search, menu, tabMenu, find, siteSettings, appSettings, aiOptions, aiPrompt, privacyPolicy, downloads, history, fontInfo }
+    enum Panel { case search, menu, tabMenu, find, siteSettings, appSettings, aiOptions, aiPrompt, privacyPolicy, downloads, history, fontInfo, linkSummary }
 
     /// The buttons' row, and the space above it.
     static let rowHeight: CGFloat = 42
@@ -118,6 +118,8 @@ final class BottomBar: UIView {
     let history = HistoryPanel()
     /// The selection menu's Font info.
     let fontInfo = FontInfoPanel()
+    /// A held link's Summarise.
+    let linkSummary = LinkSummaryPanel()
     /// Which panel the bar grows into.
     var panel = Panel.search
     /// The search's, and the address's, distance from the panel's top.
@@ -140,7 +142,7 @@ final class BottomBar: UIView {
     private var copySuccessTask: Task<Void, Never>?
     /// Whichever of the row, the search and the menu is showing, if any.
     private(set) var shown: UIView?
-    private var contents: [UIView] { [home, search, menu, tabMenu, find, siteSettings, appSettings, aiOptions, aiPrompt, privacyPolicy, downloads, history, fontInfo] }
+    private var contents: [UIView] { [home, search, menu, tabMenu, find, siteSettings, appSettings, aiOptions, aiPrompt, privacyPolicy, downloads, history, fontInfo, linkSummary] }
     /// Collapsed, only the strip remains; set it inside an animation to animate.
     var isCollapsed = false {
         didSet {
@@ -216,6 +218,12 @@ final class BottomBar: UIView {
         min(searchTop+panel.naturalHeight(width: width)+max(safeBottom, 16), screenHeight-safeTop-12)
     }
 
+    /// A link's summary starts small, under its title, and grows with the summary, a line ahead
+    /// of it, until it's as tall as the screen allows; then the summary scrolls.
+    static func linkSummaryHeight(_ panel: LinkSummaryPanel, width: CGFloat, screenHeight: CGFloat, safeTop: CGFloat, safeBottom: CGFloat) -> CGFloat {
+        min(searchTop+panel.naturalHeight(width: width)+max(safeBottom, 16), screenHeight-safeTop-12)
+    }
+
     /// As Site settings, growing for a longer list.
     static func downloadsHeight(width: CGFloat, safeBottom: CGFloat, rows: Int) -> CGFloat {
         max(menuHeight(width: width, safeBottom: safeBottom)+48,
@@ -268,7 +276,7 @@ final class BottomBar: UIView {
         for button in [tabsButton, newPageButton] { row.addSubview(button) }
         row.addSubview(moreLanding)
         moreLanding.addSubview(moreButton)
-        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton, search.privateButton, tabMenu.incognitoRow, tabMenu.historyButton, history.closeButton]+menu.buttons+siteSettings.buttons+appSettings.buttons+aiOptions.buttons+aiPrompt.buttons+privacyPolicy.buttons+fontInfo.buttons+downloads.buttons+find.buttons+[find.modeButton, find.sendButton] {
+        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton, search.privateButton, tabMenu.incognitoRow, tabMenu.historyButton, history.closeButton]+menu.buttons+siteSettings.buttons+appSettings.buttons+aiOptions.buttons+aiPrompt.buttons+privacyPolicy.buttons+fontInfo.buttons+linkSummary.buttons+downloads.buttons+find.buttons+[find.modeButton, find.sendButton] {
             // A light, crisp tap as the finger lands, rather than a soft thud; actions wait for it to lift.
             button.addAction(UIAction { [weak self, weak button] _ in
                 guard let self else { return }
@@ -329,6 +337,7 @@ final class BottomBar: UIView {
         case .downloads: downloads
         case .history: history
         case .fontInfo: fontInfo
+        case .linkSummary: linkSummary
         case nil: home
         }
         show(view, animated: animated)
@@ -460,6 +469,7 @@ final class BottomBar: UIView {
         place(privacyPolicy, Self.searchTop, max(0, bounds.height-Self.searchTop-max(safeBottom,16)))
         // To the bar's bottom edge, its last lines fading under it.
         place(fontInfo, Self.searchTop, max(0, bounds.height-Self.searchTop))
+        place(linkSummary, Self.searchTop, max(0, bounds.height-Self.searchTop-max(safeBottom, 16)))
         let historyHeight = Self.historyHeight(screenHeight: superview?.bounds.height ?? bounds.height,
                                                safeTop: window?.safeAreaInsets.top ?? 0)
         place(history, Self.searchTop, max(0, historyHeight-Self.searchTop-max(safeBottom,16)))

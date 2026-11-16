@@ -10,6 +10,13 @@ final class AskAnswerView: UITextView {
     private var notifiedHeight: CGFloat = 0
     var onHeightChanged: (() -> Void)?
     private(set) var answer = ""
+    /// The text's size, scaled with Dynamic Type; Find's answers are 15 points.
+    var fontSize: CGFloat = 15
+    /// How far each word slides in from as it arrives; 0 has it fade and sharpen where it lands.
+    var entranceTravel: CGFloat {
+        get { tokenLayout.travel }
+        set { tokenLayout.travel = newValue }
+    }
 
     init() {
         let storage = NSTextStorage(), container = NSTextContainer(size: .zero)
@@ -39,7 +46,11 @@ final class AskAnswerView: UITextView {
         if finished { stream.finish() }
         let color = UIColor.label.resolvedColor(with: traitCollection)
         stream.base = OKLab(color)
-        textStorage.setAttributedString(Self.styled(stream.text, color: color))
+        textStorage.setAttributedString(Self.styled(stream.text, color: color, size: fontSize))
+        // The view that draws the text grows to the new text now, at once: left for the next
+        // layout, it grew inside the sheet's own growth animation, from its old size, cutting
+        // off the newest lines until it caught up.
+        UIView.performWithoutAnimation { layoutIfNeeded() }
         stream.place(in: text as NSString, at: CACurrentMediaTime())
         if UIAccessibility.isReduceMotionEnabled { stream.revealAll(at: CACurrentMediaTime()) }
         paint()
@@ -57,14 +68,22 @@ final class AskAnswerView: UITextView {
 
     /// Measure the last revealed line in the complete layout, so queued words keep their
     /// wrapping but do not reserve space in the sheet before they become visible.
+    /// Measuring lays out more of the text, which resizes the view drawing it: never animated,
+    /// though a sheet growing to fit measures it inside its own animation, as that view would
+    /// otherwise grow from its old size, cutting off the newest lines until it caught up.
     func revealedHeight(for width: CGFloat) -> CGFloat {
         guard width > 0, let newest = stream.newest, NSMaxRange(newest) <= textStorage.length else { return 0 }
-        let size = CGSize(width: width, height: .greatestFiniteMagnitude)
-        if textContainer.size != size { textContainer.size = size }
-        tokenLayout.ensureLayout(forCharacterRange: newest)
-        let glyphs = tokenLayout.glyphRange(forCharacterRange: newest, actualCharacterRange: nil)
-        guard glyphs.length > 0 else { return 0 }
-        return ceil(tokenLayout.lineFragmentRect(forGlyphAt: NSMaxRange(glyphs)-1, effectiveRange: nil).maxY)
+        var height: CGFloat = 0
+        UIView.performWithoutAnimation {
+            let size = CGSize(width: width, height: .greatestFiniteMagnitude)
+            if textContainer.size != size { textContainer.size = size }
+            tokenLayout.ensureLayout(forCharacterRange: newest)
+            let glyphs = tokenLayout.glyphRange(forCharacterRange: newest, actualCharacterRange: nil)
+            guard glyphs.length > 0 else { return }
+            height = ceil(tokenLayout.lineFragmentRect(forGlyphAt: NSMaxRange(glyphs)-1, effectiveRange: nil).maxY)
+            layoutIfNeeded()
+        }
+        return height
     }
 
     private func notifyHeightChange() {
@@ -104,22 +123,22 @@ final class AskAnswerView: UITextView {
         setNeedsDisplay()
     }
 
-    private static func styled(_ text: String, color: UIColor) -> NSAttributedString {
+    private static func styled(_ text: String, color: UIColor, size: CGFloat) -> NSAttributedString {
         let result = NSMutableAttributedString(string: "")
         let paragraph = NSMutableParagraphStyle(); paragraph.lineSpacing = 3
         let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace,
                                                                failurePolicy: .returnPartiallyParsedIfPossible)
         guard let markdown = try? AttributedString(markdown: text, options: options) else {
-            return NSAttributedString(string: text, attributes: [.font: UIFont.preferredFont(forTextStyle: .subheadline),
+            return NSAttributedString(string: text, attributes: [.font: UIFontMetrics(forTextStyle: .subheadline).scaledFont(for: .systemFont(ofSize: size)),
                                                                   .foregroundColor: color])
         }
         for run in markdown.runs {
             let intent = run.inlinePresentationIntent ?? []
-            var font = UIFont.systemFont(ofSize: 15, weight: intent.contains(.stronglyEmphasized) ? .semibold : .regular)
+            var font = UIFont.systemFont(ofSize: size, weight: intent.contains(.stronglyEmphasized) ? .semibold : .regular)
             if intent.contains(.emphasized), let descriptor = font.fontDescriptor.withSymbolicTraits(.traitItalic) {
                 font = UIFont(descriptor: descriptor, size: font.pointSize)
             }
-            if intent.contains(.code) { font = .monospacedSystemFont(ofSize: 14, weight: .regular) }
+            if intent.contains(.code) { font = .monospacedSystemFont(ofSize: size-1, weight: .regular) }
             var attributes: [NSAttributedString.Key: Any] = [.font: UIFontMetrics(forTextStyle: .subheadline).scaledFont(for: font),
                 .foregroundColor: color, .paragraphStyle: paragraph]
             if let url = run.link { attributes[.link] = url }
@@ -139,6 +158,7 @@ final class AskAnswerView: UITextView {
 private final class AskTokenLayout: NSLayoutManager {
     var reducesMotion = false
     var displayScale: CGFloat = 2
+    var travel: CGFloat = TokenMotion.travel
     var entrances: [TokenStream.Entrance] = []
     // Created when a token first blurs in: making one costs about 30 ms, which at launch
     // held up the browser for every panel built with an answer view.
@@ -177,7 +197,7 @@ private final class AskTokenLayout: NSLayoutManager {
         let blur = input.applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: TokenMotion.blur*(1-progress)*format.scale])
         if let output = imageContext.createCGImage(blur, from: input.extent) {
             UIImage(cgImage: output, scale: format.scale, orientation: .up)
-                .draw(in: rect.offsetBy(dx: TokenMotion.travel*(1-progress), dy: 0))
+                .draw(in: rect.offsetBy(dx: travel*(1-progress), dy: 0))
         } else { image.draw(in: rect) }
     }
 }

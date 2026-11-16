@@ -22,6 +22,40 @@ enum SummaryCache {
     private struct Kept: Codable {
         let paragraphs: [String]
         var conversation: [SummaryTurn]?
+        /// When a link's summary was made, for those kept by address alone.
+        var made: Date?
+    }
+
+    /// How long a summary made from a held link's menu stands for its address alone, whatever its
+    /// text is by the time the page is opened: long enough to open it and pinch, not so long that
+    /// a page that changes (a front page, say) is summarised from the past.
+    static let linkLifetime: TimeInterval = 12*60*60
+
+    /// A link's summary, by its address, without the fragment.
+    static func linkKey(of url: URL) -> String {
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.fragment = nil
+        let address = components?.string ?? url.absoluteString
+        let digest = SHA256.hash(data: Data(("link\n"+address).utf8))
+        return "link-"+digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Keeps a summary made from a held link's menu under each address it went by.
+    static func storeLink(_ summary: PageSummary, for urls: [URL], made: Date = Date()) {
+        let manager = FileManager.default
+        try? manager.createDirectory(at: folder, withIntermediateDirectories: true)
+        let kept = Kept(paragraphs: summary.paragraphs, conversation: nil, made: made)
+        guard let data = try? JSONEncoder().encode(kept) else { return }
+        for key in Set(urls.map(linkKey(of:))) { try? data.write(to: folder.appendingPathComponent(key+".json"), options: .atomic) }
+        prune()
+    }
+
+    /// The summary a held link's menu made for `url`, while it's recent.
+    static func linkSummary(for url: URL, now: Date = Date()) -> PageSummary? {
+        let file = folder.appendingPathComponent(linkKey(of: url)+".json")
+        guard let data = try? Data(contentsOf: file), let kept = try? JSONDecoder().decode(Kept.self, from: data),
+              let made = kept.made, now.timeIntervalSince(made) < linkLifetime, !kept.paragraphs.isEmpty else { return nil }
+        return PageSummary(paragraphs: kept.paragraphs)
     }
 
     static func summary(for key: String) -> PageSummary? {

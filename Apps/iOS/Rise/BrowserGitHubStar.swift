@@ -4,7 +4,7 @@ import WebKit
 extension BrowserViewController {
     func nativeLinkMenu(in page: WKWebView, url: URL?, actions suggested: [UIMenuElement]) -> UIMenu {
         githubRepositoryMenu?.cancel(); githubRepositoryMenu = nil
-        let actions = addingOpenHere(to: suggested, url: url, in: page)
+        let actions = addingSummarise(to: addingOpenHere(to: suggested, url: url, in: page), url: url)
         guard let repository = GitHubRepository(url: url) else { return LinkCopyMenu.menu(ImageContextMenus.menu(in: page, actions: actions, link: url), link: url) }
         let store = page.configuration.websiteDataStore
         let menu = GitHubRepositoryMenu(browser: self,page: page,repository: repository,store: store)

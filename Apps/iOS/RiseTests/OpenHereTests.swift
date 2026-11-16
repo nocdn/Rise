@@ -22,7 +22,7 @@ final class OpenHereTests: XCTestCase {
         browser.loadViewIfNeeded()
         let page = browser.webView
         let menu = browser.nativeLinkMenu(in: page, url: URL(string: "https://example.com/article")!, actions: suggested())
-        XCTAssertEqual(titles(menu.children), ["Open", "Open Here", "Add to Reading List", "Copy Link", "Share…"])
+        XCTAssertEqual(titles(menu.children), ["Open", "Open Here", "Summarise", "Add to Reading List", "Copy Link", "Share…"])
         let open = try XCTUnwrap(menu.children[0] as? UIAction), here = try XCTUnwrap(menu.children[1] as? UIAction)
         XCTAssertEqual(here.identifier, BrowserViewController.openHereIdentifier)
         XCTAssertEqual(here.image, open.image, "The same icon as Open")
@@ -42,7 +42,7 @@ final class OpenHereTests: XCTestCase {
         renamed[0] = UIAction(title: "Open", image: UIImage(systemName: "safari")) { _ in }
         XCTAssertEqual(titles(browser.nativeLinkMenu(in: page, url: URL(string: "https://example.com/")!, actions: renamed).children).prefix(2), ["Open", "Open Here"])
         let withoutOpen = browser.nativeLinkMenu(in: page, url: URL(string: "https://example.com/")!, actions: Array(suggested().dropFirst()))
-        XCTAssertEqual(titles(withoutOpen.children), ["Add to Reading List", "Copy Link", "Share…"])
+        XCTAssertEqual(titles(withoutOpen.children), ["Add to Reading List", "Copy Link", "Share…", "Summarise"])
     }
 
     func testTheReferrerIsTheWebsDefault() {

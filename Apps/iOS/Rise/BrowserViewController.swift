@@ -26,6 +26,17 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         set { toast = newValue }
     }
     var githubRepositoryMenu: GitHubRepositoryMenu?
+    /// A held link's Summarise, waiting for its menu to go, and then running.
+    var pendingLinkSummary: URL?
+    var linkSummaryRun: LinkSummaryRun?
+    /// What a held link's Summarise asks: the model, streaming; checks give it a scripted stream.
+    var summariseLinkModel: @MainActor (PageAssistant.Page, ModelChoice, @escaping @MainActor (String) -> Void) async throws -> PageSummary = {
+        page, choice, streamed in try await PageSummary.stream(of: page, provider: choice, streamed: streamed)
+    }
+    #if DEBUG
+    /// How many link summaries have ended in the success haptic, for checks.
+    var linkSummarySuccessCount = 0
+    #endif
     /// The open tabs, in the switcher's order.
     private(set) var tabs: [BrowserTab]
     private(set) var tabIndex = 0
@@ -560,6 +571,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
     func endLinkContextMenu(in webView: WKWebView) {
         isLinkContextMenuOpen = false
+        if pendingLinkSummary != nil { DispatchQueue.main.async { [weak self] in self?.startPendingLinkSummary() } }
         InteractiveLinkMenu.setEnabled(false, in: webView)
         if webView === linkPreviewSource { linkPreview?.stop(); linkPreview = nil; linkPreviewSource = nil }
         ImageContextMenus.setPresented(false, in: webView)
@@ -797,7 +809,6 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         pullToReload.layoutGap()
         bottomBar.find.maximumAnswerHeight = max(80, min(300, view.bounds.height-keyboardHeight-160))
         layoutBottomBar()
-        toast?.place(above: bottomBar.frame.minY, in: view.bounds, safeTop: view.safeAreaInsets.top)
         // Summarise is laid out for the window it started in.
         if let summarise, summarise.bounds.size != view.bounds.size { summarise.finish() }
         if tabSwitcher.superview === content {
@@ -1012,6 +1023,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
                 return bottomBar.fontInfo.canPullToClose(at: panelPan.location(in: bottomBar.fontInfo),
                                                        velocity: panelPan.velocity(in: view))
             }
+            if bottomBar.panel == .linkSummary {
+                return bottomBar.linkSummary.canPullToClose(at: panelPan.location(in: bottomBar.linkSummary),
+                                                          velocity: panelPan.velocity(in: view))
+            }
             return true
         }
         if gestureRecognizer === tabSwipe {
@@ -1113,7 +1128,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     var canReturnFromPanel: Bool {
         guard isPanelOpen else { return false }
         switch bottomBar.panel {
-        case .history, .downloads, .siteSettings, .appSettings, .aiOptions, .aiPrompt, .privacyPolicy, .fontInfo: return true
+        case .history, .downloads, .siteSettings, .appSettings, .aiOptions, .aiPrompt, .privacyPolicy, .fontInfo, .linkSummary: return true
         default: return false
         }
     }
@@ -1363,7 +1378,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         for button in [bottomBar.history.closeButton, bottomBar.downloads.closeButton,
                        bottomBar.siteSettings.closeButton, bottomBar.appSettings.closeButton,
                        bottomBar.aiOptions.closeButton, bottomBar.aiPrompt.closeButton,
-                       bottomBar.privacyPolicy.closeButton, bottomBar.fontInfo.closeButton] {
+                       bottomBar.privacyPolicy.closeButton, bottomBar.fontInfo.closeButton,
+                       bottomBar.linkSummary.closeButton] {
             button.addAction(UIAction { [weak self] _ in self?.returnFromPanel() }, for: .primaryActionTriggered)
         }
         for (row, prompt) in zip(bottomBar.aiOptions.promptRows, AIPrompt.allCases) {
@@ -1373,6 +1389,15 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.aiPrompt.onHeightChange = { [weak self] in
             guard let self, isPanelOpen, bottomBar.panel == .aiPrompt, panelPan.state != .changed else { return }
             UIView.animate(springDuration: 0.3, bounce: 0, initialSpringVelocity: 0, delay: 0,
+                           options: [.beginFromCurrentState, .allowUserInteraction]) {
+                self.setPanel(self.panelExpansion)
+            }
+        }
+        // A line more of a link's summary, and the panel grows to keep a line's room under it.
+        bottomBar.linkSummary.onHeightChanged = { [weak self] in
+            guard let self, isPanelOpen, bottomBar.panel == .linkSummary, panelPan.state != .changed else { return }
+            guard !UIAccessibility.isReduceMotionEnabled else { setPanel(panelExpansion); return }
+            UIView.animate(springDuration: LinkSummaryPanel.growth.duration, bounce: LinkSummaryPanel.growth.bounce, initialSpringVelocity: 0, delay: 0,
                            options: [.beginFromCurrentState, .allowUserInteraction]) {
                 self.setPanel(self.panelExpansion)
             }
@@ -1406,6 +1431,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.frame = CGRect(x: 0, y: bounds.maxY-height, width: bounds.width, height: height)
         bottomBar.layer.transform = offset
         layoutBottomBarUnderfill()
+        // The toast sits on the bar's top: laid out here, it rides on whatever moves the bar, a
+        // panel opening or closing, the bar collapsing or the keyboard, with the same timing.
+        toast?.place(above: bottomBar.frame.minY, in: bounds, safeTop: view.safeAreaInsets.top)
         bottomBar.search.visibleHeight = min(SearchPanel.height, max(SearchPanel.fieldHeight,
             fullSearchHeight-keyboardHeight-BottomBar.searchTop))
         // Pages scroll clear of the open bar. Its collapsed strip leaves the inset alone, so the
@@ -1490,6 +1518,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         case .history: BottomBar.historyHeight(screenHeight: view.bounds.height, safeTop: view.safeAreaInsets.top)
         case .fontInfo: BottomBar.fontInfoHeight(bottomBar.fontInfo, width: view.bounds.width, screenHeight: view.bounds.height,
                                                  safeTop: view.safeAreaInsets.top, safeBottom: safeBottom)
+        case .linkSummary: BottomBar.linkSummaryHeight(bottomBar.linkSummary, width: view.bounds.width, screenHeight: view.bounds.height,
+                                                       safeTop: view.safeAreaInsets.top, safeBottom: safeBottom)
         }
         return max(1, height-open)
     }
@@ -1630,6 +1660,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         #endif
         bottomBar.search.end()
         bottomBar.find.end()
+        bottomBar.linkSummary.cancel()
         bottomBar.showContents(of: nil)
         updatePrivacyAppearance(animated: true)
         updatePageIndicators()
@@ -2162,7 +2193,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             return summary
         }
         let inMemory = tab.summary(of: page)
-        let onDisk = inMemory == nil && keeps ? loaded.flatMap(SummaryCache.summary(for:)) : nil
+        // Summarised from a held link's menu, it's kept by its address too, as the page's text
+        // as it loads here can differ from the text read then.
+        let onDisk = inMemory == nil && keeps
+            ? loaded.flatMap(SummaryCache.summary(for:)) ?? url.flatMap { SummaryCache.linkSummary(for: $0) } : nil
         summarise.memorised = inMemory ?? onDisk
         if keeps, summarise.memorised == nil {
             Task { [weak summarise, weak tab, weak page] in

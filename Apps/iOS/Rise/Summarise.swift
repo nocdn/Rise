@@ -261,14 +261,32 @@ struct PageSummary: Equatable {
         return context
     }
 
-    /// Asks the shared model for the page's summary, all at once, as it's revealed all at once.
-    @MainActor static func make(of page: PageAssistant.Page, provider: ModelChoice = .openRouter, session: URLSession = .shared) async throws -> PageSummary {
-        let messages: [[String: Any]] = [
+    /// What Summarise asks the model, by the pinch, More or a held link's menu alike.
+    static func messages(of page: PageAssistant.Page) -> [[String: Any]] {
+        [
             ["role": "system", "content": AIPrompt.summarise.system(context: context(of: page),
                                                                      values: ["title": page.title, "address": page.url, "text": page.text])],
             ["role": "user", "content": "Summarise this page."],
         ]
-        return try decode(try await reply(to: messages, provider: provider, session: session))
+    }
+
+    /// Asks the shared model for the page's summary, all at once, as it's revealed all at once.
+    @MainActor static func make(of page: PageAssistant.Page, provider: ModelChoice = .openRouter, session: URLSession = .shared) async throws -> PageSummary {
+        try decode(try await reply(to: messages(of: page), provider: provider, session: session))
+    }
+
+    /// The same summary, handing over the reply so far as it streams in, for a held link's
+    /// Summarise, which shows it as it comes.
+    @MainActor static func stream(of page: PageAssistant.Page, provider: ModelChoice = .openRouter, session: URLSession = .shared,
+                                  streamed: @MainActor (String) -> Void) async throws -> PageSummary {
+        var reply = ""
+        try await ModelService.run(messages(of: page), provider: provider, session: session) { event in
+            guard case .text(let text) = event else { return }
+            reply += text
+            streamed(reply)
+        }
+        try Task.checkCancellation()
+        return try decode(reply)
     }
 
     /// Answers a question asked under the summary, after the ones before it, handing over the
