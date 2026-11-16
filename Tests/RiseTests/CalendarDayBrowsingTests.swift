@@ -114,6 +114,29 @@ import XCTest
         XCTAssertEqual(agenda.displayedDay, day(1))
     }
 
+    func testPinchingResizesTheCardWhileItsOpenItsTopMovingHalfAsFarAsItsFoot() async throws {
+        let agenda = try await loadedAgenda(), card = CalendarTooltip()
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 600, height: 900), styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView?.addSubview(card); window.orderFront(nil)
+        defer { card.dismiss(animated: false); agenda.tearDown(); window.orderOut(nil) }
+        agenda.onChange = { card.update(agenda) }
+        func open() { card.present(key: "test", agenda: agenda, left: 10, anchorTop: 200, maxBottom: 880, theme: .neutral) }
+        open()
+        let usual = card.frame
+        // Midday, with room above and below, whatever the time now.
+        card.scroll.contentView.scroll(to: NSPoint(x: 0, y: 400)); card.scroll.reflectScrolledClipView(card.scroll.contentView)
+        let hour = card.convert(NSPoint(x: 0, y: 0), from: card.timeline).y
+        card.pinch(by: 0.3)
+        let grown = card.frame
+        XCTAssertGreaterThan(grown.height, usual.height+60)
+        XCTAssertEqual(grown.maxY-usual.maxY, 2*(usual.minY-grown.minY), accuracy: 1.5, "The foot moves twice as far as the top")
+        XCTAssertEqual(card.convert(NSPoint(x: 0, y: 0), from: card.timeline).y-(usual.minY-grown.minY), hour, accuracy: 0.5, "The timeline stays put")
+        card.pinch(by: -0.9)
+        XCTAssertEqual(card.frame.height, CalendarTooltip.minimumPinchedHeight, accuracy: 0.5)
+        card.dismiss(animated: false); open()
+        XCTAssertEqual(card.frame, usual, "Opened again, it's its usual size")
+    }
+
     func testFailedInvitationAnswerIsRestoredEvenAfterSwipingToAnotherDay() async throws {
         let agenda = try await loadedAgenda(); defer { agenda.tearDown() }
         agenda.loadDay = { _, date in [self.snapshot(date)] }

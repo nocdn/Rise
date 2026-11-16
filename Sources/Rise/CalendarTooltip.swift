@@ -170,6 +170,11 @@ final class CalendarTimeline: FlippedView {
     var menuFor: ((CalendarEvent) -> NSMenu?)?
     /// While an event's menu is open, the card stays, with the event highlighted.
     private var menuEvent: String?, menuOpen = false
+    /// How much taller (or, below zero, shorter) a pinch has made it, only while it's open.
+    private(set) var pinchedHeight: CGFloat = 0
+    private var pinchMonitor: Any?
+    /// The shortest a pinch makes it.
+    static let minimumPinchedHeight: CGFloat = 160
     private var background: NSColor { theme == .dark ? theme.popup : TabAppearance.selectedFill(theme) }
 
     init() {
@@ -324,6 +329,7 @@ final class CalendarTimeline: FlippedView {
         update(agenda)
         if appearing { height.settle(); navigationSlide.settle(); if !glides { top.settle() }; render() }
         if appearing && !glides { CardMotionAnimator.animateIn(self, CardMotion.selected, tab: tabOrigin) }
+        if appearing { watchPinches() }
         // Opens at the hour now, a little of the hour before showing above it.
         if appearing || switching { scrollToNow(); scroll.hideScrollerUntilScrolled() }
         animate()
@@ -404,6 +410,8 @@ final class CalendarTimeline: FlippedView {
     func dismiss(animated: Bool = true) {
         let wasShown = key != nil
         key = nil; link?.invalidate(); link = nil; clock?.invalidate(); clock = nil; shimmer.cancel()
+        if let pinchMonitor { NSEvent.removeMonitor(pinchMonitor); self.pinchMonitor = nil }
+        pinchedHeight = 0
         slidesDays = false; finishDaySlide(); agenda?.endBrowsing()
         height.settle(); top.settle(); navigationSlide.target = 0; navigationSlide.settle(); daySwipe = CalendarDaySwipe(); ownsScroll = false; lastScroll = nil; lastDayScroll = nil
         if wasShown { agenda?.selectDay(nil) }
@@ -443,8 +451,9 @@ final class CalendarTimeline: FlippedView {
     private var allDayRows: Int { allDayChips.count + (moreAllDay.stringValue.isEmpty ? 0 : 1) }
     private var allDayHeaderHeight: CGFloat { allDayRows == 0 ? 0 : CGFloat(allDayRows)*(Self.allDayHeight+Self.allDayGap)+Self.allDayGap+4 }
     private func layoutCard() {
-        height.target = min(Self.preferredHeight+allDayHeaderHeight, max(120, maxBottom-8))
-        top.target = max(8, min(anchorTop, maxBottom-height.target))
+        height.target = min(Self.preferredHeight+allDayHeaderHeight+pinchedHeight, max(120, maxBottom-8))
+        // Its top moves half as far as its foot as a pinch resizes it.
+        top.target = max(8, min(anchorTop-pinchedHeight/3, maxBottom-height.target))
         timeline.setFrameSize(NSSize(width: Self.width, height: CalendarTimeline.contentHeight))
         let columnsWidth = Self.width-CalendarTimeline.labelWidth-CalendarTimeline.trailing
         let minimum = 18/CalendarTimeline.hourHeight*60
@@ -511,6 +520,31 @@ final class CalendarTimeline: FlippedView {
         panel.layer?.shadowPath = PageOutline.path(in: panel.bounds, radius: FindBar.radius, continuous: true)
     }
     @objc private func scrolled() { updateHover() }
+    /// A pinch over the card, wherever in it, is the card's, not the page's beneath.
+    private func watchPinches() {
+        guard pinchMonitor == nil else { return }
+        pinchMonitor = NSEvent.addLocalMonitorForEvents(matching: .magnify) { [weak self] event in
+            guard let self, key != nil, !isHidden, event.window === window, let superview,
+                  frame.contains(superview.convert(event.locationInWindow, from: nil)) else { return event }
+            pinch(by: event.magnification)
+            return nil
+        }
+    }
+    /// Spreading the fingers makes it taller and pinching them shorter, at once under them: its
+    /// foot moves twice as far as its top, and the timeline stays put on the screen as its edges move.
+    func pinch(by magnification: CGFloat) {
+        guard key != nil, magnification.isFinite else { return }
+        let usual = Self.preferredHeight+allDayHeaderHeight
+        let tallest = max(Self.minimumPinchedHeight, maxBottom-8-Self.navigationHeight*navigationSlide.target)
+        pinchedHeight = max(Self.minimumPinchedHeight, min(tallest, usual+pinchedHeight+magnification*(usual+pinchedHeight)))-usual
+        let before = frame.minY
+        layoutCard(); height.settle(); top.settle(); render()
+        let moved = frame.minY-before, clip = scroll.contentView
+        guard moved != 0 else { return }
+        let most = max(0, CalendarTimeline.contentHeight-clip.bounds.height)
+        clip.scroll(to: NSPoint(x: 0, y: max(0, min(most, clip.bounds.minY+moved))))
+        scroll.reflectScrolledClipView(clip)
+    }
     @objc private func retryLoading() { onRetry?() }
     private func animate() {
         guard window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { height.settle(); top.settle(); navigationSlide.settle(); finishDaySlide(); render(); return }
