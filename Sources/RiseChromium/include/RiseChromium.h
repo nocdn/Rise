@@ -42,6 +42,11 @@ RC_EXPORT @interface RCEngine : NSObject
 + (void)setNotificationPermission:(NSInteger)permission forOrigin:(NSString *)origin;
 /// Whether sites without a choice may ask to show notifications (YES) or are refused (NO).
 + (void)setNotificationsAsk:(BOOL)ask;
+/// What `origin` may do with `permissions`, as Rise's site settings say: allowed (1), blocked
+/// (-1), or to ask (0). Chrome keeps a site's allowed camera, microphone and location, so a page
+/// that checks before asking sees them allowed, and needs Rise's changes to them.
+/// `permissions` are `RCPermission` flags, declared below.
++ (void)setPermissions:(NSUInteger)permissions state:(NSInteger)state forOrigin:(NSString *)origin;
 /// Stops Chromium; call as the app terminates.
 + (void)shutdown;
 @end

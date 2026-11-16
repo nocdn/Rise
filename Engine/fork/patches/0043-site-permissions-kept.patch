@@ -1,0 +1,77 @@
+diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
+index 550c19f..5f7931d 100644
+--- a/chrome/browser/rise/RiseChromium.h
++++ b/chrome/browser/rise/RiseChromium.h
+@@ -42,6 +42,11 @@ RC_EXPORT @interface RCEngine : NSObject
+ + (void)setNotificationPermission:(NSInteger)permission forOrigin:(NSString *)origin;
+ /// Whether sites without a choice may ask to show notifications (YES) or are refused (NO).
+ + (void)setNotificationsAsk:(BOOL)ask;
++/// What `origin` may do with `permissions`, as Rise's site settings say: allowed (1), blocked
++/// (-1), or to ask (0). Chrome keeps a site's allowed camera, microphone and location, so a page
++/// that checks before asking sees them allowed, and needs Rise's changes to them.
++/// `permissions` are `RCPermission` flags, declared below.
+++ (void)setPermissions:(NSUInteger)permissions state:(NSInteger)state forOrigin:(NSString *)origin;
+ /// Stops Chromium; call as the app terminates.
+ + (void)shutdown;
+ @end
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index 01c45e3..e2cbd13 100644
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -1463,15 +1463,15 @@ void Decide(bool allowed) {
+         allowed_types.push_back(request->GetContentSettingsType());
+       }
+       bool element = delegate->GetEmbeddedPromptFlowModel() != nullptr;
+-      // Notifications come later, when the page may be gone, so Chrome keeps
+-      // them allowed, as Rise does.
++      // Kept for the site, as Rise keeps it: a page checking first (as Meet
++      // does with the Permissions API) sees it allowed, and notifications can
++      // come when the page is gone. Rise tells Chrome when it changes.
+       bool keeps = allowed_types.size() == 1 &&
+                    allowed_types[0] == ContentSettingsType::NOTIFICATIONS;
++      delegate->Accept(prompt_options);
+       if (keeps) {
+-        delegate->Accept(prompt_options);
+         return;
+       }
+-      delegate->AcceptThisTime(prompt_options);
+       // An element's request asks macOS in its own next step.
+       if (!element) {
+         AskSystemForLocation(allowed_types);
+@@ -1941,6 +1941,36 @@ + (void)setNotificationPermission:(NSInteger)permission
+   }];
+ }
+ 
+++ (void)setPermissions:(NSUInteger)permissions
++                 state:(NSInteger)state
++             forOrigin:(NSString*)origin {
++  GURL url(base::SysNSStringToUTF8(origin));
++  if (!url.is_valid() || !url.SchemeIsHTTPOrHTTPS()) {
++    return;
++  }
++  std::vector<ContentSettingsType> types;
++  if (permissions & RCPermissionCamera) {
++    types.push_back(ContentSettingsType::MEDIASTREAM_CAMERA);
++  }
++  if (permissions & RCPermissionMicrophone) {
++    types.push_back(ContentSettingsType::MEDIASTREAM_MIC);
++  }
++  if (permissions & RCPermissionLocation) {
++    types.push_back(ContentSettingsType::GEOLOCATION);
++  }
++  if (permissions & RCPermissionNotifications) {
++    types.push_back(ContentSettingsType::NOTIFICATIONS);
++  }
++  ContentSetting setting = state > 0   ? CONTENT_SETTING_ALLOW
++                           : state < 0 ? CONTENT_SETTING_BLOCK
++                                       : CONTENT_SETTING_DEFAULT;
++  [self whenStarted:^(HostContentSettingsMap* settings) {
++    for (ContentSettingsType type : types) {
++      settings->SetContentSettingDefaultScope(url, GURL(), type, setting);
++    }
++  }];
++}
++
+ + (void)setNotificationsAsk:(BOOL)ask {
+   [self whenStarted:^(HostContentSettingsMap* settings) {
+     settings->SetDefaultContentSetting(

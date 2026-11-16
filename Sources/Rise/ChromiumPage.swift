@@ -86,6 +86,23 @@ enum RisePages {
         guard showsSiteNotifications else { return }
         RCEngine.setNotificationsAsk(ask)
     }
+    /// Whether Chrome keeps sites' allowed camera, microphone and location as Rise's site settings
+    /// say (patch 0043), so a page that checks before asking, as Meet does, sees them allowed.
+    static var keepsSitePermissions: Bool {
+        isRunning && (RCEngine.self as AnyObject).responds(to: #selector(RCEngine.setPermissions(_:state:forOrigin:)))
+    }
+    /// Tells Chrome what a site may do, as Rise's site settings say.
+    static func setPermission(_ permission: SitePermission, for capability: SiteCapability, origin: String) {
+        let kind: RCPermission
+        switch capability {
+        case .camera: kind = .camera
+        case .microphone: kind = .microphone
+        case .location: kind = .location
+        case .notifications: setNotifications(permission, origin: origin); return
+        }
+        guard keepsSitePermissions else { return }
+        RCEngine.setPermissions(kind.rawValue, state: permission == .allow ? 1 : permission == .block ? -1 : 0, forOrigin: origin)
+    }
 }
 
 /// Focusing a page's view focuses the page itself, as Chrome does: the view holding it takes no keys.

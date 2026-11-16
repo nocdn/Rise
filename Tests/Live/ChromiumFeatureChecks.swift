@@ -933,6 +933,16 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         _ = await waitUntil("Rise asks before the site gets the camera") { browser.permissionCoordinator.isShowingPrompt }
         browser.permissionCoordinator.resolve(true)
         _ = await waitUntil("Allowing gives the site the camera") { await value("return window.camera", in: ask.page) as? String == "granted 1" }
+        if ChromiumEngine.keepsSitePermissions {
+            // As Chrome keeps it: a page checking first, as Meet does, sees it allowed after a reload.
+            let state = "return (await navigator.permissions.query({name: 'camera'})).state"
+            ask.page.reload()
+            _ = await waitUntil("The camera stays allowed for the site") { await value(state, in: ask.page) as? String == "granted" }
+            if let origin = SitePermissions.origin(ask.page.url) {
+                browser.setSitePermission(.ask, for: .camera, origin: origin)
+                _ = await waitUntil("Set back to ask in Rise, the site has to ask again") { await value(state, in: ask.page) as? String == "prompt" }
+            }
+        }
         _ = await value("""
             navigator.geolocation.getCurrentPosition(() => window.place = 'granted', e => window.place = 'denied ' + e.code)
             """, in: ask.page)

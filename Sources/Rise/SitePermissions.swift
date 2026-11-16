@@ -55,21 +55,26 @@ enum SitePermission: String, CaseIterable {
     func set(_ value: SitePermission, for capability: SiteCapability, origin: String) {
         decisions[origin, default: [:]][capability.rawValue] = value.rawValue
         preferences.set(decisions, forKey: Self.preferenceKey)
-        if capability == .notifications { ChromiumEngine.setNotifications(value, origin: origin) }
+        ChromiumEngine.setPermission(value, for: capability, origin: origin)
     }
-    /// Chrome shows sites' notifications, so it's told every choice Rise keeps for them.
-    func shareNotificationChoices() {
+    /// Chrome keeps what sites are allowed, as Chrome does, so it's told every choice Rise keeps:
+    /// a page checking before it asks then sees what Rise would answer.
+    func shareChoices() {
         ChromiumEngine.setNotificationsAsk(defaultNotifications != .block)
         for (origin, site) in decisions {
-            if let value = site[SiteCapability.notifications.rawValue].flatMap(SitePermission.init(rawValue:)) {
-                ChromiumEngine.setNotifications(value, origin: origin)
+            for capability in SiteCapability.allCases {
+                if let value = site[capability.rawValue].flatMap(SitePermission.init(rawValue:)) {
+                    ChromiumEngine.setPermission(value, for: capability, origin: origin)
+                }
             }
         }
     }
     /// Forgets what the site was allowed or refused, so it's asked again; its other settings stay.
     func reset(origin: String) {
         guard var site = decisions[origin] else { return }
-        if site[SiteCapability.notifications.rawValue] != nil { ChromiumEngine.setNotifications(.ask, origin: origin) }
+        for capability in SiteCapability.allCases where site[capability.rawValue] != nil {
+            ChromiumEngine.setPermission(.ask, for: capability, origin: origin)
+        }
         SiteCapability.allCases.forEach { site.removeValue(forKey: $0.rawValue) }
         decisions[origin] = site.isEmpty ? nil : site
         preferences.set(decisions, forKey: Self.preferenceKey)
