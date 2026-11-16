@@ -22,7 +22,7 @@ import AppKit
 
     func install() {
         guard monitor == nil else { return }
-        FloatingPageEntrance.shared.install(); FloatingPageExit.shared.install()
+        FloatingPageEntrance.shared.install(); FloatingPageExit.shared.install(); FloatingPageWatcher.shared.install()
         FloatingPageTuck.shared.onUntuck = { [weak self] window in self?.untuck(window) }
         monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
             self?.route(.from(event), in: event.window, at: event.locationInWindow) == true ? nil : event
@@ -41,9 +41,25 @@ import AppKit
         }
         // Tucked, the veil over the window takes the scroll, anywhere on it.
         let veil = window as? FloatingPageVeil
-        guard input.precise, input.momentumPhase.isEmpty, input.phase.contains(.began),
-              let window = veil?.page ?? window, veil != nil || Self.startsMove(at: point, in: window) else { return false }
-        begin(window, at: input.timestamp)
+        guard input.momentumPhase.isEmpty, input.phase.contains(.began), let window = veil?.page ?? window else { return false }
+        // A dialog the window holds (the auto picture-in-picture choice, a site's permission) is a
+        // window of its own over it, and leaves the bar beneath it to move the window.
+        var page = window, location = point
+        if veil == nil, !Self.isFloatingPage(window), let parent = window.parent, Self.isFloatingPage(parent) {
+            let inParent = parent.convertPoint(fromScreen: window.convertPoint(toScreen: point))
+            if Self.startsMove(at: inParent, in: parent) { page = parent; location = inParent }
+        }
+        let moves = input.precise && (veil != nil || Self.startsMove(at: location, in: page))
+        if FloatingPageWatcher.shared.watches(page) {
+            let reason = !input.precise ? "not a trackpad's" : veil != nil ? "on its tuck veil"
+                : !Self.isFloatingChromeWindow(page) ? "not Chrome's floating window"
+                : !Self.isFloatingPage(page) ? "the window doesn't hold its page yet"
+                : location.y < page.frame.height-Self.barHeight ? "below the bar, so the page's" : "on the bar"
+            let verb = moves ? "move" : "don't move"
+            FloatingPageLog.logger.notice("Two fingers \(verb, privacy: .public) it: \(reason, privacy: .public), at y \(Int(location.y)) of \(Int(page.frame.height)); \(FloatingPageLog.describe(page), privacy: .public)")
+        }
+        guard moves else { return false }
+        begin(page, at: input.timestamp)
         handle(input)
         return true
     }
@@ -82,10 +98,13 @@ import AppKit
         stopClock()
         FloatingPageEntrance.shared.finish(window)
         self.window = window
-        var motion = FloatingVideoMotion(frame: window.frame, visibleFrame: placementArea(on: screen),
+        let area = placementArea(on: screen)
+        var motion = FloatingVideoMotion(frame: window.frame, visibleFrame: area,
                                          tucked: FloatingPageTuck.shared.edge(of: window), tuckable: FloatingTuckLook.tuckableEdges(of: screen))
         motion.begin(at: timestamp)
         self.motion = motion; swallowsMomentum = false
+        let tucked = motion.tucked.map { ", tucked \($0)" } ?? ""
+        FloatingPageLog.logger.notice("Two fingers take it\(tucked, privacy: .public), within \(FloatingPageLog.describe(area), privacy: .public): \(FloatingPageLog.describe(window), privacy: .public)")
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
         startClock()
         // The window slides out from under the pointer, which may then be over another app.
@@ -107,6 +126,10 @@ import AppKit
     }
     private func end(at timestamp: TimeInterval, cancelled: Bool) {
         motion?.end(at: timestamp, cancelled: cancelled, reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        if let motion {
+            let verb = cancelled ? "stop" : "let go", tucking = motion.tucked.map { ", tucking \($0)" } ?? ""
+            FloatingPageLog.logger.notice("Two fingers \(verb, privacy: .public) at \(FloatingPageLog.describe(motion.frame), privacy: .public), flung \(Int(motion.velocity.dx)), \(Int(motion.velocity.dy)) pt/s\(tucking, privacy: .public)")
+        }
         lastInput = nil; swallowsMomentum = !cancelled
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor); self.globalMonitor = nil }
         startClock()
@@ -138,11 +161,16 @@ import AppKit
         let reduced = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         motion?.step(elapsed: elapsed, reduceMotion: reduced)
         // Moving the window without resizing it leaves the page's layout and drawing alone.
-        if let origin = motion?.frame.origin, origin != window.frame.origin { window.setFrameOrigin(origin) }
+        if let origin = motion?.frame.origin, origin != window.frame.origin {
+            FloatingPageLog.riseIsMoving = true; window.setFrameOrigin(origin); FloatingPageLog.riseIsMoving = false
+        }
         if let screen = window.screen ?? NSScreen.main {
             FloatingPageTuck.shared.apply(window, edge: motion?.tucked, area: placementArea(on: screen), dragging: dragging)
         }
-        if motion?.phase == .idle { motion = nil }
+        if motion?.phase == .idle {
+            FloatingPageLog.logger.notice("Settles: \(FloatingPageLog.describe(window), privacy: .public)")
+            motion = nil
+        }
         if motion == nil { stopClock() }
     }
 }
@@ -187,6 +215,7 @@ import AppKit
     private func begin(_ window: NSWindow) {
         guard !entered.contains(window) else { return }
         entered.add(window)
+        FloatingPageLog.logger.notice("Comes in: \(FloatingPageLog.describe(window), privacy: .public), holding its page \(FloatingPageGestures.isFloatingPage(window))")
         guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, Self.setTransform != nil, Self.connection != nil,
               let screen = window.screen ?? NSScreen.main else { return }
         finish(self.window)

@@ -44,7 +44,7 @@ import RiseCore
         let port = ProcessInfo.processInfo.environment["RISE_CHECK_PORTS"]!.split(separator: ",")[0]
         try? "<!doctype html><title>Call</title><h1>Call</h1>".write(to: folder.appendingPathComponent("call.html"), atomically: true, encoding: .utf8)
         let tab = browser.addTab(url: URL(string: "http://localhost:\(port)/call.html")!)
-        _ = await waitUntil(10) { (try? await tab.page.evaluate("return document.readyState", arguments: [:], in: nil, world: .page)) as? String == "complete" }
+        _ = await waitUntil(10) { (try? await tab.page.evaluate("return location.pathname + ' ' + document.readyState", arguments: [:], in: nil, world: .page)) as? String == "/call.html complete" }
         let opened: Any?
         do { opened = try await tab.page.evaluate("""
             const w = await documentPictureInPicture.requestWindow({width: 420, height: 260});

@@ -1,0 +1,247 @@
+diff --git a/chrome/browser/picture_in_picture/picture_in_picture_window_manager.cc b/chrome/browser/picture_in_picture/picture_in_picture_window_manager.cc
+index b02065e..45408e6 100644
+--- a/chrome/browser/picture_in_picture/picture_in_picture_window_manager.cc
++++ b/chrome/browser/picture_in_picture/picture_in_picture_window_manager.cc
+@@ -7,6 +7,9 @@
+ #include "base/memory/raw_ptr.h"
+ #include "base/numerics/safe_conversions.h"
+ #include "chrome/browser/picture_in_picture/picture_in_picture_bounds_cache.h"
++#include "chrome/browser/picture_in_picture/rise_pip_log.h"
++#include "base/strings/strcat.h"
++#include "base/strings/string_number_conversions.h"
+ #include "chrome/browser/ui/navigator/browser_navigator_params.h"
+ #include "content/public/browser/document_picture_in_picture_window_controller.h"
+ #include "content/public/browser/navigation_handle.h"
+@@ -448,6 +451,9 @@ gfx::Rect PictureInPictureWindowManager::CalculateOuterWindowBounds(
+     // this request.
+     if (cached_window_bounds && !pip_options.prefer_initial_window_placement) {
+       // Cache hit!  Just return it as the window bounds.
++      rise_pip::Log(base::StrCat(
++          {"window bounds: the cache's ", cached_window_bounds->ToString(),
++           " in the work area ", work_area.ToString()}));
+       return *cached_window_bounds;
+     }
+   }
+@@ -511,6 +517,14 @@ gfx::Rect PictureInPictureWindowManager::CalculateOuterWindowBounds(
+       gfx::Point(window_diff_width - buffer, window_diff_height - buffer);
+   window_bounds.set_origin(default_origin);
+ 
++  rise_pip::Log(base::StrCat(
++      {"window bounds: ", window_bounds.ToString(), " in the work area ",
++       work_area.ToString(), ", the site asking for ",
++       base::NumberToString(pip_options.width), "x",
++       base::NumberToString(pip_options.height),
++       pip_options.prefer_initial_window_placement
++           ? ", preferring its first placement"
++           : ""}));
+   return window_bounds;
+ }
+ 
+diff --git a/chrome/browser/picture_in_picture/rise_pip_log.h b/chrome/browser/picture_in_picture/rise_pip_log.h
+new file mode 100644
+index 0000000..8a9cc8b
+--- /dev/null
++++ b/chrome/browser/picture_in_picture/rise_pip_log.h
+@@ -0,0 +1,38 @@
++// Copyright 2026 Rise
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#ifndef CHROME_BROWSER_PICTURE_IN_PICTURE_RISE_PIP_LOG_H_
++#define CHROME_BROWSER_PICTURE_IN_PICTURE_RISE_PIP_LOG_H_
++
++#include <string>
++
++#include "build/build_config.h"
++
++#if BUILDFLAG(IS_MAC)
++#include <os/log.h>
++#endif
++
++namespace rise_pip {
++
++// Rise's diagnostics for a page's floating window, in the system log beside
++// Rise's own (subsystem dev.bartosz.Rise, category FloatingPage): where Chrome
++// places and moves the window, and why. Never the page's address.
++inline void Log(const std::string& message) {
++#if BUILDFLAG(IS_MAC)
++  static os_log_t logger = os_log_create("dev.bartosz.Rise", "FloatingPage");
++  os_log(logger, "engine: %{public}s", message.c_str());
++#endif
++}
++
++// For what happens on every frame of a move, kept only while streaming.
++inline void LogDebug(const std::string& message) {
++#if BUILDFLAG(IS_MAC)
++  static os_log_t logger = os_log_create("dev.bartosz.Rise", "FloatingPage");
++  os_log_debug(logger, "engine: %{public}s", message.c_str());
++#endif
++}
++
++}  // namespace rise_pip
++
++#endif  // CHROME_BROWSER_PICTURE_IN_PICTURE_RISE_PIP_LOG_H_
+diff --git a/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.cc b/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.cc
+index 6fb1447..64dcffc 100644
+--- a/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.cc
++++ b/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.cc
+@@ -12,6 +12,8 @@
+ #include "base/task/single_thread_task_runner.h"
+ #include "chrome/browser/picture_in_picture/picture_in_picture_occlusion_tracker.h"
+ #include "chrome/browser/picture_in_picture/picture_in_picture_window_manager.h"
++#include "chrome/browser/picture_in_picture/rise_pip_log.h"
++#include "base/strings/strcat.h"
+ #include "chrome/browser/ui/browser_content_setting_bubble_model_delegate.h"
+ #include "chrome/browser/ui/browser_element_identifiers.h"
+ #include "chrome/browser/ui/browser_init_state.h"
+@@ -411,6 +413,8 @@ void PictureInPictureBrowserFrameView::OnBrowserViewInitViewsComplete() {
+           GetMinimumSize() + gfx::Size(insets.width(), insets.height()),
+           excluded_margin);
+ 
++  rise_pip::Log(base::StrCat({"window bounds with its frame: ",
++                              window_bounds.ToString()}));
+   BrowserInitState::From(GetBrowserView()->browser())
+       ->set_override_bounds(window_bounds);
+ }
+@@ -629,6 +633,10 @@ void PictureInPictureBrowserFrameView::SetFrameBounds(const gfx::Rect& bounds) {
+ 
+   base::UmaHistogramBoolean(
+       "Media.DocumentPictureInPicture.RequestedLargeResize", did_adjust_size);
++  rise_pip::Log(base::StrCat(
++      {"set to ", bounds.ToString(), " (", adjusted_bounds.ToString(),
++       " to fit) from ", current_bounds.ToString(),
++       is_tucking_forced_ ? ", tucked by Chrome" : ""}));
+ 
+   if (!base::FeatureList::IsEnabled(
+           media::kDocumentPictureInPictureAnimateResize) ||
+@@ -808,6 +816,12 @@ PictureInPictureBrowserFrameView::GetContentSettingBubbleModelDelegate() {
+ void PictureInPictureBrowserFrameView::OnWidgetActivationChanged(
+     views::Widget* widget,
+     bool active) {
++  rise_pip::Log(base::StrCat(
++      {active ? "active" : "inactive", " at ",
++       widget->GetWindowBoundsInScreen().ToString(),
++       mouse_inside_window_ ? ", the pointer over it" : "",
++       IsOverlayViewVisible() ? ", showing the auto picture-in-picture choice"
++                              : ""}));
+   // The window may become inactive when a popup modal shows, so we need to
+   // check if the mouse is still inside the window.
+   UpdateTopBarView(active || mouse_inside_window_ || IsOverlayViewVisible());
+@@ -864,6 +878,7 @@ void PictureInPictureBrowserFrameView::SetForcedTucking(bool tuck) {
+     tucker_ = std::make_unique<PictureInPictureTucker>(*GetWidget());
+   }
+   is_tucking_forced_ = tuck;
++  rise_pip::Log(tuck ? "Chrome tucks it away" : "Chrome lets it out");
+ 
+   // Attempting to tuck our Widget before it's been shown causes issues since
+   // it may be still adjusting its bounds. Once visible, tucking will be
+diff --git a/chrome/browser/ui/views/picture_in_picture/picture_in_picture_tucker.cc b/chrome/browser/ui/views/picture_in_picture/picture_in_picture_tucker.cc
+index 3ff2c72..0b47f1e 100644
+--- a/chrome/browser/ui/views/picture_in_picture/picture_in_picture_tucker.cc
++++ b/chrome/browser/ui/views/picture_in_picture/picture_in_picture_tucker.cc
+@@ -8,6 +8,8 @@
+ #include "ui/display/display.h"
+ #include "ui/display/screen.h"
+ #include "ui/views/widget/widget.h"
++#include "base/strings/strcat.h"
++#include "chrome/browser/picture_in_picture/rise_pip_log.h"
+ 
+ namespace {
+ 
+@@ -67,6 +69,9 @@ void PictureInPictureTucker::Tuck() {
+                              combined_work_area.width() - kTuckEdgeLength);
+   }
+ 
++  rise_pip::Log(base::StrCat({"Chrome tucks the window from ",
++                              current_bounds.ToString(), " to ",
++                              destination_bounds.ToString()}));
+   animation_ = std::make_unique<PictureInPictureBoundsChangeAnimation>(
+       *pip_widget_, destination_bounds);
+   animation_->Start();
+@@ -85,6 +90,8 @@ void PictureInPictureTucker::Untuck() {
+   tucking_ = false;
+   gfx::Rect destination_bounds = pip_widget_->GetWindowBoundsInScreen();
+   destination_bounds.set_origin(pretuck_location_);
++  rise_pip::Log(base::StrCat({"Chrome untucks the window to ",
++                              destination_bounds.ToString()}));
+   animation_ = std::make_unique<PictureInPictureBoundsChangeAnimation>(
+       *pip_widget_, destination_bounds);
+   animation_->Start();
+diff --git a/chrome/browser/ui/views/picture_in_picture/pip_child_dialog_observer_helper.cc b/chrome/browser/ui/views/picture_in_picture/pip_child_dialog_observer_helper.cc
+index ca7b7e2..f3a6269 100644
+--- a/chrome/browser/ui/views/picture_in_picture/pip_child_dialog_observer_helper.cc
++++ b/chrome/browser/ui/views/picture_in_picture/pip_child_dialog_observer_helper.cc
+@@ -12,6 +12,9 @@
+ #include "base/task/sequenced_task_runner.h"
+ #include "base/time/time.h"
+ #include "build/build_config.h"
++#include "base/strings/strcat.h"
++#include "base/strings/string_number_conversions.h"
++#include "chrome/browser/picture_in_picture/rise_pip_log.h"
+ #include "ui/compositor/layer.h"
+ #include "ui/views/animation/animation_builder.h"
+ #include "ui/views/view.h"
+@@ -40,6 +43,8 @@ PipChildDialogObserverHelper::PipChildDialogObserverHelper(Delegate* delegate)
+   // to grab the bounds now else we'll believe that the user's most recently
+   // desired size is (0,0)-0x0.
+   latest_user_desired_bounds_ = pip_widget_->GetWindowBoundsInScreen();
++  rise_pip::Log(base::StrCat({"watching child dialogs, the window at ",
++                              latest_user_desired_bounds_.ToString()}));
+ }
+ 
+ PipChildDialogObserverHelper::~PipChildDialogObserverHelper() = default;
+@@ -62,6 +67,9 @@ void PipChildDialogObserverHelper::OnWidgetBoundsChanged(
+     latest_child_dialog_forced_bounds_ = new_bounds;
+     return;
+   }
++  rise_pip::LogDebug(base::StrCat(
++      {"moved to ", new_bounds.ToString(), ", sized for a child dialog: ",
++       base::NumberToString(static_cast<int>(resizing_state_))}));
+ 
+   // Otherwise, this was due to a user resizing/moving the window, so track this
+   // new location as a user-desired one. If they've also changed the size from
+@@ -133,6 +141,12 @@ void PipChildDialogObserverHelper::OnWidgetChildAdded(
+   }
+ 
+   child_dialog_observations_.AddObservation(child_dialog);
++  rise_pip::Log(base::StrCat(
++      {"a child dialog opens at ",
++       child_dialog->GetWindowBoundsInScreen().ToString(),
++       child_dialog->IsVisible() ? ", showing" : ", hidden",
++       child_dialog->IsModal() ? ", modal" : "", ", the window at ",
++       pip_widget_->GetWindowBoundsInScreen().ToString()}));
+   if (child_dialog->IsVisible()) {
+     MaybeResizeForChildDialog(child_dialog, /*resize_immediately=*/true);
+   } else {
+@@ -241,6 +255,9 @@ void PipChildDialogObserverHelper::FinishPendingResizeForChild() {
+   CHECK_EQ(resizing_state_, ResizingState::kPendingResizeForChild);
+ 
+   resizing_state_ = ResizingState::kResizeForChildInProgress;
++  rise_pip::Log(base::StrCat({"sizing for child dialogs to ",
++                              pending_bounds_.ToString(), " from ",
++                              pip_widget_->GetWindowBoundsInScreen().ToString()}));
+   pip_widget_->SetBoundsConstrained(pending_bounds_);
+   // Give owners that position their own dialogs (e.g. the standalone host) a
+   // chance to keep each visible dialog aligned with the resized window. The
+@@ -360,6 +377,10 @@ void PipChildDialogObserverHelper::MaybeResizeForChildDialog(
+     child_dialogs_waiting_for_resize_.insert(child_dialog);
+   }
+ 
++  rise_pip::Log(base::StrCat(
++      {"a child dialog at ", dialog_bounds.ToString(),
++       child_dialog->IsModal() ? " (modal)" : "", " grows the window from ",
++       original_bounds.ToString(), " to ", adjusted_bounds.ToString()}));
+   PostResizeForChild(adjusted_bounds);
+   if (resize_immediately) {
+     RunPendingChildResize();
+@@ -387,6 +408,10 @@ void PipChildDialogObserverHelper::MaybeRevertSizeAfterChildDialogCloses() {
+   }
+   resizing_state_ = ResizingState::kNotSizedToChildren;
+   resize_timer_.Stop();
++  rise_pip::Log(base::StrCat(
++      {"the child dialogs closed: back to the user's bounds ",
++       latest_user_desired_bounds_.ToString(), " from ",
++       pip_widget_->GetWindowBoundsInScreen().ToString()}));
+   pip_widget_->SetBoundsConstrained(latest_user_desired_bounds_);
+   delegate_->EnforceTucking();
+ }
