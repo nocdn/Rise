@@ -139,7 +139,7 @@ import XCTest
         card.present(key: "test", agenda: agenda, left: 10, anchorTop: 40, maxBottom: 880, theme: .neutral, topLimit: 6)
         for _ in 0..<20 { card.pinch(by: 0.3) }
         XCTAssertEqual(card.frame.minY, 6, accuracy: 0.5, "As far from the top as from the sidebar")
-        XCTAssertLessThanOrEqual(card.frame.height, CalendarTooltip.maximumPinchedHeight+CalendarTooltip.navigationHeight+0.5)
+        XCTAssertLessThanOrEqual(card.frame.height, CalendarTooltip.maximumPinchedHeight+0.5)
     }
 
     func testFailedInvitationAnswerIsRestoredEvenAfterSwipingToAnotherDay() async throws {

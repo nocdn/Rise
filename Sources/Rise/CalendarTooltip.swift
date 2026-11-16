@@ -173,9 +173,9 @@ final class CalendarTimeline: FlippedView {
     /// How much taller (or, below zero, shorter) a pinch has made it, only while it's open.
     private(set) var pinchedHeight: CGFloat = 0
     private var pinchMonitor: Any?
-    /// The shortest and tallest a pinch makes it, about three times its usual height at most.
-    static let minimumPinchedHeight: CGFloat = 160, maximumPinchedHeight: CGFloat = 800
-    /// How near the top a pinch takes its top: as far from it as the card is from the sidebar.
+    /// The shortest a pinch makes its body, and the tallest it makes the whole card.
+    static let minimumPinchedHeight: CGFloat = 160, maximumPinchedHeight: CGFloat = 740
+    /// How near the top a pinch takes its top: as far below the page's top as the card is from the page's left.
     private var pinchTopLimit: CGFloat = 8
     private var highestTop: CGFloat { pinchedHeight > 0 ? pinchTopLimit : 8 }
     private var background: NSColor { theme == .dark ? theme.popup : TabAppearance.selectedFill(theme) }
@@ -539,7 +539,8 @@ final class CalendarTimeline: FlippedView {
     func pinch(by magnification: CGFloat) {
         guard key != nil, magnification.isFinite else { return }
         let usual = Self.preferredHeight+allDayHeaderHeight
-        let tallest = max(Self.minimumPinchedHeight, min(Self.maximumPinchedHeight, maxBottom-pinchTopLimit-Self.navigationHeight*navigationSlide.target))
+        let header = Self.navigationHeight*navigationSlide.target
+        let tallest = max(Self.minimumPinchedHeight, min(Self.maximumPinchedHeight, maxBottom-pinchTopLimit)-header)
         pinchedHeight = max(Self.minimumPinchedHeight, min(tallest, usual+pinchedHeight+magnification*(usual+pinchedHeight)))-usual
         let before = frame.minY
         layoutCard(); height.settle(); top.settle(); render()
