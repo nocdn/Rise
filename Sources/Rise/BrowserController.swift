@@ -558,6 +558,7 @@ import RiseCore
         // The page bar's, drawn as Dia's: chevrons, and a smaller sidebar glyph.
         navBar.navigation = toolbarButtons
         installSplitBar(); installPeekBar()
+        historyArrows.forEach { $0.historyMenu = { [weak self] in self?.historyMenu(for: $0) } }
         developerAddress.font = IoskeleyMonoFont.developerAddress
         developerAddress.textColor = NSColor(hex: 0x393134); developerBar.addSubview(developerAddress)
         navBar.developerAddress = developerAddress; splitBar.developerAddress = developerAddress
@@ -1108,13 +1109,19 @@ import RiseCore
     }
     @objc func goBack() { navigateHistory(.back) }
     @objc func goForward() { navigateHistory(.forward) }
-    private func navigateHistory(_ direction: HistoryDirection) {
-        // Buttons and menu shortcuts go straight to the page. Remove any in-flight
-        // swipe surface and arrow spring before navigation starts.
+    /// Buttons and menu shortcuts go straight to the page. Remove any in-flight
+    /// swipe surface and arrow spring before navigation starts.
+    private func settleBeforeHistoryNavigation() {
         historySwipe.cancel()
         developerMotion.cancel()
-        (toolbarButtons+splitBarButtons+peekBarButtons).compactMap { $0 as? HistoryArrowButton }.forEach { $0.restore() }
+        historyArrows.forEach { $0.restore() }
         errorWebView = nil
+    }
+    private var historyArrows: [HistoryArrowButton] {
+        (toolbarButtons+splitBarButtons+peekBarButtons).compactMap { $0 as? HistoryArrowButton }
+    }
+    private func navigateHistory(_ direction: HistoryDirection) {
+        settleBeforeHistoryNavigation()
         if let peek = peekTab {
             // Pages visited inside a Peek have their own history.
             if direction == .back ? peek.page.canGoBack : peek.page.canGoForward {
@@ -1126,6 +1133,60 @@ import RiseCore
         } else if let tab = selectedTab {
             // Past the page's own history: a page held from before a Peek grew into the tab.
             goThroughHeldPages(direction, in: tab)
+        }
+        update()
+    }
+    /// What right-clicking a page bar's arrow lists: the pages that way in the history of the page
+    /// the arrow acts on, nearest first, by title alone, as the swipe's list has them. Choosing one
+    /// goes straight there.
+    func historyMenu(for button: HistoryArrowButton) -> NSMenu? {
+        let barTab = allPageBarTabs.first { $0.bar.navigation.contains { $0 === button } }?.tab
+        guard let tab = peekTab ?? barTab ?? selectedTab else { return nil }
+        let page = tab.page, direction = button.direction
+        let entries = historyListEntries(for: page, direction, limit: TabNavigationHistory.maximumEntries)
+        guard !entries.isEmpty else { return nil }
+        if tab !== peekTab, tab.id != selectedID { select(tab.id) }
+        let menu = NSMenu()
+        for (offset, entry) in entries.enumerated() {
+            let item = menuItem(Self.historyMenuTitle(entry.title)) { [weak self, weak tab] in
+                guard let self, let tab, tab.page === page else { return }
+                self.goThroughHistory(direction, steps: offset+1, in: tab)
+            }
+            if item.title != entry.title { item.toolTip = entry.title }
+            menu.addItem(item)
+        }
+        return menu
+    }
+    /// How wide a title in an arrow's history menu may be, in points of the menu's font.
+    static let historyMenuTitleWidth: CGFloat = 420
+    /// A title as an arrow's history menu shows it: a long one shortened in the middle, keeping
+    /// its start and its end (often the site's name), as Safari's menu does.
+    static func historyMenuTitle(_ title: String, width: CGFloat = historyMenuTitleWidth) -> String {
+        let font = NSFont.menuFont(ofSize: 0)
+        let measure = { (text: String) in (text as NSString).size(withAttributes: [.font: font]).width }
+        guard measure(title) > width else { return title }
+        let characters = Array(title)
+        func shortened(keeping count: Int) -> String {
+            let head = (count+1)/2, tail = count/2
+            let start = String(characters.prefix(head)).trimmingCharacters(in: .whitespaces)
+            let end = String(characters.suffix(tail)).trimmingCharacters(in: .whitespaces)
+            return start+"…"+end
+        }
+        var low = 0, high = characters.count-1
+        while low < high {
+            let middle = (low+high+1)/2
+            if measure(shortened(keeping: middle)) <= width { low = middle } else { high = middle-1 }
+        }
+        return shortened(keeping: low)
+    }
+    /// Goes `steps` pages that way in the tab's page's own history, as picking from its list does.
+    func goThroughHistory(_ direction: HistoryDirection, steps: Int, in tab: BrowserTab) {
+        settleBeforeHistoryNavigation()
+        let page = tab.page
+        if tab !== peekTab { tab.cancelLoad() }
+        for _ in 0..<steps {
+            guard direction == .back ? page.canGoBack : page.canGoForward else { break }
+            if direction == .back { page.goBack() } else { page.goForward() }
         }
         update()
     }

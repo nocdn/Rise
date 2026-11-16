@@ -202,4 +202,45 @@ final class HistorySwipeListTests: XCTestCase {
         XCTAssertTrue(router.handle(event(.ended)))
         try await wait { page.url == pages[0] }
     }
+    @MainActor func testRightClickingAnArrowListsItsPagesAndGoesToTheOneChosen() async throws {
+        _ = NSApplication.shared
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json")
+        let browser = BrowserController(sessionURL: file, restore: false)
+        defer { browser.saveWork?.cancel(); browser.window?.orderOut(nil) }
+        let pages = ["a", "b", "c", "d"].map { URL(string: "https://\($0).example/")! }
+        let tab = browser.addTab(url: pages[0]), page = try XCTUnwrap(tab.page as? BlankPage)
+        try await wait { page.url == pages[0] }
+        let arrows = browser.toolbarButtons.compactMap { $0 as? HistoryArrowButton }
+        let back = try XCTUnwrap(arrows.first { $0.direction == .back }), forward = try XCTUnwrap(arrows.first { $0.direction == .forward })
+        let click = try XCTUnwrap(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                                     windowNumber: 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        browser.update()
+        XCTAssertNil(back.menu(for: click), "Nothing to go back to, no menu")
+        for url in pages.dropFirst() { page.load(url) }
+        try await wait { page.url == pages[3] }
+        browser.update()
+        let titles = { (button: HistoryArrowButton) in button.menu(for: click)?.items.map(\.title) }
+        XCTAssertEqual(titles(back), ["c.example", "b.example", "a.example"], "Nearest first, titles alone")
+        XCTAssertTrue(back.menu(for: click)?.items.allSatisfy { $0.image == nil } == true)
+        XCTAssertNil(forward.menu(for: click), "Nothing ahead, no menu")
+
+        let menu = try XCTUnwrap(back.menu(for: click)), item = menu.items[2]
+        menu.performActionForItem(at: menu.index(of: item))
+        try await wait { page.url == pages[0] }
+        browser.update()
+        XCTAssertNil(back.menu(for: click))
+        XCTAssertEqual(titles(forward), ["b.example", "c.example", "d.example"])
+        let ahead = try XCTUnwrap(forward.menu(for: click))
+        ahead.performActionForItem(at: 1)
+        try await wait { page.url == pages[2] }
+    }
+    @MainActor func testLongTitlesInAnArrowsMenuAreShortenedInTheMiddle() {
+        let long = "aditya on X: \"I've never seen any agent use browser this fast. I was just...is not sped up at all. @ego_agent loving it. https://t.co/Kv5dhD5oad\" / X"
+        let shown = BrowserController.historyMenuTitle(long)
+        let width = (shown as NSString).size(withAttributes: [.font: NSFont.menuFont(ofSize: 0)]).width
+        XCTAssertLessThanOrEqual(width, BrowserController.historyMenuTitleWidth)
+        XCTAssertGreaterThan(width, BrowserController.historyMenuTitleWidth-20, "As much of it as fits")
+        XCTAssertTrue(shown.hasPrefix("aditya on X:")); XCTAssertTrue(shown.hasSuffix("/ X")); XCTAssertEqual(shown.filter { $0 == "…" }.count, 1)
+        XCTAssertEqual(BrowserController.historyMenuTitle("History / X"), "History / X", "A short title is left whole")
+    }
 }

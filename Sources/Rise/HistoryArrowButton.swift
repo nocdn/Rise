@@ -40,6 +40,19 @@ final class HistoryArrowButton: ChromeButton {
         setStrokeColor(restingColor)
     }
     required init?(coder: NSCoder) { fatalError() }
+    /// The pages this way, to go straight to one: right-clicking or Control-clicking the arrow
+    /// lists them, as Safari's and Chrome's arrows do. With none, the arrow is off and shows nothing.
+    var historyMenu: ((HistoryArrowButton) -> NSMenu?)?
+    override func menu(for event: NSEvent) -> NSMenu? { isEnabled ? historyMenu?(self) : nil }
+    override func rightMouseDown(with event: NSEvent) {
+        hoverHint?.hide()
+        guard let menu = menu(for: event) else { return }
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+    }
+    override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control) { rightMouseDown(with: event); return }
+        super.mouseDown(with: event)
+    }
     override func layout() { super.layout(); updatePath() }
     func drag(pull: Double, armed: Bool) {
         if !isDragging { crossedThreshold = false; isDragging = true }

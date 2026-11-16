@@ -242,12 +242,13 @@ import AppKit
         indicator.setTheme(theme)
         indicator.drag(direction: direction, pull: pull, armed: armed)
     }
-    /// The pages that way in the page's own history, nearest first, with their titles and icons.
-    func historyListEntries(for page: WebPage, _ direction: HistoryDirection) -> [HistoryListEntry] {
+    /// The pages that way in the page's own history, nearest first, with their titles and icons,
+    /// the nearest `limit` of them.
+    func historyListEntries(for page: WebPage, _ direction: HistoryDirection, limit: Int = 8) -> [HistoryListEntry] {
         guard let history = page.backForwardList else { return [] }
         let indices = direction == .back ? Array((0..<history.index).reversed())
             : Array((history.index+1)..<history.entries.count)
-        return indices.prefix(8).map { index in
+        return indices.prefix(limit).map { index in
             let entry = history.entries[index], url = URL(string: entry.url)
             let blank = url == nil || entry.url == "about:blank"
             var title = entry.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
