@@ -1,0 +1,73 @@
+diff --git a/chrome/browser/notifications/mac/mac_notification_provider_factory.cc b/chrome/browser/notifications/mac/mac_notification_provider_factory.cc
+index c233352..f3590b4 100644
+--- a/chrome/browser/notifications/mac/mac_notification_provider_factory.cc
++++ b/chrome/browser/notifications/mac/mac_notification_provider_factory.cc
+@@ -41,7 +41,9 @@ void BindInProcessProvider(
+     mojo::PendingReceiver<mac_notifications::mojom::MacNotificationProvider>
+         receiver) {
+   mojo::MakeSelfOwnedReceiver(
+-      std::make_unique<mac_notifications::MacNotificationProviderImpl>(),
++      std::make_unique<mac_notifications::MacNotificationProviderImpl>(
++          mac_notifications::MacNotificationProviderImpl::
++              UseUserNotifications()),
+       std::move(receiver));
+ }
+ 
+diff --git a/chrome/services/mac_notifications/mac_notification_provider_impl.h b/chrome/services/mac_notifications/mac_notification_provider_impl.h
+index 6171f34..fa0f7bd 100644
+--- a/chrome/services/mac_notifications/mac_notification_provider_impl.h
++++ b/chrome/services/mac_notifications/mac_notification_provider_impl.h
+@@ -24,6 +24,12 @@ class MacNotificationProviderImpl : public mojom::MacNotificationProvider {
+   explicit MacNotificationProviderImpl(
+       mojo::PendingReceiver<mojom::MacNotificationProvider> binding);
+ 
++  // Rise's: banners shown from the browser's own process with the
++  // UserNotifications API. Rise uses that API itself, and once an app has,
++  // macOS refuses its NSUserNotificationCenter ones without a word.
++  struct UseUserNotifications {};
++  explicit MacNotificationProviderImpl(UseUserNotifications);
++
+   MacNotificationProviderImpl(const MacNotificationProviderImpl&) = delete;
+   MacNotificationProviderImpl& operator=(const MacNotificationProviderImpl&) =
+       delete;
+@@ -38,6 +44,7 @@ class MacNotificationProviderImpl : public mojom::MacNotificationProvider {
+  private:
+   mojo::Receiver<mojom::MacNotificationProvider> binding_{this};
+   std::unique_ptr<mojom::MacNotificationService> service_;
++  bool use_user_notifications_ = false;
+ };
+ 
+ }  // namespace mac_notifications
+diff --git a/chrome/services/mac_notifications/mac_notification_provider_impl.mm b/chrome/services/mac_notifications/mac_notification_provider_impl.mm
+index 0da7ef1..f0bb6c8 100644
+--- a/chrome/services/mac_notifications/mac_notification_provider_impl.mm
++++ b/chrome/services/mac_notifications/mac_notification_provider_impl.mm
+@@ -20,6 +20,9 @@
+ 
+ MacNotificationProviderImpl::MacNotificationProviderImpl() = default;
+ 
++MacNotificationProviderImpl::MacNotificationProviderImpl(UseUserNotifications)
++    : use_user_notifications_(true) {}
++
+ MacNotificationProviderImpl::MacNotificationProviderImpl(
+     mojo::PendingReceiver<mojom::MacNotificationProvider> binding)
+     : binding_(this, std::move(binding)) {}
+@@ -31,6 +34,18 @@
+     mojo::PendingRemote<mojom::MacNotificationActionHandler> handler) {
+   DCHECK(!service_);
+ 
++  // As the app shim's: binds once it has caught up with what's showing, and
++  // asks macOS, which answers at once if Rise already may.
++  if (use_user_notifications_) {
++    auto service_un = std::make_unique<MacNotificationServiceUN>(
++        std::move(handler), base::DoNothing(),
++        UNUserNotificationCenter.currentNotificationCenter);
++    service_un->Bind(std::move(service));
++    service_un->RequestPermission(base::DoNothing());
++    service_ = std::move(service_un);
++    return;
++  }
++
+ // MacNotificationServiceNS implements the Chromium interface to the
+ // NSUserNotificationCenter deprecated API. It is in the process of being
+ // replaced by UNNotification, above, and warnings about its deprecation are not
