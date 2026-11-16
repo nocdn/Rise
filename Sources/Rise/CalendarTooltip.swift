@@ -173,8 +173,8 @@ final class CalendarTimeline: FlippedView {
     /// How much taller (or, below zero, shorter) a pinch has made it, only while it's open.
     private(set) var pinchedHeight: CGFloat = 0
     private var pinchMonitor: Any?
-    /// The shortest and tallest a pinch makes it, about twice its usual height at most.
-    static let minimumPinchedHeight: CGFloat = 160, maximumPinchedHeight: CGFloat = 540
+    /// The shortest and tallest a pinch makes it, about three times its usual height at most.
+    static let minimumPinchedHeight: CGFloat = 160, maximumPinchedHeight: CGFloat = 800
     /// How near the top a pinch takes its top: as far from it as the card is from the sidebar.
     private var pinchTopLimit: CGFloat = 8
     private var highestTop: CGFloat { pinchedHeight > 0 ? pinchTopLimit : 8 }
