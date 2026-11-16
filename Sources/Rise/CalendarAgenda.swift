@@ -308,6 +308,11 @@ enum CalendarSchedule {
         if isPrefetching { cancel() }
     }
     func retry() { guard account != nil, !isLoading else { return }; refresh() }
+    /// Reads the day shown again now, from Calendar's page opened afresh, whatever's kept of it.
+    func reload() {
+        guard account != nil else { return }
+        reader.opensAfresh = true; refresh()
+    }
     /// Shows the answer at once and gives it to Calendar; an answer it doesn't take is undone.
     func respond(_ answer: CalendarAnswer, to event: CalendarEvent) {
         guard let account, let shown = knownEvent(event.id), shown.answer != answer else { return }
@@ -451,13 +456,22 @@ enum CalendarSchedule {
     private func run(_ script: String, in web: WebPage) async throws -> Any? {
         try await web.evaluate("return " + script, arguments: [:], in: nil, world: .named(Self.world))
     }
+    /// The next read opens Calendar's page again, rather than reading the one open, and reads
+    /// events' details again too.
+    var opensAfresh = false
+    private func takeAfresh() -> Bool {
+        let afresh = opensAfresh; opensAfresh = false
+        if afresh { descriptions = [:]; invitations = [:] }
+        return afresh
+    }
     func load(_ account: CalendarAccount) async throws -> [CalendarDay] {
         guard let web = companion else { throw Failure.unavailable }
+        let afresh = takeAfresh()
         let calendar = Calendar.current
         let today = calendar.dateComponents([.year, .month, .day], from: Date())
         let tomorrow = calendar.dateComponents([.year, .month, .day], from: calendar.date(byAdding: .day, value: 1, to: Date())!)
         // The page already open steps back to today in place; otherwise it opens on today.
-        let open = web.url.map { CalendarAccount(url: $0) == account } == true && !web.isLoading
+        let open = !afresh && web.url.map { CalendarAccount(url: $0) == account } == true && !web.isLoading
         if !(open ? (try? await run(Self.step(Self.todayButton), in: web)) as? Bool ?? false : false) {
             web.load(account.url(view: "day", day: today))
         }
@@ -473,7 +487,7 @@ enum CalendarSchedule {
         guard let web = companion else { throw Failure.unavailable }
         let day = Calendar.current.dateComponents([.year, .month, .day], from: date)
         let target = account.url(view: "day", day: day)
-        if web.url != target || web.isLoading { web.load(target) }
+        if takeAfresh() || web.url != target || web.isLoading { web.load(target) }
         let read = try await read(CalendarDay.key(day), in: web, account: account)
         return [try await describe(read, in: web)]
     }

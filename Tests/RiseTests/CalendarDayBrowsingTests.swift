@@ -94,6 +94,26 @@ import XCTest
         XCTAssertFalse(agenda.events.isEmpty)
     }
 
+    func testRefreshFromTheCardsMenuReadsTheShownDayAgain() async throws {
+        let agenda = try await loadedAgenda(), card = CalendarTooltip()
+        let window = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: 600, height: 700), styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView?.addSubview(card); window.orderFront(nil)
+        defer { card.dismiss(animated: false); agenda.tearDown(); window.orderOut(nil) }
+        agenda.onChange = { card.update(agenda) }
+        card.present(key: "test", agenda: agenda, left: 10, anchorTop: 20, maxBottom: 680, theme: .neutral)
+        var loaded: [Date] = []
+        agenda.loadDay = { _, date in loaded.append(date); return [self.snapshot(date)] }
+        card.browseDay(by: 1)
+        XCTAssertFalse(loaded.contains(day(1)), "Tomorrow was already read")
+        let click = try XCTUnwrap(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0,
+                                                     windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        let menu = try XCTUnwrap(card.menu(for: click))
+        XCTAssertEqual(menu.items.map(\.title), ["Refresh"])
+        menu.performActionForItem(at: 0)
+        try await wait { loaded.contains(self.day(1)) && !agenda.isLoading }
+        XCTAssertEqual(agenda.displayedDay, day(1))
+    }
+
     func testFailedInvitationAnswerIsRestoredEvenAfterSwipingToAnotherDay() async throws {
         let agenda = try await loadedAgenda(); defer { agenda.tearDown() }
         agenda.loadDay = { _, date in [self.snapshot(date)] }

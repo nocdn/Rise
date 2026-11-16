@@ -169,7 +169,7 @@ final class CalendarTimeline: FlippedView {
     /// An event's right-click menu.
     var menuFor: ((CalendarEvent) -> NSMenu?)?
     /// While an event's menu is open, the card stays, with the event highlighted.
-    private var menuEvent: String?
+    private var menuEvent: String?, menuOpen = false
     private var background: NSColor { theme == .dark ? theme.popup : TabAppearance.selectedFill(theme) }
 
     init() {
@@ -219,7 +219,7 @@ final class CalendarTimeline: FlippedView {
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect], owner: self))
     }
     override func mouseEntered(with event: NSEvent) { onPointer?(true); updateHover() }
-    override func mouseExited(with event: NSEvent) { if menuEvent == nil { onPointer?(false) }; updateHover() }
+    override func mouseExited(with event: NSEvent) { if menuEvent == nil, !menuOpen { onPointer?(false) }; updateHover() }
     override func mouseMoved(with event: NSEvent) { updateHover() }
     override func scrollWheel(with event: NSEvent) {
         if !handleDayScroll(event) { super.scrollWheel(with: event) }
@@ -274,9 +274,23 @@ final class CalendarTimeline: FlippedView {
         let hit = inside ? window.flatMap { window in hitTest(superview?.convert(window.mouseLocationOutsideOfEventStream, from: nil) ?? .zero) } : nil
         for chip in chips + allDayChips { chip.isHovered = menuEvent.map { chip.event.id == $0 } ?? (chip === hit) }
     }
-    func menuWillOpen(_ menu: NSMenu) {}
+    /// Right-clicking the card anywhere but on an event: Refresh reads the day shown again, so
+    /// it's up to date now rather than at its next read.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard key != nil, agenda != nil else { return nil }
+        let menu = NSMenu(); menu.autoenablesItems = false
+        let refresh = NSMenuItem(title: "Refresh", action: #selector(refreshDay), keyEquivalent: "")
+        refresh.target = self; menu.addItem(refresh)
+        menu.delegate = self
+        return menu
+    }
+    @objc func refreshDay() {
+        guard let agenda else { return }
+        agenda.reload(); update(agenda)
+    }
+    func menuWillOpen(_ menu: NSMenu) { menuOpen = true }
     func menuDidClose(_ menu: NSMenu) {
-        menuEvent = nil; updateHover()
+        menuEvent = nil; menuOpen = false; updateHover()
         // Choosing an item outside the card leaves it, as moving there would have.
         guard key != nil, let window, !bounds.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil)) else { return }
         onPointer?(false)
