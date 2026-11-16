@@ -474,8 +474,10 @@ final class CalendarTimeline: FlippedView {
         let header = allDayHeaderHeight+navigationSpace
         navigation.frame = NSRect(x: 0, y: navigationHeight-Self.navigationHeight, width: Self.width, height: Self.navigationHeight)
         navigation.isHidden = navigationSlide.value == 0 && navigationSlide.target == 0
-        dayLabel.frame = NSRect(x: 12, y: 6, width: Self.width-100, height: 17)
-        todayButton.frame = NSRect(x: Self.width-80, y: 3, width: 68, height: 22)
+        // Centred in the room above the day: down to its all-day events, past the gap over them.
+        let room = Self.navigationHeight+(allDayHeaderHeight > 0 ? Self.allDayGap+2 : 0)
+        dayLabel.frame = NSRect(x: 12, y: ((room-17)/2).rounded(), width: Self.width-100, height: 17)
+        todayButton.frame = NSRect(x: Self.width-80, y: ((room-22)/2).rounded(), width: 68, height: 22)
         dayClip.frame = NSRect(x: 0, y: navigationSpace, width: Self.width, height: max(0, bounds.height-navigationSpace))
         dayBody.frame = dayClip.bounds.offsetBy(dx: dayDirection*Self.width*daySlide.value, dy: 0)
         if let outgoingDay { outgoingDay.frame.origin.x = dayDirection*Self.width*(daySlide.value-1) }
