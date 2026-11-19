@@ -67,7 +67,7 @@ For more about the engine, see [Engine/README.md](Engine/README.md). For passkey
 ### Tabs and sidebar
 
 - **Sidebar tabs**: your tabs are in a list at the left. Drag a tab to move it. Double-click a title to rename it. Middle-click a tab to close it.
-- ⭐ **Pinned tabs**: drag a tab up into the tiles at the top to pin it. Drag a tile down to unpin it. Tiles take the color of the site's icon.
+- ⭐ **Pinned tabs**: drag a tab up into the tiles at the top to pin it. Drag a tile down to unpin it. Tiles take the color of the site's icon. A split made from a pinned tab stays in its tile, with both icons and both colors. A Peek opened from a pinned tab shows as a small icon at the tile's bottom right.
 - ⭐ **Wide sidebar**: hold ⌃⌘ to make the sidebar wider, so you can see long titles.
 - **Hidden sidebar**: press ⌘B to hide the sidebar. Move the pointer to the left edge of the window and the sidebar slides out.
 - **Tab switcher**: press ⌃Tab to go to your recent tabs, with page pictures. Release ⌃ to switch. Set how many tabs it shows in Settings → Tabs.
@@ -85,9 +85,9 @@ For more about the engine, see [Engine/README.md](Engine/README.md). For passkey
 
 ### Peek and split view
 
-- ⭐ **Peek**: Shift-click a link to open it in a card over the page. Press Escape or click outside to close it. Use the buttons on the card to make it a tab or a split.
+- ⭐ **Peek**: Shift-click a link to open it in a card over the page. Press Escape or click outside to close it. Use the buttons on the card to make it a tab or a split. Hold ⌘ and click the expand button to open the Peek in a new tab.
 - **Peek the current page**: press ⇧⌘P. Press ⌥⌘P to move a Peek into a new tab.
-- **Split view**: drag a tab from the sidebar onto the page, then drop it on the left or right target. Or press ⇧⌘D to show the current page twice. Drag the handle between the pages to resize them. Right-click a split in the sidebar to separate it.
+- **Split view**: drag a tab from the sidebar onto the page, then drop it on the left or right target. Or press ⇧⌘D to show the current page twice. Drag the handle between the pages to resize them. Right-click the handle and choose Swap sides, or press ⌥⇧⌘D, to swap the pages. Right-click a split in the sidebar to separate it.
 
 ### Address bar and search
 
@@ -242,6 +242,7 @@ You can change all of these in Settings → Keyboard shortcuts.
 | ⇧⌘P | Peek the current page |
 | ⌥⌘P | Move the Peek into a new tab |
 | ⇧⌘D | Show the page in split view |
+| ⌥⇧⌘D | Swap the split's sides |
 | ⌘R | Reload |
 | ⇧⌘R | Reload without the cache |
 | ⌘. | Stop loading |
