@@ -241,15 +241,31 @@ final class DeveloperHeader: Surface {
     override func mouseDown(with event: NSEvent) { window?.performDrag(with: event) }
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        let dark = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        NSColor.white.withAlphaComponent(dark ? 0.055 : 0.28).setFill()
-        for x in stride(from: -84.0, through: Double(bounds.width)+80, by: 44) {
-            let p = NSBezierPath()
-            p.move(to: NSPoint(x: x, y: 0)); p.line(to: NSPoint(x: x+22, y: 0))
-            p.line(to: NSPoint(x: x+62, y: bounds.height)); p.line(to: NSPoint(x: x+40, y: bounds.height)); p.close(); p.fill()
-        }
+        DeveloperStripes.draw(in: bounds, appearance: effectiveAppearance)
         NSColor.black.withAlphaComponent(0.07).setFill()
         NSRect(x: 0, y: bounds.height-0.5, width: bounds.width, height: 0.5).fill()
+    }
+}
+
+/// Developer mode's stripes on its colour, under Find's and a permission's panel over a developer
+/// mode page, so they read as its bar does (`FindBar.stylePanel` puts one in each panel).
+final class DeveloperStripes: FlippedView {
+    var color = NSColor.clear { didSet { if color != oldValue { needsDisplay = true } } }
+    override func draw(_ dirtyRect: NSRect) {
+        color.setFill(); bounds.fill()
+        Self.draw(in: bounds, appearance: effectiveAppearance)
+    }
+    /// The bar's stripes: white bands 22 points wide every 44, each leaning a point right for every
+    /// point down, so they keep the bar's angle in a panel of any height.
+    static func draw(in bounds: NSRect, appearance: NSAppearance) {
+        let dark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        NSColor.white.withAlphaComponent(dark ? 0.055 : 0.28).setFill()
+        let lean = Double(bounds.height)
+        for x in stride(from: -44-lean, through: Double(bounds.width)+44, by: 44) {
+            let p = NSBezierPath()
+            p.move(to: NSPoint(x: x, y: 0)); p.line(to: NSPoint(x: x+22, y: 0))
+            p.line(to: NSPoint(x: x+22+lean, y: bounds.height)); p.line(to: NSPoint(x: x+lean, y: bounds.height)); p.close(); p.fill()
+        }
     }
 }
 

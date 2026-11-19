@@ -739,6 +739,8 @@ import RiseCore
         }
         developerBar.frame = bar.frame
         developerBar.isHidden = progress == 0
+        // Find's panel over a developer mode page takes its bar's stripes; a permission's does as it's placed.
+        for (id, findBar) in findBars { findBar.developer = (tabs.first { $0.id == id } ?? peekTab.flatMap { $0.id == id ? $0 : nil })?.developer == true }
         let height = developerBar.bounds.height, end = min(bar.developerControlsMaxX-8, bar.frame.width-20)
         for (i, button) in devButtons.enumerated() {
             button.frame = NSRect(x: end-CGFloat(devButtons.count-i)*38+8, y: 6, width: 30, height: 28)

@@ -40,6 +40,10 @@ final class PermissionChoiceButton: ChromeButton {
     static let font = NSFont.systemFont(ofSize: 13)
     let panel = Surface(radius: FindBar.radius)
     private let content = FlippedView()
+    private var stripes: DeveloperStripes!
+    /// Asking for a developer mode page, it takes the page's bar's stripes, as Find's panel does,
+    /// and its buttons the red of that bar's icons.
+    var developer = false { didSet { if developer != oldValue { applyTheme(theme) } } }
     private let icon = NSImageView()
     private let text = NSTextField(labelWithString: "")
     let allowButton = PermissionChoiceButton(symbol: "checkmark", size: 11, title: "Allow", action: {})
@@ -77,7 +81,7 @@ final class PermissionChoiceButton: ChromeButton {
         wantsLayer = true; layer?.masksToBounds = true
         layer?.cornerRadius = PageAppearance.radius; layer?.cornerCurve = .continuous
         isHidden = true
-        FindBar.stylePanel(panel, content: content)
+        stripes = FindBar.stylePanel(panel, content: content)
         icon.imageScaling = .scaleNone
         text.lineBreakMode = .byTruncatingTail; text.cell?.usesSingleLineMode = true
         // The toolbar's own hover hints, not the system's tooltip.
@@ -112,8 +116,9 @@ final class PermissionChoiceButton: ChromeButton {
     func applyTheme(_ theme: RiseTheme) {
         self.theme = theme
         FindBar.applyPanelTheme(panel, theme: theme)
+        FindBar.showDeveloperStripes(stripes, developer, theme: theme)
         for button in [allowButton, denyButton, revertButton] {
-            button.restingTint = theme.muted; button.hoverColor = theme.text.withAlphaComponent(0.07)
+            button.restingTint = developer ? PlainNavBar.developerRed : theme.muted; button.hoverColor = theme.text.withAlphaComponent(0.07)
             button.hoverHint?.appearance = theme.appearance
         }
         allowButton.hoverTint = SiteCapability.camera.accent(theme); denyButton.hoverTint = SiteCapability.notifications.accent(theme)

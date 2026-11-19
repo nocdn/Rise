@@ -220,6 +220,9 @@ class FindInputCell: NSTextFieldCell {
 
     let panel = Surface(radius: radius)
     private let content = FlippedView(), row = FlippedView()
+    private var stripes: DeveloperStripes!
+    /// Over a developer mode page, it takes the page's bar's stripes.
+    var developer = false { didSet { if developer != oldValue { Self.showDeveloperStripes(stripes, developer, theme: theme) } } }
     let input = FindInput()
     private let placeholders = FlippedView()
     let findPlaceholder = label("Find on page", size: 13)
@@ -305,7 +308,7 @@ class FindInputCell: NSTextFieldCell {
         layer?.cornerRadius = PageAppearance.radius; layer?.cornerCurve = .continuous
         isHidden = true
 
-        Self.stylePanel(panel, content: content)
+        stripes = Self.stylePanel(panel, content: content)
         // Swapped content travels 15 pt; keep it inside the input row, not over the answer.
         row.wantsLayer = true; row.layer?.masksToBounds = true
 
@@ -385,7 +388,8 @@ class FindInputCell: NSTextFieldCell {
     }
 
     /// The panel's border and shadow. `content` clips to its corners.
-    static func stylePanel(_ panel: Surface, content: NSView) {
+    /// Returns the panel's developer mode stripes, hidden until `showDeveloperStripes` shows them.
+    @discardableResult static func stylePanel(_ panel: Surface, content: NSView) -> DeveloperStripes {
         panel.layer?.cornerCurve = .continuous; panel.layer?.borderWidth = 0.5
         // The same shadow as the pull request card.
         panel.layer?.shadowColor = NSColor.black.cgColor; panel.layer?.shadowOpacity = 0.12
@@ -395,6 +399,16 @@ class FindInputCell: NSTextFieldCell {
         panel.clipsToBounds = false
         content.wantsLayer = true; content.layer?.masksToBounds = true
         content.layer?.cornerRadius = radius; content.layer?.cornerCurve = .continuous
+        // Under everything the panel holds, filling it as it grows.
+        let stripes = DeveloperStripes(frame: content.bounds)
+        stripes.autoresizingMask = [.width, .height]; stripes.isHidden = true
+        content.addSubview(stripes, positioned: .below, relativeTo: nil)
+        return stripes
+    }
+    /// A panel over a developer mode page takes its bar's stripes and colour.
+    static func showDeveloperStripes(_ stripes: DeveloperStripes, _ developer: Bool, theme: RiseTheme) {
+        stripes.color = theme.developerSurface
+        if stripes.isHidden == developer { stripes.isHidden = !developer }
     }
     static func applyPanelTheme(_ panel: Surface, theme: RiseTheme) {
         panel.fill = theme.popup; panel.layer?.borderColor = theme.border.cgColor
@@ -411,6 +425,7 @@ class FindInputCell: NSTextFieldCell {
     func applyTheme(_ theme: RiseTheme) {
         self.theme = theme
         Self.applyPanelTheme(panel, theme: theme)
+        Self.showDeveloperStripes(stripes, developer, theme: theme)
         separator.fill = theme.text.withAlphaComponent(theme == .dark ? 0.06 : 0.045)
         [findPlaceholder, askPlaceholder, count].forEach { $0.textColor = theme.muted }
         shimmer.baseColor = theme.muted; shimmer.bandColor = theme.selectedText; badge.applyTheme(theme)
@@ -902,7 +917,7 @@ class FindInputCell: NSTextFieldCell {
     var selectedFindBar: FindBar { selectedTab.map(findBar(for:)) ?? tablessFindBar }
     func findBar(for tab: BrowserTab) -> FindBar {
         if let bar = findBars[tab.id] { return bar }
-        let bar = FindBar(); bar.applyTheme(theme)
+        let bar = FindBar(); bar.applyTheme(theme); bar.developer = tab.developer
         bar.find = { [weak tab] query, direction in
             guard let webView = tab?.page else { return PageFind.Matches(count: 0, index: -1) }
             return await PageFind.find(query, direction: direction, in: webView)

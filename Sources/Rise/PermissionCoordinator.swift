@@ -126,7 +126,7 @@ import UserNotifications
                 if let find, find.superview === clip { clip.addSubview(panel, positioned: .below, relativeTo: find) }
                 else { clip.addSubview(panel) }
             }
-            panel.frame = clip.bounds; panel.topInset = browser.peekContentInset
+            panel.frame = clip.bounds; panel.topInset = browser.peekContentInset; panel.developer = peek.developer
             panel.stackOffset = find?.isPresented == true ? (find?.panel.frame.height ?? 0)+FindBar.top : 0
             return
         }
@@ -140,6 +140,7 @@ import UserNotifications
         let left = max(page.minX, column.minX), right = min(page.maxX, column.maxX)
         panel.frame = right-left > 100 ? NSRect(x: left, y: page.minY, width: right-left, height: page.height) : page
         panel.topInset = PlainNavBar.Metrics.height
+        panel.developer = (browser.tabs.first { $0.page.view === web } ?? browser.selectedTab)?.developer == true
         let findOpen = findBar.isPresented && findBar.superview === root && abs(findBar.frame.maxX-panel.frame.maxX) < 1
         panel.stackOffset = findOpen ? findBar.panel.frame.height+FindBar.top : 0
     }
