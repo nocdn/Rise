@@ -171,7 +171,7 @@ The iPhone app uses Apple's WebKit engine. To build it, see [Apps/iOS/README.md]
 ### Tabs
 
 - **Tab switcher**: tap the Tabs button at the bottom left, or swipe up on the bottom bar. Your tabs show as a row of cards, as in Arc. Swipe a card up to close it.
-- **Reopen closed tabs**: shake the iPhone to bring back the tab that you closed.
+- ⭐ **Reopen closed tabs**: shake the iPhone to bring back the tab that you closed.
 - **Incognito mode**: open private tabs from More in the tab switcher. You can lock them with Face ID.
 - **iCloud sync**: your tabs and history sync with the Mac app. Turn this on or off in More → Site settings → App settings.
 - **Archived tabs**: tabs that you don't use for 48 hours move to Archived Tabs, in More in the tab switcher.
@@ -181,29 +181,30 @@ The iPhone app uses Apple's WebKit engine. To build it, see [Apps/iOS/README.md]
 ### Search
 
 - **New Page**: tap the button in the middle of the bottom bar to search or type an address. Suggestions come from Google, your history and your open tabs. Shake the iPhone to clear the field.
-- **Voice search**: touch and hold the New Page button and speak. The speech is changed to text on your iPhone.
-- **Search a site**: type a site's name and use its search, as on the Mac.
-- **Dictation in pages**: a microphone above the keyboard lets you speak into any field on a page.
+- ⭐ **Voice search**: touch and hold the New Page button and speak. The speech is changed to text on your iPhone.
+- ⭐ **Search a site**: type a site's name and use its search, as on the Mac.
+- ⭐ **Dictation in pages**: a microphone above the keyboard lets you speak into any field on a page.
+- ⭐ **Move through text**: when you type in a page, drag left or right along the glass bar above the keyboard to move the cursor through the text.
 
 ### Reading and pages
 
-- **Summarise**: pinch in on a page, from its smallest zoom, to get a summary. Then you can ask follow-up questions.
+- ⭐ **Summarise**: pinch in on a page, from its smallest zoom, to get a summary. Then you can ask follow-up questions.
 - **Summarise a link**: touch and hold a link, then choose Summarise.
-- **Link previews**: touch and hold a link to see a live preview of the page.
+- ⭐ **Link previews**: touch and hold a link to see a live preview of the page.
 - **Explain and ask**: select text and choose Explain in Context, or ask a question about the page. You can change the AI's prompts in AI Options.
-- **Font info**: select text and choose Font info to see its font and size.
-- **Translation**: on a page that isn't in English, tap the translate button in More. The page is translated on your iPhone.
-- **Local times**: select a time in another time zone, such as "11pm PST". The menu shows it in your own time, and you can copy it or add it to Calendar.
-- **Events**: select an event, such as an invitation's date, time and place. You can add it to Calendar or Reminders.
+- ⭐ **Font info**: select text and choose Font info to see its font and size.
+- ⭐ **Translation**: on a page that isn't in English, tap the translate button in More. The page is translated on your iPhone.
+- ⭐ **Local times**: select a time in another time zone, such as "11pm PST". The menu shows it in your own time, and you can copy it or add it to Calendar.
+- ⭐ **Events**: select an event, such as an invitation's date, time and place. You can add it to Calendar or Reminders.
 - **Find**: in Find, touch and hold an arrow to skip past the matches on the screen.
 - **Pull to reload**: pull down from the top of the page. Haptics tell you when it will reload.
 - **Back and forward**: swipe from the edge of the screen. A small circle shows when the swipe will go back or forward.
 - **Page color**: the area behind the status bar takes the color of the top of the page.
-- **GitHub stars**: touch and hold a link to a GitHub repository to star or unstar it.
+- ⭐ **GitHub stars**: touch and hold a link to a GitHub repository to star or unstar it.
 
 ### Media and downloads
 
-- **Videos**: videos play in the page, not in full screen. Touch and hold a video to play, pause, mute, share or download it. Turn off autoplay in More → Site settings → App settings.
+- ⭐ **Videos**: videos play in the page, not in full screen. Touch and hold a video to play, pause, mute, share or download it. Turn off autoplay in More → Site settings → App settings.
 - **Images**: touch and hold an image to copy or save the image itself. The menu shows its size in pixels.
 - **Downloads**: downloads show as a Live Activity in the Dynamic Island and on the Lock Screen. Open them from More → Downloads.
 
