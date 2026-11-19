@@ -16,6 +16,8 @@ struct AddressSuggestion {
     var isTypedAction = false
     /// Fills in the field (a well-known site) without a row of its own: the field already shows it.
     var isAutofill = false
+    /// The search for exactly what's typed: what Enter does anyway, so it gets no row of its own.
+    var isVerbatimSearch = false
     var assistantPrompt: AssistantPrompt? = nil
 }
 @MainActor final class AddressPalette: Surface, NSTextFieldDelegate {
@@ -60,10 +62,12 @@ struct AddressSuggestion {
     var customSite: ((String) -> PopularSite?)?
     /// The site the field fills in, behind the rows rather than among them.
     private(set) var autofill: AddressSuggestion?
+    /// The search for the typed text, kept for Enter rather than shown as a row.
+    private(set) var typedSearch: AddressSuggestion?
     /// Everything the address showed before Tab, to step straight back to.
     private struct AddressState {
         let text: String, query: String, selection: NSRange, completionRange: NSRange?, completionPrefix: String
-        let suggestions: [AddressSuggestion], autofill: AddressSuggestion?
+        let suggestions: [AddressSuggestion], autofill: AddressSuggestion?, typedSearch: AddressSuggestion?
     }
     private var addressBeforeSiteSearch: AddressState?
     var isPresented: Bool { !isHidden }
@@ -171,7 +175,8 @@ struct AddressSuggestion {
     }
     private func takeAutofill(_ list: [AddressSuggestion]) -> [AddressSuggestion] {
         autofill = list.first { $0.isAutofill }
-        return list.filter { !$0.isAutofill }
+        typedSearch = list.first { $0.isVerbatimSearch }
+        return list.filter { !$0.isAutofill && !$0.isVerbatimSearch }
     }
     /// The site the field holds, or is filling in, or is searching: its icon leads the field.
     private var fieldSite: PopularSite? { siteSearch ?? site(forAddress: input.stringValue) }
@@ -657,7 +662,7 @@ struct AddressSuggestion {
     var chosenSuggestion: AddressSuggestion? {
         suggestions.indices.contains(selectedIndex) ? suggestions[selectedIndex]
             : isCommandMode ? suggestions.first
-            : ([autofill].compactMap { $0 }+suggestions).first { $0.isTypedAction && ($0.completion == nil || $0.completion == input.stringValue) }
+            : ([autofill].compactMap { $0 }+suggestions+[typedSearch].compactMap { $0 }).first { $0.isTypedAction && ($0.completion == nil || $0.completion == input.stringValue) }
     }
 
     // MARK: Choosing from a list
@@ -684,7 +689,7 @@ struct AddressSuggestion {
     func enterChoice(_ list: Choice) {
         let address = input.stringValue
         addressBeforeChoice = AddressState(text: address, query: query, selection: (input.currentEditor() as? NSTextView)?.selectedRange() ?? NSRange(location: address.utf16.count, length: 0),
-                                           completionRange: completionRange, completionPrefix: completionPrefix, suggestions: suggestions, autofill: autofill)
+                                           completionRange: completionRange, completionPrefix: completionPrefix, suggestions: suggestions, autofill: autofill, typedSearch: typedSearch)
         choice = list; completionRange = nil; typedField = nil
         updateOffer()
         setText(""); applyPlaceholder(); input.setAccessibilityLabel(list.placeholder)
@@ -694,7 +699,7 @@ struct AddressSuggestion {
         guard let list = choice else { return }
         let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
         suggestions = list.rows.filter { words.isEmpty || $0.title.localizedCaseInsensitiveContains(words) }
-        autofill = nil; selectionBeforeHover = nil; typedField = nil
+        autofill = nil; typedSearch = nil; selectionBeforeHover = nil; typedField = nil
         selectedIndex = words.isEmpty ? list.picked.flatMap { list.rows.indices.contains($0) ? $0 : nil } ?? -1 : suggestions.isEmpty ? -1 : 0
         render(); updateLeadingIcon()
     }
@@ -709,7 +714,7 @@ struct AddressSuggestion {
         }
         applyPlaceholder(); input.setAccessibilityLabel("Address or search")
         guard let before else { refresh(); return }
-        query = before.query; suggestions = before.suggestions; autofill = before.autofill
+        query = before.query; suggestions = before.suggestions; autofill = before.autofill; typedSearch = before.typedSearch
         completionRange = before.completionRange; completionPrefix = before.completionPrefix
         selectedIndex = isCommandMode && !suggestions.isEmpty ? 0 : -1
         selectionBeforeHover = nil; typedField = nil
@@ -755,7 +760,7 @@ struct AddressSuggestion {
     func enterSiteSearch(_ site: PopularSite) {
         let address = input.stringValue
         addressBeforeSiteSearch = AddressState(text: address, query: query, selection: (input.currentEditor() as? NSTextView)?.selectedRange() ?? NSRange(location: address.utf16.count, length: 0),
-                                               completionRange: completionRange, completionPrefix: completionPrefix, suggestions: suggestions, autofill: autofill)
+                                               completionRange: completionRange, completionPrefix: completionPrefix, suggestions: suggestions, autofill: autofill, typedSearch: typedSearch)
         siteSearch = site; offeredSite = nil; completionRange = nil; suppressCompletion = false
         if siteHint.siteName != site.name || siteHint.action != site.action { siteHint.configure(site: site.name, action: site.action, color: color(for: site), theme: theme) }
         siteHint.alphaValue = 1; siteHint.setAccessibilityElement(true)
@@ -780,7 +785,7 @@ struct AddressSuggestion {
         applyPlaceholder(); input.setAccessibilityLabel("Address or search")
         offeredSite = site; siteHint.setSearching(false, animated: true)
         if let before {
-            query = before.query; suggestions = before.suggestions; autofill = before.autofill
+            query = before.query; suggestions = before.suggestions; autofill = before.autofill; typedSearch = before.typedSearch
             completionRange = before.completionRange; completionPrefix = before.completionPrefix
             selectedIndex = -1; selectionBeforeHover = nil
             render(); updateOffer(); updateLeadingIcon()

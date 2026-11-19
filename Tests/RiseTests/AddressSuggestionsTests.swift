@@ -286,8 +286,8 @@ final class AddressSuggestionsTests: XCTestCase {
         XCTAssertTrue(palette.leadingIcon.image === glyph)
         let editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
         editor.insertText("weather", replacementRange: editor.selectedRange())
-        let search = try XCTUnwrap(palette.suggestions.firstIndex { $0.symbol == "magnifyingglass" })
-        XCTAssertTrue((palette.buttons[search].subviews.first as? NSImageView)?.image === glyph, "Search rows have the same glyph")
+        XCTAssertEqual(palette.typedSearch?.url, browser.searchProvider.searchURL("weather"))
+        XCTAssertFalse(palette.suggestions.contains { $0.url == palette.typedSearch?.url }, "Enter searches what's typed without a row repeating it")
         // No blue: nothing's highlighted until the pointer or the arrow keys pick a row, then in gray.
         XCTAssertTrue(palette.buttons.allSatisfy { $0.layer?.backgroundColor?.alpha == 0 })
         let last = palette.buttons.count-1, row = palette.buttons[last]
@@ -309,17 +309,13 @@ final class AddressSuggestionsTests: XCTestCase {
         editor.insertText("news", replacementRange: editor.selectedRange())
         let filled = editor.string, filledRange = editor.selectedRange()
         XCTAssertEqual(filled, "news.ycombinator.com"); XCTAssertEqual(palette.offeredSite?.name, "Hacker News")
-        let search = try XCTUnwrap(palette.suggestions.firstIndex { $0.symbol == "magnifyingglass" })
         func highlighted() -> [Int] { palette.buttons.indices.filter { palette.buttons[$0].layer?.backgroundColor == CenteredPaletteStyle.hover(browser.theme).cgColor } }
         func cursorAtEnd() -> Bool { editor.selectedRange() == NSRange(location: editor.string.utf16.count, length: 0) }
         XCTAssertEqual(highlighted(), [])
         editor.doCommand(by: #selector(NSResponder.moveDown(_:)))
         XCTAssertEqual(highlighted(), [0]); XCTAssertEqual(editor.string, "news.ycombinator.com", "A page fills in its address")
         XCTAssertTrue(cursorAtEnd(), "To edit from the end"); XCTAssertEqual(palette.offeredSite?.name, "Hacker News")
-        for _ in 0..<search { editor.doCommand(by: #selector(NSResponder.moveDown(_:))) }
-        XCTAssertEqual(highlighted(), [search]); XCTAssertEqual(editor.string, palette.suggestions[search].title, "A search fills in its words")
-        XCTAssertTrue(cursorAtEnd())
-        for _ in 0...search { editor.doCommand(by: #selector(NSResponder.moveUp(_:))) }
+        editor.doCommand(by: #selector(NSResponder.moveUp(_:)))
         XCTAssertEqual(highlighted(), [], "Above the first row, none"); XCTAssertEqual(palette.selectedIndex, -1)
         XCTAssertEqual(editor.string, filled, "And what was typed comes back, filled in as it was")
         XCTAssertEqual(editor.selectedRange(), filledRange); XCTAssertEqual(palette.offeredSite?.name, "Hacker News")
@@ -788,6 +784,7 @@ final class AddressSuggestionsTests: XCTestCase {
             editor.doCommand(by: #selector(NSResponder.deleteBackward(_:)))
             XCTAssertEqual(editor.string, "x", "Backspace removes the completion without immediately filling it again")
             XCTAssertEqual(palette.chosenSuggestion?.url, browser.searchProvider.searchURL("x"))
+            XCTAssertFalse(palette.suggestions.contains { $0.url == browser.searchProvider.searchURL("x") }, "Enter searches what's typed without a row repeating it")
             editor.selectAll(nil); editor.insertText("x", replacementRange: editor.selectedRange())
             var destination: URL?
             let submit = palette.submit

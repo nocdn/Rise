@@ -146,8 +146,9 @@ final class GoogleSearchSuggestionsTests: XCTestCase {
         XCTAssertFalse(titles().contains("coffee beans"))
         type("offline query")
         XCTAssertEqual(palette.suggestions.count, rows)
-        for _ in 0..<50 where palette.suggestions.count != 1 { try await Task.sleep(for: .milliseconds(10)) }
-        XCTAssertEqual(titles(), ["offline query"], "With no answer coming, the held rows go")
+        for _ in 0..<50 where !palette.suggestions.isEmpty { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(titles(), [], "With no answer coming, the held rows go")
+        XCTAssertEqual(palette.typedSearch?.title, "offline query", "Enter still searches what's typed")
     }
     @MainActor func testOpeningTheAddressBarWarmsTheConnectionWithoutAnyTypedText() async throws {
         _ = NSApplication.shared
@@ -204,7 +205,7 @@ final class GoogleSearchSuggestionsTests: XCTestCase {
         XCTAssertEqual(submitted, GoogleSearchSuggestions.searchURL(for: "coffee beans"))
         editor.selectAll(nil); editor.insertText("offline query", replacementRange: editor.selectedRange())
         try await Task.sleep(for: .milliseconds(180))
-        XCTAssertEqual(palette.suggestions.count, 1, "Network failure leaves the direct search available")
+        XCTAssertEqual(palette.chosenSuggestion?.title, "offline query", "Network failure leaves the direct search available")
         XCTAssertEqual(editor.string, "offline query")
         editor.selectAll(nil); editor.insertText("closed query", replacementRange: editor.selectedRange())
         browser.hidePalette()
@@ -258,12 +259,12 @@ final class GoogleSearchSuggestionsTests: XCTestCase {
         }
         XCTAssertEqual(SearchProtocol.snapshot().count, 1)
         browser.selectSearchEngine(.kagi)
-        XCTAssertEqual(browser.palette.suggestions.first?.url?.host, "kagi.com")
+        XCTAssertEqual(browser.palette.chosenSuggestion?.url?.host, "kagi.com")
         try await Task.sleep(for: .milliseconds(130))
-        XCTAssertEqual(browser.palette.suggestions.count, 1, "Cancelled Google results cannot reappear")
+        XCTAssertEqual(browser.palette.suggestions.count, 0, "Cancelled Google results cannot reappear")
         editor.selectAll(nil); editor.insertText("kagi query", replacementRange: editor.selectedRange())
         try await Task.sleep(for: .milliseconds(130))
         XCTAssertEqual(SearchProtocol.snapshot().count, 1)
-        XCTAssertEqual(browser.palette.suggestions.first?.title, "kagi query")
+        XCTAssertEqual(browser.palette.typedSearch?.title, "kagi query")
     }
 }
