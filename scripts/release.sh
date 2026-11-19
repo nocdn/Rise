@@ -37,8 +37,10 @@ BUILD_NUMBER="$(git rev-list --count HEAD)"
 rm -rf "$WORK"; mkdir -p "$WORK" "$ARCHIVES"
 APP="$WORK/Rise.app"
 RISE_APP="$APP" RISE_VERSION="$VERSION" RISE_BUILD_NUMBER="$BUILD_NUMBER" RISE_UPDATE_FEED="$FEED" ./scripts/build.sh
-codesign -dvv "$APP" 2>&1 | grep -q "Authority=Developer ID Application" || fail "Rise wasn't signed with Developer ID (docs/Passkeys.md has the profile)"
-IDENTITY="$(codesign -dvv "$APP" 2>&1 | sed -n 's/^Authority=\(Developer ID Application: .*\)$/\1/p' | head -1)"
+# Read whole, not piped into grep -q: under pipefail, grep quitting early fails the pipe.
+SIGNATURE="$(codesign -dvv "$APP" 2>&1)"
+IDENTITY="$(print -r -- "$SIGNATURE" | sed -n 's/^Authority=\(Developer ID Application: .*\)$/\1/p' | head -1)"
+[[ -n "$IDENTITY" ]] || fail "Rise wasn't signed with Developer ID (docs/Passkeys.md has the profile)"
 
 notarize() {  # Sends a file to Apple's notary service and waits for its verdict.
   local id log
