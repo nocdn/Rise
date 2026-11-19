@@ -67,12 +67,12 @@ For more about the engine, see [Engine/README.md](Engine/README.md). For passkey
 ### Tabs and sidebar
 
 - **Sidebar tabs**: your tabs are in a list at the left. Drag a tab to move it. Double-click a title to rename it. Middle-click a tab to close it.
-- **Pinned tabs**: drag a tab up into the tiles at the top to pin it. Drag a tile down to unpin it. Tiles take the color of the site's icon.
-- **Wide sidebar**: hold ⌃⌘ to make the sidebar wider, so you can see long titles.
+- ⭐ **Pinned tabs**: drag a tab up into the tiles at the top to pin it. Drag a tile down to unpin it. Tiles take the color of the site's icon.
+- ⭐ **Wide sidebar**: hold ⌃⌘ to make the sidebar wider, so you can see long titles.
 - **Hidden sidebar**: press ⌘B to hide the sidebar. Move the pointer to the left edge of the window and the sidebar slides out.
 - **Tab switcher**: press ⌃Tab to go to your recent tabs, with page pictures. Release ⌃ to switch. Set how many tabs it shows in Settings → Tabs.
 - **Choose a tab by scrolling**: hold ⌥ and scroll on the trackpad. A highlight moves through your tabs. Release ⌥ to switch, or press Escape to cancel. Pinned tabs are not included. Change the key in Settings → Tabs.
-- **Search tabs**: press ⇧⌘A to search your open tabs by title, address and page content. Type a description and the AI finds the tabs that match it.
+- ⭐ **Search tabs**: press ⇧⌘A to search your open tabs by title, address and page content. Type a description and the AI finds the tabs that match it.
 - **Smart Rename**: put the pointer on a tab and press ⌃R. The AI gives the tab a short name.
 - **Sort tabs**: press ⇧⌘K to sort your tabs by website. Press ⌘Z to undo.
 - **Open tabs are reused**: a link to a page that is already open goes to that tab. Links from other apps do this too. ⌘-click still opens a new tab. Turn this off in Settings → Tabs.
@@ -80,31 +80,32 @@ For more about the engine, see [Engine/README.md](Engine/README.md). For passkey
 - **Archived tabs**: tabs that you don't use for 48 hours move to History → Archived Tabs. Change the time in Settings → Tabs.
 - **Reopen tabs**: press ⇧⌘T to reopen the last tab that you closed. Right-click the downloads button to see other tabs that you closed recently.
 - **Pinned tab safety**: ⌘W on a pinned tab asks you to press ⌘W again.
-- **Notification counts**: counts such as "(3)" are removed from tab titles. Turn this off in Settings → Tabs.
+- ⭐ **Notification counts**: counts such as "(3)" are removed from tab titles. Turn this off in Settings → Tabs.
 - **Sessions**: Rise keeps your tabs, their history, Peeks and splits when you quit, and opens them again at the next launch.
 
 ### Peek and split view
 
-- **Peek**: Shift-click a link to open it in a card over the page. Press Escape or click outside to close it. Use the buttons on the card to make it a tab or a split.
+- ⭐ **Peek**: Shift-click a link to open it in a card over the page. Press Escape or click outside to close it. Use the buttons on the card to make it a tab or a split.
 - **Peek the current page**: press ⇧⌘P. Press ⌥⌘P to move a Peek into a new tab.
 - **Split view**: drag a tab from the sidebar onto the page, then drop it on the left or right target. Or press ⇧⌘D to show the current page twice. Drag the handle between the pages to resize them. Right-click a split in the sidebar to separate it.
 
 ### Address bar and search
 
 - **Address bar**: press ⌘T for a new tab or ⌘L to edit the address. Suggestions come from your open tabs, your history and Google.
-- **Search a site**: type a site's name and press Tab to search on that site. Rise learns this from the searches that you do on sites.
+- ⭐ **Search a site**: type a site's name and press Tab to search on that site. Rise learns this from the searches that you do on sites.
 - **Ask an AI**: type a question to ask ChatGPT, Claude or Gemini on their own sites.
 - **Commands**: type `/` to see browser commands, such as `/zoom` or `/settings`.
-- **Copy the link**: press ⇧⌘C or click the link button in the page bar.
+- ⭐ **Copy the link**: press ⇧⌘C or click the link button in the page bar.
 
 ### Reading and pages
 
-- **Find and Ask**: press ⌘F to find text. Type a question instead, and the AI answers it about the page.
+- ⭐ **Find and Ask**: press ⌘F to find text. Type a question instead, and the AI answers it about the page.
 - **Annotations**: select text and press ⌃⌘A to ask about it. The answer stays on the page as a numbered note, also after a reload.
-- **Link summaries**: hold ⌥ over a link to see a short summary of the page that it opens.
+- ⭐ **Link summaries**: hold ⌥ over a link to see a short summary of the page that it opens.
 - **AI chat**: press ⌘E to open a chat beside the page. It can read and use your tabs, and you can mention a tab by its name. Choose the AI provider and model in Settings → AI.
-- **Local times**: press ⌥⌘T to change the times on a page to your own time zone. Press it again to change them back. You can also select a time to see it in your time zone.
-- **Events**: select a date or time, such as "Dinner on Friday at 7pm", and right-click it. You can add it to Calendar, Reminders or Google Calendar.
+- ⭐ **Local times**: select a time in another time zone, such as "3pm PST", and right-click it. The menu shows that time in your own time zone. Press ⌥⌘T to change all the times on a page to your time zone, and again to change them back.
+- ⭐ **Currency conversion**: select a price in another currency and right-click it. The menu shows the price in your own currency, and can change all the prices on the page to your currency.
+- ⭐ **Events**: select an event, such as "Dinner on Friday at 7pm at Dishoom", and right-click it. You can add it to Calendar, Reminders or Google Calendar, with its title, times and place. It also understands locations and complex layouts, such as invitations where the date, time and place are in different parts of the page.
 - **History menu**: right-click (or ⌃-click) the Back or Forward button to go straight to an earlier page.
 - **Page bar color**: the bar above the page takes the color of the top of the page.
 - **Zoom**: press ⌘+, ⌘− or ⌘0. The page bar shows the zoom level and a reset button.
@@ -116,27 +117,27 @@ For more about the engine, see [Engine/README.md](Engine/README.md). For passkey
 
 Hover over these tabs in the sidebar to see a card:
 
-- **Gmail and Proton Mail**: your newest emails. Click one to open it. Choose the Gmail category in Settings → Tabs.
-- **Google Chat**: your direct messages, newest first. Unread ones have a blue dot.
-- **Google Calendar**: your day as a timeline. Swipe sideways to go to other days. Right-click empty space and choose Refresh to get the newest events. Pinch to make the card taller or shorter while it's open. Calendar tabs also show a countdown, such as "in 17m", before an event starts.
-- **GitHub pull requests and GitLab merge requests**: the title, status, checks and changed files. These cards also open from links to pull requests in pages.
+- ⭐ **Gmail and Proton Mail**: your newest emails. Click one to open it. Choose the Gmail category in Settings → Tabs.
+- ⭐ **Google Chat**: your direct messages, newest first. Unread ones have a blue dot.
+- ⭐ **Google Calendar**: your day as a timeline. Swipe sideways to go to other days. Right-click empty space and choose Refresh to get the newest events. Pinch to make the card taller or shorter while it's open. Calendar tabs also show a countdown, such as "in 17m", before an event starts.
+- ⭐ **GitHub pull requests and GitLab merge requests**: the title, status, checks and changed files. These cards also open from links to pull requests in pages.
 
 ### Media
 
-- **Floating video**: when you leave Rise while a video plays with sound, the video floats in its own small window. Drag or flick it into a corner, pinch to resize it, or flick it past the side of the screen to tuck it away.
-- **Now Playing**: when media plays in a tab that you left, a card at the bottom of the sidebar has its controls.
+- ⭐ **Floating video**: when you leave Rise while a video plays with sound, the video floats in its own small window. Drag or flick it into a corner, pinch to resize it, or flick it past the side of the screen to tuck it away.
+- ⭐ **Now Playing**: when media plays in a tab that you left, a card at the bottom of the sidebar has its controls.
 - **Tab audio**: a tab that plays sound has a button to pause or mute it.
-- **Meet's floating window**: move it with two fingers on its title bar, and flick it into a corner.
+- ⭐ **Meet's floating window**: move it with two fingers on its title bar, and flick it into a corner.
 - **YouTube**: videos that you open wait for you to press play. Turn autoplay on in Settings → Tabs or the Page menu.
 
 ### Privacy, permissions and notifications
 
-- **Ad blocking**: Rise has uBlock Origin built in. Click the shield in the site controls to turn it off for a site.
+- ⭐ **Ad blocking**: Rise has uBlock Origin built in. Click the shield in the site controls to turn it off for a site.
 - **Cookie banners**: Rise closes cookie banners for you. Turn this off in the Page menu.
 - **Site permissions**: Rise asks before a site can use your camera, microphone or location. Your answer stays for that site. Press ⌥⌘Return to allow or ⌥⌘⌫ to deny.
 - **Notifications**: allowed sites, such as Google Chat, show their notifications in Notification Centre.
-- **Passkeys**: use Touch ID, security keys such as YubiKeys, password manager extensions, or your phone.
-- **Link preloading**: turn on Page → Preload Links on Hover to load links before you click them. It is off by default.
+- ⭐ **Passkeys**: use Touch ID, security keys such as YubiKeys, password manager extensions, or your phone.
+- ⭐ **Link preloading**: turn on Page → Preload Links on Hover to load links before you click them. It is off by default.
 
 ### Downloads
 
@@ -153,7 +154,7 @@ Hover over these tabs in the sidebar to see a card:
 - **Developer mode**: press ⌃D. The tab shows its address, and the page bar gets an address field that you can edit. It turns on by itself for `localhost`.
 - **DevTools**: press ⌥⌘J for the elements, ⌥⌘K for the console, or ⌥⌘U for the page source.
 - **Hard reload**: press ⇧⌘R to reload without the cache.
-- **Pull request tabs**: tabs for pull and merge requests show their state and repository.
+- ⭐ **Pull request tabs**: tabs for pull and merge requests show their state and repository.
 
 ### Settings and sync
 
