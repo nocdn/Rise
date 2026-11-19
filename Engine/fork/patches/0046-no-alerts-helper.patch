@@ -1,0 +1,94 @@
+diff --git a/chrome/browser/notifications/mac/notification_platform_bridge_mac.cc b/chrome/browser/notifications/mac/notification_platform_bridge_mac.cc
+index cbfe392..f2bfcc9 100644
+--- a/chrome/browser/notifications/mac/notification_platform_bridge_mac.cc
++++ b/chrome/browser/notifications/mac/notification_platform_bridge_mac.cc
+@@ -39,7 +39,9 @@ NotificationPlatformBridgeMac::NotificationPlatformBridgeMac(
+ NotificationPlatformBridgeMac::~NotificationPlatformBridgeMac() {
+   // TODO(miguelg) do not remove banners if possible.
+   banner_dispatcher_->CloseAllNotifications();
+-  alert_dispatcher_->CloseAllNotifications();
++  if (alert_dispatcher_) {
++    alert_dispatcher_->CloseAllNotifications();
++  }
+ }
+ 
+ // static
+@@ -48,9 +50,11 @@ NotificationPlatformBridge::Create() {
+   auto banner_dispatcher = std::make_unique<NotificationDispatcherMojo>(
+       std::make_unique<MacNotificationProviderFactory>(
+           mac_notifications::NotificationStyle::kBanner));
+-  auto alert_dispatcher = std::make_unique<NotificationDispatcherMojo>(
+-      std::make_unique<MacNotificationProviderFactory>(
+-          mac_notifications::NotificationStyle::kAlert));
++  // Rise has no alerts: every site's notification is a banner from its own
++  // process (below). Chrome's alerts come from its helper app, which only
++  // starting would have macOS ask, under Chromium's name, whether it may
++  // notify; so no alert dispatcher starts it, even to list or close alerts.
++  std::unique_ptr<NotificationDispatcherMac> alert_dispatcher;
+   auto create_dispatcher_for_web_app =
+       base::BindRepeating([](const webapps::AppId& web_app_id)
+                               -> std::unique_ptr<NotificationDispatcherMac> {
+@@ -123,7 +127,7 @@ void NotificationPlatformBridgeMac::CloseImpl(
+     banner_dispatcher_->CloseNotificationWithId(
+         {notification_id, profile_id, incognito});
+   }
+-  if (alert_dispatcher_.get() != excluded_dispatcher) {
++  if (alert_dispatcher_ && alert_dispatcher_.get() != excluded_dispatcher) {
+     alert_dispatcher_->CloseNotificationWithId(
+         {notification_id, profile_id, incognito});
+   }
+@@ -159,7 +163,7 @@ void NotificationPlatformBridgeMac::GetDisplayed(
+   auto notifications = std::make_unique<std::set<std::string>>();
+   std::set<std::string>* notifications_ptr = notifications.get();
+   auto barrier_closure = base::BarrierClosure(
+-      2, base::BindOnce(
++      alert_dispatcher_ ? 2 : 1, base::BindOnce(
+              [](std::unique_ptr<std::set<std::string>> notifications,
+                 GetDisplayedNotificationsCallback callback) {
+                std::move(callback).Run(std::move(*notifications),
+@@ -177,8 +181,10 @@ void NotificationPlatformBridgeMac::GetDisplayed(
+ 
+   banner_dispatcher_->GetDisplayedNotificationsForProfileId(
+       profile_id, incognito, get_notifications_callback);
+-  alert_dispatcher_->GetDisplayedNotificationsForProfileId(
+-      profile_id, incognito, get_notifications_callback);
++  if (alert_dispatcher_) {
++    alert_dispatcher_->GetDisplayedNotificationsForProfileId(
++        profile_id, incognito, get_notifications_callback);
++  }
+ }
+ 
+ void NotificationPlatformBridgeMac::GetDisplayedForOrigin(
+@@ -207,7 +213,7 @@ void NotificationPlatformBridgeMac::GetDisplayedForOrigin(
+   auto notifications = std::make_unique<std::set<std::string>>();
+   std::set<std::string>* notifications_ptr = notifications.get();
+   auto barrier_closure = base::BarrierClosure(
+-      2 + web_app_ids.size(),
++      (alert_dispatcher_ ? 2 : 1) + web_app_ids.size(),
+       base::BindOnce(
+           [](std::unique_ptr<std::set<std::string>> notifications,
+              GetDisplayedNotificationsCallback callback) {
+@@ -229,8 +235,10 @@ void NotificationPlatformBridgeMac::GetDisplayedForOrigin(
+ 
+   banner_dispatcher_->GetDisplayedNotificationsForProfileIdAndOrigin(
+       profile_id, incognito, origin, get_notifications_callback);
+-  alert_dispatcher_->GetDisplayedNotificationsForProfileIdAndOrigin(
+-      profile_id, incognito, origin, get_notifications_callback);
++  if (alert_dispatcher_) {
++    alert_dispatcher_->GetDisplayedNotificationsForProfileIdAndOrigin(
++        profile_id, incognito, origin, get_notifications_callback);
++  }
+ 
+   for (const webapps::AppId& web_app_id : web_app_ids) {
+     auto* dispatcher = GetOrCreateDispatcherForWebApp(web_app_id);
+@@ -270,7 +278,9 @@ void NotificationPlatformBridgeMac::CloseAllNotificationsForProfile(
+   bool incognito = profile->IsOffTheRecord();
+ 
+   banner_dispatcher_->CloseNotificationsWithProfileId(profile_id, incognito);
+-  alert_dispatcher_->CloseNotificationsWithProfileId(profile_id, incognito);
++  if (alert_dispatcher_) {
++    alert_dispatcher_->CloseNotificationsWithProfileId(profile_id, incognito);
++  }
+ }
+ 
+ NotificationDispatcherMac*
