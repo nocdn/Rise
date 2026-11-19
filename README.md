@@ -1,96 +1,220 @@
 # Rise
 
-The initial iOS app lives in [`Apps/iOS`](Apps/iOS/README.md): a native UIKit and
-WKWebView shell that opens Hacker News without browser controls. Both platforms
-share the original artwork and Icon Composer document in [`Assets/AppIcon`](Assets/AppIcon/README.md).
+Rise is a web browser for the Mac. It has a native AppKit interface in the style of Arc and Dia: tabs in a sidebar, Peek, split view and smooth motion. Under the interface, Rise runs its own build of Chromium, so websites and Chrome extensions work as they do in Chrome.
 
-A native macOS browser written in **AppKit + WKWebView**, with Arc-inspired chrome matched to the supplied Retina screenshots. No SwiftUI, Electron, or external dependencies. Requires macOS 14 or later.
+The repository also has an iPhone app. It is in [`Apps/iOS`](Apps/iOS/README.md).
 
-## Build and run
+## Download
 
-```sh
-./scripts/build.sh
-```
+Get the latest version from [Releases](https://github.com/nocdn/Rise/releases).
 
-The signed local app is `build/Rise.app`. Double-click it in Finder, or run `./scripts/restart.sh` to rebuild and relaunch a running copy. Local builds are signed with your Apple Development certificate when one is installed (ad-hoc otherwise), so macOS remembers folder permissions such as Downloads access across rebuilds. Rise runs on its own Chromium fork, built beside the repo first (see [Engine/README.md](Engine/README.md)). For development, open `Package.swift` in Xcode or use `swift build`. Run unit tests with `scripts/test.sh`, and checks on real pages in a Rise window with `python3 scripts/test-chromium-live.py`.
+1. Download Rise from the newest release.
+2. Move `Rise.app` to your Applications folder.
+3. Open Rise.
 
-Passkeys go through the engine's own WebAuthn, as in Chrome: security keys such as YubiKeys,
-password manager extensions such as 1Password, and a phone's passkeys by QR code need nothing
-from Apple. The engine's Touch ID passkeys need a provisioning profile for Rise, which any
-developer account can make; only iCloud Keychain passkeys need Apple's approval. See
-[Passkeys](docs/Passkeys.md) for the profile and the `RISE_SIGNING_IDENTITY` /
-`RISE_PROVISIONING_PROFILE` build options, and run `python3 scripts/test-passkey-signing.py`
-to check the signing rules.
+Rise needs macOS 14 or later on a Mac with Apple silicon.
 
-## Implemented
+## Build from source
 
-- Persistent numbered page annotations: select text → Ask About Selection, or Control-Command-A. Questions use the same model, streaming, styling and motion as Find. Annotations share page context and earlier answers, survive reloads, and can be removed individually or from the Page menu. [Details and validation](docs/PageAnnotations.md).
-- Shift-Command-A tab search matches compact page and repository metadata as well as titles and URLs. Enter on a descriptive query uses the selected AI provider to rank matching tabs in the existing sidebar, with Find's input shimmer and bounded context. [Details](docs/PageAnnotations.md#smarter-tab-search).
+You only need this if you want to change Rise. To use Rise, [download it](#download).
 
-- 228-point resizable sidebar; system-owned Liquid Glass traffic lights. The page matches the measured Dia frame with a 6-point outer inset and 9.5-point continuous corners with corner smoothing, lifted as Kero lifts its cards: two soft shadows in Light, a lit edge over three tight shadows in Dark. Dia's page bar sits across the page's top, with the sidebar, back, forward and reload buttons, the site and title, and the copy, zoom, site controls and pinned extension buttons.
-- Light and Dark (or Automatic), as Kero's Plain: its cool grey (`#ECEEF4`) or near-black (`#141418`) at 82% over the window's sidebar material, and its chosen tab (a white or lit card with a fine ring and shadow) and hover, fading as you switch. Native controls and websites supporting `prefers-color-scheme` receive the dark appearance; the chosen theme persists across launches, and a session saved with the retired Rise or Rose theme opens in Light.
-- Dia-style 34-point tab rows with 3-point gaps, 11-point continuous rounded corners with corner smoothing, and 13-point system titles with normal AppKit font rendering. Two-line developer tabs scale to 37 points, or 44 points in split groups, retaining their title/subtitle spacing and construction border. Long titles and addresses fade at the right edge instead of ending in an ellipsis.
-- Sidebar closes and opens instantly with ⌘B. Closing hides the toolbar and native window controls, leaving the page inside a uniform 6-point inset. New Tab shares the regular tabs’ 34-point height, full row width, 3-point gap, title alignment, and continuous rounded hover background.
-- Control-Tab switches in recently visited order. Releasing Control within 80 ms commits without showing UI; holding it longer reveals a centered preview switcher with favicons, titles, and cached page pictures. Control-Shift-Tab cycles backward, and moving the pointer over a card picks it; releasing Control or clicking a card commits, and Escape cancels. The frozen order stays stable during a gesture. It shows the most recent tabs, 5 unless set in rise://settings (2 to 15), five to a row, shrinking to fit rather than scrolling. Pictures are kept beside the session (`Tab Pictures/`), so restored tabs show theirs at launch without loading. Tabs it would show that have loaded but haven't been on screen, such as tabs opened in the background, get their pictures a moment later: each page renders out of sight, muted, just long enough for its picture. A restored tab with no picture yet isn't loaded for one.
-- Background tabs rest. Pages are hidden to Chromium whenever they're out of the window, including tabs opened in the background, and Chrome's tab freezing is on (as in Helium): tabs beyond the five most recently used freeze, waking a few seconds a minute, unless they're playing or capturing, on a call, holding locks or devices, or allowed notifications. After 30 minutes out of sight (`defaults write dev.bartosz.Rise Rise.TabSleepMinutes <minutes>`, 0 for never), a tab also sleeps: its page is let go, keeping its place, title, icon, picture and history, and it loads back from that history, scrolled where it was, when next shown. The five most recently used tabs, pinned tabs, and tabs that are loading, playing, holding media, shown elsewhere, or have a part-filled form stay awake.
-- Clicking a link that's already open in another tab switches to that tab instead of opening it again; ⌘-click still opens a new tab. Links from other apps also reuse an existing tab at the same address, preserving its scroll position and unsaved forms. The two behaviors have separate switches in rise://settings → Tabs.
-- Loading shows as a thin blue line along the bottom of the page bar, following the page's progress on a spring and fading when it's done; a hard reload's is red-pink.
-- Hovered link destinations appear in a small pill at the page’s lower-left corner, including in Peek and split views. A stationary pill with a single 650 ms text shimmer signals a successfully completed preload, including sites that require cache revalidation; failed responses never trigger it. The signal confirms fetching finished, while click speed still depends on the site’s caching. Reduce Motion disables the shimmer.
-- Sidebar tabs with page titles and same-origin favicons, 16-point icons with Dia-matched 4-point continuous rounding (scaled consistently in search suggestions and the tab switcher, without modifying cached image data), an approximately 8-point visible icon/title gap, and 6-point sidebar insets. Close buttons have a subtle hover background in every theme. Middle-click and release on a tab (including either split half) to close it without first selecting it. Close, duplicate, pin, and restore recently closed tabs.
-- Selecting an event (an invitation's date, time and location, or "Dinner on Friday at 7pm") puts its time first in the right-click menu, opening to Add to Calendar, Add to Reminders and Google Calendar, each filled in with its title, place, times and zone ([Selected events](docs/SelectionEvents.md)).
-- Address popup for URLs, Google searches, existing tabs, browsing-history suggestions, and browser actions. The Command-T new-tab/search popup is 400 points wide; editing the current tab's address uses the compact 350-point popup. Suggestions show real, untinted favicons from open tabs, a persistent origin-scoped cache, or each site's icon. Typed site addresses fetch their favicon after a 250 ms debounce, reuse cached/open-tab icons immediately, and cancel pending discovery when the origin changes or the popup closes. Search phrases and incomplete hosts do not fetch icons. The site's `/favicon.ico` is tried first; HTML responses or missing icons fall back to declared raster icons in bounded origin-root metadata (including CDN links). Redirected landing pages without a declared icon fall back to that destination’s `/favicon.ico`. Typed paths and query strings are not sent by icon discovery, and typing does not record a history visit. Loaded pages also supply their declared icons. Arriving icons update in place without changing selection or typed text.
-- Browsing history persists locally across relaunches, with up to 2,000 successfully visited HTTP(S) URLs. Address suggestions rank literal prefixes first, then title matches, using visit frequency and recency within each tier. Typing a known URL prefix selects an inline completed suffix; continuing to type replaces it, Backspace removes it without immediately completing again, and arrow keys choose other suggestions. Search phrases and edits in the middle of an address are not completed. Clear saved visits/autocomplete through **History → Clear Browsing History…** or **URL-bar settings → ⋯ → Clear Browsing History…**. Open tabs and website cookies stay; hovering/prefetching alone does not create a visit. History ranking and matching happen entirely on the device; no suggestion service receives the query.
-- The address popup opens and closes instantly while keeping its soft native shadow and size. Placeholder and entered addresses share the same font; suggestion titles are vertically centered with their icons.
-- Two-finger history gestures animate the existing toolbar arrow, replacing the engine’s full-page slide; the page itself stays still. Swipe right for back or left for forward; at 120 points the arrow turns `#007AFF` blue and requests one Generic haptic, then navigates at once when you lift while still beyond the threshold. Reversing below 120 points removes the blue highlight and cancels navigation; moving past the origin does not switch direction. There is at most one haptic per gesture, including if you cross the threshold again. Arrow compression, increasing resistance past threshold, and release spring (stiffness 600, damping 30) follow the supplied trackpad demo, with more visible arrowhead shortening at toolbar scale. A reversed swipe that reached the threshold still bounces home without navigating; an earlier arrow release returns over 160 ms. Vertical scrolling, horizontal page scrollers, and iframe scrolling stay with the page. Momentum never adds travel or extra navigations; any first momentum event can finish an owned gesture if the system omits finger-up or momentum-began. The bounded DOM probe tolerates short busy-page delays. Toolbar Back/Forward clicks and ⌘[ / ⌘] navigate directly, with no arrow spring. Cancelling or switching tabs cancels the swipe.
-- A Chromium page per tab, sharing one profile's website data, back/forward history, reload/stop, trackpad navigation, zoom, and Find on Page.
-- Changing page zoom reports its percentage in the URL bar. While zoomed, a reset button stays visible to the right of Copy Link; clicking it restores 100%. Its slot and the address background resize on the same spring while the icon fades in or out.
-- Built-in **Block Ads**, enabled by default. Turn it off or on for the site you’re on with the shield in the site controls, which reloads its pages. Reloading a page three times in 20 seconds offers to do the same. The preference persists and applies across tabs, split panes, Peek, popups, and speculative link preloads. Hidden loaded tabs refresh when next opened. The engine blocks ad requests and hides ad elements using bundled EasyList and Rise's ad rules. No extension installation is required.
-- New-window links open in tabs. Command-click opens a tab; Shift-click opens Peek; Option-click copies the link.
-- Holding Option on a link opens a card over it, placed and animated as a pull request link's, summarising the page it leads to in one paragraph: Rise reads the page out of sight, with your sessions, and the find bar's model writes the summary while a skeleton line holds its place.
-- Optional **Preload Links (Experimental)** in the URL-bar site controls. Hovering over an HTTP(S) link for 150 ms warms the page and its static resources in Chromium’s cache, without running page scripts or adding a tab/history entry. Short hovers, downloads, and same-page anchors are skipped. The preference persists and defaults to off. Preloads are limited to two at a time and 32 distinct URLs per minute; switching off cancels pending loads. Cacheable pages open faster; sites that disable caching or depend on JavaScript still load normally. Enabling this uses additional bandwidth and contacts hovered destinations before clicking.
-- Peek overlay with close, expand-to-tab, and split controls; two-page split view. Like Arc, a Shift-clicked link springs into the Peek card with a subtle overshoot, carrying an enlarged snapshot of the link that hands over to the live Peek page within about 100 ms while the card is still growing; its shadow fades in along the way. With the same spring, the page behind recedes to 98.2% about its center as it dims; the dimming lives inside the page, so it recedes with it and never covers the page’s shadow. Holding Shift over a link for 80 ms starts rendering its page invisibly at Peek size, so the click shows it from the first frame; an unused standby page is discarded after 20 seconds or when another link is targeted. Escape, the close button or clicking outside quickly springs the page back into the link with a barely visible bounce while the page behind springs back to full size, overshooting by about 1 point per side, crossfading into the link itself (relocated if the page scrolled). The motion is interruptible: dismissing a Peek that is still growing reverses it from wherever it is, and a new Peek can open while the previous one is still shrinking. Peeks without a visible source link scale gently from the center; Reduce Motion shows and hides Peek instantly. `python3 scripts/test-chromium-live.py peek` checks the motion frame by frame. Split pairs occupy one sidebar row with two compact favicon/title sections: a divider when inactive, and a softly shadowed rounded container with inset highlights when selected. Clicking either half or page focuses that pane without swapping left/right. Groups remain together when switching tabs and across relaunches; right-click a half to separate the pair. Closing one half leaves the other as a normal tab.
-- Tabs can be dragged vertically to reorder without replacing their page, favicon, loading state, size or styling. Split pairs move as one row; each neighbor crossing requests a subtle alignment haptic. Neighbor rows move together over 180 ms. Holding near the list edges autoscrolls while keeping the dragged row fully visible; Escape cancels the drag. Tab order is saved, including the positions of pinned tabs.
-- New and reopened tabs appear immediately at the top; existing rows make space together. Closing a tab moves the remaining rows upward together with the same quick transition. Double-click a title to edit it in place with the full text selected, unchanged typography and padding: Enter saves immediately and Escape discards. Custom names survive navigation, reloads, archiving and restarts. Pressing or holding tabs keeps their size fixed, matching Dia. Reordering, insertion and collapse retain the quick 180 ms transition; Reduce Motion removes that motion.
-- Copy the current page link with **⌘⇧C** or the URL-bar link button. A native sideways popover confirms “Link copied”, with AppKit’s material and opening/closing animation; its share button opens AirDrop directly for that copied URL. It dismisses after 1.5 seconds, stays open while hovered, and restarts the timer when the pointer leaves. Copying with the sidebar closed restores the sidebar instantly. Copy/settings glyphs are 14 points and fade in over 140 ms while any part of the sidebar is hovered, then fade out over 120 ms unless Site Controls is open. Popovers remain anchored to the URL bar while these icons fade.
-- Successful Copy URL actions swap the page bar's link glyph for a “link copied” glyph that fades in while springing up from a smaller size, restoring it after one second, and say “Copied current URL” in the blue notice; repeated copies restart the timer, and Reduce Motion swaps the glyph immediately. The page bar's copy, zoom and site controls buttons fade in while it's hovered. Site Controls uses AppKit’s native popover material and opening/closing animation, with Share, Screenshot, OCR and More across the top. These buttons and Extensions share continuous rounded corners, a fine border and a tiny shadow, with a slightly smaller proportional size. Settings use circular status icons and live text without trailing checkmarks or hover backgrounds, with a slightly larger left inset. The footer is removed; More includes connection details, split view and permissions that do not already have a visible row. The Extensions tile lists installed Chrome extensions and opens the Chrome Web Store.
-- Camera, microphone, and (on macOS 27+) location requests use a native “Not Now / Allow” popover attached to the settings icon. Decisions persist per requesting origin, including its scheme and port; navigation, tab changes, and dismissal safely cancel pending requests. Notifications can be allowed or blocked per site and use macOS notifications while the page is open; background Web Push/service-worker notifications are not implemented. macOS may separately ask for system permission. Automatic Picture-In-Picture is allowed per site by default: a playing video with sound floats in the system’s picture in picture when Rise goes into the background.
-- Developer Mode: striped URL toolbar with an editable address (Enter navigates, Escape cancels), yellow/black selected-tab border, URL copy, screenshot export, JavaScript evaluation, page source, native site-information popover, and split view. Toggling it slides the toolbar and page together over 180 ms; the tab title moves upward while its URL fades in and settles downward by 2 points. Reversing a toggle continues from the current position, and Reduce Motion uses immediate changes. Localhost enables it automatically. WKWebView is inspectable from Safari's Develop menu.
-- Web dialogs, file-upload panels, and visible navigation errors.
-- Downloads save straight to the Downloads folder, numbered like Finder (“report 2.pdf”) when the name is taken. As each one starts, a blue download icon arcs from the pointer into the sidebar’s archive icon: it stays full size for most of the way, shrinks to about a quarter on arrival, and drops into the box as the lid tilts open and the box tips forward to catch it, then the archive recoils slightly along the direction the download came from and springs back. With the sidebar collapsed, the archive springs in on a small rounded tile in the bottom-left corner, a little lighter than the sidebar with a hairline border, catches the download, and slides away half a second after the last one lands. Clicking the archive opens a native popover listing downloads newest first, capped at five rows with scrolling for more, each with its file icon, name and size (or progress while downloading); a row highlights on hover and opens the file in its default app when clicked. Hovering a finished download also shows an eye, which previews it in Quick Look (for documents, media, text and fonts), and an X, which clears it from the list without deleting the file. An empty list says “No downloads yet”. Press ⌥⌘L to open the list (from the bottom-left corner when the sidebar is collapsed); the arrow keys then move the highlight, ignoring the pointer until it moves, and Return opens, Space previews and Delete clears the highlighted download, as they also do for a row under the pointer. Closing Quick Look with its close button, Space or Escape brings the list back with the previewed row focused and scrolled into view. The list persists across relaunches and hides files that were moved or deleted. The motion and all its values come from `Playgrounds/download-flight.html`, an interactive tuning page; unit tests check the native motion against it frame by frame. Reduce Motion skips the animation.
-- Session restoration for URLs, titles, favicons, back/forward history, selected tab, pins, theme, developer mode, and sidebar width. Each tab saves the engine’s own session state, so after a relaunch it reopens on the page it was showing with its back and forward pages intact; inactive tabs keep their saved history until first opened. Favicons are saved as compact 32-pixel PNGs with their security origin and restored immediately for active and inactive tabs, before pages load. Invalid images are ignored, and icons cannot leak across sites, schemes or ports. Old sessions remain compatible and can populate missing icons without loading all their pages. Cookies and site storage are in Rise's Chromium profile. Recently closed tabs are currently session-local.
+### What you need
 
-## Shortcuts
+- A Mac with Apple silicon.
+- Xcode with the macOS 26.5 SDK, and its Metal toolchain: `xcodebuild -downloadComponent MetalToolchain`.
+- About 100 GB of free disk space for the Chromium engine.
+
+### Steps
+
+1. Get the pinned Chromium source. It goes into `../rise-chromium/fork` (about 30 GB):
+
+   ```sh
+   ./scripts/engine/checkout.sh
+   ```
+
+2. Apply Rise's patches and build the engine. The first build takes a long time:
+
+   ```sh
+   ./scripts/engine/build.sh
+   ```
+
+   If another Mac has already built the engine, copy it from there instead:
+
+   ```sh
+   ./scripts/engine/fetch.sh <ssh-host> [ssh-port]
+   ```
+
+3. Build Rise and open it:
+
+   ```sh
+   ./scripts/build.sh
+   open build/Rise.app
+   ```
+
+   After a change, `./scripts/restart.sh` rebuilds Rise and opens it again.
+
+4. Run the tests:
+
+   ```sh
+   ./scripts/test.sh                      # unit tests
+   python3 scripts/test-chromium-live.py  # checks on real pages in a Rise window
+   ```
+
+For more about the engine, see [Engine/README.md](Engine/README.md). For passkeys and signing, see [docs/Passkeys.md](docs/Passkeys.md).
+
+## Features
+
+### Tabs and sidebar
+
+- **Sidebar tabs**: your tabs are in a list at the left. Drag a tab to move it. Double-click a title to rename it. Middle-click a tab to close it.
+- **Pinned tabs**: drag a tab up into the tiles at the top to pin it. Drag a tile down to unpin it. Tiles take the color of the site's icon.
+- **Wide sidebar**: hold ⌃⌘ to make the sidebar wider, so you can see long titles.
+- **Hidden sidebar**: press ⌘B to hide the sidebar. Move the pointer to the left edge of the window and the sidebar slides out.
+- **Tab switcher**: press ⌃Tab to go to your recent tabs, with page pictures. Release ⌃ to switch. Set how many tabs it shows in Settings → Tabs.
+- **Choose a tab by scrolling**: hold ⌥ and scroll on the trackpad. A highlight moves through your tabs. Release ⌥ to switch, or press Escape to cancel. Pinned tabs are not included. Change the key in Settings → Tabs.
+- **Search tabs**: press ⇧⌘A to search your open tabs by title, address and page content. Type a description and the AI finds the tabs that match it.
+- **Smart Rename**: put the pointer on a tab and press ⌃R. The AI gives the tab a short name.
+- **Sort tabs**: press ⇧⌘K to sort your tabs by website. Press ⌘Z to undo.
+- **Open tabs are reused**: a link to a page that is already open goes to that tab. Links from other apps do this too. ⌘-click still opens a new tab. Turn this off in Settings → Tabs.
+- **Tabs rest**: tabs that you don't use freeze, and after 30 minutes they sleep to save memory. Each tab keeps its place and history, and loads again when you open it.
+- **Archived tabs**: tabs that you don't use for 48 hours move to History → Archived Tabs. Change the time in Settings → Tabs.
+- **Reopen tabs**: press ⇧⌘T to reopen the last tab that you closed. Right-click the downloads button to see other tabs that you closed recently.
+- **Pinned tab safety**: ⌘W on a pinned tab asks you to press ⌘W again.
+- **Notification counts**: counts such as "(3)" are removed from tab titles. Turn this off in Settings → Tabs.
+- **Sessions**: Rise keeps your tabs, their history, Peeks and splits when you quit, and opens them again at the next launch.
+
+### Peek and split view
+
+- **Peek**: Shift-click a link to open it in a card over the page. Press Escape or click outside to close it. Use the buttons on the card to make it a tab or a split.
+- **Peek the current page**: press ⇧⌘P. Press ⌥⌘P to move a Peek into a new tab.
+- **Split view**: drag a tab from the sidebar onto the page, then drop it on the left or right target. Or press ⇧⌘D to show the current page twice. Drag the handle between the pages to resize them. Right-click a split in the sidebar to separate it.
+
+### Address bar and search
+
+- **Address bar**: press ⌘T for a new tab or ⌘L to edit the address. Suggestions come from your open tabs, your history and Google.
+- **Search a site**: type a site's name and press Tab to search on that site. Rise learns this from the searches that you do on sites.
+- **Ask an AI**: type a question to ask ChatGPT, Claude or Gemini on their own sites.
+- **Commands**: type `/` to see browser commands, such as `/zoom` or `/settings`.
+- **Copy the link**: press ⇧⌘C or click the link button in the page bar.
+
+### Reading and pages
+
+- **Find and Ask**: press ⌘F to find text. Type a question instead, and the AI answers it about the page.
+- **Annotations**: select text and press ⌃⌘A to ask about it. The answer stays on the page as a numbered note, also after a reload.
+- **Link summaries**: hold ⌥ over a link to see a short summary of the page that it opens.
+- **AI chat**: press ⌘E to open a chat beside the page. It can read and use your tabs, and you can mention a tab by its name. Choose the AI provider and model in Settings → AI.
+- **Local times**: press ⌥⌘T to change the times on a page to your own time zone. Press it again to change them back. You can also select a time to see it in your time zone.
+- **Events**: select a date or time, such as "Dinner on Friday at 7pm", and right-click it. You can add it to Calendar, Reminders or Google Calendar.
+- **History menu**: right-click (or ⌃-click) the Back or Forward button to go straight to an earlier page.
+- **Page bar color**: the bar above the page takes the color of the top of the page.
+- **Zoom**: press ⌘+, ⌘− or ⌘0. The page bar shows the zoom level and a reset button.
+- **Captures and printing**: the File menu can save a screenshot, or the full page as an image or PDF. Press ⌘P to print.
+- **Full screen in the window**: press ⇧⌘F so that pages which go full screen, such as videos, stay inside Rise's window. Press it again to use the normal full screen.
+- **Rise's own right-click menu**: Shift–right-click to get Rise's menu on sites that have their own menu.
+
+### Hover cards
+
+Hover over these tabs in the sidebar to see a card:
+
+- **Gmail and Proton Mail**: your newest emails. Click one to open it. Choose the Gmail category in Settings → Tabs.
+- **Google Chat**: your direct messages, newest first. Unread ones have a blue dot.
+- **Google Calendar**: your day as a timeline. Swipe sideways to go to other days. Right-click empty space and choose Refresh to get the newest events. Pinch to make the card taller or shorter while it's open. Calendar tabs also show a countdown, such as "in 17m", before an event starts.
+- **GitHub pull requests and GitLab merge requests**: the title, status, checks and changed files. These cards also open from links to pull requests in pages.
+
+### Media
+
+- **Floating video**: when you leave Rise while a video plays with sound, the video floats in its own small window. Drag or flick it into a corner, pinch to resize it, or flick it past the side of the screen to tuck it away.
+- **Now Playing**: when media plays in a tab that you left, a card at the bottom of the sidebar has its controls.
+- **Tab audio**: a tab that plays sound has a button to pause or mute it.
+- **Meet's floating window**: move it with two fingers on its title bar, and flick it into a corner.
+- **YouTube**: videos that you open wait for you to press play. Turn autoplay on in Settings → Tabs or the Page menu.
+
+### Privacy, permissions and notifications
+
+- **Ad blocking**: Rise has uBlock Origin built in. Click the shield in the site controls to turn it off for a site.
+- **Cookie banners**: Rise closes cookie banners for you. Turn this off in the Page menu.
+- **Site permissions**: Rise asks before a site can use your camera, microphone or location. Your answer stays for that site. Press ⌥⌘Return to allow or ⌥⌘⌫ to deny.
+- **Notifications**: allowed sites, such as Google Chat, show their notifications in Notification Centre.
+- **Passkeys**: use Touch ID, security keys such as YubiKeys, password manager extensions, or your phone.
+- **Link preloading**: turn on Page → Preload Links on Hover to load links before you click them. It is off by default.
+
+### Downloads
+
+- **Downloads**: files go to your Downloads folder. A small animation shows each download go into the downloads button.
+- **Downloads list**: press ⌥⌘L or click the downloads button. Click a file to open it, or hover over it to preview it in Quick Look or remove it.
+
+### Extensions
+
+- **Chrome extensions**: install them from the Chrome Web Store with the Add to Rise button.
+- **Pinned extensions**: pin an extension to put its button in the page bar. Press ⌥⇧1 to ⌥⇧9 to open the pinned extensions in order.
+
+### For developers
+
+- **Developer mode**: press ⌃D. The tab shows its address, and the page bar gets an address field that you can edit. It turns on by itself for `localhost`.
+- **DevTools**: press ⌥⌘J for the elements, ⌥⌘K for the console, or ⌥⌘U for the page source.
+- **Hard reload**: press ⇧⌘R to reload without the cache.
+- **Pull request tabs**: tabs for pull and merge requests show their state and repository.
+
+### Settings and sync
+
+- **Settings**: press ⌘, to open `rise://settings`. It has appearance, tabs, AI, system and keyboard shortcut settings.
+- **Keyboard shortcuts**: change any shortcut in Settings → Keyboard shortcuts.
+- **Flags**: open `rise://flags` for Chromium's experimental features.
+- **Themes**: Light, Dark or Automatic. Change it with the paint roller button at the bottom of the sidebar, or in Settings.
+- **iCloud sync**: your tabs and history sync with the iPhone app through iCloud. Turn this on or off with Rise → Sync Tabs with iCloud.
+
+## Keyboard shortcuts
+
+You can change all of these in Settings → Keyboard shortcuts.
 
 | Shortcut | Action |
 | --- | --- |
-| ⌘T | New-tab popup |
-| ⌘L | Edit current address |
-| ⌘W | Close current tab |
-| ⇧⌘T | Restore last closed tab at the top, behind the current one (rise://settings → Tabs can switch to it) |
+| ⌘T | New tab |
+| ⌘L | Edit the address |
+| ⌘O | Open a file |
+| ⌘W | Close the tab |
+| ⇧⌘W | Close the window |
+| ⇧⌘T | Reopen the last closed tab |
 | ⌘[ / ⌘] | Back / forward |
 | ⇧⌘[ / ⇧⌘] | Previous / next tab |
-| ⌃Tab / ⌃⇧Tab | Recent-tab switcher / reverse; release Control to select |
-| ⌘R | Reload / stop |
-| ⌘B | Toggle sidebar |
-| ⌃D | Toggle developer mode |
-| ⇧⌘P | Peek current page |
-| ⌘F / ⌘G / ⇧⌘G | Find / next / previous match |
-| ⌥⌘G / ⌥⇧⌘G | Skip the matches on screen, to the first below / above it (also Option with the arrows, Option-Return and Option-Shift-Return; on iPhone, hold an arrow) |
-| ⌘+ / ⌘− / ⌘0 | Zoom in / out / reset |
-| Escape | Dismiss address popup, Find, or Peek |
+| ⌘1 to ⌘9 | Go to a tab by its number |
+| ⌃Tab / ⌃⇧Tab | Recent tabs switcher, forward / back |
+| ⌥ + scroll | Choose a tab by scrolling |
+| ⇧⌘A | Search tabs |
+| ⌘Return | In the address bar, go to the open tab that is suggested |
+| ⌥⌘↑ / ⌥⌘↓ | Move the tab up / down |
+| ⌃⌥⌘↑ | Move the tab to the top |
+| ⇧⌘K | Sort tabs by website |
+| ⌃R | Smart Rename the tab under the pointer |
+| ⌃⌘ (hold) | Wide sidebar |
+| ⌘B | Show or hide the sidebar |
+| ⇧⌘P | Peek the current page |
+| ⌥⌘P | Move the Peek into a new tab |
+| ⇧⌘D | Show the page in split view |
+| ⌘R | Reload |
+| ⇧⌘R | Reload without the cache |
+| ⌘. | Stop loading |
+| ⌘F | Find on the page, or ask about it |
+| ⌘G / ⇧⌘G | Next / previous match |
+| ⌥⌘G / ⌥⇧⌘G | Skip past the matches on the screen, down / up |
+| ⌃⌘A | Annotate the selection |
+| ⌥⌘T | Change times to your local time |
+| ⌘+ / ⌘− / ⌘0 | Zoom in / out / actual size |
+| ⇧⌘C | Copy the page's link |
+| ⌘P | Print |
+| ⌘E | AI chat |
+| ⌥⌘L | Downloads list |
+| ⌥⌘Return / ⌥⌘⌫ | Allow / deny a site's permission request |
+| ⌥⇧1 to ⌥⇧9 | Open a pinned extension |
+| ⇧⌘F | Full screen inside the window, on or off |
+| ⌃⌘F | Full screen |
+| ⌃D | Developer mode |
+| ⌥⌘J / ⌥⌘K / ⌥⌘U | DevTools elements / console / page source |
+| ⌘, | Settings |
+| Escape | Close the address bar, Find or Peek |
 
-Use the paint-roller button at the sidebar's bottom left to change theme. The archive button at the bottom right lists your downloads in a popover (click one to open it in its default app, or hover it to preview or clear it); right-click it for recently closed tabs. Sidebar icons use `#717171` (the dark theme keeps its lighter grey). Right-click a tab to pin, duplicate, split, or close it. Site controls sit beside the compact address pill.
+## More information
 
-## Scope
-
-This is the first working browsing version, not the full Arc product. Arc account sync, multiple spaces/profiles, Boosts, and Arc's full developer-tool suite are not implemented. Developer Mode uses Chrome's DevTools; its action set differs from Arc's. The layout and colors follow the references, but pixel-perfect identity across macOS versions is not guaranteed.
-
-Reference behavior: [Arc Developer Mode](https://resources.arc.net/hc/en-us/articles/20468488031511-Developer-Mode-Instant-Dev-Tools), [Arc Pinned Tabs](https://resources.arc.net/hc/en-us/articles/19231060187159-Pinned-Tabs-Tabs-you-want-to-stick-around), [Arc Command Bar](https://start.arc.net/command-bar-actions). Engine: Rise's own Chromium fork ([Engine/README.md](Engine/README.md)); the iPhone app runs on WebKit.
-
-## Structure
-
-`RiseCore` contains address resolution and persisted session data. `Rise` contains the AppKit window, sidebar, command popup, tab and page ownership, page events, and browser actions; `RiseChromium` is the interface to the engine. `Tests` covers URL handling, disk persistence, tab lifecycle, split cleanup and restoration, on blank stand-in pages; `Tests/Live` checks real pages on Chromium in a Rise window.
-
-Ad blocking on the Mac is uBlock Origin, which Rise carries and the engine loads as one of Chrome's own extensions, as Helium does: it can't be removed, and it keeps Manifest V2's blocking web requests. `Engine/ublock.json` pins the release; `scripts/ublock.py` puts it in the app. It keeps uBlock Origin's default lists, less its tracker lists, and updates them itself. The shield in the site controls adds the site to or takes it off its list of trusted sites. See `Filters/README.md` and `THIRD_PARTY_NOTICES.md` for sources and licenses. Filter lists can't catch everything, so not every site's ads will always be blocked.
-
-The preload text shimmer translates [ElevenLabs Shimmering Text](https://github.com/elevenlabs/ui/blob/main/apps/www/registry/elevenlabs-ui/ui/shimmering-text.tsx) to Core Animation: 250% background width, text-length-based spread, and linear text-clipped gradient motion. It runs once in 650 ms instead of the component’s two-second default. Native text rendering and glyph alpha coverage stay the same throughout; a contrasting glint sweeps through the existing strokes in every theme, without changing their weight. See `THIRD_PARTY_NOTICES.md` for the MIT attribution.
+- [Engine/README.md](Engine/README.md): how Rise uses Chromium, and its patches.
+- [docs](docs): details about single features.
+- [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md): licenses of the code that Rise includes from others.
