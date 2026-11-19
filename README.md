@@ -62,7 +62,7 @@ You only need this if you want to change Rise. To use Rise, [download it](#downl
 
 For more about the engine, see [Engine/README.md](Engine/README.md). For passkeys and signing, see [docs/Passkeys.md](docs/Passkeys.md).
 
-## Features
+## Mac features
 
 ### Tabs and sidebar
 
@@ -163,6 +163,55 @@ Hover over these tabs in the sidebar to see a card:
 - **Flags**: open `rise://flags` for Chromium's experimental features.
 - **Themes**: Light, Dark or Automatic. Change it with the paint roller button at the bottom of the sidebar, or in Settings.
 - **iCloud sync**: your tabs and history sync with the iPhone app through iCloud. Turn this on or off with Rise → Sync Tabs with iCloud.
+
+## iPhone app features
+
+The iPhone app uses Apple's WebKit engine. To build it, see [Apps/iOS/README.md](Apps/iOS/README.md).
+
+### Tabs
+
+- **Tab switcher**: tap the Tabs button at the bottom left, or swipe up on the bottom bar. Your tabs show as a row of cards, as in Arc. Swipe a card up to close it.
+- **Reopen closed tabs**: shake the iPhone to bring back the tab that you closed.
+- **Incognito mode**: open private tabs from More in the tab switcher. You can lock them with Face ID.
+- **iCloud sync**: your tabs and history sync with the Mac app. Turn this on or off in More → Site settings → App settings.
+- **Archived tabs**: tabs that you don't use for 48 hours move to Archived Tabs, in More in the tab switcher.
+- **History**: open History from More. Swipe a row to delete it, or select many rows at once.
+- **Home Screen actions**: touch and hold the Rise icon to go straight to Downloads, History or a new private tab.
+
+### Search
+
+- **New Page**: tap the button in the middle of the bottom bar to search or type an address. Suggestions come from Google, your history and your open tabs. Shake the iPhone to clear the field.
+- **Voice search**: touch and hold the New Page button and speak. The speech is changed to text on your iPhone.
+- **Search a site**: type a site's name and use its search, as on the Mac.
+- **Dictation in pages**: a microphone above the keyboard lets you speak into any field on a page.
+
+### Reading and pages
+
+- **Summarise**: pinch in on a page, from its smallest zoom, to get a summary. Then you can ask follow-up questions.
+- **Summarise a link**: touch and hold a link, then choose Summarise.
+- **Link previews**: touch and hold a link to see a live preview of the page.
+- **Explain and ask**: select text and choose Explain in Context, or ask a question about the page. You can change the AI's prompts in AI Options.
+- **Font info**: select text and choose Font info to see its font and size.
+- **Translation**: on a page that isn't in English, tap the translate button in More. The page is translated on your iPhone.
+- **Local times**: select a time in another time zone, such as "11pm PST". The menu shows it in your own time, and you can copy it or add it to Calendar.
+- **Events**: select an event, such as an invitation's date, time and place. You can add it to Calendar or Reminders.
+- **Find**: in Find, touch and hold an arrow to skip past the matches on the screen.
+- **Pull to reload**: pull down from the top of the page. Haptics tell you when it will reload.
+- **Back and forward**: swipe from the edge of the screen. A small circle shows when the swipe will go back or forward.
+- **Page color**: the area behind the status bar takes the color of the top of the page.
+- **GitHub stars**: touch and hold a link to a GitHub repository to star or unstar it.
+
+### Media and downloads
+
+- **Videos**: videos play in the page, not in full screen. Touch and hold a video to play, pause, mute, share or download it. Turn off autoplay in More → Site settings → App settings.
+- **Images**: touch and hold an image to copy or save the image itself. The menu shows its size in pixels.
+- **Downloads**: downloads show as a Live Activity in the Dynamic Island and on the Lock Screen. Open them from More → Downloads.
+
+### Privacy and AI
+
+- **Ad, popup and cookie banner blocking**: turn each one on or off for a site in More → Site settings.
+- **Insecure pages**: an HTTP page shows a red, open padlock.
+- **AI features**: turn page questions and Summarise on or off in More → Site settings → App settings. Choose OpenRouter or OpenAI, with your own API key. The key stays in your iPhone's Keychain.
 
 ## Keyboard shortcuts
 
