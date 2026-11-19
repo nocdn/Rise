@@ -36,12 +36,14 @@ import UIKit
         until = nil
         let maximum = min(120, screen?.maximumFramesPerSecond ?? 120)
         let range = CAFrameRateRange(minimum: Float(min(minimumFPS, maximum)), maximum: Float(maximum), preferred: Float(maximum))
-        if let link { link.preferredFrameRateRange = range; phase = "drag"; return }
+        // A tap's settle may already hold the rate unrecorded: the drag is still logged.
+        if let link, record != nil { link.preferredFrameRateRange = range; phase = "drag"; return }
         start = CACurrentMediaTime(); previousVsync = nil; phase = "drag"
         record = Record(panel: name, maximumFPS: maximum,
                         lowPower: ProcessInfo.processInfo.isLowPowerModeEnabled,
                         thermalState: ProcessInfo.processInfo.thermalState.rawValue)
         record?.frames.reserveCapacity(240); record?.work.reserveCapacity(160)
+        if let link { link.preferredFrameRateRange = range; return }
         let link = CADisplayLink(target: FrameTicker { [weak self] in self?.tick() }, selector: #selector(FrameTicker.tick))
         link.preferredFrameRateRange = range
         link.add(to: .main, forMode: .common)
@@ -55,9 +57,19 @@ import UIKit
     func event(_ name: String) {
         record?.events.append(.init(t: CACurrentMediaTime()-start, name: name))
     }
-    func settle(for duration: Double) {
-        guard link != nil else { return }
-        phase = "settle"; until = CACurrentMediaTime()+duration+0.1
+    /// Held until the spring lands. A panel opened or closed with a tap has no drag's hold to
+    /// carry on, so it gets its own, unrecorded, as Core Animation otherwise runs the spring's
+    /// slow end at 60 Hz.
+    func settle(for duration: Double, screen: UIScreen? = nil) {
+        if link == nil {
+            let maximum = min(120, screen?.maximumFramesPerSecond ?? 120)
+            let link = CADisplayLink(target: FrameTicker { [weak self] in self?.tick() }, selector: #selector(FrameTicker.tick))
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: Float(min(80, maximum)), maximum: Float(maximum), preferred: Float(maximum))
+            link.add(to: .main, forMode: .common)
+            self.link = link
+            start = CACurrentMediaTime(); previousVsync = nil
+        }
+        phase = "settle"; until = max(until ?? 0, CACurrentMediaTime()+duration+0.1)
     }
     func stop() {
         link?.invalidate(); link = nil; until = nil

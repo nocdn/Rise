@@ -226,7 +226,7 @@ extension AIChatModel {
     static func model(for choice: ModelChoice, messages: [[String: Any]], session: URLSession = .shared) -> AIChatModel {
         switch choice.provider {
         case .openRouter:
-            return AIChatCompletionsModel(endpoint: PageAssistant.endpoint, key: choice.apiKey ?? PageAssistant.apiKey,
+            return AIChatCompletionsModel(endpoint: PageAssistant.endpoint, key: choice.apiKey,
                                           model: choice.model, effort: choice.effort, messages: messages, session: session)
         case .openAI:
             return AIChatResponsesModel(key: choice.apiKey, model: choice.model, effort: choice.effort, input: messages, session: session)
@@ -277,14 +277,15 @@ extension AIChatModel {
 /// `reasoning_details`, encrypted for OpenAI's models, and goes back with it unchanged so the model
 /// keeps its train of thought across the tools' results.
 @MainActor final class AIChatCompletionsModel: AIChatModel {
-    let endpoint: URL, key: String, model: String, effort: String, session: URLSession
+    let endpoint: URL, key: String?, model: String, effort: String, session: URLSession
     private(set) var messages: [[String: Any]]
     var supportsTools: Bool { true }
-    init(endpoint: URL, key: String, model: String, effort: String, messages: [[String: Any]], session: URLSession) {
+    init(endpoint: URL, key: String?, model: String, effort: String, messages: [[String: Any]], session: URLSession) {
         self.endpoint = endpoint; self.key = key; self.model = model; self.effort = effort; self.messages = messages; self.session = session
     }
 
     func reply(tools: [AIChatTool], mayCall: Bool, handle: (AIChatModelDelta) async throws -> Void) async throws -> AIChatReply {
+        guard let key, !key.isEmpty else { throw PageAssistant.Failure.service(OpenRouterClient.missingKey) }
         var body: [String: Any] = ["model": model, "stream": true, "reasoning": ["effort": effort], "messages": messages]
         if !tools.isEmpty {
             body["tools"] = tools.map(\.chatDefinition)

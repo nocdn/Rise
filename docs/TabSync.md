@@ -5,7 +5,8 @@ panel can shrink the foreground page while a preview is still rendering; the cov
 keeps that temporary page out of the exposed backdrop without interrupting capture.
 
 Rise uses the user's existing system iCloud account. There is no Rise account, login
-screen or password to enter. Sync is on by default. Both devices need the same iCloud
+screen or password to enter. Sync is off by default on iOS and on by default on Mac;
+an explicit saved choice is preserved. Both devices need the same iCloud
 account and a build signed for the same CloudKit container and environment.
 
 On iOS, open **More → Site settings → App settings → Sync tabs with iCloud**.

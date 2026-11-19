@@ -32,10 +32,20 @@ struct ModelChoice: Equatable {
     var provider: AIProvider
     var model: String
     var effort: String
-    /// Nil for OpenRouter's built-in key, and for OpenCode, which signs in on its own.
+    /// The user's own key; nil until they add one, and for OpenCode, which signs in on its own.
     var apiKey: String?
 
     static let openRouter = ModelChoice(provider: .openRouter, model: PageAssistant.model, effort: PageAssistant.reasoningEffort)
+    #if os(macOS)
+    /// OpenRouter with a real key, for checks that ask the real model: `RISE_OPENROUTER_KEY`, else the key
+    /// saved in Rise's settings.
+    static var liveOpenRouter: ModelChoice {
+        var choice = openRouter
+        choice.apiKey = ProcessInfo.processInfo.environment["RISE_OPENROUTER_KEY"].flatMap { $0.isEmpty ? nil : $0 }
+            ?? AIKeys.keychainRead(.openRouter)
+        return choice
+    }
+    #endif
     #if os(macOS)
     static let openCode = ModelChoice(provider: .openCode, model: PageAssistant.model, effort: PageAssistant.reasoningEffort)
     #endif
@@ -109,17 +119,17 @@ enum ModelService {
 }
 
 enum OpenRouterClient {
+    #if os(iOS)
+    static let missingKey = "Add an OpenRouter API key in App settings."
+    #else
+    static let missingKey = "Add an OpenRouter API key in Rise’s settings, under AI."
+    #endif
+
     @MainActor static func run(_ messages: [[String: Any]], choice: ModelChoice, session: URLSession,
                     handle: (ModelEvent) async throws -> Void) async throws {
         var request = URLRequest(url: PageAssistant.endpoint)
         request.httpMethod = "POST"
-        #if os(iOS)
-        guard let key = choice.apiKey, !key.isEmpty else {
-            throw PageAssistant.Failure.service("Add an OpenRouter API key in App settings.")
-        }
-        #else
-        let key = choice.apiKey ?? PageAssistant.apiKey
-        #endif
+        guard let key = choice.apiKey, !key.isEmpty else { throw PageAssistant.Failure.service(missingKey) }
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("Rise", forHTTPHeaderField: "X-Title")

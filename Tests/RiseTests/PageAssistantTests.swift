@@ -103,6 +103,8 @@ private final class AssistantStreamProtocol: URLProtocol {
 }
 
 @MainActor final class PageAssistantTests: XCTestCase {
+    /// OpenRouter as Rise asks it, with a key, answered by each test's session.
+    static let router = ModelChoice(provider: .openRouter, model: PageAssistant.model, effort: PageAssistant.reasoningEffort, apiKey: "fixture")
     private func session(contents: [String], usage: [String: Any]? = nil) throws -> URLSession {
         var stream = ": keep-alive\n\n"
         for content in contents {
@@ -126,7 +128,7 @@ private final class AssistantStreamProtocol: URLProtocol {
             var events: [String] = [], tokens: [String] = []
             let stream = PageAssistant.answer("When?", history: [], page: {
                 PageAssistant.Page(title: "Release", url: "https://example.test", selection: "", text: "March 3")
-            }, highlight: { snippet in events.append("highlight:"+snippet); return found }, session: session)
+            }, highlight: { snippet in events.append("highlight:"+snippet); return found }, provider: Self.router, session: session)
             for try await token in stream {
                 tokens.append(token)
                 if !token.isEmpty { events.append("answer:"+token) }
@@ -187,7 +189,7 @@ private final class AssistantStreamProtocol: URLProtocol {
         var counts: [Int] = [], text = ""
         let stream = PageAssistant.answer("When?", history: [], page: {
             PageAssistant.Page(title: "Release", url: "https://example.test", selection: "", text: "Tomorrow")
-        }, highlight: { _ in false }, inputTokens: { counts.append($0) }, session: session)
+        }, highlight: { _ in false }, inputTokens: { counts.append($0) }, provider: Self.router, session: session)
         for try await token in stream { text += token }
         XCTAssertEqual(text, "It ships tomorrow.")
         XCTAssertEqual(counts, [2452], "Use total prompt tokens, including cached input, without adding output tokens")
@@ -207,7 +209,7 @@ private final class AssistantStreamProtocol: URLProtocol {
             var iterator = ready.stream.makeAsyncIterator()
             _ = await iterator.next()
             consumer.cancel(); await Task.yield(); return true
-        }, session: session)
+        }, provider: Self.router, session: session)
         consumer = Task {
             var tokens: [String] = []
             do { for try await token in stream { tokens.append(token); ready.continuation.yield(()) } } catch {}
@@ -224,7 +226,7 @@ private final class AssistantStreamProtocol: URLProtocol {
             let stream = PageAssistant.answer("When?", history: [], page: {
                 PageAssistant.Page(title: "Release", url: "https://example.test", selection: "", text: "No date yet")
             }, highlight: { _ in XCTFail("No snippet should be highlighted"); return false },
-               inputTokens: { _ in XCTFail("Missing usage must not invent a token count") }, session: session)
+               inputTokens: { _ in XCTFail("Missing usage must not invent a token count") }, provider: Self.router, session: session)
             var text = ""
             for try await token in stream { text += token }
             XCTAssertEqual(text, "The page does not say.")
@@ -236,7 +238,7 @@ private final class AssistantStreamProtocol: URLProtocol {
         defer { session.invalidateAndCancel() }
         let stream = PageAssistant.answer("When?", history: [], page: {
             PageAssistant.Page(title: "Release", url: "https://example.test", selection: "", text: "March 3")
-        }, highlight: { _ in XCTFail("Malformed metadata must not highlight"); return false }, session: session)
+        }, highlight: { _ in XCTFail("Malformed metadata must not highlight"); return false }, provider: Self.router, session: session)
         var text = "", failed = false
         do { for try await token in stream { text += token } } catch { failed = true }
         XCTAssertTrue(failed); XCTAssertEqual(text, "")

@@ -112,7 +112,7 @@ final class AnnotationHTTP: URLProtocol {
         let port=ProcessInfo.processInfo.environment["RISE_CHECK_PORTS"]!.split(separator:",")[0]
         let prefs=UserDefaults(suiteName:"AnnotationLive.\(UUID())")!
         browser=BrowserController(sessionURL:folder.appendingPathComponent("run-\(UUID())/session.json"),restore:false,preferences:prefs)
-        browser.aiKeys.read={_ in nil};browser.setAIModel(PageAssistant.model,for:.openRouter)
+        browser.aiKeys.read={_ in nil};browser.aiKeys.write={_,_ in};browser.setAIKey(ModelChoice.liveOpenRouter.apiKey ?? "fixture",for:.openRouter);browser.setAIModel(PageAssistant.model,for:.openRouter)
         browser.window?.setContentSize(NSSize(width:1260,height:900));browser.showWindow(nil)
         let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[AnnotationHTTP.self];let mockSession=URLSession(configuration:config);browser.annotations.session=mockSession
         let tab=browser.addTab(url:URL(string:"http://127.0.0.1:\(port)/annotations.html")!),page=tab.page

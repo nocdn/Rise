@@ -95,6 +95,8 @@ final class ServiceStub: URLProtocol {
             try write("group/app/-/merge_requests/12/index.html", "<!doctype html><meta charset=utf-8><title>Add the launch banner (!12) · Merge requests · Group / App · GitLab</title><h1>Add the launch banner</h1><p>Shows a banner on launch day.</p>")
             let prefs = UserDefaults(suiteName: "rise-tools-probe-\(ProcessInfo.processInfo.processIdentifier)")!
             browser = BrowserController(sessionURL: folder.appendingPathComponent("session.json"), restore: false, preferences: prefs)
+            // The check answers OpenRouter itself, but Rise asks only with a key.
+            browser.aiKeys.read = { _ in nil }; browser.aiKeys.write = { _, _ in }; browser.setAIKey("fixture", for: .openRouter)
             browser.window?.setContentSize(NSSize(width: 1200, height: 780)); browser.window?.center(); browser.showWindow(nil)
             NSApp.activate(ignoringOtherApps: true)
 

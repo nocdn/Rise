@@ -129,7 +129,7 @@ import RiseChromium
             var messages = AIChatPrompt.messages(history: [], current: AIChatTurn(question: "Read \(site)/article.html and tell me the secret word.", pages: []))
             messages[0]["content"] = (messages[0]["content"] as! String)+"\n\n"+AIChatBrowserTools.instructions+"\n\n"+tools.context()
             var answer = "", steps: [String] = []
-            try await AIChatAgent.run(AIChatModels.model(for: .openRouter, messages: messages), tools: tools.tools) { event in
+            try await AIChatAgent.run(AIChatModels.model(for: .liveOpenRouter, messages: messages), tools: tools.tools) { event in
                 switch event {
                 case .text(let piece): answer += piece
                 case .step(_, let step) where step.state != .running: steps.append(step.text)
@@ -142,7 +142,7 @@ import RiseChromium
             var looked = AIChatPrompt.messages(history: [], current: AIChatTurn(question: "Look at \(site)/chart.html. What colour is the big square at its top? One word.", pages: []))
             looked[0]["content"] = (looked[0]["content"] as! String)+"\n\n"+AIChatBrowserTools.instructions+"\n\n"+tools.context()
             var seen = "", seenSteps: [String] = []
-            try await AIChatAgent.run(AIChatModels.model(for: .openRouter, messages: looked), tools: tools.tools) { event in
+            try await AIChatAgent.run(AIChatModels.model(for: .liveOpenRouter, messages: looked), tools: tools.tools) { event in
                 switch event {
                 case .text(let piece): seen += piece
                 case .step(_, let step) where step.state != .running: seenSteps.append(step.text)
@@ -155,7 +155,7 @@ import RiseChromium
             var asked = AIChatPrompt.messages(history: [], current: AIChatTurn(question: "Put lunch with Priya at Dishoom on Friday at 1pm in my Apple calendar.", pages: []))
             asked[0]["content"] = (asked[0]["content"] as! String)+"\n\n"+AIChatBrowserTools.instructions+"\n\n"+tools.context()
             var event: AIChatEventDraft?
-            try await AIChatAgent.run(AIChatModels.model(for: .openRouter, messages: asked), tools: tools.tools) { update in
+            try await AIChatAgent.run(AIChatModels.model(for: .liveOpenRouter, messages: asked), tools: tools.tools) { update in
                 if case .step(_, let step) = update, case .event(let made)? = step.draft { event = made }
             }
             print("INFO event: \(String(describing: event))")

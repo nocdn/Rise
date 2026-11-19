@@ -5,7 +5,7 @@ final class AppSettingsPanel: UIView {
     static var height: CGFloat { SiteSettingsPanel.height+230 }
     private let header = PanelHeader(title: "Settings")
     var closeButton: AnimatedSymbolButton { header.closeButton }
-    let syncRow = SettingsToggleRow("Sync tabs with iCloud", icon: MenuIcons.syncTabs, colour: .systemBlue, iconSide: 26)
+    let syncRow = SettingsToggleRow("Sync tabs with iCloud", icon: MenuIcons.syncTabs, colour: .systemBlue, iconSide: 26, on: false)
     let autoplayRow = SettingsToggleRow("Autoplay videos", icon: MenuIcons.video, colour: .systemGreen, iconSide: 26)
     let incognitoLockRow = SettingsToggleRow("Locked incognito mode", icon: MenuIcons.lockedIncognito, colour: .systemPurple,
                                              iconSide: 26, on: IncognitoLock.isEnabled)
@@ -60,7 +60,7 @@ final class AppSettingsPanel: UIView {
             label.numberOfLines = 0
             scroll.addSubview(label)
         }
-        detail.text = "Tabs sync automatically through your iCloud account."
+        detail.text = SharedTabsSync.Status.disabled.message
         autoplayDetail.text = "Videos play automatically within the page. Turn off to tap Play instead."
         autoplayRow.toggle.accessibilityHint = autoplayDetail.text
         incognitoLockDetail.text = "Uses Face ID to lock your incognito tabs."

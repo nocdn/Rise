@@ -1,7 +1,8 @@
 import UIKit
 
-/// Only these two resting heights exist. Dragging follows the finger between them,
-/// and stops at either endpoint without stretching or dismissing Downloads.
+/// Only these two resting heights exist. Dragging follows the finger between them, stretches
+/// with resistance past the tall one, as the other panels do against an upward pull, and stops
+/// at the short one without dismissing Downloads.
 struct DownloadsSheetState {
     enum Detent { case compact, expanded }
     struct Heights {
@@ -11,17 +12,27 @@ struct DownloadsSheetState {
     }
     private(set) var detent = Detent.compact
     private var startHeight: CGFloat?
+    /// Where the finger would have the sheet, before any stretch past the tall height.
     private var draggedHeight: CGFloat?
     var isDragging: Bool { startHeight != nil }
 
-    func height(in heights: Heights) -> CGFloat { heights.clamp(draggedHeight ?? heights.height(for: detent)) }
+    /// How far the sheet gives for a pull `beyond` the tall height: the panels' own stretch.
+    static func stretch(_ beyond: CGFloat) -> CGFloat { 40*(1-1/(1+max(0, beyond)/160)) }
+    /// The pull that gives `stretched`, for catching the sheet as it springs back.
+    static func pull(for stretched: CGFloat) -> CGFloat { 160*(1/(1-min(39.9, max(0, stretched))/40)-1) }
+
+    func height(in heights: Heights) -> CGFloat {
+        guard let draggedHeight else { return heights.height(for: detent) }
+        if draggedHeight > heights.expanded { return heights.expanded+Self.stretch(draggedHeight-heights.expanded) }
+        return heights.clamp(draggedHeight)
+    }
     mutating func reset() { detent = .compact; startHeight = nil; draggedHeight = nil }
     mutating func begin(at height: CGFloat, in heights: Heights) {
-        startHeight = heights.clamp(height)
+        startHeight = height > heights.expanded ? heights.expanded+Self.pull(for: height-heights.expanded) : heights.clamp(height)
         draggedHeight = startHeight
     }
     mutating func drag(by translation: CGFloat, in heights: Heights) {
-        draggedHeight = heights.clamp((startHeight ?? heights.height(for: detent))-translation)
+        draggedHeight = max(heights.compact, (startHeight ?? heights.height(for: detent))-translation)
     }
     mutating func finish(velocity: CGFloat, cancelled: Bool, in heights: Heights) {
         if !cancelled {

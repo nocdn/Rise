@@ -1,3 +1,38 @@
+# TestFlight update — 19 November 2026
+
+Version **0.1.0 (4)** was archived with release Xcode 27.2 (`27B52`) and
+uploaded successfully to App Store Connect at 17:39 UTC. **Apple immediately
+approved it for External Beta after submission.** Approval was verified after a
+reload, with 90 days remaining. The existing public link is unchanged:
+[Join Rise on TestFlight](https://testflight.apple.com/join/3ZMTjMCB).
+Automatic tester notification was selected; both External Beta and Internal
+Testing contain build 4.
+
+Build: [Rise 0.1.0 (4)](https://appstoreconnect.apple.com/teams/968654d4-7e80-435c-9b7b-3bf5158384d3/apps/6824847354/testflight/ios/5765a89b-bf8d-40d5-b2a1-c5c267de6509).
+
+- iOS iCloud sync is now **off by default**, including the initial Settings
+  switch and explanation. Existing explicitly saved on/off choices are retained.
+  Sync stays disabled through launch, refresh/reconnect and background refresh
+  until enabled. The Mac default remains on.
+- The archive includes the current checkout (`419c127` plus local changes),
+  including the keyboard caret swipe and download/panel refinements. Source
+  hashes are recorded in `build/ios-testflight/source-4.json`.
+- All nine focused simulator tests passed: sync defaults and settings persistence,
+  three caret-swipe checks, two download-panel checks, and two AI consent checks.
+  Results: `build/ios-testflight/SyncDefaults-4.xcresult`.
+- The Release archive passed signature and app/widget version checks, includes
+  the default-browser entitlement and Production CloudKit configuration, and
+  excludes the Debug passkey/sync audit hooks.
+- App Store Connect’s processed metadata confirms `get-task-allow=false`,
+  `beta-reports-active=true`, Production CloudKit/APNs and the browser entitlement.
+  OS-only encryption compliance was saved.
+- The local Release iOS app was rebuilt and relaunched using `scripts/restart.sh`.
+  This is a focused release check, not a full device or test-suite pass.
+
+The October review history below is retained for reference.
+
+---
+
 # Rise iOS readiness review — 21 October 2026
 
 Read-only source review by a GPT-6.1 Sol subagent at xhigh, against the current

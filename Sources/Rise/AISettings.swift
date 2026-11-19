@@ -71,8 +71,8 @@ import Security
         preferences.set(saved, forKey: aiKey(provider, "HasKey"))
     }
 
-    /// What the next request uses. OpenRouter falls back to Rise's built-in key without one of
-    /// the user's own; OpenCode signs in on its own and keeps Rise's default model.
+    /// What the next request uses: the user's own key, which OpenRouter and OpenAI both need;
+    /// OpenCode signs in on its own and keeps Rise's default model.
     var modelChoice: ModelChoice {
         let provider = aiProvider
         if provider == .openCode { return .openCode }

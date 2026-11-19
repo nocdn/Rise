@@ -62,9 +62,9 @@ import RiseChromium
             guard provider != .openCode else { return rows }
             let saved = hasAIKey(provider)
             var key: [String: Any] = ["key": "aiKey", "type": "text", "secret": true, "value": "", "label": "API key",
-                                      "placeholder": saved ? "Saved" : provider == .openRouter ? "Optional" : "Not set",
+                                      "placeholder": saved ? "Saved" : "Not set",
                                       "sublabel": saved ? "Kept in your keychain. Type a new one to replace it"
-                                          : provider == .openRouter ? "Without one, Rise uses its built-in key" : "From platform.openai.com, kept in your keychain"]
+                                          : provider == .openRouter ? "From openrouter.ai, kept in your keychain" : "From platform.openai.com, kept in your keychain"]
             if saved { key["button"] = "Remove"; key["buttonKey"] = "aiKeyRemove" }
             rows.append(key)
             rows.append(["key": "aiModel", "type": "text", "label": "Model", "value": aiModel(provider), "placeholder": provider.defaultModel,

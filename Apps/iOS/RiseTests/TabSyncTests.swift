@@ -4,6 +4,34 @@ import CloudKit
 @testable import RiseiOS
 
 final class TabSyncTests: XCTestCase {
+    @MainActor func testFreshInstallKeepsSyncOffUntilEnabledAndPreservesExplicitChoices() async throws {
+        let folder = URL.temporaryDirectory.appendingPathComponent("RiseSyncDefault-\(UUID())")
+        let suite = "RiseSyncDefault-\(UUID())"
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite); try? FileManager.default.removeItem(at: folder) }
+        func makeSync() -> SharedTabsSync {
+            SharedTabsSync(cacheURL: folder.appendingPathComponent("sync.json"), preferences: preferences, cloudAvailable: true)
+        }
+        let sync = makeSync()
+        XCTAssertFalse(sync.isEnabled)
+        XCTAssertEqual(sync.status, .disabled)
+        let tab = SharedBrowserTab(id: UUID(), url: "https://example.com", title: "Local tab")
+        sync.start(tabs: [tab])
+        sync.refresh(); sync.reconnect()
+        let refreshed = await sync.refreshAndWait()
+        XCTAssertFalse(refreshed)
+        XCTAssertEqual(sync.status, .disabled, "Launch, foreground refresh and push handling must not connect to iCloud before opt-in")
+        XCTAssertEqual(sync.tabs, [tab], "Disabling cloud sync still keeps the local tab ledger")
+        XCTAssertNil(preferences.object(forKey: SharedTabsSync.preferenceKey))
+        // Test persisted choices without starting a network-capable sync client.
+        let choice = makeSync()
+        choice.setEnabled(true)
+        XCTAssertTrue(makeSync().isEnabled)
+        choice.setEnabled(false)
+        XCTAssertFalse(makeSync().isEnabled)
+        sync.flush()
+    }
+
     @MainActor func testSettingsPanelSurvivesRapidNavigationAndPersistsTheSyncPreference() async throws {
         let folder = URL.temporaryDirectory.appendingPathComponent("RiseSyncSettings-\(UUID())")
         let suite = "RiseSyncSettings-\(UUID())"
@@ -17,8 +45,8 @@ final class TabSyncTests: XCTestCase {
         defer { window.isHidden = true }
         browser.view.layoutIfNeeded()
         let bar = browser.bottomBar
-        XCTAssertTrue(sync.isEnabled)
-        XCTAssertTrue(bar.appSettings.syncRow.toggle.isOn)
+        XCTAssertFalse(sync.isEnabled)
+        XCTAssertFalse(bar.appSettings.syncRow.toggle.isOn)
         for _ in 0..<3 {
             bar.moreButton.sendActions(for: .primaryActionTriggered)
             try await Task.sleep(for: .milliseconds(50))
@@ -54,14 +82,14 @@ final class TabSyncTests: XCTestCase {
         let screenshot = XCTAttachment(image: image)
         screenshot.name = "Rise Settings iCloud sync"; screenshot.lifetime = .keepAlways; add(screenshot)
         bar.appSettings.syncRow.sendActions(for: .primaryActionTriggered)
-        XCTAssertFalse(sync.isEnabled)
-        XCTAssertFalse(bar.appSettings.syncRow.toggle.isOn)
-        let restored = SharedTabsSync(cacheURL: folder.appendingPathComponent("sync.json"), preferences: preferences, cloudAvailable: false)
-        XCTAssertFalse(restored.isEnabled)
-        bar.appSettings.syncRow.toggle.setOn(true, animated: false)
-        bar.appSettings.syncRow.toggle.sendActions(for: .valueChanged)
         XCTAssertTrue(sync.isEnabled)
-        XCTAssertEqual(sync.status, .unavailable)
+        XCTAssertTrue(bar.appSettings.syncRow.toggle.isOn)
+        let restored = SharedTabsSync(cacheURL: folder.appendingPathComponent("sync.json"), preferences: preferences, cloudAvailable: false)
+        XCTAssertTrue(restored.isEnabled)
+        bar.appSettings.syncRow.toggle.setOn(false, animated: false)
+        bar.appSettings.syncRow.toggle.sendActions(for: .valueChanged)
+        XCTAssertFalse(sync.isEnabled)
+        XCTAssertEqual(sync.status, .disabled)
     }
 
     @MainActor func testRemoteChangesWaitForThePanelAndPreserveLocalSelection() async throws {
@@ -70,7 +98,11 @@ final class TabSyncTests: XCTestCase {
         let store = MobileBrowserSessionStore(fileURL: folder.appendingPathComponent("session.json"))
         let a = MobileBrowserSession.Tab(url: nil, title: "A"), b = MobileBrowserSession.Tab(url: nil, title: "B")
         store.save(.init(tabs: [a, b], selectedTabID: b.id)); store.flush()
-        let sync = SharedTabsSync(cacheURL: folder.appendingPathComponent("sync.json"), cloudAvailable: false)
+        let suite = "RiseSyncRemote-\(UUID())"
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let sync = SharedTabsSync(cacheURL: folder.appendingPathComponent("sync.json"), preferences: preferences, cloudAvailable: false)
+        sync.setEnabled(true)
         let browser = BrowserViewController(sessionStore: store, tabSync: sync)
         let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
         let window = UIWindow(windowScene: scene); window.rootViewController = browser; window.makeKeyAndVisible()
@@ -117,6 +149,7 @@ final class TabSyncTests: XCTestCase {
         let pa = try XCTUnwrap(UserDefaults(suiteName: suiteA)), pb = try XCTUnwrap(UserDefaults(suiteName: suiteB))
         let a = SharedTabsSync(cacheURL: folder.appendingPathComponent("a.json"), preferences: pa, cloudAvailable: true, zoneName: zoneName, automaticallySync: false)
         let b = SharedTabsSync(cacheURL: folder.appendingPathComponent("b.json"), preferences: pb, cloudAvailable: true, zoneName: zoneName, automaticallySync: false)
+        a.setEnabled(true); b.setEnabled(true)
         let one = SharedBrowserTab(id: UUID(), url: "https://example.com/one", title: "One")
         let two = SharedBrowserTab(id: UUID(), url: "https://example.org/two", title: "Two")
         a.onTabsChange = { [weak a] in a?.acknowledge($0) }

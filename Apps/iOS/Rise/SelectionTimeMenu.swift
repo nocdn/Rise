@@ -6,10 +6,14 @@ import WebKit
 /// Rise's pages: WebKit's own, with a time selected in another zone and an amount in another
 /// currency leading the selection menu, Explain in Context beside Look Up, and no Copy Link with Highlight.
 final class RiseWebView: WKWebView {
-    /// WebKit's bar above the keyboard, with a microphone before its ✓ (`FormAccessoryDictation`).
+    /// WebKit's bar above the keyboard, with a microphone before its ✓ (`FormAccessoryDictation`),
+    /// and the stretch between ↓ and it moving the caret (`FormAccessoryCaretSwipe`).
     override var inputAccessoryView: UIView? {
         let accessory = super.inputAccessoryView
-        if let accessory { FormAccessoryDictation.install(in: accessory, for: self) }
+        if let accessory {
+            FormAccessoryDictation.install(in: accessory, for: self)
+            FormAccessoryCaretSwipe.install(in: accessory, for: self)
+        }
         return accessory
     }
     override var keyCommands: [UIKeyCommand]? {

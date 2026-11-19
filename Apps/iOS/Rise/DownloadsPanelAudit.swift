@@ -145,7 +145,8 @@ import UIKit
         try check("downloads-drag-holds-the-displays-high-refresh-rate", browser.panelMotion.isHoldingRate
                   && browser.panelMotion.preferredFPS == expectedFPS)
         browser.dragPanel(to: -10_000)
-        try check("dragging-cannot-stretch-above-the-tall-detent", abs(bar.bounds.height-expanded) < 0.5)
+        try check("dragging-past-the-tall-detent-stretches-with-resistance",
+                  bar.bounds.height > expanded+30 && bar.bounds.height < expanded+40.5)
         browser.finishPanelDrag(at: -10_000,velocity: -900)
         try check("downloads-release-keeps-the-rate-request-through-settling", browser.panelMotion.isHoldingRate)
         try await Task.sleep(for: .milliseconds(450))

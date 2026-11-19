@@ -7,6 +7,11 @@ import Foundation
     private static let log = Logger(subsystem: "dev.bartosz.Rise", category: "TabSync")
     public static let containerIdentifier = "iCloud.dev.bartosz.Rise"
     public static let preferenceKey = "Rise.SyncTabsWithiCloud"
+    #if os(iOS)
+    public static let isEnabledByDefault = false
+    #else
+    public static let isEnabledByDefault = true
+    #endif
     private let zoneID: CKRecordZone.ID
     public enum Status: Equatable, Sendable {
         case ready, syncing, offline, noAccount, unavailable, disabled, accountChanged, storageFull
@@ -53,7 +58,7 @@ import Foundation
             onStatusChange?(status)
         }
     }
-    public var isEnabled: Bool { preferences.object(forKey: Self.preferenceKey) as? Bool ?? true }
+    public var isEnabled: Bool { preferences.object(forKey: Self.preferenceKey) as? Bool ?? Self.isEnabledByDefault }
     public var tabs: [SharedBrowserTab] { cache.ledger.tabs }
     public func isClosed(_ id: UUID) -> Bool { cache.ledger.records[id]?.closedAt != nil }
     private let preferences: UserDefaults
@@ -98,6 +103,7 @@ import Foundation
         self.cacheURL = cacheURL; self.preferences = preferences; self.cloudAvailable = cloudAvailable
         self.automaticallySync = automaticallySync
         cacheLoad = CacheLoad(cacheURL)
+        if !isEnabled { status = .disabled }
     }
 
     public func start(tabs: [SharedBrowserTab], learnedSearches: LearnedSearches? = nil, browsingHistory: BrowsingHistory? = nil) {

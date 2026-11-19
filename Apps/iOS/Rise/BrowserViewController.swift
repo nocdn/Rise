@@ -318,8 +318,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             bottomBar.appSettings.syncRow.toggle.isEnabled = false
             return
         }
-        bottomBar.appSettings.showSync(enabled: tabSync?.isEnabled ?? true,
-                                      message: tabSync?.status.message ?? SharedTabsSync.Status.ready.message)
+        bottomBar.appSettings.showSync(enabled: tabSync?.isEnabled ?? false,
+                                      message: tabSync?.status.message ?? SharedTabsSync.Status.disabled.message)
         bottomBar.appSettings.syncRow.isEnabled = true
         bottomBar.appSettings.syncRow.toggle.isEnabled = true
     }
@@ -1598,7 +1598,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     private func settlePanelOpen(velocity: CGFloat = 0, alongside: (() -> Void)? = nil, completion: (() -> Void)? = nil) {
         let spring = PeekPresentationController.openSpring
-        panelMotion.settle(for: spring.duration)
+        panelMotion.settle(for: spring.duration, screen: view.window?.windowScene?.screen)
         let animate = { alongside?(); self.setPanel(1); self.setNeedsStatusBarAppearanceUpdate() }
         guard !UIAccessibility.isReduceMotionEnabled else { animate(); panelMotion.stop(); completion?(); return }
         UIView.animate(springDuration: spring.duration, bounce: spring.bounce, initialSpringVelocity: velocity, delay: 0,
@@ -1646,7 +1646,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             self.setNeedsStatusBarAppearanceUpdate()
         }
         let back = PeekPresentationController.pageReturnSpring
-        panelMotion.settle(for: max(close.duration, back.duration))
+        panelMotion.settle(for: max(close.duration, back.duration), screen: view.window?.windowScene?.screen)
         UIView.animate(springDuration: back.duration, bounce: back.bounce, initialSpringVelocity: 0, delay: 0,
                        options: [.beginFromCurrentState, .allowUserInteraction]) {
             PageRecede.apply(0, to: self.content)
@@ -1832,7 +1832,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let speed = abs(distance) > 1 ? min(4,max(0,-velocity/distance)) : 0
         let change = { self.setPanel(1) }
         guard !UIAccessibility.isReduceMotionEnabled else { change(); panelMotion.stop(); return }
-        panelMotion.settle(for: 0.3)
+        panelMotion.settle(for: 0.3, screen: view.window?.windowScene?.screen)
         UIView.animate(springDuration: 0.3,bounce: 0,initialSpringVelocity: speed,delay: 0,
                        options: [.beginFromCurrentState,.allowUserInteraction],animations: change)
     }
@@ -1845,7 +1845,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let change = { self.setPanel(1); self.setNeedsStatusBarAppearanceUpdate() }
         guard !UIAccessibility.isReduceMotionEnabled else { change(); panelMotion.stop(); return }
         let spring = PeekPresentationController.closeSpring
-        panelMotion.settle(for: spring.duration)
+        panelMotion.settle(for: spring.duration, screen: view.window?.windowScene?.screen)
         UIView.animate(springDuration: spring.duration, bounce: spring.bounce, initialSpringVelocity: 0, delay: 0,
                        options: [.beginFromCurrentState, .allowUserInteraction], animations: change)
     }

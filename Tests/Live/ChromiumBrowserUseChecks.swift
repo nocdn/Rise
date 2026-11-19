@@ -282,7 +282,7 @@ import RiseChromium
         messages[0]["content"] = (messages[0]["content"] as! String)+"\n\n"+AIChatBrowserTools.instructions+"\n\n"+tools.context()
         var answer = "", steps: [String] = []
         do {
-            try await AIChatAgent.run(AIChatModels.model(for: .openRouter, messages: messages), tools: tools.tools) { event in
+            try await AIChatAgent.run(AIChatModels.model(for: .liveOpenRouter, messages: messages), tools: tools.tools) { event in
                 switch event {
                 case .text(let piece): answer += piece
                 case .step(_, let step) where step.state != .running: steps.append(step.text)

@@ -37,7 +37,11 @@ import WebKit
         let store = MobileBrowserSessionStore(fileURL: folder.appendingPathComponent("session.json"))
         let blank = MobileBrowserSession.Tab(url: nil)
         store.save(.init(tabs: [blank], selectedTabID: blank.id)); store.flush()
-        let sync = SharedTabsSync(cacheURL: folder.appendingPathComponent("sync.json"), cloudAvailable: false)
+        let suite = "RiseTabPreviewSync-\(UUID())"
+        let preferences = UserDefaults(suiteName: suite)!
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let sync = SharedTabsSync(cacheURL: folder.appendingPathComponent("sync.json"), preferences: preferences, cloudAvailable: false)
+        sync.setEnabled(true)
         let cache = folder.appendingPathComponent("previews")
         func makeBrowser() -> BrowserViewController {
             let browser = BrowserViewController(sessionStore: store, tabSync: sync, previewCacheURL: cache)

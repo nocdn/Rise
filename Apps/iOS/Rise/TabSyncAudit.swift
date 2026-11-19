@@ -38,6 +38,7 @@ import WebKit
             SharedTabsSync(cacheURL: folder.appendingPathComponent("sync.json"), preferences: preferences, cloudAvailable: false)
         }
         let sync = makeSync()
+        sync.setEnabled(true)
         func makeBrowser(_ sync: SharedTabsSync) -> BrowserViewController {
             let browser = BrowserViewController(sessionStore: store, tabSync: sync, websiteDataStore: .nonPersistent())
             window.rootViewController = browser; window.makeKeyAndVisible(); browser.view.layoutIfNeeded()

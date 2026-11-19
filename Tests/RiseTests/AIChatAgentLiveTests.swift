@@ -5,9 +5,9 @@ import AppKit
 /// The chat's agent with the real model, through OpenRouter, in a window of tabs whose pages,
 /// searches and history are made up: whether it picks the right tools, reads before it answers,
 /// reads in parallel, keeps to what was asked, and ignores instructions written in a page.
-/// Costs a little, so it runs only with RISE_AI_LIVE=1:
+/// Costs a little, so it runs only with RISE_AI_LIVE=1, and with your own OpenRouter key:
 ///
-///     RISE_AI_LIVE=1 scripts/test.sh --filter AIChatAgentLiveTests
+///     RISE_AI_LIVE=1 RISE_OPENROUTER_KEY=sk-or-… scripts/test.sh --filter AIChatAgentLiveTests
 @MainActor final class AIChatAgentLiveTests: XCTestCase {
     private struct Run {
         var rounds: [[AIChatToolCall]] = []
@@ -67,7 +67,7 @@ import AppKit
         turn.snapshots = attached.map { PageAssistant.Page(title: $0.title, url: $0.url!.absoluteString, selection: "", text: pages[$0.url!] ?? "") }
         var messages = AIChatPrompt.messages(history: [], current: turn)
         messages[0]["content"] = (messages[0]["content"] as! String)+"\n\n"+AIChatBrowserTools.instructions+"\n\n"+tools.context()
-        let model = Recorder(AIChatModels.model(for: .openRouter, messages: messages))
+        let model = Recorder(AIChatModels.model(for: .liveOpenRouter, messages: messages))
         var run = Run()
         try await AIChatAgent.run(model, tools: tools.tools) { event in if case .text(let piece) = event { run.answer += piece } }
         run.rounds = model.rounds

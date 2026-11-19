@@ -54,7 +54,11 @@ final class NavigationHistoryTests: XCTestCase {
         let fixture = try AdBlockHTTPFixture(); try await fixture.start(); defer { fixture.stop() }
         let folder = URL.temporaryDirectory.appendingPathComponent("RisePortableHistory-\(UUID())")
         defer { try? FileManager.default.removeItem(at: folder) }
-        let sync = SharedTabsSync(cacheURL: folder.appendingPathComponent("sync.json"), cloudAvailable: false)
+        let suite = "RiseHistorySync-\(UUID())"
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let sync = SharedTabsSync(cacheURL: folder.appendingPathComponent("sync.json"), preferences: preferences, cloudAvailable: false)
+        sync.setEnabled(true)
         let store = MobileBrowserSessionStore(fileURL: folder.appendingPathComponent("session.json"))
         let browser = BrowserViewController(startURL: nil, sessionStore: store, tabSync: sync)
         let window = try host(browser); defer { window.isHidden = true }
