@@ -115,10 +115,10 @@ For more about the engine, see [Engine/README.md](Engine/README.md). For passkey
 
 ### Hover cards
 
-Hover over these tabs in the sidebar to see a card:
+Hover over these tabs in the sidebar to see a card. All cards are on by default. You can turn each one off in Settings → Tabs.
 
 - ⭐ **Gmail and Proton Mail**: your newest emails. Click one to open it. Choose the Gmail category in Settings → Tabs.
-- ⭐ **Google Chat**: your direct messages, newest first. Unread ones have a blue dot.
+- ⭐ **Google Chat**: your direct messages, newest first. Unread ones have a blue dot. To also see spaces, such as team and announcement spaces, set Google Chat preview to Everything in Settings → Tabs.
 - ⭐ **Google Calendar**: your day as a timeline. Swipe sideways to go to other days. Right-click empty space and choose Refresh to get the newest events. Pinch to make the card taller or shorter while it's open. Calendar tabs also show a countdown, such as "in 17m", before an event starts.
 - ⭐ **GitHub pull requests and GitLab merge requests**: the title, status, checks and changed files. These cards also open from links to pull requests in pages.
 

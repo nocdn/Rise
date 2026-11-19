@@ -43,7 +43,8 @@ typealias GoogleChatInbox = MailInbox<GoogleChatPageReader>
 /// first, with each one's last message, and adds older ones as it scrolls. It's only read,
 /// never opening a conversation or changing what's read.
 @MainActor final class GoogleChatPageReader: MailPageReader {
-    struct Request: Equatable { let account: GoogleChatAccount }
+    /// `everything` lists spaces and apps too, not only people's messages.
+    struct Request: Equatable { let account: GoogleChatAccount; var everything = false }
     enum Failure: MailReaderFailure {
         case signedOut, unavailable
         var message: String {
@@ -64,7 +65,7 @@ typealias GoogleChatInbox = MailInbox<GoogleChatPageReader>
     }
     static let world = "Rise.GoogleChat"
     private func read(_ web: WebPage) async throws -> Snapshot? {
-        let value = try await web.evaluate("return " + Self.snapshot, arguments: [:], in: nil, world: .named(Self.world))
+        let value = try await web.evaluate("return " + Self.snapshot, arguments: ["everything": request?.everything ?? false], in: nil, world: .named(Self.world))
         guard let raw = value as? [String: Any], let data = try? JSONSerialization.data(withJSONObject: raw) else { return nil }
         return try? JSONDecoder().decode(Snapshot.self, from: data)
     }
@@ -137,7 +138,7 @@ typealias GoogleChatInbox = MailInbox<GoogleChatPageReader>
     return 'opened';
     """
     /// People's DMs, apps aside, and the unnamed group conversations the sidebar files with them;
-    /// meetings' chats and spaces are left out. Home repeats a space for each of its threads.
+    /// meetings' chats and spaces are left out, unless `everything`. Home repeats a space for each of its threads.
     static let snapshot = #"""
     (() => {
       const clean = text => (text || '').replace(/[\u034f\u200b-\u200f\u2060\ufeff]/g, '').replace(/\s+/g, ' ').trim();
@@ -161,7 +162,7 @@ typealias GoogleChatInbox = MailInbox<GoogleChatPageReader>
         const time = Number(row.getAttribute('data-display-timestamp')) || 0;
         const dm = id.startsWith('dm/') && type !== '2';
         const group = id.startsWith('space/') && type === '4' && filed.has(id);
-        if (!time || !(dm || group)) continue;
+        if (!time || !(everything || dm || group)) continue;
         emails.push({id, name: plain(row.querySelector('[jsname=VYJYmb]')), message: plain(row.querySelector('[jsname=JzStRd]')),
                      time, unread: row.getAttribute('data-is-unread') === 'true'});
       }

@@ -41,11 +41,6 @@ import AppKit
     /// Over the whole window while a card shows, for its safe triangle (`trackPointer`).
     fileprivate var pointerArea: NSTrackingArea?
     init(storageURL: URL) { summaries = PullRequestSummaries(storageURL: storageURL) }
-    /// Tabs whose card is interactive, rather than their title.
-    static func hasPreview(_ url: URL?) -> Bool {
-        PullRequest(url: url) != nil || GmailAccount(url: url) != nil || ProtonMailAccount(url: url) != nil
-            || GoogleChatAccount(url: url) != nil || CalendarAccount(url: url) != nil
-    }
 }
 
 @MainActor extension BrowserController {
@@ -61,11 +56,11 @@ import AppKit
                 return
             }
             let url = tabs.first(where: { $0.id == id })?.url
-            if hover.shownID != nil, hover.kind != .title, !TabHoverCards.hasPreview(url), pointerIsHeadingForCard() {
+            if hover.shownID != nil, hover.kind != .title, !hasHoverPreview(url), pointerIsHeadingForCard() {
                 // Preserve the route through neighboring tabs into an interactive preview.
                 hover.hoveredID = nil; return
             }
-            if let shown = hover.shownID, shown != id, hover.kind != .title, TabHoverCards.hasPreview(url), hover.safeOrigin != nil,
+            if let shown = hover.shownID, shown != id, hover.kind != .title, hasHoverPreview(url), hover.safeOrigin != nil,
                pointerIsHeadingForCard() {
                 // Another preview's tab, crossed on the way into the open card: it waits to see
                 // whether the pointer stays.
@@ -75,10 +70,10 @@ import AppKit
             // Only previews hand over to the next preview at once; a title waits its full delay
             // every time, and whatever was showing goes first.
             let warm = hover.shownID != nil || CACurrentMediaTime()-hover.hiddenAt < TabHoverCards.grace
-            if warm, hover.kind != .title, TabHoverCards.hasPreview(url) { showTabHoverCard(id); return }
+            if warm, hover.kind != .title, hasHoverPreview(url) { showTabHoverCard(id); return }
             if hover.shownID != nil { hideTabHoverCard(); hover.hoveredID = id }
             // Previews (pull requests, mail, Calendar) wait as long as the motion tester has them set to.
-            let delay = TabHoverCards.hasPreview(url) ? CardMotion.hoverDelay : TabHoverCards.delay
+            let delay = hasHoverPreview(url) ? CardMotion.hoverDelay : TabHoverCards.delay
             hover.timer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
                 MainActor.assumeIsolated { self?.showTabHoverCard(id) }
             }
@@ -137,19 +132,16 @@ import AppKit
         let hover = tabHoverCards
         guard !isScrollingTabs, hover.hoveredID == id, sidebar.drag == nil, sidebar.pinnedDrag == nil, isSidebarShown, window?.isVisible == true,
               let tab = tabs.first(where: { $0.id == id }), let row = sidebar.anchor(for: id), row.window != nil, !sidebar.isRenaming(id) else { return }
-        if GmailAccount(url: tab.url) != nil {
-            showGmailTooltip(id); return
+        // A card turned off in Settings leaves its tab with the title card.
+        let card = HoverCard(url: tab.url).flatMap { showsHoverCard($0) ? $0 : nil }
+        switch card {
+        case .gmail: showGmailTooltip(id); return
+        case .protonMail: showProtonMailTooltip(id); return
+        case .googleChat: showChatTooltip(id); return
+        case .calendar: showCalendarTooltip(id); return
+        default: break
         }
-        if ProtonMailAccount(url: tab.url) != nil {
-            showProtonMailTooltip(id); return
-        }
-        if GoogleChatAccount(url: tab.url) != nil {
-            showChatTooltip(id); return
-        }
-        if CalendarAccount(url: tab.url) != nil {
-            showCalendarTooltip(id); return
-        }
-        guard let pr = PullRequest(url: tab.url) else {
+        guard card != nil, let pr = PullRequest(url: tab.url) else {
             hover.pullRequestCard.dismiss(); hover.gmailCard.dismiss(); hover.chatCard.dismiss(); hover.calendarCard.dismiss(); hover.kind = .title; hover.shownID = id
             raiseHoverCard(hover.titleCard)
             trackPointer(true)
@@ -327,7 +319,7 @@ import AppKit
     /// instead of closing and popping back open.
     private var pointerIsOverCardTab: Bool {
         guard let point = pointerInRoot, let id = sidebar.tabID(at: sidebar.convert(point, from: root)) else { return false }
-        return TabHoverCards.hasPreview(tabs.first(where: { $0.id == id })?.url)
+        return hasHoverPreview(tabs.first(where: { $0.id == id })?.url)
     }
     var pointerInRoot: NSPoint? {
         guard let window else { return nil }
@@ -469,7 +461,7 @@ import AppKit
         hover.chatCard.onOpen = { [weak self] conversation in self?.openChatConversation(conversation) }
         raiseHoverCard(hover.chatCard)
         trackPointer(true)
-        chatInbox.prepare(.init(account: account), source: tab.page, host: root, refreshAfter: 5)
+        chatInbox.prepare(.init(account: account, everything: googleChatCardContent == .everything), source: tab.page, host: root, refreshAfter: 5)
         let anchor = previewAnchor(row)
         hover.chatCard.present(key: account.baseURL.absoluteString, inbox: chatInbox,
                                left: sidebar.frame.maxX+6, anchorTop: anchor.top, maxBottom: root.bounds.height-8,
@@ -503,7 +495,7 @@ import AppKit
     }
     /// As Gmail's: the selected Chat tab's account wins, then the one already loaded.
     func preloadChatInbox() {
-        let chats = tabs.filter { GoogleChatAccount(url: $0.url) != nil }
+        let chats = showsHoverCard(.googleChat) ? tabs.filter { GoogleChatAccount(url: $0.url) != nil } : []
         guard let tab = chats.first(where: { $0.id == selectedID })
                 ?? chats.first(where: { GoogleChatAccount(url: $0.url) == chatInbox.request?.account }) ?? chats.first,
               let account = GoogleChatAccount(url: tab.url) else {
@@ -511,11 +503,11 @@ import AppKit
             return
         }
         guard tabHoverCards.shownID == nil, root.window != nil else { return }
-        chatInbox.prepare(.init(account: account), source: tab.page, host: root, refreshAfter: TabHoverCards.backgroundRefresh)
+        chatInbox.prepare(.init(account: account, everything: googleChatCardContent == .everything), source: tab.page, host: root, refreshAfter: TabHoverCards.backgroundRefresh)
     }
     /// As Gmail's: the selected Proton Mail tab's account wins, then the one already loaded.
     func preloadProtonMailInbox() {
-        let proton = tabs.filter { ProtonMailAccount(url: $0.url) != nil }
+        let proton = showsHoverCard(.protonMail) ? tabs.filter { ProtonMailAccount(url: $0.url) != nil } : []
         guard let tab = proton.first(where: { $0.id == selectedID })
                 ?? proton.first(where: { ProtonMailAccount(url: $0.url) == protonMailInbox.request?.account }) ?? proton.first,
               let account = ProtonMailAccount(url: tab.url) else {
@@ -556,7 +548,7 @@ import AppKit
     /// While a Gmail tab is open its emails load in the background, so the card opens with them.
     /// The selected Gmail tab's account wins, then the one already loaded.
     func preloadGmailInbox() {
-        let gmail = tabs.filter { GmailAccount(url: $0.url) != nil }
+        let gmail = showsHoverCard(.gmail) ? tabs.filter { GmailAccount(url: $0.url) != nil } : []
         guard let tab = gmail.first(where: { $0.id == selectedID })
                 ?? gmail.first(where: { GmailAccount(url: $0.url) == gmailInbox.request?.account }) ?? gmail.first,
               let account = GmailAccount(url: tab.url) else {
@@ -626,7 +618,8 @@ import AppKit
     /// While a Calendar tab is open its events load in the background, for the card and the
     /// tab's countdown. The selected Calendar tab's account wins, then the one already loaded.
     func preloadCalendarAgenda() {
-        let calendars = tabs.filter { CalendarAccount(url: $0.url) != nil }
+        // The countdown needs the events too, with the card off.
+        let calendars = showsHoverCard(.calendar) || showsCalendarBadge ? tabs.filter { CalendarAccount(url: $0.url) != nil } : []
         guard let tab = calendars.first(where: { $0.id == selectedID })
                 ?? calendars.first(where: { CalendarAccount(url: $0.url) == calendarAgenda.account }) ?? calendars.first,
               let account = CalendarAccount(url: tab.url) else {

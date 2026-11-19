@@ -79,7 +79,8 @@ import AppKit
         if !modifiers.contains(.option), let shown = links.shown, shown.matches(url), links.shownWeb === web,
            shown.pullRequest.map({ gated && LinkPullRequestCards.Subject.isGitHubOnGitHub($0, page: pageURL) }) ?? true { return }
         links.timer?.invalidate(); links.timer = nil
-        let pr = LinkPullRequestCards.Subject(url: url, option: modifiers.contains(.option), on: pageURL, gitHubNeedsOption: gated)
+        var pr = LinkPullRequestCards.Subject(url: url, option: modifiers.contains(.option), on: pageURL, gitHubNeedsOption: gated)
+        if let request = pr?.pullRequest, !showsHoverCard(HoverCard(request)) { pr = nil }
         // Heading up from the link into its card crosses the page under the card, whose
         // links (on a list, other pull requests) report hovers of their own. They don't count.
         if let shown = links.shown, let point = pointerInRoot, linkCardZone.contains(point) {

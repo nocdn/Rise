@@ -13,7 +13,7 @@ final class ProtonMailTests: XCTestCase {
         XCTAssertNil(ProtonMailAccount(url: URL(string: "http://mail.proton.me/u/0/inbox")))
         XCTAssertNil(ProtonMailAccount(url: URL(string: "https://account.proton.me/u/0/mail")))
         XCTAssertNil(ProtonMailAccount(url: URL(string: "https://mail.proton.me/inbox")), "Proton names the account once it has loaded")
-        XCTAssertTrue(TabHoverCards.hasPreview(URL(string: "https://mail.proton.me/u/1/inbox")))
+        XCTAssertEqual(HoverCard(url: URL(string: "https://mail.proton.me/u/1/inbox")), .protonMail)
         XCTAssertEqual(account(1).inboxURL.absoluteString, "https://mail.proton.me/u/1/inbox")
         let id = "OUdq_ygLegFE5aPImSyjTP-O-8m5Bi3zL4rmVpcQ1oWlpm4N7PBYHICZW_nkNyhG42Tc9nSSHmC-Io1tZQ5PTQ=="
         XCTAssertEqual(account(1).messageURL(id: id)?.absoluteString, "https://mail.proton.me/u/1/inbox/" + id)
