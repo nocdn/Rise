@@ -146,5 +146,28 @@ class ProfileConfigurationTests(PasskeySigningTests):
                 signing.configuration_for_profile(Path("/test/Rise.provisionprofile"), "dev.bartosz.Rise", "0 valid identities found")
 
 
+class NestedSigningTests(unittest.TestCase):
+    """The engine's helpers are signed as Chrome's release signing signs them, innermost first."""
+    def testRenderersAndGpuGetTheJitWithoutLibraryValidationAndTheRestTheFullRuntime(self):
+        with tempfile.TemporaryDirectory() as folder:
+            framework = Path(folder) / "Chromium Framework.framework"
+            version = framework / "Versions/156"
+            for name in ("Chromium Helper.app", "Chromium Helper (Renderer).app", "Chromium Helper (Aperitif GPU).app"):
+                (version / "Helpers" / name).mkdir(parents=True)
+            (version / "Libraries").mkdir()
+            (version / "Libraries/libvulkan.dylib").write_bytes(b"")
+            (version / "Helpers/chrome_crashpad_handler").write_bytes(b""); (version / "Helpers/chrome_crashpad_handler").chmod(0o755)
+            (framework / "Versions/Current").symlink_to("156")
+            parts = {path.name: (options, entitlements) for path, options, entitlements in signing.engine_parts(framework)}
+            self.assertEqual(parts["Chromium Helper (Renderer).app"], ("restrict,kill,runtime", signing.JIT))
+            self.assertEqual(parts["Chromium Helper (Aperitif GPU).app"], ("restrict,kill,runtime", signing.JIT))
+            self.assertEqual(parts["Chromium Helper.app"], ("restrict,library,kill,runtime", None))
+            self.assertEqual(parts["chrome_crashpad_handler"], ("restrict,library,kill,runtime", None))
+            self.assertEqual(parts["libvulkan.dylib"], (None, None))
+            self.assertEqual([path.name for path, _, _ in signing.engine_parts(framework)][-1], framework.name)
+            # Ad-hoc helpers have no team for library validation to match the engine against.
+            self.assertEqual({options for _, options, _ in signing.engine_parts(framework, team_signed=False)} - {None}, {"restrict,kill,runtime"})
+
+
 if __name__ == "__main__":
     unittest.main()

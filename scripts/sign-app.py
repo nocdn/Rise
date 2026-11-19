@@ -108,6 +108,50 @@ def profile_entitlements(profile, bundle_id, certificate_hash, now=None):
     return result
 
 
+# The engine's helpers, signed as Chrome's own release signing signs them (chrome/installer/mac/signing/
+# parts.py), which notarization needs: each under the hardened runtime, the renderer and GPU helpers with
+# the JIT their pages run on and without library validation, which that entitlement rules out.
+JIT = {"com.apple.security.cs.allow-jit": True}
+JIT_RUNTIME = "restrict,kill,runtime"
+
+
+def engine_parts(framework, team_signed=True):
+    """(path, codesign options, entitlements) for each piece of the engine's framework, innermost first,
+    the framework itself last. Library validation needs a team: ad-hoc helpers couldn't load the engine."""
+    full = "restrict,library,kill,runtime" if team_signed else JIT_RUNTIME
+    version = framework / "Versions/Current"
+    parts = [(library, None, None) for library in sorted((version / "Libraries").glob("*.dylib"))]
+    parts += [(tool, full, None) for tool in sorted((version / "Helpers").iterdir())
+              if tool.suffix != ".app" and tool.is_file() and os.access(tool, os.X_OK)]
+    for helper in sorted((version / "Helpers").glob("*.app")):
+        jit = "Renderer)" in helper.name or "GPU)" in helper.name
+        parts.append((helper, JIT_RUNTIME if jit else full, JIT if jit else None))
+    return parts + [(framework, None, None)]
+
+
+def sparkle_parts(framework):
+    """Sparkle's pieces in the order its documentation signs them, each under the hardened runtime; its
+    downloader keeps the entitlements Sparkle gave it."""
+    version = framework / "Versions/B"
+    parts = [(version / "XPCServices/Installer.xpc", "runtime", None),
+             (version / "XPCServices/Downloader.xpc", "runtime", "preserve"),
+             (version / "Autoupdate", "runtime", None), (version / "Updater.app", "runtime", None)]
+    return [part for part in parts if part[0].exists()] + [(framework, "runtime", None)]
+
+
+def sign_parts(command, parts, timestamp):
+    for path, options, entitlements in parts:
+        arguments = [*command, timestamp] + (["--options", options] if options else [])
+        if entitlements == "preserve":
+            subprocess.run([*arguments, "--preserve-metadata=entitlements", str(path)], check=True, stderr=subprocess.DEVNULL)
+        elif entitlements:
+            with tempfile.NamedTemporaryFile(suffix=".entitlements") as temporary:
+                plistlib.dump(entitlements, temporary); temporary.flush()
+                subprocess.run([*arguments, "--entitlements", temporary.name, str(path)], check=True, stderr=subprocess.DEVNULL)
+        else:
+            subprocess.run([*arguments, str(path)], check=True, stderr=subprocess.DEVNULL)
+
+
 def read_profile(path):
     return plistlib.loads(subprocess.check_output(["security", "cms", "-D", "-i", str(path)], stderr=subprocess.PIPE))
 
@@ -203,17 +247,19 @@ def main():
     info_path.write_bytes(plistlib.dumps(info))
     embedded = app / "Contents/embedded.provisionprofile"
     command = ["codesign", "--force", "--sign", identity]
-    # The engine's framework, with its helper apps, signed as the app is: under the hardened runtime,
-    # the app only loads a framework signed by its own team.
-    for framework in (app / "Contents/Frameworks").glob("*.framework"):
-        subprocess.run([*command, "--deep", str(framework)], check=True, stderr=subprocess.DEVNULL)
+    # Profile-signed builds are the ones that ship, and notarization needs Apple's secure timestamp on
+    # every piece. Local development can stay certificate-signed when Apple's timestamp service is offline.
+    timestamp = "--timestamp" if profile_file and os.environ.get("RISE_SIGNING_TIMESTAMP") != "none" else "--timestamp=none"
+    # The frameworks signed as the app is, piece by piece: under the hardened runtime, the app only
+    # loads frameworks signed by its own team.
+    for framework in sorted((app / "Contents/Frameworks").glob("*.framework")):
+        parts = sparkle_parts(framework) if framework.name == "Sparkle.framework" else engine_parts(framework, identity != "-")
+        sign_parts(command, parts, timestamp)
     if profile_file:
         if profile_file.resolve() != embedded.resolve():
             shutil.copyfile(profile_file, embedded)
         with tempfile.NamedTemporaryFile(suffix=".entitlements") as temporary:
             plistlib.dump(entitlements, temporary); temporary.flush()
-            # Local development can stay certificate-signed when Apple's timestamp service is offline.
-            timestamp = "--timestamp=none" if os.environ.get("RISE_SIGNING_TIMESTAMP") == "none" else "--timestamp"
             subprocess.run([*command, "--options", "runtime", timestamp, "--entitlements", temporary.name, str(app)], check=True)
         print("Signed with the provisioning profile " + profile_file.name + ". Touch ID passkeys: " + str("keychain-access-groups" in entitlements)
               + "; iCloud Keychain passkeys: " + str(PASSKEY in entitlements) + "; CloudKit: " + str(info["RiseCloudKitEnabled"])

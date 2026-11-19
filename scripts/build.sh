@@ -10,7 +10,8 @@ ENGINE_ROOT="${RISE_CHROMIUM_ROOT:-${PWD:h}/rise-chromium}"
 # Rise's Chromium fork, built by scripts/engine/build.sh (Engine/README.md).
 FRAMEWORK="$ENGINE_ROOT/fork/src/out/Official/Chromium.app/Contents/Frameworks/Chromium Framework.framework"
 [[ -d "$FRAMEWORK" ]] || { echo "The engine isn't built: $FRAMEWORK (see Engine/README.md)" >&2; exit 1; }
-APP="$PWD/build/Rise.app"; EXECUTABLE=Rise
+# RISE_APP builds elsewhere, as a release does: build/Rise.app can be a link to the copy in use.
+APP="${RISE_APP:-$PWD/build/Rise.app}"; EXECUTABLE=Rise
 # The palette lab (scripts/palette-lab.sh): the same Rise under its own name, settings and profile.
 [[ "${RISE_PALETTE_LAB:-}" == 1 ]] && { APP="$PWD/build/Rise Palette Lab.app"; EXECUTABLE=RiseLab; }
 swift build -c release --jobs "${RISE_BUILD_JOBS:-4}" -Xlinker -platform_version -Xlinker macos -Xlinker 14.0 -Xlinker "$RISE_SDK_VERSION"
@@ -19,6 +20,10 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/Framewor
 # macOS kills it as its code changes under it.
 cp .build/release/Rise "$APP/Contents/MacOS/.$EXECUTABLE.new" && mv -f "$APP/Contents/MacOS/.$EXECUTABLE.new" "$APP/Contents/MacOS/$EXECUTABLE"
 cp scripts/Info.plist "$APP/Contents/Info.plist"
+# A release (scripts/release.sh) names its version and gives Sparkle the feed it updates from.
+[[ -n "${RISE_VERSION:-}" ]] && /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $RISE_VERSION" "$APP/Contents/Info.plist"
+[[ -n "${RISE_BUILD_NUMBER:-}" ]] && /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $RISE_BUILD_NUMBER" "$APP/Contents/Info.plist"
+[[ -n "${RISE_UPDATE_FEED:-}" ]] && /usr/libexec/PlistBuddy -c "Add :SUFeedURL string $RISE_UPDATE_FEED" "$APP/Contents/Info.plist"
 if [[ "$EXECUTABLE" == RiseLab ]]; then
   for change in "Set :CFBundleIdentifier dev.bartosz.Rise.PaletteLab" "Set :CFBundleExecutable RiseLab" "Set :CFBundleName Rise Lab" \
                 "Set :CFBundleDisplayName Rise Palette Lab" "Add :RisePaletteLab bool true" "Delete :CFBundleURLTypes"; do
@@ -42,5 +47,7 @@ xcrun actool "$PWD/Assets/AppIcon/Rise.icon" --compile "$APP/Contents/Resources"
   --minimum-deployment-target 14.0 --output-format human-readable-text --errors > /dev/null
 # The engine's framework, with its helper apps, as Chromium.app has it.
 rsync -a --delete "$FRAMEWORK/" "$APP/Contents/Frameworks/Chromium Framework.framework/"
+# Sparkle, which updates released copies; symlinks kept, as its signature covers them.
+rsync -a --delete .build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework/ "$APP/Contents/Frameworks/Sparkle.framework/"
 python3 scripts/sign-app.py "$APP"
 echo "Built $APP"

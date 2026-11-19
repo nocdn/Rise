@@ -22,6 +22,7 @@ import AppKit
 
         let app = addMenu("Rise")
         item(app, "About Rise", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), target: NSApp)
+        if let updates = AppUpdater.shared.menuItem() { app.addItem(updates) }
         item(app, "Settings…", #selector(BrowserController.showSettings), ",", target: browser)
         item(app, "Sync Tabs with iCloud", #selector(toggleTabSync), target: self)
         app.addItem(.separator())

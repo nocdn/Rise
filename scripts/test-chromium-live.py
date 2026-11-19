@@ -69,7 +69,7 @@ objects += [str(path) for path in (debug / "RiseCore.build").glob("*.o")]
 engine_sources = {path.name for path in (root / "Sources/RiseChromium").glob("*.m")}
 objects += [str(path) for path in (debug / "RiseChromium.build").glob("*.o") if path.name[:-2] in engine_sources]
 # The engine itself: the fork's framework, as the app has it.
-engine_linking = ["-F", str(app / "Contents/Frameworks"), "-framework", "Chromium Framework",
+engine_linking = ["-F", str(app / "Contents/Frameworks"), "-framework", "Chromium Framework", "-framework", "Sparkle",
                    "-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"]
 
 keep = os.environ.get("RISE_PEEK_OUT")
