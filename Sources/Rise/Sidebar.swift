@@ -68,6 +68,8 @@ import RiseCore
     var onUnpin: ((UUID, Int) -> Void)?
     var onReorderPinned: (([UUID]) -> Void)?
     var splitRows: [UUID: SplitTabRow] = [:]
+    /// A split made from a pinned tab stays its tile: each of the split's tabs, to the tile's.
+    var tileSplitOwners: [UUID: UUID] = [:]
     var displayedRows: [NSView] = []
     var targetFrames: [UUID: NSRect] = [:]
     var drag: SidebarDrag?
@@ -139,9 +141,19 @@ import RiseCore
         selectedTabID = selected?.id
         for id in Array(rows.keys) where !tabs.contains(where: { $0.id == id }) { if let row = rows.removeValue(forKey: id) { fadeOut(row) } }
         tabsByID = Dictionary(tabs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        // A split with a pinned tab in it shows in that tab's tile, the other tab with it.
+        let allSplits = splits
+        let tileSplits = allSplits.filter { [$0.leftID, $0.rightID].contains { tabsByID[$0]?.pinned == true } }
+        let splits = allSplits.filter { group in !tileSplits.contains { $0.id == group.id } }
+        tileSplitOwners = [:]
+        for group in tileSplits {
+            let owner = tabsByID[group.leftID]?.pinned == true ? group.leftID : group.rightID
+            tileSplitOwners[group.leftID] = owner; tileSplitOwners[group.rightID] = owner
+        }
         let splitIDs = Set(splits.flatMap { [$0.leftID, $0.rightID] })
-        let pinned = Array(tabs.filter { $0.pinned && !splitIDs.contains($0.id) }.prefix(PinnedLayout.maximum).map(\.id))
-        updatePinned(pinned, selected: selected, theme: theme)
+        let inTiles = Set(tileSplitOwners.keys).subtracting(tileSplitOwners.values)
+        let pinned = Array(tabs.filter { $0.pinned && !splitIDs.contains($0.id) && !inTiles.contains($0.id) }.prefix(PinnedLayout.maximum).map(\.id))
+        updatePinned(pinned, selected: selected, theme: theme, splits: tileSplits)
         for tab in tabs {
             let row: TabRow
             if let existing = rows[tab.id] { row = existing }
@@ -172,7 +184,7 @@ import RiseCore
                        configuration: .forTab(tab, theme: theme, peek: peekState?(tab.id), developerLook: developerTabLook,
                                               pullRequestState: pullRequestState ?? { _ in nil }))
             row.setPlayback(paused: playbackState?(tab.id))
-            if pinned.contains(tab.id) { if row.superview === rowsHost { row.removeFromSuperview() } }
+            if pinned.contains(tab.id) || inTiles.contains(tab.id) { if row.superview === rowsHost { row.removeFromSuperview() } }
             else if group == nil && row.superview !== rowsHost && drag?.view !== row && returningDrag?.view !== row { rowsHost.addSubview(row) }
         }
         for id in Array(splitRows.keys) where !splits.contains(where: { $0.id == id }) { splitRows.removeValue(forKey: id)?.removeFromSuperview() }
@@ -185,7 +197,7 @@ import RiseCore
         }
         displayedRows = []; orderedIDs = []
         var seen = Set<UUID>()
-        for tab in tabs where !seen.contains(tab.id) && !pinned.contains(tab.id) {
+        for tab in tabs where !seen.contains(tab.id) && !pinned.contains(tab.id) && !inTiles.contains(tab.id) {
             if let group = splits.first(where: { $0.contains(tab.id) }), let row = splitRows[group.id] {
                 displayedRows.append(row); orderedIDs.append(group.leftID); seen.formUnion([group.leftID, group.rightID])
             } else if let row = rows[tab.id] {

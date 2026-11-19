@@ -186,6 +186,27 @@ final class PinnedTabsTests: XCTestCase {
     }
 
     /// However tiles are dragged about, each comes to rest in its slot.
+    @MainActor func testAPinnedTabsSplitAndPeekShowInItsTile() async throws {
+        let browser = browser(); defer { clean(browser) }
+        let pinned = browser.addTab(), other = browser.addTab()
+        browser.pinTab(pinned.id); browser.select(pinned.id); browser.root.layoutSubtreeIfNeeded()
+        let tile = try XCTUnwrap(browser.sidebar.pinnedView.tiles[pinned.id])
+        browser.showPeek(url: URL(string: "about:blank")!, from: pinned.page.view)
+        for _ in 0..<100 where tile.peekAmount < 0.999 || tile.isMoving { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(tile.peekAmount, 1, accuracy: 0.001, "A Peek open from it shows as a chip")
+        browser.closePeek()
+        browser.showSplit(other)
+        for _ in 0..<100 where tile.splitAmount < 0.999 || tile.isMoving { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(browser.sidebar.pinnedView.tiles[pinned.id] === tile, "It stays a tile")
+        XCTAssertEqual(tile.peekAmount, 0, accuracy: 0.001); XCTAssertEqual(tile.splitAmount, 1, accuracy: 0.001)
+        XCTAssertFalse(browser.sidebar.displayedRows.contains { $0 is SplitTabRow }, "Its split has no row of its own")
+        XCTAssertFalse(browser.sidebar.rows[other.id]?.superview != nil, "The other tab shows only in the tile")
+        XCTAssertTrue(browser.sidebar.anchor(for: other.id) === tile)
+        browser.separateSplit(containing: pinned.id)
+        for _ in 0..<100 where tile.splitAmount > 0.001 || tile.isMoving { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(tile.splitAmount, 0, accuracy: 0.001)
+        XCTAssertNotNil(browser.sidebar.rows[other.id]?.superview)
+    }
     @MainActor func testTilesGrowUpwardForACalendarCountdownAndBack() async throws {
         let browser = browser(); defer { clean(browser) }
         let tab = browser.addTab(); browser.pinTab(tab.id); browser.root.layoutSubtreeIfNeeded()

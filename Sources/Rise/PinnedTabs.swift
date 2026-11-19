@@ -1,4 +1,5 @@
 import AppKit
+import RiseCore
 
 /// Pinned tabs sit between the address and New Tab as tiles: up to three to a row and six in
 /// all, a row of fewer sharing its width between them.
@@ -109,6 +110,14 @@ enum PinnedLayout {
     // MARK: Motion
     private var x = MotionSpring(), y = MotionSpring(), width = MotionSpring(), height = MotionSpring()
     private var rowness = MotionSpring()
+    /// Into a split, from 0 to 1; a Peek open from it, from 0 to 1; and its own favicon's side, 0 on the left, 1 on the right.
+    private var splitness = MotionSpring(), peekness = MotionSpring(), ownSide = MotionSpring()
+    /// The split's other page's favicon, or the Peek's, and the colours a split's half takes from it.
+    let companion = PinnedCompanionIcon()
+    private let paint = PinnedSplitPaint()
+    private var companionAccent: NSColor?, companionImage: NSImage?
+    /// Stands for a companion without a favicon, which shows the empty placeholder.
+    static let emptyFavicon = NSImage(size: NSSize(width: 16, height: 16))
     /// While held, where the tile's corner goes for a size, so it stays under the pointer as it changes shape.
     private var origin: ((NSSize) -> NSPoint)?
     private var link: CADisplayLink?, lastTick: CFTimeInterval?
@@ -136,7 +145,7 @@ enum PinnedLayout {
     func move(to frame: NSRect, animated: Bool = true, bouncy: Bool = true, completion: (() -> Void)? = nil) {
         onRest = completion
         guard animated, canAnimate, self.frame.width > 0 else {
-            stopMotion(); origin = nil; setFrame(frame); rowness = MotionSpring(rowness.target); land(); style(); needsLayout = true
+            stopMotion(); origin = nil; setFrame(frame); rowness = MotionSpring(rowness.target); settleCompanion(); land(); style(); needsLayout = true
             completion.map { done in onRest = nil; done() }
             return
         }
@@ -165,6 +174,9 @@ enum PinnedLayout {
         for keyPath in [\PinnedTabTile.x, \.y, \.width, \.height, \.rowness] {
             self[keyPath: keyPath].configure(response: PinnedLayout.response, bounce: self.bouncy ? PinnedLayout.bounce : 0)
         }
+        splitness.configure(response: PinnedLayout.splitResponse, bounce: PinnedLayout.splitBounce)
+        ownSide.configure(response: PinnedLayout.splitResponse, bounce: PinnedLayout.splitBounce)
+        peekness.configure(response: PinnedLayout.peekResponse, bounce: PinnedLayout.peekBounce)
     }
     private var bouncy = true
     private func spring(_ value: CGFloat) -> MotionSpring { MotionSpring(value) }
@@ -180,18 +192,24 @@ enum PinnedLayout {
         stopMotion()
         let size = NSSize(width: width.target, height: height.target)
         setFrame(NSRect(origin: origin?(size) ?? NSPoint(x: x.target, y: y.target), size: size))
-        rowness = MotionSpring(rowness.target); land(); style(); needsLayout = true
+        rowness = MotionSpring(rowness.target); settleCompanion(); land(); style(); needsLayout = true
         let done = onRest; onRest = nil; done?()
+    }
+    private func settleCompanion() {
+        splitness = MotionSpring(splitness.target); peekness = MotionSpring(peekness.target); ownSide = MotionSpring(ownSide.target)
     }
     private func land() { if !dragging, lifted { lifted = false; style() } }
     private func stopMotion() { link?.invalidate(); link = nil; lastTick = nil }
     @objc private func tick(_ link: CADisplayLink) {
         let now = CACurrentMediaTime(), dt = min(0.05, now-(lastTick ?? now)); lastTick = now
         x.step(dt); y.step(dt); width.step(dt); height.step(dt); rowness.step(dt)
+        splitness.step(dt); peekness.step(dt); ownSide.step(dt)
         let springs = origin == nil ? [x, y, width, height] : [width, height]
         let resting = springs.allSatisfy { $0.isResting(within: 0.05) } && rowness.isResting(within: 0.002) && settled >= 1
+            && [splitness, peekness, ownSide].allSatisfy { $0.isResting(within: 0.002) }
         if resting {
             x.value = x.target; y.value = y.target; width.value = width.target; height.value = height.target; rowness.value = rowness.target
+            settleCompanion()
         }
         let size = NSSize(width: max(0, width.value), height: max(0, height.value))
         setFrame(NSRect(origin: origin?(size) ?? NSPoint(x: x.value, y: y.value), size: size))
@@ -230,7 +248,8 @@ enum PinnedLayout {
         wantsLayer = true; layer?.cornerCurve = .continuous
         title.font = .systemFont(ofSize: 13); title.lineBreakMode = .byTruncatingTail; title.alphaValue = 0
         badge.isHidden = true
-        [icon, badge, title].forEach(addSubview)
+        [paint, icon, badge, title, companion].forEach(addSubview)
+        paint.isHidden = true; companion.alphaValue = 0
         setAccessibilityElement(true); setAccessibilityRole(.button)
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -244,6 +263,29 @@ enum PinnedLayout {
         setAccessibilityLabel(tab.title + (badgeText.map { ", \($0)" } ?? "") + (selected ? ", selected" : ""))
         style()
     }
+    /// A split made from the tab shows its other page's favicon beside its own, each half in its
+    /// favicon's colours; a Peek open from it, a chip with the Peek's favicon at the bottom right.
+    func setCompanion(split partner: NSImage?, partnerOnLeft: Bool, peek: NSImage?, theme: RiseTheme) {
+        // Without one coming, the last stays, to leave with.
+        if let image = partner ?? peek, image !== companionImage {
+            companionImage = image
+            if image === Self.emptyFavicon { companion.favicon.showEmptyPlaceholder(theme: theme); companionAccent = nil }
+            else { companion.favicon.image = image; companionAccent = FaviconColor.dominant(image) }
+        }
+        let split: Double = partner != nil ? 1 : 0, peeking: Double = partner == nil && peek != nil ? 1 : 0, side: Double = partnerOnLeft ? 1 : 0
+        guard split != splitness.target || peeking != peekness.target || side != ownSide.target else { return }
+        if canAnimate, frame.width > 0 {
+            prepareMotion()
+            splitness.target = split; peekness.target = peeking; ownSide.target = side
+            startMotion()
+        } else {
+            splitness = MotionSpring(split); peekness = MotionSpring(peeking); ownSide = MotionSpring(side)
+            style(); needsLayout = true
+        }
+    }
+    /// For tests and pictures: how far into a split, and how far a Peek's chip has come in.
+    var splitAmount: CGFloat { CGFloat(splitness.value) }
+    var peekAmount: CGFloat { CGFloat(peekness.value) }
     func setBadge(_ text: String?) {
         guard text != badgeText else { return }
         let arriving = badgeText == nil, going = text == nil
@@ -313,7 +355,8 @@ enum PinnedLayout {
         CATransaction.commit()
     }
     /// The favicon's colour, a little lighter, or a grey for a favicon without one.
-    var borderColor: NSColor {
+    var borderColor: NSColor { borderColor(for: accent) }
+    private func borderColor(for accent: NSColor?) -> NSColor {
         guard let accent else { return NSColor(white: theme == .dark ? 0.5 : 0.72, alpha: 1) }
         return theme == .dark ? accent : accent.blended(withFraction: 0.35, of: .white) ?? accent
     }
@@ -325,12 +368,32 @@ enum PinnedLayout {
         // Settling into a row, the held row's fill gives way to that row's own.
         let row = restingFill.map { held.blended(withFraction: settled, of: $0) ?? $0 } ?? held
         // A breath of the favicon's colour, more under the pointer and more again chosen.
-        let shown = PinnedLayout.tint(accent, theme: theme, selected: selected, hovered: (scrollFocus ?? hovered) && !dragging)
-        let fill = lifted || !takesClicks ? PinnedLayout.solid(shown, on: theme) : shown
-        layer?.backgroundColor = (fill.blended(withFraction: r, of: row) ?? fill).cgColor
+        func fill(_ accent: NSColor?) -> NSColor {
+            let shown = PinnedLayout.tint(accent, theme: theme, selected: selected, hovered: (scrollFocus ?? hovered) && !dragging)
+            let fill = lifted || !takesClicks ? PinnedLayout.solid(shown, on: theme) : shown
+            return fill.blended(withFraction: r, of: row) ?? fill
+        }
+        func edge(_ accent: NSColor?) -> NSColor { selected ? borderColor(for: accent) : PinnedLayout.edge(accent, theme: theme) }
         // Chosen, a border in the favicon's colour; at rest, a faint one in it.
-        layer?.borderWidth = (selected ? PinnedLayout.border : PinnedLayout.restingBorder)*(1-r)
-        layer?.borderColor = (selected ? borderColor : PinnedLayout.edge(accent, theme: theme)).cgColor
+        let borderWidth = (selected ? PinnedLayout.border : PinnedLayout.restingBorder)*(1-r)
+        // In a split, each half in its own favicon's colours, blending where they meet.
+        let split = CGFloat(splitness.value), side = CGFloat(min(1, max(0, ownSide.value)))
+        if split > 0.001 {
+            let toLeft = min(1, max(0, split*side)), toRight = min(1, max(0, split*(1-side)))
+            let own = (fill(accent), edge(accent)), other = (fill(companionAccent), edge(companionAccent))
+            func mix(_ a: NSColor, _ b: NSColor, _ amount: CGFloat) -> NSColor { a.blended(withFraction: amount, of: b) ?? a }
+            paint.isHidden = false
+            paint.apply(left: (mix(own.0, other.0, toLeft), mix(own.1, other.1, toLeft)),
+                        right: (mix(own.0, other.0, toRight), mix(own.1, other.1, toRight)),
+                        borderWidth: borderWidth, radius: cornerRadius, blend: PinnedLayout.splitBlend)
+            layer?.backgroundColor = NSColor.clear.cgColor; layer?.borderWidth = 0
+        } else {
+            paint.isHidden = true
+            layer?.backgroundColor = fill(accent).cgColor
+            layer?.borderWidth = borderWidth
+            layer?.borderColor = edge(accent).cgColor
+        }
+        companion.setChip(PinnedLayout.solid(PinnedLayout.tint(companionAccent, theme: theme, selected: true, hovered: false), on: theme))
         // The countdown's pill in the tile's own colour, as deep as a chosen tile's wash.
         badge.setFill(PinnedLayout.tint(accent, theme: theme, selected: true, hovered: false))
         CATransaction.commit()
@@ -347,9 +410,25 @@ enum PinnedLayout {
         let stack = side+(showsBadge ? (3+badgeSize.height)*(1-r)*room : 0)
         let tile = NSPoint(x: (bounds.width-side)/2, y: (bounds.height-stack)/2)
         let row = NSPoint(x: 8, y: (bounds.height-side)/2)
-        let iconFrame = NSRect(x: (tile.x+(row.x-tile.x)*r).rounded(), y: (tile.y+(row.y-tile.y)*r).rounded(), width: side, height: side)
+        // In a split, both favicons spread evenly across the tile; with a Peek, its own moves up
+        // and left for the Peek's chip at the bottom right.
+        let split = CGFloat(splitness.value), peek = CGFloat(peekness.value), ownSide = CGFloat(self.ownSide.value)
+        let spacing = (bounds.width-2*side)/3, leftSlot = spacing, rightSlot = 2*spacing+side
+        let ownSlot = leftSlot+(rightSlot-leftSlot)*ownSide, otherSlot = rightSlot+(leftSlot-rightSlot)*ownSide
+        let own = NSPoint(x: tile.x+(split*(ownSlot-tile.x)+peek*PinnedLayout.peekIconOffset.dx)*(1-r),
+                          y: tile.y+peek*PinnedLayout.peekIconOffset.dy*(1-r))
+        let iconFrame = NSRect(x: (own.x+(row.x-own.x)*r).rounded(), y: (own.y+(row.y-own.y)*r).rounded(), width: side, height: side)
         icon.layer?.removeAnimation(forKey: TabListMotion.movementKey)
         icon.frame = iconFrame
+        paint.frame = bounds
+        // The companion: from the tile's middle, out to the Peek's chip or the split's other slot.
+        let shown = max(peek, split)
+        let centre = NSPoint(x: tile.x+side/2+peek*PinnedLayout.peekChipOffset.dx+split*(otherSlot-tile.x),
+                             y: tile.y+side/2+peek*PinnedLayout.peekChipOffset.dy)
+        let chipShare = peek+split > 0.001 ? min(1, max(0, peek/(peek+split))) : 1
+        companion.place(centre: centre, scale: PinnedLayout.peekChipScale+(1-PinnedLayout.peekChipScale)*shown,
+                        chip: chipShare, faviconSide: side-2*chipShare*(side/2-PinnedLayout.peekChip/2+PinnedLayout.peekChipInset))
+        companion.alphaValue = min(1, max(0, shown))*(1-r)
         if showsBadge {
             // A tile keeps its bottom as it grows, and so does the countdown, so it only moves
             // as it comes in. As a row, it follows the icon.
@@ -536,6 +615,17 @@ extension PinnedLayout {
     /// Tiles change shape and place on a spring a little slower than the list's slide, with a
     /// slight bounce.
     static let response = 0.28, bounce = 0.3
+    /// A split's second favicon and colours come into a tile on about a split's timing, with a
+    /// touch of bounce.
+    static let splitResponse = 0.26, splitBounce = 0.15
+    /// A Peek's chip comes in quickly with a small bounce, the sidebar's slide's timing.
+    static let peekResponse = 0.2, peekBounce = 0.22
+    /// How wide the two halves' colours blend where they meet.
+    static let splitBlend: CGFloat = 12
+    /// A Peek's chip, at the tile's bottom right, and where the tile's own favicon moves to make room.
+    static let peekChip: CGFloat = 20, peekChipInset: CGFloat = 3, peekChipRadius: CGFloat = 7
+    static let peekChipOffset = CGVector(dx: 8, dy: 7), peekIconOffset = CGVector(dx: -6, dy: -5)
+    static let peekChipScale: CGFloat = 0.7
     /// A landing row's held fill fades out over about as long as it takes to land.
     static let settleDuration = 0.24
     /// A closed tab's tile shrinks to this as it fades, gone before the tiles closing over it land.
@@ -560,7 +650,7 @@ extension PinnedLayout {
 @MainActor extension SidebarView {
     /// What a tab's hover card and menu point at: its tile or its row.
     func anchor(for id: UUID) -> NSView? {
-        if let tile = pinnedView.tiles[id], tile.superview === pinnedView { return tile }
+        if let tile = pinnedView.tiles[tileSplitOwners[id] ?? id], tile.superview === pinnedView { return tile }
         guard let row = rows[id], row.superview != nil else { return nil }
         return row
     }
@@ -570,11 +660,16 @@ extension PinnedLayout {
         rows.values.forEach { $0.refreshHover() }
         pinnedView.tiles.values.forEach { $0.refreshHover() }
     }
-    func updatePinned(_ pinned: [UUID], selected: BrowserTab?, theme: RiseTheme) {
+    func updatePinned(_ pinned: [UUID], selected: BrowserTab?, theme: RiseTheme, splits: [SplitTabGroup] = []) {
         pinnedView.set(order: pinned, make: { makeTile($0) }, closed: { tabsByID[$0] == nil })
         for id in pinned {
-            guard let tab = tabsByID[id] else { continue }
-            pinnedView.tiles[id]?.update(tab: tab, selected: id == selected?.id, theme: theme)
+            guard let tab = tabsByID[id], let tile = pinnedView.tiles[id] else { continue }
+            let group = splits.first { $0.contains(id) }
+            let partner = group.flatMap { tabsByID[$0.leftID == id ? $0.rightID : $0.leftID] }
+            tile.update(tab: tab, selected: id == selected?.id || group.map { group in selected.map { group.contains($0.id) } ?? false } == true, theme: theme)
+            tile.setCompanion(split: partner.map { $0.favicon(for: theme) ?? PinnedTabTile.emptyFavicon },
+                              partnerOnLeft: group?.rightID == id, peek: group == nil ? peekState?(id).map { $0.favicon(for: theme) ?? PinnedTabTile.emptyFavicon } : nil,
+                              theme: theme)
         }
     }
     private func makeTile(_ id: UUID) -> PinnedTabTile {
@@ -862,5 +957,76 @@ extension PinnedLayout {
             if self.pinnedView.tiles[id] === tile { self.pinnedView.addSubview(tile); tile.frame = target }
             pinnedDrag.overlay.removeFromSuperview(); self.refreshHovers()
         }
+    }
+}
+
+/// A split tile's two halves: each half's fill and border in its own colours, blending over a
+/// narrow band where they meet.
+@MainActor final class PinnedSplitPaint: NSView {
+    private let fill = CAGradientLayer(), edge = CAGradientLayer(), edgeShape = CALayer()
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        for gradient in [fill, edge] {
+            gradient.startPoint = CGPoint(x: 0, y: 0.5); gradient.endPoint = CGPoint(x: 1, y: 0.5)
+            gradient.cornerCurve = .continuous
+            layer?.addSublayer(gradient)
+        }
+        fill.masksToBounds = true
+        edgeShape.borderColor = NSColor.black.cgColor; edgeShape.cornerCurve = .continuous
+        edge.mask = edgeShape
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    private var applied: (() -> Void)?
+    override func layout() { super.layout(); applied?() }
+    func apply(left: (fill: NSColor, edge: NSColor), right: (fill: NSColor, edge: NSColor), borderWidth: CGFloat, radius: CGFloat, blend: CGFloat) {
+        applied = { [weak self] in self?.draw(left: left, right: right, borderWidth: borderWidth, radius: radius, blend: blend) }
+        draw(left: left, right: right, borderWidth: borderWidth, radius: radius, blend: blend)
+    }
+    private func draw(left: (fill: NSColor, edge: NSColor), right: (fill: NSColor, edge: NSColor), borderWidth: CGFloat, radius: CGFloat, blend: CGFloat) {
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        let bounds = CGRect(origin: .zero, size: self.bounds.size)
+        let half = bounds.width > 0 ? min(0.5, blend/2/bounds.width) : 0
+        let locations = [0, 0.5-half, 0.5+half, 1].map { NSNumber(value: Double($0)) }
+        fill.frame = bounds; edge.frame = bounds; edgeShape.frame = bounds
+        fill.cornerRadius = radius; edgeShape.cornerRadius = radius; edgeShape.borderWidth = borderWidth
+        fill.colors = [left.fill, left.fill, right.fill, right.fill].map(\.cgColor); fill.locations = locations
+        edge.colors = [left.edge, left.edge, right.edge, right.edge].map(\.cgColor); edge.locations = locations
+        CATransaction.commit()
+    }
+}
+
+/// The favicon a tile shows beside its own: a split's other page's, or, in a chip at the bottom
+/// right, a Peek's, as a row's Peek indicator does.
+@MainActor final class PinnedCompanionIcon: NSView {
+    let favicon = FaviconView(frame: .zero)
+    private let chip = CALayer()
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        chip.cornerCurve = .continuous; chip.cornerRadius = PinnedLayout.peekChipRadius
+        layer?.addSublayer(chip)
+        addSubview(favicon)
+        setAccessibilityElement(false)
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    func setChip(_ color: NSColor) {
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        chip.backgroundColor = color.cgColor
+        CATransaction.commit()
+    }
+    /// `chip` is how much of the Peek's chip shows, from none, as a split's favicon, to all of it.
+    func place(centre: NSPoint, scale: CGFloat, chip share: CGFloat, faviconSide: CGFloat) {
+        let side = PinnedLayout.peekChip*max(0, scale)
+        frame = NSRect(x: centre.x-side/2, y: centre.y-side/2, width: side, height: side)
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        chip.frame = CGRect(origin: .zero, size: frame.size)
+        chip.cornerRadius = PinnedLayout.peekChipRadius*max(0, scale)
+        chip.opacity = Float(min(1, max(0, share)))
+        CATransaction.commit()
+        let icon = faviconSide*max(0, scale)
+        favicon.frame = NSRect(x: (side-icon)/2, y: (side-icon)/2, width: icon, height: icon)
     }
 }
