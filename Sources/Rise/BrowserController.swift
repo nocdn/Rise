@@ -262,6 +262,8 @@ import RiseCore
     let splitHandle = SplitHandle()
     /// The split springing back to the middle after a double click on its handle.
     var splitMotion: PeekLiveMotion?
+    /// Stills of a split's sides crossing over as they swap (`SplitSwap`).
+    var splitSwapMotion: PeekLiveMotion?
     /// The page area below the developer bar, as last laid out.
     var pageBody = NSRect.zero
     /// An animation is placing the pages itself, so layout leaves them where it put them.

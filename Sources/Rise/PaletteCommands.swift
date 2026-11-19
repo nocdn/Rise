@@ -190,11 +190,4 @@ enum PageZoom {
         return tabs.prefix(firstVisible).filter { !$0.pinned }
     }
     @objc func closeTabsAbove() { for tab in closableTabsAbove { closeTab(tab.id) } }
-    /// The split's pages trade places, each keeping its share of the room.
-    func swapSplitSides() {
-        guard let group = activeSplitGroup, let index = splitGroups.firstIndex(where: { $0.id == group.id }) else { return }
-        splitGroups[index].leftID = group.rightID; splitGroups[index].rightID = group.leftID
-        splitGroups[index].fraction = 1-group.fraction
-        attachVisiblePages(); update(); scheduleSave()
-    }
 }

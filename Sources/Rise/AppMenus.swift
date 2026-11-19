@@ -127,6 +127,7 @@ import AppKit
         item(tabs, "Move Tab to Top", #selector(BrowserController.moveCurrentTabToTop), target: browser)
         item(tabs, "Split View", #selector(BrowserController.toggleSplit), target: browser)
         item(tabs, "Duplicate into Split View", #selector(BrowserController.duplicateIntoSplit), "d", modifiers: [.command, .shift], target: browser)
+        item(tabs, "Swap Split Sides", #selector(BrowserController.swapSplitSides), "d", modifiers: [.command, .option, .shift], target: browser)
         item(tabs, "Peek Current Page", #selector(BrowserController.peekCurrentPage), "p", modifiers: [.command, .shift], target: browser)
         item(tabs, "Stash Peek in New Tab", #selector(BrowserController.stashPeekInNewTab), "p", modifiers: [.command, .option], target: browser)
         item(tabs, "Sort Tabs by Domain", #selector(BrowserController.cleanUpTabs), "k", modifiers: [.command, .shift], target: browser)

@@ -139,6 +139,8 @@ import RiseCore
         splitHandle.onReset = { [weak self] in self?.centerSplit() }
         splitHandle.canReturnToPeek = { [weak self] in self?.canReturnSplitToPeek == true }
         splitHandle.onReturnToPeek = { [weak self] in self?.returnSplitToPeek() }
+        splitHandle.onSwapSides = { [weak self] in self?.swapSplitSides() }
+        splitHandle.swapShortcut = { NSApp.mainMenu?.items.lazy.compactMap { $0.submenu?.items.first { $0.action == #selector(BrowserController.swapSplitSides) } }.first }
     }
     func setSplitFraction(_ fraction: Double, of id: UUID) {
         guard let index = splitGroups.firstIndex(where: { $0.id == id }) else { return }

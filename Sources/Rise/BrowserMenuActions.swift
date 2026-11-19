@@ -74,6 +74,7 @@ extension BrowserController: NSMenuItemValidation {
         case #selector(moveCurrentTabUp): return canMoveCurrentTab(by: -1)
         case #selector(moveCurrentTabDown): return canMoveCurrentTab(by: 1)
         case #selector(duplicateCurrentTab), #selector(duplicateIntoSplit): return tabHasPage
+        case #selector(swapSplitSides): return activeSplitGroup != nil
         case #selector(pinCurrentTab):
             item.title = tab?.pinned == true ? "Unpin Tab" : "Pin Tab"
             return tab.map { tab in tab.pinned || canPinTab && !splitGroups.contains { $0.contains(tab.id) } } ?? false

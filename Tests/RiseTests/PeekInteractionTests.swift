@@ -407,7 +407,7 @@ final class PeekInteractionTests: XCTestCase {
         BrowserController.peekUndoDuration = 0.03
         browser.splitPeek()
         let menu = browser.splitHandle.makeContextMenu()
-        XCTAssertEqual(menu.items.map(\.title), ["Return to Peek state"])
+        XCTAssertEqual(menu.items.map(\.title), ["Return to Peek state", "Swap sides"])
         XCTAssertTrue(menu.items[0].isEnabled)
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertNil(browser.peekUndo, "The keyboard shortcut remains time-limited")
@@ -418,6 +418,19 @@ final class PeekInteractionTests: XCTestCase {
         XCTAssertEqual(browser.tabs.map(\.id), [source.id]); XCTAssertEqual(browser.selectedID, source.id)
         XCTAssertTrue(browser.splitPeekReturns.isEmpty)
         XCTAssertFalse(browser.splitHandle.makeContextMenu().items[0].isEnabled)
+    }
+    @MainActor func testSwappingSidesCrossesStillsOverTheSwappedPagesAndClearsThemAway() async throws {
+        let browser = browser(); defer { clean(browser) }
+        let left = browser.addTab(), right = browser.addTab()
+        browser.showWindow(nil); browser.select(left.id); browser.showSplit(right)
+        let group = try XCTUnwrap(browser.activeSplitGroup)
+        browser.setSplitFraction(0.6, of: group.id)
+        browser.splitHandle.makeContextMenu().performActionForItem(at: 1)
+        try await wait { browser.activeSplitGroup?.leftID == group.rightID }
+        XCTAssertEqual(browser.activeSplitGroup?.rightID, group.leftID)
+        XCTAssertEqual(browser.activeSplitGroup?.fraction ?? 0, 0.4, accuracy: 0.001, "Each keeps its share of the room")
+        if browser.peekMotionAllowed { XCTAssertTrue(browser.root.subviews.contains { $0 is SplitSwapGhost }) }
+        try await wait { browser.splitSwapMotion == nil && !browser.root.subviews.contains { $0 is SplitSwapGhost } }
     }
     @MainActor func testSplitHandleMenuRestoresOnlyItsOwnPairAndForgetsSeparatedPairs() throws {
         let browser = browser(); defer { clean(browser) }

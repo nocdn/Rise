@@ -16,6 +16,9 @@ import AppKit
     var onReset: (() -> Void)?
     var canReturnToPeek: (() -> Bool)?
     var onReturnToPeek: (() -> Void)?
+    var onSwapSides: (() -> Void)?
+    /// The menu's Swap sides shows the shortcut the menu bar's Swap Split Sides has.
+    var swapShortcut: (() -> NSMenuItem?)?
     private let pill = CALayer()
     private var tint = NSColor.black
     private var pressPoint: NSPoint?
@@ -80,16 +83,20 @@ import AppKit
     override func resetCursorRects() { addCursorRect(bounds, cursor: .resizeLeftRight) }
     override func cursorUpdate(with event: NSEvent) { NSCursor.resizeLeftRight.set() }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    /// Only a split, which a Peek can come back from, has a menu.
     override func menu(for event: NSEvent) -> NSMenu? { canReturnToPeek == nil ? nil : makeContextMenu().separatingIconSections() }
     func makeContextMenu() -> NSMenu {
         let menu = NSMenu(); menu.autoenablesItems = false
         let item = NSMenuItem(title: "Return to Peek state", action: #selector(returnToPeek), keyEquivalent: "")
         item.target = self; item.isEnabled = canReturnToPeek?() == true
         menu.addItem(item)
+        let swap = NSMenuItem(title: "Swap sides", action: #selector(swapSides), keyEquivalent: "")
+        if let shortcut = swapShortcut?() { swap.keyEquivalent = shortcut.keyEquivalent; swap.keyEquivalentModifierMask = shortcut.keyEquivalentModifierMask }
+        swap.target = self; swap.isEnabled = onSwapSides != nil
+        menu.addItem(swap)
         return menu
     }
     @objc private func returnToPeek() { if canReturnToPeek?() == true { onReturnToPeek?() } }
+    @objc private func swapSides() { onSwapSides?() }
     override func mouseEntered(with event: NSEvent) { hovering = true }
     override func mouseExited(with event: NSEvent) { hovering = false }
     override func mouseDown(with event: NSEvent) {
