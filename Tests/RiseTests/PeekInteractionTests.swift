@@ -224,6 +224,19 @@ final class PeekInteractionTests: XCTestCase {
         XCTAssertEqual(browser.selectedID, peek.id); XCTAssertTrue(browser.selectedTab?.page.view === web)
         XCTAssertNil(browser.peekCard)
     }
+    @MainActor func testCommandExpandShowsTheNewTabsRowAsItIsPressed() async throws {
+        let browser = browser(); defer { clean(browser) }
+        let source = browser.addTab()
+        browser.showWindow(nil); browser.select(source.id)
+        browser.showPeek(url: URL(string: "about:blank")!, from: source.page.view)
+        let peek = try XCTUnwrap(browser.peekTab)
+        try XCTSkipUnless(browser.peekMotionAllowed && browser.peekCard != nil, "Without motion it lands at once")
+        browser.expandPeek(modifiers: .command)
+        XCTAssertFalse(browser.tabs.contains { $0 === peek }, "Still growing")
+        XCTAssertNotNil(browser.sidebar.anchor(for: peek.id), "Its row is in the sidebar already")
+        try await wait { browser.tabs.contains { $0 === peek } }
+        XCTAssertEqual(browser.sidebarTabs.map(\.id), browser.tabs.map(\.id))
+    }
     @MainActor func testNewWindowLinkKeepsNormalNewTabSemanticsWhenExpanded() throws {
         let browser = browser(); defer { clean(browser) }
         let source = browser.addTab(), top = browser.addTab()
@@ -445,6 +458,11 @@ final class PeekInteractionTests: XCTestCase {
         XCTAssertTrue(split.isSwaying, "The divider sways on hover")
         arrows.mouseEntered(with: NSEvent())
         XCTAssertEqual(arrows.arrowSpread, 1.5, accuracy: 0.01, "The arrows spread like Picture in Picture's")
+        arrows.commandChanged(true)
+        XCTAssertTrue(arrows.showsPlus, "⌘ over the arrows shows the plus for a new tab")
+        split.commandChanged(true); XCTAssertFalse(split.showsPlus)
+        arrows.mouseExited(with: NSEvent())
+        XCTAssertFalse(arrows.showsPlus, "Off the button, it goes")
 
         func mouse(_ type: NSEvent.EventType) -> NSEvent {
             NSEvent.mouseEvent(with: type, location: content.convert(center, to: nil), modifierFlags: [], timestamp: 0,

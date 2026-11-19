@@ -15,7 +15,7 @@ import AppKit
         let existing = Dictionary(uniqueKeysWithValues: tabs.map { ($0.id,$0) })
         tabOrderUndoPending = false
         tabs = ids.compactMap { existing[$0] }
-        sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: sidebarSplitGroups, animated: animated)
+        sidebar.update(tabs: sidebarTabs, selected: sidebarSelectedTab, theme: theme, splits: sidebarSplitGroups, animated: animated)
         scheduleSave()
     }
     /// One ID per sidebar row, including rows hidden by search, or per pinned tile.
@@ -165,7 +165,7 @@ import AppKit
         let next = pinned + tabs.filter { !pinned.contains($0) }
         guard next.map(\.id) != tabs.map(\.id) else { return }
         tabs = next
-        sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: sidebarSplitGroups)
+        sidebar.update(tabs: sidebarTabs, selected: sidebarSelectedTab, theme: theme, splits: sidebarSplitGroups)
         scheduleSave()
     }
     func renameTab(_ id: UUID, title: String) { tabs.first { $0.id == id }?.rename(title) }

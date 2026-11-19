@@ -166,6 +166,7 @@ import RiseCore
     /// `still`, a picture of it, as the page itself is going elsewhere.
     func closePeek(animated: Bool = false, replacing: Bool = false, keepingPage: Bool = false, still: NSImage? = nil) {
         if let page = peekTab?.page { historySwipe.cancel(for: page) }
+        peekJoiningSidebar = nil
         // An extension's popup opened from the Peek's bar goes with it.
         if let popup = extensionPopup, popup.anchor?.isDescendant(of: peekBar) == true { popup.close() }
         // The card's stand-in carries the bar away with it.

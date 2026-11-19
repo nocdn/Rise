@@ -44,6 +44,7 @@ struct PeekUndo {
     /// the Peek's page a tab of its own instead.
     func expandPeek(modifiers: NSEvent.ModifierFlags = NSEvent.modifierFlags) {
         guard let tab = peekTab, !isPromotingPeek else { return }
+        showPeekJoiningSidebar(tab, modifiers: modifiers)
         guard peekMotionAllowed, let card = peekCard else { promotePeek(tab, modifiers: modifiers, snapshots: (nil, nil)); return }
         if livePeekResize { expandPeekLive(tab, card: card, modifiers: modifiers); return }
         isPromotingPeek = true
@@ -111,7 +112,27 @@ struct PeekUndo {
         update()
     }
 
+    /// Becoming a tab of its own, the Peek's row slides into the sidebar as the press lands,
+    /// not once the page has finished growing.
+    private func showPeekJoiningSidebar(_ tab: BrowserTab, modifiers: NSEvent.ModifierFlags) {
+        let source = tabs.first { $0.id == peekSourceTabID } ?? selectedTab
+        guard modifiers.contains(.command) || peekOpensNewTab || source == nil else { return }
+        peekJoiningSidebar = (tab, source.flatMap { source in tabs.firstIndex { $0.id == source.id } } ?? 0)
+        sidebar.update(tabs: sidebarTabs, selected: sidebarSelectedTab, theme: theme, splits: sidebarSplitGroups)
+    }
+    /// The tabs as the sidebar shows them: with a Peek on its way to becoming one.
+    var sidebarTabs: [BrowserTab] {
+        guard let joining = peekJoiningSidebar, joining.tab === peekTab, !tabs.contains(where: { $0 === joining.tab }) else { return tabs }
+        var list = tabs; list.insert(joining.tab, at: min(joining.index, list.count))
+        return list.filter(\.pinned) + list.filter { !$0.pinned }
+    }
+    var sidebarSelectedTab: BrowserTab? {
+        if let joining = peekJoiningSidebar, joining.tab === peekTab { return joining.tab }
+        return selectedTab
+    }
+
     func promotePeek(_ tab: BrowserTab, modifiers: NSEvent.ModifierFlags, snapshots: (peek: NSImage?, under: NSImage?)) {
+        peekJoiningSidebar = nil
         let source = tabs.first { $0.id == peekSourceTabID } ?? selectedTab
         let opensNewTab = peekOpensNewTab, origin = peekOrigin
         let bar = peekBarStill()

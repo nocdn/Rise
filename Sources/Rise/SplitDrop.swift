@@ -313,7 +313,7 @@ final class SplitDragPreview: FlippedView {
         let previous = splitGroups
         let group = side == .left ? SplitTabGroup(leftID: tab.id, rightID: current.id) : SplitTabGroup(leftID: current.id, rightID: tab.id)
         pendingSplitDrop = group
-        sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: sidebarSplitGroups, animated: true)
+        sidebar.update(tabs: sidebarTabs, selected: sidebarSelectedTab, theme: theme, splits: sidebarSplitGroups, animated: true)
         let join = { [weak self] in
             guard let self else { return }
             self.pendingSplitDrop = nil

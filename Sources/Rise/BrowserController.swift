@@ -245,6 +245,8 @@ import RiseCore
     var splitPeekReturns: [UUID: PeekUndo] = [:]
     /// Waiting for the Peek's snapshot before it grows into the page.
     var isPromotingPeek = false
+    /// A Peek growing into a new tab, whose row the sidebar shows from the press, before it lands.
+    var peekJoiningSidebar: (tab: BrowserTab, index: Int)?
     var peekPromotion: PeekPromotion?
     /// The Peek card moving frame by frame with its live page inside, when Live Peek Resize is on.
     var peekLiveMotion: PeekLiveMotion?
@@ -971,7 +973,7 @@ import RiseCore
             tabs = tabs.filter(\.pinned) + tabs.filter { !$0.pinned }
         }
         sidebar.developerTabLook = developerTabLook
-        sidebar.update(tabs: tabs, selected: selectedTab, theme: theme, splits: sidebarSplitGroups)
+        sidebar.update(tabs: sidebarTabs, selected: sidebarSelectedTab, theme: theme, splits: sidebarSplitGroups)
         annotations.layout()
         refreshTabScroll()
         nowPlaying.setNeedsRefresh()

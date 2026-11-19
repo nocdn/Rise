@@ -32,7 +32,12 @@ import AppKit
     private var pieces: [(layer: CALayer, direction: CGVector)] = []
     private var renderedScale: CGFloat = 0
     private var washColor = NSColor.black
-    private(set) var hovering = false { didSet { if hovering != oldValue { updateWash(); updateGlyph() } } }
+    private(set) var hovering = false { didSet { if hovering != oldValue { updateWash(); updateGlyph(); watchCommand() } } }
+    /// Over the arrows with ⌘ held, a small plus at their top right: the Peek opens in a new tab.
+    private let plus = CALayer()
+    private(set) var showsPlus = false { didSet { if showsPlus != oldValue { updatePlus() } } }
+    private var commandMonitor: Any?
+    static let plusScale: CGFloat = 0.7, plusDuration: TimeInterval = 0.12
     private(set) var pressed = false {
         didSet {
             guard pressed != oldValue else { return }
@@ -60,6 +65,8 @@ import AppKit
             // Up-left keeps the triangle above the bottom-left to top-right diagonal; down-right the one below.
             pieces = [CGVector(dx: -1, dy: 1), CGVector(dx: 1, dy: -1)].map { (CALayer(), $0) }
             pieces.forEach { $0.layer.mask = CAShapeLayer(); face.addSublayer($0.layer) }
+            plus.opacity = 0; plus.transform = CATransform3DMakeScale(Self.plusScale, Self.plusScale, 1)
+            face.addSublayer(plus)
         }
         toolTip = title
         setAccessibilityElement(true); setAccessibilityRole(.button); setAccessibilityLabel(title)
@@ -126,8 +133,16 @@ import AppKit
                     half.closeSubpath()
                     (piece.mask as? CAShapeLayer)?.path = half
                 }
+                if let mark = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)?
+                    .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 7*k, weight: .bold).applying(.init(paletteColors: [Self.tint]))) {
+                    plus.contentsScale = scale; plus.contents = mark.layerContents(forContentsScale: scale)
+                    plus.bounds = CGRect(origin: .zero, size: mark.size)
+                }
             }
             pieces.forEach { $0.layer.position = center }
+            // In the empty corner between the arrows, at the glyph's top right.
+            let arrows = pieces.first?.layer.bounds.size ?? .zero
+            plus.position = CGPoint(x: center.x+arrows.width*0.36, y: center.y+arrows.height*0.36)
         }
         CATransaction.commit()
     }
@@ -189,6 +204,38 @@ import AppKit
         return buttonRect.contains(convert(point, from: superview)) ? self : nil
     }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        super.viewWillMove(toWindow: newWindow)
+        if newWindow == nil { hovering = false }
+    }
+    /// While the pointer is over the arrows, ⌘ going down or up shows or hides the plus.
+    private func watchCommand() {
+        guard glyph == .arrows else { return }
+        if hovering, commandMonitor == nil {
+            commandMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+                self?.commandChanged(event.modifierFlags.contains(.command)); return event
+            }
+        } else if !hovering, let monitor = commandMonitor {
+            NSEvent.removeMonitor(monitor); commandMonitor = nil
+        }
+        commandChanged(NSEvent.modifierFlags.contains(.command))
+    }
+    func commandChanged(_ held: Bool) { showsPlus = glyph == .arrows && hovering && held }
+    /// Fades and grows in from 0.7, and back out the same way.
+    private func updatePlus() {
+        let opacity: Float = showsPlus ? 1 : 0, scale: CGFloat = showsPlus ? 1 : Self.plusScale
+        let shown = plus.presentation() ?? plus
+        let fromOpacity = shown.opacity, fromScale = shown.transform.m11
+        CATransaction.begin(); CATransaction.setDisableActions(true)
+        plus.opacity = opacity; plus.transform = CATransform3DMakeScale(scale, scale, 1)
+        CATransaction.commit()
+        guard !Self.reduceMotion else { return }
+        let fade = CABasicAnimation(keyPath: "opacity"); fade.fromValue = fromOpacity; fade.toValue = opacity
+        let grow = CABasicAnimation(keyPath: "transform.scale"); grow.fromValue = fromScale; grow.toValue = scale
+        let group = CAAnimationGroup(); group.animations = [fade, grow]
+        group.duration = Self.plusDuration; group.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        plus.add(group, forKey: "plus")
+    }
     override func mouseEntered(with event: NSEvent) { hovering = true }
     override func mouseExited(with event: NSEvent) { hovering = false }
     override func mouseDown(with event: NSEvent) { pressed = true }
