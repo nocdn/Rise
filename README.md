@@ -184,7 +184,7 @@ The iPhone app uses Apple's WebKit engine. To build it, see [Apps/iOS/README.md]
 - ⭐ **Voice search**: touch and hold the New Page button and speak. The speech is changed to text on your iPhone.
 - ⭐ **Search a site**: type a site's name and use its search, as on the Mac.
 - ⭐ **Dictation in pages**: a microphone above the keyboard lets you speak into any field on a page.
-- ⭐ **Move through text**: when you type in a page, drag left or right along the glass bar above the keyboard to move the cursor through the text.
+- ⭐ **Move through text**: when you type in a page, drag left or right along the glass bar above the keyboard to move the cursor through the text. Put a second finger down on the bar while you drag to select text instead.
 
 ### Reading and pages
 
