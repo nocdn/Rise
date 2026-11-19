@@ -333,8 +333,10 @@ import AppKit
         guard let window else { return nil }
         return root.convert(window.mouseLocationOutsideOfEventStream, from: nil)
     }
-    /// Inside the card or the gap beside the row just left, or inside the triangle from where
-    /// the pointer left (the tab or the card) to the near edge of where it's heading.
+    /// Inside the card or the gap beside the row just left, or on the way from where the pointer
+    /// left (the tab or the card) to where it's heading: anywhere between that point and the
+    /// target's corners. A pinned tile's card hangs below and right of the tile, so the way there
+    /// can pass over the card's top as well as its side.
     private func pointerIsHeadingForCard() -> Bool {
         let hover = tabHoverCards
         guard hover.shownID != nil, let point = pointerInRoot else { return false }
@@ -343,11 +345,19 @@ import AppKit
         guard let origin = hover.safeOrigin else { return false }
         let target = hover.safeTarget ?? card
         if target.contains(point) || hypot(point.x-origin.x, point.y-origin.y) < 2 { return true }
-        let edge = target.minX >= origin.x ? target.minX : target.maxX
-        let a = origin, b = NSPoint(x: edge, y: target.minY), c = NSPoint(x: edge, y: target.maxY)
+        return Self.isOnTheWay(point, from: origin, to: target)
+    }
+    /// Inside the outline joining a point to a rectangle's corners: the triangles from the point
+    /// to each of its edges.
+    static func isOnTheWay(_ point: NSPoint, from origin: NSPoint, to target: NSRect) -> Bool {
+        let corners = [NSPoint(x: target.minX, y: target.minY), NSPoint(x: target.maxX, y: target.minY),
+                       NSPoint(x: target.maxX, y: target.maxY), NSPoint(x: target.minX, y: target.maxY)]
         func side(_ p: NSPoint, _ q: NSPoint, _ r: NSPoint) -> CGFloat { (p.x-r.x)*(q.y-r.y)-(q.x-r.x)*(p.y-r.y) }
-        let d1 = side(point, a, b), d2 = side(point, b, c), d3 = side(point, c, a)
-        return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0))
+        return corners.indices.contains { index in
+            let b = corners[index], c = corners[(index+1) % corners.count]
+            let d1 = side(point, origin, b), d2 = side(point, b, c), d3 = side(point, c, origin)
+            return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0))
+        }
     }
     /// Hover cards go over everything on the page, Peeks and their controls included, which
     /// are added later and would otherwise sit above a card added before them.

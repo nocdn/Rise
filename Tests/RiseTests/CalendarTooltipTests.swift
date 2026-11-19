@@ -81,6 +81,15 @@ final class CalendarTooltipTests: XCTestCase {
         XCTAssertEqual(CalendarSchedule.events([day], calendar: calendar).first?.color, 0xD50000)
     }
 
+    /// A pinned tile's card hangs below and right of the tile: the way to it can pass over the
+    /// card's top, not only beside it, while turning back stays off the way.
+    @MainActor func testThePathToAPinnedTilesCardMayPassAboveTheCard() {
+        let tileExit = NSPoint(x: 40, y: 20), card = NSRect(x: 60, y: 40, width: 300, height: 400)
+        XCTAssertTrue(BrowserController.isOnTheWay(NSPoint(x: 150, y: 35), from: tileExit, to: card))
+        XCTAssertTrue(BrowserController.isOnTheWay(NSPoint(x: 50, y: 100), from: tileExit, to: card))
+        XCTAssertFalse(BrowserController.isOnTheWay(NSPoint(x: 150, y: 10), from: tileExit, to: card))
+        XCTAssertFalse(BrowserController.isOnTheWay(NSPoint(x: 20, y: 60), from: tileExit, to: card))
+    }
     @MainActor func testEventTooltipShowsItsTimesAndTheStartOfItsDescription() {
         let text = (1...8).map { "Line \($0)" }.joined(separator: "\n\n")
         let day = CalendarDay(key: 29010, height: 1441, chips: [
