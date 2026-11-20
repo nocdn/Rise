@@ -125,7 +125,7 @@ Hover over these tabs in the sidebar to see a card. All cards are on by default.
 
 ### Media
 
-- ⭐ **Floating video**: when you leave Rise while a video plays with sound, the video floats in its own small window. Drag or flick it into a corner, pinch to resize it, or flick it past the side of the screen to tuck it away.
+- ⭐ **Floating video**: when you leave Rise while a video plays with sound, the video floats in its own small window. Drag or flick it into a corner. Pinch to resize it, or drag one of its edges or corners. Flick it past the side of the screen to tuck it away. Click the tucked window, or flick it back out, and it goes back to where it was. Right-click it to play, pause or untuck it.
 - ⭐ **Now Playing**: when media plays in a tab that you left, a card at the bottom of the sidebar has its controls.
 - **Tab audio**: a tab that plays sound has a button to pause or mute it.
 - ⭐ **Meet's floating window**: move it with two fingers on its title bar, and flick it into a corner.

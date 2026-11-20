@@ -36,6 +36,8 @@ import RiseChromium
             if only?.contains("PinchOverThePictureResizesItWhenDeliveredToTheBrowserWindow") ?? true { await liveCase("PinchOverThePictureResizesItWhenDeliveredToTheBrowserWindow") { try await self.testPinchOverThePictureResizesItWhenDeliveredToTheBrowserWindow(); self.tearDown() } }
             if only?.contains("ATrackpadPinchReachesWhicheverPartOfThePictureIsUnderThePointer") ?? true { await liveCase("ATrackpadPinchReachesWhicheverPartOfThePictureIsUnderThePointer") { try await self.testATrackpadPinchReachesWhicheverPartOfThePictureIsUnderThePointer(); self.tearDown() } }
             if only?.contains("TheShadowMarginPassesClicksAndHoverToTheWindowsBeneath") ?? true { await liveCase("TheShadowMarginPassesClicksAndHoverToTheWindowsBeneath") { try await self.testTheShadowMarginPassesClicksAndHoverToTheWindowsBeneath(); self.tearDown() } }
+            if only?.contains("DraggingAnEdgeResizesThePictureAndThePageRedrawsItThere") ?? true { await liveCase("DraggingAnEdgeResizesThePictureAndThePageRedrawsItThere") { try await self.testDraggingAnEdgeResizesThePictureAndThePageRedrawsItThere(); self.tearDown() } }
+            if only?.contains("ATuckedPicturesMenuPlaysAndPausesTheVideoAndUntucksItToWhereItWas") ?? true { await liveCase("ATuckedPicturesMenuPlaysAndPausesTheVideoAndUntucksItToWhereItWas") { try await self.testATuckedPicturesMenuPlaysAndPausesTheVideoAndUntucksItToWhereItWas(); self.tearDown() } }
             if only?.contains("SpaceTogglesPlaybackOnlyWhileThePointerIsOverThePicture") ?? true { await liveCase("SpaceTogglesPlaybackOnlyWhileThePointerIsOverThePicture") { try await self.testSpaceTogglesPlaybackOnlyWhileThePointerIsOverThePicture(); self.tearDown() } }
             if only?.contains("SpaceOverThePictureNeverScrollsThePageBehindIt") ?? true { await liveCase("SpaceOverThePictureNeverScrollsThePageBehindIt") { try await self.testSpaceOverThePictureNeverScrollsThePageBehindIt(); self.tearDown() } }
             if only?.contains("MinimizeHidesThePictureAndKeepsPlayingUntilTheTabIsShownAgain") ?? true { await liveCase("MinimizeHidesThePictureAndKeepsPlayingUntilTheTabIsShownAgain") { try await self.testMinimizeHidesThePictureAndKeepsPlayingUntilTheTabIsShownAgain(); self.tearDown() } }
@@ -484,14 +486,89 @@ import RiseChromium
         }
         XCTAssertTrue(takesMouse(at: NSPoint(x: video.midX, y: video.midY)))
         XCTAssertTrue(takesMouse(at: NSPoint(x: video.minX+1, y: video.midY)))
-        XCTAssertFalse(takesMouse(at: NSPoint(x: video.minX-1, y: video.midY)), "The shadow margin beside the picture")
+        // Its edges and corners take the pointer a few points out, to resize it from there.
+        XCTAssertTrue(takesMouse(at: NSPoint(x: video.minX-2, y: video.midY)), "The edge, just outside")
+        XCTAssertTrue(takesMouse(at: NSPoint(x: video.minX+1, y: video.minY+1)), "The corner, outside its rounding")
+        XCTAssertFalse(takesMouse(at: NSPoint(x: video.minX-FloatingVideoEdgeResize.outside-2, y: video.midY)), "The shadow margin beside the picture")
         XCTAssertFalse(takesMouse(at: NSPoint(x: video.maxX+30, y: video.maxY+30)))
-        XCTAssertFalse(takesMouse(at: NSPoint(x: video.minX+1, y: video.minY+1)), "Outside the rounded corner")
         XCTAssertTrue(takesMouse(at: NSPoint(x: video.maxX-26, y: video.maxY-26)), "The return button")
         XCTAssertGreaterThan(panel.frame.width, video.width, "The shadow keeps its margin")
         browser.select(source.id)
         try await wait("PiP returns") { panel.isDismissing || !panel.isVisible }
         XCTAssertFalse(takesMouse(at: NSPoint(x: video.midX, y: video.midY)), "A fading picture never takes clicks")
+    }
+
+    @MainActor func testDraggingAnEdgeResizesThePictureAndThePageRedrawsItThere() async throws {
+        let browser = browser(); defer { clean(browser) }
+        let source = try await fixture(in: browser)
+        _ = browser.addTab()
+        try await wait("PiP") { browser.pictureInPicture.panel?.alphaValue == 1 }
+        let panel = try XCTUnwrap(browser.pictureInPicture.panel)
+        try await wait("first picture") { panel.canvasSize != nil }
+        let original = panel.videoFrame, before = try XCTUnwrap(panel.canvasSize)
+        var pointer = NSPoint(x: original.minX+1, y: original.midY)
+        panel.pointerLocation = { pointer }
+        XCTAssertTrue(panel.contentView?.hitTest(panel.convertPoint(fromScreen: pointer)) is FloatingResizeEdges, "The left edge takes the press")
+        func mouse(_ type: NSEvent.EventType) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.mouseEvent(with: type, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: panel.windowNumber,
+                                             context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        }
+        panel.handleEdgeResize(try mouse(.leftMouseDown))
+        pointer.x -= 80
+        panel.handleEdgeResize(try mouse(.leftMouseDragged))
+        try await Task.sleep(for: .milliseconds(150))
+        XCTAssertEqual(panel.canvasSize, before, "Mid-drag, the page keeps its picture, stretched")
+        panel.handleEdgeResize(try mouse(.leftMouseUp))
+        XCTAssertEqual(panel.videoFrame.width, original.width+80, accuracy: 1)
+        XCTAssertEqual(panel.videoFrame.maxX, original.maxX, accuracy: 1, "The right side stays")
+        XCTAssertEqual(panel.videoFrame.width/panel.videoFrame.height, original.width/original.height, accuracy: 0.01)
+        try await wait("page redraws at the new size") { panel.canvasSize == panel.videoFrame.size }
+        try await assertValue("document.querySelector('video').paused", in: source, equals: false)
+    }
+
+    @MainActor func testATuckedPicturesMenuPlaysAndPausesTheVideoAndUntucksItToWhereItWas() async throws {
+        let browser = browser(); defer { clean(browser) }
+        let source = try await fixture(in: browser)
+        _ = browser.addTab()
+        try await wait("PiP") { browser.pictureInPicture.panel?.alphaValue == 1 }
+        let panel = try XCTUnwrap(browser.pictureInPicture.panel)
+        let screen = try XCTUnwrap(panel.screen)
+        let edges = FloatingTuckLook.tuckableEdges(of: screen)
+        let edge: FloatingVideoMotion.Edge = edges.contains(.right) ? .right : .left
+        // With displays on both sides of this one, it can't tuck.
+        guard !edges.isEmpty else { print("NOTE no side of this display to tuck past"); return }
+        var time = 10.0
+        func move(by dx: CGFloat, steps: Int, every interval: Double) async throws {
+            panel.handleGesture(.init(phase: .began, timestamp: time))
+            for _ in 1...steps {
+                time += interval
+                panel.handleGesture(.init(phase: .changed, translation: CGVector(dx: dx, dy: 0), timestamp: time))
+                try await Task.sleep(for: .milliseconds(9))
+            }
+            time += 1.0/120; panel.handleGesture(.init(phase: .ended, timestamp: time)); time += 1
+        }
+        if edge == .left {
+            // It opens on the right: slowly over to the left first.
+            try await move(by: -40, steps: 60, every: 0.2)
+            try await wait("over on the left") { !panel.isDragging }
+            try await Task.sleep(for: .milliseconds(600))
+        }
+        let home = panel.videoFrame
+        try await move(by: edge == .right ? 40 : -40, steps: 4, every: 1.0/120)
+        try await wait("tucked", timeout: 5) { panel.tuckedEdge == edge && panel.tuckProgress > 0.99 }
+        let click = try XCTUnwrap(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: panel.windowNumber,
+                                                     context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        let playing = try XCTUnwrap(panel.tuckHandle.menu(for: click))
+        XCTAssertEqual(playing.items.map(\.title), ["Pause", "Untuck"])
+        playing.performActionForItem(at: 0)
+        try await wait("video pauses") { try await self.value("document.querySelector('video').paused", in: source) as? Bool == true }
+        let paused = try XCTUnwrap(panel.tuckHandle.menu(for: click))
+        XCTAssertEqual(paused.items.first?.title, "Play")
+        paused.performActionForItem(at: 0)
+        try await wait("video plays") { try await self.value("document.querySelector('video').paused", in: source) as? Bool == false }
+        try XCTUnwrap(panel.tuckHandle.menu(for: click)).performActionForItem(at: 1)
+        XCTAssertNil(panel.tuckedEdge)
+        try await wait("back where it was", timeout: 5) { abs(panel.videoFrame.minX-home.minX) < 1 && abs(panel.videoFrame.minY-home.minY) < 1 }
     }
 
     @MainActor func testSpaceTogglesPlaybackOnlyWhileThePointerIsOverThePicture() async throws {
@@ -575,10 +652,13 @@ import RiseChromium
         let source = try await fixture(in: browser)
         let row = try XCTUnwrap(browser.sidebar.rows[source.id])
         try await wait("row knows the video plays") { row.playbackPaused == false }
-        let hover = try XCTUnwrap(NSEvent.enterExitEvent(with: .mouseEntered, location: .zero, modifierFlags: [], timestamp: 0,
-            windowNumber: 0, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil))
+        // Over the row itself: a row hovers only where it's in front.
+        func hover(_ row: NSView) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.enterExitEvent(with: .mouseEntered, location: row.convert(NSPoint(x: row.bounds.midX, y: row.bounds.midY), to: nil),
+                modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil))
+        }
         XCTAssertTrue(row.playback.isHidden, "Only on hover")
-        row.mouseEntered(with: hover); row.layoutSubtreeIfNeeded()
+        row.mouseEntered(with: try hover(row)); row.layoutSubtreeIfNeeded()
         XCTAssertFalse(row.playback.isHidden); XCTAssertFalse(row.close.isHidden)
         XCTAssertEqual(row.playback.frame.size, row.close.frame.size)
         XCTAssertEqual(row.playback.frame.midY, row.close.frame.midY)
@@ -610,7 +690,7 @@ import RiseChromium
         try await wait("row follows") { row.playbackPaused == false && !row.playback.paused }
 
         let plain = try XCTUnwrap(browser.sidebar.rows[other.id])
-        plain.mouseEntered(with: hover)
+        plain.mouseEntered(with: try hover(plain))
         XCTAssertFalse(plain.close.isHidden); XCTAssertTrue(plain.playback.isHidden, "Tabs without a video have no play button")
     }
 

@@ -97,10 +97,12 @@ import AppKit
         guard let screen = window.screen ?? NSScreen.main ?? NSScreen.screens.first else { return }
         stopClock()
         FloatingPageEntrance.shared.finish(window)
+        // The same window keeps where it was before it was tucked, to come back out there.
+        let home = self.window === window ? self.motion?.home : nil
         self.window = window
         let area = placementArea(on: screen)
         var motion = FloatingVideoMotion(frame: window.frame, visibleFrame: area,
-                                         tucked: FloatingPageTuck.shared.edge(of: window), tuckable: FloatingTuckLook.tuckableEdges(of: screen))
+                                         tucked: FloatingPageTuck.shared.edge(of: window), tuckable: FloatingTuckLook.tuckableEdges(of: screen), home: home)
         motion.begin(at: timestamp)
         self.motion = motion; swallowsMomentum = false
         let tucked = motion.tucked.map { ", tucked \($0)" } ?? ""

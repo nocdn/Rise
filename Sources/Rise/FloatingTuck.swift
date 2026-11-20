@@ -2,9 +2,12 @@ import AppKit
 
 /// Covers a floating window while it's tucked past the screen's side: under the pointer it shows a
 /// chevron in the part still on the screen, pointing the way it comes back out, and a click brings
-/// it out. The chevron comes and goes with a quick, plain fade.
+/// it out, and a right-click shows what its window offers there. The chevron comes and goes with
+/// a quick, plain fade.
 @MainActor final class FloatingTuckHandle: NSView {
     var onClick: (() -> Void)?
+    /// What a right-click (or a Control-click) shows while it's tucked.
+    var makeMenu: (() -> NSMenu?)?
     /// A drag on the tucked window moves it, as one on its picture does.
     var mouseDrag: ((NSEvent) -> Void)?
     /// The side the window is tucked past; nil when it isn't, which lets clicks through.
@@ -87,7 +90,18 @@ import AppKit
     // Only while tucked does it take the window's clicks.
     override func hitTest(_ point: NSPoint) -> NSView? { edge == nil ? nil : super.hitTest(point) }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-    override func mouseDown(with event: NSEvent) { downPoint = event.locationInWindow; dragged = false }
+    override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.control), showMenu(for: event) { return }
+        downPoint = event.locationInWindow; dragged = false
+    }
+    override func rightMouseDown(with event: NSEvent) { if !showMenu(for: event) { super.rightMouseDown(with: event) } }
+    override func menu(for event: NSEvent) -> NSMenu? { edge == nil ? nil : makeMenu?() }
+    private func showMenu(for event: NSEvent) -> Bool {
+        guard let menu = menu(for: event) else { return false }
+        setHovered(false)
+        NSMenu.popUpContextMenu(menu, with: event, for: self)
+        return true
+    }
     override func mouseDragged(with event: NSEvent) {
         guard let downPoint else { return }
         if !dragged, hypot(event.locationInWindow.x-downPoint.x, event.locationInWindow.y-downPoint.y) >= 3 {
@@ -171,6 +185,13 @@ enum FloatingTuckLook {
         guard !resting, window.isVisible else { return }
         let veil = FloatingPageVeil(page: window)
         veil.handle.onClick = { [weak self, weak window] in if let window { self?.onUntuck?(window) } }
+        veil.handle.makeMenu = { [weak self, weak window] in
+            guard let self, let window else { return nil }
+            let menu = NSMenu(), action = MenuAction { [weak self, weak window] in if let window { self?.onUntuck?(window) } }
+            let item = NSMenuItem(title: "Untuck", action: #selector(MenuAction.invoke), keyEquivalent: "")
+            item.target = action; item.representedObject = action
+            menu.addItem(item); return menu
+        }
         veils.setObject(veil, forKey: window)
         veil.update(progress: progress, edge: edge, dragging: dragging)
     }

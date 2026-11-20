@@ -185,6 +185,63 @@ final class FloatingVideoMotionTests: XCTestCase {
         }
     }
 
+    /// Flicked off the left side from `start`, and settled there tucked.
+    private func tucked(from start: CGPoint) -> FloatingVideoMotion {
+        var motion = FloatingVideoMotion(frame: CGRect(origin: start, size: size), visibleFrame: screen)
+        flick(&motion, dx: -40)
+        XCTAssertEqual(motion.tucked, .left, "Thrown hard enough to tuck")
+        settle(&motion)
+        return motion
+    }
+
+    func testATuckedWindowComesBackToWhereItWasBeforeByClickOrFlick() {
+        let start = CGPoint(x: -1100, y: 400)
+        // Clicked: back to its place, not merely onto the screen at the side.
+        var clicked = tucked(from: start)
+        clicked.untuck(); settle(&clicked)
+        XCTAssertEqual(clicked.frame.origin.x, start.x, accuracy: 0.5)
+        XCTAssertEqual(clicked.frame.origin.y, start.y, accuracy: 0.5)
+
+        // Flicked out with two fingers: the same place, not a corner.
+        var flicked = tucked(from: start)
+        flick(&flicked, dx: 40, at: 10)
+        XCTAssertNil(flicked.tucked)
+        settle(&flicked)
+        XCTAssertEqual(flicked.frame.origin.x, start.x, accuracy: 0.5)
+        XCTAssertEqual(flicked.frame.origin.y, start.y, accuracy: 0.5)
+
+        // Moved up while tucked, it comes back as far up.
+        var moved = tucked(from: start)
+        moved.begin(at: 10)
+        for step in 1...60 { moved.drag(by: CGVector(dx: 0, dy: 2), at: 10+Double(step)/60); moved.step(elapsed: 1.0/60) }
+        moved.end(at: 12)
+        settle(&moved)
+        XCTAssertEqual(moved.tucked, .left)
+        moved.untuck(); settle(&moved)
+        XCTAssertEqual(moved.frame.origin.x, start.x, accuracy: 0.5)
+        XCTAssertEqual(moved.frame.origin.y, start.y+120, accuracy: 0.5)
+    }
+
+    func testFlicksUpAndDownKeepATuckedWindowTucked() {
+        let start = CGPoint(x: -1100, y: 400)
+        let tuckedX = FloatingVideoMotion.tuckedX(.left, width: size.width, visibleFrame: screen)
+        // Straight up, and up with a little way out, as moving it out of the way does.
+        for (dx, dy) in [(CGFloat(0), CGFloat(30)), (12, 30), (-8, -30)] {
+            var motion = tucked(from: start)
+            flick(&motion, dx: dx, dy: dy, at: 10)
+            XCTAssertEqual(motion.tucked, .left, "A flick of \(dx), \(dy) leaves it tucked")
+            settle(&motion)
+            XCTAssertEqual(motion.frame.minX, tuckedX, accuracy: 0.5)
+            XCTAssertGreaterThan(abs(motion.frame.minY-start.y), 4*abs(dy), "Thrown on up or down by the flick")
+            let limits = FloatingVideoMotion.originBounds(size: size, visibleFrame: screen)
+            XCTAssertTrue((limits.minY...limits.maxY).contains(motion.frame.minY))
+        }
+        // Out, mostly sideways: it's back.
+        var out = tucked(from: start)
+        flick(&out, dx: 30, dy: 12, at: 10)
+        XCTAssertNil(out.tucked)
+    }
+
     func testGrabbingDuringSettleKeepsCurrentPositionAndIdleReleaseDropsMomentum() {
         var motion = FloatingVideoMotion(frame: CGRect(x: -900, y: 350, width: size.width, height: size.height), visibleFrame: screen)
         motion.begin(at: 0); motion.drag(by: CGVector(dx: 130, dy: 80), at: 0.01)
@@ -236,5 +293,71 @@ final class FloatingLiftTests: XCTestCase {
             if landed { XCTAssertEqual(lift.value, 1, accuracy: 0.002); break }
         }
         XCTAssertTrue(landed)
+    }
+}
+
+final class FloatingEdgeResizeTests: XCTestCase {
+    let screen = CGRect(x: 0, y: 0, width: 1440, height: 875)
+    let video = CGRect(x: 300, y: 300, width: 360, height: 202.5)
+    private func resize(_ handle: FloatingVideoEdgeResize.Handle, from video: CGRect? = nil, by delta: CGVector) -> CGRect {
+        let video = video ?? self.video
+        let pointer = CGPoint(x: handle.x < 0 ? video.minX : handle.x > 0 ? video.maxX : video.midX,
+                              y: handle.y < 0 ? video.minY : handle.y > 0 ? video.maxY : video.midY)
+        let edge = FloatingVideoEdgeResize(handle: handle, videoFrame: video, pointer: pointer, visibleFrame: screen, minimumWidth: 180, maximumWidth: 760)
+        return edge.videoFrame(pointer: CGPoint(x: pointer.x+delta.dx, y: pointer.y+delta.dy))
+    }
+
+    func testTheEdgesAndCornersTakeThePointerAndTheMiddleDoesNot() {
+        typealias Handle = FloatingVideoEdgeResize.Handle
+        let cases: [(CGPoint, Handle?)] = [
+            (CGPoint(x: video.maxX+2, y: video.midY), Handle(x: 1, y: 0)),
+            (CGPoint(x: video.minX+2, y: video.midY), Handle(x: -1, y: 0)),
+            (CGPoint(x: video.midX, y: video.maxY-1), Handle(x: 0, y: 1)),
+            (CGPoint(x: video.midX, y: video.minY-3), Handle(x: 0, y: -1)),
+            (CGPoint(x: video.maxX-1, y: video.maxY-1), Handle(x: 1, y: 1)),
+            // Along an edge near a corner, it's the corner.
+            (CGPoint(x: video.minX+12, y: video.maxY-2), Handle(x: -1, y: 1)),
+            (CGPoint(x: video.maxX-2, y: video.minY+12), Handle(x: 1, y: -1)),
+            // Inside, as the close button is, or well outside: none.
+            (CGPoint(x: video.minX+12, y: video.maxY-12), nil),
+            (CGPoint(x: video.midX, y: video.midY), nil),
+            (CGPoint(x: video.maxX+8, y: video.midY), nil),
+        ]
+        for (point, handle) in cases { XCTAssertEqual(FloatingVideoEdgeResize.handle(at: point, in: video), handle, "\(point)") }
+    }
+
+    func testAnEdgeResizesAboutTheOppositeOneKeepingItsShape() {
+        let wider = resize(.init(x: 1, y: 0), by: CGVector(dx: 90, dy: 40))
+        XCTAssertEqual(wider.width, 450, accuracy: 0.01)
+        XCTAssertEqual(wider.width/wider.height, video.width/video.height, accuracy: 0.0001)
+        XCTAssertEqual(wider.minX, video.minX, accuracy: 0.01, "The left side stays")
+        XCTAssertEqual(wider.midY, video.midY, accuracy: 0.01, "Its middle stays the other way")
+
+        let shorter = resize(.init(x: 0, y: 1), by: CGVector(dx: 0, dy: -50))
+        XCTAssertEqual(shorter.height, video.height-50, accuracy: 0.01)
+        XCTAssertEqual(shorter.minY, video.minY, accuracy: 0.01, "The bottom stays")
+        XCTAssertEqual(shorter.midX, video.midX, accuracy: 0.01)
+
+        // A corner: the opposite one stays, and the drag along its diagonal sets the size.
+        let corner = resize(.init(x: -1, y: -1), by: CGVector(dx: -64, dy: -36))
+        XCTAssertEqual(corner.maxX, video.maxX, accuracy: 0.01)
+        XCTAssertEqual(corner.maxY, video.maxY, accuracy: 0.01)
+        XCTAssertEqual(corner.width, video.width+64, accuracy: 0.5)
+        XCTAssertEqual(corner.width/corner.height, video.width/video.height, accuracy: 0.0001)
+    }
+
+    func testItStaysWithinItsLimitsAndTheScreen() {
+        XCTAssertEqual(resize(.init(x: 1, y: 0), by: CGVector(dx: 5000, dy: 0)).width, 760, accuracy: 0.01)
+        XCTAssertEqual(resize(.init(x: -1, y: 0), by: CGVector(dx: 5000, dy: 0)).width, 180, accuracy: 0.01)
+        // Against the right side, pulling the right edge can't take it off the screen.
+        let atRight = CGRect(x: screen.maxX-8-360, y: 300, width: 360, height: 202.5)
+        let pulled = resize(.init(x: 1, y: 0), from: atRight, by: CGVector(dx: 200, dy: 0))
+        XCTAssertEqual(pulled, atRight)
+        // Against the bottom, its left edge pulled keeps it on the bottom.
+        let atBottom = CGRect(x: 300, y: 8, width: 360, height: 202.5)
+        let grown = resize(.init(x: -1, y: 0), from: atBottom, by: CGVector(dx: -100, dy: 0))
+        XCTAssertEqual(grown.minY, 8, accuracy: 0.01)
+        XCTAssertEqual(grown.maxX, atBottom.maxX, accuracy: 0.01)
+        XCTAssertTrue(screen.contains(grown))
     }
 }

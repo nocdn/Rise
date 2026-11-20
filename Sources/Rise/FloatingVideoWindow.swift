@@ -82,6 +82,14 @@ struct FloatingVideoScrollInput {
     private var dismissalID = UUID()
     /// When the X started the window's close, which plays out before it goes.
     private var closeStarted: CFTimeInterval?
+    /// Takes presses on the video's edges and corners, which resize it from there.
+    private let resizeEdges = FloatingResizeEdges()
+    private var edgeResize: FloatingVideoEdgeResize?
+    var isResizingFromEdge: Bool { edgeResize != nil }
+    /// The pinch under way, for the log: how it started, how many steps it's had, and a stop for one
+    /// whose end never comes.
+    private var pinchSteps = 0, pinchStartWidth: CGFloat = 0
+    private var pinchWatchdog: DispatchWorkItem?
 
     init(aspectRatio: CGFloat, screen: NSScreen, referenceWindow: NSWindow? = nil, placement: Placement? = nil) {
         let aspect = min(3, max(0.45, aspectRatio))
@@ -139,7 +147,15 @@ struct FloatingVideoScrollInput {
         picture.addSubview(videoHost); picture.addSubview(frozenFrame)
         tuckHandle.frame = surface.bounds
         surface.addSubview(picture); surface.addSubview(overlay); surface.addSubview(tuckHandle)
+        resizeEdges.frame = content.bounds; resizeEdges.autoresizingMask = [.width, .height]
+        content.addSubview(resizeEdges)
+        resizeEdges.handle = { [weak self] point in
+            guard let self else { return nil }
+            return self.resizeHandle(at: self.convertPoint(toScreen: point))
+        }
+        resizeEdges.onMouse = { [weak self] event in self?.handleEdgeResize(event) }
         tuckHandle.onClick = { [weak self] in self?.untuck() }
+        tuckHandle.makeMenu = { [weak self] in self?.tuckMenu() }
         tuckHandle.mouseDrag = { [weak self] event in self?.handleMouse(event) }
         overlay.closeAction = { [weak self] in self?.onClose?() }
         overlay.returnAction = { [weak self] in self?.onReturn?() }
@@ -152,7 +168,7 @@ struct FloatingVideoScrollInput {
             self.updateMousePassThrough()
         }
         overlay.mouseDrag = { [weak self] event in self?.handleMouse(event) }
-        overlay.pinch = { [weak self] event in self?.handleMagnification(event.magnification, phase: event.phase) }
+        overlay.pinch = { [weak self] event in self?.handleMagnification(event.magnification, phase: event.phase, via: "overlay") }
         observeScreenChanges()
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -185,7 +201,7 @@ struct FloatingVideoScrollInput {
             surface.frame = content.bounds.insetBy(dx: Self.shadowInset, dy: Self.shadowInset)
             // The tuck's scale goes while the picture's frame changes, and comes back below.
             picture.layer?.transform = CATransform3DIdentity; appliedTuck = -1
-            picture.frame = surface.bounds; tuckHandle.frame = surface.bounds
+            picture.frame = surface.bounds; tuckHandle.frame = surface.bounds; resizeEdges.frame = content.bounds
             // Stretches the page's last picture to the new size until it redraws.
             videoHost.frame = surface.bounds; videoHost.bounds = NSRect(origin: canvasOrigin, size: canvasSize ?? surface.bounds.size)
             overlay.frame = surface.bounds
@@ -196,7 +212,7 @@ struct FloatingVideoScrollInput {
         applyTuck()
         // Redrawing at every step of a pinch would show each new size before
         // the page paints it, so the picture stretches until the size settles.
-        if resizeMotion.map({ $0.phase == .idle }) ?? true { onVideoSizeChange?(surface.bounds.size, backingScaleFactor) }
+        if edgeResize == nil, resizeMotion.map({ $0.phase == .idle }) ?? true { onVideoSizeChange?(surface.bounds.size, backingScaleFactor) }
     }
 
     /// `webView` is the page's view, whichever engine draws it.
@@ -389,10 +405,10 @@ struct FloatingVideoScrollInput {
     override func sendEvent(_ event: NSEvent) {
         if event.type == .flagsChanged { overlay.updateModifiers(event.modifierFlags) }
         if event.type == .magnify {
-            handleMagnification(event.magnification, phase: event.phase); return
+            handleMagnification(event.magnification, phase: event.phase, via: "panel"); return
         }
         if event.type == .endGesture, resizeMotion?.phase == .pinching {
-            handleMagnification(0, phase: .ended); return
+            handleMagnification(0, phase: .ended, via: "panel's gesture end"); return
         }
         if event.type == .scrollWheel, event.hasPreciseScrollingDeltas { handleScroll(event); return }
         super.sendEvent(event)
@@ -442,9 +458,13 @@ struct FloatingVideoScrollInput {
         let takesKeys = takesSpace(at: pointerLocation())
         spaceShortcut.setEnabled(takesKeys); returnShortcut.setEnabled(takesKeys)
         refreshTuckHover()
-        if acceptsMouse, resizeMotion?.phase == .pinching || motion.phase == .dragging || overlay.progress.isTrackpadScrubbing { return }
         let pointer = pointerLocation()
-        let over = acceptsMouse && NSBezierPath(roundedRect: videoFrame, xRadius: 16, yRadius: 16).contains(pointer)
+        // Not for a press that began elsewhere, such as a file dragged over it.
+        let edge = edgeResize?.handle ?? (NSEvent.pressedMouseButtons == 0 ? resizeHandle(at: pointer) : nil)
+        FloatingResizeCursor.show(edge)
+        if acceptsMouse, edgeResize != nil || resizeMotion?.phase == .pinching || motion.phase == .dragging || overlay.progress.isTrackpadScrubbing { return }
+        // Its edges take the pointer a little way outside it too, to resize it from there.
+        let over = acceptsMouse && (NSBezierPath(roundedRect: videoFrame, xRadius: 16, yRadius: 16).contains(pointer) || edge != nil)
         guard over == ignoresMouseEvents, !acceptsMouse || NSEvent.pressedMouseButtons == 0 else { return }
         ignoresMouseEvents = !over
         // Tracking areas miss the crossing that happened while the panel ignored the mouse.
@@ -455,6 +475,7 @@ struct FloatingVideoScrollInput {
 
     private func removeEventMonitors() {
         spaceShortcut.setEnabled(false); returnShortcut.setEnabled(false)
+        FloatingResizeCursor.show(nil)
         overlay.hideHoverHints()
         if let localPointerMonitor { NSEvent.removeMonitor(localPointerMonitor); self.localPointerMonitor = nil }
         if let globalPointerMonitor { NSEvent.removeMonitor(globalPointerMonitor); self.globalPointerMonitor = nil }
@@ -466,16 +487,28 @@ struct FloatingVideoScrollInput {
     func routePinch(_ event: NSEvent) -> NSEvent? {
         // A pinch whose last magnify went elsewhere still ends with the gesture.
         if event.type == .endGesture, resizeMotion?.phase == .pinching, !isDismissing {
-            handleMagnification(0, phase: .ended); return event
+            handleMagnification(0, phase: .ended, via: "gesture end"); return event
         }
         // Even one addressed to this panel goes to the key window, so take it here.
-        guard event.type == .magnify, !isDismissing, isVisible, acceptsMouse, motion.tucked == nil else { return event }
-        if resizeMotion?.phase != .pinching {
-            let point = event.window.map { $0.convertPoint(toScreen: event.locationInWindow) } ?? event.locationInWindow
-            guard event.phase.contains(.began) || event.phase.contains(.changed),
-                  videoFrame.contains(point) || videoFrame.contains(NSEvent.mouseLocation) else { return event }
+        guard event.type == .magnify else { return event }
+        let point = event.window.map { $0.convertPoint(toScreen: event.locationInWindow) } ?? event.locationInWindow
+        let over = videoFrame.contains(point) || videoFrame.contains(NSEvent.mouseLocation)
+        guard !isDismissing, isVisible, acceptsMouse, motion.tucked == nil, edgeResize == nil else {
+            // Only a pinch begun over the video is worth noting: it was meant for it.
+            if event.phase.contains(.began), over {
+                Self.log.notice("Pinch over Picture in Picture not taken: dismissing=\(self.isDismissing) visible=\(self.isVisible) acceptsMouse=\(self.acceptsMouse) tucked=\(self.motion.tucked.map { "\($0)" } ?? "no", privacy: .public) edgeResize=\(self.edgeResize != nil)")
+            }
+            return event
         }
-        handleMagnification(event.magnification, phase: event.phase)
+        if resizeMotion?.phase != .pinching {
+            guard event.phase.contains(.began) || event.phase.contains(.changed), over else {
+                if event.phase.contains(.began) || event.phase.contains(.changed), videoFrame.insetBy(dx: -48, dy: -48).contains(point) {
+                    Self.log.debug("Pinch beside Picture in Picture left to the page: at \(point.debugDescription, privacy: .public) video \(self.videoFrame.debugDescription, privacy: .public)")
+                }
+                return event
+            }
+        }
+        handleMagnification(event.magnification, phase: event.phase, via: event.window === self ? "this panel" : event.window == nil ? "another app" : "Rise's key window")
         return nil
     }
 
@@ -508,7 +541,10 @@ struct FloatingVideoScrollInput {
         handleScroll(.from(event), pointer: pointer)
     }
     func handleScroll(_ input: FloatingVideoScrollInput, pointer: NSPoint) {
-        guard !isDismissing, input.precise, resizeMotion?.phase != .pinching else { return }
+        if resizeMotion?.phase == .pinching, input.phase.contains(.began) {
+            Self.log.notice("Two fingers over Picture in Picture not taken: a pinch is still under way (\(self.pinchSteps) steps, width \(Int(self.videoFrame.width)))")
+        }
+        guard !isDismissing, input.precise, resizeMotion?.phase != .pinching, edgeResize == nil else { return }
         let progress = overlay.progress
         if input.phase.contains(.began) { progress.finishTrackpadScrub() }
         let point = progress.convert(convertPoint(fromScreen: pointer), from: nil)
@@ -541,24 +577,64 @@ struct FloatingVideoScrollInput {
         }
     }
 
-    func handleMagnification(_ magnification: CGFloat, phase: NSEvent.Phase) {
-        guard !isDismissing, magnification.isFinite, motion.tucked == nil else { return }
+    func handleMagnification(_ magnification: CGFloat, phase: NSEvent.Phase, via source: String = "direct") {
+        guard !isDismissing, magnification.isFinite, motion.tucked == nil, edgeResize == nil else {
+            if phase.contains(.began) {
+                Self.log.notice("Pinch via \(source, privacy: .public) not taken: dismissing=\(self.isDismissing) finite=\(magnification.isFinite) tucked=\(self.motion.tucked != nil) edgeResize=\(self.edgeResize != nil)")
+            }
+            return
+        }
         if phase.contains(.began) || (phase.contains(.changed) || phase.isEmpty) && resizeMotion?.phase != .pinching {
-            guard let screen = screen ?? NSScreen.main else { return }
+            guard let screen = screen ?? NSScreen.main else {
+                Self.log.error("Pinch via \(source, privacy: .public) not taken: Picture in Picture has no screen"); return
+            }
+            if let resize = resizeMotion, resize.phase != .idle {
+                Self.log.notice("Pinch via \(source, privacy: .public) catches a resize still \(resize.phase == .settling ? "settling" : "pinching", privacy: .public) at width \(Int(resize.width))")
+            }
             stopMotion()
             resizeMotion = resizing(on: screen)
             resizeMotion?.begin()
+            pinchSteps = 0; pinchStartWidth = videoFrame.width
+            Self.log.notice("Pinch begins via \(source, privacy: .public), phase \(Self.describe(phase), privacy: .public): width \(Int(self.videoFrame.width)) within \(Int(self.resizeMotion?.minimumWidth ?? 0))–\(Int(self.resizeMotion?.maximumWidth ?? 0)), video \(self.videoFrame.debugDescription, privacy: .public)")
         }
-        guard var resize = resizeMotion else { return }
-        if phase.contains(.began) || phase.contains(.changed) || phase.isEmpty { resize.magnify(by: magnification) }
+        guard var resize = resizeMotion else {
+            Self.log.notice("Pinch step via \(source, privacy: .public) with no pinch under way, phase \(Self.describe(phase), privacy: .public)"); return
+        }
+        if phase.contains(.began) || phase.contains(.changed) || phase.isEmpty {
+            resize.magnify(by: magnification); pinchSteps += 1
+            Self.log.debug("Pinch step \(self.pinchSteps) via \(source, privacy: .public): \(magnification) to width \(resize.width)")
+        }
         if phase.contains(.ended) || phase.contains(.cancelled) {
             resize.end(reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+            Self.log.notice("Pinch \(phase.contains(.cancelled) ? "cancelled" : "ends", privacy: .public) via \(source, privacy: .public) after \(self.pinchSteps) steps: width \(Int(self.pinchStartWidth)) to \(Int(resize.width)), \(resize.phase == .settling ? "settling back within its limits" : "resting", privacy: .public)")
         }
         resizeMotion = resize; applyVideoFrame(resize.videoFrame)
         if let screen = screen ?? NSScreen.main {
-            motion = FloatingVideoMotion(frame: frame, visibleFrame: placementArea(on: screen), contentInset: Self.shadowInset, tucked: motion.tucked, tuckable: tuckable(on: screen))
+            motion = FloatingVideoMotion(frame: frame, visibleFrame: placementArea(on: screen), contentInset: Self.shadowInset, tucked: motion.tucked, tuckable: tuckable(on: screen), home: motion.home)
         }
+        watchPinch()
         if resize.phase == .settling { startClock() } else if resize.phase == .idle { updateMousePassThrough() }
+    }
+    /// A pinch whose end never arrives would hold the window, refusing two-finger drags and keeping
+    /// the mouse, until the next one: one that's gone quiet this long ends here.
+    var abandonedPinchTimeout: TimeInterval = 1.2
+    private func watchPinch() {
+        pinchWatchdog?.cancel(); pinchWatchdog = nil
+        guard resizeMotion?.phase == .pinching else { return }
+        let watchdog = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.resizeMotion?.phase == .pinching else { return }
+                Self.log.error("Pinch never ended: nothing for \(self.abandonedPinchTimeout)s after \(self.pinchSteps) steps, so it ends here at width \(Int(self.videoFrame.width))")
+                self.handleMagnification(0, phase: .ended, via: "the pinch's watchdog")
+            }
+        }
+        pinchWatchdog = watchdog
+        DispatchQueue.main.asyncAfter(deadline: .now()+abandonedPinchTimeout, execute: watchdog)
+    }
+    private static func describe(_ phase: NSEvent.Phase) -> String {
+        let names: [(NSEvent.Phase, String)] = [(.began, "began"), (.changed, "changed"), (.ended, "ended"), (.cancelled, "cancelled"), (.mayBegin, "mayBegin"), (.stationary, "stationary")]
+        let shown = names.filter { phase.contains($0.0) }.map(\.1)
+        return shown.isEmpty ? "none" : shown.joined(separator: "+")
     }
 
     private func handleMouse(_ event: NSEvent) {
@@ -574,10 +650,13 @@ struct FloatingVideoScrollInput {
     }
 
     private func beginDrag(at timestamp: TimeInterval) {
-        guard !isDismissing else { return }
+        guard !isDismissing, edgeResize == nil else { return }
         guard let screen = self.screen ?? NSScreen.main ?? NSScreen.screens.first else { return }
-        if var resize = resizeMotion { resize.finish(); resizeMotion = nil; applyVideoFrame(resize.videoFrame) }
-        motion = FloatingVideoMotion(frame: frame, visibleFrame: placementArea(on: screen), contentInset: Self.shadowInset, tucked: motion.tucked, tuckable: tuckable(on: screen))
+        if var resize = resizeMotion {
+            if resize.phase == .pinching { Self.log.notice("A drag takes Picture in Picture mid-pinch, after \(self.pinchSteps) steps") }
+            resize.finish(); resizeMotion = nil; applyVideoFrame(resize.videoFrame); watchPinch()
+        }
+        motion = FloatingVideoMotion(frame: frame, visibleFrame: placementArea(on: screen), contentInset: Self.shadowInset, tucked: motion.tucked, tuckable: tuckable(on: screen), home: motion.home)
         motion.begin(at: timestamp)
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
         startClock()
@@ -632,7 +711,7 @@ struct FloatingVideoScrollInput {
             resize.step(elapsed: elapsed, reduceMotion: reduced)
             resizeMotion = resize; applyVideoFrame(resize.videoFrame)
             if let screen = screen ?? NSScreen.main {
-                motion = FloatingVideoMotion(frame: frame, visibleFrame: placementArea(on: screen), contentInset: Self.shadowInset, tucked: motion.tucked, tuckable: tuckable(on: screen))
+                motion = FloatingVideoMotion(frame: frame, visibleFrame: placementArea(on: screen), contentInset: Self.shadowInset, tucked: motion.tucked, tuckable: tuckable(on: screen), home: motion.home)
             }
         } else {
             motion.step(elapsed: elapsed, reduceMotion: reduced)
@@ -662,7 +741,7 @@ struct FloatingVideoScrollInput {
     }
     private func fitToScreen() {
         guard !isDismissing, let screen = screen ?? NSScreen.main else { return }
-        stopMotion()
+        stopMotion(); edgeResize = nil
         let tucked = motion.tucked
         var resize = resizing(on: screen)
         resize.finish(); resizeMotion = nil
@@ -677,7 +756,7 @@ struct FloatingVideoScrollInput {
         }
         applyVideoFrame(fitted)
         motion = FloatingVideoMotion(frame: frame, visibleFrame: placementArea(on: screen), contentInset: Self.shadowInset, tucked: tucked,
-                                     tuckable: tuckable(on: screen))
+                                     tuckable: tuckable(on: screen), home: motion.home)
         applyTuck()
     }
 
@@ -723,5 +802,136 @@ struct FloatingVideoScrollInput {
         // Grown enough that the blur's soft edge falls outside the rounded corners.
         layer.transform = FloatingTuckLook.apply(progress, to: layer, size: surface.bounds.size)
         CATransaction.commit()
+    }
+
+    /// Right-clicking the part of a tucked window on the screen: play or pause it, or bring it back.
+    private func tuckMenu() -> NSMenu? {
+        guard motion.tucked != nil, !isDismissing else { return nil }
+        let menu = NSMenu()
+        let playback = NSMenuItem(title: overlay.playButton.paused ? "Play" : "Pause", action: #selector(menuTogglePlayback), keyEquivalent: "")
+        let untuck = NSMenuItem(title: "Untuck", action: #selector(menuUntuck), keyEquivalent: "")
+        for item in [playback, untuck] { item.target = self; menu.addItem(item) }
+        return menu
+    }
+    @objc private func menuTogglePlayback() { overlay.toggle() }
+    @objc private func menuUntuck() { untuck() }
+
+    // MARK: Resizing from an edge
+
+    /// The edge or corner of the video the pointer is on, while it can be resized from there: on
+    /// the screen, at rest, and not being pinched.
+    func resizeHandle(at pointer: NSPoint) -> FloatingVideoEdgeResize.Handle? {
+        guard acceptsMouse, !isDismissing, isVisible, closeStarted == nil, motion.tucked == nil, motion.phase == .idle,
+              appliedTuck <= 0.001, resizeMotion.map({ $0.phase == .idle }) ?? true else { return nil }
+        return FloatingVideoEdgeResize.handle(at: pointer, in: videoFrame)
+    }
+    func handleEdgeResize(_ event: NSEvent) {
+        let pointer = pointerLocation()
+        switch event.type {
+        case .leftMouseDown:
+            guard edgeResize == nil, let screen = screen ?? NSScreen.main,
+                  let handle = FloatingVideoEdgeResize.handle(at: pointer, in: videoFrame) else { return }
+            stopMotion(); resizeMotion = nil
+            let limits = resizing(on: screen)
+            edgeResize = FloatingVideoEdgeResize(handle: handle, videoFrame: videoFrame, pointer: pointer, visibleFrame: placementArea(on: screen),
+                                                 minimumWidth: limits.minimumWidth, maximumWidth: limits.maximumWidth)
+            FloatingResizeCursor.show(handle)
+            Self.log.notice("Resizing Picture in Picture from its edge \(handle.x), \(handle.y): \(self.videoFrame.debugDescription, privacy: .public)")
+        case .leftMouseDragged:
+            guard let edgeResize else { return }
+            applyVideoFrame(edgeResize.videoFrame(pointer: pointer))
+            FloatingResizeCursor.show(edgeResize.handle)
+        case .leftMouseUp:
+            guard let resize = edgeResize else { return }
+            let final = resize.videoFrame(pointer: pointer)
+            // Done: the page draws the picture at its new size.
+            edgeResize = nil; applyVideoFrame(final)
+            if let screen = screen ?? NSScreen.main {
+                motion = FloatingVideoMotion(frame: frame, visibleFrame: placementArea(on: screen), contentInset: Self.shadowInset, tuckable: tuckable(on: screen))
+            }
+            Self.log.notice("Resized Picture in Picture from its edge to \(self.videoFrame.debugDescription, privacy: .public)")
+            updateMousePassThrough(); overlay.refreshHover()
+        default: break
+        }
+    }
+}
+
+/// Over a floating video and the few points around it: takes presses on its edges and corners,
+/// for the window to resize it, and lets every other one through to the video beneath.
+@MainActor final class FloatingResizeEdges: NSView {
+    /// The edge or corner at a point in the window, if it can be resized from there.
+    var handle: ((NSPoint) -> FloatingVideoEdgeResize.Handle?)?
+    var onMouse: ((NSEvent) -> Void)?
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let superview, handle?(superview.convert(point, to: nil)) != nil else { return nil }
+        return self
+    }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func mouseDown(with event: NSEvent) { onMouse?(event) }
+    override func mouseDragged(with event: NSEvent) { onMouse?(event) }
+    override func mouseUp(with event: NSEvent) { onMouse?(event) }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(rect: .zero, options: [.cursorUpdate, .mouseMoved, .activeAlways, .inVisibleRect], owner: self))
+    }
+    // Coming over the video, the pointer is an arrow, whatever it was over the page beneath.
+    override func cursorUpdate(with event: NSEvent) {
+        let handle = handle?(event.locationInWindow)
+        FloatingResizeCursor.show(handle)
+        if handle == nil { NSCursor.arrow.set() }
+    }
+    override func mouseMoved(with event: NSEvent) { FloatingResizeCursor.show(handle?(event.locationInWindow)) }
+}
+
+/// The resize arrows for a floating video's edges and corners. The window takes the pointer
+/// with Rise in the background too, where the window server lets an app set the cursor only once
+/// it has asked to: Rise asks while the arrows show, and stops when they go.
+@MainActor enum FloatingResizeCursor {
+    private(set) static var shown: FloatingVideoEdgeResize.Handle?
+    static func show(_ handle: FloatingVideoEdgeResize.Handle?) {
+        if let handle {
+            setsCursorInBackground(true)
+            cursor(for: handle).set()
+        } else if shown != nil {
+            NSCursor.arrow.set()
+            setsCursorInBackground(false)
+        }
+        shown = handle
+    }
+    static func cursor(for handle: FloatingVideoEdgeResize.Handle) -> NSCursor {
+        if #available(macOS 15, *) {
+            let position: NSCursor.FrameResizePosition = switch (handle.x, handle.y) {
+            case (-1, 1): .topLeft
+            case (0, 1): .top
+            case (1, 1): .topRight
+            case (-1, 0): .left
+            case (1, 0): .right
+            case (-1, -1): .bottomLeft
+            case (0, -1): .bottom
+            default: .bottomRight
+            }
+            return .frameResize(position: position, directions: .all)
+        }
+        if handle.y == 0 { return .resizeLeftRight }
+        if handle.x == 0 { return .resizeUpDown }
+        let name = handle.x == handle.y ? "_windowResizeNorthEastSouthWestCursor" : "_windowResizeNorthWestSouthEastCursor"
+        let selector = NSSelectorFromString(name)
+        guard NSCursor.responds(to: selector), let cursor = NSCursor.perform(selector)?.takeUnretainedValue() as? NSCursor else { return .crosshair }
+        return cursor
+    }
+    private typealias SetProperty = @convention(c) (Int32, Int32, CFString, CFTypeRef) -> Int32
+    private typealias Connection = @convention(c) () -> Int32
+    /// The window server's own calls, absent from the SDK, so looked up as Rise runs.
+    private static let setProperty: SetProperty? = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGSSetConnectionProperty")
+        .map { unsafeBitCast($0, to: SetProperty.self) }
+    private static let connection: Connection? = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGSMainConnectionID")
+        .map { unsafeBitCast($0, to: Connection.self) }
+    private static var inBackground = false
+    private static func setsCursorInBackground(_ on: Bool) {
+        guard on != inBackground, let setProperty, let connection else { return }
+        let id = connection()
+        _ = setProperty(id, id, "SetsCursorInBackground" as CFString, (on ? kCFBooleanTrue : kCFBooleanFalse) as CFTypeRef)
+        inBackground = on
     }
 }

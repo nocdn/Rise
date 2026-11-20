@@ -4,8 +4,8 @@ import CoreGraphics
 /// Adapted from Snap's ScreenshotPreviewController and ScreenshotFeedbackStyle.
 /// Slow releases keep their placement; flicks use its velocity projection and corner spring.
 /// Where Snap's preview would be flicked off the screen's side and dismissed, a floating window
-/// is tucked instead: all but a tenth of it past that side, until it's brought back. Flicks off
-/// the top or bottom go to a corner as any other.
+/// is tucked instead: all but a tenth of it past that side, until it's brought back, to where it
+/// was before. Flicks off the top or bottom go to a corner as any other.
 struct FloatingVideoMotion {
     enum Phase { case idle, dragging, settling }
     enum Edge { case left, right }
@@ -23,6 +23,12 @@ struct FloatingVideoMotion {
     private var target: CGPoint
     private var inputVelocity = CGVector.zero
     private var lastInput: TimeInterval?
+    /// Where it was when the fingers or the pointer took it, and whether it was tucked then.
+    private var start = CGPoint.zero, startedTucked = false, grabbedX: CGFloat = 0
+    /// Where it rested before it was tucked, and the height it was tucked at: brought back, it
+    /// goes to that place, as far up or down as it was moved while tucked.
+    struct Home: Equatable { var origin: CGPoint; var tuckedY: CGFloat }
+    private(set) var home: Home?
     static let edgeInset: CGFloat = 8
     /// Screen points per second at lift-off, after accounting for a pause before release.
     static let flickSpeed: CGFloat = 650
@@ -31,9 +37,13 @@ struct FloatingVideoMotion {
     static let projectionTime: CGFloat = 0.22
     /// How much of the window stays on the screen tucked.
     static let tuckedShowing: CGFloat = 0.1
+    /// Tucked, flicks that move it up and down out of the way shouldn't bring it out: only one
+    /// out from the side this fast, mostly sideways, after the fingers have gone this far does.
+    static let untuckSpeed: CGFloat = 650, untuckTravel: CGFloat = 28, untuckSideways: CGFloat = 1.5
 
-    init(frame: CGRect, visibleFrame: CGRect, contentInset: CGFloat = 0, tucked: Edge? = nil, tuckable: Set<Edge> = [.left, .right]) {
-        self.frame = frame; self.tucked = tucked; self.tuckable = tuckable
+    init(frame: CGRect, visibleFrame: CGRect, contentInset: CGFloat = 0, tucked: Edge? = nil, tuckable: Set<Edge> = [.left, .right],
+         home: Home? = nil) {
+        self.frame = frame; self.tucked = tucked; self.tuckable = tuckable; self.home = tucked == nil ? nil : home
         area = visibleFrame; self.contentInset = contentInset
         limits = Self.originBounds(size: frame.size, visibleFrame: visibleFrame, contentInset: contentInset)
         unconstrained = frame.origin; target = frame.origin
@@ -65,12 +75,19 @@ struct FloatingVideoMotion {
         CGPoint(x: min(maxX, max(minX, point.x)), y: min(limits.maxY, max(limits.minY, point.y)))
     }
 
-    /// Back onto the screen from wherever it is on the way, keeping its height on the screen.
+    /// Back onto the screen from wherever it is on the way, to where it was before it was tucked.
     mutating func untuck() {
         guard tucked != nil else { return }
         tucked = nil
-        target = clamped(phase == .idle ? frame.origin : target)
+        target = comingOut(from: phase == .idle ? frame.origin : target)
         phase = .settling; lastInput = nil; inputVelocity = .zero
+    }
+    /// Where an untucked window from `point` goes: its place before it was tucked, moved up or down
+    /// as far as it was while tucked; or, not known, onto the screen at its height.
+    private mutating func comingOut(from point: CGPoint) -> CGPoint {
+        defer { home = nil }
+        guard let home else { return clamped(point) }
+        return clamped(CGPoint(x: home.origin.x, y: home.origin.y+point.y-home.tuckedY))
     }
 
     static func originBounds(size: CGSize, visibleFrame: CGRect, contentInset: CGFloat = 0) -> CGRect {
@@ -91,6 +108,8 @@ struct FloatingVideoMotion {
     }
 
     mutating func begin(at timestamp: TimeInterval) {
+        // Caught on its way somewhere, that's where it was: where it goes back to, tucked now.
+        start = phase == .settling ? target : frame.origin; startedTucked = tucked != nil; grabbedX = frame.minX
         unconstrained = frame.origin; target = frame.origin
         inputVelocity = .zero; velocity = .zero; lastInput = timestamp; phase = .dragging
     }
@@ -118,23 +137,39 @@ struct FloatingVideoMotion {
         velocity = !flick || reduceMotion ? .zero : release
         if !cancelled, speed >= Self.tuckSpeed, let edge = tuckEdge(for: release) {
             // Keeps on its way, out to its tucked place at that height.
-            let y = target.y+release.dy*(reduceMotion ? 0 : Self.projectionTime)
+            let y = min(limits.maxY, max(limits.minY, target.y+release.dy*(reduceMotion ? 0 : Self.projectionTime)))
+            if !startedTucked { home = Home(origin: start, tuckedY: y) }
             tucked = edge
-            target = CGPoint(x: tuckedX(edge), y: min(limits.maxY, max(limits.minY, y)))
+            target = CGPoint(x: tuckedX(edge), y: y)
             glideIn()
             phase = .settling; lastInput = nil; inputVelocity = .zero
             return
         }
         if let tucked {
-            // Pushed back towards its side, or let go still mostly tucked, it stays tucked.
-            let toward = tucked == .left ? release.dx < 0 : release.dx > 0
-            if flick ? toward : tuckProgress(at: cancelled ? frame.origin : target) > 0.5 {
-                target = CGPoint(x: tuckedX(tucked), y: clamped(cancelled ? frame.origin : target).y)
+            // Flicked out from its side, it comes back to where it was; let go mostly out, it stays
+            // there. Otherwise it stays tucked, flicked up or down as far as the flick throws it.
+            let place = cancelled ? frame.origin : target
+            let outward = tucked == .left ? release.dx : -release.dx
+            let travelled = tucked == .left ? unconstrained.x-grabbedX : grabbedX-unconstrained.x
+            let mostlyOut = tuckProgress(at: place) <= 0.5
+            let deliberate = outward >= Self.untuckSpeed && outward >= Self.untuckSideways*abs(release.dy) && travelled >= Self.untuckTravel
+            let flickedOut = flick && (deliberate || mostlyOut && outward >= 0)
+            let draggedOut = !flick && mostlyOut
+            guard flickedOut || draggedOut else {
+                let y = place.y+(flick && !reduceMotion ? release.dy*Self.projectionTime : 0)
+                target = CGPoint(x: tuckedX(tucked), y: min(limits.maxY, max(limits.minY, y)))
                 glideIn()
                 phase = .settling; lastInput = nil; inputVelocity = .zero
                 return
             }
             self.tucked = nil
+            if flickedOut {
+                target = comingOut(from: place)
+                arrive()
+                phase = .settling; lastInput = nil; inputVelocity = .zero
+                return
+            }
+            home = nil
         }
         if !flick {
             target = clamped(cancelled ? frame.origin : target)
@@ -190,6 +225,13 @@ struct FloatingVideoMotion {
         velocity.dx = min(limit, max(-limit, velocity.dx))
         let speed = hypot(velocity.dx, velocity.dy)
         if speed > 5_000 { velocity.dx *= 5_000/speed; velocity.dy *= 5_000/speed }
+    }
+
+    /// On its way back out, the flick carries it no further than it's going, as `glideIn` does.
+    private mutating func arrive() {
+        let rate = 0.9*sqrt(340)
+        velocity.dx = min(rate*abs(target.x-frame.minX), max(-rate*abs(target.x-frame.minX), velocity.dx))
+        velocity.dy = min(rate*abs(target.y-frame.minY), max(-rate*abs(target.y-frame.minY), velocity.dy))
     }
 
     /// The side a release would have thrown Snap's preview off: its projection past that side,

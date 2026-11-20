@@ -226,4 +226,76 @@ final class FloatingVideoControlsTests: XCTestCase {
         XCTAssertTrue(panel.isDragging); XCTAssertFalse(bar.isTrackpadScrubbing)
         panel.handleScroll(.init(phase: .ended, timestamp: 2.2), pointer: point)
     }
+
+    @MainActor func testDraggingAnEdgeResizesKeepingItsShapeAndRedrawsOnceLetGo() throws {
+        _ = NSApplication.shared
+        let panel = FloatingVideoWindow(aspectRatio: 16.0/9, screen: try XCTUnwrap(NSScreen.main))
+        defer { panel.closeImmediately() }
+        panel.present(); panel.contentView?.layoutSubtreeIfNeeded()
+        var sizes: [NSSize] = []; panel.onVideoSizeChange = { size, _ in sizes.append(size) }
+        let start = panel.videoFrame
+        var pointer = NSPoint(x: start.minX+1, y: start.midY)
+        panel.pointerLocation = { pointer }
+        XCTAssertEqual(panel.resizeHandle(at: pointer), .init(x: -1, y: 0))
+        XCTAssertNil(panel.resizeHandle(at: NSPoint(x: start.midX, y: start.midY)))
+        XCTAssertTrue(panel.contentView?.hitTest(panel.convertPoint(fromScreen: pointer)) is FloatingResizeEdges, "The edge takes the press")
+        XCTAssertFalse(panel.contentView?.hitTest(panel.convertPoint(fromScreen: NSPoint(x: start.midX, y: start.midY))) is FloatingResizeEdges)
+        func mouse(_ type: NSEvent.EventType) throws -> NSEvent {
+            try XCTUnwrap(NSEvent.mouseEvent(with: type, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: panel.windowNumber,
+                                             context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        }
+        panel.handleEdgeResize(try mouse(.leftMouseDown))
+        XCTAssertTrue(panel.isResizingFromEdge)
+        pointer.x -= 60; pointer.y += 30
+        panel.handleEdgeResize(try mouse(.leftMouseDragged))
+        XCTAssertEqual(panel.videoFrame.width, start.width+60, accuracy: 1)
+        XCTAssertEqual(panel.videoFrame.maxX, start.maxX, accuracy: 1, "The right side stays")
+        XCTAssertEqual(panel.videoFrame.width/panel.videoFrame.height, start.width/start.height, accuracy: 0.01)
+        XCTAssertTrue(sizes.isEmpty, "The picture stretches until it's let go")
+        panel.handleEdgeResize(try mouse(.leftMouseUp))
+        XCTAssertFalse(panel.isResizingFromEdge)
+        XCTAssertEqual(sizes.last?.width ?? 0, panel.videoFrame.width, accuracy: 0.5)
+        XCTAssertEqual(sizes.count, 1)
+    }
+
+    @MainActor func testATuckedWindowsMenuPlaysOrPausesAndUntucks() throws {
+        _ = NSApplication.shared
+        let screen = try XCTUnwrap(NSScreen.main)
+        let placement = FloatingVideoWindow.Placement(videoFrame: NSRect(x: screen.visibleFrame.minX+20, y: screen.visibleFrame.midY, width: 360, height: 202.5), tucked: .left)
+        let panel = FloatingVideoWindow(aspectRatio: 16.0/9, screen: screen, placement: placement)
+        defer { panel.closeImmediately() }
+        panel.present(); panel.contentView?.layoutSubtreeIfNeeded()
+        XCTAssertEqual(panel.tuckedEdge, .left)
+        let click = try XCTUnwrap(NSEvent.mouseEvent(with: .rightMouseDown, location: .zero, modifierFlags: [], timestamp: 0, windowNumber: panel.windowNumber,
+                                                     context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        panel.showPlayback(paused: false)
+        XCTAssertEqual(panel.tuckHandle.menu(for: click)?.items.map(\.title), ["Pause", "Untuck"])
+        panel.showPlayback(paused: true)
+        let menu = try XCTUnwrap(panel.tuckHandle.menu(for: click))
+        XCTAssertEqual(menu.items.map(\.title), ["Play", "Untuck"])
+        var toggles = 0; panel.onTogglePlayback = { toggles += 1 }
+        menu.performActionForItem(at: 0)
+        XCTAssertEqual(toggles, 1)
+        XCTAssertNil(panel.resizeHandle(at: NSPoint(x: panel.videoFrame.maxX-1, y: panel.videoFrame.midY)), "No resizing while tucked")
+        menu.performActionForItem(at: 1)
+        XCTAssertNil(panel.tuckedEdge)
+        XCTAssertNil(panel.tuckHandle.menu(for: click), "Out on the screen, the picture's own clicks are back")
+    }
+
+    @MainActor func testAPinchWhoseEndNeverComesStopsHoldingTheWindow() async throws {
+        _ = NSApplication.shared
+        let panel = FloatingVideoWindow(aspectRatio: 16.0/9, screen: try XCTUnwrap(NSScreen.main))
+        defer { panel.closeImmediately() }
+        panel.present(); panel.contentView?.layoutSubtreeIfNeeded()
+        panel.abandonedPinchTimeout = 0.05
+        panel.handleMagnification(0.2, phase: .began)
+        panel.handleMagnification(0.1, phase: .changed)
+        let middle = NSPoint(x: panel.videoFrame.midX, y: panel.videoFrame.midY)
+        panel.handleScroll(.init(phase: .began, timestamp: 1), pointer: middle)
+        XCTAssertFalse(panel.isDragging, "Mid-pinch, two fingers don't move it")
+        try await Task.sleep(for: .milliseconds(300))
+        panel.handleScroll(.init(phase: .began, timestamp: 2), pointer: middle)
+        XCTAssertTrue(panel.isDragging, "The quiet pinch ended, so they do")
+        panel.handleScroll(.init(phase: .ended, timestamp: 2.1), pointer: middle)
+    }
 }
