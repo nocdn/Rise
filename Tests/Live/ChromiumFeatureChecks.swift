@@ -409,7 +409,7 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         let inspect = await rightClick(center("#link"), in: menus.page, "a link to inspect")
         choose("Inspect Element", in: inspect)
         let selected = "const find = (root, selector) => [...root.querySelectorAll(selector)].concat(...[...root.querySelectorAll('*')].filter(n => n.shadowRoot).map(n => find(n.shadowRoot, selector)));" +
-            "return find(document, 'li.selected').map(n => n.textContent).join(' ')"
+            "return find(document, 'li.selected, [role=treeitem][aria-selected=true]').map(n => n.textContent).join(' ')"
         _ = await waitUntil("Inspect Element selects the link in DevTools", 20) {
             guard let frontend = self.browser.devTools.clip.subviews.first as? RCBrowserView else { return false }
             return (await self.value(selected, in: frontend) as? String)?.replacingOccurrences(of: "\u{200B}", with: "").contains("example.com/linked") == true

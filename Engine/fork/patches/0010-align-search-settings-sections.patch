@@ -1,7 +1,8 @@
 diff --git a/chrome/browser/resources/settings/rise_page/rise_site_search_page.html.ts b/chrome/browser/resources/settings/rise_page/rise_site_search_page.html.ts
+index e68148907a..a0ab5a2b18 100644
 --- a/chrome/browser/resources/settings/rise_page/rise_site_search_page.html.ts
 +++ b/chrome/browser/resources/settings/rise_page/rise_site_search_page.html.ts
-@@ -9,7 +9,7 @@
+@@ -9,7 +9,7 @@ import type {SettingsRiseSiteSearchPageElement} from './rise_site_search_page.js
  export function getHtml(this: SettingsRiseSiteSearchPageElement) {
    // clang-format off
    return html`<!--_html_template_start_-->
@@ -11,9 +12,10 @@ diff --git a/chrome/browser/resources/settings/rise_page/rise_site_search_page.h
      <div class="flex cr-padded-text">
        <div>Search a site from the address bar</div>
 diff --git a/chrome/browser/resources/settings/rise_page/rise_site_search_page.ts b/chrome/browser/resources/settings/rise_page/rise_site_search_page.ts
+index 6e5100cf39..32bfac2e25 100644
 --- a/chrome/browser/resources/settings/rise_page/rise_site_search_page.ts
 +++ b/chrome/browser/resources/settings/rise_page/rise_site_search_page.ts
-@@ -73,6 +73,10 @@
+@@ -73,6 +73,10 @@ export class SettingsRiseSiteSearchPageElement extends CrLitElement implements
        getCrSharedStyle(),
        getSettingsSharedStyle(),
        css`

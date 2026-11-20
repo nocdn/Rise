@@ -1,51 +1,5 @@
---- a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h
-+++ b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h
-@@ -7,6 +7,7 @@
- 
- #include <memory>
- #include <optional>
-+#include <string>
- 
- #include "base/files/file_path.h"
- #include "base/functional/callback.h"
-@@ -109,6 +110,11 @@
-   // Whether the embedder took a key press the page didn't use, as its menu
-   // bar's shortcuts: Chrome's own windows send these to theirs.
-   virtual bool HandleKeyboardEvent(const input::NativeWebKeyboardEvent& event);
-+  // An extension's action.openPopup(), after Chrome checks its action and the active window.
-+  // True takes the request; `done` reports whether the embedder actually showed the popup.
-+  virtual bool ShowExtensionPopup(const std::string& extension_id,
-+                                  const GURL& url,
-+                                  base::OnceCallback<void(bool)> done);
- };
- 
- // An embedder's own filter in front of the URL loader factories Chrome makes
---- a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc
-+++ b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc
-@@ -91,6 +91,13 @@
-   return false;
- }
- 
-+bool EmbedderTabHooks::ShowExtensionPopup(
-+    const std::string& extension_id,
-+    const GURL& url,
-+    base::OnceCallback<void(bool)> done) {
-+  return false;
-+}
-+
- bool EmbedderTabHooks::ChooseDownloadPath(download::DownloadItem* download,
-                                           const base::FilePath& suggested,
-                                           DownloadPathCallback done) {
---- a/chrome/browser/extensions/api/extension_action/extension_action_api.h
-+++ b/chrome/browser/extensions/api/extension_action/extension_action_api.h
-@@ -315,6 +315,7 @@
-   ResponseAction Run() override;
- 
-   void OnShowPopupComplete(ExtensionHost* popup_host);
-+  void OnEmbedderPopupComplete(bool shown);
- };
- 
- //
+diff --git a/chrome/browser/extensions/api/extension_action/extension_action_api.cc b/chrome/browser/extensions/api/extension_action/extension_action_api.cc
+index 6a06fde237..a346be7a31 100644
 --- a/chrome/browser/extensions/api/extension_action/extension_action_api.cc
 +++ b/chrome/browser/extensions/api/extension_action/extension_action_api.cc
 @@ -53,6 +53,7 @@
@@ -56,7 +10,7 @@
  #include "chrome/browser/ui/browser_window.h"
  #include "chrome/browser/ui/window_feature_controller/window_feature_controller.h"
  #endif  // !BUILDFLAG(IS_ANDROID)
-@@ -565,6 +566,24 @@
+@@ -570,6 +571,24 @@ ExtensionFunction::ResponseAction ActionOpenPopupFunction::Run() {
      return RespondNow(Error(kNoActivePopup));
    }
  
@@ -78,10 +32,10 @@
 +  }
 +#endif
 +
+   std::string error;
    if (!OpenPopupInBrowser(
            *browser, *extension(), &error,
-           base::BindOnce(&ActionOpenPopupFunction::OnShowPopupComplete,
-@@ -596,6 +615,15 @@
+@@ -602,6 +621,15 @@ void ActionOpenPopupFunction::OnShowPopupComplete(ExtensionHost* popup_host) {
    }
  }
  
@@ -97,9 +51,23 @@
  BrowserActionOpenPopupFunction::BrowserActionOpenPopupFunction() = default;
  BrowserActionOpenPopupFunction::~BrowserActionOpenPopupFunction() = default;
  
+diff --git a/chrome/browser/extensions/api/extension_action/extension_action_api.h b/chrome/browser/extensions/api/extension_action/extension_action_api.h
+index 6e0395ba69..a45a450f89 100644
+--- a/chrome/browser/extensions/api/extension_action/extension_action_api.h
++++ b/chrome/browser/extensions/api/extension_action/extension_action_api.h
+@@ -315,6 +315,7 @@ class ActionOpenPopupFunction : public ExtensionFunction {
+   ResponseAction Run() override;
+ 
+   void OnShowPopupComplete(ExtensionHost* popup_host);
++  void OnEmbedderPopupComplete(bool shown);
+ };
+ 
+ //
+diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
+index ac1b8a3978..4b7495e341 100644
 --- a/chrome/browser/rise/RiseChromium.h
 +++ b/chrome/browser/rise/RiseChromium.h
-@@ -256,6 +256,12 @@
+@@ -256,6 +256,12 @@ RC_EXPORT @interface RCContextMenu : NSObject
  /// An extension popup's page has a new size, as Chrome sizes popups to what they show (see
  /// `sizesExtensionPopups`), in points.
  - (void)browserView:(RCBrowserView *)browserView didChangePreferredSize:(NSSize)size;
@@ -112,9 +80,11 @@
  /// The page, at `origin`, asks for a dialog; call `completion` once, with whether it was accepted
  /// and, for a prompt, the text.
  - (void)browserView:(RCBrowserView *)browserView
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index 79d2befaa9..b5415484bb 100644
 --- a/chrome/browser/rise/rise_bridge.mm
 +++ b/chrome/browser/rise/rise_bridge.mm
-@@ -889,6 +889,32 @@
+@@ -889,6 +889,32 @@ bool HandleKeyboardEvent(
      return [NSApp.mainMenu performKeyEquivalent:key];
    }
  
@@ -147,3 +117,45 @@
    // A right-click shows Rise's menu.
    bool HandleContextMenu(content::RenderFrameHost& frame,
                           const content::ContextMenuParams& params) override {
+diff --git a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc
+index 26a88a3d0c..70eda844fd 100644
+--- a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc
++++ b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc
+@@ -91,6 +91,13 @@ bool EmbedderTabHooks::HandleKeyboardEvent(
+   return false;
+ }
+ 
++bool EmbedderTabHooks::ShowExtensionPopup(
++    const std::string& extension_id,
++    const GURL& url,
++    base::OnceCallback<void(bool)> done) {
++  return false;
++}
++
+ bool EmbedderTabHooks::ChooseDownloadPath(download::DownloadItem* download,
+                                           const base::FilePath& suggested,
+                                           DownloadPathCallback done) {
+diff --git a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h
+index e0d8b8695d..c6fdcee172 100644
+--- a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h
++++ b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h
+@@ -7,6 +7,7 @@
+ 
+ #include <memory>
+ #include <optional>
++#include <string>
+ 
+ #include "base/files/file_path.h"
+ #include "base/functional/callback.h"
+@@ -109,6 +110,11 @@ class EmbedderTabHooks : public base::SupportsUserData::Data {
+   // Whether the embedder took a key press the page didn't use, as its menu
+   // bar's shortcuts: Chrome's own windows send these to theirs.
+   virtual bool HandleKeyboardEvent(const input::NativeWebKeyboardEvent& event);
++  // An extension's action.openPopup(), after Chrome checks its action and the active window.
++  // True takes the request; `done` reports whether the embedder actually showed the popup.
++  virtual bool ShowExtensionPopup(const std::string& extension_id,
++                                  const GURL& url,
++                                  base::OnceCallback<void(bool)> done);
+ };
+ 
+ // An embedder's own filter in front of the URL loader factories Chrome makes

@@ -1,5 +1,5 @@
 diff --git a/chrome/browser/extensions/extension_install_prompt.cc b/chrome/browser/extensions/extension_install_prompt.cc
-index b07aaf556e..8507fc2950 100644
+index cc38a6456a..580e8d6832 100644
 --- a/chrome/browser/extensions/extension_install_prompt.cc
 +++ b/chrome/browser/extensions/extension_install_prompt.cc
 @@ -7,6 +7,7 @@
@@ -56,10 +56,10 @@ index 7edcac89ef..c6f72d2492 100644
    // TODO(devlin): This method is yucky - callers probably only care about one
    // prompt type. We just need to comb through and figure out what it is.
 diff --git a/chrome/browser/ui/views/extensions/extension_install_dialog_view.cc b/chrome/browser/ui/views/extensions/extension_install_dialog_view.cc
-index 83ce5b59c1..6e775fab50 100644
+index 396b18bf34..0cefab7fc8 100644
 --- a/chrome/browser/ui/views/extensions/extension_install_dialog_view.cc
 +++ b/chrome/browser/ui/views/extensions/extension_install_dialog_view.cc
-@@ -732,5 +732,8 @@ END_METADATA
+@@ -762,5 +762,8 @@ END_METADATA
  // static
  ExtensionInstallPrompt::ShowDialogCallback
  ExtensionInstallPrompt::GetDefaultShowDialogCallback() {

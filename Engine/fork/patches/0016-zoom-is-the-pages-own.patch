@@ -1,6 +1,8 @@
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index f109456511..e5e532512a 100644
 --- a/chrome/browser/rise/rise_bridge.mm
 +++ b/chrome/browser/rise/rise_bridge.mm
-@@ -2149,6 +2149,13 @@
+@@ -2149,6 +2149,13 @@ - (NSURL*)hoveredURL {
    return nil;
  }
  

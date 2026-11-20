@@ -1,5 +1,5 @@
 {
-  "chromium": "156.0.8078.17",
+  "chromium": "158.0.8127.37",
   "gn_args": [
     "is_official_build=true",
     "is_debug=false",

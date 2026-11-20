@@ -1,8 +1,8 @@
 diff --git a/chrome/browser/resources/settings/BUILD.gn b/chrome/browser/resources/settings/BUILD.gn
-index 1795e894fc..25fb48e3bd 100644
+index 480df5a9f2..e7c0e9ad41 100644
 --- a/chrome/browser/resources/settings/BUILD.gn
 +++ b/chrome/browser/resources/settings/BUILD.gn
-@@ -392,6 +392,10 @@ build_webui("build") {
+@@ -395,6 +395,10 @@ build_webui("build") {
      "reset_page/reset_profile_banner.ts",
      "reset_page/reset_profile_dialog.html.ts",
      "reset_page/reset_profile_dialog.ts",
@@ -13,8 +13,20 @@ index 1795e894fc..25fb48e3bd 100644
      "route.ts",
      "router.ts",
      "safety_hub/extensions_module.html.ts",
+diff --git a/chrome/browser/resources/settings/appearance_page/appearance_page.html.ts b/chrome/browser/resources/settings/appearance_page/appearance_page.html.ts
+index 1519e61bc6..08c2724486 100644
+--- a/chrome/browser/resources/settings/appearance_page/appearance_page.html.ts
++++ b/chrome/browser/resources/settings/appearance_page/appearance_page.html.ts
+@@ -353,6 +353,7 @@ export function getHtml(this: SettingsAppearancePageElement) {
+               'allowSplitViewDragAndDrop')}">
+   </settings-toggle-button>
+   ` : ''}
++  <rise-settings-rows section="appearance"></rise-settings-rows>
+ </settings-section>
+ ${this.showManagedThemeDialog_ ? html`
+   <managed-dialog @close="${this.onManagedDialogClose_}"
 diff --git a/chrome/browser/resources/settings/appearance_page/appearance_page.ts b/chrome/browser/resources/settings/appearance_page/appearance_page.ts
-index f1631122d3..e7f17b7104 100644
+index c8a96291d0..5b04ac38c6 100644
 --- a/chrome/browser/resources/settings/appearance_page/appearance_page.ts
 +++ b/chrome/browser/resources/settings/appearance_page/appearance_page.ts
 @@ -12,6 +12,7 @@ import '../controls/settings_toggle_button.js';
@@ -26,10 +38,10 @@ index f1631122d3..e7f17b7104 100644
  import {PrefService} from '/shared/settings/prefs2/pref_service.js';
  import {PrefServiceObserverMixinLit} from '/shared/settings/prefs2/pref_service_observer_mixin_lit.js';
 diff --git a/chrome/browser/resources/settings/icons.html.ts b/chrome/browser/resources/settings/icons.html.ts
-index bd369ccfa5..afab94d6c2 100644
+index 62409b0bd7..8451d7f55d 100644
 --- a/chrome/browser/resources/settings/icons.html.ts
 +++ b/chrome/browser/resources/settings/icons.html.ts
-@@ -115,6 +115,8 @@ NOTE: Chrome OS icons go in ./chromeos/os_icons.html.
+@@ -113,6 +113,8 @@ NOTE: Chrome OS icons go in ./chromeos/os_icons.html.
  <cr-iconset name="settings" size="24">
    <svg>
      <defs>
@@ -38,7 +50,7 @@ index bd369ccfa5..afab94d6c2 100644
        <!-- Domain verification GM3 icon -->
        <g id="domain-verification">
          <path d="M4.2 19.2c-.497 0-.919-.177-1.27-.528a1.747 1.747 0 0 1-.532-1.274V6.594c0-.496.18-.918.532-1.27a1.74 1.74 0 0 1 1.27-.523h15.6c.497 0 .919.176 1.27.527.352.356.532.777.532 1.274v10.804c0 .496-.18.918-.532 1.27a1.74 1.74 0 0 1-1.27.523Zm0-1.802h15.6v-9H4.2Zm6.75-3.546 3.6-3.602a.87.87 0 0 1 .637-.273.87.87 0 0 1 .637.273c.184.184.278.39.278.625a.862.862 0 0 1-.278.625l-4.25 4.25a.864.864 0 0 1-.636.273.87.87 0 0 1-.637-.273l-2.125-2.125a.816.816 0 0 1-.262-.637.914.914 0 0 1 .285-.636.88.88 0 0 1 .637-.278c.242 0 .457.094.64.278ZM4.2 17.398V6.602Zm0 0"></path>
-@@ -353,6 +355,8 @@ NOTE: Chrome OS icons go in ./chromeos/os_icons.html.
+@@ -349,6 +351,8 @@ NOTE: Chrome OS icons go in ./chromeos/os_icons.html.
  <cr-iconset name="settings" size="24">
    <svg>
      <defs>
@@ -48,29 +60,29 @@ index bd369ccfa5..afab94d6c2 100644
        <g id="domain-verification" viewBox="0 -960 960 960">
          <path d="M160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h640q33 0 56.5 23.5T880-720v480q0 33-23.5 56.5T800-160H160Zm0-80h640v-400H160v400Zm278-58L296-440l58-58 84 84 168-168 58 58-226 226Zm-278 58v-480 480Z"></path>
 diff --git a/chrome/browser/resources/settings/privacy_page/privacy_page.html b/chrome/browser/resources/settings/privacy_page/privacy_page.html
-index 6445226c0a..725df387be 100644
+index 71101c5712..cf631f2324 100644
 --- a/chrome/browser/resources/settings/privacy_page/privacy_page.html
 +++ b/chrome/browser/resources/settings/privacy_page/privacy_page.html
-@@ -43,6 +43,7 @@
+@@ -42,6 +42,7 @@
          sub-label="$i18n{siteSettingsSublabel}"
-         on-click="onSiteSettingsLinkRowClick_"
+         @click="${this.onSiteSettingsLinkRowClick_}"
          role-description="$i18n{subpageArrowRoleDescription}"></cr-link-row>
 +    <rise-settings-rows section="privacy"></rise-settings-rows>
      <cr-toast id="deleteBrowsingDataToast" duration="5000">
-       <div>[[dbdDeletionConfirmationToastLabel_]]</div>
+       <div>${this.dbdDeletionConfirmationToastLabel_}</div>
      </cr-toast>
 diff --git a/chrome/browser/resources/settings/privacy_page/privacy_page.ts b/chrome/browser/resources/settings/privacy_page/privacy_page.ts
-index c1fb233a13..9191f31174 100644
+index b3ecabfb8f..6aed8f6403 100644
 --- a/chrome/browser/resources/settings/privacy_page/privacy_page.ts
 +++ b/chrome/browser/resources/settings/privacy_page/privacy_page.ts
-@@ -17,6 +17,7 @@ import '../privacy_icons.html.js';
+@@ -14,6 +14,7 @@ import '../icons.html.js';
+ import '../privacy_icons.html.js';
  import '../settings_page/settings_section.js';
- import '../settings_shared.css.js';
  import './privacy_guide/privacy_guide_dialog.js';
 +import '../rise_page/rise_settings_rows.js';
  
- import {PrefsMixin} from '/shared/settings/prefs/prefs_mixin.js';
- import type {CrLinkRowElement} from 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
+ import {PrefServiceObserverMixinLit} from '/shared/settings/prefs2/pref_service_observer_mixin_lit.js';
+ import {getCss as getCrHiddenStyleCss} from 'chrome://resources/cr_elements/cr_hidden_style_lit.css.js';
 diff --git a/chrome/browser/resources/settings/rise_page/rise_page.html.ts b/chrome/browser/resources/settings/rise_page/rise_page.html.ts
 new file mode 100644
 index 0000000000..ee3b452971
@@ -401,7 +413,7 @@ index 0000000000..eb78412338
 +
 +customElements.define(RiseSettingsRowsElement.is, RiseSettingsRowsElement);
 diff --git a/chrome/browser/resources/settings/route.ts b/chrome/browser/resources/settings/route.ts
-index d733ae8b32..951d42e954 100644
+index 257eee5f0e..8f3644c2da 100644
 --- a/chrome/browser/resources/settings/route.ts
 +++ b/chrome/browser/resources/settings/route.ts
 @@ -216,6 +216,10 @@ function createRoutes(): SettingsRoutes {
@@ -416,7 +428,7 @@ index d733ae8b32..951d42e954 100644
      r.AUTOFILL = r.BASIC.createSection(
          '/autofill', 'yourSavedInfo',
 diff --git a/chrome/browser/resources/settings/router.ts b/chrome/browser/resources/settings/router.ts
-index 5c07af7bf6..a4482fbee4 100644
+index 47b4a045f3..b8502a6555 100644
 --- a/chrome/browser/resources/settings/router.ts
 +++ b/chrome/browser/resources/settings/router.ts
 @@ -53,6 +53,8 @@ export interface SettingsRoutes {
@@ -429,37 +441,35 @@ index 5c07af7bf6..a4482fbee4 100644
    SAFETY_HUB: Route;
    SEARCH: Route;
 diff --git a/chrome/browser/resources/settings/settings_main/settings_main.html b/chrome/browser/resources/settings/settings_main/settings_main.html
-index 2ef4dcad53..6d8e1cd253 100644
+index a7e073c70e..0176cc60d6 100644
 --- a/chrome/browser/resources/settings/settings_main/settings_main.html
 +++ b/chrome/browser/resources/settings/settings_main/settings_main.html
-@@ -113,6 +113,22 @@
+@@ -66,6 +66,20 @@ ${this.showResetProfileBanner_ ? html`
      </div>
-   </template>
+   ` : ''}
  
 +  <div slot="view" id="riseTabs">
-+    <template is="dom-if" if="[[renderPlugin_(
-+        routes_.RISE_TABS, lastRoute_, inSearchMode_)]]">
++    ${this.renderPlugin_(this.routes_.RISE_TABS) ? html`
 +      <settings-rise-page section="tabs" page-title="Tabs">
 +      </settings-rise-page>
-+    </template>
++    ` : ''}
 +  </div>
 +
 +  <div slot="view" id="riseAi">
-+    <template is="dom-if" if="[[renderPlugin_(
-+        routes_.RISE_AI, lastRoute_, inSearchMode_)]]">
++    ${this.renderPlugin_(this.routes_.RISE_AI) ? html`
 +      <settings-rise-page section="ai" page-title="AI">
 +      </settings-rise-page>
-+    </template>
++    ` : ''}
 +  </div>
 +
    <div slot="view" id="search">
-     <template is="dom-if" if="[[renderPlugin_(
-         routes_.SEARCH, lastRoute_, inSearchMode_)]]">
+     ${this.renderPlugin_(this.routes_.SEARCH) ? html`
+       <settings-search-page-index ?in-search-mode="${this.inSearchMode_}">
 diff --git a/chrome/browser/resources/settings/settings_main/settings_main.ts b/chrome/browser/resources/settings/settings_main/settings_main.ts
-index 4b6a86f0d9..0de2941647 100644
+index 924de638e8..c7ced58b7e 100644
 --- a/chrome/browser/resources/settings/settings_main/settings_main.ts
 +++ b/chrome/browser/resources/settings/settings_main/settings_main.ts
-@@ -18,6 +18,7 @@ import '../on_startup_page/on_startup_page.js';
+@@ -17,6 +17,7 @@ import '../on_startup_page/on_startup_page.js';
  import '../people_page/people_page_index.js';
  import '../performance_page/performance_page_index.js';
  import '../privacy_page/privacy_page_index.js';
@@ -468,10 +478,10 @@ index 4b6a86f0d9..0de2941647 100644
  import '../search_page/search_page_index.js';
  // <if expr="not is_chromeos">
 diff --git a/chrome/browser/resources/settings/settings_menu/settings_menu.html b/chrome/browser/resources/settings/settings_menu/settings_menu.html
-index 0d30190f42..c102e83e3b 100644
+index c35c985ddf..957244162d 100644
 --- a/chrome/browser/resources/settings/settings_menu/settings_menu.html
 +++ b/chrome/browser/resources/settings/settings_menu/settings_menu.html
-@@ -134,6 +134,16 @@
+@@ -51,6 +51,16 @@
            <span class="menu-label">$i18n{appearancePageTitle}</span>
            <cr-ripple></cr-ripple>
          </a>
@@ -488,7 +498,7 @@ index 0d30190f42..c102e83e3b 100644
          <a role="menuitem" id="search" href="/search" class="cr-nav-menu-item">
            <cr-icon icon="settings:search"></cr-icon>
            <span class="menu-label">$i18n{searchPageTitle}</span>
-@@ -205,7 +215,7 @@
+@@ -123,7 +133,7 @@
          </a>
          <a role="menuitem" id="about-menu" href="/help"
              class="cr-nav-menu-item">
@@ -498,7 +508,7 @@ index 0d30190f42..c102e83e3b 100644
            <cr-ripple></cr-ripple>
          </a>
 diff --git a/chrome/browser/resources/settings/system_page/system_page.html.ts b/chrome/browser/resources/settings/system_page/system_page.html.ts
-index f70f5d24aa..f70961ae52 100644
+index 55d344cd54..0dedae6b4a 100644
 --- a/chrome/browser/resources/settings/system_page/system_page.html.ts
 +++ b/chrome/browser/resources/settings/system_page/system_page.html.ts
 @@ -131,6 +131,8 @@ export function getHtml(this: SettingsSystemPageElement) {
@@ -511,7 +521,7 @@ index f70f5d24aa..f70961ae52 100644
      <relaunch-confirmation-dialog .restartType="${RestartType.RESTART}"
          @close="${this.onRelaunchDialogClose}">
 diff --git a/chrome/browser/resources/settings/system_page/system_page.ts b/chrome/browser/resources/settings/system_page/system_page.ts
-index c50e369220..bf6a64de80 100644
+index 62c47ec508..9e1fd7efca 100644
 --- a/chrome/browser/resources/settings/system_page/system_page.ts
 +++ b/chrome/browser/resources/settings/system_page/system_page.ts
 @@ -8,6 +8,7 @@
@@ -520,16 +530,5 @@ index c50e369220..bf6a64de80 100644
  import 'chrome://resources/cr_elements/cr_button/cr_button.js';
 +import '../rise_page/rise_settings_rows.js';
  import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
- // <if expr="_google_chrome">
- import 'chrome://resources/cr_elements/cr_link_row/cr_link_row.js';
-diff --git a/chrome/browser/resources/settings/appearance_page/appearance_page.html.ts b/chrome/browser/resources/settings/appearance_page/appearance_page.html.ts
---- a/chrome/browser/resources/settings/appearance_page/appearance_page.html.ts
-+++ b/chrome/browser/resources/settings/appearance_page/appearance_page.html.ts
-@@ -354,6 +354,7 @@
-                : 'allowSplitViewDragAndDrop')}">
-   </settings-toggle-button>
-   ` : ''}
-+  <rise-settings-rows section="appearance"></rise-settings-rows>
- </settings-section>
- ${this.showManagedThemeDialog_ ? html`
-   <managed-dialog @close="${this.onManagedDialogClose_}"
+ import 'chrome://resources/cr_elements/policy/cr_policy_indicator.js';
+ import '/shared/settings/controls/cr_policy_pref_indicator.js';

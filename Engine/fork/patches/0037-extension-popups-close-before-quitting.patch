@@ -1,6 +1,8 @@
---- a/chrome/browser/rise/rise_bridge.mm	2026-11-06 13:05:12
-+++ b/chrome/browser/rise/rise_bridge.mm	2026-11-06 13:05:12
-@@ -700,6 +700,7 @@
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index 8c08e225df..a7688a4e69 100644
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -700,6 +700,7 @@ - (void)contentsChanged;
  - (void)willNavigate:(RCNavigationKind)kind;
  - (void)finishedLoad;
  - (void)crashed;
@@ -8,7 +10,7 @@
  @end
  
  namespace {
-@@ -1737,6 +1738,12 @@
+@@ -1737,6 +1738,12 @@ - (void)run {
            return;
          }
          RiseWillTerminate();
@@ -21,20 +23,20 @@
          for (RCTabStrip* strip in Strips()) {
            [strip browserClosing:browser];
          }
-@@ -2963,6 +2970,12 @@
-                            : nil);
-           },
+@@ -2965,6 +2972,12 @@ - (void)snapshotRect:(NSRect)rect
            completion));
-+}
-+
+ }
+ 
 +- (void)closeIfExtensionPopup {
 +  if (_popupContents) {
 +    [self close];
 +  }
- }
- 
++}
++
  - (void)close {
-@@ -2978,6 +2991,11 @@
+   if (_closed) {
+     return;
+@@ -2978,6 +2991,11 @@ - (void)close {
      [_popupContents->GetNativeView().GetNativeNSView() removeFromSuperview];
      _popupContents->SetDelegate(nullptr);
      _popupDelegate.reset();

@@ -1,0 +1,95 @@
+diff --git a/chrome/browser/rise/rise_browser_window.h b/chrome/browser/rise/rise_browser_window.h
+index be29f01..e112879 100644
+--- a/chrome/browser/rise/rise_browser_window.h
++++ b/chrome/browser/rise/rise_browser_window.h
+@@ -200,8 +200,6 @@ class RiseBrowserWindow : public BrowserWindow,
+   web_modal::WebContentsModalDialogHost* GetWebContentsModalDialogHostFor(
+       content::WebContents* web_contents) override;
+   void ShowAvatarBubbleFromAvatarButton(bool is_source_keyboard) override {}
+-  void MaybeShowProfileSwitchIPH() override {}
+-  void MaybeShowSupervisedUserProfileSignInIPH() override {}
+ 
+ #if BUILDFLAG(IS_CHROMEOS) || BUILDFLAG(IS_MAC) || BUILDFLAG(IS_WIN) || \
+     BUILDFLAG(IS_LINUX)
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index e2cbd13..4b44da0 100644
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -96,6 +96,7 @@
+ #include "chrome/common/content_restriction.h"
+ #include "base/observer_list.h"
+ #include "extensions/browser/install_prompt_data.h"
++#include "extensions/common/event_args.h"
+ #include "extensions/common/extension.h"
+ #include "extensions/common/extension_l10n_util.h"
+ #include "extensions/common/manifest.h"
+@@ -526,7 +527,7 @@ void CloseContents(content::WebContents* source) override {
+       content::WebContents* source,
+       const content::OpenURLParams& params,
+       base::OnceCallback<void(content::NavigationHandle&)> callback) override {
+-    if (params.disposition == WindowOpenDisposition::CURRENT_TAB) {
++    if (params.disposition == WindowOpenDisposition::kCurrentTab) {
+       source->GetController().LoadURLWithParams(
+           content::NavigationController::LoadURLParams(params));
+       return source;
+@@ -1105,17 +1106,17 @@ void OverrideWebPreferences(blink::web_pref::WebPreferences& prefs) override {
+   OpenURLResult OpenURL(const content::OpenURLParams& params) override {
+     RCOpenDisposition disposition;
+     switch (params.disposition) {
+-      case WindowOpenDisposition::NEW_BACKGROUND_TAB:
++      case WindowOpenDisposition::kNewBackgroundTab:
+         disposition = RCOpenDispositionBackgroundTab;
+         break;
+-      case WindowOpenDisposition::NEW_WINDOW:
++      case WindowOpenDisposition::kNewWindow:
+         disposition = RCOpenDispositionWindow;
+         break;
+-      case WindowOpenDisposition::NEW_POPUP:
++      case WindowOpenDisposition::kNewPopup:
+         disposition = RCOpenDispositionPopup;
+         break;
+-      case WindowOpenDisposition::SAVE_TO_DISK:
+-      case WindowOpenDisposition::IGNORE_ACTION:
++      case WindowOpenDisposition::kSaveToDisk:
++      case WindowOpenDisposition::kIgnoreAction:
+         return OpenURLResult::kChrome;
+       default:
+         disposition = RCOpenDispositionForegroundTab;
+@@ -1136,7 +1137,7 @@ bool AddNewContents(std::unique_ptr<content::WebContents>& contents,
+                       const blink::mojom::WindowFeatures& features,
+                       bool user_gesture) override {
+     // A page's picture-in-picture window is Chrome's own, floating.
+-    if (disposition == WindowOpenDisposition::NEW_PICTURE_IN_PICTURE) {
++    if (disposition == WindowOpenDisposition::kNewPictureInPicture) {
+       return false;
+     }
+     RCBrowserView* view = view_;
+@@ -4550,7 +4551,7 @@ - (void)runInTab:(RCBrowserView*)tab {
+   args.Append(std::move(tab_value));
+   auto event = std::make_unique<extensions::Event>(
+       extensions::events::COMMANDS_ON_COMMAND, "commands.onCommand",
+-      std::move(args), profile);
++      base::MakeRefCounted<extensions::EventArgs>(std::move(args)), profile);
+   event->user_gesture = extensions::EventRouter::UserGestureState::kEnabled;
+   extensions::EventRouter::Get(profile)->DispatchEventToExtension(
+       extension->id(), std::move(event));
+diff --git a/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc b/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc
+index 8038a48..7feb46e 100644
+--- a/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc
++++ b/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc
+@@ -583,13 +583,13 @@ content::WebContents* BrowserWebContentsDelegate::OpenURLFromTab(
+ 
+   // An embedder's tab opening something elsewhere (a new tab or window).
+   if (EmbedderTabHooks* hooks = EmbedderTabHooks::FromWebContents(source);
+-      hooks && params.disposition != WindowOpenDisposition::CURRENT_TAB) {
++      hooks && params.disposition != WindowOpenDisposition::kCurrentTab) {
+     switch (hooks->OpenURL(params)) {
+       case EmbedderTabHooks::OpenURLResult::kOpened:
+         return nullptr;
+       case EmbedderTabHooks::OpenURLResult::kHere: {
+         content::OpenURLParams here = params;
+-        here.disposition = WindowOpenDisposition::CURRENT_TAB;
++        here.disposition = WindowOpenDisposition::kCurrentTab;
+         return OpenURLFromTab(source, here,
+                               std::move(navigation_handle_callback));
+       }

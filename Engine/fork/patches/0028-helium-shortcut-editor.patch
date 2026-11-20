@@ -1,7 +1,8 @@
 diff --git a/chrome/browser/resources/settings/BUILD.gn b/chrome/browser/resources/settings/BUILD.gn
+index 51b80525e1..22fbfc1f5f 100644
 --- a/chrome/browser/resources/settings/BUILD.gn
 +++ b/chrome/browser/resources/settings/BUILD.gn
-@@ -394,6 +394,7 @@
+@@ -397,6 +397,7 @@ build_webui("build") {
      "reset_page/reset_profile_dialog.ts",
      "rise_page/rise_default_browser_banner.html.ts",
      "rise_page/rise_default_browser_banner.ts",
@@ -9,447 +10,9 @@ diff --git a/chrome/browser/resources/settings/BUILD.gn b/chrome/browser/resourc
      "rise_page/rise_keyboard_shortcuts.html.ts",
      "rise_page/rise_keyboard_shortcuts.ts",
      "rise_page/rise_page.html.ts",
-diff --git a/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.ts b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.ts
---- a/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.ts
-+++ b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.ts
-@@ -1,19 +1,21 @@
--// Copyright 2026 The Chromium Authors
--// Use of this source code is governed by a BSD-style license that can be
--// found in the LICENSE file.
-+// Copyright 2026 The Helium Authors
-+// Adapted for Rise's Lit settings plugin and native command registry.
-+// SPDX-License-Identifier: GPL-3.0-only
-+// See Engine/third_party/helium/LICENSE in Rise's source tree.
- 
--import 'chrome://resources/cr_components/cr_shortcut_input/cr_shortcut_input.js';
-+import 'chrome://resources/cr_elements/action_link.css.js';
- import 'chrome://resources/cr_elements/cr_button/cr_button.js';
--import 'chrome://resources/cr_elements/cr_input/cr_input.js';
--import '../settings_page/settings_section.js';
-+import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
-+import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
-+import 'chrome://resources/js/action_link.js';
-+import '../settings_page/settings_subpage.js';
- 
--import type {CrShortcutInputElement} from 'chrome://resources/cr_components/cr_shortcut_input/cr_shortcut_input.js';
- import {getCss as getCrSharedStyle} from 'chrome://resources/cr_elements/cr_shared_style_lit.css.js';
--import {CrLitElement, css} from 'chrome://resources/lit/v3_0/lit.rollup.js';
--
-+import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
- import {getSearchManager} from '../search_settings.js';
- import {getCss as getSettingsSharedStyle} from '../settings_shared_lit.css.js';
- import type {SettingsPlugin} from '../settings_main/settings_plugin.js';
-+import {heliumShortcutStyles} from './rise_keyboard_shortcuts.css.js';
- import {getHtml} from './rise_keyboard_shortcuts.html.js';
- 
- interface Command {
-@@ -21,6 +23,7 @@
-   title: string;
-   group: string;
-   bindings: string[];
-+  displayBindings: string[];
-   defaults: string[];
-   modified: boolean;
- }
-@@ -30,60 +33,45 @@
-   id: string;
-   index: number;
-   shortcut?: string;
-+  display?: string;
-   cancelled?: boolean;
-+  commit?: boolean;
-   error?: string;
- }
- 
- export class SettingsRiseKeyboardShortcutsElement extends CrLitElement implements SettingsPlugin {
-   static get is() { return 'settings-rise-keyboard-shortcuts'; }
-   static override get styles() {
--    return [getCrSharedStyle(), getSettingsSharedStyle(), css`
--      :host { display: block; padding-bottom: 24px; }
--      .intro { display: flex; align-items: center; gap: 20px; padding: 16px 20px; }
--      .intro .secondary { flex: 1; line-height: 1.6; }
--      .search { padding: 0 20px 16px; }
--      .command { display: flex; align-items: flex-start; gap: 20px; padding: 16px 20px;
--        border-top: var(--cr-separator-line); min-height: 48px; }
--      .label { flex: 1; min-width: 120px; }
--      .group { margin-top: 6px; }
--      .bindings { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
--      cr-shortcut-input { width: 360px; max-width: 100%; --cr-shortcut-input-width: 100%; }
--      .add { --cr-button-height: 28px; align-self: flex-start; }
--      .reset { align-self: center; }
--      .error { color: var(--cr-error-color); margin: 0; padding: 0 20px 16px;
--        line-height: 1.5; }
--      .empty { padding: 24px 20px; color: var(--cr-secondary-text-color); }
--      @media (max-width: 740px) {
--        .command { flex-direction: column; align-items: stretch; }
--        .bindings { align-items: stretch; }
--        cr-shortcut-input { width: 100%; }
--        .reset { align-self: flex-end; }
--        .intro { flex-wrap: wrap; }
--      }
--    `];
-+    return [getCrSharedStyle(), getSettingsSharedStyle(), heliumShortcutStyles];
-   }
-   override render() { return getHtml.bind(this)(); }
-   static override get properties() {
-     return {
--      commands_: {type: Array}, query_: {type: String}, error_: {type: String},
--      errorID_: {type: String}, extraID_: {type: String}, loading_: {type: Boolean},
-+      commands_: {type: Array}, searchTerm_: {type: String}, error_: {type: String},
-+      loading_: {type: Boolean}, dialogCommand_: {type: Object},
-+      capturedShortcut_: {type: String}, capturedDisplayText_: {type: String},
-+      captureMessage_: {type: String}, showResetDialog_: {type: Boolean}, saving_: {type: Boolean},
-     };
-   }
-   protected accessor commands_: Command[] = [];
--  protected accessor query_: string = '';
-+  protected accessor searchTerm_: string = '';
-   protected accessor error_: string = '';
--  protected accessor errorID_: string = '';
--  private accessor extraID_: string = '';
-   protected accessor loading_: boolean = true;
--  private recorder_: {input: CrShortcutInputElement, id: string, index: number}|null = null;
-+  protected accessor dialogCommand_: Command|null = null;
-+  protected accessor capturedShortcut_: string = '';
-+  protected accessor capturedDisplayText_: string = '';
-+  protected accessor captureMessage_: string = '';
-+  protected accessor showResetDialog_: boolean = false;
-+  protected accessor saving_: boolean = false;
-+  private recording_: {id: string, index: number}|null = null;
-   private refresh_ = () => { void this.load_(); };
--  private recorded_ = (event: Event) => { void this.onRecorded_((event as CustomEvent<Recorded>).detail); };
-+  private recorded_ = (event: Event) => { this.onRecorded_((event as CustomEvent<Recorded>).detail); };
- 
-   override connectedCallback() {
-     super.connectedCallback();
-     window.addEventListener('rise-settings-ready', this.refresh_);
-     window.addEventListener('rise-shortcut-recorded', this.recorded_);
--    void this.load_();
-+    void this.load_(true);
-   }
-   override disconnectedCallback() {
-     this.stopRecording_();
-@@ -99,99 +87,109 @@
-     const bridge = window.riseSettings as unknown as Bridge|undefined;
-     if (!bridge) { return null; }
-     try { return await bridge.request('shortcuts', body) as Result; }
--    catch {
--      this.error_ = 'Could not save keyboard shortcuts. Please try again.';
--      this.errorID_ = '';
--      return null;
-+    catch { this.error_ = 'Could not update keyboard shortcuts. Please try again.'; return null; }
-+  }
-+  private async load_(resetCapture: boolean = false) {
-+    const result = await this.request_({action: 'list', resetCapture});
-+    if (result) { this.commands_ = result.commands; this.loading_ = false; }
-+  }
-+
-+  // Helium ranks exact matches, prefixes, and other matches across names and keys.
-+  private normalizeSearchText_(text: string): string {
-+    return text.trim().toLocaleLowerCase().replace(/\s+/g, '');
-+  }
-+  private getMatchRank_(command: Command, query: string): number|null {
-+    const ranks = [command.title, command.group, ...command.displayBindings, ...command.bindings]
-+        .map(field => this.normalizeSearchText_(field))
-+        .flatMap(field => {
-+          const index = field.indexOf(query);
-+          const rank = Math.min(index, 1) + Number(field !== query);
-+          return index === -1 ? [] : [rank];
-+        });
-+    return ranks.length ? Math.min(...ranks) : null;
-+  }
-+  protected filteredCommands_(): Command[] {
-+    const commands = [...this.commands_].sort((a, b) => a.title.localeCompare(b.title));
-+    const query = this.normalizeSearchText_(this.searchTerm_);
-+    if (!query) { return commands; }
-+    return commands.map(command => ({command, rank: this.getMatchRank_(command, query)}))
-+        .filter(match => match.rank !== null)
-+        .sort((a, b) => a.rank! - b.rank! || a.command.title.localeCompare(b.command.title))
-+        .map(match => match.command);
-+  }
-+  protected onSearchTermChanged_(event: CustomEvent<{value: string}>) { this.searchTerm_ = event.detail.value; }
-+  protected hasModified_(): boolean { return this.commands_.some(command => command.modified); }
-+
-+  protected async onAddShortcutClick_(event: Event) {
-+    const id = (event.currentTarget as HTMLElement).dataset['command'];
-+    const command = this.commands_.find(command => command.id === id);
-+    if (!command) { return; }
-+    this.stopRecording_(); this.dialogCommand_ = command;
-+    this.capturedShortcut_ = ''; this.capturedDisplayText_ = ''; this.captureMessage_ = ''; this.error_ = '';
-+    const recording = {id: command.id, index: command.bindings.length};
-+    this.recording_ = recording;
-+    const result = await this.request_({action: 'capture', ...recording, capturing: true});
-+    if (this.recording_ !== recording) { return; }
-+    if (!result || result.error) {
-+      this.closeDialogs_();
-+      this.error_ = result?.error || 'Could not start shortcut recording. Please try again.'; return;
-+    }
-+    await this.updateComplete;
-+    this.shadowRoot.querySelector<HTMLElement>('#captureTarget')?.focus();
-+  }
-+  private stopRecording_() {
-+    const recording = this.recording_; this.recording_ = null;
-+    if (recording) { void this.request_({action: 'capture', ...recording, capturing: false}); }
-+  }
-+  private onRecorded_(detail: Recorded) {
-+    if (!this.recording_ || this.recording_.id !== detail.id || this.recording_.index !== detail.index) { return; }
-+    if (detail.cancelled) { this.closeDialogs_(); return; }
-+    if (detail.commit) { void this.onSaveShortcutClick_(); return; }
-+    this.capturedShortcut_ = detail.shortcut || '';
-+    this.capturedDisplayText_ = detail.display || ''; this.captureMessage_ = detail.error || '';
-+    if (detail.shortcut) {
-+      const conflict = this.commands_.find(command => command.id !== detail.id && command.bindings.includes(detail.shortcut!));
-+      if (conflict) { this.captureMessage_ = `Saving will remove this shortcut from ${conflict.title}.`; }
-     }
-   }
--  private async load_() {
--    const result = await this.request_({action: 'list'});
--    if (result) { this.commands_ = result.commands; this.loading_ = false; }
-+  protected onCaptureKeydown_(event: KeyboardEvent) {
-+    event.preventDefault(); event.stopPropagation();
-+    if (event.key === 'Escape') { this.closeDialogs_(); }
-+    else if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) { void this.onSaveShortcutClick_(); }
-   }
--  protected filteredCommands_(): Command[] {
--    const query = this.query_.trim().toLocaleLowerCase();
--    return this.commands_.filter(command => `${command.title} ${command.group}`.toLocaleLowerCase().includes(query));
-+  protected async onSaveShortcutClick_() {
-+    if (!this.dialogCommand_ || !this.capturedShortcut_ || this.saving_) { return; }
-+    this.saving_ = true;
-+    const result = await this.request_({action: 'assign', id: this.dialogCommand_.id, shortcut: this.capturedShortcut_});
-+    this.saving_ = false;
-+    if (!result) { return; }
-+    if (result.error) { this.captureMessage_ = result.error; return; }
-+    this.commands_ = result.commands; this.closeDialogs_();
-   }
--  protected hasModified_(): boolean { return this.commands_.some(command => command.modified); }
--  protected onFilterValueChanged_(event: CustomEvent<{value: string}>) { this.query_ = event.detail.value; }
--  protected onInputCaptureChange_(event: CustomEvent<boolean>) {
--    const input = event.currentTarget as CrShortcutInputElement;
--    void this.capture_(event, input.dataset['command']!, Number(input.dataset['index']));
-+  protected onDialogClose_() { this.closeDialogs_(); }
-+  protected onDialogCancel_() { this.closeDialogs_(); }
-+  protected onCancelDialogClick_() { this.closeDialogs_(); }
-+  protected closeDialogs_() {
-+    this.stopRecording_(); this.dialogCommand_ = null; this.showResetDialog_ = false;
-+    this.capturedShortcut_ = ''; this.capturedDisplayText_ = ''; this.captureMessage_ = '';
-   }
--  protected onShortcutUpdated_(event: CustomEvent<string>) {
--    const input = event.currentTarget as CrShortcutInputElement;
--    const id = input.dataset['command']!;
--    const index = Number(input.dataset['index']);
--    const command = this.commands_.find(command => command.id === id);
--    if (!event.detail && this.extraID_ === id && index === command?.bindings.length) {
--      this.stopRecording_();
--      this.extraID_ = ''; this.error_ = ''; this.errorID_ = '';
--      return;
--    }
--    void this.save_(id, index, event.detail);
-+  protected async onRemoveShortcutClick_(event: Event) {
-+    const target = event.currentTarget as HTMLElement;
-+    const result = await this.request_({action: 'remove', id: target.dataset['command'], shortcut: target.dataset['shortcut']});
-+    if (result) { this.commands_ = result.commands; this.error_ = result.error; }
-   }
--  protected onAddClick_(event: Event) { void this.add_((event.currentTarget as HTMLElement).dataset['command']!); }
--  protected onResetClick_(event: Event) { void this.reset_((event.currentTarget as HTMLElement).dataset['command']!); }
--  protected inputs_(command: Command): string[] {
--    const bindings = command.bindings.length ? [...command.bindings] : [''];
--    if (this.extraID_ === command.id && command.bindings.length) { bindings.push(''); }
--    return bindings;
-+  protected async onResetCommandClick_(event: Event) {
-+    const result = await this.request_({action: 'reset', id: (event.currentTarget as HTMLElement).dataset['command']});
-+    if (result) { this.commands_ = result.commands; this.error_ = result.error; }
-   }
--  protected async add_(id: string) {
--    this.stopRecording_(); this.extraID_ = id;
--    await this.updateComplete;
--    const row = Array.from(this.shadowRoot.querySelectorAll<HTMLElement>('.command')).find(row => row.dataset['command'] === id);
--    const inputs = row?.querySelectorAll<CrShortcutInputElement>('cr-shortcut-input');
--    inputs?.[inputs.length - 1]?.shadowRoot?.querySelector<HTMLElement>('#edit')?.click();
-+  protected onResetAllClick_() { if (this.hasModified_()) { this.showResetDialog_ = true; } }
-+  protected async onResetDialogConfirmClick_() {
-+    const result = await this.request_({action: 'resetAll'});
-+    if (result) { this.commands_ = result.commands; this.error_ = result.error; this.showResetDialog_ = false; }
-   }
--  protected async capture_(event: CustomEvent<boolean>, id: string, index: number) {
--    event.stopPropagation();
--    const input = event.target as CrShortcutInputElement;
--    if (event.detail) {
--      if (this.recorder_ && this.recorder_.input !== input) { this.stopRecording_(); }
--      this.recorder_ = {input, id, index}; this.error_ = ''; this.errorID_ = '';
--    } else if (this.recorder_?.input === input) { this.recorder_ = null; }
--    await this.request_({action: 'capture', id, index, capturing: event.detail});
--  }
--  private stopRecording_() {
--    const recorder = this.recorder_;
--    if (!recorder) { return; }
--    this.recorder_ = null;
--    recorder.input.$.input.blur();
--    void this.request_({action: 'capture', id: recorder.id, index: recorder.index, capturing: false});
--  }
--  private async onRecorded_(detail: Recorded) {
--    const recorder = this.recorder_;
--    if (!recorder || recorder.id !== detail.id || recorder.index !== detail.index) { return; }
--    if (detail.error) { this.error_ = detail.error; this.errorID_ = detail.id; return; }
--    if (detail.shortcut !== undefined) { recorder.input.shortcut = detail.shortcut; }
--    this.stopRecording_(); this.extraID_ = ''; this.error_ = ''; this.errorID_ = '';
--    await this.load_();
--  }
--  protected async save_(id: string, index: number, shortcut: string) {
--    const result = await this.request_({action: 'set', id, index, shortcut});
--    if (!result) { return; }
--    this.error_ = result.error; this.errorID_ = id;
--    this.commands_ = result.commands;
--    if (!result.error) { this.extraID_ = ''; }
--  }
--  protected async reset_(id: string) {
--    this.stopRecording_();
--    const result = await this.request_({action: 'reset', id});
--    if (!result) { return; }
--    this.commands_ = result.commands; this.error_ = result.error; this.errorID_ = id; this.extraID_ = '';
--  }
--  protected async onResetAllClick_() {
--    this.stopRecording_();
--    const result = await this.request_({action: 'resetAll'});
--    if (!result) { return; }
--    this.commands_ = result.commands; this.error_ = ''; this.errorID_ = ''; this.extraID_ = '';
--  }
-+  protected onMacSystemShortcutsLinkClick_(event: Event) { event.preventDefault(); void this.request_({action: 'openSystemSettings'}); }
- }
- declare global {
--  interface HTMLElementTagNameMap {
--    'settings-rise-keyboard-shortcuts': SettingsRiseKeyboardShortcutsElement;
--  }
-+  interface HTMLElementTagNameMap { 'settings-rise-keyboard-shortcuts': SettingsRiseKeyboardShortcutsElement; }
- }
- customElements.define(SettingsRiseKeyboardShortcutsElement.is, SettingsRiseKeyboardShortcutsElement);
-diff --git a/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.html.ts b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.html.ts
---- a/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.html.ts
-+++ b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.html.ts
-@@ -1,47 +1,82 @@
--// Copyright 2026 The Chromium Authors
--// Use of this source code is governed by a BSD-style license that can be
--// found in the LICENSE file.
-+// Copyright 2026 The Helium Authors
-+// Adapted from browser_shortcuts_page.html for Rise's Lit settings plugin.
-+// SPDX-License-Identifier: GPL-3.0-only
-+// See Engine/third_party/helium/LICENSE in Rise's source tree.
- 
- import {html} from 'chrome://resources/lit/v3_0/lit.rollup.js';
- import type {SettingsRiseKeyboardShortcutsElement} from './rise_keyboard_shortcuts.js';
- 
- export function getHtml(this: SettingsRiseKeyboardShortcutsElement) {
--    return html`
--      <settings-section page-title="Keyboard shortcuts" class="cr-centered-card-container">
--        <div class="intro">
--          <div class="secondary">Choose a shortcut to edit it, then press the keys you want.
--            Escape cancels recording. Changes are saved automatically.</div>
--          <cr-button id="resetAll" ?disabled="${!this.hasModified_()}"
--              @click="${this.onResetAllClick_}">Reset all</cr-button>
--        </div>
--        <div class="search"><cr-input id="filter" aria-label="Search keyboard shortcuts"
--            placeholder="Search keyboard shortcuts" .value="${this.query_}"
--            @value-changed="${this.onFilterValueChanged_}">
--        </cr-input></div>
--        ${this.error_ && !this.errorID_ ? html`<p class="error" role="alert">${this.error_}</p>` : ''}
--        ${this.filteredCommands_().map(command => html`
--          <div class="command" data-command="${command.id}">
--            <div class="label">${command.title}<div class="secondary group">${command.group}</div></div>
--            <div class="bindings">
--              ${this.inputs_(command).map((shortcut, index) => html`
--                <cr-shortcut-input data-command="${command.id}" data-index="${index}" .shortcut="${shortcut}" .allowCtrlAltShortcuts="${true}"
--                    .allowClearingEmpty="${command.bindings.length > 0 && index === command.bindings.length}"
--                    .inputAriaLabel="${`${command.title} shortcut ${index + 1}`}"
--                    .editButtonAriaLabel="${`Record ${command.title} shortcut ${index + 1}`}"
--                    .clearButtonAriaLabel="${`Remove ${command.title} shortcut ${index + 1}`}"
--                    @input-capture-change="${this.onInputCaptureChange_}"
--                    @shortcut-updated="${this.onShortcutUpdated_}">
--                </cr-shortcut-input>
--              `)}
--              ${command.bindings.length > 0 ? html`<cr-button class="add" data-command="${command.id}"
--                  @click="${this.onAddClick_}">Add shortcut</cr-button>` : ''}
-+  return html`
-+    <settings-subpage page-title="Keyboard shortcuts" route-path="/keyboardShortcuts"
-+        search-label="Search shortcuts" search-icon="settings20:filter-list"
-+        .searchTerm="${this.searchTerm_}" @search-term-changed="${this.onSearchTermChanged_}">
-+      <cr-button id="resetAllButton" class="secondary-button" slot="subpage-title-extra"
-+          ?disabled="${!this.hasModified_()}" @click="${this.onResetAllClick_}">Reset all to defaults</cr-button>
-+      <div id="macSystemShortcutsNotice" class="secondary">
-+        Some keyboard shortcuts are protected and can't be changed here. To change them, go to:
-+        <a is="action-link" @click="${this.onMacSystemShortcutsLinkClick_}">
-+          System Settings &gt; Keyboard &gt; Keyboard Shortcuts &gt; App Shortcuts</a>.
-+      </div>
-+      ${this.error_ ? html`<div class="error" role="alert">${this.error_}</div>` : ''}
-+      ${this.loading_ ? Array.from({length: 10}, () => html`
-+        <div class="cr-row command-row" aria-hidden="true">
-+          <div class="command-details cr-padded-text">
-+            <div class="loading-block loading-name"></div>
-+            <div class="loading-shortcuts"><div class="loading-block loading-chip"></div><div class="loading-block loading-chip"></div></div>
-+          </div>
-+          <div class="separator"></div><div class="actions"><div class="loading-block loading-action"></div></div>
-+        </div>`) : ''}
-+      ${this.filteredCommands_().map(command => html`
-+        <div class="cr-row command-row" data-command="${command.id}">
-+          <div class="command-details cr-padded-text">
-+            <div class="command-name">${command.title}</div>
-+            <div class="shortcut-list secondary">
-+              ${command.bindings.map((shortcut, index) => html`
-+                <span class="shortcut-chip">
-+                  <span class="shortcut-label">${command.displayBindings[index] || shortcut}</span>
-+                  <cr-icon-button class="icon-clear remove" title="Remove" data-command="${command.id}" data-shortcut="${shortcut}"
-+                      aria-label="${`Remove ${command.displayBindings[index] || shortcut} from ${command.title}`}"
-+                      @click="${this.onRemoveShortcutClick_}"></cr-icon-button>
-+                </span>`)}
-             </div>
--            <cr-button class="reset" data-command="${command.id}" ?disabled="${!command.modified}"
--                aria-label="${`Reset ${command.title} shortcuts`}"
--                @click="${this.onResetClick_}">Reset</cr-button>
-           </div>
--          ${this.error_ && this.errorID_ === command.id ? html`<p class="error" role="alert">${this.error_}</p>` : ''}
--        `)}
--        ${!this.filteredCommands_().length ? html`<div class="empty" role="status">${this.loading_ ? 'Loading shortcuts…' : 'No matching shortcuts'}</div>` : ''}
--      </settings-section>`;
-+          <div class="separator"></div>
-+          <div class="actions">
-+            <cr-button class="add" data-command="${command.id}" aria-label="${`Add shortcut for ${command.title}`}"
-+                @click="${this.onAddShortcutClick_}">Add</cr-button>
-+            ${command.modified ? html`<cr-button class="reset" data-command="${command.id}"
-+                aria-label="${`Reset ${command.title} shortcuts to defaults`}"
-+                @click="${this.onResetCommandClick_}">Reset</cr-button>` : ''}
-+          </div>
-+        </div>`)}
-+      ${!this.loading_ && !this.filteredCommands_().length ? html`
-+        <div id="noResults" class="cr-row secondary" role="status">No matching shortcuts</div>` : ''}
-+      ${this.dialogCommand_ ? html`
-+        <cr-dialog id="captureDialog" show-on-attach @close="${this.onDialogClose_}" @cancel="${this.onDialogCancel_}">
-+          <div slot="title">Add shortcut</div>
-+          <div slot="body">
-+            <div id="captureCommand" class="secondary">${this.dialogCommand_.title}</div>
-+            <div id="captureTarget" tabindex="0" role="textbox" aria-readonly="true"
-+                aria-label="${`Shortcut for ${this.dialogCommand_.title}`}" aria-live="polite" @keydown="${this.onCaptureKeydown_}">
-+              ${this.capturedDisplayText_ || 'Press a combination of keys to create a new shortcut'}
-+            </div>
-+            ${this.captureMessage_ ? html`<div class="warning" role="status">${this.captureMessage_}</div>` : ''}
-+          </div>
-+          <div slot="button-container">
-+            <cr-button class="cancel-button" @click="${this.onCancelDialogClick_}">Cancel</cr-button>
-+            <cr-button id="saveShortcut" class="action-button" ?disabled="${!this.capturedShortcut_ || this.saving_}"
-+                @click="${this.onSaveShortcutClick_}">Save</cr-button>
-+          </div>
-+        </cr-dialog>` : ''}
-+      ${this.showResetDialog_ ? html`
-+        <cr-dialog id="resetDialog" show-on-attach @close="${this.onDialogClose_}" @cancel="${this.onDialogCancel_}">
-+          <div slot="title">Reset all to defaults</div>
-+          <div slot="body">All keyboard shortcuts will be reset to their default values. Any custom shortcuts you've set will be lost.</div>
-+          <div slot="button-container">
-+            <cr-button class="cancel-button" @click="${this.onCancelDialogClick_}">Cancel</cr-button>
-+            <cr-button id="confirmReset" class="action-button" @click="${this.onResetDialogConfirmClick_}">Reset</cr-button>
-+          </div>
-+        </cr-dialog>` : ''}
-+    </settings-subpage>`;
- }
 diff --git a/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.css.ts b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.css.ts
 new file mode 100644
+index 0000000000..db8e55f1bb
 --- /dev/null
 +++ b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.css.ts
 @@ -0,0 +1,167 @@
@@ -620,3 +183,436 @@ new file mode 100644
 +  .error { color: var(--cr-error-color); padding: 12px var(--cr-section-padding); }
 +  #captureCommand { margin-bottom: 12px; }
 +`;
+diff --git a/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.html.ts b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.html.ts
+index 6dbb1af18c..0051a92ecd 100644
+--- a/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.html.ts
++++ b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.html.ts
+@@ -1,47 +1,82 @@
+-// Copyright 2026 The Chromium Authors
+-// Use of this source code is governed by a BSD-style license that can be
+-// found in the LICENSE file.
++// Copyright 2026 The Helium Authors
++// Adapted from browser_shortcuts_page.html for Rise's Lit settings plugin.
++// SPDX-License-Identifier: GPL-3.0-only
++// See Engine/third_party/helium/LICENSE in Rise's source tree.
+ 
+ import {html} from 'chrome://resources/lit/v3_0/lit.rollup.js';
+ import type {SettingsRiseKeyboardShortcutsElement} from './rise_keyboard_shortcuts.js';
+ 
+ export function getHtml(this: SettingsRiseKeyboardShortcutsElement) {
+-    return html`
+-      <settings-section page-title="Keyboard shortcuts" class="cr-centered-card-container">
+-        <div class="intro">
+-          <div class="secondary">Choose a shortcut to edit it, then press the keys you want.
+-            Escape cancels recording. Changes are saved automatically.</div>
+-          <cr-button id="resetAll" ?disabled="${!this.hasModified_()}"
+-              @click="${this.onResetAllClick_}">Reset all</cr-button>
+-        </div>
+-        <div class="search"><cr-input id="filter" aria-label="Search keyboard shortcuts"
+-            placeholder="Search keyboard shortcuts" .value="${this.query_}"
+-            @value-changed="${this.onFilterValueChanged_}">
+-        </cr-input></div>
+-        ${this.error_ && !this.errorID_ ? html`<p class="error" role="alert">${this.error_}</p>` : ''}
+-        ${this.filteredCommands_().map(command => html`
+-          <div class="command" data-command="${command.id}">
+-            <div class="label">${command.title}<div class="secondary group">${command.group}</div></div>
+-            <div class="bindings">
+-              ${this.inputs_(command).map((shortcut, index) => html`
+-                <cr-shortcut-input data-command="${command.id}" data-index="${index}" .shortcut="${shortcut}" .allowCtrlAltShortcuts="${true}"
+-                    .allowClearingEmpty="${command.bindings.length > 0 && index === command.bindings.length}"
+-                    .inputAriaLabel="${`${command.title} shortcut ${index + 1}`}"
+-                    .editButtonAriaLabel="${`Record ${command.title} shortcut ${index + 1}`}"
+-                    .clearButtonAriaLabel="${`Remove ${command.title} shortcut ${index + 1}`}"
+-                    @input-capture-change="${this.onInputCaptureChange_}"
+-                    @shortcut-updated="${this.onShortcutUpdated_}">
+-                </cr-shortcut-input>
+-              `)}
+-              ${command.bindings.length > 0 ? html`<cr-button class="add" data-command="${command.id}"
+-                  @click="${this.onAddClick_}">Add shortcut</cr-button>` : ''}
++  return html`
++    <settings-subpage page-title="Keyboard shortcuts" route-path="/keyboardShortcuts"
++        search-label="Search shortcuts" search-icon="settings20:filter-list"
++        .searchTerm="${this.searchTerm_}" @search-term-changed="${this.onSearchTermChanged_}">
++      <cr-button id="resetAllButton" class="secondary-button" slot="subpage-title-extra"
++          ?disabled="${!this.hasModified_()}" @click="${this.onResetAllClick_}">Reset all to defaults</cr-button>
++      <div id="macSystemShortcutsNotice" class="secondary">
++        Some keyboard shortcuts are protected and can't be changed here. To change them, go to:
++        <a is="action-link" @click="${this.onMacSystemShortcutsLinkClick_}">
++          System Settings &gt; Keyboard &gt; Keyboard Shortcuts &gt; App Shortcuts</a>.
++      </div>
++      ${this.error_ ? html`<div class="error" role="alert">${this.error_}</div>` : ''}
++      ${this.loading_ ? Array.from({length: 10}, () => html`
++        <div class="cr-row command-row" aria-hidden="true">
++          <div class="command-details cr-padded-text">
++            <div class="loading-block loading-name"></div>
++            <div class="loading-shortcuts"><div class="loading-block loading-chip"></div><div class="loading-block loading-chip"></div></div>
++          </div>
++          <div class="separator"></div><div class="actions"><div class="loading-block loading-action"></div></div>
++        </div>`) : ''}
++      ${this.filteredCommands_().map(command => html`
++        <div class="cr-row command-row" data-command="${command.id}">
++          <div class="command-details cr-padded-text">
++            <div class="command-name">${command.title}</div>
++            <div class="shortcut-list secondary">
++              ${command.bindings.map((shortcut, index) => html`
++                <span class="shortcut-chip">
++                  <span class="shortcut-label">${command.displayBindings[index] || shortcut}</span>
++                  <cr-icon-button class="icon-clear remove" title="Remove" data-command="${command.id}" data-shortcut="${shortcut}"
++                      aria-label="${`Remove ${command.displayBindings[index] || shortcut} from ${command.title}`}"
++                      @click="${this.onRemoveShortcutClick_}"></cr-icon-button>
++                </span>`)}
++            </div>
++          </div>
++          <div class="separator"></div>
++          <div class="actions">
++            <cr-button class="add" data-command="${command.id}" aria-label="${`Add shortcut for ${command.title}`}"
++                @click="${this.onAddShortcutClick_}">Add</cr-button>
++            ${command.modified ? html`<cr-button class="reset" data-command="${command.id}"
++                aria-label="${`Reset ${command.title} shortcuts to defaults`}"
++                @click="${this.onResetCommandClick_}">Reset</cr-button>` : ''}
++          </div>
++        </div>`)}
++      ${!this.loading_ && !this.filteredCommands_().length ? html`
++        <div id="noResults" class="cr-row secondary" role="status">No matching shortcuts</div>` : ''}
++      ${this.dialogCommand_ ? html`
++        <cr-dialog id="captureDialog" show-on-attach @close="${this.onDialogClose_}" @cancel="${this.onDialogCancel_}">
++          <div slot="title">Add shortcut</div>
++          <div slot="body">
++            <div id="captureCommand" class="secondary">${this.dialogCommand_.title}</div>
++            <div id="captureTarget" tabindex="0" role="textbox" aria-readonly="true"
++                aria-label="${`Shortcut for ${this.dialogCommand_.title}`}" aria-live="polite" @keydown="${this.onCaptureKeydown_}">
++              ${this.capturedDisplayText_ || 'Press a combination of keys to create a new shortcut'}
+             </div>
+-            <cr-button class="reset" data-command="${command.id}" ?disabled="${!command.modified}"
+-                aria-label="${`Reset ${command.title} shortcuts`}"
+-                @click="${this.onResetClick_}">Reset</cr-button>
++            ${this.captureMessage_ ? html`<div class="warning" role="status">${this.captureMessage_}</div>` : ''}
++          </div>
++          <div slot="button-container">
++            <cr-button class="cancel-button" @click="${this.onCancelDialogClick_}">Cancel</cr-button>
++            <cr-button id="saveShortcut" class="action-button" ?disabled="${!this.capturedShortcut_ || this.saving_}"
++                @click="${this.onSaveShortcutClick_}">Save</cr-button>
++          </div>
++        </cr-dialog>` : ''}
++      ${this.showResetDialog_ ? html`
++        <cr-dialog id="resetDialog" show-on-attach @close="${this.onDialogClose_}" @cancel="${this.onDialogCancel_}">
++          <div slot="title">Reset all to defaults</div>
++          <div slot="body">All keyboard shortcuts will be reset to their default values. Any custom shortcuts you've set will be lost.</div>
++          <div slot="button-container">
++            <cr-button class="cancel-button" @click="${this.onCancelDialogClick_}">Cancel</cr-button>
++            <cr-button id="confirmReset" class="action-button" @click="${this.onResetDialogConfirmClick_}">Reset</cr-button>
+           </div>
+-          ${this.error_ && this.errorID_ === command.id ? html`<p class="error" role="alert">${this.error_}</p>` : ''}
+-        `)}
+-        ${!this.filteredCommands_().length ? html`<div class="empty" role="status">${this.loading_ ? 'Loading shortcuts…' : 'No matching shortcuts'}</div>` : ''}
+-      </settings-section>`;
++        </cr-dialog>` : ''}
++    </settings-subpage>`;
+ }
+diff --git a/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.ts b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.ts
+index d582016b1e..d2fb2648bb 100644
+--- a/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.ts
++++ b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.ts
+@@ -1,19 +1,20 @@
+-// Copyright 2026 The Chromium Authors
+-// Use of this source code is governed by a BSD-style license that can be
+-// found in the LICENSE file.
++// Copyright 2026 The Helium Authors
++// Adapted for Rise's Lit settings plugin and native command registry.
++// SPDX-License-Identifier: GPL-3.0-only
++// See Engine/third_party/helium/LICENSE in Rise's source tree.
+ 
+-import 'chrome://resources/cr_components/cr_shortcut_input/cr_shortcut_input.js';
+ import 'chrome://resources/cr_elements/cr_button/cr_button.js';
+-import 'chrome://resources/cr_elements/cr_input/cr_input.js';
+-import '../settings_page/settings_section.js';
++import 'chrome://resources/cr_elements/cr_dialog/cr_dialog.js';
++import 'chrome://resources/cr_elements/cr_icon_button/cr_icon_button.js';
++import 'chrome://resources/js/action_link.js';
++import '../settings_page/settings_subpage.js';
+ 
+-import type {CrShortcutInputElement} from 'chrome://resources/cr_components/cr_shortcut_input/cr_shortcut_input.js';
+ import {getCss as getCrSharedStyle} from 'chrome://resources/cr_elements/cr_shared_style_lit.css.js';
+-import {CrLitElement, css} from 'chrome://resources/lit/v3_0/lit.rollup.js';
+-
++import {CrLitElement} from 'chrome://resources/lit/v3_0/lit.rollup.js';
+ import {getSearchManager} from '../search_settings.js';
+ import {getCss as getSettingsSharedStyle} from '../settings_shared_lit.css.js';
+ import type {SettingsPlugin} from '../settings_main/settings_plugin.js';
++import {heliumShortcutStyles} from './rise_keyboard_shortcuts.css.js';
+ import {getHtml} from './rise_keyboard_shortcuts.html.js';
+ 
+ interface Command {
+@@ -21,6 +22,7 @@ interface Command {
+   title: string;
+   group: string;
+   bindings: string[];
++  displayBindings: string[];
+   defaults: string[];
+   modified: boolean;
+ }
+@@ -30,60 +32,45 @@ interface Recorded {
+   id: string;
+   index: number;
+   shortcut?: string;
++  display?: string;
+   cancelled?: boolean;
++  commit?: boolean;
+   error?: string;
+ }
+ 
+ export class SettingsRiseKeyboardShortcutsElement extends CrLitElement implements SettingsPlugin {
+   static get is() { return 'settings-rise-keyboard-shortcuts'; }
+   static override get styles() {
+-    return [getCrSharedStyle(), getSettingsSharedStyle(), css`
+-      :host { display: block; padding-bottom: 24px; }
+-      .intro { display: flex; align-items: center; gap: 20px; padding: 16px 20px; }
+-      .intro .secondary { flex: 1; line-height: 1.6; }
+-      .search { padding: 0 20px 16px; }
+-      .command { display: flex; align-items: flex-start; gap: 20px; padding: 16px 20px;
+-        border-top: var(--cr-separator-line); min-height: 48px; }
+-      .label { flex: 1; min-width: 120px; }
+-      .group { margin-top: 6px; }
+-      .bindings { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+-      cr-shortcut-input { width: 360px; max-width: 100%; --cr-shortcut-input-width: 100%; }
+-      .add { --cr-button-height: 28px; align-self: flex-start; }
+-      .reset { align-self: center; }
+-      .error { color: var(--cr-error-color); margin: 0; padding: 0 20px 16px;
+-        line-height: 1.5; }
+-      .empty { padding: 24px 20px; color: var(--cr-secondary-text-color); }
+-      @media (max-width: 740px) {
+-        .command { flex-direction: column; align-items: stretch; }
+-        .bindings { align-items: stretch; }
+-        cr-shortcut-input { width: 100%; }
+-        .reset { align-self: flex-end; }
+-        .intro { flex-wrap: wrap; }
+-      }
+-    `];
++    return [getCrSharedStyle(), getSettingsSharedStyle(), heliumShortcutStyles];
+   }
+   override render() { return getHtml.bind(this)(); }
+   static override get properties() {
+     return {
+-      commands_: {type: Array}, query_: {type: String}, error_: {type: String},
+-      errorID_: {type: String}, extraID_: {type: String}, loading_: {type: Boolean},
++      commands_: {type: Array}, searchTerm_: {type: String}, error_: {type: String},
++      loading_: {type: Boolean}, dialogCommand_: {type: Object},
++      capturedShortcut_: {type: String}, capturedDisplayText_: {type: String},
++      captureMessage_: {type: String}, showResetDialog_: {type: Boolean}, saving_: {type: Boolean},
+     };
+   }
+   protected accessor commands_: Command[] = [];
+-  protected accessor query_: string = '';
++  protected accessor searchTerm_: string = '';
+   protected accessor error_: string = '';
+-  protected accessor errorID_: string = '';
+-  private accessor extraID_: string = '';
+   protected accessor loading_: boolean = true;
+-  private recorder_: {input: CrShortcutInputElement, id: string, index: number}|null = null;
++  protected accessor dialogCommand_: Command|null = null;
++  protected accessor capturedShortcut_: string = '';
++  protected accessor capturedDisplayText_: string = '';
++  protected accessor captureMessage_: string = '';
++  protected accessor showResetDialog_: boolean = false;
++  protected accessor saving_: boolean = false;
++  private recording_: {id: string, index: number}|null = null;
+   private refresh_ = () => { void this.load_(); };
+-  private recorded_ = (event: Event) => { void this.onRecorded_((event as CustomEvent<Recorded>).detail); };
++  private recorded_ = (event: Event) => { this.onRecorded_((event as CustomEvent<Recorded>).detail); };
+ 
+   override connectedCallback() {
+     super.connectedCallback();
+     window.addEventListener('rise-settings-ready', this.refresh_);
+     window.addEventListener('rise-shortcut-recorded', this.recorded_);
+-    void this.load_();
++    void this.load_(true);
+   }
+   override disconnectedCallback() {
+     this.stopRecording_();
+@@ -99,99 +86,109 @@ export class SettingsRiseKeyboardShortcutsElement extends CrLitElement implement
+     const bridge = window.riseSettings as unknown as Bridge|undefined;
+     if (!bridge) { return null; }
+     try { return await bridge.request('shortcuts', body) as Result; }
+-    catch {
+-      this.error_ = 'Could not save keyboard shortcuts. Please try again.';
+-      this.errorID_ = '';
+-      return null;
+-    }
++    catch { this.error_ = 'Could not update keyboard shortcuts. Please try again.'; return null; }
+   }
+-  private async load_() {
+-    const result = await this.request_({action: 'list'});
++  private async load_(resetCapture: boolean = false) {
++    const result = await this.request_({action: 'list', resetCapture});
+     if (result) { this.commands_ = result.commands; this.loading_ = false; }
+   }
+-  protected filteredCommands_(): Command[] {
+-    const query = this.query_.trim().toLocaleLowerCase();
+-    return this.commands_.filter(command => `${command.title} ${command.group}`.toLocaleLowerCase().includes(query));
++
++  // Helium ranks exact matches, prefixes, and other matches across names and keys.
++  private normalizeSearchText_(text: string): string {
++    return text.trim().toLocaleLowerCase().replace(/\s+/g, '');
++  }
++  private getMatchRank_(command: Command, query: string): number|null {
++    const ranks = [command.title, command.group, ...command.displayBindings, ...command.bindings]
++        .map(field => this.normalizeSearchText_(field))
++        .flatMap(field => {
++          const index = field.indexOf(query);
++          const rank = Math.min(index, 1) + Number(field !== query);
++          return index === -1 ? [] : [rank];
++        });
++    return ranks.length ? Math.min(...ranks) : null;
+   }
++  protected filteredCommands_(): Command[] {
++    const commands = [...this.commands_].sort((a, b) => a.title.localeCompare(b.title));
++    const query = this.normalizeSearchText_(this.searchTerm_);
++    if (!query) { return commands; }
++    return commands.map(command => ({command, rank: this.getMatchRank_(command, query)}))
++        .filter(match => match.rank !== null)
++        .sort((a, b) => a.rank! - b.rank! || a.command.title.localeCompare(b.command.title))
++        .map(match => match.command);
++  }
++  protected onSearchTermChanged_(event: CustomEvent<{value: string}>) { this.searchTerm_ = event.detail.value; }
+   protected hasModified_(): boolean { return this.commands_.some(command => command.modified); }
+-  protected onFilterValueChanged_(event: CustomEvent<{value: string}>) { this.query_ = event.detail.value; }
+-  protected onInputCaptureChange_(event: CustomEvent<boolean>) {
+-    const input = event.currentTarget as CrShortcutInputElement;
+-    void this.capture_(event, input.dataset['command']!, Number(input.dataset['index']));
+-  }
+-  protected onShortcutUpdated_(event: CustomEvent<string>) {
+-    const input = event.currentTarget as CrShortcutInputElement;
+-    const id = input.dataset['command']!;
+-    const index = Number(input.dataset['index']);
++
++  protected async onAddShortcutClick_(event: Event) {
++    const id = (event.currentTarget as HTMLElement).dataset['command'];
+     const command = this.commands_.find(command => command.id === id);
+-    if (!event.detail && this.extraID_ === id && index === command?.bindings.length) {
+-      this.stopRecording_();
+-      this.extraID_ = ''; this.error_ = ''; this.errorID_ = '';
+-      return;
++    if (!command) { return; }
++    this.stopRecording_(); this.dialogCommand_ = command;
++    this.capturedShortcut_ = ''; this.capturedDisplayText_ = ''; this.captureMessage_ = ''; this.error_ = '';
++    const recording = {id: command.id, index: command.bindings.length};
++    this.recording_ = recording;
++    const result = await this.request_({action: 'capture', ...recording, capturing: true});
++    if (this.recording_ !== recording) { return; }
++    if (!result || result.error) {
++      this.closeDialogs_();
++      this.error_ = result?.error || 'Could not start shortcut recording. Please try again.'; return;
+     }
+-    void this.save_(id, index, event.detail);
+-  }
+-  protected onAddClick_(event: Event) { void this.add_((event.currentTarget as HTMLElement).dataset['command']!); }
+-  protected onResetClick_(event: Event) { void this.reset_((event.currentTarget as HTMLElement).dataset['command']!); }
+-  protected inputs_(command: Command): string[] {
+-    const bindings = command.bindings.length ? [...command.bindings] : [''];
+-    if (this.extraID_ === command.id && command.bindings.length) { bindings.push(''); }
+-    return bindings;
+-  }
+-  protected async add_(id: string) {
+-    this.stopRecording_(); this.extraID_ = id;
+     await this.updateComplete;
+-    const row = Array.from(this.shadowRoot.querySelectorAll<HTMLElement>('.command')).find(row => row.dataset['command'] === id);
+-    const inputs = row?.querySelectorAll<CrShortcutInputElement>('cr-shortcut-input');
+-    inputs?.[inputs.length - 1]?.shadowRoot?.querySelector<HTMLElement>('#edit')?.click();
+-  }
+-  protected async capture_(event: CustomEvent<boolean>, id: string, index: number) {
+-    event.stopPropagation();
+-    const input = event.target as CrShortcutInputElement;
+-    if (event.detail) {
+-      if (this.recorder_ && this.recorder_.input !== input) { this.stopRecording_(); }
+-      this.recorder_ = {input, id, index}; this.error_ = ''; this.errorID_ = '';
+-    } else if (this.recorder_?.input === input) { this.recorder_ = null; }
+-    await this.request_({action: 'capture', id, index, capturing: event.detail});
++    this.shadowRoot.querySelector<HTMLElement>('#captureTarget')?.focus();
+   }
+   private stopRecording_() {
+-    const recorder = this.recorder_;
+-    if (!recorder) { return; }
+-    this.recorder_ = null;
+-    recorder.input.$.input.blur();
+-    void this.request_({action: 'capture', id: recorder.id, index: recorder.index, capturing: false});
+-  }
+-  private async onRecorded_(detail: Recorded) {
+-    const recorder = this.recorder_;
+-    if (!recorder || recorder.id !== detail.id || recorder.index !== detail.index) { return; }
+-    if (detail.error) { this.error_ = detail.error; this.errorID_ = detail.id; return; }
+-    if (detail.shortcut !== undefined) { recorder.input.shortcut = detail.shortcut; }
+-    this.stopRecording_(); this.extraID_ = ''; this.error_ = ''; this.errorID_ = '';
+-    await this.load_();
++    const recording = this.recording_; this.recording_ = null;
++    if (recording) { void this.request_({action: 'capture', ...recording, capturing: false}); }
++  }
++  private onRecorded_(detail: Recorded) {
++    if (!this.recording_ || this.recording_.id !== detail.id || this.recording_.index !== detail.index) { return; }
++    if (detail.cancelled) { this.closeDialogs_(); return; }
++    if (detail.commit) { void this.onSaveShortcutClick_(); return; }
++    this.capturedShortcut_ = detail.shortcut || '';
++    this.capturedDisplayText_ = detail.display || ''; this.captureMessage_ = detail.error || '';
++    if (detail.shortcut) {
++      const conflict = this.commands_.find(command => command.id !== detail.id && command.bindings.includes(detail.shortcut!));
++      if (conflict) { this.captureMessage_ = `Saving will remove this shortcut from ${conflict.title}.`; }
++    }
+   }
+-  protected async save_(id: string, index: number, shortcut: string) {
+-    const result = await this.request_({action: 'set', id, index, shortcut});
+-    if (!result) { return; }
+-    this.error_ = result.error; this.errorID_ = id;
+-    this.commands_ = result.commands;
+-    if (!result.error) { this.extraID_ = ''; }
++  protected onCaptureKeydown_(event: KeyboardEvent) {
++    event.preventDefault(); event.stopPropagation();
++    if (event.key === 'Escape') { this.closeDialogs_(); }
++    else if (event.key === 'Enter' && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) { void this.onSaveShortcutClick_(); }
+   }
+-  protected async reset_(id: string) {
+-    this.stopRecording_();
+-    const result = await this.request_({action: 'reset', id});
++  protected async onSaveShortcutClick_() {
++    if (!this.dialogCommand_ || !this.capturedShortcut_ || this.saving_) { return; }
++    this.saving_ = true;
++    const result = await this.request_({action: 'assign', id: this.dialogCommand_.id, shortcut: this.capturedShortcut_});
++    this.saving_ = false;
+     if (!result) { return; }
+-    this.commands_ = result.commands; this.error_ = result.error; this.errorID_ = id; this.extraID_ = '';
+-  }
+-  protected async onResetAllClick_() {
+-    this.stopRecording_();
++    if (result.error) { this.captureMessage_ = result.error; return; }
++    this.commands_ = result.commands; this.closeDialogs_();
++  }
++  protected onDialogClose_() { this.closeDialogs_(); }
++  protected onDialogCancel_() { this.closeDialogs_(); }
++  protected onCancelDialogClick_() { this.closeDialogs_(); }
++  protected closeDialogs_() {
++    this.stopRecording_(); this.dialogCommand_ = null; this.showResetDialog_ = false;
++    this.capturedShortcut_ = ''; this.capturedDisplayText_ = ''; this.captureMessage_ = '';
++  }
++  protected async onRemoveShortcutClick_(event: Event) {
++    const target = event.currentTarget as HTMLElement;
++    const result = await this.request_({action: 'remove', id: target.dataset['command'], shortcut: target.dataset['shortcut']});
++    if (result) { this.commands_ = result.commands; this.error_ = result.error; }
++  }
++  protected async onResetCommandClick_(event: Event) {
++    const result = await this.request_({action: 'reset', id: (event.currentTarget as HTMLElement).dataset['command']});
++    if (result) { this.commands_ = result.commands; this.error_ = result.error; }
++  }
++  protected onResetAllClick_() { if (this.hasModified_()) { this.showResetDialog_ = true; } }
++  protected async onResetDialogConfirmClick_() {
+     const result = await this.request_({action: 'resetAll'});
+-    if (!result) { return; }
+-    this.commands_ = result.commands; this.error_ = ''; this.errorID_ = ''; this.extraID_ = '';
++    if (result) { this.commands_ = result.commands; this.error_ = result.error; this.showResetDialog_ = false; }
+   }
++  protected onMacSystemShortcutsLinkClick_(event: Event) { event.preventDefault(); void this.request_({action: 'openSystemSettings'}); }
+ }
+ declare global {
+-  interface HTMLElementTagNameMap {
+-    'settings-rise-keyboard-shortcuts': SettingsRiseKeyboardShortcutsElement;
+-  }
++  interface HTMLElementTagNameMap { 'settings-rise-keyboard-shortcuts': SettingsRiseKeyboardShortcutsElement; }
+ }
+ customElements.define(SettingsRiseKeyboardShortcutsElement.is, SettingsRiseKeyboardShortcutsElement);

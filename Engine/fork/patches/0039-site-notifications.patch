@@ -1,8 +1,8 @@
 diff --git a/chrome/browser/notifications/mac/notification_platform_bridge_mac.cc b/chrome/browser/notifications/mac/notification_platform_bridge_mac.cc
-index ec0919a..cbfe392 100644
+index 967672e97b..498e69c1e9 100644
 --- a/chrome/browser/notifications/mac/notification_platform_bridge_mac.cc
 +++ b/chrome/browser/notifications/mac/notification_platform_bridge_mac.cc
-@@ -97,9 +97,11 @@ void NotificationPlatformBridgeMac::Display(
+@@ -133,9 +133,11 @@ void NotificationPlatformBridgeMac::Display(
                                    outcome);
    }
  
@@ -17,7 +17,7 @@ index ec0919a..cbfe392 100644
    dispatcher->DisplayNotification(notification_type, profile, notification);
    CloseImpl(profile, notification.id(), dispatcher);
 diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
-index 775bd6f..184913d 100644
+index 775bd6ff23..184913de9f 100644
 --- a/chrome/browser/rise/RiseChromium.h
 +++ b/chrome/browser/rise/RiseChromium.h
 @@ -35,6 +35,13 @@ RC_EXPORT @interface RCEngine : NSObject
@@ -45,7 +45,7 @@ index 775bd6f..184913d 100644
  
  /// A dialog a page asks for: `alert()`, `confirm()`, `prompt()`, or, leaving or reloading a page
 diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
-index b0d5b48..0586f23 100644
+index b0d5b489fa..0586f23b0c 100644
 --- a/chrome/browser/rise/rise_bridge.mm
 +++ b/chrome/browser/rise/rise_bridge.mm
 @@ -1295,6 +1295,9 @@ bool RunFileChooser(content::RenderFrameHost* frame,

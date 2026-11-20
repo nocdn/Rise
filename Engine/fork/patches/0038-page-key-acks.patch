@@ -1,6 +1,8 @@
+diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
+index 02da481fef..775bd6ff23 100644
 --- a/chrome/browser/rise/RiseChromium.h
 +++ b/chrome/browser/rise/RiseChromium.h
-@@ -214,6 +214,11 @@
+@@ -214,6 +214,11 @@ RC_EXPORT @interface RCContextMenu : NSObject
  @optional
  /// The pointer moved onto a link, or off one (nil).
  - (void)browserView:(RCBrowserView *)browserView didHoverLink:(nullable NSURL *)url;
@@ -12,7 +14,7 @@
  /// The page wants `url` somewhere other than itself, a new tab or window. Return YES once
  /// Rise has opened it; NO lets it open in this page instead.
  - (BOOL)browserView:(RCBrowserView *)browserView openURL:(NSURL *)url disposition:(RCOpenDisposition)disposition
-@@ -312,6 +317,9 @@
+@@ -312,6 +317,9 @@ RC_EXPORT @interface RCBrowserView : NSView
  - (instancetype)initWithFrame:(NSRect)frameRect NS_UNAVAILABLE;
  - (nullable instancetype)initWithCoder:(NSCoder *)coder NS_UNAVAILABLE;
  @property (nonatomic, weak, nullable) id<RCBrowserViewDelegate> delegate;
@@ -22,6 +24,8 @@
  @property (nonatomic, readonly, nullable) NSURL *URL;
  @property (nonatomic, readonly, nullable) NSString *title;
  /// Navigation loading state for browser UI. Late subframe loads on a finished page do not
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index a7688a4e69..b0d5b489fa 100644
 --- a/chrome/browser/rise/rise_bridge.mm
 +++ b/chrome/browser/rise/rise_bridge.mm
 @@ -151,7 +151,11 @@
@@ -36,7 +40,7 @@
  #include "content/public/browser/weak_document_ptr.h"
  #include "content/public/browser/web_contents.h"
  #include "content/public/browser/web_contents_observer.h"
-@@ -865,6 +869,56 @@
+@@ -865,6 +869,56 @@ bool Show(RCDialogKind kind,
  }
  
  // What Rise shows itself for a page, in its own interface.
@@ -93,20 +97,20 @@
  class RiseTabHooks : public EmbedderTabHooks {
   public:
    explicit RiseTabHooks(RCBrowserView* view)
-@@ -895,6 +949,12 @@
-     NSEvent* key = event.os_event.Get();
+@@ -896,6 +950,12 @@ bool HandleKeyboardEvent(
      if (event.skip_if_unhandled || !key || key.type != NSEventTypeKeyDown) {
        return false;
-+    }
+     }
 +    RCBrowserView* view = view_;
 +    id<RCBrowserViewDelegate> delegate = view.delegate;
 +    if ([delegate respondsToSelector:@selector(browserView:handleUnusedKey:)] &&
 +        [delegate browserView:view handleUnusedKey:key]) {
 +      return true;
-     }
++    }
      return [NSApp.mainMenu performKeyEquivalent:key];
    }
-@@ -1909,6 +1969,7 @@
+ 
+@@ -1909,6 +1969,7 @@ - (void)layoutSublayers {
  @implementation RCBrowserView {
    raw_ptr<content::WebContents> _contents;
    std::unique_ptr<TabObserver> _observer;
@@ -114,11 +118,10 @@
    NSURL* _pendingURL;
    BOOL _closed;
    // Rise's scripts for the page's documents, in order: source, world (none
-@@ -2051,6 +2112,22 @@
- }
+@@ -2052,6 +2113,22 @@ - (NSArray*)accessibilityChildren {
  - (NSView*)focusView {
    return [self pageAccessibilityView];
-+}
+ }
 +- (void)watchNextKeyPress {
 +  if (!_contents) {
 +    return;
@@ -134,6 +137,7 @@
 +    _keyWatcher = std::make_unique<PageKeyWatcher>(self);
 +  }
 +  _keyWatcher->Watch(frame->GetRenderWidgetHost());
- }
++}
  - (NSView*)pageAccessibilityView {
    content::RenderWidgetHostView* view =
+       _contents ? _contents->GetRenderWidgetHostView() : nullptr;

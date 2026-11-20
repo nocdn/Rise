@@ -1,6 +1,8 @@
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index c72dc64ae4..7db8631535 100644
 --- a/chrome/browser/rise/rise_bridge.mm
 +++ b/chrome/browser/rise/rise_bridge.mm
-@@ -1684,6 +1684,10 @@
+@@ -1684,6 +1684,10 @@ + (BOOL)startWithCachePath:(NSString*)cachePath keychain:(BOOL)keychain {
    // its own tab strip's window, which Rise's pages don't have; its full-page
    // warning shows in the page itself.
    arguments.push_back("--disable-features=HttpsFirstDialogUi");
@@ -11,7 +13,7 @@
    if (!keychain) {
      arguments.push_back("--use-mock-keychain");
    }
-@@ -1970,8 +1974,13 @@
+@@ -1970,8 +1974,13 @@ - (void)browserStarted {
      [self makePopup:browser->GetProfile()];
      return;
    }

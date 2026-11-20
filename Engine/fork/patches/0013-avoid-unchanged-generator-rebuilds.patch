@@ -1,8 +1,8 @@
 diff --git a/build/config/siso/mac.star b/build/config/siso/mac.star
-index 42a8efe9c1..3c4a0c660e 100644
+index 00a0a36203..81607600bd 100644
 --- a/build/config/siso/mac.star
 +++ b/build/config/siso/mac.star
-@@ -60,6 +60,14 @@ __handlers.update(clang.handlers)
+@@ -28,6 +28,14 @@ __handlers.update(clang.handlers)
  
  def __step_config(ctx, step_config):
      config.check(ctx)
@@ -15,5 +15,5 @@ index 42a8efe9c1..3c4a0c660e 100644
 +        "accumulate": True,
 +    })
      step_config = clang.step_config(ctx, step_config)
+     step_config = apple.step_config(ctx, step_config)
      step_config["rules"].extend([
-         {

@@ -1,7 +1,8 @@
 diff --git a/chrome/browser/resources/settings/BUILD.gn b/chrome/browser/resources/settings/BUILD.gn
+index 49c4b0f876..42c8add0ce 100644
 --- a/chrome/browser/resources/settings/BUILD.gn
 +++ b/chrome/browser/resources/settings/BUILD.gn
-@@ -392,6 +392,8 @@ build_webui("build") {
+@@ -395,6 +395,8 @@ build_webui("build") {
      "reset_page/reset_profile_banner.ts",
      "reset_page/reset_profile_dialog.html.ts",
      "reset_page/reset_profile_dialog.ts",
@@ -10,33 +11,9 @@ diff --git a/chrome/browser/resources/settings/BUILD.gn b/chrome/browser/resourc
      "rise_page/rise_page.html.ts",
      "rise_page/rise_page.ts",
      "rise_page/rise_settings_rows.html.ts",
-diff --git a/chrome/browser/resources/settings/settings_main/settings_main.html b/chrome/browser/resources/settings/settings_main/settings_main.html
---- a/chrome/browser/resources/settings/settings_main/settings_main.html
-+++ b/chrome/browser/resources/settings/settings_main/settings_main.html
-@@ -48,6 +48,10 @@
-   </settings-reset-profile-banner>
- </template>
- 
-+<template is="dom-if" if="[[!inSearchMode_]]">
-+  <rise-default-browser-banner></rise-default-browser-banner>
-+</template>
-+
- <cr-view-manager id="switcher"
-     show-all$="[[shouldShowAll_(inSearchMode_, lastRoute_)]]">
-   <template is="dom-if" if="[[showPage_(pageVisibility_.people)]]">
-diff --git a/chrome/browser/resources/settings/settings_main/settings_main.ts b/chrome/browser/resources/settings/settings_main/settings_main.ts
---- a/chrome/browser/resources/settings/settings_main/settings_main.ts
-+++ b/chrome/browser/resources/settings/settings_main/settings_main.ts
-@@ -18,6 +18,7 @@ import '../on_startup_page/on_startup_page.js';
- import '../people_page/people_page_index.js';
- import '../performance_page/performance_page_index.js';
- import '../privacy_page/privacy_page_index.js';
-+import '../rise_page/rise_default_browser_banner.js';
- import '../rise_page/rise_page.js';
- import '../reset_page/reset_profile_banner.js';
- import '../search_page/search_page_index.js';
 diff --git a/chrome/browser/resources/settings/rise_page/rise_default_browser_banner.html.ts b/chrome/browser/resources/settings/rise_page/rise_default_browser_banner.html.ts
 new file mode 100644
+index 0000000000..883fb809ec
 --- /dev/null
 +++ b/chrome/browser/resources/settings/rise_page/rise_default_browser_banner.html.ts
 @@ -0,0 +1,31 @@
@@ -73,6 +50,7 @@ new file mode 100644
 +}
 diff --git a/chrome/browser/resources/settings/rise_page/rise_default_browser_banner.ts b/chrome/browser/resources/settings/rise_page/rise_default_browser_banner.ts
 new file mode 100644
+index 0000000000..311feed332
 --- /dev/null
 +++ b/chrome/browser/resources/settings/rise_page/rise_default_browser_banner.ts
 @@ -0,0 +1,140 @@
@@ -216,3 +194,30 @@ new file mode 100644
 +
 +customElements.define(
 +    RiseDefaultBrowserBannerElement.is, RiseDefaultBrowserBannerElement);
+diff --git a/chrome/browser/resources/settings/settings_main/settings_main.html b/chrome/browser/resources/settings/settings_main/settings_main.html
+index 0176cc60d6..87066119a2 100644
+--- a/chrome/browser/resources/settings/settings_main/settings_main.html
++++ b/chrome/browser/resources/settings/settings_main/settings_main.html
+@@ -11,6 +11,10 @@ ${this.showResetProfileBanner_ ? html`
+   </settings-reset-profile-banner>
+ ` : ''}
+ 
++${!this.inSearchMode_ ? html`
++  <rise-default-browser-banner></rise-default-browser-banner>
++` : ''}
++
+ <cr-view-manager id="switcher" ?show-all="${this.shouldShowAll_()}">
+   ${this.showPage_(this.pageVisibility_?.people) ? html`
+     <div slot="view" id="people">
+diff --git a/chrome/browser/resources/settings/settings_main/settings_main.ts b/chrome/browser/resources/settings/settings_main/settings_main.ts
+index c7ced58b7e..1f0e71f031 100644
+--- a/chrome/browser/resources/settings/settings_main/settings_main.ts
++++ b/chrome/browser/resources/settings/settings_main/settings_main.ts
+@@ -17,6 +17,7 @@ import '../on_startup_page/on_startup_page.js';
+ import '../people_page/people_page_index.js';
+ import '../performance_page/performance_page_index.js';
+ import '../privacy_page/privacy_page_index.js';
++import '../rise_page/rise_default_browser_banner.js';
+ import '../rise_page/rise_page.js';
+ import '../reset_page/reset_profile_banner.js';
+ import '../search_page/search_page_index.js';

@@ -1,6 +1,8 @@
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index a75aff82fe..0ec5b45515 100644
 --- a/chrome/browser/rise/rise_bridge.mm
 +++ b/chrome/browser/rise/rise_bridge.mm
-@@ -932,6 +932,17 @@
+@@ -932,6 +932,17 @@ explicit RiseTabHooks(RCBrowserView* view)
    // Rise loads a crashed page again itself.
    bool ShowsCrashedPages() override { return true; }
  
@@ -18,9 +20,11 @@
    // The link under the pointer goes to Rise, which shows where it leads.
    bool UpdateTargetURL(const GURL& url) override {
      RCBrowserView* view = view_;
+diff --git a/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc b/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc
+index 3fc4f14c87..8038a4853f 100644
 --- a/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc
 +++ b/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc
-@@ -787,6 +787,10 @@
+@@ -836,6 +836,10 @@ void BrowserWebContentsDelegate::ActivateContents(
  
  bool BrowserWebContentsDelegate::IsContentsActive(
      content::WebContents* contents) {
@@ -31,9 +35,11 @@
    return browser_->GetTabStripModel()->GetActiveWebContents() == contents;
  }
  
+diff --git a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc
+index b4062b8f0e..c269c2291f 100644
 --- a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc
 +++ b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc
-@@ -103,6 +103,10 @@
+@@ -103,6 +103,10 @@ bool EmbedderTabHooks::HandleContextMenu(
    return false;
  }
  
@@ -44,9 +50,11 @@
  bool EmbedderTabHooks::RunFileChooser(
      content::RenderFrameHost* frame,
      scoped_refptr<content::FileSelectListener> listener,
+diff --git a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h
+index 649f77cbb4..f139ef3a9c 100644
 --- a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h
 +++ b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h
-@@ -63,6 +63,10 @@
+@@ -63,6 +63,10 @@ class EmbedderTabHooks : public base::SupportsUserData::Data {
    // Whether the embedder shows its own menu for a right-click in the page.
    virtual bool HandleContextMenu(content::RenderFrameHost& frame,
                                   const content::ContextMenuParams& params);
@@ -57,31 +65,33 @@
    // Whether the embedder shows the file chooser the page asks for.
    virtual bool RunFileChooser(content::RenderFrameHost* frame,
                                scoped_refptr<content::FileSelectListener> listener,
+diff --git a/content/browser/web_contents/web_contents_impl.cc b/content/browser/web_contents/web_contents_impl.cc
+index a2638c29d4..06899eb2a0 100644
 --- a/content/browser/web_contents/web_contents_impl.cc
 +++ b/content/browser/web_contents/web_contents_impl.cc
-@@ -9102,7 +9102,11 @@
+@@ -9114,7 +9114,11 @@ void WebContentsImpl::EnumerateDirectory(
    absl::Cleanup cancel_chooser = [&listener] {
      listener->FileSelectionCanceled();
    };
--  if (visibility_ == Visibility::HIDDEN) {
+-  if (visibility_ != Visibility::VISIBLE) {
 +  // A tab out of sight that runs as one on screen, visibly captured, and that
 +  // its embedder counts as in front (as Rise's agent uses tabs) may open one.
-+  if (visibility_ == Visibility::HIDDEN &&
++  if (visibility_ != Visibility::VISIBLE &&
 +      !(IsBeingVisiblyCaptured() && delegate_ &&
 +        delegate_->IsContentsActive(this))) {
-     // Do not allow background tab to open file chooser.
+     // Do not allow background or occluded tab to open file chooser.
      return;
    }
-@@ -9934,7 +9938,11 @@
+@@ -9946,7 +9950,11 @@ void WebContentsImpl::RunFileChooser(
    absl::Cleanup cancel_chooser = [&listener] {
      listener->FileSelectionCanceled();
    };
--  if (visibility_ == Visibility::HIDDEN) {
+-  if (visibility_ != Visibility::VISIBLE) {
 +  // A tab out of sight that runs as one on screen, visibly captured, and that
 +  // its embedder counts as in front (as Rise's agent uses tabs) may open one.
-+  if (visibility_ == Visibility::HIDDEN &&
++  if (visibility_ != Visibility::VISIBLE &&
 +      !(IsBeingVisiblyCaptured() && delegate_ &&
 +        delegate_->IsContentsActive(this))) {
-     // Do not allow background tab to open file chooser.
+     // Do not allow background or occluded tab to open file chooser.
      return;
    }

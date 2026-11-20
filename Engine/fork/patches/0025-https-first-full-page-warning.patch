@@ -1,6 +1,8 @@
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index ce04d38c66..2e67c18a66 100644
 --- a/chrome/browser/rise/rise_bridge.mm
 +++ b/chrome/browser/rise/rise_bridge.mm
-@@ -1683,6 +1683,10 @@
+@@ -1683,6 +1683,10 @@ + (BOOL)startWithCachePath:(NSString*)cachePath keychain:(BOOL)keychain {
    arguments.push_back("--no-startup-window");
    arguments.push_back("--no-first-run");
    arguments.push_back("--no-default-browser-check");

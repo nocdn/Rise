@@ -1,0 +1,47 @@
+diff --git a/chrome/browser/resources/settings/appearance_page/appearance_page.ts b/chrome/browser/resources/settings/appearance_page/appearance_page.ts
+--- a/chrome/browser/resources/settings/appearance_page/appearance_page.ts
++++ b/chrome/browser/resources/settings/appearance_page/appearance_page.ts
+@@ -71,8 +71,6 @@
+ 
+ export interface SettingsAppearancePageElement {
+   $: {
+-    colorSchemeModeRow: HTMLElement,
+-    colorSchemeModeSelect: HTMLSelectElement,
+     defaultFontSize: SettingsDropdownMenuElement,
+     zoomLevel: HTMLSelectElement,
+   };
+@@ -615,9 +613,10 @@
+     return colorSchemeMode === this.selectedColorSchemeMode_;
+   }
+ 
+-  protected onColorSchemeModeChange_(): void {
++  protected onColorSchemeModeChange_(event: Event): void {
++    const select = event.target as HTMLSelectElement;
+     this.colorSchemeModeBrowserProxy_.handler.setColorSchemeMode(
+-        parseInt(this.$.colorSchemeModeSelect.value, 10) as ColorSchemeMode);
++        parseInt(select.value, 10) as ColorSchemeMode);
+   }
+ 
+   protected onZoomLevelChange_() {
+diff --git a/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.html.ts b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.html.ts
+--- a/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.html.ts
++++ b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.html.ts
+@@ -19,14 +19,16 @@
+           System Settings &gt; Keyboard &gt; Keyboard Shortcuts &gt; App Shortcuts</a>.
+       </div>
+       ${this.error_ ? html`<div class="error" role="alert">${this.error_}</div>` : ''}
+-      ${this.loading_ ? Array.from({length: 10}, () => html`
++      ${this.loading_ ? html`
++        ${Array.from({length: 10}, () => html`
+         <div class="cr-row command-row" aria-hidden="true">
+           <div class="command-details cr-padded-text">
+             <div class="loading-block loading-name"></div>
+             <div class="loading-shortcuts"><div class="loading-block loading-chip"></div><div class="loading-block loading-chip"></div></div>
+           </div>
+           <div class="separator"></div><div class="actions"><div class="loading-block loading-action"></div></div>
+-        </div>`) : ''}
++        </div>`)}
++      ` : ''}
+       ${this.filteredCommands_().map(command => html`
+         <div class="cr-row command-row" data-command="${command.id}">
+           <div class="command-details cr-padded-text">

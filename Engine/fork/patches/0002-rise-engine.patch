@@ -147,10 +147,10 @@ index 6dbc3aeff3..11bfa62335 100644
 +_OBJC_CLASS_$_RCExtensions
 +_OBJC_METACLASS_$_RCExtensions
 diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
-index 33a6696fd8..4cc5ec9a9f 100644
+index f0f529901a..e8c9c7b2bd 100644
 --- a/chrome/browser/BUILD.gn
 +++ b/chrome/browser/BUILD.gn
-@@ -1546,6 +1546,8 @@ source_set("core") {
+@@ -1827,6 +1827,8 @@ source_set("core") {
        "//chrome/browser/enterprise/connectors/device_trust/key_management/core/mac",
        "//chrome/browser/mac",
        "//chrome/browser/mac:impl",
@@ -177,7 +177,7 @@ index 62f68487c9..9a74299855 100644
  
  // DEPRECATED: use lastProfileIfLoaded instead.
 diff --git a/chrome/browser/app_controller_mac.mm b/chrome/browser/app_controller_mac.mm
-index ead883ef95..4e2097a7bd 100644
+index f251259f82..9e1d0fffdc 100644
 --- a/chrome/browser/app_controller_mac.mm
 +++ b/chrome/browser/app_controller_mac.mm
 @@ -791,6 +791,7 @@ @implementation AppController {
@@ -327,7 +327,7 @@ index ead883ef95..4e2097a7bd 100644
    StartupTabs tabs;
    tabs.emplace_back(gurl, /*is_untrusted_launch=*/true);
 diff --git a/chrome/browser/chrome_browser_application_mac.mm b/chrome/browser/chrome_browser_application_mac.mm
-index 823b03b27c..b9c7c89bb0 100644
+index bf09ca8ff0..64d867f6c5 100644
 --- a/chrome/browser/chrome_browser_application_mac.mm
 +++ b/chrome/browser/chrome_browser_application_mac.mm
 @@ -148,7 +148,11 @@ + (void)initialize {
@@ -344,10 +344,10 @@ index 823b03b27c..b9c7c89bb0 100644
  
  - (void)orderFrontCharacterPalette:sender {
 diff --git a/chrome/browser/chrome_browser_main.cc b/chrome/browser/chrome_browser_main.cc
-index b2619baa8f..41d4cd4a22 100644
+index 9aa6f338c7..82b13620d0 100644
 --- a/chrome/browser/chrome_browser_main.cc
 +++ b/chrome/browser/chrome_browser_main.cc
-@@ -224,6 +224,7 @@
+@@ -227,6 +227,7 @@
  #include "chrome/browser/infobars/browser_infobar_manager.h"
  #include "chrome/browser/infobars/infobar_features.h"
  #include "chrome/browser/mac/chrome_browser_main_extra_parts_mac.h"
@@ -355,7 +355,7 @@ index b2619baa8f..41d4cd4a22 100644
  #include "chrome/browser/shutdown_watchdog_mac.h"
  #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
  #include "chrome/browser/ui/browser_window/public/global_browser_collection.h"
-@@ -821,6 +822,8 @@ std::unique_ptr<content::BrowserMainParts> ChromeBrowserMainParts::Create(
+@@ -822,6 +823,8 @@ std::unique_ptr<content::BrowserMainParts> ChromeBrowserMainParts::Create(
  
  #if BUILDFLAG(IS_MAC)
    main_parts->AddParts(std::make_unique<ChromeBrowserMainExtraPartsMac>());
@@ -387,10 +387,10 @@ index b269f1610a..91d841073b 100644
  
    return content::RESULT_CODE_NORMAL_EXIT;
 diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
-index 2e0f287290..44fca06364 100644
+index 565bd580ba..459b7bf844 100644
 --- a/chrome/browser/chrome_content_browser_client.cc
 +++ b/chrome/browser/chrome_content_browser_client.cc
-@@ -198,6 +198,7 @@
+@@ -206,6 +206,7 @@
  #include "chrome/browser/translate/translate_service.h"
  #include "chrome/browser/ui/blocked_content/blocked_window_params.h"
  #include "chrome/browser/ui/blocked_content/chrome_popup_navigation_delegate.h"
@@ -398,7 +398,7 @@ index 2e0f287290..44fca06364 100644
  #include "chrome/browser/ui/color/chrome_color_id.h"
  #include "chrome/browser/ui/login/http_auth_coordinator.h"
  #include "chrome/browser/ui/navigator/browser_navigator.h"
-@@ -4995,6 +4996,11 @@ void ChromeContentBrowserClient::OverrideWebPreferences(
+@@ -5084,6 +5085,11 @@ void ChromeContentBrowserClient::OverrideWebPreferences(
  
    web_prefs->is_xslt_deprecation_banner_suppressed =
        prefs->GetBoolean(prefs::kXSLTDeprecationBannerSuppressed);
@@ -410,7 +410,7 @@ index 2e0f287290..44fca06364 100644
  }
  
  bool ChromeContentBrowserClientParts::OverrideWebPreferencesAfterNavigation(
-@@ -6798,6 +6804,18 @@ void ChromeContentBrowserClient::WillCreateURLLoaderFactory(
+@@ -6931,6 +6937,18 @@ void ChromeContentBrowserClient::WillCreateURLLoaderFactory(
      network::mojom::URLLoaderFactoryOverridePtr* factory_override,
      scoped_refptr<base::SequencedTaskRunner> navigation_response_task_runner,
      bool is_for_network_service) {
@@ -430,7 +430,7 @@ index 2e0f287290..44fca06364 100644
    auto* web_request_api =
        extensions::BrowserContextKeyedAPIFactory<extensions::WebRequestAPI>::Get(
 diff --git a/chrome/browser/download/download_target_determiner.cc b/chrome/browser/download/download_target_determiner.cc
-index 0e2ffe2ae7..f98f0fbfac 100644
+index 3fc1b3d2c0..cffb9cb5ab 100644
 --- a/chrome/browser/download/download_target_determiner.cc
 +++ b/chrome/browser/download/download_target_determiner.cc
 @@ -10,6 +10,7 @@
@@ -441,15 +441,15 @@ index 0e2ffe2ae7..f98f0fbfac 100644
  #include "base/location.h"
  #include "base/metrics/histogram_functions.h"
  #include "base/rand_util.h"
-@@ -28,6 +29,7 @@
- #include "chrome/browser/history/history_service_factory.h"
+@@ -29,6 +30,7 @@
  #include "chrome/browser/profiles/profile.h"
  #include "chrome/browser/safe_browsing/safe_browsing_metrics_collector_factory.h"
+ #include "chrome/browser/supervised_user/supervised_user_url_filtering_service_factory.h"
 +#include "chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h"
  #include "chrome/common/pref_names.h"
  #include "chrome/grit/generated_resources.h"
  #include "components/download/public/common/download_interrupt_reasons.h"
-@@ -646,6 +648,27 @@ DownloadTargetDeterminer::DoRequestConfirmation() {
+@@ -712,6 +714,27 @@ DownloadTargetDeterminer::DoRequestConfirmation() {
      }
  #endif
  
@@ -478,7 +478,7 @@ index 0e2ffe2ae7..f98f0fbfac 100644
      if (confirmation_reason_ != DownloadConfirmationReason::NONE) {
        base::FilePath sanitized_path = virtual_path_;
 diff --git a/chrome/browser/extensions/browser_extension_window_controller.cc b/chrome/browser/extensions/browser_extension_window_controller.cc
-index b48c0452f3..80e4a08fd2 100644
+index 497220fc72..d0d9173771 100644
 --- a/chrome/browser/extensions/browser_extension_window_controller.cc
 +++ b/chrome/browser/extensions/browser_extension_window_controller.cc
 @@ -16,6 +16,7 @@
@@ -504,10 +504,10 @@ index b48c0452f3..80e4a08fd2 100644
           allow_dev_tools_windows;
  }
 diff --git a/chrome/browser/extensions/chrome_extension_function_details.cc b/chrome/browser/extensions/chrome_extension_function_details.cc
-index 9cfacb4358..cf91f21cc2 100644
+index 1e1d95cf28..bbaf153b01 100644
 --- a/chrome/browser/extensions/chrome_extension_function_details.cc
 +++ b/chrome/browser/extensions/chrome_extension_function_details.cc
-@@ -60,10 +60,15 @@ WindowController* ChromeExtensionFunctionDetails::GetCurrentWindowController()
+@@ -61,10 +61,15 @@ WindowController* ChromeExtensionFunctionDetails::GetCurrentWindowController()
    WindowController* window_controller = nullptr;
    ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
        [&](BrowserWindowInterface* browser) {
@@ -528,7 +528,7 @@ index 9cfacb4358..cf91f21cc2 100644
          }
          return true;  // Continue iterating.
 diff --git a/chrome/browser/extensions/extension_uninstall_dialog.cc b/chrome/browser/extensions/extension_uninstall_dialog.cc
-index 72148d4bc2..e1e96d2efc 100644
+index 07ced68d81..8128ba7e3f 100644
 --- a/chrome/browser/extensions/extension_uninstall_dialog.cc
 +++ b/chrome/browser/extensions/extension_uninstall_dialog.cc
 @@ -6,6 +6,7 @@
@@ -598,10 +598,10 @@ index 7d4532e1d9..48efbf402d 100644
    // Do not reorder this enum as it is used in UMA histograms.
    enum CloseAction {
 diff --git a/chrome/browser/extensions/tab_helper.cc b/chrome/browser/extensions/tab_helper.cc
-index 33a4d3ac7d..87f3cafd42 100644
+index 721cb94673..866e68f3bd 100644
 --- a/chrome/browser/extensions/tab_helper.cc
 +++ b/chrome/browser/extensions/tab_helper.cc
-@@ -327,7 +327,14 @@ void TabHelper::WebContentsDestroyed() {
+@@ -330,7 +330,14 @@ void TabHelper::WebContentsDestroyed() {
  }
  
  WindowController* TabHelper::GetExtensionWindowController() {
@@ -618,7 +618,7 @@ index 33a4d3ac7d..87f3cafd42 100644
  
  void TabHelper::OnExtensionLoaded(content::BrowserContext* browser_context,
 diff --git a/chrome/browser/external_protocol/external_protocol_handler.cc b/chrome/browser/external_protocol/external_protocol_handler.cc
-index 1f269b2237..cd4986290c 100644
+index 1c59be7919..3c24777300 100644
 --- a/chrome/browser/external_protocol/external_protocol_handler.cc
 +++ b/chrome/browser/external_protocol/external_protocol_handler.cc
 @@ -30,6 +30,7 @@
@@ -631,7 +631,7 @@ index 1f269b2237..cd4986290c 100644
  #include "components/prefs/pref_service.h"
 @@ -524,6 +525,13 @@ void ExternalProtocolHandler::LaunchUrl(
  ) {
-   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+   CHECK_CURRENTLY_ON(content::BrowserThread::UI, base::NotFatalUntil::M161);
  
 +  // An embedder (Rise) asks about every link for another app its own way.
 +  if (EmbedderTabHooks* hooks =
@@ -658,10 +658,10 @@ index ee322f39a9..8b7dc8ef9c 100644
      (content::RenderWidgetHost*)renderWidgetHost;
  
 diff --git a/chrome/browser/renderer_host/chrome_render_widget_host_view_mac_delegate.mm b/chrome/browser/renderer_host/chrome_render_widget_host_view_mac_delegate.mm
-index 3a0283de31..13f045738f 100644
+index 0da54369fc..388b221148 100644
 --- a/chrome/browser/renderer_host/chrome_render_widget_host_view_mac_delegate.mm
 +++ b/chrome/browser/renderer_host/chrome_render_widget_host_view_mac_delegate.mm
-@@ -37,6 +37,11 @@
+@@ -36,6 +36,11 @@
  #include "services/service_manager/public/cpp/interface_provider.h"
  #include "ui/base/window_open_disposition.h"
  
@@ -673,8 +673,8 @@ index 3a0283de31..13f045738f 100644
  @interface ChromeRenderWidgetHostViewMacDelegate () <HistorySwiperDelegate>
  
  @property(readonly) content::WebContents* webContents;
-@@ -58,16 +63,22 @@ @implementation ChromeRenderWidgetHostViewMacDelegate {
-   BOOL _resigningFirstResponder;
+@@ -53,16 +58,22 @@ @implementation ChromeRenderWidgetHostViewMacDelegate {
+   HistorySwiper* __strong _historySwiper;
  }
  
 ++ (void)setHistorySwipesDisabled:(BOOL)disabled {
@@ -763,7 +763,7 @@ index 0000000000..aefb5133bc
 +}
 diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
 new file mode 100644
-index 0000000000..19ff73b805
+index 0000000000..ee52bac46a
 --- /dev/null
 +++ b/chrome/browser/rise/RiseChromium.h
 @@ -0,0 +1,477 @@
@@ -6099,10 +6099,10 @@ index 0000000000..be29f012bb
 +
 +#endif  // CHROME_BROWSER_RISE_RISE_BROWSER_WINDOW_H_
 diff --git a/chrome/browser/ui/browser.cc b/chrome/browser/ui/browser.cc
-index 07de580deb..900819bca4 100644
+index 4e9be10d04..477076cb4b 100644
 --- a/chrome/browser/ui/browser.cc
 +++ b/chrome/browser/ui/browser.cc
-@@ -284,6 +284,7 @@ Browser::Browser(BrowserWindowCreateParams params)
+@@ -282,6 +282,7 @@ Browser::Browser(BrowserWindowCreateParams params)
    const bool user_gesture = params.from_user_gesture;
    const bool in_tab_dragging = params.in_tab_dragging;
    BrowserWindow* const custom_window = params.window;
@@ -6110,7 +6110,7 @@ index 07de580deb..900819bca4 100644
  
    // Constructed first so that downstream features and window setup (e.g.
    // BrowserWindowFeatures and the window sizer) can query the creation and
-@@ -306,7 +307,7 @@ Browser::Browser(BrowserWindowCreateParams params)
+@@ -304,7 +305,7 @@ Browser::Browser(BrowserWindowCreateParams params)
    features_ = std::make_unique<BrowserWindowFeatures>();
    features_->Init(this);
  
@@ -6120,7 +6120,7 @@ index 07de580deb..900819bca4 100644
    }
    window_ =
 diff --git a/chrome/browser/ui/browser_web_contents_delegate/BUILD.gn b/chrome/browser/ui/browser_web_contents_delegate/BUILD.gn
-index d4dacf5897..8f07451b35 100644
+index 7dbf9fb2fd..cffa7d8e6b 100644
 --- a/chrome/browser/ui/browser_web_contents_delegate/BUILD.gn
 +++ b/chrome/browser/ui/browser_web_contents_delegate/BUILD.gn
 @@ -10,6 +10,8 @@ if (!is_android) {
@@ -6130,13 +6130,13 @@ index d4dacf5897..8f07451b35 100644
 +      "embedder_tab_hooks.cc",
 +      "embedder_tab_hooks.h",
      ]
-     public_deps = [ "//chrome/browser:browser_public_dependencies" ]
      deps = [
+       "//base",
 diff --git a/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc b/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc
-index 3bc40bcc91..6975dbb94d 100644
+index 3c3aaff4f9..3fc4f14c87 100644
 --- a/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc
 +++ b/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.cc
-@@ -32,6 +32,7 @@
+@@ -33,6 +33,7 @@
  #include "chrome/browser/ui/browser_commands.h"
  #include "chrome/browser/ui/browser_tabstrip.h"
  #include "chrome/browser/ui/browser_ui_controller/browser_ui_controller.h"
@@ -6144,7 +6144,7 @@ index 3bc40bcc91..6975dbb94d 100644
  #include "chrome/browser/ui/browser_window.h"
  #include "chrome/browser/ui/browser_window/public/browser_window_features.h"
  #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
-@@ -327,8 +328,14 @@ bool BrowserWebContentsDelegate::HandleKeyboardEvent(
+@@ -366,8 +367,14 @@ bool BrowserWebContentsDelegate::HandleKeyboardEvent(
      const input::NativeWebKeyboardEvent& event) {
    DevToolsWindow* devtools_window =
        DevToolsWindow::GetInstanceForInspectedWebContents(source);
@@ -6161,8 +6161,8 @@ index 3bc40bcc91..6975dbb94d 100644
  }
  
  void BrowserWebContentsDelegate::RequestPointerLock(
-@@ -541,6 +548,23 @@ content::WebContents* BrowserWebContentsDelegate::OpenURLFromTab(
-   DCHECK(params.Valid());
+@@ -574,6 +581,23 @@ content::WebContents* BrowserWebContentsDelegate::OpenURLFromTab(
+   CHECK(params.Valid(), base::NotFatalUntil::M162);
  #endif
  
 +  // An embedder's tab opening something elsewhere (a new tab or window).
@@ -6184,11 +6184,11 @@ index 3bc40bcc91..6975dbb94d 100644
 +
    if ((browser_->GetType() == BrowserWindowInterface::Type::TYPE_DEVTOOLS)) {
      DevToolsWindow* window = DevToolsWindow::AsDevToolsWindow(source);
-     DCHECK(window);
-@@ -672,6 +696,14 @@ content::WebContents* BrowserWebContentsDelegate::AddNewContents(
-     const blink::mojom::WindowFeatures& window_features,
-     bool user_gesture,
-     bool* was_blocked) {
+     CHECK(window, base::NotFatalUntil::M162);
+@@ -721,6 +745,14 @@ content::WebContents* BrowserWebContentsDelegate::AddNewContents(
+     }
+   }
+ 
 +  // A window an embedder's tab opened, for the embedder to place.
 +  if (EmbedderTabHooks* hooks = EmbedderTabHooks::FromWebContents(source)) {
 +    content::WebContents* opened = new_contents.get();
@@ -6200,7 +6200,7 @@ index 3bc40bcc91..6975dbb94d 100644
    FullscreenController* fullscreen_controller =
        exclusive_access_manager_->fullscreen_controller();
  #if BUILDFLAG(IS_MAC)
-@@ -796,6 +828,10 @@ void BrowserWebContentsDelegate::SetContentsBounds(content::WebContents* source,
+@@ -843,6 +875,10 @@ void BrowserWebContentsDelegate::SetContentsBounds(content::WebContents* source,
  
  void BrowserWebContentsDelegate::UpdateTargetURL(content::WebContents* source,
                                                   const GURL& url) {
@@ -6211,7 +6211,7 @@ index 3bc40bcc91..6975dbb94d 100644
    std::vector<StatusBubble*> status_bubbles =
        browser_ui_controller_->GetStatusBubbles();
    for (StatusBubble* status_bubble : status_bubbles) {
-@@ -1113,6 +1149,12 @@ void BrowserWebContentsDelegate::RendererResponsive(
+@@ -1160,6 +1196,12 @@ void BrowserWebContentsDelegate::RendererResponsive(
  content::JavaScriptDialogManager*
  BrowserWebContentsDelegate::GetJavaScriptDialogManager(
      content::WebContents* source) {
@@ -6224,7 +6224,7 @@ index 3bc40bcc91..6975dbb94d 100644
    return javascript_dialogs::TabModalDialogManager::FromWebContents(source);
  }
  
-@@ -1123,10 +1165,23 @@ bool BrowserWebContentsDelegate::GuestSaveFrame(
+@@ -1170,10 +1212,23 @@ bool BrowserWebContentsDelegate::GuestSaveFrame(
    return guest_view && guest_view->PluginDoSave();
  }
  
@@ -6248,7 +6248,7 @@ index 3bc40bcc91..6975dbb94d 100644
    FileSelectHelper::RunFileChooser(render_frame_host, std::move(listener),
                                     params);
  }
-@@ -1191,6 +1246,12 @@ bool BrowserWebContentsDelegate::CanEnterFullscreenModeForTab(
+@@ -1238,6 +1293,12 @@ bool BrowserWebContentsDelegate::CanEnterFullscreenModeForTab(
      return false;
    }
  
@@ -6261,7 +6261,7 @@ index 3bc40bcc91..6975dbb94d 100644
    return exclusive_access_manager_->fullscreen_controller()
        ->CanEnterFullscreenModeForTab(requesting_frame);
  }
-@@ -1198,12 +1259,23 @@ bool BrowserWebContentsDelegate::CanEnterFullscreenModeForTab(
+@@ -1245,12 +1306,23 @@ bool BrowserWebContentsDelegate::CanEnterFullscreenModeForTab(
  void BrowserWebContentsDelegate::EnterFullscreenModeForTab(
      content::RenderFrameHost* requesting_frame,
      const blink::mojom::FullscreenOptions& options) {
@@ -6285,7 +6285,7 @@ index 3bc40bcc91..6975dbb94d 100644
    exclusive_access_manager_->fullscreen_controller()->ExitFullscreenModeForTab(
        web_contents);
  }
-@@ -1217,6 +1289,15 @@ bool BrowserWebContentsDelegate::IsFullscreenForTabOrPending(
+@@ -1264,6 +1336,15 @@ bool BrowserWebContentsDelegate::IsFullscreenForTabOrPending(
  
  content::FullscreenState BrowserWebContentsDelegate::GetFullscreenState(
      const content::WebContents* web_contents) const {
@@ -6302,10 +6302,10 @@ index 3bc40bcc91..6975dbb94d 100644
        web_contents);
  }
 diff --git a/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.h b/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.h
-index 360d1abf0b..a7c2976561 100644
+index cb68c459f3..7424e5d59b 100644
 --- a/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.h
 +++ b/chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.h
-@@ -195,6 +195,8 @@ class BrowserWebContentsDelegate : public content::WebContentsDelegate {
+@@ -193,6 +193,8 @@ class BrowserWebContentsDelegate : public content::WebContentsDelegate {
    content::JavaScriptDialogManager* GetJavaScriptDialogManager(
        content::WebContents* source) override;
    bool GuestSaveFrame(content::WebContents* guest_web_contents) override;
@@ -6562,10 +6562,10 @@ index 0000000000..e0d8b8695d
 +
 +#endif  // CHROME_BROWSER_UI_BROWSER_WEB_CONTENTS_DELEGATE_EMBEDDER_TAB_HOOKS_H_
 diff --git a/chrome/browser/ui/browser_window.h b/chrome/browser/ui/browser_window.h
-index 6e4b4388d9..bf7abea18a 100644
+index 3b0e66f8a9..0764fdd96d 100644
 --- a/chrome/browser/ui/browser_window.h
 +++ b/chrome/browser/ui/browser_window.h
-@@ -515,6 +515,11 @@ class BrowserWindow : public ui::BaseWindow {
+@@ -501,6 +501,11 @@ class BrowserWindow : public ui::BaseWindow {
    // https://crbug.com/360163254.
    virtual BrowserView* AsBrowserView() = 0;
  
@@ -6578,10 +6578,10 @@ index 6e4b4388d9..bf7abea18a 100644
    friend struct BrowserWindowDeleter;
    // Deletes `this`. Note BrowserWindow will no longer be valid after this
 diff --git a/chrome/browser/ui/browser_window/public/create_browser_window.h b/chrome/browser/ui/browser_window/public/create_browser_window.h
-index 6ecba965f8..f743dfabb7 100644
+index 0bf187196b..4bbcb15675 100644
 --- a/chrome/browser/ui/browser_window/public/create_browser_window.h
 +++ b/chrome/browser/ui/browser_window/public/create_browser_window.h
-@@ -146,6 +146,10 @@ struct BrowserWindowCreateParams {
+@@ -148,6 +148,10 @@ struct BrowserWindowCreateParams {
    // default. Intended for testing.
    raw_ptr<BrowserWindow, DanglingUntriaged> window = nullptr;
  
@@ -6593,7 +6593,7 @@ index 6ecba965f8..f743dfabb7 100644
    std::string user_title;
  
 diff --git a/chrome/browser/ui/extensions/extension_uninstall_dialog_impl.cc b/chrome/browser/ui/extensions/extension_uninstall_dialog_impl.cc
-index 9bc1098150..26e6dabc3d 100644
+index a31c6083e8..068c4cc7b2 100644
 --- a/chrome/browser/ui/extensions/extension_uninstall_dialog_impl.cc
 +++ b/chrome/browser/ui/extensions/extension_uninstall_dialog_impl.cc
 @@ -71,6 +71,26 @@ ExtensionUninstallDialogImpl::~ExtensionUninstallDialogImpl() {
@@ -6627,7 +6627,7 @@ index 9bc1098150..26e6dabc3d 100644
  }
  
  void ExtensionUninstallDialogImpl::Close() {
--  DCHECK(dialog_model_);
+-  CHECK(dialog_model_, base::NotFatalUntil::M162);
 +  // The embedder's prompt answers on its own.
 +  if (!dialog_model_) {
 +    return;
@@ -6660,10 +6660,10 @@ index c0157e893f..d8494c52fa 100644
    if (status == base::TERMINATION_STATUS_EVICTED_FOR_MEMORY) {
      // If the renderer was terminated to prevent an browser OOM crash, discard
 diff --git a/chrome/browser/ui/unload_controller.cc b/chrome/browser/ui/unload_controller.cc
-index fd25e44754..ae2e25df2b 100644
+index 9cefffb0e2..2b87d66e05 100644
 --- a/chrome/browser/ui/unload_controller.cc
 +++ b/chrome/browser/ui/unload_controller.cc
-@@ -628,6 +628,11 @@ void UnloadController::OnTabStripModelChanged(
+@@ -644,6 +644,11 @@ void UnloadController::OnTabStripModelChanged(
  }
  
  void UnloadController::TabStripEmpty() {
@@ -6676,7 +6676,7 @@ index fd25e44754..ae2e25df2b 100644
    // browser before it closes.
    if (state_ == State::kIdle) {
 diff --git a/chrome/browser/ui/views/bubble_anchor_util_views.cc b/chrome/browser/ui/views/bubble_anchor_util_views.cc
-index bd418d5445..f50ba7169f 100644
+index 2d36e44a69..eb264b10ae 100644
 --- a/chrome/browser/ui/views/bubble_anchor_util_views.cc
 +++ b/chrome/browser/ui/views/bubble_anchor_util_views.cc
 @@ -8,6 +8,8 @@
@@ -6687,7 +6687,7 @@ index bd418d5445..f50ba7169f 100644
 +#include "content/public/browser/web_contents.h"
  #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
  #include "chrome/browser/ui/bubble_anchor_util.h"
- #include "chrome/browser/ui/views/frame/app_menu_button.h"
+ #include "chrome/browser/ui/location_bar/location_bar_override_data.h"
 @@ -36,8 +38,11 @@ AnchorConfiguration GetPageInfoAnchorConfiguration(
      BrowserWindowInterface* browser,
      Anchor anchor) {
@@ -6700,10 +6700,10 @@ index bd418d5445..f50ba7169f 100644
 +  }
 +  auto* location_bar_view = browser_view->GetLocationBarView();
  
-   if (base::FeatureList::IsEnabled(
-           content_settings::features::kLeftHandSideActivityIndicators) &&
-@@ -183,6 +188,17 @@ gfx::Rect GetPageInfoAnchorRect(BrowserWindowInterface* browser) {
-   DCHECK(GetPageInfoAnchorConfiguration(browser).anchor.IsNull());
+   if (location_bar_view) {
+     auto* permission_dashboard_view =
+@@ -191,6 +196,17 @@ gfx::Rect GetPageInfoAnchorRect(BrowserWindowInterface* browser) {
+         base::NotFatalUntil::M162);
  
    BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
 +  // An embedder's window: the top left of the page, as for a window without a
@@ -6736,7 +6736,7 @@ index ad579aa818..2fa56bd6b3 100644
      const BrowserWindowInterface* browser) {
    // See https://crbug.com/496674143 for the umbrella effort to remove
 diff --git a/chrome/browser/ui/views/storage/storage_pressure_bubble_view.cc b/chrome/browser/ui/views/storage/storage_pressure_bubble_view.cc
-index e055aa36ff..d7d53987c1 100644
+index 116b292f45..1166376628 100644
 --- a/chrome/browser/ui/views/storage/storage_pressure_bubble_view.cc
 +++ b/chrome/browser/ui/views/storage/storage_pressure_bubble_view.cc
 @@ -45,6 +45,10 @@ void StoragePressureBubbleView::ShowBubble(const url::Origin& origin) {
@@ -6820,10 +6820,10 @@ index 0000000000..1221ad8fe0
 +      => (mojo_base.mojom.Value reply, string? error);
 +};
 diff --git a/chrome/renderer/BUILD.gn b/chrome/renderer/BUILD.gn
-index df80dfe84a..a069e7e80d 100644
+index dab2e49bb9..5425721b24 100644
 --- a/chrome/renderer/BUILD.gn
 +++ b/chrome/renderer/BUILD.gn
-@@ -243,6 +243,10 @@ static_library("renderer") {
+@@ -247,6 +247,10 @@ static_library("renderer") {
      deps += [ "//components/webapps/isolated_web_apps:scheme" ]
    }
  
@@ -6833,12 +6833,12 @@ index df80dfe84a..a069e7e80d 100644
 +
    data_deps = [ "//tools/v8_context_snapshot" ]
  
-   configs += [ "//build/config/compiler:wexit_time_destructors" ]
+   if (enable_bound_session_credentials) {
 diff --git a/chrome/renderer/chrome_content_renderer_client.cc b/chrome/renderer/chrome_content_renderer_client.cc
-index d460c0fb69..2071421df5 100644
+index 792412915d..028e01889c 100644
 --- a/chrome/renderer/chrome_content_renderer_client.cc
 +++ b/chrome/renderer/chrome_content_renderer_client.cc
-@@ -216,6 +216,10 @@
+@@ -213,6 +213,10 @@
  #include "chrome/renderer/media/chrome_speech_recognition_client.h"
  #endif  // BUILDFLAG(ENABLE_SPEECH_SERVICE)
  
@@ -6849,7 +6849,7 @@ index d460c0fb69..2071421df5 100644
  #if BUILDFLAG(IS_WIN)
  #include "chrome/renderer/render_frame_font_family_accessor.h"
  #endif
-@@ -656,6 +660,10 @@ void ChromeContentRendererClient::RenderFrameCreated(
+@@ -657,6 +661,10 @@ void ChromeContentRendererClient::RenderFrameCreated(
    service_manager::BinderRegistry* registry = render_frame_observer->registry();
  
    new prerender::NoStatePrefetchRenderFrameObserver(render_frame);
@@ -6860,7 +6860,7 @@ index d460c0fb69..2071421df5 100644
  
    auto content_settings_delegate =
        std::make_unique<ChromeContentSettingsAgentDelegate>(render_frame);
-@@ -1487,6 +1495,12 @@ ChromeContentRendererClient::CreateSpeechRecognitionClient(
+@@ -1489,6 +1497,12 @@ ChromeContentRendererClient::CreateSpeechRecognitionClient(
  
  void ChromeContentRendererClient::RunScriptsAtDocumentStart(
      content::RenderFrame* render_frame) {

@@ -1,6 +1,8 @@
+diff --git a/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.cc b/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.cc
+index c92372e019..768c21a9d2 100644
 --- a/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.cc
 +++ b/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.cc
-@@ -84,8 +84,6 @@
+@@ -83,8 +83,6 @@ constexpr int kContentSettingIconSize = 16;
  // The height of the controls bar at the top of the window: Rise's, a little
  // taller than Chrome's 34 to fit its buttons.
  constexpr int kTopControlsHeight = rise_pip::kTopBarHeight;
@@ -9,7 +11,7 @@
  
  constexpr int kResizeBorder = 10;
  constexpr int kResizeAreaCornerSize = 16;
-@@ -240,6 +238,9 @@
+@@ -244,6 +242,9 @@ PictureInPictureBrowserFrameView::PictureInPictureBrowserFrameView(
    // animations.
    button_container_view_ = top_bar_container_view_->AddChildView(
        std::make_unique<views::FlexLayoutView>());
@@ -19,7 +21,7 @@
  
    // Creates the content setting models. Currently we only support camera and
    // microphone settings.
-@@ -253,18 +254,10 @@
+@@ -257,18 +258,10 @@ PictureInPictureBrowserFrameView::PictureInPictureBrowserFrameView(
    // Creates the content setting views based on the models.
    for (auto& model : models) {
      model->SetIconSize(kContentSettingIconSize);
@@ -41,9 +43,11 @@
  
      content_setting_views_.push_back(
          button_container_view_->AddChildView(std::move(image_view)));
+diff --git a/chrome/browser/ui/views/frame/rise_pip_top_bar.cc b/chrome/browser/ui/views/frame/rise_pip_top_bar.cc
+index 6b6288fe60..b4f24acf09 100644
 --- a/chrome/browser/ui/views/frame/rise_pip_top_bar.cc
 +++ b/chrome/browser/ui/views/frame/rise_pip_top_bar.cc
-@@ -210,6 +210,53 @@
+@@ -210,6 +210,53 @@ void LocationButton::UpdateBorder() {
  BEGIN_METADATA(LocationButton)
  END_METADATA
  
@@ -97,6 +101,8 @@
  GlyphButton::GlyphButton(Glyph glyph,
                           const gfx::RoundedCornersF& corners,
                           const std::u16string& title,
+diff --git a/chrome/browser/ui/views/frame/rise_pip_top_bar.h b/chrome/browser/ui/views/frame/rise_pip_top_bar.h
+index ac22fcfebb..41c6f10df9 100644
 --- a/chrome/browser/ui/views/frame/rise_pip_top_bar.h
 +++ b/chrome/browser/ui/views/frame/rise_pip_top_bar.h
 @@ -10,6 +10,7 @@
@@ -107,7 +113,7 @@
  #include "chrome/browser/ui/views/location_bar/location_icon_view.h"
  #include "ui/gfx/animation/animation_delegate.h"
  #include "ui/gfx/animation/linear_animation.h"
-@@ -51,7 +52,8 @@
+@@ -51,7 +52,8 @@ class Motion : public gfx::AnimationDelegate {
    void Start(float target, bool spring, base::TimeDelta duration);
    void AnimationProgressed(const gfx::Animation* animation) override;
  
@@ -117,7 +123,7 @@
    base::RepeatingClosure on_step_;
    float from_ = 0, to_ = 0, value_ = 0;
    bool spring_ = false;
-@@ -100,6 +102,31 @@
+@@ -100,6 +102,31 @@ class LocationButton : public LocationIconView {
    ButtonStyle style_;
  };
  
@@ -149,6 +155,8 @@
  // The return and close buttons, with the floating video's arrows and cross.
  class GlyphButton : public views::Button {
    METADATA_HEADER(GlyphButton, views::Button)
+diff --git a/chrome/browser/ui/views/picture_in_picture/pip_top_bar_animation_controller.cc b/chrome/browser/ui/views/picture_in_picture/pip_top_bar_animation_controller.cc
+index 50c9736c6c..242b5d6da5 100644
 --- a/chrome/browser/ui/views/picture_in_picture/pip_top_bar_animation_controller.cc
 +++ b/chrome/browser/ui/views/picture_in_picture/pip_top_bar_animation_controller.cc
 @@ -5,6 +5,7 @@
@@ -159,7 +167,7 @@
  #include <memory>
  
  #include "base/check.h"
-@@ -30,9 +31,13 @@
+@@ -30,9 +31,13 @@ constexpr base::TimeDelta kAnimationDuration = base::Milliseconds(250);
  // The animation durations for the top-right buttons, split into multiple parts
  // because some transitions are delayed. Mirror
  // PictureInPictureBrowserFrameView.
@@ -176,7 +184,7 @@
  constexpr std::array<base::TimeDelta, 3>
      kShowBackToTabButtonAnimationDurations = {kAnimationDuration * 0.4,
                                                kAnimationDuration * 0.4,
-@@ -60,12 +65,13 @@
+@@ -60,12 +65,13 @@ PipTopBarAnimationController::PipTopBarAnimationController(
        close_image_button_(CHECK_DEREF(close_button)),
        content_setting_views_(std::move(content_setting_views)),
        top_bar_color_animation_(this),
@@ -196,7 +204,7 @@
        show_back_to_tab_button_animation_(
            gfx::MultiAnimation::Parts{{kShowBackToTabButtonAnimationDurations[0],
                                        gfx::Tween::Type::ZERO, 0.0, 0.0},
-@@ -114,9 +120,6 @@
+@@ -114,9 +120,6 @@ PipTopBarAnimationController::PipTopBarAnimationController(
    top_bar_color_animation_.SetTweenType(gfx::Tween::LINEAR);
    top_bar_color_animation_.Reset(1.0);
  
@@ -206,7 +214,7 @@
  
    if (back_to_tab_button_) {
      show_back_to_tab_button_animation_.set_continuous(false);
-@@ -170,7 +173,6 @@
+@@ -170,7 +173,6 @@ void PipTopBarAnimationController::SetTopBarActiveStatus(bool active) {
    // (so the camera can slide into the freed space) and together otherwise.
    // Mirrors PictureInPictureBrowserFrameView::UpdateTopBarView.
    if (top_bar_active_) {
@@ -214,20 +222,19 @@
      if (has_visible_content_setting_views) {
        if (back_to_tab_button_) {
          hide_back_to_tab_button_animation_.Stop();
-@@ -181,11 +183,8 @@
+@@ -181,10 +183,7 @@ void PipTopBarAnimationController::SetTopBarActiveStatus(bool active) {
      }
  
      top_bar_color_animation_.Show();
-+    StartCameraSlide(0);
- 
+-
 -    // SlideAnimation needs to be reset if only Show() is called.
 -    move_camera_button_to_left_animation_.Reset(0.0);
 -    move_camera_button_to_left_animation_.Show();
--
++    StartCameraSlide(0);
+ 
      if (has_visible_content_setting_views) {
        if (back_to_tab_button_) {
-         show_back_to_tab_button_animation_.Start();
-@@ -195,8 +194,6 @@
+@@ -195,8 +194,6 @@ void PipTopBarAnimationController::SetTopBarActiveStatus(bool active) {
        show_all_buttons_animation_.Start();
      }
    } else {
@@ -236,7 +243,7 @@
      if (has_visible_content_setting_views) {
        if (back_to_tab_button_) {
          show_back_to_tab_button_animation_.Stop();
-@@ -207,7 +204,7 @@
+@@ -207,7 +204,7 @@ void PipTopBarAnimationController::SetTopBarActiveStatus(bool active) {
      }
  
      top_bar_color_animation_.Hide();
@@ -245,13 +252,10 @@
      if (has_visible_content_setting_views) {
        if (back_to_tab_button_) {
          hide_back_to_tab_button_animation_.Start();
-@@ -216,9 +213,53 @@
-     } else {
-       hide_all_buttons_animation_.Start();
-     }
-+  }
-+}
-+
+@@ -219,6 +216,50 @@ void PipTopBarAnimationController::SetTopBarActiveStatus(bool active) {
+   }
+ }
+ 
 +void PipTopBarAnimationController::StartCameraSlide(float target) {
 +  move_camera_button_to_left_animation_.Stop();
 +  move_camera_button_to_right_animation_.Stop();
@@ -259,7 +263,7 @@
 +  camera_to_ = target;
 +  if (camera_from_ == camera_to_) {
 +    return;
-   }
++  }
 +  if (!gfx::Animation::ShouldRenderRichAnimation()) {
 +    camera_offset_ = camera_to_;
 +    AnimationProgressed(&move_camera_button_to_left_animation_);
@@ -268,8 +272,8 @@
 +  (target > 0 ? move_camera_button_to_right_animation_
 +              : move_camera_button_to_left_animation_)
 +      .Start();
- }
- 
++}
++
 +float PipTopBarAnimationController::CameraOffsetAt(
 +    const gfx::Animation* animation) const {
 +  const auto& linear = *static_cast<const gfx::LinearAnimation*>(animation);
@@ -299,7 +303,7 @@
  bool PipTopBarAnimationController::HasAnyVisibleContentSettingViews() const {
    for (ContentSettingImageView* view : content_setting_views_) {
      if (view->GetVisible()) {
-@@ -289,15 +330,18 @@
+@@ -289,15 +330,18 @@ void PipTopBarAnimationController::AnimationProgressed(
        animation == &move_camera_button_to_right_animation_) {
      // Slide the content-setting icon(s) between their resting position (0) and
      // the space occupied by the (now-hidden) window-control buttons.
@@ -322,9 +326,11 @@
      }
      return;
    }
+diff --git a/chrome/browser/ui/views/picture_in_picture/pip_top_bar_animation_controller.h b/chrome/browser/ui/views/picture_in_picture/pip_top_bar_animation_controller.h
+index 52a86bf553..59284fa984 100644
 --- a/chrome/browser/ui/views/picture_in_picture/pip_top_bar_animation_controller.h
 +++ b/chrome/browser/ui/views/picture_in_picture/pip_top_bar_animation_controller.h
-@@ -127,8 +127,14 @@
+@@ -125,8 +125,14 @@ class PipTopBarAnimationController : public gfx::AnimationDelegate {
    // inactive foreground, the back-to-tab and close buttons fade in or out, and
    // the camera icon slides left or right to fill the space the buttons vacate.
    gfx::SlideAnimation top_bar_color_animation_;

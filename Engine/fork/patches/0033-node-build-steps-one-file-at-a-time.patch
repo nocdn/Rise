@@ -1,80 +1,5 @@
-diff --git a/third_party/devtools-frontend/src/scripts/build/compress_files.js b/third_party/devtools-frontend/src/scripts/build/compress_files.js
---- a/third_party/devtools-frontend/src/scripts/build/compress_files.js
-+++ b/third_party/devtools-frontend/src/scripts/build/compress_files.js
-@@ -90,7 +90,12 @@ async function main(argv) {
-   const fileList = argv[fileListPosition + 1];
-   const fileListContents = await readTextFile(fileList);
-   const files = fileListContents.split(/\s+/).filter(Boolean);
--  await Promise.all(files.map(filename => filename.trim()).map(compressFile));
-+  // Rise: one file at a time, meant to stop SentinelOne killing node for reading
-+  // every DevTools file at once. It doesn't: DevTools' build still gets node
-+  // killed (docs/EngineRebuild.md). It does no harm, so it stays.
-+  for (const filename of files) {
-+    await compressFile(filename.trim());
-+  }
- 
-   const depfileIndex = argv.indexOf('--depfile');
-   if (depfileIndex !== -1 && files.length > 0) {
-diff --git a/third_party/devtools-frontend/src/scripts/build/generate_css_js_files.js b/third_party/devtools-frontend/src/scripts/build/generate_css_js_files.js
---- a/third_party/devtools-frontend/src/scripts/build/generate_css_js_files.js
-+++ b/third_party/devtools-frontend/src/scripts/build/generate_css_js_files.js
-@@ -45,7 +45,8 @@ async function runMain() {
-   const filenames = files.split(',');
-   const isDebug = isDebugString === 'true';
- 
--  await Promise.all(filenames.map(async fileName => {
-+  // Rise: one file at a time, as in copy-files.js.
-+  for (const fileName of filenames) {
-     const contents = await fs.readFile(path.join(srcDir, fileName), {
-       encoding: 'utf8',
-       flag: 'r',
-@@ -60,7 +61,7 @@ async function runMain() {
-     const generatedFileLocation = path.join(targetGenDir, generatedFileName);
- 
-     await writeIfChanged(generatedFileLocation, newContents);
--  }));
-+  }
- }
- 
- if (import.meta.main) {
-diff --git a/third_party/devtools-frontend/src/scripts/build/ninja/copy-files.js b/third_party/devtools-frontend/src/scripts/build/ninja/copy-files.js
---- a/third_party/devtools-frontend/src/scripts/build/ninja/copy-files.js
-+++ b/third_party/devtools-frontend/src/scripts/build/ninja/copy-files.js
-@@ -8,10 +8,12 @@ import {writeIfChanged} from './write-if-changed.js';
- 
- const [, , src, dest, files] = process.argv;
- 
--await Promise.all(files.split(',').map(async file => {
-+// Rise: one file at a time, meant to stop SentinelOne killing node mid-build.
-+// It doesn't (docs/EngineRebuild.md), but it does no harm, so it stays.
-+for (const file of files.split(',')) {
-   const srcPath = path.join(src, file);
-   const destPath = path.join(dest, file);
- 
-   const srcContents = await fs.readFile(srcPath);
-   await writeIfChanged(destPath, srcContents);
--}));
-+}
-diff --git a/third_party/devtools-frontend/src/scripts/build/ninja/minify-json-files.js b/third_party/devtools-frontend/src/scripts/build/ninja/minify-json-files.js
---- a/third_party/devtools-frontend/src/scripts/build/ninja/minify-json-files.js
-+++ b/third_party/devtools-frontend/src/scripts/build/ninja/minify-json-files.js
-@@ -9,7 +9,8 @@ import {writeIfChanged} from './write-if-changed.js';
- 
- const [, , dest, ...files] = process.argv;
- 
--await Promise.all(files.map(async file => {
-+// Rise: one file at a time, as in copy-files.js.
-+for (const file of files) {
-   const filename = path.basename(file);
-   const destPath = path.join(dest, filename);
- 
-@@ -17,4 +18,4 @@ await Promise.all(files.map(async file => {
-   const srcContents = await fs.readFile(file, 'utf-8');
-   const destContents = JSON.stringify(JSON.parse(srcContents));
-   await writeIfChanged(destPath, destContents);
--}));
-+}
 diff --git a/ui/webui/resources/tools/minify_js.js b/ui/webui/resources/tools/minify_js.js
+index d10517a826..07ffb9824f 100644
 --- a/ui/webui/resources/tools/minify_js.js
 +++ b/ui/webui/resources/tools/minify_js.js
 @@ -90,6 +90,9 @@ async function main() {
@@ -88,3 +13,83 @@ diff --git a/ui/webui/resources/tools/minify_js.js b/ui/webui/resources/tools/mi
 +  }
  }
  main();
+diff --git a/third_party/devtools-frontend/src/scripts/build/compress_files.js b/third_party/devtools-frontend/src/scripts/build/compress_files.js
+index ef663cfdd9..64cefd0b66 100644
+--- a/third_party/devtools-frontend/src/scripts/build/compress_files.js
++++ b/third_party/devtools-frontend/src/scripts/build/compress_files.js
+@@ -166,7 +166,12 @@ async function main() {
+   }
+   const fileListContents = await readTextFile(fileList);
+   const files = fileListContents.split(/\s+/).filter(Boolean);
+-  await Promise.all(files.map(filename => filename.trim()).map(compressFile));
++  // Rise: one file at a time, meant to stop SentinelOne killing node for reading
++  // every DevTools file at once. It doesn't: DevTools' build still gets node
++  // killed (docs/EngineRebuild.md). It does no harm, so it stays.
++  for (const filename of files) {
++    await compressFile(filename.trim());
++  }
+ 
+   if (depfile && files.length > 0) {
+     const firstOutput = (files[0] + '.compressed').replaceAll('\\', '/');
+diff --git a/third_party/devtools-frontend/src/scripts/build/generate_css_js_files.js b/third_party/devtools-frontend/src/scripts/build/generate_css_js_files.js
+index 312c61dca5..97e73b37e6 100644
+--- a/third_party/devtools-frontend/src/scripts/build/generate_css_js_files.js
++++ b/third_party/devtools-frontend/src/scripts/build/generate_css_js_files.js
+@@ -78,7 +78,8 @@ async function runMain() {
+ 
+   const filenames = files.split(',');
+ 
+-  await Promise.all(filenames.map(async fileName => {
++  // Rise: one file at a time, as in copy-files.js.
++  for (const fileName of filenames) {
+     const contents = await fs.readFile(path.join(srcDir, fileName), {
+       encoding: 'utf8',
+       flag: 'r',
+@@ -93,7 +94,7 @@ async function runMain() {
+     const generatedFileLocation = path.join(targetGenDir, generatedFileName);
+ 
+     await writeIfChanged(generatedFileLocation, newContents);
+-  }));
++  }
+ }
+ 
+ if (import.meta.main) {
+diff --git a/third_party/devtools-frontend/src/scripts/build/ninja/copy-files.js b/third_party/devtools-frontend/src/scripts/build/ninja/copy-files.js
+index 280857367c..af7dd0b109 100644
+--- a/third_party/devtools-frontend/src/scripts/build/ninja/copy-files.js
++++ b/third_party/devtools-frontend/src/scripts/build/ninja/copy-files.js
+@@ -28,10 +28,12 @@ if (!src || !dest || !files) {
+   throw new Error('Missing required arguments: --src, --dest, and --files must be provided');
+ }
+ 
+-await Promise.all(files.split(',').map(async file => {
++// Rise: one file at a time, meant to stop SentinelOne killing node mid-build.
++// It doesn't (docs/EngineRebuild.md), but it does no harm, so it stays.
++for (const file of files.split(',')) {
+   const srcPath = path.join(src, file);
+   const destPath = path.join(dest, file);
+ 
+   const srcContents = await fs.readFile(srcPath);
+   await writeIfChanged(destPath, srcContents);
+-}));
++}
+diff --git a/third_party/devtools-frontend/src/scripts/build/ninja/minify-json-files.js b/third_party/devtools-frontend/src/scripts/build/ninja/minify-json-files.js
+index 8b2b160bb7..89dd57845e 100644
+--- a/third_party/devtools-frontend/src/scripts/build/ninja/minify-json-files.js
++++ b/third_party/devtools-frontend/src/scripts/build/ninja/minify-json-files.js
+@@ -27,7 +27,8 @@ if (!dest || !files || files.length === 0) {
+   throw new Error('Missing required arguments: --dest and --files must be provided');
+ }
+ 
+-await Promise.all(files.map(async file => {
++// Rise: one file at a time, as in copy-files.js.
++for (const file of files) {
+   const filename = path.basename(file);
+   const destPath = path.join(dest, filename);
+ 
+@@ -35,4 +36,4 @@ await Promise.all(files.map(async file => {
+   const srcContents = await fs.readFile(file, 'utf-8');
+   const destContents = JSON.stringify(JSON.parse(srcContents));
+   await writeIfChanged(destPath, destContents);
+-}));
++}

@@ -1,8 +1,8 @@
 diff --git a/content/app_shim_remote_cocoa/web_contents_view_cocoa.mm b/content/app_shim_remote_cocoa/web_contents_view_cocoa.mm
-index 60bb2a260c..f5151d47ad 100644
+index a80c755cab..996a4c14e9 100644
 --- a/content/app_shim_remote_cocoa/web_contents_view_cocoa.mm
 +++ b/content/app_shim_remote_cocoa/web_contents_view_cocoa.mm
-@@ -524,20 +524,45 @@ - (void)updateWebContentsVisibility:
+@@ -528,20 +528,45 @@ - (void)updateWebContentsVisibility:
    _willSetWebContentsOccludedAfterDelay = YES;
  }
  

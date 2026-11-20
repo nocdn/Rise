@@ -1,0 +1,74 @@
+diff --git a/chrome/browser/ui/BUILD.gn b/chrome/browser/ui/BUILD.gn
+index 88668a0b3e..7b2e31e707 100644
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -1332,6 +1332,7 @@ if (!is_android) {
+     public = [ "browser.h" ]
+     visibility = [
+       ":core",
++      "//chrome/browser/rise:impl",
+       "//chrome/browser/ui/browser_window/internal",
+     ]
+     public_deps = [
+diff --git a/chrome/browser/rise/BUILD.gn b/chrome/browser/rise/BUILD.gn
+index e51b476..de67376 100644
+--- a/chrome/browser/rise/BUILD.gn
++++ b/chrome/browser/rise/BUILD.gn
+@@ -26,22 +26,52 @@ source_set("impl") {
+     ":rise",
+     "//base",
+     "//chrome/browser:chrome_browser_application_mac",
++    "//chrome/browser/content_settings:content_settings_factory",
++    "//chrome/browser/permissions/system",
+     "//chrome/browser/profiles:profile",
+     "//chrome/browser/renderer_host:delegate",
+     "//chrome/browser/search_engines",
+-    "//chrome/browser/ui",
++
++    # Chromium 158 split //chrome/browser/ui's library into these.
++    "//chrome/browser:app_controller_mac",
++    "//chrome/browser/devtools",
++    "//chrome/browser/extensions",
++    "//chrome/browser/lifetime",
++    "//chrome/browser/printing",
++    "//chrome/browser/spellchecker",
++    "//chrome/browser/ui:browser_header",
++    "//chrome/browser/ui:browser_init_state",
++    "//chrome/browser/ui:browser_window_header",
++    "//chrome/browser/ui:unload_controller",
++    "//chrome/browser/ui/browser_active_state_manager",
++    "//chrome/browser/ui/browser_web_contents_delegate",
+     "//chrome/browser/ui/browser_window",
+     "//chrome/browser/ui/browser_window:create_browser_window",
++    "//chrome/browser/ui/cocoa",
++    "//chrome/browser/ui/dialogs:browser_dialogs",
++    "//chrome/browser/ui/exclusive_access",
++    "//chrome/browser/ui/find_bar",
++    "//chrome/browser/ui/location_bar",
++    "//chrome/browser/ui/prefs",
++    "//chrome/browser/ui/tab_contents",
++    "//chrome/browser/ui/tabs:tab_enums",
++    "//chrome/browser/ui/tabs:tab_model",
+     "//chrome/browser/ui/tabs:tab_strip",
+-    "//chrome/browser/content_settings:content_settings_factory",
+-    "//chrome/browser/permissions/system",
+-    "//chrome/browser/ui/browser_web_contents_delegate",
++    "//chrome/browser/ui/tabs:tab_strip_model_observer",
++    "//chrome/browser/ui/translate",
++    "//chrome/browser/ui/user_education",
++    "//chrome/browser/ui/views:bubble_anchor_util_views",
++    "//chrome/browser/ui/webui/tab_search:mojo_bindings",
+     "//chrome/common/rise:mojom",
+     "//components/content_settings/core/browser",
+     "//components/download/public/common:public",
++    "//components/input",
+     "//components/permissions",
+-    "//components/sessions",
+     "//components/search_engines",
++    "//components/sessions",
++    "//components/sharing_message",
++    "//components/spellcheck/browser",
++    "//components/spellcheck/common",
+     "//content/public/browser",
+     "//mojo/public/cpp/bindings",
+     "//net",

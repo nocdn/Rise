@@ -1,6 +1,8 @@
+diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
+index 52aa3aac33..b766fc8fa7 100644
 --- a/chrome/browser/rise/RiseChromium.h
 +++ b/chrome/browser/rise/RiseChromium.h
-@@ -285,6 +285,8 @@
+@@ -285,6 +285,8 @@ RC_EXPORT @interface RCBrowserView : NSView
  @property (nonatomic, weak, nullable) id<RCBrowserViewDelegate> delegate;
  @property (nonatomic, readonly, nullable) NSURL *URL;
  @property (nonatomic, readonly, nullable) NSString *title;
@@ -9,9 +11,11 @@
  @property (nonatomic, readonly) BOOL isLoading;
  @property (nonatomic, readonly) BOOL canGoBack;
  @property (nonatomic, readonly) BOOL canGoForward;
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index 951ed89674..f109456511 100644
 --- a/chrome/browser/rise/rise_bridge.mm
 +++ b/chrome/browser/rise/rise_bridge.mm
-@@ -1963,7 +1963,9 @@
+@@ -1963,7 +1963,9 @@ - (NSString*)title {
    return _contents ? base::SysUTF16ToNSString(_contents->GetTitle()) : nil;
  }
  - (BOOL)isLoading {

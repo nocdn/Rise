@@ -1,6 +1,8 @@
---- a/chrome/browser/chrome_content_browser_client.cc	2026-11-05 10:11:05
-+++ b/chrome/browser/chrome_content_browser_client.cc	2026-11-05 10:11:05
-@@ -4350,6 +4350,17 @@
+diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
+index 3c4248b937..654163aaf9 100644
+--- a/chrome/browser/chrome_content_browser_client.cc
++++ b/chrome/browser/chrome_content_browser_client.cc
+@@ -4395,6 +4395,17 @@ base::OnceClosure ChromeContentBrowserClient::SelectClientCertificate(
        !matching_certificates.empty() ? std::move(matching_certificates)
                                       : std::move(nonmatching_certificates);
  
@@ -18,9 +20,11 @@
    return ShowSSLClientCertificateSelector(web_contents, cert_request_info,
                                            std::move(client_cert_choices),
                                            std::move(delegate));
+diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
+index 7ad590c7ae..02da481fef 100644
 --- a/chrome/browser/rise/RiseChromium.h
 +++ b/chrome/browser/rise/RiseChromium.h
-@@ -262,6 +262,17 @@
+@@ -262,6 +262,17 @@ RC_EXPORT @interface RCContextMenu : NSObject
  /// shows in the inspected page's place, under it, as Chrome does. Their device mode shows its
  /// toolbar and rulers there, around the page; otherwise the page fills it, from the origin.
  - (void)browserView:(RCBrowserView *)browserView setInspectedPageBounds:(NSRect)bounds;
@@ -38,6 +42,8 @@
  /// The page was right-clicked; Rise shows its menu for `menu`.
  - (void)browserView:(RCBrowserView *)browserView
      showContextMenu:(RCContextMenu *)menu NS_SWIFT_NAME(browserView(_:showContextMenu:));
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index 0719f8ab20..47d6e41347 100644
 --- a/chrome/browser/rise/rise_bridge.mm
 +++ b/chrome/browser/rise/rise_bridge.mm
 @@ -131,6 +131,11 @@
@@ -52,12 +58,10 @@
  #include "third_party/blink/public/mojom/window_features/window_features.mojom.h"
  #include "third_party/blink/public/common/associated_interfaces/associated_interface_provider.h"
  #include "components/tabs/public/tab_interface.h"
-@@ -890,6 +895,87 @@
-       return false;
-     }
+@@ -892,6 +897,87 @@ bool HandleKeyboardEvent(
      return [NSApp.mainMenu performKeyEquivalent:key];
-+  }
-+
+   }
+ 
 +  // A site asking for a certificate to identify the person: Rise has them
 +  // choose among the keychain's identities that suit it, in macOS's chooser.
 +  bool SelectClientCertificate(
@@ -137,12 +141,16 @@
 +        },
 +        answer, weak_view);
 +    return true;
-   }
- 
++  }
++
    // An extension can request its popup without clicking Rise's toolbar button.
---- a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc	2026-11-05 10:11:05
-+++ b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc	2026-11-05 10:11:05
-@@ -83,6 +83,14 @@
+   bool ShowExtensionPopup(const std::string& extension_id,
+                           const GURL& url,
+diff --git a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc
+index c8332e0a07..b4062b8f0e 100644
+--- a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc
++++ b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc
+@@ -83,6 +83,14 @@ bool EmbedderTabHooks::ShowExtensionPopup(
    return false;
  }
  
@@ -157,8 +165,10 @@
  bool EmbedderTabHooks::ChooseDownloadPath(download::DownloadItem* download,
                                            const base::FilePath& suggested,
                                            DownloadPathCallback done) {
---- a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h	2026-11-05 10:11:05
-+++ b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h	2026-11-05 10:11:05
+diff --git a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h
+index b037aab594..649f77cbb4 100644
+--- a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h
++++ b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h
 @@ -13,6 +13,7 @@
  #include "base/functional/callback.h"
  #include "base/memory/scoped_refptr.h"
@@ -167,7 +177,7 @@
  #include "ui/base/window_open_disposition.h"
  #include "third_party/blink/public/mojom/choosers/file_chooser.mojom-forward.h"
  
-@@ -34,7 +35,12 @@
+@@ -34,7 +35,12 @@ struct WebPreferences;
  
  class GURL;
  
@@ -180,7 +190,7 @@
  struct ContextMenuParams;
  class FileSelectListener;
  struct OpenURLParams;
-@@ -107,6 +113,15 @@
+@@ -107,6 +113,15 @@ class EmbedderTabHooks : public base::SupportsUserData::Data {
    virtual bool ShowExtensionPopup(const std::string& extension_id,
                                    const GURL& url,
                                    base::OnceCallback<void(bool)> done);

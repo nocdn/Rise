@@ -1,0 +1,32 @@
+diff --git a/chrome/browser/ui/webui/settings/settings_utils.cc b/chrome/browser/ui/webui/settings/settings_utils.cc
+index 352e594..f015be4 100644
+--- a/chrome/browser/ui/webui/settings/settings_utils.cc
++++ b/chrome/browser/ui/webui/settings/settings_utils.cc
+@@ -50,7 +50,10 @@ void MaybeNotifySettingsCustomEvent(content::WebUI* web_ui,
+   ui::TrackedElement* const browser_element =
+       ui::ElementTracker::GetElementTracker()->GetUniqueElement(
+           kBrowserViewElementId, context);
+-  CHECK(browser_element);
++  // Rise: its windows have no BrowserView, so there's no element to tell.
++  if (!browser_element) {
++    return;
++  }
+   ui::ElementTracker::GetFrameworkDelegate()->NotifyCustomEvent(browser_element,
+                                                                 event_type);
+ }
+diff --git a/chrome/browser/ui/webui/settings/settings_clear_browsing_data_handler.cc b/chrome/browser/ui/webui/settings/settings_clear_browsing_data_handler.cc
+index c30225a..164220f 100644
+--- a/chrome/browser/ui/webui/settings/settings_clear_browsing_data_handler.cc
++++ b/chrome/browser/ui/webui/settings/settings_clear_browsing_data_handler.cc
+@@ -88,7 +88,10 @@ void NotifyBrowserViewCustomEvent(tabs::TabInterface* tab,
+   ui::TrackedElement* const browser_element =
+       ui::ElementTracker::GetElementTracker()->GetUniqueElement(
+           kBrowserViewElementId, context);
+-  CHECK(browser_element);
++  // Rise: its windows have no BrowserView, so there's no element to tell.
++  if (!browser_element) {
++    return;
++  }
+   ui::ElementTracker::GetFrameworkDelegate()->NotifyCustomEvent(browser_element,
+                                                                 event_type);
+ }

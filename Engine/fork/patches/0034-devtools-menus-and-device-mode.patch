@@ -1,6 +1,8 @@
+diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
+index 2b98af4ea7..7ad590c7ae 100644
 --- a/chrome/browser/rise/RiseChromium.h
 +++ b/chrome/browser/rise/RiseChromium.h
-@@ -149,7 +149,8 @@
+@@ -149,7 +149,8 @@ typedef NS_ENUM(NSInteger, RCEditCommand) {
  };
  
  /// An extension's entry in the page menu (chrome.contextMenus), as Chrome would show it for the
@@ -10,7 +12,7 @@
  RC_EXPORT @interface RCExtensionMenuItem : NSObject
  /// Empty for a separator.
  @property (nonatomic, readonly) NSString *title;
-@@ -162,7 +163,7 @@
+@@ -162,7 +163,7 @@ RC_EXPORT @interface RCExtensionMenuItem : NSObject
  /// What a submenu holds; empty for an entry.
  @property (nonatomic, readonly) NSArray<RCExtensionMenuItem *> *children;
  - (instancetype)init NS_UNAVAILABLE;
@@ -19,7 +21,7 @@
  - (void)perform;
  @end
  
-@@ -198,6 +199,12 @@
+@@ -198,6 +199,12 @@ RC_EXPORT @interface RCContextMenu : NSObject
  - (void)inspect;
  /// Extensions' entries for what was clicked.
  @property (nonatomic, readonly) NSArray<RCExtensionMenuItem *> *extensionItems;
@@ -32,7 +34,7 @@
  @end
  
  @class RCBrowserView;
-@@ -250,6 +257,11 @@
+@@ -250,6 +257,11 @@ RC_EXPORT @interface RCContextMenu : NSObject
  - (void)browserView:(RCBrowserView *)browserView openInOtherApp:(NSURL *)url;
  /// The page is closing without Rise having asked, as when an extension closes its tab.
  - (void)browserViewDidRequestClose:(RCBrowserView *)browserView;
@@ -44,6 +46,8 @@
  /// The page was right-clicked; Rise shows its menu for `menu`.
  - (void)browserView:(RCBrowserView *)browserView
      showContextMenu:(RCContextMenu *)menu NS_SWIFT_NAME(browserView(_:showContextMenu:));
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index 188e73ed91..0719f8ab20 100644
 --- a/chrome/browser/rise/rise_bridge.mm
 +++ b/chrome/browser/rise/rise_bridge.mm
 @@ -23,6 +23,7 @@
@@ -54,7 +58,7 @@
  #include "base/pickle.h"
  #include "base/files/file_enumerator.h"
  #include "base/strings/string_util.h"
-@@ -1347,7 +1348,17 @@
+@@ -1347,7 +1348,17 @@ explicit DevToolsFrontend(RCBrowserView* frontend) : frontend_(frontend) {}
    void ActivateWindow() override {}
    void CloseWindow() override { Close(); }
    void Inspect(scoped_refptr<content::DevToolsAgentHost> host) override {}
@@ -73,7 +77,7 @@
    void InspectElementCompleted() override {}
    void SetIsDocked(bool is_docked) override {}
    void OpenInNewTab(const std::string& url) override {
-@@ -2654,14 +2665,20 @@
+@@ -2654,14 +2665,20 @@ - (void)evaluateConsoleExpression:(NSString*)expression
  
  - (RCBrowserView*)makeDevToolsView {
    // DevTools opens on the panel it last showed; Rise's opens on Elements.
@@ -98,11 +102,10 @@
    frontend->_inspected = self;
    _devToolsFrontend = frontend;
    _devToolsLoaded = NO;
-@@ -3214,17 +3231,101 @@
-   ui::SimpleMenuModel model_;
+@@ -3215,16 +3232,100 @@ void ExecuteCommand(int command_id, int event_flags) override {
    extensions::ContextMenuMatcher matcher_;
  };
-+
+ 
 +// The page's own entries for its right-click, as DevTools gives for every menu
 +// it shows (its tabs' overflow, its toolbars' menus, a node's or a request's
 +// right-click): Chrome shows these in place of its own entries and tells the
@@ -116,7 +119,7 @@
 +        model_(this) {
 +    Add(params.custom_items, 0, &model_);
 +  }
- 
++
 +  bool IsCommandIdChecked(int command_id) const override {
 +    return checked_.contains(command_id);
 +  }
@@ -202,7 +205,7 @@
    int _command;
  }
  @synthesize title = _title;
-@@ -3236,8 +3337,9 @@
+@@ -3236,8 +3337,9 @@ @implementation RCExtensionMenuItem {
  
  // What `model` holds, as Rise's entries.
  + (NSArray<RCExtensionMenuItem*>*)itemsOf:(ui::MenuModel*)model
@@ -214,7 +217,7 @@
    NSMutableArray<RCExtensionMenuItem*>* items = [NSMutableArray array];
    for (size_t i = 0; model && i < model->GetItemCount(); ++i) {
      if (model->GetTypeAt(i) == ui::MenuModel::TYPE_SEPARATOR ||
-@@ -3252,7 +3354,8 @@
+@@ -3252,7 +3354,8 @@ @implementation RCExtensionMenuItem {
  
  - (instancetype)initWithModel:(ui::MenuModel*)model
                          index:(size_t)index
@@ -224,7 +227,7 @@
    if (!(self = [super init])) {
      return nil;
    }
-@@ -3288,6 +3391,7 @@
+@@ -3288,6 +3391,7 @@ @implementation RCContextMenu {
    int _x;
    int _y;
    std::shared_ptr<ExtensionEntries> _extensionEntries;
@@ -232,7 +235,7 @@
  }
  @synthesize point = _point;
  @synthesize linkURL = _linkURL;
-@@ -3313,6 +3417,9 @@
+@@ -3313,6 +3417,9 @@ - (instancetype)initWithParams:(const content::ContextMenuParams&)params
    _downloadName = params.suggested_filename;
    _view = view;
    _extensionEntries = std::make_shared<ExtensionEntries>(frame, params);
@@ -242,16 +245,15 @@
    _x = params.x;
    _y = params.y;
    _point = NSMakePoint(params.x, params.y);
-@@ -3449,7 +3556,17 @@
-              ? [RCExtensionMenuItem itemsOf:_extensionEntries->model()
+@@ -3450,6 +3557,16 @@ - (void)inspect {
                                      entries:_extensionEntries]
               : @[];
-+}
+ }
 +- (NSArray<RCExtensionMenuItem*>*)customItems {
 +  return _customEntries ? [RCExtensionMenuItem itemsOf:_customEntries->model()
 +                                               entries:_customEntries]
 +                        : @[];
- }
++}
 +- (void)closed {
 +  if (_customEntries) {
 +    _customEntries->Closed();

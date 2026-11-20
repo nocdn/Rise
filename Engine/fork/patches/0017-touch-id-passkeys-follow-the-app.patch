@@ -1,37 +1,5 @@
---- a/crypto/apple/keychain_util.h
-+++ b/crypto/apple/keychain_util.h
-@@ -23,6 +23,10 @@
- // The API used to query this information is not available on iOS.
- CRYPTO_EXPORT bool ExecutableHasKeychainAccessGroupEntitlement(
-     const std::string& keychain_access_group);
-+
-+// Rise: the main executable's com.apple.application-identifier entitlement,
-+// such as "TEAMID.com.example.app", or an empty string when it has none.
-+CRYPTO_EXPORT std::string ExecutableApplicationIdentifier();
- #endif  // !BUILDFLAG(IS_IOS)
- 
- // Returns the accessibility attribute to use for new keychain items.
---- a/crypto/apple/keychain_util.mm
-+++ b/crypto/apple/keychain_util.mm
-@@ -58,6 +58,18 @@
-   return [entitlement_value_nsarray
-       containsObject:base::SysUTF8ToNSString(keychain_access_group)];
- }
-+
-+std::string ExecutableApplicationIdentifier() {
-+  base::apple::ScopedCFTypeRef<SecTaskRef> task(SecTaskCreateFromSelf(nullptr));
-+  if (!task) {
-+    return std::string();
-+  }
-+  base::apple::ScopedCFTypeRef<CFTypeRef> value(
-+      KeychainV2::GetInstance().TaskCopyValueForEntitlement(
-+          task.get(), CFSTR("com.apple.application-identifier"), nullptr));
-+  CFStringRef identifier = base::apple::CFCast<CFStringRef>(value.get());
-+  return identifier ? base::SysCFStringRefToUTF8(identifier) : std::string();
-+}
- #endif  // !BUILDFLAG(IS_IOS)
- 
- #if BUILDFLAG(IS_IOS)
+diff --git a/chrome/browser/webauthn/chrome_web_authentication_delegate.cc b/chrome/browser/webauthn/chrome_web_authentication_delegate.cc
+index 0f9b546cbb..96d1263f90 100644
 --- a/chrome/browser/webauthn/chrome_web_authentication_delegate.cc
 +++ b/chrome/browser/webauthn/chrome_web_authentication_delegate.cc
 @@ -81,6 +81,8 @@
@@ -43,7 +11,7 @@
  #include "device/fido/mac/credential_metadata.h"
  #endif
  
-@@ -391,8 +393,17 @@
+@@ -391,8 +393,17 @@ void ChromeWebAuthenticationDelegate::UpdateUserPasskeys(
  ChromeWebAuthenticationDelegate::TouchIdAuthenticatorConfig
  ChromeWebAuthenticationDelegate::TouchIdAuthenticatorConfigForProfile(
      Profile* profile) {
@@ -63,7 +31,7 @@
  
    std::string metadata_secret = profile->GetPrefs()->GetString(
        webauthn::pref_names::kWebAuthnTouchIdMetadataSecretPrefName);
-@@ -405,7 +416,7 @@
+@@ -405,7 +416,7 @@ ChromeWebAuthenticationDelegate::TouchIdAuthenticatorConfigForProfile(
    }
  
    return TouchIdAuthenticatorConfig{
@@ -72,3 +40,41 @@
        .metadata_secret = std::move(metadata_secret)};
  }
  
+diff --git a/crypto/apple/keychain_util.h b/crypto/apple/keychain_util.h
+index 68bdcafaf3..7e1d4f17c7 100644
+--- a/crypto/apple/keychain_util.h
++++ b/crypto/apple/keychain_util.h
+@@ -23,6 +23,10 @@ namespace crypto::apple {
+ // The API used to query this information is not available on iOS.
+ CRYPTO_EXPORT bool ExecutableHasKeychainAccessGroupEntitlement(
+     const std::string& keychain_access_group);
++
++// Rise: the main executable's com.apple.application-identifier entitlement,
++// such as "TEAMID.com.example.app", or an empty string when it has none.
++CRYPTO_EXPORT std::string ExecutableApplicationIdentifier();
+ #endif  // !BUILDFLAG(IS_IOS)
+ 
+ // Returns the accessibility attribute to use for new keychain items.
+diff --git a/crypto/apple/keychain_util.mm b/crypto/apple/keychain_util.mm
+index ac313ead64..c1332c4dc4 100644
+--- a/crypto/apple/keychain_util.mm
++++ b/crypto/apple/keychain_util.mm
+@@ -57,6 +57,18 @@ bool ExecutableHasKeychainAccessGroupEntitlement(
+   return [entitlement_value_nsarray
+       containsObject:base::SysUTF8ToNSString(keychain_access_group)];
+ }
++
++std::string ExecutableApplicationIdentifier() {
++  base::apple::ScopedCFTypeRef<SecTaskRef> task(SecTaskCreateFromSelf(nullptr));
++  if (!task) {
++    return std::string();
++  }
++  base::apple::ScopedCFTypeRef<CFTypeRef> value(
++      KeychainV2::GetInstance().TaskCopyValueForEntitlement(
++          task.get(), CFSTR("com.apple.application-identifier"), nullptr));
++  CFStringRef identifier = base::apple::CFCast<CFStringRef>(value.get());
++  return identifier ? base::SysCFStringRefToUTF8(identifier) : std::string();
++}
+ #endif  // !BUILDFLAG(IS_IOS)
+ 
+ #if BUILDFLAG(IS_IOS)

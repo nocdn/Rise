@@ -1,5 +1,7 @@
---- a/chrome/browser/rise/rise_bridge.mm	2026-11-06 11:05:25
-+++ b/chrome/browser/rise/rise_bridge.mm	2026-11-06 11:05:25
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index 47d6e41347..8c08e225df 100644
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
 @@ -110,6 +110,7 @@
  #include "chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h"
  #include "chrome/common/rise/rise_frame.mojom.h"
@@ -8,7 +10,7 @@
  #include "components/download/public/common/download_item.h"
  #include "chrome/browser/permissions/system/system_permission_settings.h"
  #include "components/permissions/embedded_permission_prompt_flow_model.h"
-@@ -1402,8 +1403,14 @@
+@@ -1402,8 +1403,14 @@ void Decide(bool allowed) {
          HostContentSettingsMapFactory::GetForProfile(
              contents->GetBrowserContext());
      for (ContentSettingsType type : types) {

@@ -1,7 +1,8 @@
 diff --git a/chrome/browser/resources/settings/BUILD.gn b/chrome/browser/resources/settings/BUILD.gn
+index 42c8add0ce..51b80525e1 100644
 --- a/chrome/browser/resources/settings/BUILD.gn
 +++ b/chrome/browser/resources/settings/BUILD.gn
-@@ -394,6 +394,8 @@
+@@ -397,6 +397,8 @@ build_webui("build") {
      "reset_page/reset_profile_dialog.ts",
      "rise_page/rise_default_browser_banner.html.ts",
      "rise_page/rise_default_browser_banner.ts",
@@ -10,75 +11,11 @@ diff --git a/chrome/browser/resources/settings/BUILD.gn b/chrome/browser/resourc
      "rise_page/rise_page.html.ts",
      "rise_page/rise_page.ts",
      "rise_page/rise_settings_rows.html.ts",
-diff --git a/chrome/browser/resources/settings/route.ts b/chrome/browser/resources/settings/route.ts
---- a/chrome/browser/resources/settings/route.ts
-+++ b/chrome/browser/resources/settings/route.ts
-@@ -220,6 +220,7 @@
-   // Rise's own sections, whose rows come from Rise.
-   r.RISE_TABS = r.BASIC.createSection('/tabs', 'riseTabs', 'Tabs');
-   r.RISE_AI = r.BASIC.createSection('/assistant', 'riseAi', 'AI');
-+  r.RISE_SHORTCUTS = r.BASIC.createSection('/keyboardShortcuts', 'riseShortcuts', 'Keyboard shortcuts');
- 
-   if (visibility.yourSavedInfo !== false) {
-     r.AUTOFILL = r.BASIC.createSection(
-diff --git a/chrome/browser/resources/settings/router.ts b/chrome/browser/resources/settings/router.ts
---- a/chrome/browser/resources/settings/router.ts
-+++ b/chrome/browser/resources/settings/router.ts
-@@ -54,6 +54,7 @@
-   PRIVACY_GUIDE: Route;
-   RESET: Route;
-   RISE_AI: Route;
-+  RISE_SHORTCUTS: Route;
-   RISE_SITE_SEARCH: Route;
-   RISE_TABS: Route;
-   RESET_DIALOG: Route;
-diff --git a/chrome/browser/resources/settings/settings_main/settings_main.html b/chrome/browser/resources/settings/settings_main/settings_main.html
---- a/chrome/browser/resources/settings/settings_main/settings_main.html
-+++ b/chrome/browser/resources/settings/settings_main/settings_main.html
-@@ -125,6 +125,13 @@
-     </template>
-   </div>
- 
-+  <div slot="view" id="riseShortcuts">
-+    <template is="dom-if" if="[[renderPlugin_(
-+        routes_.RISE_SHORTCUTS, lastRoute_, inSearchMode_)]]">
-+      <settings-rise-keyboard-shortcuts></settings-rise-keyboard-shortcuts>
-+    </template>
-+  </div>
-+
-   <div slot="view" id="riseAi">
-     <template is="dom-if" if="[[renderPlugin_(
-         routes_.RISE_AI, lastRoute_, inSearchMode_)]]">
-diff --git a/chrome/browser/resources/settings/settings_main/settings_main.ts b/chrome/browser/resources/settings/settings_main/settings_main.ts
---- a/chrome/browser/resources/settings/settings_main/settings_main.ts
-+++ b/chrome/browser/resources/settings/settings_main/settings_main.ts
-@@ -20,6 +20,7 @@
- import '../privacy_page/privacy_page_index.js';
- import '../rise_page/rise_default_browser_banner.js';
- import '../rise_page/rise_page.js';
-+import '../rise_page/rise_keyboard_shortcuts.js';
- import '../reset_page/reset_profile_banner.js';
- import '../search_page/search_page_index.js';
- // <if expr="not is_chromeos">
-diff --git a/chrome/browser/resources/settings/settings_menu/settings_menu.html b/chrome/browser/resources/settings/settings_menu/settings_menu.html
---- a/chrome/browser/resources/settings/settings_menu/settings_menu.html
-+++ b/chrome/browser/resources/settings/settings_menu/settings_menu.html
-@@ -137,6 +137,11 @@
-         <a role="menuitem" id="riseTabs" href="/tabs" class="cr-nav-menu-item">
-           <cr-icon icon="settings:web-asset"></cr-icon>
-           <span class="menu-label">Tabs</span>
-+          <cr-ripple></cr-ripple>
-+        </a>
-+        <a role="menuitem" id="riseShortcuts" href="/keyboardShortcuts" class="cr-nav-menu-item">
-+          <cr-icon icon="settings:rise-keyboard"></cr-icon>
-+          <span class="menu-label">Keyboard shortcuts</span>
-           <cr-ripple></cr-ripple>
-         </a>
-         <a role="menuitem" id="riseAi" href="/assistant" class="cr-nav-menu-item">
 diff --git a/chrome/browser/resources/settings/icons.html.ts b/chrome/browser/resources/settings/icons.html.ts
+index 8451d7f55d..c3cc4b2244 100644
 --- a/chrome/browser/resources/settings/icons.html.ts
 +++ b/chrome/browser/resources/settings/icons.html.ts
-@@ -115,6 +115,7 @@
+@@ -113,6 +113,7 @@ NOTE: Chrome OS icons go in ./chromeos/os_icons.html.
  <cr-iconset name="settings" size="24">
    <svg>
      <defs>
@@ -86,7 +23,7 @@ diff --git a/chrome/browser/resources/settings/icons.html.ts b/chrome/browser/re
        <!-- Rise's mark, for About Rise. -->
        <g id="rise-product"><path d="M12.00 3.00L16.22 8.86L7.78 8.86ZM7.16 9.72L12.00 15.50L8.04 21.00L3.21 15.21ZM16.84 9.72L20.79 15.21L15.96 21.00L12.00 15.50Z"></path></g>
        <!-- Domain verification GM3 icon -->
-@@ -355,6 +356,7 @@
+@@ -351,6 +352,7 @@ NOTE: Chrome OS icons go in ./chromeos/os_icons.html.
  <cr-iconset name="settings" size="24">
    <svg>
      <defs>
@@ -94,8 +31,62 @@ diff --git a/chrome/browser/resources/settings/icons.html.ts b/chrome/browser/re
        <!-- Rise's mark, for About Rise. -->
        <g id="rise-product"><path d="M12.00 3.00L16.22 8.86L7.78 8.86ZM7.16 9.72L12.00 15.50L8.04 21.00L3.21 15.21ZM16.84 9.72L20.79 15.21L15.96 21.00L12.00 15.50Z"></path></g>
        <!-- Domain verification GM3 icon -->
+diff --git a/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.html.ts b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.html.ts
+new file mode 100644
+index 0000000000..6dbb1af18c
+--- /dev/null
++++ b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.html.ts
+@@ -0,0 +1,47 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++import {html} from 'chrome://resources/lit/v3_0/lit.rollup.js';
++import type {SettingsRiseKeyboardShortcutsElement} from './rise_keyboard_shortcuts.js';
++
++export function getHtml(this: SettingsRiseKeyboardShortcutsElement) {
++    return html`
++      <settings-section page-title="Keyboard shortcuts" class="cr-centered-card-container">
++        <div class="intro">
++          <div class="secondary">Choose a shortcut to edit it, then press the keys you want.
++            Escape cancels recording. Changes are saved automatically.</div>
++          <cr-button id="resetAll" ?disabled="${!this.hasModified_()}"
++              @click="${this.onResetAllClick_}">Reset all</cr-button>
++        </div>
++        <div class="search"><cr-input id="filter" aria-label="Search keyboard shortcuts"
++            placeholder="Search keyboard shortcuts" .value="${this.query_}"
++            @value-changed="${this.onFilterValueChanged_}">
++        </cr-input></div>
++        ${this.error_ && !this.errorID_ ? html`<p class="error" role="alert">${this.error_}</p>` : ''}
++        ${this.filteredCommands_().map(command => html`
++          <div class="command" data-command="${command.id}">
++            <div class="label">${command.title}<div class="secondary group">${command.group}</div></div>
++            <div class="bindings">
++              ${this.inputs_(command).map((shortcut, index) => html`
++                <cr-shortcut-input data-command="${command.id}" data-index="${index}" .shortcut="${shortcut}" .allowCtrlAltShortcuts="${true}"
++                    .allowClearingEmpty="${command.bindings.length > 0 && index === command.bindings.length}"
++                    .inputAriaLabel="${`${command.title} shortcut ${index + 1}`}"
++                    .editButtonAriaLabel="${`Record ${command.title} shortcut ${index + 1}`}"
++                    .clearButtonAriaLabel="${`Remove ${command.title} shortcut ${index + 1}`}"
++                    @input-capture-change="${this.onInputCaptureChange_}"
++                    @shortcut-updated="${this.onShortcutUpdated_}">
++                </cr-shortcut-input>
++              `)}
++              ${command.bindings.length > 0 ? html`<cr-button class="add" data-command="${command.id}"
++                  @click="${this.onAddClick_}">Add shortcut</cr-button>` : ''}
++            </div>
++            <cr-button class="reset" data-command="${command.id}" ?disabled="${!command.modified}"
++                aria-label="${`Reset ${command.title} shortcuts`}"
++                @click="${this.onResetClick_}">Reset</cr-button>
++          </div>
++          ${this.error_ && this.errorID_ === command.id ? html`<p class="error" role="alert">${this.error_}</p>` : ''}
++        `)}
++        ${!this.filteredCommands_().length ? html`<div class="empty" role="status">${this.loading_ ? 'Loading shortcuts…' : 'No matching shortcuts'}</div>` : ''}
++      </settings-section>`;
++}
 diff --git a/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.ts b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.ts
 new file mode 100644
+index 0000000000..d582016b1e
 --- /dev/null
 +++ b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.ts
 @@ -0,0 +1,197 @@
@@ -296,59 +287,77 @@ new file mode 100644
 +  }
 +}
 +customElements.define(SettingsRiseKeyboardShortcutsElement.is, SettingsRiseKeyboardShortcutsElement);
-diff --git a/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.html.ts b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.html.ts
-new file mode 100644
---- /dev/null
-+++ b/chrome/browser/resources/settings/rise_page/rise_keyboard_shortcuts.html.ts
-@@ -0,0 +1,47 @@
-+// Copyright 2026 The Chromium Authors
-+// Use of this source code is governed by a BSD-style license that can be
-+// found in the LICENSE file.
+diff --git a/chrome/browser/resources/settings/route.ts b/chrome/browser/resources/settings/route.ts
+index c278a6deb7..da94df0085 100644
+--- a/chrome/browser/resources/settings/route.ts
++++ b/chrome/browser/resources/settings/route.ts
+@@ -220,6 +220,7 @@ function createRoutes(): SettingsRoutes {
+   // Rise's own sections, whose rows come from Rise.
+   r.RISE_TABS = r.BASIC.createSection('/tabs', 'riseTabs', 'Tabs');
+   r.RISE_AI = r.BASIC.createSection('/assistant', 'riseAi', 'AI');
++  r.RISE_SHORTCUTS = r.BASIC.createSection('/keyboardShortcuts', 'riseShortcuts', 'Keyboard shortcuts');
+ 
+   if (visibility.yourSavedInfo !== false) {
+     r.AUTOFILL = r.BASIC.createSection(
+diff --git a/chrome/browser/resources/settings/router.ts b/chrome/browser/resources/settings/router.ts
+index 897a39a748..f2b952e85e 100644
+--- a/chrome/browser/resources/settings/router.ts
++++ b/chrome/browser/resources/settings/router.ts
+@@ -54,6 +54,7 @@ export interface SettingsRoutes {
+   PRIVACY_GUIDE: Route;
+   RESET: Route;
+   RISE_AI: Route;
++  RISE_SHORTCUTS: Route;
+   RISE_SITE_SEARCH: Route;
+   RISE_TABS: Route;
+   RESET_DIALOG: Route;
+diff --git a/chrome/browser/resources/settings/settings_main/settings_main.html b/chrome/browser/resources/settings/settings_main/settings_main.html
+index 87066119a2..c116e0421a 100644
+--- a/chrome/browser/resources/settings/settings_main/settings_main.html
++++ b/chrome/browser/resources/settings/settings_main/settings_main.html
+@@ -77,6 +77,12 @@ ${!this.inSearchMode_ ? html`
+     ` : ''}
+   </div>
+ 
++  <div slot="view" id="riseShortcuts">
++    ${this.renderPlugin_(this.routes_.RISE_SHORTCUTS) ? html`
++      <settings-rise-keyboard-shortcuts></settings-rise-keyboard-shortcuts>
++    ` : ''}
++  </div>
 +
-+import {html} from 'chrome://resources/lit/v3_0/lit.rollup.js';
-+import type {SettingsRiseKeyboardShortcutsElement} from './rise_keyboard_shortcuts.js';
-+
-+export function getHtml(this: SettingsRiseKeyboardShortcutsElement) {
-+    return html`
-+      <settings-section page-title="Keyboard shortcuts" class="cr-centered-card-container">
-+        <div class="intro">
-+          <div class="secondary">Choose a shortcut to edit it, then press the keys you want.
-+            Escape cancels recording. Changes are saved automatically.</div>
-+          <cr-button id="resetAll" ?disabled="${!this.hasModified_()}"
-+              @click="${this.onResetAllClick_}">Reset all</cr-button>
-+        </div>
-+        <div class="search"><cr-input id="filter" aria-label="Search keyboard shortcuts"
-+            placeholder="Search keyboard shortcuts" .value="${this.query_}"
-+            @value-changed="${this.onFilterValueChanged_}">
-+        </cr-input></div>
-+        ${this.error_ && !this.errorID_ ? html`<p class="error" role="alert">${this.error_}</p>` : ''}
-+        ${this.filteredCommands_().map(command => html`
-+          <div class="command" data-command="${command.id}">
-+            <div class="label">${command.title}<div class="secondary group">${command.group}</div></div>
-+            <div class="bindings">
-+              ${this.inputs_(command).map((shortcut, index) => html`
-+                <cr-shortcut-input data-command="${command.id}" data-index="${index}" .shortcut="${shortcut}" .allowCtrlAltShortcuts="${true}"
-+                    .allowClearingEmpty="${command.bindings.length > 0 && index === command.bindings.length}"
-+                    .inputAriaLabel="${`${command.title} shortcut ${index + 1}`}"
-+                    .editButtonAriaLabel="${`Record ${command.title} shortcut ${index + 1}`}"
-+                    .clearButtonAriaLabel="${`Remove ${command.title} shortcut ${index + 1}`}"
-+                    @input-capture-change="${this.onInputCaptureChange_}"
-+                    @shortcut-updated="${this.onShortcutUpdated_}">
-+                </cr-shortcut-input>
-+              `)}
-+              ${command.bindings.length > 0 ? html`<cr-button class="add" data-command="${command.id}"
-+                  @click="${this.onAddClick_}">Add shortcut</cr-button>` : ''}
-+            </div>
-+            <cr-button class="reset" data-command="${command.id}" ?disabled="${!command.modified}"
-+                aria-label="${`Reset ${command.title} shortcuts`}"
-+                @click="${this.onResetClick_}">Reset</cr-button>
-+          </div>
-+          ${this.error_ && this.errorID_ === command.id ? html`<p class="error" role="alert">${this.error_}</p>` : ''}
-+        `)}
-+        ${!this.filteredCommands_().length ? html`<div class="empty" role="status">${this.loading_ ? 'Loading shortcuts…' : 'No matching shortcuts'}</div>` : ''}
-+      </settings-section>`;
-+}
+   <div slot="view" id="riseAi">
+     ${this.renderPlugin_(this.routes_.RISE_AI) ? html`
+       <settings-rise-page section="ai" page-title="AI">
+diff --git a/chrome/browser/resources/settings/settings_main/settings_main.ts b/chrome/browser/resources/settings/settings_main/settings_main.ts
+index 1f0e71f031..9cb6acdf07 100644
+--- a/chrome/browser/resources/settings/settings_main/settings_main.ts
++++ b/chrome/browser/resources/settings/settings_main/settings_main.ts
+@@ -19,6 +19,7 @@ import '../performance_page/performance_page_index.js';
+ import '../privacy_page/privacy_page_index.js';
+ import '../rise_page/rise_default_browser_banner.js';
+ import '../rise_page/rise_page.js';
++import '../rise_page/rise_keyboard_shortcuts.js';
+ import '../reset_page/reset_profile_banner.js';
+ import '../search_page/search_page_index.js';
+ // <if expr="not is_chromeos">
+diff --git a/chrome/browser/resources/settings/settings_menu/settings_menu.html b/chrome/browser/resources/settings/settings_menu/settings_menu.html
+index 2eb537efee..7ca6e02a2e 100644
+--- a/chrome/browser/resources/settings/settings_menu/settings_menu.html
++++ b/chrome/browser/resources/settings/settings_menu/settings_menu.html
+@@ -56,6 +56,11 @@
+           <span class="menu-label">Tabs</span>
+           <cr-ripple></cr-ripple>
+         </a>
++        <a role="menuitem" id="riseShortcuts" href="/keyboardShortcuts" class="cr-nav-menu-item">
++          <cr-icon icon="settings:rise-keyboard"></cr-icon>
++          <span class="menu-label">Keyboard shortcuts</span>
++          <cr-ripple></cr-ripple>
++        </a>
+         <a role="menuitem" id="riseAi" href="/assistant" class="cr-nav-menu-item">
+           <cr-icon icon="settings:pen-spark"></cr-icon>
+           <span class="menu-label">AI</span>
 diff --git a/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.css b/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.css
+index e3093c36f8..e4f4cc021f 100644
 --- a/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.css
 +++ b/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.css
 @@ -12,7 +12,7 @@
@@ -360,30 +369,11 @@ diff --git a/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_inpu
  }
  
  #input {
-diff --git a/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.ts b/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.ts
---- a/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.ts
-+++ b/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.ts
-@@ -57,6 +57,7 @@
-       clearButtonAriaLabel: {type: String},
-       inputDisabled: {type: Boolean},
-       allowCtrlAltShortcuts: {type: Boolean},
-+      allowClearingEmpty: {type: Boolean},
-       error_: {type: Number},
-
-       readonly_: {
-@@ -72,6 +73,8 @@
-   accessor clearButtonAriaLabel: string = '';
-   accessor inputDisabled: boolean = false;
-   accessor allowCtrlAltShortcuts = false;
-+  // Lets hosts remove an empty, newly added shortcut slot.
-+  accessor allowClearingEmpty = false;
-   protected accessor readonly_: boolean = true;
-   private capturing_: boolean = false;
-   private accessor error_: ShortcutError = ShortcutError.NO_ERROR;
 diff --git a/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.html.ts b/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.html.ts
+index d22adc0eb0..c6f22a718b 100644
 --- a/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.html.ts
 +++ b/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.html.ts
-@@ -27,7 +27,7 @@
+@@ -27,7 +27,7 @@ export function getHtml(this: CrShortcutInputElement) {
      <cr-icon-button id="clear" title="${this.i18n('shortcutClear')}"
          aria-label="${this.clearButtonAriaLabel}" slot="suffix"
          class="icon-clear no-overlap"
@@ -392,3 +382,24 @@ diff --git a/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_inpu
          @click="${this.onClearClick_}">
      </cr-icon-button>
    </cr-input>
+diff --git a/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.ts b/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.ts
+index 4518893dc2..bf65f02dd9 100644
+--- a/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.ts
++++ b/ui/webui/resources/cr_components/cr_shortcut_input/cr_shortcut_input.ts
+@@ -57,6 +57,7 @@ export class CrShortcutInputElement extends CrShortcutInputElementBase {
+       clearButtonAriaLabel: {type: String},
+       inputDisabled: {type: Boolean},
+       allowCtrlAltShortcuts: {type: Boolean},
++      allowClearingEmpty: {type: Boolean},
+       error_: {type: Number},
+ 
+       readonly_: {
+@@ -72,6 +73,8 @@ export class CrShortcutInputElement extends CrShortcutInputElementBase {
+   accessor clearButtonAriaLabel: string = '';
+   accessor inputDisabled: boolean = false;
+   accessor allowCtrlAltShortcuts = false;
++  // Lets hosts remove an empty, newly added shortcut slot.
++  accessor allowClearingEmpty = false;
+   protected accessor readonly_: boolean = true;
+   private capturing_: boolean = false;
+   private accessor error_: ShortcutError = ShortcutError.NO_ERROR;

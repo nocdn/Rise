@@ -1,3 +1,5 @@
+diff --git a/ui/accelerated_widget_mac/display_ca_layer_tree.mm b/ui/accelerated_widget_mac/display_ca_layer_tree.mm
+index b20c2d410c..62b163937a 100644
 --- a/ui/accelerated_widget_mac/display_ca_layer_tree.mm
 +++ b/ui/accelerated_widget_mac/display_ca_layer_tree.mm
 @@ -22,6 +22,29 @@ @interface CALayer (PrivateAPI)

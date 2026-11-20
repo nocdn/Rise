@@ -1,18 +1,75 @@
+diff --git a/chrome/browser/extensions/api/messaging/native_message_process_host.cc b/chrome/browser/extensions/api/messaging/native_message_process_host.cc
+index 14562bbd56..90494e9e4e 100644
+--- a/chrome/browser/extensions/api/messaging/native_message_process_host.cc
++++ b/chrome/browser/extensions/api/messaging/native_message_process_host.cc
+@@ -38,8 +38,20 @@
+ #include "net/base/net_errors.h"
+ #include "url/gurl.h"
+ 
++#if BUILDFLAG(IS_MAC)
++#include <os/log.h>
++#endif
++
+ namespace {
+ 
++#if BUILDFLAG(IS_MAC)
++os_log_t RiseNativeMessagingLog() {
++  static os_log_t log = os_log_create("dev.bartosz.Rise", "NativeMessaging");
++  return log;
++}
++// Host paths, extension IDs and message bodies can contain private information.
++#endif
++
+ // Maximum message size in bytes for messages received from Native Messaging
+ // hosts. Message size is limited mainly to prevent Chrome from crashing when
+ // native application misbehaves (e.g. starts writing garbage to the pipe).
+@@ -151,6 +163,12 @@ void NativeMessageProcessHost::OnHostProcessLaunched(
+     std::unique_ptr<net::FileStream> write_stream) {
+   CHECK(task_runner_->BelongsToCurrentThread(), base::NotFatalUntil::M161);
+ 
++#if BUILDFLAG(IS_MAC)
++  os_log_with_type(RiseNativeMessagingLog(),
++                   result == NativeProcessLauncher::RESULT_SUCCESS ? OS_LOG_TYPE_DEFAULT : OS_LOG_TYPE_ERROR,
++                   "Native host launch onePassword=%{public}d result=%{public}d",
++                   native_host_name_ == "com.1password.1password", static_cast<int>(result));
++#endif
+   switch (result) {
+     case NativeProcessLauncher::RESULT_INVALID_NAME:
+       Close(kInvalidNameError);
+@@ -407,6 +425,17 @@ void NativeMessageProcessHost::Close(const std::string& error_message) {
+   CHECK(task_runner_->BelongsToCurrentThread(), base::NotFatalUntil::M161);
+ 
+   if (!closed_) {
++#if BUILDFLAG(IS_MAC)
++    // Close receives Chromium's fixed transport errors, never host message content.
++    const int reason = error_message == kNativeHostExited ? 0
++        : error_message == kInvalidNameError ? 1
++        : error_message == kNotFoundError ? 2
++        : error_message == kForbiddenError ? 3
++        : error_message == kFailedToStartError ? 4 : 5;
++    os_log_with_type(RiseNativeMessagingLog(), OS_LOG_TYPE_DEFAULT,
++                     "Native host channel closed onePassword=%{public}d reason=%{public}d",
++                     native_host_name_ == "com.1password.1password", reason);
++#endif
+     closed_ = true;
+     VLOG(1) << "Closing native messaging channel: " << error_message;
+ #if BUILDFLAG(IS_POSIX)
+diff --git a/chrome/browser/webauthn/chrome_authenticator_request_delegate.cc b/chrome/browser/webauthn/chrome_authenticator_request_delegate.cc
+index 6c8b888328..9000aac1a7 100644
 --- a/chrome/browser/webauthn/chrome_authenticator_request_delegate.cc
 +++ b/chrome/browser/webauthn/chrome_authenticator_request_delegate.cc
-@@ -105,6 +105,7 @@
- #include "ui/gfx/native_ui_types.h"
+@@ -108,6 +108,7 @@
+ #endif
  
  #if BUILDFLAG(IS_MAC)
 +#include <os/log.h>
  #include "chrome/browser/webauthn/chrome_authenticator_request_delegate_mac.h"
  #include "device/fido/mac/credential_metadata.h"
  #include "ui/views/widget/widget.h"
-@@ -126,6 +127,14 @@
-     device::FidoRequestHandlerBase::TransportAvailabilityInfo;
+@@ -130,6 +131,14 @@ using TransportAvailabilityInfo =
  
  namespace {
-+
+ 
 +#if BUILDFLAG(IS_MAC)
 +// Local lifecycle diagnostics only: no relying parties, accounts or credential data.
 +os_log_t RisePasskeyLog() {
@@ -20,10 +77,11 @@
 +  return log;
 +}
 +#endif
- 
++
  ChromeAuthenticatorRequestDelegate::TestObserver* g_observer = nullptr;
  
-@@ -282,6 +291,9 @@
+ static constexpr char kGoogleRpId[] = "google.com";
+@@ -434,6 +443,9 @@ ChromeAuthenticatorRequestDelegate::ChromeAuthenticatorRequestDelegate(
            GetRenderFrameHost())),
        barrier_(
            std::make_unique<UiReadinessBarrier>(this, dialog_model_.get())) {
@@ -33,7 +91,7 @@
    dialog_model_->observers.AddObserver(this);
    if (g_observer) {
      g_observer->Created(this);
-@@ -291,6 +303,10 @@
+@@ -443,6 +455,10 @@ ChromeAuthenticatorRequestDelegate::ChromeAuthenticatorRequestDelegate(
  ChromeAuthenticatorRequestDelegate::~ChromeAuthenticatorRequestDelegate() {
    // Currently, completion of the request is indicated by //content destroying
    // this delegate.
@@ -44,7 +102,7 @@
    dialog_model_->OnRequestComplete();
    dialog_model_->observers.RemoveObserver(this);
  
-@@ -350,6 +366,10 @@
+@@ -502,6 +518,10 @@ void ChromeAuthenticatorRequestDelegate::SetUIPresentation(
  
  bool ChromeAuthenticatorRequestDelegate::DoesBlockRequestOnFailure(
      InterestingFailureReason reason) {
@@ -55,7 +113,7 @@
    if (!webauthn_ui_enabled()) {
      return false;
    }
-@@ -422,6 +442,11 @@
+@@ -574,6 +594,11 @@ void ChromeAuthenticatorRequestDelegate::OnTransactionSuccessful(
    if (request_source != RequestSource::kWebAuthentication) {
      return;
    }
@@ -64,19 +122,21 @@
 +                   "WebAuthn success requestType=%{public}d authenticatorType=%{public}d",
 +                   static_cast<int>(request_type), static_cast<int>(authenticator_type));
 +#endif
- #if BUILDFLAG(ENABLE_DICE_SUPPORT)
    MaybeRecordHybridPasskeyOutcome(
        authenticator_type == device::AuthenticatorType::kPhone
-@@ -886,6 +911,9 @@
+           ? HybridPasskeyOutcome::kSuccess
+@@ -1049,6 +1074,9 @@ void ChromeAuthenticatorRequestDelegate::OnStepTransition() {
  }
  
  void ChromeAuthenticatorRequestDelegate::OnCancelRequest() {
 +#if BUILDFLAG(IS_MAC)
 +  os_log_with_type(RisePasskeyLog(), OS_LOG_TYPE_DEFAULT, "WebAuthn UI cancelled");
 +#endif
- #if BUILDFLAG(ENABLE_DICE_SUPPORT)
    MaybeRecordHybridPasskeyOutcome(
        HybridPasskeyTerminationReason::kUserCancelled);
+ 
+diff --git a/chrome/browser/webauthn/chrome_web_authentication_delegate.cc b/chrome/browser/webauthn/chrome_web_authentication_delegate.cc
+index 96d1263f90..6788729c45 100644
 --- a/chrome/browser/webauthn/chrome_web_authentication_delegate.cc
 +++ b/chrome/browser/webauthn/chrome_web_authentication_delegate.cc
 @@ -81,6 +81,7 @@
@@ -87,7 +147,7 @@
  #include "base/no_destructor.h"
  #include "crypto/apple/keychain_util.h"
  #include "device/fido/mac/credential_metadata.h"
-@@ -399,10 +400,15 @@
+@@ -399,10 +400,15 @@ ChromeWebAuthenticationDelegate::TouchIdAuthenticatorConfigForProfile(
    static const base::NoDestructor<std::string> kKeychainAccessGroup([] {
      const std::string application =
          crypto::apple::ExecutableApplicationIdentifier();
@@ -107,59 +167,8 @@
    }());
  
    std::string metadata_secret = profile->GetPrefs()->GetString(
---- a/chrome/browser/extensions/api/messaging/native_message_process_host.cc
-+++ b/chrome/browser/extensions/api/messaging/native_message_process_host.cc
-@@ -37,7 +37,19 @@
- #include "net/base/net_errors.h"
- #include "url/gurl.h"
- 
-+#if BUILDFLAG(IS_MAC)
-+#include <os/log.h>
-+#endif
-+
- namespace {
-+
-+#if BUILDFLAG(IS_MAC)
-+os_log_t RiseNativeMessagingLog() {
-+  static os_log_t log = os_log_create("dev.bartosz.Rise", "NativeMessaging");
-+  return log;
-+}
-+// Host paths, extension IDs and message bodies can contain private information.
-+#endif
- 
- // Maximum message size in bytes for messages received from Native Messaging
- // hosts. Message size is limited mainly to prevent Chrome from crashing when
-@@ -150,6 +162,12 @@
-     std::unique_ptr<net::FileStream> write_stream) {
-   DCHECK(task_runner_->BelongsToCurrentThread());
- 
-+#if BUILDFLAG(IS_MAC)
-+  os_log_with_type(RiseNativeMessagingLog(),
-+                   result == NativeProcessLauncher::RESULT_SUCCESS ? OS_LOG_TYPE_DEFAULT : OS_LOG_TYPE_ERROR,
-+                   "Native host launch onePassword=%{public}d result=%{public}d",
-+                   native_host_name_ == "com.1password.1password", static_cast<int>(result));
-+#endif
-   switch (result) {
-     case NativeProcessLauncher::RESULT_INVALID_NAME:
-       Close(kInvalidNameError);
-@@ -406,6 +424,17 @@
-   DCHECK(task_runner_->BelongsToCurrentThread());
- 
-   if (!closed_) {
-+#if BUILDFLAG(IS_MAC)
-+    // Close receives Chromium's fixed transport errors, never host message content.
-+    const int reason = error_message == kNativeHostExited ? 0
-+        : error_message == kInvalidNameError ? 1
-+        : error_message == kNotFoundError ? 2
-+        : error_message == kForbiddenError ? 3
-+        : error_message == kFailedToStartError ? 4 : 5;
-+    os_log_with_type(RiseNativeMessagingLog(), OS_LOG_TYPE_DEFAULT,
-+                     "Native host channel closed onePassword=%{public}d reason=%{public}d",
-+                     native_host_name_ == "com.1password.1password", reason);
-+#endif
-     closed_ = true;
- #if BUILDFLAG(IS_POSIX)
-     read_controller_.reset();
+diff --git a/device/fido/mac/touch_id_context.mm b/device/fido/mac/touch_id_context.mm
+index 5e100311e4..6b89a62122 100644
 --- a/device/fido/mac/touch_id_context.mm
 +++ b/device/fido/mac/touch_id_context.mm
 @@ -7,6 +7,7 @@
@@ -170,7 +179,7 @@
  
  #include "base/apple/bridging.h"
  #include "base/apple/foundation_util.h"
-@@ -80,12 +81,14 @@
+@@ -80,12 +81,14 @@ bool CanCreateSecureEnclaveKeyPairBlocking() {
  
  // static
  bool TouchIdContext::TouchIdAvailableImpl(AuthenticatorConfig config) {
@@ -185,7 +194,7 @@
      FIDO_LOG(ERROR)
          << "Touch ID authenticator unavailable because keychain-access-group "
             "entitlement is missing or incorrect. Expected value: "
-@@ -97,6 +100,8 @@
+@@ -97,6 +100,8 @@ bool CanCreateSecureEnclaveKeyPairBlocking() {
    NSError* nserr;
    if (![context canEvaluatePolicy:LAPolicyDeviceOwnerAuthentication
                              error:&nserr]) {
@@ -194,7 +203,7 @@
      FIDO_LOG(DEBUG) << "canEvaluatePolicy failed: " << nserr;
      return false;
    }
-@@ -105,6 +110,9 @@
+@@ -105,6 +110,9 @@ bool CanCreateSecureEnclaveKeyPairBlocking() {
    // bindings exist. Instead, test whether we can create a key pair in the
    // secure enclave. This takes hundreds of milliseconds, so only do it once.
    static const bool kHasSecureEnclave = CanCreateSecureEnclaveKeyPairBlocking();

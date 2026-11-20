@@ -1,6 +1,8 @@
+diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
+index 184913de9f..c4a3eaea8c 100644
 --- a/chrome/browser/rise/RiseChromium.h
 +++ b/chrome/browser/rise/RiseChromium.h
-@@ -368,6 +368,10 @@
+@@ -368,6 +368,10 @@ RC_EXPORT @interface RCBrowserView : NSView
  /// Under something else, such as a Peek: the page takes no hover and sets no cursor, though
  /// mouse tracking would otherwise reach it through whatever covers it.
  @property (nonatomic) BOOL covered;
@@ -11,6 +13,8 @@
  /// The page's own view, which takes the keyboard: focusing the page is making it first
  /// responder, as Chrome does, not this view.
  @property (nonatomic, readonly, nullable) NSView *focusView;
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index 0586f23b0c..a75aff82fe 100644
 --- a/chrome/browser/rise/rise_bridge.mm
 +++ b/chrome/browser/rise/rise_bridge.mm
 @@ -24,6 +24,7 @@
@@ -21,7 +25,7 @@
  #include "base/pickle.h"
  #include "base/files/file_enumerator.h"
  #include "base/strings/string_util.h"
-@@ -2046,6 +2047,8 @@
+@@ -2046,6 +2047,8 @@ @implementation RCBrowserView {
    std::unique_ptr<PageDialogHost> _dialogHost;
    // Chromium's tracking areas, set aside while the page is covered.
    NSMapTable<NSView*, NSArray<NSTrackingArea*>*>* _parkedAreas;
@@ -30,7 +34,7 @@
  }
  
  @synthesize delegate = _delegate;
-@@ -2063,6 +2066,30 @@
+@@ -2063,6 +2066,30 @@ - (void)setScriptsDisabled:(BOOL)disabled {
  }
  @synthesize extensionPopup = _extensionPopup;
  @synthesize covered = _covered;
@@ -61,7 +65,7 @@
  
  // Under something else, such as a Peek or a notice: Chromium's mouse tracking
  // is set aside, so the page takes no hover and sets no cursor through it.
-@@ -2283,6 +2310,9 @@
+@@ -2283,6 +2310,9 @@ - (instancetype)initWithFrame:(NSRect)frame
  
  // What a page takes as soon as it's the view's.
  - (void)tookContents {
@@ -71,7 +75,7 @@
    // Its permission requests are asked in Rise's prompt.
    if (auto* permissions =
            permissions::PermissionRequestManager::FromWebContents(_contents)) {
-@@ -2334,6 +2364,7 @@
+@@ -2334,6 +2364,7 @@ - (void)tookContents {
  }
  
  - (void)contentsGone {
@@ -79,7 +83,7 @@
    _observer.reset();
    [Views() removeObjectForKey:[NSValue valueWithPointer:_contents]];
    _contents = nullptr;
-@@ -3111,6 +3142,7 @@
+@@ -3111,6 +3142,7 @@ - (void)close {
      return;
    }
    _closed = YES;

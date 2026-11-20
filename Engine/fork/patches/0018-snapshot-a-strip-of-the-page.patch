@@ -1,6 +1,8 @@
+diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
+index b766fc8fa7..ac1b8a3978 100644
 --- a/chrome/browser/rise/RiseChromium.h
 +++ b/chrome/browser/rise/RiseChromium.h
-@@ -399,6 +399,10 @@
+@@ -399,6 +399,10 @@ RC_EXPORT @interface RCBrowserView : NSView
  - (nullable CALayer *)liveLayerShowing:(NSRect)rect;
  /// A picture of what the page shows now, the size of this view.
  - (void)snapshotWithCompletion:(void (^)(NSImage *_Nullable image))completion;
@@ -11,6 +13,8 @@
  /// Closes the page for good; the view shows nothing after.
  - (void)close;
  @end
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index e5e532512a..79d2befaa9 100644
 --- a/chrome/browser/rise/rise_bridge.mm
 +++ b/chrome/browser/rise/rise_bridge.mm
 @@ -89,6 +89,8 @@
@@ -22,12 +26,10 @@
  #include "ui/gfx/image/image.h"
  #include "ui/gfx/image/image_skia.h"
  #include "chrome/browser/spellchecker/spellcheck_custom_dictionary.h"
-@@ -2641,6 +2643,30 @@
-             completion(image);
-           },
+@@ -2643,6 +2645,30 @@ - (void)snapshotWithCompletion:(void (^)(NSImage*))completion {
            completion, size));
-+}
-+
+ }
+ 
 +- (void)snapshotRect:(NSRect)rect
 +                size:(NSSize)size
 +          completion:(void (^)(NSImage*))completion {
@@ -50,6 +52,8 @@
 +                           : nil);
 +          },
 +          completion));
- }
- 
++}
++
  - (void)close {
+   if (_closed) {
+     return;

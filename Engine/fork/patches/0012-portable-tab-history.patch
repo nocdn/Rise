@@ -1,6 +1,8 @@
+diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
+index d14b130a57..52aa3aac33 100644
 --- a/chrome/browser/rise/RiseChromium.h
 +++ b/chrome/browser/rise/RiseChromium.h
-@@ -310,6 +310,10 @@
+@@ -310,6 +310,10 @@ RC_EXPORT @interface RCBrowserView : NSView
  /// Gives a page that hasn't loaded anything that history and loads its current entry, or loads
  /// `fallback` if it can't use it.
  - (void)restoreNavigationState:(NSData *)state fallback:(NSURL *)fallback;
@@ -11,9 +13,11 @@
  /// The link under the pointer.
  @property (nonatomic, readonly, nullable) NSURL *hoveredURL;
  /// Under something else, such as a Peek: the page takes no hover and sets no cursor, though
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index 3043c6adb0..951ed89674 100644
 --- a/chrome/browser/rise/rise_bridge.mm
 +++ b/chrome/browser/rise/rise_bridge.mm
-@@ -2034,6 +2034,48 @@
+@@ -2034,6 +2034,48 @@ - (void)loadFailed:(NSInteger)code text:(NSString*)text url:(NSURL*)url {
  // What a saved history starts with, to tell it from another engine's.
  const char kHistoryFormat[] = "rise-fork-history-1";
  

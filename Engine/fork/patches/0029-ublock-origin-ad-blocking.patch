@@ -1,6 +1,8 @@
+diff --git a/chrome/app/framework.exports b/chrome/app/framework.exports
+index c76a9fb948..3db5bc6338 100644
 --- a/chrome/app/framework.exports
 +++ b/chrome/app/framework.exports
-@@ -22,7 +22,6 @@
+@@ -22,7 +22,6 @@ _ChromeWebAppShortcutCopierMain
  
  # Rise's engine interface (chrome/browser/rise/RiseChromium.h), which Rise links.
  _OBJC_CLASS_$_RCAdBlock
@@ -8,9 +10,11 @@
  _OBJC_METACLASS_$_RCAdBlock
  _OBJC_CLASS_$_RCEngine
  _OBJC_METACLASS_$_RCEngine
+diff --git a/chrome/app/framework.order b/chrome/app/framework.order
+index 11bfa62335..4b75f3fffa 100644
 --- a/chrome/app/framework.order
 +++ b/chrome/app/framework.order
-@@ -31,7 +31,6 @@
+@@ -31,7 +31,6 @@ _ChromeWebAppShortcutCopierMain
  
  # _ChromeMain must be listed last.  That's the whole point of this file.
  _ChromeMain
@@ -18,9 +22,11 @@
  
  # Rise's engine interface (chrome/browser/rise/RiseChromium.h), which Rise links.
  # Its classes are data, which follows _ChromeMain's code in the binary.
+diff --git a/chrome/browser/chrome_content_browser_client.cc b/chrome/browser/chrome_content_browser_client.cc
+index 459b7bf844..3c4248b937 100644
 --- a/chrome/browser/chrome_content_browser_client.cc
 +++ b/chrome/browser/chrome_content_browser_client.cc
-@@ -6804,18 +6804,6 @@
+@@ -6937,18 +6937,6 @@ void ChromeContentBrowserClient::WillCreateURLLoaderFactory(
      network::mojom::URLLoaderFactoryOverridePtr* factory_override,
      scoped_refptr<base::SequencedTaskRunner> navigation_response_task_runner,
      bool is_for_network_service) {
@@ -39,11 +45,13 @@
  #if BUILDFLAG(ENABLE_EXTENSIONS_CORE)
    auto* web_request_api =
        extensions::BrowserContextKeyedAPIFactory<extensions::WebRequestAPI>::Get(
+diff --git a/chrome/browser/extensions/component_extensions_allowlist/allowlist.cc b/chrome/browser/extensions/component_extensions_allowlist/allowlist.cc
+index 720671265e..4206a10098 100644
 --- a/chrome/browser/extensions/component_extensions_allowlist/allowlist.cc
 +++ b/chrome/browser/extensions/component_extensions_allowlist/allowlist.cc
-@@ -40,6 +40,10 @@
-       extension_misc::kGlicExtensionId,
-       extension_misc::kInAppPaymentsSupportAppId,
+@@ -48,6 +48,10 @@ bool IsComponentExtensionAllowlisted(const std::string& extension_id) {
+       extension_misc::kNewTabPageExtensionId,
+ #endif  // BUILDFLAG(ENABLE_WEBUI_NTP)
        extension_misc::kPdfExtensionId,
 +      // uBlock Origin, which Rise carries and loads as Chrome's own
 +      // (chrome/browser/rise/rise_bridge.mm); its id is from the key Rise's
@@ -52,9 +60,11 @@
  #if BUILDFLAG(IS_CHROMEOS)
        extension_misc::kAssessmentAssistantExtensionId,
        extension_misc::kAccessibilityCommonExtensionId,
+diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
+index 4b44751e90..cdbe051c8f 100644
 --- a/chrome/browser/rise/RiseChromium.h
 +++ b/chrome/browser/rise/RiseChromium.h
-@@ -7,23 +7,16 @@
+@@ -7,23 +7,16 @@ NS_ASSUME_NONNULL_BEGIN
  #define RC_EXPORT
  #endif
  
@@ -84,6 +94,8 @@
  RC_EXPORT @interface RCEngine : NSObject
  /// The default search engine chosen in Chrome's settings (rise://settings), by name; nil if none.
  + (nullable NSString *)defaultSearchName;
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index 922f4a4b64..c72dc64ae4 100644
 --- a/chrome/browser/rise/rise_bridge.mm
 +++ b/chrome/browser/rise/rise_bridge.mm
 @@ -27,6 +27,8 @@
@@ -137,7 +149,7 @@
  
  @interface RCTabStrip ()
  // Chrome is closing the window's Browser itself, to quit.
-@@ -1565,6 +1563,7 @@
+@@ -1565,6 +1563,7 @@ void SendScripts(content::RenderFrameHost* frame, bool fresh) {
  
  void BrowserStarted() {
    g_started = true;
@@ -145,7 +157,7 @@
    NSArray* waiting = g_waiting_for_start;
    g_waiting_for_start = nil;
    // On the next turn, with the main loop running, as AppKit would.
-@@ -1640,8 +1639,6 @@
+@@ -1640,8 +1639,6 @@ - (void)run {
          }
          UnloadController::From(browser)->OnWindowClosing();
        }));
@@ -154,7 +166,7 @@
    // Chrome's dialogs for a page go over it, and Chrome's windows over Rise's
    // move with them.
    WatchChromeWindows();
-@@ -2878,204 +2875,94 @@
+@@ -2878,204 +2875,94 @@ - (void)close {
  
  namespace {
  
@@ -245,8 +257,7 @@
 -    new AdBlockingFactory(frame, initiator, std::move(receiver),
 -                          std::move(target));
 -  }
-+}  // namespace
- 
+-
 -  void CreateLoaderAndStart(
 -      mojo::PendingReceiver<network::mojom::URLLoader> loader,
 -      int32_t request_id,
@@ -264,25 +275,13 @@
 -    target_->CreateLoaderAndStart(std::move(loader), request_id, options,
 -                                  request, std::move(client),
 -                                  traffic_annotation);
-+// Loads uBlock Origin into Rise's profile, or unloads it, as the setting is.
-+// Before Chrome has started, there's nothing to do until it has.
-+void ApplyAdBlocking(base::OnceClosure done) {
-+  Profile* profile = RiseProfile();
-+  extensions::ComponentLoader* loader =
-+      profile ? extensions::ComponentLoader::Get(profile) : nullptr;
-+  if (!loader || loader->Exists(kUBlockOriginId) == g_ad_block_enabled) {
-+    std::move(done).Run();
-+    return;
-   }
+-  }
 -  void Clone(
 -      mojo::PendingReceiver<network::mojom::URLLoaderFactory> receiver) override {
 -    receivers_.Add(this, std::move(receiver));
-+  if (!g_ad_block_enabled) {
-+    loader->Remove(std::string(kUBlockOriginId));
-+    std::move(done).Run();
-+    return;
-   }
--
+-  }
++}  // namespace
+ 
 - private:
 -  AdBlockingFactory(
 -      content::RenderFrameHost* frame,
@@ -298,12 +297,7 @@
 -        &AdBlockingFactory::OnDisconnect, base::Unretained(this)));
 -    target_.set_disconnect_handler(base::BindOnce(
 -        &AdBlockingFactory::OnTargetGone, base::Unretained(this)));
-+  NSString* path = [NSBundle.mainBundle pathForResource:@"uBlock0.chromium"
-+                                                 ofType:nil];
-+  if (!path) {
-+    std::move(done).Run();
-+    return;
-   }
+-  }
 -
 -  bool Blocks(const network::ResourceRequest& request) {
 -    const char* kind = AdBlockKind(request.destination);
@@ -325,13 +319,26 @@
 -      return false;
 -    }
 -    return g_ad_block.blocks(request.url.spec().c_str(), source.c_str(), kind);
--  }
++// Loads uBlock Origin into Rise's profile, or unloads it, as the setting is.
++// Before Chrome has started, there's nothing to do until it has.
++void ApplyAdBlocking(base::OnceClosure done) {
++  Profile* profile = RiseProfile();
++  extensions::ComponentLoader* loader =
++      profile ? extensions::ComponentLoader::Get(profile) : nullptr;
++  if (!loader || loader->Exists(kUBlockOriginId) == g_ad_block_enabled) {
++    std::move(done).Run();
++    return;
+   }
 -
 -  void OnDisconnect() {
 -    if (receivers_.empty()) {
 -      delete this;
 -    }
--  }
++  if (!g_ad_block_enabled) {
++    loader->Remove(std::string(kUBlockOriginId));
++    std::move(done).Run();
++    return;
+   }
 -  void OnTargetGone() { delete this; }
 -
 -  content::GlobalRenderFrameHostId frame_;
@@ -353,6 +360,12 @@
 -    char* (*hidden)(const char*, const char*, const char*),
 -    void (*free_string)(char*)) {
 -  g_ad_block = {load, blocks, hidden, free_string};
++  NSString* path = [NSBundle.mainBundle pathForResource:@"uBlock0.chromium"
++                                                 ofType:nil];
++  if (!path) {
++    std::move(done).Run();
++    return;
++  }
 +  base::FilePath directory = base::apple::NSStringToFilePath(path);
 +  base::ThreadPool::PostTaskAndReplyWithResult(
 +      FROM_HERE, {base::MayBlock(), base::TaskPriority::USER_BLOCKING},
@@ -432,6 +445,8 @@
  }
  @end
  
+diff --git a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc
+index 70eda844fd..c8332e0a07 100644
 --- a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc
 +++ b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.cc
 @@ -6,28 +6,13 @@
@@ -463,9 +478,11 @@
  // static
  EmbedderTabHooks* EmbedderTabHooks::FromWebContents(
      content::WebContents* contents) {
+diff --git a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h
+index c6fdcee172..b037aab594 100644
 --- a/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h
 +++ b/chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h
-@@ -34,14 +34,6 @@
+@@ -34,14 +34,6 @@ struct WebPreferences;
  
  class GURL;
  
@@ -480,7 +497,7 @@
  namespace content {
  struct ContextMenuParams;
  class FileSelectListener;
-@@ -117,14 +109,4 @@
+@@ -117,14 +109,4 @@ class EmbedderTabHooks : public base::SupportsUserData::Data {
                                    base::OnceCallback<void(bool)> done);
  };
  

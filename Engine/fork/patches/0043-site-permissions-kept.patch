@@ -1,5 +1,5 @@
 diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
-index 550c19f..5f7931d 100644
+index 550c19f235..5f7931de65 100644
 --- a/chrome/browser/rise/RiseChromium.h
 +++ b/chrome/browser/rise/RiseChromium.h
 @@ -42,6 +42,11 @@ RC_EXPORT @interface RCEngine : NSObject
@@ -15,7 +15,7 @@ index 550c19f..5f7931d 100644
  + (void)shutdown;
  @end
 diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
-index 01c45e3..e2cbd13 100644
+index 01c45e3711..e2cbd13717 100644
 --- a/chrome/browser/rise/rise_bridge.mm
 +++ b/chrome/browser/rise/rise_bridge.mm
 @@ -1463,15 +1463,15 @@ void Decide(bool allowed) {

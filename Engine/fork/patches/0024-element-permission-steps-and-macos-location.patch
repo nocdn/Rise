@@ -1,6 +1,8 @@
+diff --git a/chrome/browser/rise/BUILD.gn b/chrome/browser/rise/BUILD.gn
+index aefb5133bc..e51b476411 100644
 --- a/chrome/browser/rise/BUILD.gn
 +++ b/chrome/browser/rise/BUILD.gn
-@@ -34,6 +34,7 @@
+@@ -34,6 +34,7 @@ source_set("impl") {
      "//chrome/browser/ui/browser_window:create_browser_window",
      "//chrome/browser/ui/tabs:tab_strip",
      "//chrome/browser/content_settings:content_settings_factory",
@@ -8,6 +10,8 @@
      "//chrome/browser/ui/browser_web_contents_delegate",
      "//chrome/common/rise:mojom",
      "//components/content_settings/core/browser",
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index 6c3f8aaa4e..ce04d38c66 100644
 --- a/chrome/browser/rise/rise_bridge.mm
 +++ b/chrome/browser/rise/rise_bridge.mm
 @@ -106,6 +106,8 @@
@@ -19,7 +23,7 @@
  #include "components/permissions/permission_prompt.h"
  #include "components/sessions/content/content_serialized_navigation_builder.h"
  #include "components/sessions/core/serialized_navigation_entry.h"
-@@ -1107,10 +1109,30 @@
+@@ -1107,10 +1109,30 @@ bool RunFileChooser(content::RenderFrameHost* frame,
  // A page's request for camera, microphone or location, asked in Rise's own
  // prompt, which keeps its decisions itself: Chrome grants for the page only,
  // and keeps no denial, so it asks again next time and Rise answers.
@@ -50,7 +54,7 @@
      RCPermission asked = 0;
      bool others = false;
      for (const auto& request : delegate->Requests()) {
-@@ -1175,6 +1197,84 @@
+@@ -1175,6 +1197,84 @@ TabSwitchingBehavior GetTabSwitchingBehavior() override {
    }
  
   private:
@@ -135,7 +139,7 @@
    void Decide(bool allowed) {
      Delegate* delegate = delegate_.get();
      if (!delegate || decided_ || delegate->Requests().empty()) {
-@@ -1189,7 +1289,16 @@
+@@ -1189,7 +1289,16 @@ void Decide(bool allowed) {
                        GeolocationAccuracy::kPrecise})
                  : PromptOptions(std::monostate());
      if (allowed) {
@@ -152,7 +156,7 @@
        return;
      }
      GURL origin = delegate->GetRequestingOrigin();
-@@ -1214,6 +1323,9 @@
+@@ -1214,6 +1323,9 @@ void Decide(bool allowed) {
    base::WeakPtr<Delegate> delegate_;
    __weak RCBrowserView* view_;
    bool decided_ = false;

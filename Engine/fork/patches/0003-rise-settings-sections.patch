@@ -1,8 +1,8 @@
 diff --git a/chrome/browser/resources/settings/about_page/about_page.ts b/chrome/browser/resources/settings/about_page/about_page.ts
-index aaaf8c6e7e..54533bafae 100644
+index 30855eca88..87dbedf3ca 100644
 --- a/chrome/browser/resources/settings/about_page/about_page.ts
 +++ b/chrome/browser/resources/settings/about_page/about_page.ts
-@@ -231,12 +231,8 @@ export class SettingsAboutPageElement extends SettingsAboutPageElementBase
+@@ -230,12 +230,8 @@ export class SettingsAboutPageElement extends SettingsAboutPageElementBase
  
    // <if expr="not is_chromeos">
    private updateShowUpdateStatus_() {
@@ -17,6 +17,74 @@ index aaaf8c6e7e..54533bafae 100644
    }
  
    protected shouldShowLearnMoreLink_(): boolean {
+diff --git a/chrome/browser/resources/settings/appearance_page/appearance_page.html.ts b/chrome/browser/resources/settings/appearance_page/appearance_page.html.ts
+index b2aaf8dca5..1519e61bc6 100644
+--- a/chrome/browser/resources/settings/appearance_page/appearance_page.html.ts
++++ b/chrome/browser/resources/settings/appearance_page/appearance_page.html.ts
+@@ -49,6 +49,7 @@ export function getHtml(this: SettingsAppearancePageElement) {
+       </div>
+ </if>
+     </div>
++    ${this.pageVisibility_.browserUi !== false ? html`
+     <div id="toolbarRow" class="settings-row">
+       <cr-link-row id="customizeToolbar" label="$i18n{customizeToolbar}"
+           @click="${this.onCustomizeToolbarClick_}" external>
+@@ -79,6 +80,7 @@ export function getHtml(this: SettingsAppearancePageElement) {
+         `)}
+       </select>
+     </div>
++    ` : ''}
+     <div class="hr"
+         ?hidden="${!this.showHr_(
+             this.pageVisibility_.setTheme, this.pageVisibility_.homeButton)}">
+@@ -144,6 +146,7 @@ export function getHtml(this: SettingsAppearancePageElement) {
+       </div>
+     ` : ''}
+ 
++    ${this.pageVisibility_.browserUi !== false ? html`
+ <if expr="is_macosx">
+     ${this.showGlassEffectEnabled_ ? html`
+       <div class="cr-row hr">
+@@ -265,6 +268,7 @@ export function getHtml(this: SettingsAppearancePageElement) {
+         </settings-dropdown-menu>
+       </div>
+     </div>
++    ` : ''}
+     ${!this.showHoverCardImagesOption_ ? html`
+       <div class="hr" ?hidden="${!this.pageVisibility_.hoverCard}"></div>
+       <settings-toggle-button id="hoverCardMemoryUsageToggle"
+@@ -302,7 +306,7 @@ export function getHtml(this: SettingsAppearancePageElement) {
+         label="$i18n{showWindowDecorations}" inverted>
+     </settings-toggle-button>
+ </if>
+-    <div class="cr-row">
++    <div class="cr-row ${this.pageVisibility_.browserUi === false ? 'first' : ''}">
+       <div class="flex cr-padded-text" aria-hidden="true">
+         $i18n{fontSize}
+       </div>
+@@ -333,11 +337,14 @@ export function getHtml(this: SettingsAppearancePageElement) {
+     <settings-toggle-button class="hr" pref-key="webkit.webprefs.tabs_to_links"
+         label="$i18n{tabsToLinks}">
+     </settings-toggle-button>
++    ${this.pageVisibility_.browserUi !== false ? html`
+     <settings-toggle-button class="hr" pref-key="browser.confirm_to_quit"
+         label="$i18n{warnBeforeQuitting}">
+     </settings-toggle-button>
++    ` : ''}
+ </if>
+   </div>
++  ${this.pageVisibility_.browserUi !== false ? html`
+   <settings-toggle-button class="hr" id="splitViewDragAndDrop"
+       pref-key="browser.split_view_drag_and_drop_enabled"
+       label="${this.i18n(
+@@ -345,6 +352,7 @@ export function getHtml(this: SettingsAppearancePageElement) {
+               'allowSplitViewDragAndDropHorizontal' :
+               'allowSplitViewDragAndDrop')}">
+   </settings-toggle-button>
++  ` : ''}
+ </settings-section>
+ ${this.showManagedThemeDialog_ ? html`
+   <managed-dialog @close="${this.onManagedDialogClose_}"
 diff --git a/chrome/browser/resources/settings/page_visibility.ts b/chrome/browser/resources/settings/page_visibility.ts
 index feff9bdf64..0f310babbc 100644
 --- a/chrome/browser/resources/settings/page_visibility.ts
@@ -86,70 +154,3 @@ index feff9bdf64..0f310babbc 100644
  /**
   * Dictionary defining page visibility.
   */
-diff --git a/chrome/browser/resources/settings/appearance_page/appearance_page.html.ts b/chrome/browser/resources/settings/appearance_page/appearance_page.html.ts
---- a/chrome/browser/resources/settings/appearance_page/appearance_page.html.ts
-+++ b/chrome/browser/resources/settings/appearance_page/appearance_page.html.ts
-@@ -49,6 +49,7 @@
-       </div>
- </if>
-     </div>
-+    ${this.pageVisibility_.browserUi !== false ? html`
-     <div id="toolbarRow" class="settings-row">
-       <cr-link-row id="customizeToolbar"
-           label="$i18n{customizeToolbar}"
-@@ -80,6 +81,7 @@
-         `)}
-       </select>
-     </div>
-+    ` : ''}
-     <div class="hr" ?hidden="${!this.showHr_(
-         this.pageVisibility_.setTheme, this.pageVisibility_.homeButton)}">
-     </div>
-@@ -144,6 +146,7 @@
-       </div>
-     ` : ''}
- 
-+    ${this.pageVisibility_.browserUi !== false ? html`
-     <if expr="is_macosx">
-       ${this.showGlassEffectEnabled_ ? html`
-         <div class="cr-row hr">
-@@ -265,6 +268,7 @@
-         </settings-dropdown-menu>
-       </div>
-     </div>
-+    ` : ''}
-     ${!this.showHoverCardImagesOption_ ? html`
-       <div class="hr" ?hidden="${!this.pageVisibility_.hoverCard}"></div>
-       <settings-toggle-button id="hoverCardMemoryUsageToggle"
-@@ -302,7 +306,7 @@
-         inverted>
-     </settings-toggle-button>
- </if>
--    <div class="cr-row">
-+    <div class="cr-row ${this.pageVisibility_.browserUi === false ? 'first' : ''}">
-       <div class="flex cr-padded-text" aria-hidden="true">
-         $i18n{fontSize}
-       </div>
-@@ -334,18 +338,22 @@
-         pref-key="webkit.webprefs.tabs_to_links"
-         label="$i18n{tabsToLinks}">
-     </settings-toggle-button>
-+    ${this.pageVisibility_.browserUi !== false ? html`
-     <settings-toggle-button class="hr"
-         pref-key="browser.confirm_to_quit"
-         label="$i18n{warnBeforeQuitting}">
-     </settings-toggle-button>
-+    ` : ''}
- </if>
-   </div>
-+  ${this.pageVisibility_.browserUi !== false ? html`
-   <settings-toggle-button class="hr" id="splitViewDragAndDrop"
-       pref-key="browser.split_view_drag_and_drop_enabled"
-       label="${this.i18n(this.splitViewHorizontalEnabled_
-                ? 'allowSplitViewDragAndDropHorizontal'
-                : 'allowSplitViewDragAndDrop')}">
-   </settings-toggle-button>
-+  ` : ''}
- </settings-section>
- ${this.showManagedThemeDialog_ ? html`
-   <managed-dialog @close="${this.onManagedDialogClose_}"

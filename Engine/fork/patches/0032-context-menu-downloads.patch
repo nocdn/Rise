@@ -1,3 +1,19 @@
+diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
+index cdbe051c8f..2b98af4ea7 100644
+--- a/chrome/browser/rise/RiseChromium.h
++++ b/chrome/browser/rise/RiseChromium.h
+@@ -189,6 +189,9 @@ RC_EXPORT @interface RCContextMenu : NSObject
+ /// Adds the misspelled word to the spelling dictionary.
+ - (void)learnMisspelledWord;
+ - (void)copyImage;
++/// Saves a link or media source in the clicked document's context. Does nothing
++/// once that document has navigated away or closed.
++- (void)downloadURL:(NSURL *)url NS_SWIFT_NAME(download(_:));
+ /// Shows the dictionary's definition of the selection, at it.
+ - (void)lookUp;
+ /// Has the page's DevTools select the element clicked, once they're attached if they aren't yet.
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index 8182e61145..188e73ed91 100644
 --- a/chrome/browser/rise/rise_bridge.mm
 +++ b/chrome/browser/rise/rise_bridge.mm
 @@ -145,8 +145,10 @@
@@ -11,7 +27,7 @@
  #include "content/public/common/isolated_world_ids.h"
  #include "skia/ext/skia_utils_mac.h"
  #include "third_party/blink/public/common/page/page_zoom.h"
-@@ -2387,7 +2389,22 @@
+@@ -2387,7 +2389,22 @@ - (void)setAudioMuted:(BOOL)muted {
  - (BOOL)isAudioMuted {
    return _contents && _contents->IsAudioMuted();
  }
@@ -35,7 +51,7 @@
  
  - (void)evaluateFunctionBody:(NSString*)functionBody
                     arguments:(NSDictionary<NSString*, id>*)arguments
-@@ -3264,6 +3281,9 @@
+@@ -3264,6 +3281,9 @@ - (void)perform {
  
  @implementation RCContextMenu {
    content::GlobalRenderFrameHostId _frame;
@@ -45,7 +61,7 @@
    __weak RCBrowserView* _view;
    int _x;
    int _y;
-@@ -3287,6 +3307,10 @@
+@@ -3287,6 +3307,10 @@ - (instancetype)initWithParams:(const content::ContextMenuParams&)params
      return nil;
    }
    _frame = frame->GetGlobalId();
@@ -56,7 +72,7 @@
    _view = view;
    _extensionEntries = std::make_shared<ExtensionEntries>(frame, params);
    _x = params.x;
-@@ -3389,6 +3413,22 @@
+@@ -3389,6 +3413,22 @@ - (void)learnMisspelledWord {
                                   base::SysNSStringToUTF16(_misspelledWord));
    }
  }
@@ -79,15 +95,3 @@
  - (void)copyImage {
    if (content::RenderFrameHost* frame =
            content::RenderFrameHost::FromID(_frame)) {
---- a/chrome/browser/rise/RiseChromium.h
-+++ b/chrome/browser/rise/RiseChromium.h
-@@ -189,6 +189,9 @@
- /// Adds the misspelled word to the spelling dictionary.
- - (void)learnMisspelledWord;
- - (void)copyImage;
-+/// Saves a link or media source in the clicked document's context. Does nothing
-+/// once that document has navigated away or closed.
-+- (void)downloadURL:(NSURL *)url NS_SWIFT_NAME(download(_:));
- /// Shows the dictionary's definition of the selection, at it.
- - (void)lookUp;
- /// Has the page's DevTools select the element clicked, once they're attached if they aren't yet.

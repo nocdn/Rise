@@ -1,3 +1,5 @@
+diff --git a/chrome/browser/printing/print_preview_dialog_controller.cc b/chrome/browser/printing/print_preview_dialog_controller.cc
+index 68d8290053..55452825ff 100644
 --- a/chrome/browser/printing/print_preview_dialog_controller.cc
 +++ b/chrome/browser/printing/print_preview_dialog_controller.cc
 @@ -24,6 +24,7 @@
@@ -6,9 +8,9 @@
  #include "components/guest_view/browser/guest_view_base.h"
 +#include "components/tabs/public/tab_interface.h"
  #include "components/web_modal/web_contents_modal_dialog_host.h"
- #include "content/public/browser/host_zoom_map.h"
- #include "content/public/browser/navigation_controller.h"
-@@ -134,7 +135,14 @@
+ #include "components/web_modal/web_contents_modal_dialog_manager.h"
+ #include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
+@@ -136,7 +137,14 @@ void PrintPreviewDialogDelegate::GetDialogSize(gfx::Size* size) const {
    BrowserWindowInterface* browser =
        GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(
            outermost_web_contents);
@@ -24,9 +26,11 @@
      host = browser->GetWebContentsModalDialogHostForWindow();
  
    if (host)
+diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
+index c4a3eaea8c..550c19f235 100644
 --- a/chrome/browser/rise/RiseChromium.h
 +++ b/chrome/browser/rise/RiseChromium.h
-@@ -207,6 +207,9 @@
+@@ -207,6 +207,9 @@ RC_EXPORT @interface RCContextMenu : NSObject
  - (void)lookUp;
  /// Has the page's DevTools select the element clicked, once they're attached if they aren't yet.
  - (void)inspect;
@@ -36,7 +40,7 @@
  /// Extensions' entries for what was clicked.
  @property (nonatomic, readonly) NSArray<RCExtensionMenuItem *> *extensionItems;
  /// The page's own entries, as DevTools gives for every menu it shows (its tabs' overflow, its
-@@ -388,6 +391,16 @@
+@@ -388,6 +391,16 @@ RC_EXPORT @interface RCBrowserView : NSView
  - (void)reload;
  - (void)reloadIgnoringCache;
  - (void)stopLoading;
@@ -53,6 +57,8 @@
  - (void)setAudioMuted:(BOOL)muted;
  /// Whether Chromium has the page's sound muted.
  @property (nonatomic, readonly) BOOL isAudioMuted;
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index 0ec5b45515..01c45e3711 100644
 --- a/chrome/browser/rise/rise_bridge.mm
 +++ b/chrome/browser/rise/rise_bridge.mm
 @@ -90,6 +90,10 @@
@@ -74,12 +80,10 @@
  #include "components/prefs/scoped_user_pref_update.h"
  #include "components/spellcheck/browser/spellcheck_platform.h"
  #include "components/spellcheck/common/spellcheck_features.h"
-@@ -2660,7 +2665,48 @@
- - (void)stopLoading {
-   if (_contents) {
+@@ -2662,6 +2667,47 @@ - (void)stopLoading {
      _contents->Stop();
-+  }
-+}
+   }
+ }
 +// As chrome::CanPrint and chrome::Print, for this page rather than the active tab of Chrome's
 +// tab strip, which needn't be the one Rise shows.
 +- (BOOL)canPrint {
@@ -117,13 +121,14 @@
 +           ->GetPrefs()
 +           ->GetBoolean(prefs::kPrintingEnabled)) {
 +    return;
-   }
++  }
 +  // From the print preview too, as Chrome's command is, which hands its job to the system's.
 +  printing::StartBasicPrint(_contents);
- }
++}
  - (void)setAudioMuted:(BOOL)muted {
    if (_contents) {
-@@ -3824,6 +3870,24 @@
+     _contents->SetAudioMuted(muted);
+@@ -3824,6 +3870,24 @@ - (void)copyImage {
      frame->CopyImageAt(_x, _y);
    }
  }

@@ -33,7 +33,7 @@ took: Chromium built from source with our own patches and our own embedding laye
 | `scripts/engine/fetch.sh` | Copies Chromium.app from another Mac that built it, for Macs that can't (`docs/EngineRebuild.md`) |
 | `Engine/ublock.json` | The uBlock Origin release Rise carries for ad blocking, and the key that fixes its extension id |
 
-Needs Xcode with the macOS SDK the pin expects (26.5 for Chromium 156), its Metal
+Needs Xcode with the macOS SDK the pin expects (27.0 for Chromium 158), its Metal
 toolchain (`xcodebuild -downloadComponent MetalToolchain`), and about 100 GB free.
 
 The checkout lives outside the repo: `RISE_CHROMIUM_ROOT`, by default
@@ -100,6 +100,11 @@ run without a Chromium checkout: `python3 -m unittest discover -s scripts/engine
 | `0044-pip-placement-logging.patch` | Where Chrome places and moves a page's floating window, and why, in the system log beside Rise's own (subsystem `dev.bartosz.Rise`, category `FloatingPage`, lines starting `engine:`): its first bounds and the bounds cache, child dialogs growing it and putting it back, Chrome's tuck, a site resizing it, and its focus |
 | `0045-site-notifications-user-notifications.patch` | Sites' notifications are shown from Rise's own process with the UserNotifications API (`MacNotificationServiceUN`, as Chrome's app shims show theirs), not the deprecated `NSUserNotificationCenter`. Rise uses UserNotifications itself, and once an app has, macOS refuses its `NSUserNotificationCenter` notifications without a word ("You can't mix modern clients with legacy clients"), so Google Chat's and every other site's never showed |
 | `0046-no-alerts-helper.patch` | No alert dispatcher: every site's notification is already a banner from Rise's own process (`0039`, `0045`), and Chrome only started its alerts helper (`Chromium Helper (Alerts)`) at launch to list or close alerts it never showed. Starting it was enough for macOS to ask, under Chromium's name, whether it could send notifications |
+| `0047-chromium-158-build-targets.patch` | Uses Chromium 158's smaller browser UI build targets for Rise's embedding layer and permits its use of `browser.h` |
+| `0048-chromium-158-settings-lint.patch` | Meets Chromium 158's Lit template checks: conditionally rendered Appearance controls are read from their change event, and keyboard shortcut loading rows use a tagged template branch |
+| `0049-chromium-158-v8-callback-data.patch` | Reads Rise's renderer message handler data through V8's `DataV2` API, replacing the deprecated `Data` accessor |
+| `0050-chromium-158-browser-api.patch` | Follows Chromium 158's browser API: `BrowserWindow` no longer has the profile IPH methods, `WindowOpenDisposition`'s values are `kCurrentTab` and so on, and an extension event takes its arguments as shared `EventArgs` |
+| `0051-settings-events-without-browser-view.patch` | Chromium 158's settings tell the window's `BrowserView` element when the search engine changes or browsing data is cleared, and CHECKed that it was there; Rise's windows have none, so choosing a search engine crashed Rise. They now skip it |
 
 `0002` is exported from the fork's tree with `git diff HEAD` over `base` and `chrome`, less the
 paths the other patches and `brand.py` own (see `Engine/fork-plan.md`); new files are added

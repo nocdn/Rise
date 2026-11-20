@@ -1,3 +1,46 @@
+diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
+index 4b7495e341..4b44751e90 100644
+--- a/chrome/browser/rise/RiseChromium.h
++++ b/chrome/browser/rise/RiseChromium.h
+@@ -33,10 +33,14 @@ RC_EXPORT @interface RCEngine : NSObject
+ /// `cachePath`. Call on the main thread after `RCApplication.sharedApplication`, before the
+ /// run loop starts. Returns NO if Chromium couldn't start.
+ ///
+-/// Chromium encrypts cookies and saved data with a key it keeps in the Keychain, in Rise's own
+-/// item ("Rise Safe Storage"). A throwaway profile, such as a test's, passes `keychain` NO: its
+-/// key is made up in memory and the Keychain is never asked, so it can't prompt for a password.
++/// Chromium encrypts cookies and saved data with a key it keeps in the Keychain: in Chromium's
++/// item ("Chromium Safe Storage"), or the one set with `setKeychainService:account:`. A throwaway
++/// profile, such as a test's, passes `keychain` NO: its key is made up in memory and the
++/// Keychain is never asked, so it can't prompt for a password.
+ + (BOOL)startWithCachePath:(NSString *)cachePath keychain:(BOOL)keychain;
++/// The Keychain item to keep that key in, as Chrome keeps its in "Chrome Safe Storage". Call
++/// before `startWithCachePath:keychain:`.
+++ (void)setKeychainService:(NSString *)service account:(NSString *)account;
+ @property (class, readonly) BOOL isRunning;
+ /// Stops Chromium; call as the app terminates.
+ + (void)shutdown;
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index 2e67c18a66..922f4a4b64 100644
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -1693,6 +1693,14 @@ + (BOOL)startWithCachePath:(NSString*)cachePath keychain:(BOOL)keychain {
+   return YES;
+ }
+ 
+++ (void)setKeychainService:(NSString*)service account:(NSString*)account {
++  std::vector<std::string>& arguments = Arguments();
++  arguments.push_back("--rise-keychain-service=" +
++                      base::SysNSStringToUTF8(service));
++  arguments.push_back("--rise-keychain-account=" +
++                      base::SysNSStringToUTF8(account));
++}
++
+ + (BOOL)isRunning {
+   return g_start_requested;
+ }
+diff --git a/components/os_crypt/common/keychain_password_mac.mm b/components/os_crypt/common/keychain_password_mac.mm
+index 212b930952..a9139f3f00 100644
 --- a/components/os_crypt/common/keychain_password_mac.mm
 +++ b/components/os_crypt/common/keychain_password_mac.mm
 @@ -9,6 +9,7 @@
@@ -44,40 +87,3 @@
    return *account_name;
  }
  
---- a/chrome/browser/rise/RiseChromium.h
-+++ b/chrome/browser/rise/RiseChromium.h
-@@ -33,10 +33,14 @@
- /// `cachePath`. Call on the main thread after `RCApplication.sharedApplication`, before the
- /// run loop starts. Returns NO if Chromium couldn't start.
- ///
--/// Chromium encrypts cookies and saved data with a key it keeps in the Keychain, in Rise's own
--/// item ("Rise Safe Storage"). A throwaway profile, such as a test's, passes `keychain` NO: its
--/// key is made up in memory and the Keychain is never asked, so it can't prompt for a password.
-+/// Chromium encrypts cookies and saved data with a key it keeps in the Keychain: in Chromium's
-+/// item ("Chromium Safe Storage"), or the one set with `setKeychainService:account:`. A throwaway
-+/// profile, such as a test's, passes `keychain` NO: its key is made up in memory and the
-+/// Keychain is never asked, so it can't prompt for a password.
- + (BOOL)startWithCachePath:(NSString *)cachePath keychain:(BOOL)keychain;
-+/// The Keychain item to keep that key in, as Chrome keeps its in "Chrome Safe Storage". Call
-+/// before `startWithCachePath:keychain:`.
-++ (void)setKeychainService:(NSString *)service account:(NSString *)account;
- @property (class, readonly) BOOL isRunning;
- /// Stops Chromium; call as the app terminates.
- + (void)shutdown;
---- a/chrome/browser/rise/rise_bridge.mm
-+++ b/chrome/browser/rise/rise_bridge.mm
-@@ -1691,6 +1691,14 @@
-     arguments.push_back("--use-mock-keychain");
-   }
-   return YES;
-+}
-+
-++ (void)setKeychainService:(NSString*)service account:(NSString*)account {
-+  std::vector<std::string>& arguments = Arguments();
-+  arguments.push_back("--rise-keychain-service=" +
-+                      base::SysNSStringToUTF8(service));
-+  arguments.push_back("--rise-keychain-account=" +
-+                      base::SysNSStringToUTF8(account));
- }
- 
- + (BOOL)isRunning {

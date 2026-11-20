@@ -1,5 +1,5 @@
 diff --git a/chrome/browser/picture_in_picture/picture_in_picture_window_manager.cc b/chrome/browser/picture_in_picture/picture_in_picture_window_manager.cc
-index b02065e..45408e6 100644
+index 811bac8db0..d450fe6444 100644
 --- a/chrome/browser/picture_in_picture/picture_in_picture_window_manager.cc
 +++ b/chrome/browser/picture_in_picture/picture_in_picture_window_manager.cc
 @@ -7,6 +7,9 @@
@@ -12,7 +12,7 @@ index b02065e..45408e6 100644
  #include "chrome/browser/ui/navigator/browser_navigator_params.h"
  #include "content/public/browser/document_picture_in_picture_window_controller.h"
  #include "content/public/browser/navigation_handle.h"
-@@ -448,6 +451,9 @@ gfx::Rect PictureInPictureWindowManager::CalculateOuterWindowBounds(
+@@ -461,6 +464,9 @@ gfx::Rect PictureInPictureWindowManager::CalculateOuterWindowBounds(
      // this request.
      if (cached_window_bounds && !pip_options.prefer_initial_window_placement) {
        // Cache hit!  Just return it as the window bounds.
@@ -22,7 +22,7 @@ index b02065e..45408e6 100644
        return *cached_window_bounds;
      }
    }
-@@ -511,6 +517,14 @@ gfx::Rect PictureInPictureWindowManager::CalculateOuterWindowBounds(
+@@ -524,6 +530,14 @@ gfx::Rect PictureInPictureWindowManager::CalculateOuterWindowBounds(
        gfx::Point(window_diff_width - buffer, window_diff_height - buffer);
    window_bounds.set_origin(default_origin);
  
@@ -39,7 +39,7 @@ index b02065e..45408e6 100644
  
 diff --git a/chrome/browser/picture_in_picture/rise_pip_log.h b/chrome/browser/picture_in_picture/rise_pip_log.h
 new file mode 100644
-index 0000000..8a9cc8b
+index 0000000000..8a9cc8b99b
 --- /dev/null
 +++ b/chrome/browser/picture_in_picture/rise_pip_log.h
 @@ -0,0 +1,38 @@
@@ -82,7 +82,7 @@ index 0000000..8a9cc8b
 +
 +#endif  // CHROME_BROWSER_PICTURE_IN_PICTURE_RISE_PIP_LOG_H_
 diff --git a/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.cc b/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.cc
-index 6fb1447..64dcffc 100644
+index 768c21a9d2..28997e208b 100644
 --- a/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.cc
 +++ b/chrome/browser/ui/views/frame/picture_in_picture_browser_frame_view.cc
 @@ -12,6 +12,8 @@
@@ -94,7 +94,7 @@ index 6fb1447..64dcffc 100644
  #include "chrome/browser/ui/browser_content_setting_bubble_model_delegate.h"
  #include "chrome/browser/ui/browser_element_identifiers.h"
  #include "chrome/browser/ui/browser_init_state.h"
-@@ -411,6 +413,8 @@ void PictureInPictureBrowserFrameView::OnBrowserViewInitViewsComplete() {
+@@ -421,6 +423,8 @@ void PictureInPictureBrowserFrameView::OnBrowserViewInitViewsComplete() {
            GetMinimumSize() + gfx::Size(insets.width(), insets.height()),
            excluded_margin);
  
@@ -103,10 +103,10 @@ index 6fb1447..64dcffc 100644
    BrowserInitState::From(GetBrowserView()->browser())
        ->set_override_bounds(window_bounds);
  }
-@@ -629,6 +633,10 @@ void PictureInPictureBrowserFrameView::SetFrameBounds(const gfx::Rect& bounds) {
- 
-   base::UmaHistogramBoolean(
-       "Media.DocumentPictureInPicture.RequestedLargeResize", did_adjust_size);
+@@ -645,6 +649,10 @@ void PictureInPictureBrowserFrameView::SetFrameBounds(const gfx::Rect& bounds) {
+     base::UmaHistogramBoolean(
+         "Media.DocumentPictureInPicture.RequestedLargeResize", did_adjust_size);
+   }
 +  rise_pip::Log(base::StrCat(
 +      {"set to ", bounds.ToString(), " (", adjusted_bounds.ToString(),
 +       " to fit) from ", current_bounds.ToString(),
@@ -114,7 +114,7 @@ index 6fb1447..64dcffc 100644
  
    if (!base::FeatureList::IsEnabled(
            media::kDocumentPictureInPictureAnimateResize) ||
-@@ -808,6 +816,12 @@ PictureInPictureBrowserFrameView::GetContentSettingBubbleModelDelegate() {
+@@ -831,6 +839,12 @@ PictureInPictureBrowserFrameView::GetContentSettingBubbleModelDelegate() {
  void PictureInPictureBrowserFrameView::OnWidgetActivationChanged(
      views::Widget* widget,
      bool active) {
@@ -127,7 +127,7 @@ index 6fb1447..64dcffc 100644
    // The window may become inactive when a popup modal shows, so we need to
    // check if the mouse is still inside the window.
    UpdateTopBarView(active || mouse_inside_window_ || IsOverlayViewVisible());
-@@ -864,6 +878,7 @@ void PictureInPictureBrowserFrameView::SetForcedTucking(bool tuck) {
+@@ -890,6 +904,7 @@ void PictureInPictureBrowserFrameView::SetForcedTucking(bool tuck) {
      tucker_ = std::make_unique<PictureInPictureTucker>(*GetWidget());
    }
    is_tucking_forced_ = tuck;
@@ -136,7 +136,7 @@ index 6fb1447..64dcffc 100644
    // Attempting to tuck our Widget before it's been shown causes issues since
    // it may be still adjusting its bounds. Once visible, tucking will be
 diff --git a/chrome/browser/ui/views/picture_in_picture/picture_in_picture_tucker.cc b/chrome/browser/ui/views/picture_in_picture/picture_in_picture_tucker.cc
-index 3ff2c72..0b47f1e 100644
+index 3ff2c7219b..0b47f1e039 100644
 --- a/chrome/browser/ui/views/picture_in_picture/picture_in_picture_tucker.cc
 +++ b/chrome/browser/ui/views/picture_in_picture/picture_in_picture_tucker.cc
 @@ -8,6 +8,8 @@
@@ -168,7 +168,7 @@ index 3ff2c72..0b47f1e 100644
        *pip_widget_, destination_bounds);
    animation_->Start();
 diff --git a/chrome/browser/ui/views/picture_in_picture/pip_child_dialog_observer_helper.cc b/chrome/browser/ui/views/picture_in_picture/pip_child_dialog_observer_helper.cc
-index ca7b7e2..f3a6269 100644
+index ca7b7e2ef0..f3a626984d 100644
 --- a/chrome/browser/ui/views/picture_in_picture/pip_child_dialog_observer_helper.cc
 +++ b/chrome/browser/ui/views/picture_in_picture/pip_child_dialog_observer_helper.cc
 @@ -12,6 +12,9 @@

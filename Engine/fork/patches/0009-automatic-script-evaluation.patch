@@ -1,7 +1,8 @@
 diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
+index ee52bac46a..d14b130a57 100644
 --- a/chrome/browser/rise/RiseChromium.h
 +++ b/chrome/browser/rise/RiseChromium.h
-@@ -379,6 +379,14 @@
+@@ -379,6 +379,14 @@ RC_EXPORT @interface RCBrowserView : NSView
                         frame:(nullable RCFrame *)frame
                         world:(nullable NSString *)world
                    completion:(void (^)(id _Nullable result, NSString *_Nullable error))completion;
@@ -17,9 +18,10 @@ diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromi
  /// the window, as a Peek's card does on its way to and from its link: Chromium draws into it as
  /// into the page, with nothing copied. Nil until the page has drawn. Scale it with a transform.
 diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index e20460669c..3043c6adb0 100644
 --- a/chrome/browser/rise/rise_bridge.mm
 +++ b/chrome/browser/rise/rise_bridge.mm
-@@ -2185,11 +2185,26 @@
+@@ -2185,11 +2185,26 @@ - (void)evaluateFunctionBody:(NSString*)functionBody
                         frame:(RCFrame*)frame
                         world:(NSString*)world
                    completion:(void (^)(id, NSString*))completion {
@@ -46,7 +48,7 @@ diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridg
        content::WebContents::FromRenderFrameHost(host) != _contents) {
      completion(nil, frame ? @"The frame isn't there" : @"The page isn't there");
      return;
-@@ -2206,9 +2221,9 @@
+@@ -2206,9 +2221,9 @@ - (void)evaluateFunctionBody:(NSString*)functionBody
                         [names componentsJoinedByString:@", "], functionBody,
                         [values componentsJoinedByString:@", "]];
    static_cast<content::RenderFrameHostImpl*>(host)->ExecuteJavaScriptForTests(
