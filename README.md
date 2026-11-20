@@ -78,6 +78,7 @@ For more about the engine, see [Engine/README.md](Engine/README.md). For passkey
 - **Open tabs are reused**: a link to a page that is already open goes to that tab. Links from other apps do this too. ⌘-click still opens a new tab. Turn this off in Settings → Tabs.
 - **Tabs rest**: tabs that you don't use freeze, and after 30 minutes they sleep to save memory. Each tab keeps its place and history, and loads again when you open it.
 - **Archived tabs**: tabs that you don't use for 48 hours move to History → Archived Tabs. Change the time in Settings → Tabs.
+- ⭐ **Bookmarks**: press ⌘D to bookmark the page, type a name and press Return, or press Escape to cancel. Bookmarks show in a bar under the address. The bar can hide until the pointer reaches the page bar. Or choose In the sidebar in Settings → Appearance: then press ⌥⌘B to see your bookmarks in the place of your tabs, or hold ⌃⌥B to see them only while you hold the keys. Click a bookmark to open it beside your tab. ⌘-click opens it at the top. Drag bookmarks to reorder them, and right-click one to rename or remove it.
 - **Reopen tabs**: press ⇧⌘T to reopen the last tab that you closed. Right-click the downloads button to see other tabs that you closed recently.
 - **Pinned tab safety**: ⌘W on a pinned tab asks you to press ⌘W again.
 - ⭐ **Notification counts**: counts such as "(3)" are removed from tab titles. Turn this off in Settings → Tabs.

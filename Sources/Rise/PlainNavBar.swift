@@ -368,14 +368,20 @@ import RiseCore
         CATransaction.begin(); CATransaction.setDisableActions(true)
         layer?.backgroundColor = background
         CATransaction.commit()
+        var fade: CABasicAnimation?
         if animated, window != nil, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion, let from {
-            let fade = CABasicAnimation(keyPath: "backgroundColor")
-            fade.fromValue = from; fade.toValue = background; fade.duration = 0.2
-            fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            layer?.add(fade, forKey: "color")
+            let animation = CABasicAnimation(keyPath: "backgroundColor")
+            animation.fromValue = from; animation.toValue = background; animation.duration = 0.2
+            animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            animation.beginTime = CACurrentMediaTime(); fade = animation
+            layer?.add(animation, forKey: "color")
         }
         applyInk()
+        onColorChange?(fade)
     }
+    /// The bar's colour changed, fading as `fade` does or at once: what's under it, such as the
+    /// bookmarks bar, takes the same colour the same way.
+    var onColorChange: ((CABasicAnimation?) -> Void)?
 
     private func applyInk() {
         CATransaction.begin(); CATransaction.setDisableActions(true)
@@ -847,6 +853,7 @@ import RiseCore
     /// The arrows of the full screen notices, drawn as heavy as the link.
     static let fullScreenImage = symbol("arrow.up.left.and.arrow.down.right")
     static let starImage = TablerIcon.image(TablerIcon.star, size: 14, description: nil)
+    static let bookmarkImage = TablerIcon.image(TablerIcon.bookmark, size: 14, description: nil)
     static let commandImage = symbol("command")
     static let unpinImage = symbol("pin.slash"), resetImage = symbol("arrow.counterclockwise")
     static let warningImage = TablerIcon.image(TablerIcon.alertTriangle, size: 14, description: nil)

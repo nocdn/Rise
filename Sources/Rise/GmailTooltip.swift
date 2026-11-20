@@ -12,10 +12,18 @@ final class GmailScroller: NSScroller {
     override func drawKnobSlot(in slotRect: NSRect, highlight flag: Bool) {}
     override func drawKnob() {
         guard isRevealed else { return }
-        let knob = rect(for: .knob)
-        let thin = NSRect(x: bounds.maxX-7, y: knob.minY, width: 3, height: knob.height)
-        NSColor.secondaryLabelColor.withAlphaComponent(isHovered ? 0.6 : 0.28).setFill()
-        NSBezierPath(roundedRect: thin, xRadius: 1.5, yRadius: 1.5).fill()
+        Self.draw(Self.bar(knob: rect(for: .knob), in: bounds), hovered: isHovered)
+    }
+    /// The bar's look, which the sidebar's scroller shares: thin, fully rounded, no track.
+    static let thickness: CGFloat = 3, edge: CGFloat = 4
+    static func bar(knob: NSRect, in bounds: NSRect) -> NSRect {
+        knob.isEmpty ? .zero : NSRect(x: bounds.maxX-edge-thickness, y: knob.minY, width: thickness, height: knob.height)
+    }
+    static func color(hovered: Bool) -> NSColor { NSColor.secondaryLabelColor.withAlphaComponent(hovered ? 0.6 : 0.28) }
+    static func draw(_ bar: NSRect, hovered: Bool) {
+        guard !bar.isEmpty else { return }
+        color(hovered: hovered).setFill()
+        NSBezierPath(roundedRect: bar, xRadius: thickness/2, yRadius: thickness/2).fill()
     }
     override func updateTrackingAreas() {
         super.updateTrackingAreas()

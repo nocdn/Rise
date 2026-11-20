@@ -102,7 +102,8 @@ final class TabOrganizationTests: XCTestCase {
         for _ in 0..<40 { _ = browser.addTab() }
         browser.root.layoutSubtreeIfNeeded(); browser.sidebar.scroll.flashScrollers()
         let scroller = try XCTUnwrap(browser.sidebar.scroll.verticalScroller as? ThinScroller)
-        XCTAssertEqual(scroller.bar.width, ThinScroller.thickness)
+        XCTAssertEqual(scroller.bar.width, GmailScroller.thickness, "The hover cards' bar")
+        XCTAssertEqual(scroller.controlSize, .small)
         XCTAssertTrue(scroller.rect(for: .knob).contains(scroller.bar), "Drawn inside the knob's place, nothing cut off")
         let middle = scroller.convert(NSPoint(x: scroller.bar.midX, y: scroller.bar.midY), to: nil)
         XCTAssertTrue(browser.window?.contentView?.superview?.hitTest(middle) === scroller, "Grabbing it reaches the scroller")
@@ -110,7 +111,7 @@ final class TabOrganizationTests: XCTestCase {
             windowNumber: browser.window!.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0))
         scroller.mouseMoved(with: move)
         XCTAssertTrue(scroller.hovered)
-        XCTAssertGreaterThan(ThinScroller.color(dark: false, hovered: true).alphaComponent, ThinScroller.color(dark: false, hovered: false).alphaComponent)
+        XCTAssertGreaterThan(GmailScroller.color(hovered: true).alphaComponent, GmailScroller.color(hovered: false).alphaComponent)
     }
     @MainActor func testCleanUpBringsEachSitesTabsTogetherAndUndoes() throws {
         let browser = browser(); defer { clean(browser) }

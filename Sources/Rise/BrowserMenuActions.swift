@@ -64,6 +64,13 @@ extension BrowserController: NSMenuItemValidation {
             item.title = "\(item.tag+1). \(target.title)"; item.toolTip = target.url?.absoluteString
             item.state = selectedID == target.id ? .on : .off
             return true
+        case #selector(bookmarkCurrentPage):
+            let bookmarked = bookmarks.bookmark(for: page?.url) != nil
+            item.title = bookmarked ? "Edit Bookmark" : "Bookmark This Page"
+            return page?.url.map(Self.canBookmark) ?? false
+        case #selector(toggleSidebarBookmarks):
+            item.title = sidebarBookmarks.isShown ? "Return to Tabs" : "Show Bookmarks in Sidebar"
+            return bookmarkPlacement == .sidebar
         case #selector(goBack): return historyPage.map { canNavigate($0, .back) } ?? false
         case #selector(goForward): return historyPage.map { canNavigate($0, .forward) } ?? false
         case #selector(reopenTab): return !closedTabs.isEmpty

@@ -150,6 +150,19 @@ import RiseCore
     var sidebarWidth = SidebarWidth.ideal
     var sidebarVisible = true
     let sidebarPeek = SidebarPeek()
+    /// Bookmarks (`Bookmarks.swift`): kept beside the session, shown in a bar under the page's bar
+    /// (`BookmarksBar.swift`) or in the sidebar in the tabs' place (`SidebarBookmarks.swift`).
+    lazy var bookmarks = BookmarkStore(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("bookmarks.json"))
+    let bookmarksBar = BookmarksBar()
+    let bookmarksBarHover = BookmarksBarHover(frame: .zero)
+    let sidebarBookmarks = SidebarBookmarksState()
+    /// A menu from the bookmarks bar is open, so a bar that hides itself stays down.
+    var bookmarksMenuOpen = false
+    /// Until when a bar that hides itself stays down to show a bookmark just added.
+    var bookmarksBarRevealUntil: Date?
+    /// The bookmark whose title is being typed after ⌘D: whether it was just added, so Escape
+    /// takes it away again, and whether the sidebar rolled to bookmarks for it, to roll back after.
+    var bookmarkEdit: (id: UUID, isNew: Bool, returnsToTabs: Bool)?
     let sidebarFloat = SidebarFloat()
     let devTools = DevToolsPanel()
     /// The AI chat docked at the window's right (`AIChatPanel.swift`).
@@ -501,7 +514,7 @@ import RiseCore
     }
     required init?(coder: NSCoder) { fatalError() }
     func buildChrome() {
-        sidebar = SidebarView(archive: { [weak self] in self?.showDownloads() }, cleanUp: { [weak self] in self?.cleanUpTabs() })
+        sidebar = SidebarView(archive: { [weak self] in self?.showDownloads() }, cleanUp: { [weak self] in self?.sidebarSortPressed() })
         sidebar.onSearchQuestion = { [weak self] query in self?.smartTabSearch.search(query) }
         sidebar.onSearchChanged = { [weak self] in self?.smartTabSearch.cancel() }
         sidebar.searchMetadata = { [weak self] tab in self?.smartTabSearch.detail(tab) ?? "" }
@@ -530,11 +543,16 @@ import RiseCore
             if let tab = self?.tabs.first(where: { $0.id == id }) { tab.setAudioMuted(!tab.isAudioMuted) }
         }
         sidebar.onTabPress = { [weak self] in self?.tabPressed() }
+        sidebar.bookmarksPane.onOpen = { [weak self] id, atTop in self?.openSidebarBookmark(id, atTop: atTop) }
+        sidebar.bookmarksPane.onMenu = { [weak self] id, event, view in self?.showBookmarkMenu(id, event: event, in: view) }
+        sidebar.bookmarksPane.onReorder = { [weak self] id, index in self?.bookmarks.move(id, to: index) }
+        sidebar.bookmarksPane.onEditEnd = { [weak self] id, title in self?.finishBookmarkEdit(id, title: title) }
         pageShadow.layer?.cornerCurve = .continuous; pageClip.layer?.cornerCurve = .continuous
         pageClip.layer?.masksToBounds = true; pageClip.clipsToBounds = true
         root.addSubview(sidebar); root.addSubview(pageShadow); pageShadow.addSubview(pageClip); installSplitHandle()
         pageClip.addSubview(emptyPage); pageClip.addSubview(developerBar); pageClip.addSubview(navBar)
         navBar.onOpenAddress = { [weak self] in self?.focusAddress() }
+        installBookmarksBar()
         navBar.addressMenu = { [weak self] bar in self?.addressMenu(for: bar) }
         installSidebarEdge()
         installDevTools()
@@ -652,6 +670,7 @@ import RiseCore
         toolbarHost.frame.size.width = shown ? max(112, sidebar.frame.width-toolbarX-8)+room : 28
         carryTitlebarControls(by: carry)
         placeTitlebarNewTab()
+        placeBookmarksTitle()
         // The chat takes the window's right side, and the selected tab's DevTools go beside it.
         let chatRoom = layoutAIChat(in: b, pageLeft: pageLeft)
         let devToolsRoom = layoutDevTools(in: NSRect(x: b.minX, y: b.minY, width: b.width-chatRoom, height: b.height), pageLeft: pageLeft)
@@ -672,9 +691,11 @@ import RiseCore
         grip.frame = NSRect(x: width-3, y: 44, width: 6, height: b.height-88)
         grip.isHidden = !sidebarVisible || sidebarPeek.progress > 0 || sidebarFloat.dockProgress < 1
         let cb = pageClip.bounds
-        let barHeight = PlainNavBar.Metrics.height
+        // The page starts under its bar, and under the bookmarks bar while that stays.
+        let barHeight = pageHeaderHeight
         layoutPageBars(width: cb.width)
         layoutDeveloperBar()
+        layoutBookmarksBar(width: cb.width)
         let regularBody = NSRect(x: 0, y: barHeight, width: cb.width, height: cb.height-barHeight)
         let body = activeSplitGroup == nil ? fullscreenContentFrame(for: selectedTab, regular: regularBody) : regularBody
         emptyPage.frame = body; pageBody = body
@@ -761,7 +782,8 @@ import RiseCore
         cancelTabScroll()
         timeReplacement.cancelHold()
         cancelShortcutRecording()
-        pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch(); endSidebarPeek(); tabPressed()
+        pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch(); endSidebarPeek(); endBookmarksHold(); tabPressed()
+        refreshBookmarksBar()
         sidebar?.cancelTabInteractions()
         // Leaving Rise floats a shown video in Rise's own window, as leaving its tab does.
         DispatchQueue.main.async { [weak self] in
@@ -893,6 +915,7 @@ import RiseCore
             self.siteSearchLearner.addressChanged(tab.page.view, url: tab.page.url)
             self.currencyReplacement.pageChanged(tab)
             self.adBlockPrompt.pageChanged(tab)
+            if !tab.page.isLoading { self.bookmarks.refreshIcons(from: tab) }
             if !tab.page.isLoading, let url = tab.page.url, let title = tab.page.title {
                 self.browsingHistory.updateTitle(self.historyTitle(title, url: url), for: url)
             }
@@ -996,6 +1019,7 @@ import RiseCore
     /// Searches the sidebar's tabs (`TabSearch.swift`), bringing a hidden sidebar out to do it.
     @objc func searchTabs() {
         cancelTabScroll()
+        returnToTabs(animated: false)
         hidePalette()
         if !sidebarVisible { revealFloatingSidebar() }
         sidebar.beginTabSearch()

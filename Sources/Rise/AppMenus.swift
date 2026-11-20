@@ -116,6 +116,13 @@ import AppKit
         history.addItem(.separator())
         item(history, "Clear Browsing History…", #selector(BrowserController.confirmClearBrowsingHistory), target: browser)
 
+        let bookmarks = addMenu("Bookmarks")
+        item(bookmarks, "Bookmark This Page", #selector(BrowserController.bookmarkCurrentPage), "d", target: browser)
+        item(bookmarks, "Show Bookmarks in Sidebar", #selector(BrowserController.toggleSidebarBookmarks), "b", modifiers: [.command, .option], target: browser)
+        bookmarks.addItem(.separator())
+        // The bookmarks themselves follow, as they are when the menu opens.
+        bookmarks.identifier = NSUserInterfaceItemIdentifier("bookmarks"); bookmarks.delegate = self
+
         let tabs = addMenu("Tabs")
         item(tabs, "Next Tab", #selector(BrowserController.nextTab), "]", modifiers: [.command, .shift], target: browser)
         item(tabs, "Previous Tab", #selector(BrowserController.previousTab), "[", modifiers: [.command, .shift], target: browser)
@@ -169,10 +176,25 @@ import AppKit
         bar.separatingIconSections()
     }
 
+    static let bookmarkMenuTag = 0xB00C
     func menuNeedsUpdate(_ menu: NSMenu) {
         if menu.identifier?.rawValue == "browserTheme", let fresh = browser.makeThemeMenu().submenu {
             menu.removeAllItems()
             for item in fresh.items { fresh.removeItem(item); menu.addItem(item) }
+            return
+        }
+        if menu.identifier?.rawValue == "bookmarks" {
+            for item in menu.items where item.tag == Self.bookmarkMenuTag { menu.removeItem(item) }
+            let empty = NSMenuItem(title: "No Bookmarks", action: nil, keyEquivalent: ""); empty.isEnabled = false
+            let listed: [NSMenuItem] = browser.bookmarks.items.isEmpty ? [empty] : browser.bookmarks.items.map { bookmark in
+                    let entry = browser.menuItem(bookmark.shownTitle) { [weak browser] in
+                        browser?.openBookmark(bookmark.id, atTop: NSApp.currentEvent?.modifierFlags.contains(.command) == true)
+                    }
+                    entry.toolTip = bookmark.url.absoluteString
+                    if let icon = browser.bookmarkIcon(bookmark)?.copy() as? NSImage { icon.size = NSSize(width: 16, height: 16); entry.image = icon }
+                    return entry
+                }
+            for item in listed { item.tag = Self.bookmarkMenuTag; menu.addItem(item) }
             return
         }
         guard menu.identifier?.rawValue == "recentlyClosedTabs" else { return }

@@ -33,6 +33,8 @@ import AppKit
             ("allowPermission", "Allow Site Permission", "Site", ["Command+Alt+Enter"]),
             ("denyPermission", "Don’t Allow Site Permission", "Site", ["Command+Alt+Backspace"]),
             ("toggleLocalTimes", "Replace Times with Local Time", "View", ["Command+Alt+T"]),
+            // Bookmarks in the sidebar until it's let go (`SidebarBookmarks.swift`).
+            ("holdSidebarBookmarks", "Show Bookmarks While Held", "Bookmarks", ["Ctrl+Alt+B"]),
         ]
         for (id, title, group, bindings) in early { commands.append(Command(id: id, title: title, group: group, defaults: bindings.compactMap(KeyboardShortcut.init))) }
         for number in 1...9 {

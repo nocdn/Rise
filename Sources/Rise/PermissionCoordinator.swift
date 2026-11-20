@@ -139,7 +139,7 @@ import UserNotifications
         let page = browser.pageShadow.frame, column = web.convert(web.bounds, to: root)
         let left = max(page.minX, column.minX), right = min(page.maxX, column.maxX)
         panel.frame = right-left > 100 ? NSRect(x: left, y: page.minY, width: right-left, height: page.height) : page
-        panel.topInset = PlainNavBar.Metrics.height
+        panel.topInset = browser.pageHeaderHeight
         panel.developer = (browser.tabs.first { $0.page.view === web } ?? browser.selectedTab)?.developer == true
         let findOpen = findBar.isPresented && findBar.superview === root && abs(findBar.frame.maxX-panel.frame.maxX) < 1
         panel.stackOffset = findOpen ? findBar.panel.frame.height+FindBar.top : 0

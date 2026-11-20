@@ -36,8 +36,10 @@ enum SidebarWidth {
 }
 
 @MainActor extension BrowserController {
+    /// Wider while Control-Command is held, and halfway there while bookmarks show in it.
     var displayedSidebarWidth: CGFloat {
-        sidebarWidth+(max(sidebarWidth, SidebarWidth.wide)-sidebarWidth)*sidebarPeek.progress
+        let reach = max(sidebarPeek.progress, sidebarBookmarks.progress*SidebarRollMotion.widening)
+        return sidebarWidth+(max(sidebarWidth, SidebarWidth.wide)-sidebarWidth)*reach
     }
     /// Dragging the grip, snapping to the ideal width with a tick on arrival.
     func resizeSidebar(to x: CGFloat) {

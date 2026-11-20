@@ -29,7 +29,7 @@ import RiseChromium
                 toggle("gitHubCardsNeedOption", "Hold ⌥ for pull request cards on GitHub", "GitHub shows its own card for its links, so Rise’s waits until you hold ⌥", gitHubLinkCardsNeedOption),
                 toggle("hideAddressScheme", "Hide https:// in addresses", "Leave http:// and https:// off addresses in the address panel and link previews", hidesAddressScheme),
                 toggle("hideAddressWWW", "Hide www. in addresses", "Show www.youtube.com as youtube.com. Pages still open at their own address", hidesAddressWWW),
-            ]
+            ] + bookmarkSettingRows(select: select, toggle: toggle)
         case "tabs":
             return [
                 toggle("minimalNewTab", "Minimal New Tab button", "A plus beside the window buttons opens a new tab, in place of the New Tab row above your tabs", minimalNewTab),
@@ -113,6 +113,8 @@ import RiseChromium
         case "gitHubCardsNeedOption": setGitHubLinkCardsNeedOption(on)
         case "hideAddressScheme": setHidesAddressScheme(on)
         case "hideAddressWWW": setHidesAddressWWW(on)
+        case "bookmarkPlacement": if let placement = BookmarkPlacement(rawValue: text) { setBookmarkPlacement(placement) }
+        case "autoHideBookmarksBar": setAutoHidesBookmarksBar(on)
         case "minimalNewTab": setMinimalNewTab(on)
         case "tabSwitcherLimit": if let limit = Int(text) { setTabSwitcherLimit(limit) }
         case "tabScrollModifier": if let modifier = TabScrollModifier(rawValue: text) { setTabScrollModifier(modifier) }

@@ -248,6 +248,8 @@ final class SidebarShadowView: NSView {
         guard let window else { return false }
         if RunLoop.current.currentMode == .eventTracking || NSEvent.pressedMouseButtons != 0 { return true }
         if palette.isPresented || sidebar.drag != nil || tabHoverCards.shownID != nil { return true }
+        // Bookmarks it came out to show keep it out until they go.
+        if sidebarBookmarks.isShown { return true }
         if [siteControlsPopover, downloadsPopover, siteInfoPopover].contains(where: \.isShown) { return true }
         var responder = window.firstResponder as? NSView
         if let editor = responder as? NSTextView, editor.isFieldEditor { responder = editor.delegate as? NSView }

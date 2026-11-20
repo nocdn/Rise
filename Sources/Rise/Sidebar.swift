@@ -43,7 +43,14 @@ import RiseCore
     let archiveButton: DownloadsButton
     /// What a tab you've left plays, over Downloads and Sort (`NowPlaying.swift`).
     let nowPlaying = NowPlayingCard()
-    let cleanUpButton: HoverHintButton
+    /// Sort tabs by domain, or Return to tabs while bookmarks show (`SidebarBookmarks.swift`).
+    let cleanUpButton: SidebarSortButton
+    /// Bookmarks, when they show in the sidebar: over the tabs, in their place, with their title
+    /// between the traffic lights and New Tab's plus.
+    let bookmarksPane = SidebarBookmarksPane()
+    let bookmarksTitle = NSTextField(labelWithString: "Bookmarks")
+    var showsBookmarks = false
+    var bookmarksTitleLeading: CGFloat = 78, bookmarksTitleMidY: CGFloat = 26
     /// The minimal New Tab: a plus in the titlebar, level with the traffic lights and over the
     /// downloads button, in place of the New Tab row. The titlebar holds it, as it takes clicks
     /// there (`BrowserController.placeTitlebarNewTab`).
@@ -102,21 +109,23 @@ import RiseCore
     var onTabPress: (() -> Void)?
     init(archive: @escaping () -> Void, cleanUp: @escaping () -> Void) {
         archiveButton = DownloadsButton(title: "Downloads", action: archive)
-        cleanUpButton = HoverHintButton(image: TablerIcon.image(TablerIcon.tabCleanup, size: 20, description: "Sort tabs by domain"),
-                                        text: "Sort tabs by domain", shortcut: "⇧⌘K", action: cleanUp)
+        cleanUpButton = SidebarSortButton(action: cleanUp)
         titlebarNewTab = HoverHintButton(image: TablerIcon.image(TablerIcon.plus, size: 20, strokeWidth: ReloadMorph.lineWidth, description: "New Tab"),
                                          text: "New Tab", shortcut: "⌘T", action: {})
         super.init()
         newTab.target = self; newTab.action = #selector(createTab); newTab.isHidden = minimalNewTab
         titlebarNewTab.actionBlock = { [weak self] in self?.createTab() }
         scroll.drawsBackground = false; scroll.hasVerticalScroller = true; scroll.autohidesScrollers = true
-        scroll.verticalScroller = ThinScroller(); scroll.scrollerStyle = .overlay
+        scroll.verticalScroller = ThinScroller(); scroll.verticalScroller?.controlSize = .small; scroll.scrollerStyle = .overlay
         scroll.documentView = rowsHost
         scroll.wantsLayer = true
         scroll.contentView.postsBoundsChangedNotifications = true
         NotificationCenter.default.addObserver(self, selector: #selector(listScrolled), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
         chosenPill.target = self; chosenPill.action = #selector(revealChosenTab)
         [pinnedView, newTab, scroll, chosenPill, archiveButton, cleanUpButton, nowPlaying].forEach(addSubview)
+        bookmarksTitle.font = .systemFont(ofSize: 13, weight: .medium); bookmarksTitle.lineBreakMode = .byTruncatingTail
+        bookmarksTitle.wantsLayer = true; bookmarksTitle.isHidden = true
+        addSubview(bookmarksPane); addSubview(bookmarksTitle)
     }
     required init?(coder: NSCoder) { fatalError() }
     @objc func createTab() { onNewTab?() }
@@ -127,7 +136,9 @@ import RiseCore
             appliedTheme = theme
             fill = theme.background
             newTab.theme = theme; searchRow.apply(theme); chosenPill.apply(theme); nowPlaying.apply(theme)
-            (scroll.verticalScroller as? ThinScroller)?.dark = theme == .dark
+            bookmarksPane.apply(theme); bookmarksTitle.textColor = TabAppearance.text(theme, selected: true)
+            // Its ink is the cards' secondary label colour, in the sidebar's light or dark.
+            scroll.verticalScroller?.appearance = theme.appearance
             for button in [archiveButton, cleanUpButton, titlebarNewTab] as [ChromeButton] {
                 button.hoverHint?.appearance = theme.appearance
             }
@@ -296,6 +307,7 @@ import RiseCore
         archiveButton.frame = NSRect(x: downloadsCentreX-14, y: bounds.height-39, width: 28, height: 28)
         cleanUpButton.frame = NSRect(x: 10, y: bounds.height-39, width: 28, height: 28)
         nowPlaying.dock(x: TabAppearance.inset, width: w-2*TabAppearance.inset, bottom: bounds.height-46)
+        layoutBookmarks()
         updateScrollCues()
         onScrollFocusChanged?()
     }

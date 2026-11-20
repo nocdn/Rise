@@ -38,7 +38,8 @@ import AppKit
         let newTabKey = keyboardShortcuts.bindings("newTab").first?.display ?? ""
         sidebar.newTab.toolTip = newTabKey.isEmpty ? "New Tab" : "New Tab (\(newTabKey))"
         func shortcut(_ id: String) -> String { keyboardShortcuts.bindings(id).first?.display ?? "" }
-        for (button, id) in [(sidebar.titlebarNewTab, "newTab"), (sidebar.cleanUpButton, "cleanUpTabs"),
+        sidebar.cleanUpButton.setShortcuts(sort: shortcut("cleanUpTabs"), back: shortcut("toggleSidebarBookmarks"))
+        for (button, id) in [(sidebar.titlebarNewTab, "newTab"),
                              (sidebar.archiveButton, "toggleDownloads"), (toolbarButtons[0], "toggleSidebar"),
                              (navBar.copyButton, "copyURL"), (splitBar.copyButton, "copyURL"), (peekBar.copyButton, "copyURL")] as [(ChromeButton, String)] {
             button.hoverHint?.setShortcut(shortcut(id))
@@ -108,7 +109,7 @@ import AppKit
         guard event.type == .keyDown else { return false }
         if let command = keyboardShortcuts.command(for: event) {
             let early = ["moveCurrentTabUp", "moveCurrentTabDown", "moveCurrentTabToTop",
-                         "tabSwitcherNext", "tabSwitcherPrevious", "smartRename", "activateSuggestedTab"]
+                         "tabSwitcherNext", "tabSwitcherPrevious", "smartRename", "activateSuggestedTab", "holdSidebarBookmarks"]
             if early.contains(command.id) { return false }
             // The page goes first; what it doesn't use comes back through the engine.
             if letPageTryShortcut(command, event) { return false }
