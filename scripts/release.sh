@@ -76,8 +76,9 @@ cp "$DMG" "$ARCHIVES/"
 # The previous release's appcast, so its entries (and their download addresses) carry over.
 [[ -f "$ARCHIVES/appcast.xml" ]] || gh release download --repo "$REPO" --pattern appcast.xml --dir "$ARCHIVES" 2>/dev/null || true
 touch "$WORK/before-appcast"; sleep 1
+# Release notes go in the appcast itself, which is all Sparkle reads, rather than in a file of their own.
 "$SPARKLE/generate_appcast" --ed-key-file "$KEY" --download-url-prefix "https://github.com/$REPO/releases/download/$TAG/" \
-  --link "https://github.com/$REPO" --maximum-deltas 3 "$ARCHIVES"
+  --link "https://github.com/$REPO" --maximum-deltas 3 --embed-release-notes "$ARCHIVES"
 # The prefix applies to every entry, but each release's DMG and deltas live under its own tag.
 python3 -I - "$ARCHIVES/appcast.xml" "$REPO" <<'PY'
 import re, sys
