@@ -45,7 +45,14 @@ import AppKit
         item(file, "Close Window", #selector(NSWindow.performClose(_:)), "w", modifiers: [.command, .shift], target: browser.window)
         item(file, "Reopen Closed Tab", #selector(BrowserController.reopenTab), "t", modifiers: [.command, .shift], target: browser)
         file.addItem(.separator())
-        item(file, "Share Page…", #selector(BrowserController.shareCurrentPage), target: browser)
+        // The menu bar's share items go without the icons a page's menu shows them with.
+        for entry in [item(file, "Share…", #selector(BrowserController.shareCurrentPage), target: browser),
+                      item(file, "AirDrop", #selector(BrowserController.airDropCurrentPage), target: browser)] {
+            entry.image = nil
+            #if compiler(>=6.4)
+            if #available(macOS 27, *) { entry.preferredImageVisibility = .hidden }
+            #endif
+        }
         item(file, "Copy Link", #selector(BrowserController.copyURL), "C", modifiers: [.command, .shift], target: browser)
         file.addItem(.separator())
         item(file, "Save Page Screenshot…", #selector(BrowserController.savePageScreenshot), target: browser)

@@ -123,6 +123,9 @@ extension BrowserController: NSMenuItemValidation {
             item.state = (findTab?.page as? ChromiumPage).map { timeReplacement.isActive(in: $0) } == true ? .on : .off
             return findTab?.page is ChromiumPage && palette.isHidden
         case #selector(copyURL), #selector(shareCurrentPage): return hasPage && page?.url?.absoluteString != "about:blank"
+        case #selector(airDropCurrentPage):
+            guard hasPage, let url = page?.url, url.absoluteString != "about:blank" else { return false }
+            return AirDropMenuItem.canSend([url])
         case #selector(showPageSource): return ["http", "https", "file"].contains(page?.url?.scheme ?? "")
         case #selector(javascriptConsole): return page?.page is ChromiumPage
         case #selector(showSettings), #selector(manageExtensions): return ChromiumEngine.isRunning

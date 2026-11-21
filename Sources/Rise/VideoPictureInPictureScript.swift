@@ -12,6 +12,8 @@
       let selected = null, active = false, token = '', scheduled = false, previous = '', entries = 0;
       let frameCount = 0, lastDraw = 0, frameInterval = 0;
       let width = 360, height = 202.5, pixelRatio = 2, originX = 0, originY = 0, placed = false;
+      // The canvas's own size, in CSS pixels: while floating, it only grows.
+      let canvasWidth = 0, canvasHeight = 0;
       const canvas = document.createElement('canvas');
       canvas.setAttribute('aria-hidden', 'true');
       const context = canvas.getContext('2d', {alpha:false});
@@ -159,26 +161,40 @@
       // page around it while it paints. Each new size is drawn in the opposite
       // corner where it fits beside the last one, which stays intact until
       // Rise has switched to the new picture. Returns where it is drawn.
+      //
+      // The picture Rise shows until then must stay whole: the canvas never
+      // shrinks while floating, which would cut it and show the page in its
+      // place, and when it has to grow (a size a fraction past the viewport,
+      // or another display's pixels) it keeps what it has drawn, as a canvas
+      // resized starts out blank.
       const resize = (w, h, ratio) => {
         if (![w,h,ratio].every(Number.isFinite) || w <= 0 || h <= 0) return null;
-        const previous = {x: originX, y: originY, w: width, h: height};
+        const previous = {x: originX, y: originY, w: width, h: height}, previousRatio = pixelRatio;
         width = w; height = h; pixelRatio = Math.min(3, Math.max(1, ratio));
         if (!active) return null;
         // innerWidth drops a zoomed viewport's fraction of a pixel, which the visual viewport keeps.
         const view = visualViewport ?? {width: innerWidth, height: innerHeight};
-        const viewWidth = Math.max(width, innerWidth, view.width), viewHeight = Math.max(height, innerHeight, view.height);
-        canvas.style.setProperty('width', `${viewWidth}px`, 'important');
-        canvas.style.setProperty('height', `${viewHeight}px`, 'important');
-        const pixelsWide = Math.max(1, Math.round(viewWidth*pixelRatio));
-        const pixelsHigh = Math.max(1, Math.round(viewHeight*pixelRatio));
-        let cleared = false;
+        const shownWidth = Math.max(innerWidth, view.width), shownHeight = Math.max(innerHeight, view.height);
+        canvasWidth = Math.max(canvasWidth, width, shownWidth); canvasHeight = Math.max(canvasHeight, height, shownHeight);
+        canvas.style.setProperty('width', `${canvasWidth}px`, 'important');
+        canvas.style.setProperty('height', `${canvasHeight}px`, 'important');
+        const pixelsWide = Math.max(1, Math.round(canvasWidth*pixelRatio));
+        const pixelsHigh = Math.max(1, Math.round(canvasHeight*pixelRatio));
         if (canvas.width !== pixelsWide || canvas.height !== pixelsHigh) {
-          canvas.width = pixelsWide; canvas.height = pixelsHigh; cleared = true;
+          let kept = null;
+          if (placed && canvas.width > 1 && canvas.height > 1) {
+            kept = document.createElement('canvas'); kept.width = canvas.width; kept.height = canvas.height;
+            kept.getContext('2d', {alpha:false}).drawImage(canvas, 0, 0);
+          }
+          canvas.width = pixelsWide; canvas.height = pixelsHigh;
+          // Where it was, in CSS pixels, at the new density.
+          if (kept) context.drawImage(kept, 0, 0, kept.width*pixelRatio/previousRatio, kept.height*pixelRatio/previousRatio);
         }
+        // Only where the page shows: the canvas past the viewport is never on the screen.
         const apart = (x, y) => x >= previous.x+previous.w || x+width <= previous.x || y >= previous.y+previous.h || y+height <= previous.y;
-        const corners = [{x:0, y:0}, {x:viewWidth-width, y:viewHeight-height}];
+        const corners = [{x:0, y:0}, {x:Math.max(0, shownWidth-width), y:Math.max(0, shownHeight-height)}];
         const other = corners.find(c => (c.x !== previous.x || c.y !== previous.y) && apart(c.x, c.y));
-        const next = !placed || cleared ? corners[0] : other || corners[0];
+        const next = !placed ? corners[0] : other || corners[0];
         originX = next.x; originY = next.y; placed = true;
         draw(performance.now());
         return {x: originX, y: originY};
@@ -218,7 +234,7 @@
           }
           if (entry !== entries) return false;
         }
-        selected = video; active = true; token = id; placed = false; originX = 0; originY = 0;
+        selected = video; active = true; token = id; placed = false; originX = 0; originY = 0; canvasWidth = 0; canvasHeight = 0;
         // Overlay only the visible portion of the original viewport. Do not
         // resize or restyle the player, its ancestors, or the page.
         canvas.style.cssText = 'all:initial!important;display:block!important;position:fixed!important;left:0!important;top:0!important;margin:0!important;padding:0!important;border:0!important;background:black!important;pointer-events:none!important;z-index:2147483647!important;';

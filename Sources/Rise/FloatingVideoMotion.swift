@@ -25,8 +25,13 @@ struct FloatingVideoMotion {
     private var lastInput: TimeInterval?
     /// Where it was when the fingers or the pointer took it, and whether it was tucked then.
     private var start = CGPoint.zero, startedTucked = false, grabbedX: CGFloat = 0
-    /// Where it rested before it was tucked, and the height it was tucked at: brought back, it
-    /// goes to that place, as far up or down as it was moved while tucked.
+    /// Where the drag has taken it lately, so a flick off a side can come back to where the flick
+    /// began, not where the drag did: moved down and flung away in one go, it comes back down there.
+    private var trail: [(time: TimeInterval, origin: CGPoint)] = []
+    /// The pace below which a drag toward a side isn't yet the flick that tucks it.
+    static let flickStartSpeed: CGFloat = 300
+    /// Where it was as the flick that tucked it began, and the height it was tucked at: brought
+    /// back, it goes to that place, as far up or down as it was moved while tucked.
     struct Home: Equatable { var origin: CGPoint; var tuckedY: CGFloat }
     private(set) var home: Home?
     static let edgeInset: CGFloat = 8
@@ -110,6 +115,7 @@ struct FloatingVideoMotion {
     mutating func begin(at timestamp: TimeInterval) {
         // Caught on its way somewhere, that's where it was: where it goes back to, tucked now.
         start = phase == .settling ? target : frame.origin; startedTucked = tucked != nil; grabbedX = frame.minX
+        trail = [(timestamp, start)]
         unconstrained = frame.origin; target = frame.origin
         inputVelocity = .zero; velocity = .zero; lastInput = timestamp; phase = .dragging
     }
@@ -126,6 +132,23 @@ struct FloatingVideoMotion {
             inputVelocity.dy += (translation.dy/elapsed-inputVelocity.dy)*response
         }
         lastInput = timestamp
+        trail.append((timestamp, target))
+        // Enough to look back past a flick, and no more.
+        if let first = trail.first, timestamp-first.time > 1, trail.count > 2 { trail.removeFirst() }
+    }
+    /// Where it was as the flick off `edge` that ended the drag began: back along the drag for as
+    /// long as it was heading fast for that side, to where it was going another way or slowly. On
+    /// the screen, as it showed there.
+    private func flickOrigin(toward edge: Edge) -> CGPoint {
+        var origin = trail.first?.origin ?? start
+        for index in trail.indices.dropFirst().reversed() {
+            let from = trail[index-1], to = trail[index]
+            let dx = to.origin.x-from.origin.x, dy = to.origin.y-from.origin.y
+            let toward = edge == .left ? -dx : dx
+            let speed = hypot(dx, dy)/CGFloat(max(1.0/240, to.time-from.time))
+            guard toward > 0, toward >= abs(dy), speed >= Self.flickStartSpeed else { origin = to.origin; break }
+        }
+        return CGPoint(x: min(limits.maxX, max(limits.minX, origin.x)), y: min(limits.maxY, max(limits.minY, origin.y)))
     }
 
     mutating func end(at timestamp: TimeInterval, cancelled: Bool = false, reduceMotion: Bool = false) {
@@ -138,7 +161,7 @@ struct FloatingVideoMotion {
         if !cancelled, speed >= Self.tuckSpeed, let edge = tuckEdge(for: release) {
             // Keeps on its way, out to its tucked place at that height.
             let y = min(limits.maxY, max(limits.minY, target.y+release.dy*(reduceMotion ? 0 : Self.projectionTime)))
-            if !startedTucked { home = Home(origin: start, tuckedY: y) }
+            if !startedTucked { home = Home(origin: flickOrigin(toward: edge), tuckedY: y) }
             tucked = edge
             target = CGPoint(x: tuckedX(edge), y: y)
             glideIn()

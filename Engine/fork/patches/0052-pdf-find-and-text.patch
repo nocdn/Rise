@@ -1,0 +1,265 @@
+diff --git a/chrome/browser/rise/BUILD.gn b/chrome/browser/rise/BUILD.gn
+index de67376..d748249 100644
+--- a/chrome/browser/rise/BUILD.gn
++++ b/chrome/browser/rise/BUILD.gn
+@@ -51,6 +51,9 @@ source_set("impl") {
+     "//chrome/browser/ui/dialogs:browser_dialogs",
+     "//chrome/browser/ui/exclusive_access",
+     "//chrome/browser/ui/find_bar",
++    "//components/find_in_page",
++    "//components/pdf/browser",
++    "//components/pdf/common:constants",
+     "//chrome/browser/ui/location_bar",
+     "//chrome/browser/ui/prefs",
+     "//chrome/browser/ui/tab_contents",
+diff --git a/chrome/browser/rise/RiseChromium.h b/chrome/browser/rise/RiseChromium.h
+index 5f7931d..4437119 100644
+--- a/chrome/browser/rise/RiseChromium.h
++++ b/chrome/browser/rise/RiseChromium.h
+@@ -406,6 +406,26 @@ RC_EXPORT @interface RCBrowserView : NSView
+ /// Prints with the system's print dialog, as Chrome's Print Using System Dialog does, from the
+ /// page or its print preview.
+ - (void)printPageUsingSystemDialog;
++/// Whether the page shows a PDF in Chromium's viewer, whose text the page's scripts can't reach.
++@property (nonatomic, readonly) BOOL showsPDF;
++/// The text of each page of the PDF the page shows, once it has loaded; nil when it shows none.
++- (void)PDFPageTextsWithCompletion:(void (^)(NSArray<NSString *> *_Nullable pages))completion
++    NS_SWIFT_NAME(pdfPageTexts(completion:));
++/// YES once the PDF the page shows has loaded; NO at once while there's no document yet to wait
++/// for, before its viewer has started.
++- (void)whenPDFLoaded:(void (^)(BOOL loaded))completion NS_SWIFT_NAME(whenPDFLoaded(_:)) NS_SWIFT_DISABLE_ASYNC;
++/// The text selected in the PDF the page shows, which the page's own selection doesn't include.
++@property (nonatomic, readonly) NSString *PDFSelectedText NS_SWIFT_NAME(pdfSelectedText);
++/// Finds `text` as Chrome's find bar does, in a PDF too: every match is marked, and the next (or
++/// previous) one is chosen and scrolled to. Results come to `completion`, maybe more than once
++/// as Chromium counts: the matches, the chosen one's place (from 1, 0 for none), and whether
++/// the count is done. Empty text clears the marks.
++- (void)findText:(NSString *)text
++         forward:(BOOL)forward
++      completion:(void (^)(NSInteger matches, NSInteger active, BOOL final))completion
++    NS_SWIFT_NAME(find(_:forward:completion:)) NS_SWIFT_DISABLE_ASYNC;
++/// Ends a find, leaving its chosen match selected, as closing Chrome's find bar does, or not.
++- (void)stopFindingSelectingMatch:(BOOL)select NS_SWIFT_NAME(stopFinding(selectingMatch:));
+ - (void)setAudioMuted:(BOOL)muted;
+ /// Whether Chromium has the page's sound muted.
+ @property (nonatomic, readonly) BOOL isAudioMuted;
+diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
+index 4b44da0..c8d8cb3 100644
+--- a/chrome/browser/rise/rise_bridge.mm
++++ b/chrome/browser/rise/rise_bridge.mm
+@@ -36,6 +36,7 @@
+ #include "base/json/json_writer.h"
+ #include "base/no_destructor.h"
+ #include "base/strings/sys_string_conversions.h"
++#include "base/scoped_observation.h"
+ #include "base/strings/utf_string_conversions.h"
+ #include "chrome/browser/ui/cocoa/l10n_util.h"
+ #include "chrome/browser/profiles/profile.h"
+@@ -116,6 +117,12 @@
+ #include "third_party/blink/public/common/context_menu_data/edit_flags.h"
+ #include "chrome/browser/ui/browser_web_contents_delegate/embedder_tab_hooks.h"
+ #include "chrome/common/rise/rise_frame.mojom.h"
++#include "components/find_in_page/find_result_observer.h"
++#include "components/find_in_page/find_tab_helper.h"
++#include "components/find_in_page/find_types.h"
++#include "components/pdf/browser/pdf_document_helper.h"
++#include "components/pdf/browser/pdf_frame_util.h"
++#include "components/pdf/common/constants.h"
+ #include "components/content_settings/core/browser/host_content_settings_map.h"
+ #include "components/content_settings/core/browser/permission_settings_registry.h"
+ #include "components/download/public/common/download_item.h"
+@@ -1655,6 +1662,35 @@ void AgentHostClosed(content::DevToolsAgentHost* host) override {
+ }
+ 
+ // What a tab does, told to its Rise view.
++// Chrome's find results for a page, passed to the handler of Rise's latest find there.
++class FindResultRelay : public find_in_page::FindResultObserver {
++ public:
++  explicit FindResultRelay(find_in_page::FindTabHelper* helper) : helper_(helper) {
++    observation_.Observe(helper);
++  }
++  find_in_page::FindTabHelper* helper() const { return helper_; }
++  void SetHandler(void (^handler)(NSInteger, NSInteger, BOOL)) { handler_ = handler; }
++  void OnFindResultAvailable(content::WebContents* contents) override {
++    if (!handler_ || !helper_) {
++      return;
++    }
++    const find_in_page::FindNotificationDetails& result = helper_->find_result();
++    handler_(result.number_of_matches(), result.active_match_ordinal(),
++             result.final_update());
++  }
++  void OnFindTabHelperDestroyed(find_in_page::FindTabHelper* helper) override {
++    observation_.Reset();
++    helper_ = nullptr;
++  }
++
++ private:
++  raw_ptr<find_in_page::FindTabHelper> helper_;
++  void (^handler_)(NSInteger, NSInteger, BOOL) = nil;
++  base::ScopedObservation<find_in_page::FindTabHelper,
++                          find_in_page::FindResultObserver>
++      observation_{this};
++};
++
+ class TabObserver : public content::WebContentsObserver {
+  public:
+   TabObserver(RCBrowserView* view, content::WebContents* contents)
+@@ -2096,6 +2132,8 @@ @implementation RCBrowserView {
+   NSMapTable<NSView*, NSArray<NSTrackingArea*>*>* _parkedAreas;
+   // Held while the page keeps visible, as a capture of it would.
+   base::ScopedClosureRunner _visibleCapture;
++  // Passes Chrome's find results to Rise's latest find.
++  std::unique_ptr<FindResultRelay> _findRelay;
+ }
+ 
+ @synthesize delegate = _delegate;
+@@ -2739,6 +2777,149 @@ - (void)printPageUsingSystemDialog {
+   // From the print preview too, as Chrome's command is, which hands its job to the system's.
+   printing::StartBasicPrint(_contents);
+ }
++- (BOOL)showsPDF {
++  return _contents && _contents->GetContentsMimeType() == pdf::kPDFMimeType;
++}
++// Its pages' text, as Chrome's own features read a PDF: the page count first, then each page.
++- (void)PDFPageTextsWithCompletion:(void (^)(NSArray<NSString*>*))completion {
++  pdf::PDFDocumentHelper* helper =
++      _contents ? pdf::PDFDocumentHelper::MaybeGetForFullPagePdf(*_contents)
++                : nullptr;
++  if (!helper) {
++    completion(nil);
++    return;
++  }
++  __weak RCBrowserView* weak_view = self;
++  helper->RegisterForDocumentLoadComplete(base::BindOnce(
++      [](__weak RCBrowserView* view, void (^completion)(NSArray<NSString*>*)) {
++        RCBrowserView* shown = view;
++        if (!shown) {
++          completion(nil);
++          return;
++        }
++        [shown readPDFPagesWithCompletion:completion];
++      },
++      weak_view, completion));
++}
++- (void)whenPDFLoaded:(void (^)(BOOL))completion {
++  pdf::PDFDocumentHelper* helper = [self fullPagePDFHelper];
++  if (!helper) {
++    completion(NO);
++    return;
++  }
++  helper->RegisterForDocumentLoadComplete(base::BindOnce(
++      [](void (^completion)(BOOL)) { completion(YES); }, completion));
++}
++// The PDF's own frame holds its selection: the page's is the viewer's, around it.
++- (NSString*)PDFSelectedText {
++  if (![self showsPDF]) {
++    return @"";
++  }
++  content::RenderFrameHost* viewer =
++      pdf_frame_util::FindFullPagePdfExtensionHost(_contents);
++  content::RenderFrameHost* content =
++      viewer ? pdf_frame_util::FindPdfChildFrame(viewer) : nullptr;
++  content::RenderWidgetHostView* view = content ? content->GetView() : nullptr;
++  return view ? base::SysUTF16ToNSString(view->GetSelectedText()) : @"";
++}
++- (pdf::PDFDocumentHelper*)fullPagePDFHelper {
++  return _contents ? pdf::PDFDocumentHelper::MaybeGetForFullPagePdf(*_contents)
++                   : nullptr;
++}
++- (void)readPDFPagesWithCompletion:(void (^)(NSArray<NSString*>*))completion {
++  pdf::PDFDocumentHelper* helper = [self fullPagePDFHelper];
++  if (!helper) {
++    completion(nil);
++    return;
++  }
++  // A limit of nothing sends no bytes, only the page count.
++  __weak RCBrowserView* weak_view = self;
++  helper->GetPdfBytes(
++      0, base::BindOnce(
++             [](__weak RCBrowserView* view,
++                void (^completion)(NSArray<NSString*>*),
++                pdf::mojom::PdfListener::GetPdfBytesStatus status,
++                const std::vector<uint8_t>& bytes, uint32_t page_count) {
++               RCBrowserView* shown = view;
++               if (!shown) {
++                 completion(nil);
++                 return;
++               }
++               [shown readPDFPage:0
++                           count:std::min<uint32_t>(page_count, 5000)
++                            into:[NSMutableArray array]
++                      completion:completion];
++             },
++             weak_view, completion));
++}
++- (void)readPDFPage:(uint32_t)index
++              count:(uint32_t)count
++               into:(NSMutableArray<NSString*>*)pages
++         completion:(void (^)(NSArray<NSString*>*))completion {
++  pdf::PDFDocumentHelper* helper = [self fullPagePDFHelper];
++  if (index >= count || !helper) {
++    completion(helper ? pages : nil);
++    return;
++  }
++  __weak RCBrowserView* weak_view = self;
++  helper->GetPageText(
++      index, base::BindOnce(
++                 [](__weak RCBrowserView* view, uint32_t index, uint32_t count,
++                    NSMutableArray<NSString*>* pages,
++                    void (^completion)(NSArray<NSString*>*),
++                    const std::u16string& text) {
++                   [pages addObject:base::SysUTF16ToNSString(text)];
++                   RCBrowserView* shown = view;
++                   if (!shown) {
++                     completion(nil);
++                     return;
++                   }
++                   [shown readPDFPage:index + 1
++                                count:count
++                                 into:pages
++                           completion:completion];
++                 },
++                 weak_view, index, count, pages, completion));
++}
++- (find_in_page::FindTabHelper*)findHelper {
++  if (!_contents) {
++    return nullptr;
++  }
++  find_in_page::FindTabHelper::CreateForWebContents(_contents);
++  return find_in_page::FindTabHelper::FromWebContents(_contents);
++}
++- (void)findText:(NSString*)text
++         forward:(BOOL)forward
++      completion:(void (^)(NSInteger, NSInteger, BOOL))completion {
++  find_in_page::FindTabHelper* helper = [self findHelper];
++  if (!helper) {
++    completion(0, 0, YES);
++    return;
++  }
++  if (!_findRelay || _findRelay->helper() != helper) {
++    _findRelay = std::make_unique<FindResultRelay>(helper);
++  }
++  if (text.length == 0) {
++    _findRelay->SetHandler(nil);
++    helper->StopFinding(find_in_page::SelectionAction::kClear);
++    completion(0, 0, YES);
++    return;
++  }
++  _findRelay->SetHandler(completion);
++  helper->StartFinding(base::SysNSStringToUTF16(text), forward,
++                       /*case_sensitive=*/false, /*find_match=*/true);
++}
++- (void)stopFindingSelectingMatch:(BOOL)select {
++  if (_findRelay) {
++    _findRelay->SetHandler(nil);
++  }
++  if (find_in_page::FindTabHelper* helper =
++          _contents ? find_in_page::FindTabHelper::FromWebContents(_contents)
++                    : nullptr) {
++    helper->StopFinding(select ? find_in_page::SelectionAction::kKeep
++                               : find_in_page::SelectionAction::kClear);
++  }
++}
+ - (void)setAudioMuted:(BOOL)muted {
+   if (_contents) {
+     _contents->SetAudioMuted(muted);

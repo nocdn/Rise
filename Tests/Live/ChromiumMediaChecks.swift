@@ -1011,6 +1011,7 @@ private final class HeaderRecordingServer {
         let only = ProcessInfo.processInfo.environment["RISE_CASES"]?.split(separator: ",").map(String.init)
         if only?.contains("TabPlayButtonPausesAndResumesAnySitesMedia") ?? true { await liveCase("TabPlayButtonPausesAndResumesAnySitesMedia") { try await self.testTabPlayButtonPausesAndResumesAnySitesMedia(); self.tearDown() } }
         if only?.contains("PlayButtonReachesMediaInFramesAndOutsideTheDocument") ?? true { await liveCase("PlayButtonReachesMediaInFramesAndOutsideTheDocument") { try await self.testPlayButtonReachesMediaInFramesAndOutsideTheDocument(); self.tearDown() } }
+        if only?.contains("ANotificationsChimeIsNoMediaButLongerAudioIs") ?? true { await liveCase("ANotificationsChimeIsNoMediaButLongerAudioIs") { try await self.testANotificationsChimeIsNoMediaButLongerAudioIs(); self.tearDown() } }
     }
     private var preferenceSuites: [String] = []
     func tearDown() {
@@ -1073,8 +1074,9 @@ private final class HeaderRecordingServer {
 
         _ = try await tab.web.evaluateJavaScript("main.play(); 0")
         try await wait("row knows the media plays") { row.playbackPaused == false }
-        let hover = try XCTUnwrap(NSEvent.enterExitEvent(with: .mouseEntered, location: .zero, modifierFlags: [], timestamp: 0,
-            windowNumber: 0, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil))
+        // Over the row itself: a row hovers only where it's in front.
+        let hover = try XCTUnwrap(NSEvent.enterExitEvent(with: .mouseEntered, location: row.convert(NSPoint(x: row.bounds.midX, y: row.bounds.midY), to: nil),
+            modifierFlags: [], timestamp: 0, windowNumber: row.window?.windowNumber ?? 0, context: nil, eventNumber: 0, trackingNumber: 0, userData: nil))
         row.mouseEntered(with: hover); row.layoutSubtreeIfNeeded()
         XCTAssertFalse(row.playback.isHidden, "Shows beside the close button on hover")
 
@@ -1132,6 +1134,49 @@ private final class HeaderRecordingServer {
 
         browser.closeTab(tab.id)
         XCTAssertNil(browser.tabMedia.paused(tab.id))
+    }
+
+    /// A page's notification chime, as Google Meet plays before a meeting, is no media to show:
+    /// no play button on the tab and no Now Playing card once you've left it. Audio that runs
+    /// longer still is.
+    @MainActor func testANotificationsChimeIsNoMediaButLongerAudioIs() async throws {
+        let browser = browser(); defer { clean(browser) }
+        let tab = try await page("""
+          <audio id=element></audio>
+          <script>
+          // A quiet tone, `seconds` long.
+          window.wav = seconds => {
+            const rate = 8000, samples = rate*seconds, buffer = new ArrayBuffer(44 + samples*2), view = new DataView(buffer);
+            const text = (offset, value) => [...value].forEach((c, i) => view.setUint8(offset+i, c.charCodeAt(0)));
+            text(0, 'RIFF'); view.setUint32(4, 36 + samples*2, true); text(8, 'WAVEfmt ');
+            view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+            view.setUint32(24, rate, true); view.setUint32(28, rate*2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+            text(36, 'data'); view.setUint32(40, samples*2, true);
+            for (let i = 0; i < samples; i++) view.setInt16(44 + i*2, Math.round(Math.sin(i*2*Math.PI*440/rate)*3000), true);
+            return URL.createObjectURL(new Blob([buffer], {type: 'audio/wav'}));
+          };
+          </script>
+          """, in: browser)
+        let row = try XCTUnwrap(browser.sidebar.rows[tab.id])
+        let other = browser.addTab(); browser.select(other.id); browser.update()
+        // Played as pages play their chimes: a new Audio, and an element of the page's own.
+        _ = try await tab.web.evaluateJavaScript("window.chime = new Audio(wav(1)); chime.play(); element.src = wav(1); element.play(); 0")
+        try await wait("the chimes play") { try await self.paused("chime.currentTime > 0.2 && element.currentTime > 0.2", in: tab) == true }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertNil(browser.tabMedia.paused(tab.id), "A chime is no media")
+        XCTAssertNil(row.playbackPaused, "The tab gets no play button for it")
+        XCTAssertFalse(browser.sidebar.nowPlaying.isShown, "Nor does Now Playing show it")
+        // Over, or paused at its end, it still isn't: a chime left paused gave Now Playing its card.
+        try await Task.sleep(for: .milliseconds(1200))
+        let over = try await tab.web.evaluateJavaScript("[chime.paused || chime.ended, element.paused || element.ended, chime.currentTime, element.currentTime].join(' ')") as? String
+        XCTAssertTrue(over?.hasPrefix("true true") == true, "The chimes are over: \(over ?? "")")
+        XCTAssertNil(browser.tabMedia.paused(tab.id), "Over, it still isn't media")
+        XCTAssertFalse(browser.sidebar.nowPlaying.isShown)
+
+        _ = try await tab.web.evaluateJavaScript("window.song = new Audio(wav(15)); song.play(); 0")
+        try await wait("longer audio is media") { browser.tabMedia.paused(tab.id) == false && row.playbackPaused == false }
+        try await wait("and Now Playing shows it") { browser.sidebar.nowPlaying.isShown }
+        _ = try await tab.web.evaluateJavaScript("song.pause(); 0")
     }
 }
 @MainActor final class TabAudioCases {

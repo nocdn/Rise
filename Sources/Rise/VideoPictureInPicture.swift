@@ -1,4 +1,5 @@
 import AppKit
+import os
 
 /// Floats a tab's video when the tab is left: YouTube's video pages, and on any
 /// other site a video that has played with sound, in the page or one of its frames.
@@ -316,6 +317,7 @@ import AppKit
         let session = Session(tab: tab, panel: FloatingVideoWindow(aspectRatio: aspect, screen: screen, referenceWindow: browser.window,
                                                                   placement: placements[tab.id]), target: target)
         current = session
+        Self.log.notice("Floats in Rise's own window, Rise \(NSApp.isActive ? "in front" : "behind another app", privacy: .public): \(session.panel.videoFrame.debugDescription, privacy: .public)")
         session.panel.onClose = { [weak self] in self?.closeVideo() }
         session.panel.onReturn = { [weak self] in self?.returnToTab() }
         session.panel.onMinimize = { [weak self] in self?.minimizeVideo() }
@@ -372,6 +374,7 @@ import AppKit
     /// Chromium's own window can show encrypted video, which Rise's can't. It goes back
     /// inline when the tab is shown again; floating another video pauses it.
     private func floatNatively(_ tab: BrowserTab, target: Target) {
+        Self.log.notice("Floats in Chromium's own window, as Rise can't draw the video, Rise \(NSApp.isActive ? "in front" : "behind another app", privacy: .public)")
         if let old = current { departing[old.id] = old; current = nil; restore(old, animated: true, pause: true) }
         for id in Array(nativeFloats.keys) where id != tab.id { exitNative(id, pause: true) }
         nativeFloats[tab.id] = target
@@ -385,6 +388,8 @@ import AppKit
         Self.call("window.risePictureInPicture?.exitNative(\(pause))", in: tab.page, frame: target.info) { _, _ in }
     }
 
+    /// Under the floating video's own, in the system log: subsystem Rise, category PictureInPicture.
+    private static let log = Logger(subsystem: "Rise", category: "PictureInPicture")
     /// The canvas is sized in CSS pixels, which page zoom scales on screen.
     private static func canvasArguments(_ size: NSSize, _ backingScale: CGFloat, in web: WebPage) -> String {
         let zoom = web.zoom > 0 ? web.zoom : 1

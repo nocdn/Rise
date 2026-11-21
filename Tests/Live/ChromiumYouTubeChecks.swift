@@ -46,6 +46,7 @@ import RiseChromium
             if only?.contains("ProgressFollowsPlaybackSeeksAndThePlayButtonFollowsThePage") ?? true { await liveCase("ProgressFollowsPlaybackSeeksAndThePlayButtonFollowsThePage") { try await self.testProgressFollowsPlaybackSeeksAndThePlayButtonFollowsThePage(); self.tearDown() } }
             if only?.contains("SlowTrackpadMovesKeepTheirPlacementWhileVideoKeepsPlaying") ?? true { await liveCase("SlowTrackpadMovesKeepTheirPlacementWhileVideoKeepsPlaying") { try await self.testSlowTrackpadMovesKeepTheirPlacementWhileVideoKeepsPlaying(); self.tearDown() } }
             if only?.contains("TrackpadFingerPhaseFlicksTheRealWindowAndSystemMomentumDoesNotDismissIt") ?? true { await liveCase("TrackpadFingerPhaseFlicksTheRealWindowAndSystemMomentumDoesNotDismissIt") { try await self.testTrackpadFingerPhaseFlicksTheRealWindowAndSystemMomentumDoesNotDismissIt(); self.tearDown() } }
+            if only?.contains("QuickPinchesShowOnlyThePictureInEveryFrame") ?? true { await liveCase("QuickPinchesShowOnlyThePictureInEveryFrame") { try await self.testQuickPinchesShowOnlyThePictureInEveryFrame(); self.tearDown() } }
             if only?.contains("PinchingStretchesThePictureUntilItSettlesAndNeverShowsThePage") ?? true { await liveCase("PinchingStretchesThePictureUntilItSettlesAndNeverShowsThePage") { try await self.testPinchingStretchesThePictureUntilItSettlesAndNeverShowsThePage(); self.tearDown() } }
             if only?.contains("PinchResizesTheRealWindowAndRestoresBothLimitsWithoutChangingPlayback") ?? true { await liveCase("PinchResizesTheRealWindowAndRestoresBothLimitsWithoutChangingPlayback") { try await self.testPinchResizesTheRealWindowAndRestoresBothLimitsWithoutChangingPlayback(); self.tearDown() } }
             if only?.contains("SwitchCanProbePlaybackBeforeMediaStateArrivesAndNewVideoReplacesOldPiP") ?? true { await liveCase("SwitchCanProbePlaybackBeforeMediaStateArrivesAndNewVideoReplacesOldPiP") { try await self.testSwitchCanProbePlaybackBeforeMediaStateArrivesAndNewVideoReplacesOldPiP(); self.tearDown() } }
@@ -890,6 +891,74 @@ import RiseChromium
             near(bytes[i], 0x90) && near(bytes[i+1], 0x50) && near(bytes[i+2], 0x40)
         }
         XCTAssertFalse(brown, "Only the canvas shows inside the picture")
+    }
+
+    /// Pinched quickly from small to large and back, as fingers do, every frame the window shows
+    /// is the picture filling it: never the page's own colour, nor the window's blank surface
+    /// around a picture drawn at another size.
+    @MainActor func testQuickPinchesShowOnlyThePictureInEveryFrame() async throws {
+        let browser = browser(); defer { clean(browser) }
+        let source = try await fixture(in: browser)
+        let pageSize = try await source.web.evaluateJavaScript("innerWidth+'x'+innerHeight") as? String
+        _ = browser.addTab()
+        try await wait("PiP") { browser.pictureInPicture.panel?.alphaValue == 1 && browser.pictureInPicture.panel?.canvasSize != nil }
+        let panel = try XCTUnwrap(browser.pictureInPicture.panel)
+        try await Task.sleep(for: .milliseconds(400))
+        /// The share of the picture's area, as the screen shows it, that isn't the picture: the
+        /// page's colour, a blank surface, or a canvas not yet painted.
+        func stray() -> (page: Double, blank: Double, black: Double)? {
+            // On the screen: a capture of the window alone leaves out what Chromium composites.
+            let video = panel.videoFrame.insetBy(dx: 10, dy: 10)
+            let top = NSScreen.screens[0].frame.height
+            guard let area = CGWindowListCreateImage(CGRect(x: video.minX, y: top-video.maxY, width: video.width, height: video.height),
+                                                     .optionOnScreenOnly, kCGNullWindowID, .bestResolution) else { return nil }
+            let width = 48, height = 27
+            var bytes = [UInt8](repeating: 0, count: width*height*4)
+            bytes.withUnsafeMutableBytes { buffer in
+                CGContext(data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width*4,
+                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)?
+                    .draw(area, in: CGRect(x: 0, y: 0, width: width, height: height))
+            }
+            func near(_ value: UInt8, _ target: Int) -> Bool { abs(Int(value)-target) < 14 }
+            var page = 0, blank = 0, black = 0
+            for i in stride(from: 0, to: bytes.count, by: 4) {
+                if near(bytes[i], 0x90) && near(bytes[i+1], 0x50) && near(bytes[i+2], 0x40) { page += 1 }
+                if bytes[i] > 225 && bytes[i+1] > 225 && bytes[i+2] > 225 { blank += 1 }
+                if bytes[i] < 20 && bytes[i+1] < 20 && bytes[i+2] < 20 { black += 1 }
+            }
+            let all = Double(width*height)
+            return (Double(page)/all, Double(blank)/all, Double(black)/all)
+        }
+        let resting = try XCTUnwrap(stray())
+        print("NOTE at rest: page \(resting.page), blank \(resting.blank), black \(resting.black)")
+        var worst = (page: 0.0, blank: 0.0, black: 0.0), frames = 0, label = ""
+        func watch(for seconds: Double) async {
+            let end = Date().addingTimeInterval(seconds)
+            while Date() < end {
+                if let share = stray() {
+                    frames += 1
+                    if share.page > worst.page+0.02 || share.blank > worst.blank+0.02 || share.black > worst.black+0.02 {
+                        print("NOTE \(label): frame \(frames) at width \(Int(panel.videoFrame.width)), canvas \(panel.canvasSize.map { "\(Int($0.width))" } ?? "none"): page \(share.page), blank \(share.blank), black \(share.black)")
+                    }
+                    worst = (max(worst.page, share.page), max(worst.blank, share.blank), max(worst.black, share.black))
+                }
+                try? await Task.sleep(for: .milliseconds(8))
+            }
+        }
+        for (name, step) in [("grow", 0.06), ("shrink", -0.06), ("grow from the smallest", 0.08), ("shrink to the smallest", -0.08)] {
+            label = name
+            panel.handleMagnification(0, phase: .began)
+            for _ in 0..<12 { panel.handleMagnification(step, phase: .changed); await watch(for: 0.012) }
+            panel.handleMagnification(0, phase: .ended)
+            let viewport = try await source.web.evaluateJavaScript("innerWidth+'x'+innerHeight") as? String
+            XCTAssertEqual(viewport, pageSize, "The page keeps its own size however big the window shows it (\(name))")
+            await watch(for: 1.2)
+            print("NOTE after \(name): width \(Int(panel.videoFrame.width)), worst so far page \(worst.page), blank \(worst.blank), black \(worst.black), \(frames) frames")
+        }
+        XCTAssertGreaterThan(frames, 100, "The window was watched frame by frame")
+        XCTAssertLessThanOrEqual(worst.page, resting.page+0.01, "The page never shows in the picture")
+        XCTAssertLessThanOrEqual(worst.blank, resting.blank+0.02, "Nor the window's blank surface around a picture at another size")
+        XCTAssertLessThanOrEqual(worst.black, resting.black+0.05, "Nor a canvas not yet painted")
     }
 
     @MainActor func testPinchResizesTheRealWindowAndRestoresBothLimitsWithoutChangingPlayback() async throws {

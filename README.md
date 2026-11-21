@@ -78,7 +78,8 @@ For more about the engine, see [Engine/README.md](Engine/README.md). For passkey
 - **Open tabs are reused**: a link to a page that is already open goes to that tab. Links from other apps do this too. ⌘-click still opens a new tab. Turn this off in Settings → Tabs.
 - **Tabs rest**: tabs that you don't use freeze, and after 30 minutes they sleep to save memory. Each tab keeps its place and history, and loads again when you open it.
 - **Archived tabs**: tabs that you don't use for 48 hours move to History → Archived Tabs. Change the time in Settings → Tabs.
-- ⭐ **Bookmarks**: press ⌘D to bookmark the page, type a name and press Return, or press Escape to cancel. Bookmarks show in a bar under the address. The bar can hide until the pointer reaches the page bar. Or choose In the sidebar in Settings → Appearance: then press ⌥⌘B to see your bookmarks in the place of your tabs, or hold ⌃⌥B to see them only while you hold the keys. Click a bookmark to open it beside your tab. ⌘-click opens it at the top. Drag bookmarks to reorder them, and right-click one to rename or remove it.
+- ⭐ **Bookmarks**: press ⌘D to bookmark the page, type a name and press Return, or press Escape to cancel. Press ⌥⌘B to see your bookmarks in the sidebar, in the place of your tabs, or hold ⌃⌥B to see them only while you hold the keys. Or choose Bar under the address in Settings → Appearance. The bar can hide until the pointer reaches the page bar. Click a bookmark to open it beside your tab. ⌘-click opens it at the top. Drag bookmarks to reorder them, and right-click one to rename or remove it.
+- **Sidebar scroll bar**: to hide the sidebar's scroll bar, turn on Hide the sidebar's scroll bar in Settings → Tabs. Your tabs and bookmarks still scroll.
 - **Reopen tabs**: press ⇧⌘T to reopen the last tab that you closed. Right-click the downloads button to see other tabs that you closed recently.
 - **Pinned tab safety**: ⌘W on a pinned tab asks you to press ⌘W again.
 - ⭐ **Notification counts**: counts such as "(3)" are removed from tab titles. Turn this off in Settings → Tabs.
@@ -97,10 +98,11 @@ For more about the engine, see [Engine/README.md](Engine/README.md). For passkey
 - **Ask an AI**: type a question to ask ChatGPT, Claude or Gemini on their own sites.
 - **Commands**: type `/` to see browser commands, such as `/zoom` or `/settings`.
 - ⭐ **Copy the link**: press ⇧⌘C or click the link button in the page bar.
+- **Share the page**: right-click the address to share the page or send it with AirDrop. They are also in the File menu.
 
 ### Reading and pages
 
-- ⭐ **Find and Ask**: press ⌘F to find text. Type a question instead, and the AI answers it about the page.
+- ⭐ **Find and Ask**: press ⌘F to find text. Type a question instead, and the AI answers it about the page. This also works in PDFs: Find counts and steps through the matches on every page, and the AI reads the whole PDF and the text that you selected in it.
 - **Annotations**: select text and press ⌃⌘A to ask about it. The answer stays on the page as a numbered note, also after a reload.
 - ⭐ **Link summaries**: hold ⌥ over a link to see a short summary of the page that it opens.
 - **AI chat**: press ⌘E to open a chat beside the page. It can read and use your tabs, and you can mention a tab by its name. Choose the AI provider and model in Settings → AI.
@@ -125,8 +127,8 @@ Hover over these tabs in the sidebar to see a card. All cards are on by default.
 
 ### Media
 
-- ⭐ **Floating video**: when you leave Rise while a video plays with sound, the video floats in its own small window. Drag or flick it into a corner. Pinch to resize it, or drag one of its edges or corners. Flick it past the side of the screen to tuck it away. Click the tucked window, or flick it back out, and it goes back to where it was. Right-click it to play, pause or untuck it.
-- ⭐ **Now Playing**: when media plays in a tab that you left, a card at the bottom of the sidebar has its controls.
+- ⭐ **Floating video**: when you leave Rise while a video plays with sound, the video floats in its own small window. Drag or flick it into a corner. Pinch to resize it, also from another app, or drag one of its edges or corners. Flick it past the side of the screen to tuck it away. Click the tucked window, or flick it back out, and it goes back to where you tucked it from. Right-click it to play, pause or untuck it.
+- ⭐ **Now Playing**: when media plays in a tab that you left, a card at the bottom of the sidebar has its controls. Short sounds, such as a site's notification sound, do not show a card.
 - **Tab audio**: a tab that plays sound has a button to pause or mute it.
 - ⭐ **Meet's floating window**: move it with two fingers on its title bar, and flick it into a corner.
 - **YouTube**: videos that you open wait for you to press play. Turn autoplay on in Settings → Tabs or the Page menu.
@@ -159,7 +161,7 @@ Hover over these tabs in the sidebar to see a card. All cards are on by default.
 
 ### Settings and sync
 
-- **Settings**: press ⌘, to open `rise://settings`. It has appearance, tabs, AI, system and keyboard shortcut settings.
+- **Settings**: press ⌘, to open `rise://settings`. It has appearance, tabs, AI, system and keyboard shortcut settings. Search finds Rise's settings and Chrome's.
 - **Keyboard shortcuts**: change any shortcut in Settings → Keyboard shortcuts.
 - **Flags**: open `rise://flags` for Chromium's experimental features.
 - **Themes**: Light, Dark or Automatic. Change it with the paint roller button at the bottom of the sidebar, or in Settings.

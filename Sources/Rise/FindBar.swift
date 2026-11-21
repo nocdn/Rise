@@ -559,6 +559,11 @@ class FindInputCell: NSTextFieldCell {
             if matches.count == 0 { askIfOutgrown(query) }
         }
     }
+    /// A later count for the search showing, as a long PDF's matches keep coming after it answered.
+    func update(_ matches: PageFind.Matches, for query: String) {
+        guard mode == .find, isPresented, input.stringValue == query else { return }
+        show(matches)
+    }
     private func askIfOutgrown(_ query: String) {
         guard !keepsFind, let font = input.font,
               (query as NSString).size(withAttributes: [.font: font]).width > Self.findFieldWidth-Self.askSlack else { return }
@@ -920,7 +925,7 @@ class FindInputCell: NSTextFieldCell {
         let bar = FindBar(); bar.applyTheme(theme); bar.developer = tab.developer
         bar.find = { [weak tab] query, direction in
             guard let webView = tab?.page else { return PageFind.Matches(count: 0, index: -1) }
-            return await PageFind.find(query, direction: direction, in: webView)
+            return await PageFind.find(query, direction: direction, in: webView) { [weak bar] in bar?.update($0, for: query) }
         }
         bar.cannotSearchPage = { [weak tab] in Self.drawsItsOwnText(tab?.url) }
         bar.dismiss = { [weak self, weak tab] in

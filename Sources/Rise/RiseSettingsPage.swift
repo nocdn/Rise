@@ -33,6 +33,7 @@ import RiseChromium
         case "tabs":
             return [
                 toggle("minimalNewTab", "Minimal New Tab button", "A plus beside the window buttons opens a new tab, in place of the New Tab row above your tabs", minimalNewTab),
+                toggle("hideSidebarScrollbar", "Hide the sidebar's scroll bar", "Your tabs and bookmarks still scroll, with no bar beside them", hidesSidebarScrollbar),
                 select("tabSwitcherLimit", "Tabs in the Control-Tab switcher", "The most it shows, the current tab first, five to a row",
                        "\(tabSwitcherLimit)", Self.tabSwitcherLimits.map { ("\($0)", "\($0)") }),
                 select("tabScrollModifier", "Scroll to choose a tab", "Hold this key and scroll to highlight a tab. Release to switch; Escape cancels",
@@ -116,6 +117,7 @@ import RiseChromium
         case "bookmarkPlacement": if let placement = BookmarkPlacement(rawValue: text) { setBookmarkPlacement(placement) }
         case "autoHideBookmarksBar": setAutoHidesBookmarksBar(on)
         case "minimalNewTab": setMinimalNewTab(on)
+        case "hideSidebarScrollbar": setHidesSidebarScrollbar(on)
         case "tabSwitcherLimit": if let limit = Int(text) { setTabSwitcherLimit(limit) }
         case "tabScrollModifier": if let modifier = TabScrollModifier(rawValue: text) { setTabScrollModifier(modifier) }
         case "gmailCategory": if let category = GmailCategory(rawValue: text) { selectGmailCategory(category) }

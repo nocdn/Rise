@@ -3,6 +3,8 @@ import AppKit
 /// Reopening the sidebar isn't a scroll gesture. Only interaction should bring its
 /// overlay indicator back; AppKit still owns the indicator's usual fade afterward.
 final class SidebarScrollView: NSScrollView {
+    /// Scrolls with no bar at all, as Settings can ask of the sidebar.
+    var hidesScroller = false { didSet { hasVerticalScroller = !hidesScroller } }
     override func updateTrackingAreas() {
         super.updateTrackingAreas(); removeOwnTrackingAreas()
         addTrackingArea(NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .mouseMoved, .activeInKeyWindow, .inVisibleRect], owner: self))
@@ -10,7 +12,7 @@ final class SidebarScrollView: NSScrollView {
     private func revealScroller(at event: NSEvent) {
         // Track from the visible scroll view, since an alpha-zero indicator needn't
         // receive mouse events itself. Its native drag target returns before a click.
-        if let scroller = verticalScroller as? ThinScroller,
+        if hasVerticalScroller, let scroller = verticalScroller as? ThinScroller,
            scroller.frame.contains(convert(event.locationInWindow, from: nil)) {
             scroller.revealForInteraction()
         }
@@ -18,7 +20,7 @@ final class SidebarScrollView: NSScrollView {
     override func mouseEntered(with event: NSEvent) { super.mouseEntered(with: event); revealScroller(at: event) }
     override func mouseMoved(with event: NSEvent) { super.mouseMoved(with: event); revealScroller(at: event) }
     override func scrollWheel(with event: NSEvent) {
-        if event.scrollingDeltaY != 0 || event.phase == .began {
+        if hasVerticalScroller, event.scrollingDeltaY != 0 || event.phase == .began {
             (verticalScroller as? ThinScroller)?.revealForInteraction()
         }
         super.scrollWheel(with: event)

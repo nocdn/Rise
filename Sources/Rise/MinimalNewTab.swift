@@ -4,6 +4,13 @@ import AppKit
 /// lights, centred over the downloads button, instead of the New Tab row above the tabs.
 @MainActor extension BrowserController {
     static let minimalNewTabKey = "Rise.MinimalNewTab"
+    static let hideSidebarScrollbarKey = "Rise.HideSidebarScrollbar"
+    /// Off unless chosen in Settings: the sidebar scrolls with its thin bar.
+    var hidesSidebarScrollbar: Bool { preferences.bool(forKey: Self.hideSidebarScrollbarKey) }
+    func setHidesSidebarScrollbar(_ hides: Bool) {
+        preferences.set(hides, forKey: Self.hideSidebarScrollbarKey)
+        sidebar.hidesScrollbar = hides
+    }
     var minimalNewTab: Bool { preferences.object(forKey: Self.minimalNewTabKey) as? Bool ?? true }
     func setMinimalNewTab(_ on: Bool) {
         preferences.set(on, forKey: Self.minimalNewTabKey)

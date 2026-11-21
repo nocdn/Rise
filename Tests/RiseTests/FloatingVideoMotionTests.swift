@@ -222,6 +222,43 @@ final class FloatingVideoMotionTests: XCTestCase {
         XCTAssertEqual(moved.frame.origin.y, start.y+120, accuracy: 0.5)
     }
 
+    /// Moved down from the top left corner and flung off the side in one go, it comes back down
+    /// where the flick began, not up in the corner where the fingers first took it.
+    func testATuckedWindowComesBackToWhereTheFlickThatTuckedItBegan() {
+        let limits = FloatingVideoMotion.originBounds(size: size, visibleFrame: screen)
+        let corner = CGPoint(x: limits.minX, y: limits.maxY)
+        var motion = FloatingVideoMotion(frame: CGRect(origin: corner, size: size), visibleFrame: screen)
+        motion.begin(at: 0)
+        // Down, unhurried, for a second and a half: 360 points.
+        for step in 1...90 { motion.drag(by: CGVector(dx: 0, dy: -4), at: Double(step)/60); motion.step(elapsed: 1.0/60) }
+        let flickedFrom = motion.restingOrigin
+        // Then flung left without lifting the fingers.
+        for step in 1...4 { motion.drag(by: CGVector(dx: -40, dy: 0), at: 1.5+Double(step)/120); motion.step(elapsed: 1.0/120) }
+        motion.end(at: 1.5+4.0/120)
+        XCTAssertEqual(motion.tucked, .left)
+        settle(&motion)
+        var clicked = motion
+        clicked.untuck(); settle(&clicked)
+        XCTAssertEqual(clicked.frame.origin.x, flickedFrom.x, accuracy: 0.5)
+        XCTAssertEqual(clicked.frame.origin.y, flickedFrom.y, accuracy: 0.5, "Down where it was flung from, not in the corner")
+        XCTAssertLessThan(clicked.frame.origin.y, corner.y-300)
+
+        // Let go after the move, then flung away: back exactly where it was let go.
+        var separate = FloatingVideoMotion(frame: CGRect(origin: corner, size: size), visibleFrame: screen)
+        separate.begin(at: 0)
+        for step in 1...90 { separate.drag(by: CGVector(dx: 0, dy: -4), at: Double(step)/60); separate.step(elapsed: 1.0/60) }
+        separate.end(at: 1.6); settle(&separate)
+        let rested = separate.frame.origin
+        flick(&separate, dx: -40, at: 10)
+        XCTAssertEqual(separate.tucked, .left)
+        settle(&separate)
+        flick(&separate, dx: 40, at: 20)
+        XCTAssertNil(separate.tucked, "Flicked out")
+        settle(&separate)
+        XCTAssertEqual(separate.frame.origin.x, rested.x, accuracy: 0.5)
+        XCTAssertEqual(separate.frame.origin.y, rested.y, accuracy: 0.5)
+    }
+
     func testFlicksUpAndDownKeepATuckedWindowTucked() {
         let start = CGPoint(x: -1100, y: 400)
         let tuckedX = FloatingVideoMotion.tuckedX(.left, width: size.width, visibleFrame: screen)

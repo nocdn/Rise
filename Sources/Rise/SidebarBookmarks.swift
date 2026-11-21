@@ -21,17 +21,18 @@ import RiseCore
 }
 
 /// The roll: what leaves goes sideways and fades quickly, and what comes follows a moment later from
-/// the other side, slowing into place, on the page bar's notice timing (`PlainNavBar.Notice`).
+/// the other side, slowing into place. The page bar's notice timing (`PlainNavBar.Notice`) at more
+/// than twice its pace, as a swap you ask for shouldn't keep you waiting: 0.16 s from start to rest.
 enum SidebarRollMotion {
     static let exit: CGFloat = 34, entry: CGFloat = 30
-    static let exitDuration = PlainNavBar.Notice.exitDuration, entryDelay = PlainNavBar.Notice.entryDelay
-    static let entryDuration = PlainNavBar.Notice.entryDuration+0.04
+    static let exitDuration = 0.06, entryDelay = 0.05
+    static let entryDuration = 0.11
     static let exitTiming = CAMediaTimingFunction(controlPoints: 0.5, 0, 0.9, 0.6)
     static let entryTiming = CAMediaTimingFunction(controlPoints: 0.2, 0.7, 0.3, 1)
     static let key = "Rise.SidebarRoll"
     /// How far toward its Control-Command width the sidebar widens for bookmarks.
     static let widening: CGFloat = 0.5
-    static let widthResponse = 0.22
+    static let widthResponse = 0.11
     /// The title rolls a shorter way, as words in the page bar do.
     static let titleExit: CGFloat = 14, titleEntry: CGFloat = 12
 }

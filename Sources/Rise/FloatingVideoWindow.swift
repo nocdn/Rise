@@ -168,7 +168,10 @@ struct FloatingVideoScrollInput {
             self.updateMousePassThrough()
         }
         overlay.mouseDrag = { [weak self] event in self?.handleMouse(event) }
-        overlay.pinch = { [weak self] event in self?.handleMagnification(event.magnification, phase: event.phase, via: "overlay") }
+        overlay.pinch = { [weak self] event in
+            guard let self, self.isNewMagnify(event) else { return }
+            self.handleMagnification(event.magnification, phase: event.phase, via: "overlay")
+        }
         observeScreenChanges()
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -405,7 +408,8 @@ struct FloatingVideoScrollInput {
     override func sendEvent(_ event: NSEvent) {
         if event.type == .flagsChanged { overlay.updateModifiers(event.modifierFlags) }
         if event.type == .magnify {
-            handleMagnification(event.magnification, phase: event.phase, via: "panel"); return
+            if isNewMagnify(event) { handleMagnification(event.magnification, phase: event.phase, via: "panel") }
+            return
         }
         if event.type == .endGesture, resizeMotion?.phase == .pinching {
             handleMagnification(0, phase: .ended, via: "panel's gesture end"); return
@@ -422,6 +426,7 @@ struct FloatingVideoScrollInput {
         localPinchMonitor = NSEvent.addLocalMonitorForEvents(matching: Self.pinchTypes) { [weak self] event in
             // Not `self?.routePinch(event) ?? event`: that turns "handled" (nil) back into the event.
             guard let self else { return event }
+            self.noteGesture(event, raw: event.type, via: "Rise")
             return self.routePinch(event)
         }
         // A trackpad pinch travels as a raw gesture event (type 29) that only
@@ -429,10 +434,13 @@ struct FloatingVideoScrollInput {
         // alone never fires; watching raw gestures catches it.
         globalPinchMonitor = NSEvent.addGlobalMonitorForEvents(matching: Self.pinchTypes.union(.gesture)) { [weak self] event in
             MainActor.assumeIsolated {
+                let raw = event.type
                 let event = event.type == .gesture ? event.cgEvent.flatMap(NSEvent.init(cgEvent:)) ?? event : event
+                self?.noteGesture(event, raw: raw, via: "another app")
                 _ = self?.routePinch(event)
             }
         }
+        installGestureTap()
         // The panel never takes keyboard focus, so Space reaches Rise's key window.
         spaceMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
             guard let self else { return event }
@@ -481,7 +489,16 @@ struct FloatingVideoScrollInput {
         if let globalPointerMonitor { NSEvent.removeMonitor(globalPointerMonitor); self.globalPointerMonitor = nil }
         if let localPinchMonitor { NSEvent.removeMonitor(localPinchMonitor); self.localPinchMonitor = nil }
         if let globalPinchMonitor { NSEvent.removeMonitor(globalPinchMonitor); self.globalPinchMonitor = nil }
+        removeGestureTap()
         if let spaceMonitor { NSEvent.removeMonitor(spaceMonitor); self.spaceMonitor = nil }
+    }
+    /// Notes a gesture's start near the video: what it is and where it came from, as one that
+    /// never reaches the pinch says nothing else.
+    private func noteGesture(_ event: NSEvent, raw: NSEvent.EventType, via source: String) {
+        guard event.type == .beginGesture || event.phase.contains(.began) else { return }
+        let point = event.window.map { $0.convertPoint(toScreen: event.locationInWindow) } ?? NSEvent.mouseLocation
+        guard videoFrame.insetBy(dx: -48, dy: -48).contains(point) else { return }
+        Self.log.notice("Gesture near Picture in Picture from \(source, privacy: .public): type \(event.type.rawValue) (raw \(raw.rawValue)), phase \(Self.describe(event.phase), privacy: .public), at \(point.debugDescription, privacy: .public), video \(self.videoFrame.debugDescription, privacy: .public), window \(event.window.map { NSStringFromClass(type(of: $0)) } ?? "none", privacy: .public)")
     }
     /// Returns nil when the pinch resized this window.
     func routePinch(_ event: NSEvent) -> NSEvent? {
@@ -508,8 +525,59 @@ struct FloatingVideoScrollInput {
                 return event
             }
         }
+        guard isNewMagnify(event) else { return nil }
         handleMagnification(event.magnification, phase: event.phase, via: event.window === self ? "this panel" : event.window == nil ? "another app" : "Rise's key window")
         return nil
+    }
+    /// The same magnify can come by more than one way, as the tap sees what the panel is sent: the
+    /// same moment, phase and amount. Events made rather than sent may share a moment, never all three.
+    private var lastMagnify: (time: TimeInterval, phase: UInt, amount: CGFloat)?
+    private func isNewMagnify(_ event: NSEvent) -> Bool {
+        let magnify = (time: event.timestamp, phase: event.phase.rawValue, amount: event.magnification)
+        if let lastMagnify, lastMagnify == magnify { return false }
+        lastMagnify = magnify; return true
+    }
+
+    // MARK: Pinches with Rise behind another app
+
+    /// With Rise behind another app, a pinch over the video is sent to neither the panel nor the
+    /// global monitor, so a listen-only tap on the session's gestures watches for it. It only
+    /// watches: the gesture still reaches whatever it was for.
+    private static weak var gestureTapTarget: FloatingVideoWindow?
+    private static var gestureTap: CFMachPort?, gestureTapSource: CFRunLoopSource?
+    private func installGestureTap() {
+        Self.gestureTapTarget = self
+        guard Self.gestureTap == nil else { return }
+        let gestureType: CGEventMask = 29  // NSEventType.gesture, as the trackpad sends a pinch
+        guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .tailAppendEventTap, options: .listenOnly,
+                                          eventsOfInterest: 1 << gestureType, callback: { _, type, event, _ in
+            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                if let tap = FloatingVideoWindow.gestureTap { CGEvent.tapEnable(tap: tap, enable: true) }
+            } else if Thread.isMainThread {
+                MainActor.assumeIsolated { FloatingVideoWindow.tapped(event) }
+            }
+            return Unmanaged.passUnretained(event)
+        }, userInfo: nil) else {
+            Self.log.error("Can't watch for pinches with Rise behind another app: no event tap (listen access \(CGPreflightListenEventAccess()))")
+            return
+        }
+        let source = CFMachPortCreateRunLoopSource(nil, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        Self.gestureTap = tap; Self.gestureTapSource = source
+    }
+    private func removeGestureTap() {
+        guard Self.gestureTapTarget === self || Self.gestureTapTarget == nil else { return }
+        Self.gestureTapTarget = nil
+        if let source = Self.gestureTapSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
+        if let tap = Self.gestureTap { CGEvent.tapEnable(tap: tap, enable: false); CFMachPortInvalidate(tap) }
+        Self.gestureTap = nil; Self.gestureTapSource = nil
+    }
+    private static func tapped(_ event: CGEvent) {
+        // In front, Rise is sent the pinch itself.
+        guard !NSApp.isActive, let window = gestureTapTarget, let pinch = NSEvent(cgEvent: event),
+              [.magnify, .beginGesture, .endGesture].contains(pinch.type) else { return }
+        window.noteGesture(pinch, raw: .gesture, via: "the event tap")
+        _ = window.routePinch(pinch)
     }
 
     /// Space plays or pauses while the pointer is over the video, and F returns it to its tab;
@@ -736,11 +804,20 @@ struct FloatingVideoScrollInput {
     private func observeScreenChanges() {
         guard screenObserver == nil else { return }
         screenObserver = NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.fitToScreen() }
+            MainActor.assumeIsolated { self?.screenParametersChanged() }
         }
+    }
+    /// The screen it was last fitted to, as macOS can say the screens changed many times a second
+    /// when nothing it stands on has: refitting stops it wherever it's going.
+    private var fittedScreen: (frame: CGRect, area: CGRect)?
+    private func screenParametersChanged() {
+        if let screen = screen ?? NSScreen.main, let fitted = fittedScreen,
+           fitted.frame == screen.frame, fitted.area == placementArea(on: screen) { return }
+        fitToScreen()
     }
     private func fitToScreen() {
         guard !isDismissing, let screen = screen ?? NSScreen.main else { return }
+        fittedScreen = (screen.frame, placementArea(on: screen))
         stopMotion(); edgeResize = nil
         let tucked = motion.tucked
         var resize = resizing(on: screen)

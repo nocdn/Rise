@@ -16,6 +16,11 @@ import Vision
         sharingPicker = NSSharingServicePicker(items: [url])
         sharingPicker?.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
     }
+    /// The page's address, straight to AirDrop, as a link's menu sends it.
+    @objc func airDropCurrentPage() {
+        guard let url = commandTab?.url, url.absoluteString != "about:blank" else { return }
+        AirDropMenuItem.send([url], in: { [weak self] in self?.window })
+    }
     func moreSiteControls() {
         // Rise's settings are among Chrome's, at rise://settings; without the engine, as in unit
         // tests, the menu stands in.

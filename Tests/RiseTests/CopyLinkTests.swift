@@ -87,7 +87,11 @@ final class CopyLinkTests: XCTestCase {
         XCTAssertNil(bar.menu(for: click(bar.fieldRect.maxX+40)), "Only on the address")
         browser.linkPasteboard.clearContents()
         let menu = try XCTUnwrap(bar.menu(for: click(bar.fieldRect.midX)))
-        XCTAssertEqual(menu.items.map(\.title), ["Copy URL", "Copy as Markdown Link", "", "Paste and Go", "Edit Address"])
+        // Share and AirDrop in a section of their own, as a link's menu on the page has them; AirDrop
+        // only where it's on.
+        let airDrop = AirDropMenuItem.canSend([try XCTUnwrap(tab.url)]) ? ["AirDrop"] : []
+        XCTAssertEqual(menu.items.map(\.title), ["Copy URL", "Copy as Markdown Link", "", "Paste and Go", "Edit Address", "", "Share…"]+airDrop)
+        XCTAssertNotNil(menu.items[6].image, "Share keeps its icon here")
         XCTAssertEqual(menu.items[0].keyEquivalent, "C"); XCTAssertEqual(menu.items[0].keyEquivalentModifierMask, [.command, .shift])
         XCTAssertEqual(menu.items[4].keyEquivalent, "l")
         XCTAssertFalse(menu.items[3].isEnabled, "Nothing to paste")

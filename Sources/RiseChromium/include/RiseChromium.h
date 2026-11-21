@@ -406,6 +406,26 @@ RC_EXPORT @interface RCBrowserView : NSView
 /// Prints with the system's print dialog, as Chrome's Print Using System Dialog does, from the
 /// page or its print preview.
 - (void)printPageUsingSystemDialog;
+/// Whether the page shows a PDF in Chromium's viewer, whose text the page's scripts can't reach.
+@property (nonatomic, readonly) BOOL showsPDF;
+/// The text of each page of the PDF the page shows, once it has loaded; nil when it shows none.
+- (void)PDFPageTextsWithCompletion:(void (^)(NSArray<NSString *> *_Nullable pages))completion
+    NS_SWIFT_NAME(pdfPageTexts(completion:));
+/// YES once the PDF the page shows has loaded; NO at once while there's no document yet to wait
+/// for, before its viewer has started.
+- (void)whenPDFLoaded:(void (^)(BOOL loaded))completion NS_SWIFT_NAME(whenPDFLoaded(_:)) NS_SWIFT_DISABLE_ASYNC;
+/// The text selected in the PDF the page shows, which the page's own selection doesn't include.
+@property (nonatomic, readonly) NSString *PDFSelectedText NS_SWIFT_NAME(pdfSelectedText);
+/// Finds `text` as Chrome's find bar does, in a PDF too: every match is marked, and the next (or
+/// previous) one is chosen and scrolled to. Results come to `completion`, maybe more than once
+/// as Chromium counts: the matches, the chosen one's place (from 1, 0 for none), and whether
+/// the count is done. Empty text clears the marks.
+- (void)findText:(NSString *)text
+         forward:(BOOL)forward
+      completion:(void (^)(NSInteger matches, NSInteger active, BOOL final))completion
+    NS_SWIFT_NAME(find(_:forward:completion:)) NS_SWIFT_DISABLE_ASYNC;
+/// Ends a find, leaving its chosen match selected, as closing Chrome's find bar does, or not.
+- (void)stopFindingSelectingMatch:(BOOL)select NS_SWIFT_NAME(stopFinding(selectingMatch:));
 - (void)setAudioMuted:(BOOL)muted;
 /// Whether Chromium has the page's sound muted.
 @property (nonatomic, readonly) BOOL isAudioMuted;

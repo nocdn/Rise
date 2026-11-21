@@ -522,6 +522,7 @@ import RiseCore
         sidebar.archiveButton.secondaryAction = { [weak self] in self?.archiveMenu() }
         sidebar.onNewTab = { [weak self] in self?.newTab() }
         sidebar.minimalNewTab = minimalNewTab
+        sidebar.hidesScrollbar = hidesSidebarScrollbar
         // Choosing a tab, from a search too, shows them all again with it selected.
         sidebar.onSelect = { [weak self] id in self?.sidebar.endTabSearch(); self?.select(id) }
         sidebar.onTabSearchEnded = { [weak self] in self?.window?.makeFirstResponder(self?.selectedTab?.page.view) }

@@ -1,0 +1,30 @@
+diff --git a/chrome/browser/resources/settings/route.ts b/chrome/browser/resources/settings/route.ts
+index da94df0..637289e 100644
+--- a/chrome/browser/resources/settings/route.ts
++++ b/chrome/browser/resources/settings/route.ts
+@@ -347,7 +347,9 @@ export let routes: SettingsRoutes = Router.getInstance().getRoutes();
+ // Returns the "effective" route when at chrome://settings/.
+ export function getTopLevelRoute(): Route {
+   if (!loadTimeData.getBoolean('isGuest')) {
+-    return routes.PEOPLE;
++    // Rise has no People section; search, at the top level, falls back on the
++    // first section it shows instead of an undefined route that hides them all.
++    return routes.PEOPLE || routes.PRIVACY;
+   }
+ 
+   let guestTopLevelRoute = routes.SEARCH;
+diff --git a/chrome/browser/resources/settings/site_settings/site_settings_list.ts b/chrome/browser/resources/settings/site_settings/site_settings_list.ts
+index 6fa4766..c4836f4 100644
+--- a/chrome/browser/resources/settings/site_settings/site_settings_list.ts
++++ b/chrome/browser/resources/settings/site_settings/site_settings_list.ts
+@@ -89,6 +89,10 @@ class SettingsSiteSettingsListElement extends
+     // Populate the |focusConfig| map with entries that correspond to subpage
+     // trigger elements residing in this element's Shadow DOM.
+     for (const item of this.categoryList) {
++      // A category Rise's settings leave without a page has nothing to focus.
++      if (!item.route) {
++        continue;
++      }
+       focusConfig.set(item.route.path, () => {
+         const toFocus =
+             this.shadowRoot!.querySelector<HTMLElement>(`#${item.id}`);

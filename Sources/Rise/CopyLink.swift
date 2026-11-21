@@ -33,6 +33,14 @@ import AppKit
         let pasted = linkPasteboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         add("Paste and Go", nil, enabled: !pasted.isEmpty && !pasted.contains("\n")) { [weak self] in self?.submitAddress(pasted, suggestion: nil) }
         add("Edit Address", "focusAddress") { [weak self] in self?.focusAddress() }
+        // As a link's menu on the page has them: the share sheet, and AirDrop straight away.
+        if let url = tab.url, url.absoluteString != "about:blank" {
+            menu.addItem(.separator())
+            let picker = NSSharingServicePicker(items: [url])
+            sharingPicker = picker
+            menu.addItem(picker.standardShareMenuItem)
+            if let airDrop = AirDropMenuItem.make(for: [url], in: { [weak self] in self?.window }) { menu.addItem(airDrop) }
+        }
         menu.autoenablesItems = false
         return menu
     }

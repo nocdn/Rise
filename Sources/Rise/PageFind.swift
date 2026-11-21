@@ -17,6 +17,22 @@ import WebKit
     #endif
 }
 
+/// A page that can show a document whose text no script can reach, such as a PDF Chromium draws
+/// itself: find and Page Assistant use the engine's own search and text for it instead.
+@MainActor protocol DocumentPage: ScriptablePage {
+    /// Whether the page shows such a document now; otherwise it's searched like any other.
+    var showsDocument: Bool { get }
+    /// `later` takes the matches the search finds after it answered, as a long document's keep coming.
+    func findInDocument(_ query: String, direction: PageFind.Direction, later: ((PageFind.Matches) -> Void)?) async -> PageFind.Matches
+    func highlightInDocument(_ quote: String) async -> Bool
+    /// Ends a search, or a passage, in the document, if one is up.
+    func clearDocumentFind(selectingCurrent: Bool)
+    func clearDocumentPassage()
+    /// The document's text, nil when it couldn't be read.
+    func documentText() async -> String?
+    var documentSelection: String { get }
+}
+
 #if os(iOS)
 extension WKWebView: ScriptablePage {
     func runScript(_ body: String, arguments: [String: Any], world: String?) async throws -> Any? {
@@ -48,7 +64,11 @@ extension WKWebView: ScriptablePage {
 
     /// `shown` is the part of the page's viewport that isn't covered, top to bottom in CSS pixels;
     /// nil means all of it.
-    static func find(_ query: String, direction: Direction, shown: ClosedRange<Double>? = nil, in page: any ScriptablePage) async -> Matches {
+    static func find(_ query: String, direction: Direction, shown: ClosedRange<Double>? = nil, in page: any ScriptablePage,
+                     later: ((Matches) -> Void)? = nil) async -> Matches {
+        if let document = page as? DocumentPage, document.showsDocument {
+            return await document.findInDocument(query, direction: direction, later: later)
+        }
         let view: [String: Double] = shown.map { ["top": $0.lowerBound, "bottom": $0.upperBound] } ?? [:]
         switch await call("return __riseFind.find(query, direction, view)", ["query": query, "direction": direction.rawValue, "view": view], in: page) {
         case .success(let result as [String: Any]):
@@ -66,16 +86,23 @@ extension WKWebView: ScriptablePage {
     /// Use the finder's own text extraction for model context so verbatim snippets map to
     /// the same DOM nodes, including around inline links and hidden accessibility labels.
     static func visibleText(in page: any ScriptablePage) async -> String? {
+        if let document = page as? DocumentPage, document.showsDocument { return await document.documentText() }
         if case .success(let text as String) = await call("return __riseFind.sourceText()", [:], in: page) { return text }
         return nil
     }
     /// Removes the find highlights and, on closing, selects the current match as browsers do.
     static func clear(_ page: any ScriptablePage, selectingCurrent: Bool) async {
+        // Even once the page has moved on from the document, its search mustn't outlive the bar.
+        if let document = page as? DocumentPage {
+            document.clearDocumentFind(selectingCurrent: selectingCurrent)
+            if document.showsDocument { return }
+        }
         await clearNativeMarks(page)
         _ = await call("return __riseFind.clear(select)", ["select": selectingCurrent], in: page)
     }
     /// Highlights the first occurrence of `quote` and scrolls to it; false when it isn't on the page.
     static func highlightPassage(_ quote: String, in page: any ScriptablePage) async -> Bool {
+        if let document = page as? DocumentPage, document.showsDocument { return await document.highlightInDocument(quote) }
         switch await call("return __riseFind.passage(quote)", ["quote": quote], in: page) {
         case .success(let found as Bool): return found
         case .success: return await findNatively(quote, backwards: false, in: page).index >= 0
@@ -83,6 +110,10 @@ extension WKWebView: ScriptablePage {
         }
     }
     static func clearPassage(_ page: any ScriptablePage) async {
+        if let document = page as? DocumentPage {
+            document.clearDocumentPassage()
+            if document.showsDocument { return }
+        }
         await clearNativeMarks(page)
         _ = await call("return __riseFind.passage('')", [:], in: page)
     }

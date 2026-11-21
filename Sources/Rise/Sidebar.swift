@@ -57,6 +57,10 @@ import RiseCore
     let titlebarNewTab: HoverHintButton
     /// The middle of the downloads button, which the titlebar's plus is centred over.
     var downloadsCentreX: CGFloat { bounds.width-23 }
+    /// The tabs, and the bookmarks in their place, scroll with no scroll bar.
+    var hidesScrollbar = false {
+        didSet { scroll.hidesScroller = hidesScrollbar; bookmarksPane.scroll.hidesScroller = hidesScrollbar }
+    }
     var minimalNewTab = true {
         didSet {
             guard minimalNewTab != oldValue else { return }

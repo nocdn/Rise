@@ -2,7 +2,9 @@ import AppKit
 
 /// Follows the audio and video each tab plays, in every frame, so the tab's play
 /// button can pause and resume any site's media, not only YouTube's. Media counts
-/// once it plays with sound, so silent background loops don't give a tab a button.
+/// once it plays with sound, so silent background loops don't give a tab a button, and once it's
+/// more than a sound effect: audio of ten seconds or less, such as the chime of a page's
+/// notification or a call's ring, gives a tab no button and Now Playing no card.
 /// It also tells the sidebar's Now Playing what plays (`NowPlaying.swift`): the page's
 /// Media Session details, its position and its sound's levels, and seeks and skips it.
 @MainActor final class TabMedia: NSObject {
@@ -231,12 +233,16 @@ import AppKit
         if (value !== previous) { previous = value; post(body); }
       };
       const schedule = () => { if (!scheduled) { scheduled = true; setTimeout(report, 30); } };
+      // A chime, a ring or a pronunciation: audio alone, ten seconds long or less. Until audio knows
+      // how long it is, it waits, and counts once it turns out longer.
+      const brief = media => !(media instanceof HTMLVideoElement) && !(media.duration > 10);
       const note = media => {
         if (!(media instanceof HTMLMediaElement)) return;
+        if (brief(media)) { if (heard.delete(media)) schedule(); return; }
         if (playing(media) && !media.muted && media.volume > 0) { heard.delete(media); heard.add(media); resume = []; }
         if (heard.has(media)) schedule();
       };
-      const events = ['play', 'playing', 'pause', 'ended', 'emptied', 'volumechange'];
+      const events = ['play', 'playing', 'pause', 'ended', 'emptied', 'volumechange', 'durationchange'];
       const listen = event => note(event.target);
       events.forEach(event => document.addEventListener(event, listen, true));
       // Media outside the document gets no document events; it is seen when it plays.

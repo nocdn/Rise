@@ -70,6 +70,11 @@ enum PageAssistant {
 
     /// The visible text of the page, plus whatever the user has selected on it.
     @MainActor static func snapshot(of webPage: any ScriptablePage) async throws -> Page {
+        // A PDF's text is the engine's to give, as no script can read it.
+        if let document = webPage as? DocumentPage, document.showsDocument {
+            return Page(title: webPage.title ?? "", url: webPage.url?.absoluteString ?? "", selection: document.documentSelection,
+                        text: String((await document.documentText() ?? "").prefix(pageCharacterLimit)), links: [])
+        }
         let source = await PageFind.visibleText(in: webPage)
         let script = "return [fallback && document.body ? document.body.innerText : '', String(window.getSelection() || '')]"
         let parts = try await webPage.runScript(script, arguments: ["fallback": source == nil], world: nil) as? [String] ?? []

@@ -112,6 +112,8 @@ enum RisePages {
 @MainActor final class ChromiumPage: NSObject, WebPage, RCBrowserViewDelegate {
     let browserView: RCBrowserView
     var view: NSView { browserView }
+    /// Find in the PDFs Chromium draws itself.
+    let documentFinder = DocumentFinder()
     var onChange: ((WebPageChange) -> Void)?
     var onHoverLink: ((URL?) -> Void)?
     var onOpenElsewhere: ((URL, Bool) -> Bool)?

@@ -1,0 +1,16 @@
+diff --git a/content/app_shim_remote_cocoa/render_widget_host_view_cocoa.mm b/content/app_shim_remote_cocoa/render_widget_host_view_cocoa.mm
+index 10f9649..4b3d4e8 100644
+--- a/content/app_shim_remote_cocoa/render_widget_host_view_cocoa.mm
++++ b/content/app_shim_remote_cocoa/render_widget_host_view_cocoa.mm
+@@ -476,6 +476,11 @@ - (void)sendViewBoundsInWindowToHost {
+   gfx::Rect gfxViewBoundsInWindow(viewBoundsInWindow);
+   gfxViewBoundsInWindow.set_y(NSHeight([enclosingWindow frame]) -
+                               NSMaxY(viewBoundsInWindow));
++  // Rise: an ancestor that scales the view, as Rise's floating video
++  // stretches its page to the window's size, changes how big the page looks,
++  // not how big it is. Measured in the window, every step of a resize would
++  // lay the page out again at another size, showing it through the picture.
++  gfxViewBoundsInWindow.set_size(gfx::Rect(viewBoundsInView).size());
+   _host->OnBoundsInWindowChanged(gfxViewBoundsInWindow, true);
+ }
+ 

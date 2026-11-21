@@ -114,7 +114,7 @@ enum BookmarkPlacement: String, CaseIterable {
     static let bookmarkPlacementKey = "Rise.BookmarkPlacement"
     static let autoHideBookmarksBarKey = "Rise.AutoHideBookmarksBar"
     var bookmarkPlacement: BookmarkPlacement {
-        preferences.string(forKey: Self.bookmarkPlacementKey).flatMap(BookmarkPlacement.init) ?? .bar
+        preferences.string(forKey: Self.bookmarkPlacementKey).flatMap(BookmarkPlacement.init) ?? .sidebar
     }
     var autoHidesBookmarksBar: Bool { preferences.bool(forKey: Self.autoHideBookmarksBarKey) }
     func setBookmarkPlacement(_ placement: BookmarkPlacement) {

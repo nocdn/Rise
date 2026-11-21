@@ -3,9 +3,11 @@ import XCTest
 @testable import Rise
 
 @MainActor final class BookmarksTests: XCTestCase {
-    private func makeBrowser() -> BrowserController {
+    /// Bookmarks show in the sidebar unless chosen otherwise; most of these are about the bar.
+    private func makeBrowser(placement: BookmarkPlacement? = .bar) -> BrowserController {
         let suite = "BookmarksTests.\(UUID())"
         let preferences = UserDefaults(suiteName: suite)!
+        if let placement { preferences.set(placement.rawValue, forKey: BrowserController.bookmarkPlacementKey) }
         let session = FileManager.default.temporaryDirectory.appendingPathComponent("\(suite)/session.json")
         let browser = BrowserController(sessionURL: session, restore: false, preferences: preferences)
         browser.window?.setFrameAutosaveName("")
@@ -23,6 +25,12 @@ import XCTest
     private func keep(_ browser: BrowserController) {
         guard let tab = browser.selectedTab, let url = tab.url else { return }
         browser.bookmarks.add(url: url, title: tab.title, icon: nil, darkIcon: nil)
+    }
+    func testBookmarksShowInTheSidebarUntilChosenOtherwise() {
+        let browser = makeBrowser(placement: nil); defer { clean(browser) }
+        XCTAssertEqual(browser.bookmarkPlacement, .sidebar)
+        browser.setRiseSetting("bookmarkPlacement", "bar")
+        XCTAssertEqual(browser.bookmarkPlacement, .bar)
     }
     private func press(_ selector: Selector, in field: NSTextField) throws {
         let editor = try XCTUnwrap(field.currentEditor() as? NSTextView, "Its title is being typed")
