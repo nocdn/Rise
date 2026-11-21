@@ -282,10 +282,14 @@ import RiseChromium
           for (const child of slot.children) if (child !== button && !('riseHidden' in child.dataset)) hide(child);
         }
       };
+      // The listing's title. The store keeps the pages it moves on from in the page, hidden, so
+      // the first heading can be the search results' or a category's, out of sight.
+      const visible = n => n.getClientRects().length > 0 && getComputedStyle(n).visibility !== 'hidden';
+      const titleOf = () => [...document.querySelectorAll('main h1'), ...document.querySelectorAll('h1')].find(visible);
       const place = () => {
         hideOffers();
         const id = idOf();
-        const title = id && document.querySelector('main h1, h1');
+        const title = id && titleOf();
         if (!title) { button.remove(); shown = null; return; }
         if (button.previousElementSibling !== title) title.after(button);
         if (shown !== id) { shown = id; installed = false; draw(); check(); }
@@ -296,6 +300,10 @@ import RiseChromium
         queued = true;
         setTimeout(() => { queued = false; place(); }, 100);
       }).observe(document, {childList: true, subtree: true});
+      // Going back to a page the store kept can show it again without adding anything.
+      const settle = () => { setTimeout(place, 50); setTimeout(place, 400); };
+      addEventListener('popstate', settle);
+      window.navigation?.addEventListener('navigatesuccess', settle);
       addEventListener('focus', () => shown && check());
       window.riseWebStore = {refresh: () => shown && check()};
       place();

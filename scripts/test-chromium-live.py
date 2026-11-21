@@ -1,11 +1,22 @@
 """Rise's features on Chromium pages in an actual Rise window.
 
-    python3 scripts/test-chromium-live.py [peek|features|extensions|passkeys|scripts|app|float|capture|tools|youtube|media|devtools|certificates|path/to/Check.swift]
+    python3 scripts/test-chromium-live.py [peek|features|extensions|upgrade|passkeys|scripts|app|float|capture|tools|youtube|media|devtools|certificates|path/to/Check.swift]
 
 peek: Peek's motion, frame by frame (Tests/Live/ChromiumPeekBenchmarks.swift).
 features: history after a relaunch, downloads, find, permissions, picture in picture and the
 tab's media and sound (Tests/Live/ChromiumFeatureChecks.swift), with pages served from two local
 sites so one can hold a frame of the other.
+extensions: a test extension's background, content script, popup, buttons and shortcuts in Rise's
+pages, and the Chrome Web Store: Rise's Add to Rise button in sight on a listing, opened directly or
+reached through the store's own pages, and installing through Rise's sheet
+(Tests/Live/ChromiumExtensionChecks.swift). It needs the network.
+upgrade: a profile the previous release made opens intact in this build, with its cookies and an
+extension it installed from the Web Store (Tests/Live/ChromiumUpgradeChecks.swift). The previous
+release (RISE_UPGRADE_FROM=<version>, or the latest v* tag) makes it first, with its own engine and
+its own code, from its tag and its disk image (build/releases, or its GitHub release), running
+Tests/Live/ChromiumUpgradeSeed.swift. Run it on every engine update: a new engine can drop what an
+older one kept, as Chromium 158 dropped the cookies and extensions of profiles outside its default
+folder. It needs the network.
 devtools: DevTools' menus, close button, device mode, downloads, saving and choosing files
 (Tests/Live/ChromiumDevToolsChecks.swift).
 certificates: a site asking for a client certificate gets macOS's chooser, on a local site and on
@@ -25,8 +36,8 @@ the swipe's page probe and hard reloads (Tests/Live/ChromiumMediaChecks.swift). 
 (Tests/Live/LiveXCTest.swift), with pages at the addresses they name (scripts/live-fixture-server.py).
 
 Chromium only runs from an app bundle with its helpers, so the check runs as the main program of
-a copy of build/Rise.app (made by ./scripts/build.sh with the engine built). Frames are kept in
-RISE_PEEK_OUT, or a temporary folder that's removed afterwards."""
+a copy of build/Rise.app (made by ./scripts/build.sh with the engine built), or of the app at
+RISE_LIVE_APP. Frames are kept in RISE_PEEK_OUT, or a temporary folder that's removed afterwards."""
 import os
 from pathlib import Path
 import platform
@@ -37,7 +48,8 @@ import socket
 import tempfile
 import time
 
-checks = {"peek": "ChromiumPeekBenchmarks.swift", "features": "ChromiumFeatureChecks.swift", "extensions": "ChromiumExtensionChecks.swift", "passkeys": "ChromiumPasskeyChecks.swift",
+checks = {"peek": "ChromiumPeekBenchmarks.swift", "features": "ChromiumFeatureChecks.swift", "extensions": "ChromiumExtensionChecks.swift",
+          "upgrade": "ChromiumUpgradeChecks.swift", "passkeys": "ChromiumPasskeyChecks.swift",
           "float": "ChromiumFloatingVideoChecks.swift", "capture": "ChromiumCaptureChecks.swift", "tools": "ChromiumToolChecks.swift",
           "youtube": "ChromiumYouTubeChecks.swift", "media": "ChromiumMediaChecks.swift",
           "scripts": "ChromiumScriptChecks.swift", "app": "ChromiumAppChecks.swift", "devtools": "ChromiumDevToolsChecks.swift",
@@ -51,7 +63,7 @@ if check not in checks and not check.endswith(".swift"):
     raise SystemExit(f"Unknown check {check}; choose from {', '.join(checks)}.")
 
 root = Path(__file__).resolve().parents[1]
-app = root / "build/Rise.app"
+app = Path(os.environ["RISE_LIVE_APP"]).resolve() if os.environ.get("RISE_LIVE_APP") else root / "build/Rise.app"
 if not (app / "Contents/Frameworks/Chromium Framework.framework").exists():
     raise SystemExit(f"{app.name} has no Chromium; build the engine and run ./scripts/build.sh first.")
 sdk = subprocess.check_output(["xcrun", "--sdk", "macosx", "--show-sdk-version"], text=True).strip()
@@ -75,6 +87,44 @@ engine_linking = ["-F", str(app / "Contents/Frameworks"), "-framework", "Chromiu
 keep = os.environ.get("RISE_PEEK_OUT")
 folder = Path(keep) if keep else Path(tempfile.mkdtemp(prefix="rise-chromium-peek-"))
 folder.mkdir(parents=True, exist_ok=True)
+if check == "upgrade":
+    # The previous release makes a profile with its own engine and code, from its tag and its disk
+    # image, in folder/previous; this build's check then opens it.
+    previous = os.environ.get("RISE_UPGRADE_FROM") or subprocess.run(
+        ["git", "describe", "--tags", "--abbrev=0", "--match", "v*"], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
+    previous = previous.removeprefix("v")
+    release = Path(tempfile.mkdtemp(prefix=f"rise-upgrade-{previous}-"))
+    source = release / "source"
+    subprocess.run(["git", "worktree", "add", "--detach", str(source), f"v{previous}"], cwd=root, check=True, capture_output=True)
+    try:
+        image = root / f"build/releases/Rise-{previous}.dmg"
+        if not image.exists():
+            subprocess.run(["gh", "release", "download", f"v{previous}", "--pattern", image.name, "--dir", str(release)], cwd=root, check=True)
+            image = release / image.name
+        mount = release / "mount"
+        mount.mkdir()
+        subprocess.run(["hdiutil", "attach", "-nobrowse", "-readonly", "-mountpoint", str(mount), str(image)], check=True, capture_output=True)
+        try:
+            subprocess.run(["ditto", str(mount / "Rise.app"), str(source / "build/Rise.app")], check=True)
+        finally:
+            subprocess.run(["hdiutil", "detach", str(mount)], capture_output=True)
+        seed = source / "ChromiumUpgradeSeed.swift"
+        shutil.copy(root / "Tests/Live/ChromiumUpgradeSeed.swift", seed)
+        shutil.rmtree(folder / "previous", ignore_errors=True)
+        # Its code links against its own engine, the one in its app, where Package.swift looks for one.
+        engine = release / "engine/fork/src/out/Official/Chromium.app/Contents"
+        engine.mkdir(parents=True)
+        (engine / "Frameworks").symlink_to(source / "build/Rise.app/Contents/Frameworks")
+        seeding = {key: value for key, value in os.environ.items() if key not in ("RISE_LIVE_APP", "RISE_PEEK_OUT")}
+        seeding["RISE_CHROMIUM_ROOT"] = str(release / "engine")
+        print(f"Rise {previous} makes the profile")
+        if subprocess.run([sys.executable, str(source / "scripts/test-chromium-live.py"), str(seed)],
+                          env=dict(seeding, RISE_PEEK_OUT=str(folder / "previous"))).returncode:
+            sys.exit(f"Rise {previous} couldn't make its profile")
+        (folder / "previous/version").write_text(previous)
+    finally:
+        subprocess.run(["git", "worktree", "remove", "--force", str(source)], cwd=root, capture_output=True)
+        shutil.rmtree(release, ignore_errors=True)
 probe = folder / "RiseProbe.app"
 shutil.rmtree(probe, ignore_errors=True)
 started = time.time()
@@ -105,7 +155,7 @@ if check in ("features", "float") or check.endswith(".swift"):
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=30", "-f", "lavfi",
                     "-i", "sine=frequency=440", "-t", "30", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
                     "-shortest", str(folder / "clip.mp4")], check=True)
-if check in ("features", "scripts", "float", "capture", "tools", "passkeys", "devtools") or check.endswith(".swift"):
+if check in ("features", "scripts", "float", "capture", "tools", "passkeys", "devtools", "upgrade") or check.endswith(".swift"):
     # Two sites: localhost and 127.0.0.1 are different sites.
     ports = []
     for _ in range(2):

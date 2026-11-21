@@ -3,11 +3,12 @@ import RiseChromium
 @testable import Rise
 
 /// Chrome extensions in Rise's Chromium pages: a test extension, loaded at startup, whose
-/// background, content script and popup report what they see.
+/// background, content script and popup report what they see; and the Chrome Web Store, where
+/// Rise's Add to Rise button takes the place of the store's Chrome one and installs extensions.
 @main @MainActor struct ChromiumExtensionMain {
     static func main() {
         setvbuf(stdout, nil, _IONBF, 0)
-        DispatchQueue.main.asyncAfter(deadline: .now()+240) { print("FAIL the check stopped answering"); exit(1) }
+        DispatchQueue.main.asyncAfter(deadline: .now()+480) { print("FAIL the check stopped answering"); exit(1) }
         let app = RCApplication.shared
         let folder = ProcessInfo.processInfo.environment["RISE_PEEK_OUT"]!
         guard RCEngine.start(withCachePath: folder + "/chromium", keychain: false) else { print("FAIL Chromium didn't start"); exit(1) }
@@ -373,5 +374,135 @@ import RiseChromium
         try? await Task.sleep(for: .milliseconds(1100))
         check(answers == [false] && !dismissed.isShown && dismissed.card.superview == nil,
               "Closing a pending popup answers once and cannot reopen after the fallback")
+
+        await webStoreChecks()
+    }
+
+    /// An extension that's small, long-lived and opens nothing as it installs.
+    let storeExtension = (id: "bcjindcccaagfpapjjmafapmmgkkhgoa", name: "JSON Formatter")
+
+    /// The Chrome Web Store offers Chrome only. In its place, Rise's Add to Rise button, in sight
+    /// under the listing's title, whether the listing was opened or reached through the store's own
+    /// pages, which keep the pages they move on from in the page, hidden; and installing through
+    /// Rise's sheet. It needs the network.
+    func webStoreChecks() async {
+        let store = "https://chromewebstore.google.com"
+        func load(_ path: String) async -> BrowserTab {
+            let tab = browser.addTab(url: URL(string: store + path)!)
+            browser.select(tab.id)
+            _ = await waitUntil("The Web Store loads \(path)", 30) { !tab.page.isLoading && tab.page.url?.host != nil }
+            if tab.page.url?.host == "consent.google.com" {
+                // Google asks about cookies first, here.
+                _ = await value("const b = [...document.querySelectorAll('button')].find(b => /Reject all/i.test(b.textContent)); b?.click(); return !!b", in: tab.page)
+                _ = await waitUntil("The Web Store loads after Google's cookie question", 30) {
+                    !tab.page.isLoading && tab.page.url?.host == "chromewebstore.google.com"
+                }
+            }
+            return tab
+        }
+        /// Rise's button: what it says, whether it's in sight and on top, the heading before it, and
+        /// any of the store's Chrome offers in sight.
+        func button(in page: WebPage) async -> [String: Any] {
+            let text = await value("""
+                const offers = [...document.querySelectorAll('body *')].filter(n => !n.childElementCount && n.getClientRects().length &&
+                  /^(Add to Chrome|Install Chrome|Switch to Chrome to install extensions and themes)$/.test(n.textContent.trim())).map(n => n.textContent.trim());
+                const b = [...document.querySelectorAll('button')].find(b => /^Add(ed)? to Rise$/.test(b.textContent.trim()));
+                if (!b) return JSON.stringify({offers});
+                const r = b.getBoundingClientRect(), hit = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+                const title = b.previousElementSibling;
+                return JSON.stringify({text: b.textContent.trim(), size: [r.width, r.height], onTop: !!hit && (hit === b || b.contains(hit)), offers,
+                  title: title?.tagName === 'H1' && title.getClientRects().length ? title.textContent.trim() : null});
+                """, in: page) as? String
+            return text.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] } ?? [:]
+        }
+        func inSight(_ seen: [String: Any]) -> Bool {
+            let size = seen["size"] as? [Double] ?? []
+            return size.count == 2 && size[0] > 0 && size[1] > 0 && seen["onTop"] as? Bool == true
+        }
+        let (id, name) = storeExtension
+
+        // Opened directly.
+        let listing = await load("/detail/\(id)")
+        var seen: [String: Any] = [:]
+        _ = await waitUntil("Add to Rise shows on \(name)'s listing", 20) { seen = await button(in: listing.page); return inSight(seen) }
+        check(inSight(seen) && (seen["title"] as? String)?.contains(name) == true && seen["text"] as? String == "Add to Rise",
+              "A listing shows Add to Rise in sight, under its title: \(seen)")
+        check((seen["offers"] as? [String])?.isEmpty == true, "And none of the store's Chrome offers: \(seen["offers"] ?? "none")")
+        browser.closeTab(listing.id)
+
+        // Reached through the store's search, as most are: the store opens the listing in the same
+        // page, keeping the results in it, hidden, with their heading before the listing's.
+        let search = await load("/search/\(name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)!)")
+        _ = await waitUntil("The store's search lists \(name)", 20) {
+            await self.value("return !!document.querySelector('a[href*=\(id)]')", in: search.page) as? Bool == true
+        }
+        // Once the store's own scripts run, as they do by the time anyone clicks: before, the link
+        // loads a new page.
+        try? await Task.sleep(for: .seconds(4))
+        _ = await value("window.riseSamePage = true; document.querySelector('a[href*=\(id)]').click(); return 0", in: search.page)
+        _ = await waitUntil("Its link opens the listing", 20) { search.page.url?.path.contains(id) == true }
+        _ = await waitUntil("Add to Rise shows on the listing reached from the search", 20) { seen = await button(in: search.page); return inSight(seen) }
+        let samePage = await value("return window.riseSamePage === true", in: search.page) as? Bool == true
+        let headings = await value("return [...document.querySelectorAll('h1')].map(h => h.textContent.trim() + (h.getClientRects().length ? '' : ' (hidden)')).join(', ')",
+                                   in: search.page) as? String ?? ""
+        check(inSight(seen) && (seen["title"] as? String)?.contains(name) == true,
+              "Reached from the store's search (\(samePage ? "the same page" : "a new page"), headings: \(headings)), the listing shows Add to Rise in sight, under its own title: \(seen)")
+        // However the store keeps its pages that day: a hidden heading before the listing's, as the
+        // results' is, leaves Add to Rise under the listing's title, in sight.
+        // (The store takes no HTML as text, only made elements.)
+        let kept = await value("""
+            const kept = document.createElement('div'), heading = document.createElement('h1');
+            kept.id = 'rise-kept-page'; kept.hidden = true; heading.textContent = 'Search results'; kept.append(heading);
+            (document.querySelector('main') || document.body).prepend(kept);
+            return document.querySelector('main h1, h1') === heading
+            """, in: search.page) as? Bool == true
+        try? await Task.sleep(for: .milliseconds(800))
+        seen = await button(in: search.page)
+        check(kept && inSight(seen) && (seen["title"] as? String)?.contains(name) == true,
+              "With a hidden page's heading first, before the listing's, Add to Rise stays under the listing's title, in sight: \(kept ? "\(seen)" : "the heading didn't go in")")
+        _ = await value("document.getElementById('rise-kept-page')?.remove(); return 0", in: search.page)
+        // Back to the results, which have no Add to Rise, and forward to the listing, which has, when
+        // the store went to the listing in the same page.
+        if samePage {
+            _ = await value("history.back(); return 0", in: search.page)
+            _ = await waitUntil("Back goes to the results", 20) { search.page.url?.path.hasPrefix("/search") == true && !search.page.isLoading }
+            _ = await waitUntil("Add to Rise goes with the listing", 10) { !inSight(await button(in: search.page)) }
+            let atResults = await button(in: search.page)
+            check(search.page.url?.path.hasPrefix("/search") == true && !inSight(atResults),
+                  "Back at the results, which show no Add to Rise: \(search.page.url?.absoluteString ?? "no page")")
+            _ = await value("history.forward(); return 0", in: search.page)
+            _ = await waitUntil("Forward brings the listing back, with Add to Rise in sight", 20) {
+                guard search.page.url?.path.contains(id) == true else { return false }
+                return inSight(await button(in: search.page))
+            }
+        } else {
+            print("NOTE The store loaded the listing as a new page, so Back and Forward within its page weren't checked")
+        }
+
+        // Adding it: Rise's sheet asks, and it installs, pinned, with the button saying so.
+        check(!browser.isExtensionInstalled(id), "\(name) isn't installed yet")
+        _ = await value("[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Add to Rise').click(); return 0", in: search.page)
+        var sheet: (text: [String], buttons: [NSButton])?
+        _ = await waitUntil("Add to Rise asks with Rise's install sheet", 60) { sheet = self.installSheet(); return sheet != nil }
+        check(sheet?.text.contains { $0.contains(name) } == true, "Rise's sheet names \(name): \(sheet?.text ?? [])")
+        sheet?.buttons.first { $0.title != "Cancel" }?.performClick(nil)
+        _ = await waitUntil("\(name) installs", 60) { self.browser.isExtensionInstalled(id) }
+        check(browser.isExtensionInstalled(id) && browser.pinnedExtensions.contains(id), "\(name) installs, pinned in the page bar")
+        _ = await waitUntil("The button says it's added", 10) { await button(in: search.page)["text"] as? String == "Added to Rise" }
+        let files = folder.appendingPathComponent("chromium/Default/Extensions/\(id)")
+        check(!((try? FileManager.default.contentsOfDirectory(atPath: files.path)) ?? []).isEmpty, "Its files are in the profile")
+    }
+
+    /// Rise's install sheet on the window, if it's showing: its text and its buttons.
+    func installSheet() -> (text: [String], buttons: [NSButton])? {
+        guard let sheet = browser.window?.attachedSheet, let content = sheet.contentView else { return nil }
+        var text: [String] = [], buttons: [NSButton] = []
+        func walk(_ view: NSView) {
+            if let field = view as? NSTextField, !field.stringValue.isEmpty { text.append(field.stringValue) }
+            if let button = view as? NSButton, !button.title.isEmpty { buttons.append(button) }
+            view.subviews.forEach(walk)
+        }
+        walk(content)
+        return (text, buttons)
     }
 }

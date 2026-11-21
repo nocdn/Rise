@@ -108,6 +108,7 @@ run without a Chromium checkout: `python3 -m unittest discover -s scripts/engine
 | `0052-pdf-find-and-text.patch` | A PDF Chromium draws itself, for Find and Page Assistant: `RCBrowserView` says whether it shows one (`showsPDF`), searches it with Chrome's own find (`findText:forward:completion:`, its count and current match as they come in, and `stopFindingSelectingMatch:`), says when its document has loaded (`whenPDFLoaded:`), and gives its pages' text (`PDFPageTextsWithCompletion:`) and what is selected in it (`PDFSelectedText`) |
 | `0053-settings-search-without-people.patch` | Searching settings shows what it finds: Chrome falls back on "You and Google" as the top-level section a search starts from, which Rise hides, so every search threw and showed a blank page. It falls back on Privacy instead, and the site settings list skips rows without a route |
 | `0054-page-size-ignores-ancestor-scaling.patch` | A page's size is its view's own, not how big an ancestor that scales it shows it: Rise's floating video stretches its page to fill the window, and measured in the window, every step of a resize laid the page out at another size, which showed through the picture as a flicker or a blank corner |
+| `0055-keep-reading-the-old-key.patch` | Rise's profile keeps what it encrypted before Chromium 158: 158 marks the key older Chromiums encrypt with ("v10") as unavailable for a profile outside Chromium's default folder, as Rise's is, and dropped every cookie it couldn't read and every extension whose signed settings it couldn't check, files and all. Rise reads that key still; 158's own ("v11"), which takes precedence, encrypts |
 
 `0002` is exported from the fork's tree with `git diff HEAD` over `base` and `chrome`, less the
 paths the other patches and `brand.py` own (see `Engine/fork-plan.md`); new files are added
@@ -164,7 +165,8 @@ Live checks, in a real Rise window (see `scripts/test-chromium-live.py`):
 
     python3 scripts/test-chromium-live.py peek       # Peek's motion, frame by frame
     python3 scripts/test-chromium-live.py features   # the features above
-    python3 scripts/test-chromium-live.py extensions # a test extension: tabs, buttons, popups
+    python3 scripts/test-chromium-live.py extensions # a test extension: tabs, buttons, popups; the Web Store's Add to Rise
+    python3 scripts/test-chromium-live.py upgrade    # a profile the previous release made keeps its cookies and extensions
     python3 scripts/test-chromium-live.py passkeys   # signed platform availability, RP isolation, cancellation
 
 and `scripts`, `app`, `float`, `capture`, `tools`, `youtube` and `media`. Some need Rise's
@@ -181,4 +183,7 @@ window in front, and say so when it wasn't.
 Move the pin in `Engine/chromium.json` to the next stable tag, run `checkout.sh`, then
 `build.sh` (which applies the patches). Fix any patch that no longer applies, run
 `scripts/engine/fork-reach-ins.py` for new places Chrome reaches for its window, and rebuild.
+Then run the live checks, `upgrade` and `extensions` among them: `upgrade` has the last release,
+on the old engine, make a profile the new one must open with its cookies and extensions intact,
+which Chromium 158 didn't (0055), and `extensions` installs from the Web Store.
 Keep patches small and focused so this stays quick every four weeks.
