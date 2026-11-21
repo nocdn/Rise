@@ -8,7 +8,7 @@ limit is set on each device: 48 hours unless changed, or Never.
 |---|---|---|
 | Time limit | Settings → Tabs → Archive unused tabs | More → Site settings → App settings → Archive unused tabs |
 | Archived Tabs | History → Archived Tabs…, the palette, or a right-click on the downloads button | More in the tab view |
-| After archiving | A notice in the address bar, with Undo | A toast for 4 seconds, which opens the list when tapped |
+| After archiving | A notice in the address bar, with Undo | A toast for 3 seconds. Tapped, the bar or its panel turns into the list, the tabs just archived shimmering in turn |
 
 The list stays for 90 days and at most 500 tabs. A blank tab holds nothing to come back to, so it just
 closes.

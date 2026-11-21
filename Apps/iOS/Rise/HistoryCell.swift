@@ -8,6 +8,8 @@ final class HistoryCell: UICollectionViewCell {
     let row = AddressSuggestionRow()
     let checkbox = PanelSelectionIndicator()
     let checkButton = UIButton(type: .custom)
+    /// Picks out the title, as Archived Tabs does the tabs its toast named.
+    let glint = TextGlint()
     private(set) var isSelecting = false
     private var isChecked = false
 
@@ -54,6 +56,7 @@ final class HistoryCell: UICollectionViewCell {
 
     override func prepareForReuse() {
         super.prepareForReuse()
+        glint.stop()
         setSelecting(false, animated: false)
         setChecked(false, animated: false)
         transform = .identity

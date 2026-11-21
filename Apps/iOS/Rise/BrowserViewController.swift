@@ -182,6 +182,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private(set) var downloadsSheet = DownloadsSheetState()
     private var historyReturnPanel: BottomBar.Panel?
     private var lastTabArchiveCheck: Date?
+    /// The addresses of the tabs the last archiving closed, for its toast to pick out.
+    private var lastArchived: Set<String> = []
     private var isArchivingTabs = false
     private var tabArchiveTimer: Timer?
     private lazy var tabUseClock: TabUseClock = UserDefaults.standard.data(forKey: Self.tabUseClockKey)
@@ -936,6 +938,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let next = AppStoreToast(link: link, page: page)
         next.onActivate = { [weak self, weak next] in
             guard let self, let next, toast === next, next.page === webView else { return }
+            // Tapped over an open panel, through its dimming.
+            closePanel()
             openAppStore(next.link.externalURL)
         }
         next.onUserDismiss = { [weak self, weak page] in
@@ -1476,8 +1480,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.layer.transform = offset
         layoutBottomBarUnderfill()
         // The toast sits on the bar's top: laid out here, it rides on whatever moves the bar, a
-        // panel opening or closing, the bar collapsing or the keyboard, with the same timing.
-        toast?.place(above: bottomBar.frame.minY, in: bounds, safeTop: view.safeAreaInsets.top)
+        // panel opening or closing, the bar collapsing or the keyboard, with the same timing. One
+        // leaving, as when tapped open into a panel, stays put and sinks behind the bar growing over it.
+        if let toast, !toast.dismissed { toast.place(above: bottomBar.frame.minY, in: bounds, safeTop: view.safeAreaInsets.top) }
         bottomBar.search.visibleHeight = min(SearchPanel.height, max(SearchPanel.fieldHeight,
             fullSearchHeight-keyboardHeight-BottomBar.searchTop))
         // Pages scroll clear of the open bar. Its collapsed strip leaves the inset alone, so the
@@ -1726,15 +1731,38 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         else { openPanel(.history) }
     }
 
-    /// Archived Tabs, in History's panel with History's rows.
-    func openArchivedTabs() {
-        guard allowsPeek, presentedViewController == nil, !isPanelOpen || bottomBar.panel != .history else { return }
-        historyReturnPanel = isPanelOpen ? bottomBar.panel : nil
-        bottomBar.history.setSelecting(false, animated: false)
-        bottomBar.history.content = .archivedTabs
-        bottomBar.history.reload()
+    /// Archived Tabs, in History's panel with History's rows. The bar grows into it, or the panel
+    /// open turns into it; `highlighting` shimmers the rows of the tabs just archived.
+    func openArchivedTabs(highlighting archived: Set<String> = []) {
+        guard allowsPeek, presentedViewController == nil else { return }
+        let history = bottomBar.history
+        if isPanelOpen, bottomBar.panel == .history {
+            // History itself, as a toast is tapped over it, turns into the list in place.
+            guard history.content != .archivedTabs || !archived.isEmpty else { return }
+            history.setSelecting(false, animated: false)
+            if history.content != .archivedTabs {
+                UIView.transition(with: history, duration: 0.2, options: [.transitionCrossDissolve, .allowUserInteraction]) {
+                    history.content = .archivedTabs; history.reload()
+                }
+            }
+            history.highlight(archived)
+            return
+        }
+        // Typing and Find end, and closing the list then closes the panel rather than going back to them.
+        let leaving = isPanelOpen ? bottomBar.panel : nil
+        switch leaving {
+        case .search: bottomBar.search.end(); updatePrivacyAppearance(animated: true)
+        case .find: bottomBar.find.end()
+        case .linkSummary: bottomBar.linkSummary.cancel()
+        default: break
+        }
+        historyReturnPanel = [.search, .find, .linkSummary].contains(leaving) ? nil : leaving
+        history.setSelecting(false, animated: false)
+        history.content = .archivedTabs
+        history.reload()
         if isPanelOpen { swapMenuPanel(to: .history) }
         else { openPanel(.history) }
+        history.highlight(archived)
     }
 
     func closeHistory() {
@@ -2836,6 +2864,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         // Under the dimming, so a panel opening tints it as it does the page; it still rides on
         // the bar's top as the panel grows.
         if dimming.superview === view { view.insertSubview(next, belowSubview: dimming) } else { view.addSubview(next) }
+        dimming.toast = next
         next.place(above: bottomBar.frame.minY, in: view.bounds, safeTop: view.safeAreaInsets.top)
         next.appear()
     }
@@ -3139,6 +3168,7 @@ extension BrowserViewController {
         updateTabsCount()
         saveSession()
         guard !listed.isEmpty else { return }
+        lastArchived = Set(listed.compactMap { $0.sessionTab.url?.absoluteString })
         let toast = Toast(message: listed.count == 1 ? "Archived 1 unused tab" : "Archived \(listed.count) unused tabs",
                           glyph: UIImage(systemName: "archivebox.fill"), name: "archived-tabs")
         toast.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(openArchivedTabsFromToast)))
@@ -3146,10 +3176,11 @@ extension BrowserViewController {
         toast.leave(after: Self.archivedTabsToastDuration)
     }
     /// Long enough to tap through to the list, then it goes by itself.
-    static let archivedTabsToastDuration: Double = 4
-    @objc private func openArchivedTabsFromToast() {
+    static let archivedTabsToastDuration: Double = 3
+    /// Opens the list with the tabs the toast named picked out.
+    @objc func openArchivedTabsFromToast() {
         toast?.dismiss()
-        openArchivedTabs()
+        openArchivedTabs(highlighting: lastArchived)
     }
 
     /// What's archived on any device, one row to an address, the newest of them. Tabs still open
@@ -3186,11 +3217,16 @@ extension BrowserViewController {
 }
 
 /// The dimming over the page behind a panel, which takes a tap to close it. Behind Find it lets
-/// touches through to the page instead.
+/// touches through to the page instead. A toast under it, tinted with the page, still takes its own.
 final class PanelDimming: UIView {
     var passesTouches = false
+    weak var toast: Toast?
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         let hit = super.hitTest(point, with: event)
-        return passesTouches && hit === self ? nil : hit
+        guard hit === self else { return hit }
+        if passesTouches { return nil }
+        if let toast, toast.superview === superview, !toast.isHidden, !toast.dismissed, toast.isUserInteractionEnabled,
+           toast.point(inside: convert(point, to: toast), with: event) { return nil }
+        return hit
     }
 }

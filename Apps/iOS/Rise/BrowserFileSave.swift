@@ -9,6 +9,8 @@ extension BrowserViewController {
         let next = FileSaveToast(document: document, page: page)
         next.onActivate = { [weak self, weak next] in
             guard let self, let next, toast === next, let page = next.page, page === webView else { return }
+            // Tapped over an open panel, through its dimming: the Files picker needs it closed.
+            closePanel()
             saveFile(on: page, fromToast: true)
         }
         next.onUserDismiss = { [weak self, weak page] in

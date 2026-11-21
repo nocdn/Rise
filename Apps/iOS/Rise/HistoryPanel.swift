@@ -11,6 +11,9 @@ final class HistoryPanel: UIView, UICollectionViewDataSource {
             closeButton.accessibilityLabel = archived ? "Close Archived Tabs" : "Close History"
             listMenuButton.accessibilityLabel = archived ? "Archived Tabs Options" : "History Options"
             empty.text = archived ? "Tabs you don't use for a while are kept here" : "No browsing history yet"
+            // What Archived Tabs picked out isn't History's to show.
+            glintStarts = [:]
+            list.visibleCells.compactMap { $0 as? HistoryCell }.forEach { $0.glint.stop() }
         }
     }
     var archivedEntries: (() -> [HistoryEntry])?
@@ -31,6 +34,10 @@ final class HistoryPanel: UIView, UICollectionViewDataSource {
     private(set) var selected: Set<String> = []
     private(set) lazy var swipe = HistoryRowSwipe(list: list)
     var open: ((URL) -> Void)?
+    /// When each row picked out starts to shimmer, so one scrolled into view or reused keeps its turn.
+    private(set) var glintStarts: [String: CFTimeInterval] = [:]
+    /// The first a moment after the panel opens, then down the list a little after each other.
+    static let glintDelay: CFTimeInterval = 0.3, glintStagger: CFTimeInterval = 0.07
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -219,6 +226,27 @@ final class HistoryPanel: UIView, UICollectionViewDataSource {
         animator.startAnimation()
     }
 
+    /// Shimmers the rows for `keys` in the accent colour, top to bottom, as Archived Tabs opens from
+    /// its toast to show which tabs just went. No keys stops any still to come.
+    func highlight(_ keys: Set<String>) {
+        let now = CACurrentMediaTime()
+        let order = entries.map(\.url).filter(keys.contains)
+        glintStarts = Dictionary(order.enumerated().map { ($1, now+Self.glintDelay+Double($0)*Self.glintStagger) },
+                                 uniquingKeysWith: min)
+        for case let cell as HistoryCell in list.visibleCells {
+            guard let index = list.indexPath(for: cell)?.item, entries.indices.contains(index) else { continue }
+            cell.glint.stop()
+            showGlint(entries[index], in: cell)
+        }
+    }
+    /// A row whose turn is yet to come waits for it; one already crossing carries on.
+    private func showGlint(_ entry: HistoryEntry, in cell: HistoryCell) {
+        guard cell.glint.key != entry.url else { return }
+        cell.glint.stop()
+        guard let start = glintStarts[entry.url], start > CACurrentMediaTime() else { return }
+        cell.glint.run(on: cell.row.titleLabelView, key: entry.url, at: start)
+    }
+
     /// A favicon arriving never replaces rows, moves the scroll position, or interrupts a press.
     func refreshIcons() {
         for case let cell as HistoryCell in list.visibleCells {
@@ -250,6 +278,7 @@ final class HistoryPanel: UIView, UICollectionViewDataSource {
         cell.setSelecting(isSelecting, animated: false)
         cell.setChecked(selected.contains(entry.url), animated: false)
         configureActions(entry, in: cell)
+        showGlint(entry, in: cell)
     }
     private func configureActions(_ entry: HistoryEntry, in cell: HistoryCell) {
         let url = URL(string: entry.url)

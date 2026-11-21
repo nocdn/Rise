@@ -70,9 +70,24 @@ import WebKit
         await settle(Int(BrowserViewController.archivedTabsToastDuration*1000))
         try check("the-toast-goes-by-itself", archivedToast?.dismissed == true && alone.toast !== archivedToast)
 
-        // The list, in History's panel.
-        let bar = alone.bottomBar
-        alone.openArchivedTabs(); await settle()
+        // The list, in History's panel, as tapping the toast opens it: the tabs it named shimmer in turn.
+        let bar = alone.bottomBar, history = bar.history
+        let opened = CACurrentMediaTime()
+        alone.openArchivedTabsFromToast()
+        let starts = history.entries.compactMap { history.glintStarts[$0.url] }
+        try check("the-archived-rows-each-have-a-turn", starts.count == 3 && Set(history.glintStarts.keys) == Set(due.compactMap { $0.sessionTab.url?.absoluteString }))
+        // From the panel's spring starting, at the end of opening it.
+        try? String(format: "first glint %.3f s after the tap\n", starts[0]-opened).write(to: folder.appendingPathComponent("glint.txt"), atomically: true, encoding: .utf8)
+        try check("the-first-goes-a-moment-after-opening", starts[0]-opened >= HistoryPanel.glintDelay && starts[0]-opened < HistoryPanel.glintDelay+0.3)
+        try check("the-rest-follow-down-the-list", zip(starts, starts.dropFirst()).allSatisfy { abs($1-$0-HistoryPanel.glintStagger) < 0.001 })
+        await settle(Int(HistoryPanel.glintDelay*1000)+120); shot("archived-glint-first")
+        let cells = history.list.visibleCells.compactMap { $0 as? HistoryCell }
+        try check("their-rows-are-waiting-or-crossing", cells.count == 3 && cells.allSatisfy { cell in
+            history.list.indexPath(for: cell).map { cell.glint.key == history.entries[$0.item].url } == true })
+        try check("the-first-is-crossing", cells.contains { $0.glint.isCrossing })
+        await settle(150); shot("archived-glint-next")
+        await settle(1500)
+        try check("each-crosses-once-then-stops", cells.allSatisfy { !$0.glint.isCrossing })
         try check("the-list-opens", bar.panel == .history && bar.history.header.title == "Archived Tabs" && bar.history.entries.count == 3)
         shot("archived-list")
         let toDelete = due[1], toReopen = due[0], address = toReopen.sessionTab.url!
@@ -86,7 +101,20 @@ import WebKit
         try check("reopened-it-has-its-time-started", aloneSync.use(of: alone.tabs[0].id).map { $0.lastUsed > Date().addingTimeInterval(-60) } == true)
         try check("the-tab-it-left-stays", alone.tabs.contains { $0 === reading })
         alone.openHistory(); await settle()
-        try check("history-is-still-history-afterwards", bar.history.header.title == "History")
+        try check("history-is-still-history-afterwards", bar.history.header.title == "History" && history.glintStarts.isEmpty)
+        alone.closePanel(); await settle()
+
+        // A toast over an open panel, tinted under its dimming, still takes its taps, and More turns into the list.
+        alone.openPanel(.menu); await settle()
+        let probe = Toast(message: "Archived 1 unused tab", glyph: UIImage(systemName: "archivebox.fill"), name: "archived-tabs")
+        alone.showToast(probe); await settle()
+        let middle = probe.convert(CGPoint(x: probe.bounds.midX, y: probe.bounds.midY), to: alone.view)
+        try check("a-toast-over-a-panel-takes-its-own-taps", alone.view.hitTest(middle, with: nil)?.isDescendant(of: probe) == true)
+        alone.openArchivedTabsFromToast(); await settle()
+        try check("more-turns-into-the-list", bar.panel == .history && history.content == .archivedTabs && probe.dismissed)
+        shot("archived-from-more")
+        alone.closeHistory(); await settle()
+        try check("closing-the-list-goes-back-to-more", bar.panel == .menu)
         alone.closePanel(); await settle()
 
         // What another device says.

@@ -263,12 +263,18 @@ final class FileSaveTests: XCTestCase {
         XCTAssertEqual(dimming.alpha, 1)
         browser.view.layoutIfNeeded()
         let raised = toast.convert(CGPoint(x: toast.bounds.midX, y: toast.bounds.midY), to: browser.view)
-        XCTAssertTrue(browser.view.hitTest(raised, with: nil) === dimming, "A tap on the tinted toast closes the panel, as on the page")
+        XCTAssertTrue(browser.view.hitTest(raised, with: nil)?.isDescendant(of: toast) == true, "The tinted toast still takes its own taps")
+        let page = CGPoint(x: browser.view.bounds.midX, y: browser.view.safeAreaInsets.top+40)
+        XCTAssertTrue(browser.view.hitTest(page, with: nil) === dimming, "A tap on the page beside it closes the panel")
         let attachment = XCTAttachment(image: UIGraphicsImageRenderer(bounds: browser.view.bounds).image { context in
             browser.view.layer.render(in: context.cgContext)
         })
         attachment.name = "Save to Files toast dimmed behind More"; attachment.lifetime = .keepAlways
         add(attachment)
-        browser.closePanel()
+        // Pressed there, it closes the panel first, for the Files picker.
+        (toast as? FileSaveToast)?.pressButton.sendActions(for: .primaryActionTriggered)
+        for _ in 0..<100 where dimming.alpha > 0 { try await Task.sleep(for: .milliseconds(20)) }
+        XCTAssertFalse(browser.isPanelOpen, "Saving closes the panel the toast was tapped over")
+        browser.fileDocuments.dismiss(for: browser.webView)
     }
 }
