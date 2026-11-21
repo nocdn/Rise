@@ -52,6 +52,11 @@ final class AdBlockHTTPFixture: @unchecked Sendable {
             let route = request.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
             lock.lock(); paths[route, default: 0] += 1; let attempt = paths[route]!; lock.unlock()
             if shouldFail { connection.cancel(); return }
+            if route == "/app-store/redirect" {
+                // Apple's iPhone response is an empty redirect to its store scheme.
+                let redirect = Data("HTTP/1.1 301 Moved Permanently\r\nLocation: itms-appss://apps.apple.com/uk/app/gov-uk-one-login/id6737119425?pt=123&ct=qr\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
+                connection.send(content: redirect, completion: .contentProcessed { _ in connection.cancel() }); return
+            }
             if (slowIcons || missingRootIcon), route == "/favicon.ico" {
                 let missing = Data("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
                 connection.send(content: missing, completion: .contentProcessed { _ in connection.cancel() }); return

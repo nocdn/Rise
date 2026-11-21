@@ -23,8 +23,10 @@ final class BrowserNavigationStatus: UIView {
         [spinner, title, detail, retryButton].forEach(addSubview)
     }
     required init?(coder: NSCoder) { fatalError() }
-    func show(address: URL?, committed: Bool, error: Error?, stopped: Bool = false) {
-        guard address != nil, !committed else { isHidden = true; spinner.stopAnimating(); return }
+    func show(address: URL?, committed: Bool, error: Error?, stopped: Bool = false, appStoreLink: Bool = false) {
+        // Apple's empty store redirect is a handoff, not a broken web page. Its native
+        // toast supplies Open; don't put "Frame load interrupted" underneath it.
+        guard address != nil, !committed, !appStoreLink else { isHidden = true; spinner.stopAnimating(); return }
         isHidden = false
         let failed = error != nil
         title.text = stopped ? "Loading stopped" : failed ? "Couldn't open this page" : nil

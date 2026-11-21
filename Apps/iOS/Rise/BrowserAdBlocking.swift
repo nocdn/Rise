@@ -103,6 +103,10 @@ extension BrowserViewController {
             return
         }
         if action.shouldPerformDownload { finishAdBlockingReload(on: page); decisionHandler(.download); return }
+        if action.targetFrame?.isMainFrame == true, let url = action.request.url {
+            appStoreLinks.noteNavigation(to: url, in: page)
+            if page === webView { updateAppStoreToast() }
+        }
         // New-window links pass the popup policy in createWebViewWith first.
         if action.targetFrame != nil, handleExternalAppLink(action, in: page) {
             decisionHandler(.cancel); return
@@ -136,6 +140,10 @@ extension BrowserViewController {
         }
         if Self.shouldDownload(response) { finishAdBlockingReload(on: page); decisionHandler(.download); return }
         guard response.isForMainFrame else { decisionHandler(.allow); return }
+        if let url = response.response.url {
+            appStoreLinks.noteNavigation(to: url, in: page)
+            if page === webView { updateAppStoreToast() }
+        }
         // A server redirect can change the final host without another action-policy callback.
         if adBlocker.prepareIfReady(page, for: response.response.url) { decisionHandler(.allow); return }
         Task {

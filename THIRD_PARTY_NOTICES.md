@@ -107,3 +107,17 @@ The complete MIT license ships in the iOS app as Torph-LICENSE.txt. Native word
 segmentation uses ICU; changed words retain Swift grapheme clusters, and punctuation
 fragments are flattened before character matching. Numeric rolling and web framework
 adapters are outside this text-label port.
+
+## Font Awesome
+
+The iOS Open App Store toast uses the supplied square-up-right icon from
+Font Awesome Solid by Dave Gandy (https://fontawesome.com/), licensed under
+CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Its SVG path is unchanged;
+the display size and template color adapt to Rise's toast icons.
+
+## Streamline
+
+The iOS Open App Store toast uses the supplied App Store fallback icon from
+Logos free icons by Streamline (https://www.streamlinehq.com/), licensed under
+CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Its SVG path is unchanged;
+the display size and template color adapt to Rise's toast icons.

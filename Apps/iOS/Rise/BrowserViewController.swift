@@ -53,7 +53,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
     /// The tabs as cards, over the page and under the bottom bar, which stays.
     let tabSwitcher = TabSwitcherView()
-    private(set) var isTabSwitcherOpen = false
+    private(set) var isTabSwitcherOpen = false {
+        didSet { (toast as? AppStoreToast)?.isHidden = isTabSwitcherOpen }
+    }
     /// When Tabs opened the switcher: tapped again within `tabsDoubleTap`, it goes to the previous tab.
     private var tabsOpenedAt: CFTimeInterval?
     static let tabsDoubleTap: CFTimeInterval = 0.25
@@ -118,6 +120,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// Preview WebKit pages remain in the window to paint, behind an opaque black cover.
     private let previewBackdrop = UIView()
     let navigationStatus = BrowserNavigationStatus()
+    let appStoreLinks = AppStoreLinks()
     /// Darkens the receded page; tapping it closes the panel.
     private let dimming = PanelDimming()
     /// With Find open, the page under it scrolls and zooms; a tap on it still closes Find.
@@ -903,8 +906,31 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         updateNavigationStatus()
     }
 
+    func updateAppStoreToast() {
+        guard isViewLoaded else { return }
+        let page = webView, link = appStoreLinks.link(for: page, address: currentTab.addressURL)
+        updateNavigationStatus()
+        if let current = toast as? AppStoreToast {
+            if current.page === page, current.link == link, !appStoreLinks.isDismissed(for: page) { return }
+            current.dismiss(animated: false)
+        }
+        guard let link, !appStoreLinks.isDismissed(for: page), toast == nil else { return }
+        let next = AppStoreToast(link: link, page: page)
+        next.open = { [weak self, weak next] in
+            guard let self, let next, toast === next, next.page === webView else { return }
+            openAppStore(next.link.externalURL)
+        }
+        next.onUserDismiss = { [weak self, weak page] in
+            guard let self, let page else { return }
+            appStoreLinks.dismiss(for: page)
+        }
+        showToast(next)
+        next.isHidden = isTabSwitcherOpen
+    }
+
     /// Back in More's panel also returns past the start of the page's history to the page it replaced.
     func updateAddress() {
+        updateAppStoreToast()
         updatePageLoading()
         updateAdBlockingSettings()
         updatePageIndicators()
@@ -2732,7 +2758,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private var shareableURL: URL? { currentTab.addressURL.flatMap { Self.canPeek($0) ? $0 : nil } }
     func updateNavigationStatus() {
         navigationStatus.show(address: currentTab.addressURL, committed: currentTab.hasCommittedDocument,
-                              error: currentTab.navigationError, stopped: currentTab.wasStopped)
+                              error: currentTab.navigationError, stopped: currentTab.wasStopped,
+                              appStoreLink: appStoreLinks.link(for: webView, address: currentTab.addressURL) != nil)
     }
     func pageLoadingStarted(in page: WKWebView) {
         guard page === webView else { return }
@@ -2782,7 +2809,11 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         toast?.dismiss(animated: false)
         toast = next
         next.onDismiss = { [weak self, weak next] in
-            if self?.toast === next { self?.toast = nil }
+            if self?.toast === next {
+                self?.toast = nil
+                // Let a replacement toast finish installing before offering the store again.
+                DispatchQueue.main.async { [weak self] in self?.updateAppStoreToast() }
+            }
         }
         view.insertSubview(next, belowSubview: bottomBar)
         next.place(above: bottomBar.frame.minY, in: view.bounds, safeTop: view.safeAreaInsets.top)
