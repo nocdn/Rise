@@ -89,7 +89,8 @@ def own_tag(item):
     return re.sub(rf"(https://github\.com/{re.escape(repo)}/releases/download/)[^/]+/", rf"\g<1>v{version}/", item.group(0))
 open(path, "w").write(re.sub(r"<item>.*?</item>", own_tag, feed, flags=re.S))
 PY
-DELTAS=("${(@f)$(find "$ARCHIVES" -maxdepth 1 -name '*.delta' -newer "$WORK/before-appcast")}")
+# -H: build/releases can be a link to the main checkout's, as in a release made from a worktree.
+DELTAS=("${(@f)$(find -H "$ARCHIVES" -maxdepth 1 -name '*.delta' -newer "$WORK/before-appcast")}")
 DELTAS=(${DELTAS:#})
 
 echo "Publishing $TAG…"
