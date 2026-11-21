@@ -121,3 +121,10 @@ The iOS Open App Store toast uses the supplied App Store fallback icon from
 Logos free icons by Streamline (https://www.streamlinehq.com/), licensed under
 CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Its SVG path is unchanged;
 the display size and template color adapt to Rise's toast icons.
+
+## Pikaicons
+
+The iOS Save to Files toast uses the supplied download-down (Stroke) icon from Pikaicons
+(https://pikaicons.com/), free for personal and commercial use under its license
+(https://pikaicons.com/license). Its SVG path is unchanged; the display size, stroke width
+and template color adapt to Rise's toast icons.

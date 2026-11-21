@@ -18,19 +18,26 @@ import UIKit
     private var dragInput = CGPoint.zero
     private var dragScale: CGFloat = 1
     private var dragScaleCorrection: CGFloat = 0
-    private static let leadingInset: CGFloat = 47
-    /// Past the text. A busier icon looks better balanced with less.
-    private let trailingInset: CGFloat
-    private var contentInsets: CGFloat { Self.leadingInset+trailingInset }
+    /// Before the text: room for the icon, or less where a toast has none at its start.
+    let leadingInset: CGFloat
+    /// Past the text. A busier icon looks better balanced with less. A change takes effect
+    /// with the next `setMessage`, which animates the width to it.
+    var trailingInset: CGFloat
+    private var contentInsets: CGFloat { leadingInset+trailingInset }
     private var hiddenOffset: CGFloat = 90
     private var contentWidth: CGFloat = 140
     private let sizeTransition = TorphSizeTransition()
     private(set) var widthAnimationCount = 0
     private(set) var dismissed = false
     var onDismiss: (() -> Void)?
+    /// Views a subclass adds that follow the width as a message changes it, as the surface does.
+    var widthFollowers: [UIView] { [] }
+    /// Draws the shadow; a subclass that scales its contents when pressed moves it there.
+    var shadowCaster: CALayer { layer }
 
-    init(message: String, motionName: String, trailingInset: CGFloat = 22) {
+    init(message: String, motionName: String, leadingInset: CGFloat = 47, trailingInset: CGFloat = 22) {
         self.motionName = motionName
+        self.leadingInset = leadingInset
         self.trailingInset = trailingInset
         super.init(frame: .zero)
         addSubview(surface)
@@ -72,7 +79,7 @@ import UIKit
         CATransaction.commit()
         surface.frame = bounds
         symbol.frame = CGRect(x: 12, y: 11, width: 32, height: 32)
-        label.frame = CGRect(x: Self.leadingInset, y: 0, width: bounds.width-63, height: bounds.height)
+        label.frame = CGRect(x: leadingInset, y: 0, width: bounds.width-63, height: bounds.height)
     }
     func appear() {
         layoutIfNeeded()
@@ -83,7 +90,7 @@ import UIKit
     /// Content changes own their size transaction. Ordinary parent layouts never
     /// measure live text, so an icon swap cannot pre-empt the width animation.
     func setMessage(_ title: String, animated: Bool = true) {
-        let layers = [layer,surface.layer,label.layer]
+        let layers = [layer,surface.layer,label.layer]+widthFollowers.map(\.layer)
         let poses = layers.map { ($0.presentation() ?? $0).bounds.size }
         let positions = layers.map { ($0.presentation() ?? $0).position }
         label.setText(title,animated: animated)
@@ -103,6 +110,7 @@ import UIKit
                 for item in layers {
                     for key in ["toast.width","toast.width-position","toast.width-shadow"] { item.removeAnimation(forKey: key) }
                 }
+                shadowCaster.removeAnimation(forKey: "toast.width-shadow")
             }
             return
         }
@@ -123,7 +131,7 @@ import UIKit
                 }
             }
         }
-        TorphAnimation.add(to: layer,path: "shadowPath",key: "toast.width-shadow",timing: run.timing,screen: window?.screen) { progress in
+        TorphAnimation.add(to: shadowCaster,path: "shadowPath",key: "toast.width-shadow",timing: run.timing,screen: window?.screen) { progress in
             UIBezierPath(roundedRect: CGRect(x: 0,y: 0,width: TorphAnimation.mix(run.from,run.to,progress),height: 54),cornerRadius: 17).cgPath
         }
         motion.settle(for: max(0.48,run.timing.duration))
@@ -270,6 +278,14 @@ import UIKit
     nonisolated func animationDidStop(_ animation: CAAnimation,finished flag: Bool) {
         guard flag else { return }
         Task { @MainActor [self] in completion() }
+    }
+}
+
+extension Toast {
+    /// Over the surface's gradient and clipped to its corners, under the icon and text.
+    func addToSurface(_ view: UIView) {
+        surface.layer.masksToBounds = true
+        surface.addSubview(view)
     }
 }
 

@@ -127,8 +127,8 @@ import WebKit
     var revert: (() -> Void)? { didSet { tap.isEnabled = revert != nil; accessibilityTraits = revert == nil ? .staticText : .button } }
     private let tap = UITapGestureRecognizer()
 
-    override init(message: String, motionName: String, trailingInset: CGFloat = 22) {
-        super.init(message: message, motionName: motionName, trailingInset: trailingInset)
+    override init(message: String, motionName: String, leadingInset: CGFloat = 47, trailingInset: CGFloat = 22) {
+        super.init(message: message, motionName: motionName, leadingInset: leadingInset, trailingInset: trailingInset)
         tap.addTarget(self, action: #selector(tapped)); tap.isEnabled = false
         addGestureRecognizer(tap)
     }

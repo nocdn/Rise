@@ -54,7 +54,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     /// The tabs as cards, over the page and under the bottom bar, which stays.
     let tabSwitcher = TabSwitcherView()
     private(set) var isTabSwitcherOpen = false {
-        didSet { (toast as? AppStoreToast)?.isHidden = isTabSwitcherOpen }
+        didSet { (toast as? PageActionToast)?.isHidden = isTabSwitcherOpen }
     }
     /// When Tabs opened the switcher: tapped again within `tabsDoubleTap`, it goes to the previous tab.
     private var tabsOpenedAt: CFTimeInterval?
@@ -121,6 +121,12 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private let previewBackdrop = UIView()
     let navigationStatus = BrowserNavigationStatus()
     let appStoreLinks = AppStoreLinks()
+    /// Pages that are files, such as an MP3 in WebKit's player, and their saving (`BrowserFileSave`).
+    let fileDocuments = FileDocuments()
+    var fileSavePickerDelegate: FileSavePickerDelegate?
+    /// Stands in for the Files picker in checks: given the downloaded file, it answers with where
+    /// it was saved, or nil for Cancel.
+    var fileSavePickerOverride: ((URL, @escaping @MainActor (URL?) -> Void) -> Void)?
     /// Darkens the receded page; tapping it closes the panel.
     private let dimming = PanelDimming()
     /// With Find open, the page under it scrolls and zooms; a tap on it still closes Find.
@@ -906,17 +912,29 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         updateNavigationStatus()
     }
 
-    func updateAppStoreToast() {
+    /// The toast a page offers, one at a time: Open App Store for a store listing, else Save to
+    /// Files for a page that's a file. Another toast showing goes first; this one follows it.
+    func updatePageToast() {
         guard isViewLoaded else { return }
         let page = webView, link = appStoreLinks.link(for: page, address: currentTab.addressURL)
         updateNavigationStatus()
-        if let current = toast as? AppStoreToast {
-            if current.page === page, current.link == link, !appStoreLinks.isDismissed(for: page) { return }
+        let offersLink = link != nil && !appStoreLinks.isDismissed(for: page)
+        let file = offersLink ? nil : fileDocuments.offer(for: page)
+        if let current = toast as? AppStoreToast, !current.dismissed {
+            if current.page === page, current.link == link, offersLink { return }
+            current.dismiss(animated: false)
+        } else if let current = toast as? FileSaveToast, !current.dismissed {
+            // Saved stays to say so until it leaves.
+            if current.page === page, current.phase == .saved { return }
+            if current.page === page, current.document == file { refreshFileSaveToast(current); return }
             current.dismiss(animated: false)
         }
-        guard let link, !appStoreLinks.isDismissed(for: page), toast == nil else { return }
+        // One already leaving, such as one swiped away, can be replaced as it goes.
+        guard toast == nil || toast?.dismissed == true else { return }
+        if let file { showFileSaveToast(file, on: page); return }
+        guard let link, offersLink else { return }
         let next = AppStoreToast(link: link, page: page)
-        next.open = { [weak self, weak next] in
+        next.onActivate = { [weak self, weak next] in
             guard let self, let next, toast === next, next.page === webView else { return }
             openAppStore(next.link.externalURL)
         }
@@ -930,7 +948,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     /// Back in More's panel also returns past the start of the page's history to the page it replaced.
     func updateAddress() {
-        updateAppStoreToast()
+        updatePageToast()
         updatePageLoading()
         updateAdBlockingSettings()
         updatePageIndicators()
@@ -2811,11 +2829,13 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         next.onDismiss = { [weak self, weak next] in
             if self?.toast === next {
                 self?.toast = nil
-                // Let a replacement toast finish installing before offering the store again.
-                DispatchQueue.main.async { [weak self] in self?.updateAppStoreToast() }
+                // Let a replacement toast finish installing before offering the page's again.
+                DispatchQueue.main.async { [weak self] in self?.updatePageToast() }
             }
         }
-        view.insertSubview(next, belowSubview: bottomBar)
+        // Under the dimming, so a panel opening tints it as it does the page; it still rides on
+        // the bar's top as the panel grows.
+        if dimming.superview === view { view.insertSubview(next, belowSubview: dimming) } else { view.addSubview(next) }
         next.place(above: bottomBar.frame.minY, in: view.bounds, safeTop: view.safeAreaInsets.top)
         next.appear()
     }
@@ -2842,9 +2862,14 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         guard let url = shareableURL else { return }
         // The page's print formatter gives the sheet Print, as Safari's has.
         let items: [Any] = webView.url == nil ? [url] : [url, webView.viewPrintFormatter()]
-        let share = UIActivityViewController(activityItems: items, applicationActivities: nil)
-        share.completionWithItemsHandler = { [weak self] _, _, _, _ in
-            DispatchQueue.main.async { self?.applyPendingChanges() }
+        // A page that's a file, such as an MP3, can be saved to Files, as in Safari's sheet.
+        let page = webView, file = fileDocuments.document(for: page)
+        let share = UIActivityViewController(activityItems: items, applicationActivities: file == nil ? nil : [SaveToFilesActivity()])
+        share.completionWithItemsHandler = { [weak self, weak page] type, completed, _, _ in
+            DispatchQueue.main.async {
+                self?.applyPendingChanges()
+                if completed, type == SaveToFilesActivity.type, let page, page === self?.webView { self?.saveFile(on: page) }
+            }
         }
         share.popoverPresentationController?.sourceView = bottomBar.moreButton
         present(share, animated: true)
@@ -2966,6 +2991,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         blocker(for: webView).popups.didCommit(webView)
         pageTranslation.didCommit(webView)
         finishOpeningHere(webView, navigation: navigation)
+        fileDocuments.didCommit(webView) { [weak self, weak webView] in
+            if let self, let webView, webView === self.webView { updatePageToast() }
+        }
         if let navigation { tabs.first { $0.webView === webView }?.didCommit(navigation) }
         addressSuggestions.committed(webView)
         if webView === self.webView { updateNavigationStatus(); updateAddress() }

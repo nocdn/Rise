@@ -308,7 +308,7 @@ public enum SelectionEvents {
                 if let endClock {
                     end = Dates.date(endDay?.day ?? first, endClock, in: calendar)
                     // "22:00 – 02:00" ends the next morning.
-                    while end <= start, let next = calendar.date(byAdding: .day, value: 1, to: end) { end = next }
+                    while !(start < end), let next = calendar.date(byAdding: .day, value: 1, to: end) { end = next }
                 } else if let detected = day?.detectedEnd, clock.line == day?.line, detected > start {
                     end = detected
                 } else if let last = day?.last ?? endDay?.day, last != first {
@@ -321,7 +321,7 @@ public enum SelectionEvents {
                 start = Dates.date(day.day, in: local)
                 let last = day.last ?? endDay?.day ?? day.day
                 end = floating.date(byAdding: .day, value: 1, to: Dates.date(last, in: local)) ?? start.addingTimeInterval(86400)
-                if end <= start { end = floating.date(byAdding: .day, value: 1, to: start)! }
+                if !(start < end) { end = floating.date(byAdding: .day, value: 1, to: start)! }
                 hasEnd = day.last != nil || endDay != nil
             } else { return nil }
             // GMT for someone in London in winter: their own clock, so nothing to note.

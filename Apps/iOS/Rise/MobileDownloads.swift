@@ -260,7 +260,7 @@ import WebKit
 
     // MARK: Files
 
-    static func cleanName(_ suggested: String) -> String {
+    nonisolated static func cleanName(_ suggested: String) -> String {
         let name = suggested.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty || name == "." || name == ".." ? "Download" : name

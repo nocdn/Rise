@@ -248,7 +248,7 @@ public enum SelectionTimes {
             let amount = remainder == 0 ? "\(hours) \(hours == 1 ? "hour" : "hours")"
                 : hours == 0 ? "\(remainder) min" : "\(hours) hr \(remainder) min"
             text += " there (" + (difference == 0 ? "same as here" : amount + (difference > 0 ? " ahead" : " behind")) + ")"
-        } else if let end = time.end, time.start <= now, now < end { text += " (happening now)" }
+        } else if let end = time.end, !(now < time.start), now < end { text += " (happening now)" }
         else if let away = away(from: now, to: time.start) { text += " (\(away))" }
         return count > 1 ? "\(time.written) → \(text)" : text
     }

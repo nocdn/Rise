@@ -38,6 +38,8 @@ final class AdBlockHTTPFixture: @unchecked Sendable {
         }
     }
     func stop() { listener.cancel() }
+    /// What every /files/ address serves, to compare a saved copy with.
+    static let fileBytes = Data("ID3".utf8)+Data((0..<8192).map { UInt8($0%251) })
     static func html(scriptBase: String = "/") -> String {
         """
         <html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head>
@@ -56,6 +58,18 @@ final class AdBlockHTTPFixture: @unchecked Sendable {
                 // Apple's iPhone response is an empty redirect to its store scheme.
                 let redirect = Data("HTTP/1.1 301 Moved Permanently\r\nLocation: itms-appss://apps.apple.com/uk/app/gov-uk-one-login/id6737119425?pt=123&ct=qr\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
                 connection.send(content: redirect, completion: .contentProcessed { _ in connection.cancel() }); return
+            }
+            if route.hasPrefix("/files/") {
+                // Files WebKit shows in its own player, for Save to Files. The flaky one serves its
+                // page and then fails, as a download that breaks would.
+                if route == "/files/flaky.mp3", attempt > 1 {
+                    let broken = Data("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
+                    connection.send(content: broken, completion: .contentProcessed { _ in connection.cancel() }); return
+                }
+                let type = route.hasSuffix(".mp4") ? "video/mp4" : "audio/mpeg"
+                let name = route == "/files/named" ? "Content-Disposition: inline; filename=\"Song Exploder.mp3\"\r\n" : ""
+                let headers = Data("HTTP/1.1 200 OK\r\nContent-Type: \(type)\r\n\(name)Content-Length: \(Self.fileBytes.count)\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n".utf8)
+                connection.send(content: headers+Self.fileBytes, completion: .contentProcessed { _ in connection.cancel() }); return
             }
             if (slowIcons || missingRootIcon), route == "/favicon.ico" {
                 let missing = Data("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)

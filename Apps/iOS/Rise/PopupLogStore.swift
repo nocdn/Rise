@@ -50,7 +50,7 @@ final class PopupLogStore: @unchecked Sendable {
                 }
                 let ids = Set(records.map(\.id))
                 records += self.recent.filter { !ids.contains($0.id) }
-                records = records.filter { $0.timestamp >= Self.cutoff() }.sorted { $0.timestamp < $1.timestamp }
+                records = records.filter { !($0.timestamp < Self.cutoff()) }.sorted { $0.timestamp < $1.timestamp }
                 continuation.resume(returning: PopupLogSnapshot(schema: 1, exportedAt: Date(), privateSession: false,
                     notes: "Native decisions are authoritative. Page-world window.open observations are unverified and never authorize a window. A null handle can also mean noopener. URL credentials, query values, fragments and sensitive path segments are redacted. Seven UTC dates, capped at 8 MiB; older events rotate out.",
                     writeFailures: self.writeFailures, unreadableLines: unreadable, evictedMemoryEvents: 0, queueDroppedEvents: self.droppedCount(), events: records))

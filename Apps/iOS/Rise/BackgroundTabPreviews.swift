@@ -92,7 +92,7 @@ import WebKit
     private func isCurrent(_ tab: BrowserTab, key: Key) -> Bool {
         tabs.contains { $0 === tab } && tab.sessionTab.url == key.url
     }
-    private func canRetry(_ retry: Retry?) -> Bool { retry.map { Date() >= $0.date } ?? true }
+    private func canRetry(_ retry: Retry?) -> Bool { retry.map { !(Date() < $0.date) } ?? true }
 
     private func start() {
         guard active, work == nil, host.window != nil, viewport.width > 0 else { return }

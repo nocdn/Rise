@@ -85,7 +85,7 @@ import UIKit
         // Only complete public domains are fetched. In-progress/local addresses keep the placeholder.
         guard fetch, allowsNetwork, !AddressResolver.isLocal(url), let host = url.host, host.contains("."),
               !host.hasSuffix(".test"), !host.hasSuffix(".example"), !host.hasSuffix(".invalid"),
-              tasks[origin] == nil, (retryAfter[origin] ?? .distantPast) <= Date(),
+              tasks[origin] == nil, !((retryAfter[origin] ?? .distantPast) > Date()),
               attempted.insert(origin).inserted else { return cached(origin) }
         tasks[origin] = Task { [weak self] in
             guard let self else { return }

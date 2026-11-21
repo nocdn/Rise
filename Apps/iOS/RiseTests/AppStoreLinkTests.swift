@@ -54,9 +54,9 @@ final class AppStoreLinkTests: XCTestCase {
         window.layoutIfNeeded(); browser.view.layoutIfNeeded(); toast.layoutIfNeeded()
         XCTAssertEqual(browser.webView.frame.minY, browser.view.safeAreaInsets.top, accuracy: 0.5, "The toast must not reserve space above the page")
         XCTAssertLessThan(toast.frame.maxY, browser.bottomBar.frame.minY)
-        XCTAssertEqual(toast.openIcon.tintColor, toast.symbol.tintColor)
-        XCTAssertNotNil(toast.openIcon.image)
-        XCTAssertEqual(toast.openIcon.image?.size, CGSize(width: 24, height: 24))
+        XCTAssertEqual(toast.trailingIcon.tintColor, toast.symbol.tintColor)
+        XCTAssertNotNil(toast.trailingIcon.image)
+        XCTAssertEqual(toast.trailingIcon.image?.size, CGSize(width: 24, height: 24))
         XCTAssertEqual(browser.tabs.count, 1)
         toast.activate()
         XCTAssertEqual(opened, [Self.external])
@@ -95,7 +95,7 @@ final class AppStoreLinkTests: XCTestCase {
         let browser = BrowserViewController(startURL: nil)
         let window = try host(browser)
         browser.appStoreLinks.noteNavigation(to: Self.listing, in: browser.webView)
-        browser.updateAppStoreToast()
+        browser.updatePageToast()
         var attempts = 0
         browser.openExternalURL = { url, completion in
             XCTAssertEqual(url, Self.external); attempts += 1; completion(false)
@@ -114,7 +114,7 @@ final class AppStoreLinkTests: XCTestCase {
         let browser = BrowserViewController(startURL: nil)
         let window = try host(browser)
         browser.appStoreLinks.noteNavigation(to: Self.listing, in: browser.webView)
-        browser.updateAppStoreToast()
+        browser.updatePageToast()
         var opened = false
         browser.openExternalURL = { _, completion in opened = true; completion(true) }
         let toast = try XCTUnwrap(browser.toast as? AppStoreToast)
@@ -123,7 +123,7 @@ final class AppStoreLinkTests: XCTestCase {
         XCTAssertTrue(browser.appStoreLinks.isDismissed(for: browser.webView))
         XCTAssertFalse(opened)
         toast.dismiss(animated: false)
-        browser.updateAppStoreToast()
+        browser.updatePageToast()
         XCTAssertFalse((browser.toast as? AppStoreToast).map { !$0.dismissed } ?? false)
         withExtendedLifetime(window) {}
     }
@@ -142,7 +142,7 @@ final class AppStoreLinkTests: XCTestCase {
         XCTAssertEqual(toast.appIcon.bounds.size, CGSize(width: 24, height: 24))
         XCTAssertNotNil(toast.appIcon.image)
         var opened = 0, dismissed = 0
-        toast.open = { opened += 1 }; toast.onUserDismiss = { dismissed += 1 }
+        toast.onActivate = { opened += 1 }; toast.onUserDismiss = { dismissed += 1 }
         XCTAssertTrue(toast.accessibilityActivate())
         XCTAssertEqual(opened, 1)
         XCTAssertEqual(try XCTUnwrap(toast.accessibilityCustomActions?.first).name, "Dismiss")
@@ -158,7 +158,7 @@ final class AppStoreLinkTests: XCTestCase {
         toast.place(above: 700, in: CGRect(x: 0, y: 0, width: 320, height: 800), safeTop: 59)
         toast.layoutIfNeeded()
         var opened = 0
-        toast.open = { opened += 1 }
+        toast.onActivate = { opened += 1 }
         toast.pressButton.sendActions(for: .touchDown)
         if !UIAccessibility.isReduceMotionEnabled {
             XCTAssertEqual(toast.pressButton.transform.a, SearchPanel.pressedScale, accuracy: 0.001)

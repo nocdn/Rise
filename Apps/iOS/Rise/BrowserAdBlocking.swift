@@ -105,7 +105,7 @@ extension BrowserViewController {
         if action.shouldPerformDownload { finishAdBlockingReload(on: page); decisionHandler(.download); return }
         if action.targetFrame?.isMainFrame == true, let url = action.request.url {
             appStoreLinks.noteNavigation(to: url, in: page)
-            if page === webView { updateAppStoreToast() }
+            if page === webView { updatePageToast() }
         }
         // New-window links pass the popup policy in createWebViewWith first.
         if action.targetFrame != nil, handleExternalAppLink(action, in: page) {
@@ -142,8 +142,10 @@ extension BrowserViewController {
         guard response.isForMainFrame else { decisionHandler(.allow); return }
         if let url = response.response.url {
             appStoreLinks.noteNavigation(to: url, in: page)
-            if page === webView { updateAppStoreToast() }
+            if page === webView { updatePageToast() }
         }
+        // An MP3 or MP4 shown in WebKit's player can be saved once its document commits.
+        fileDocuments.noteResponse(response.response, in: page)
         // A server redirect can change the final host without another action-policy callback.
         if adBlocker.prepareIfReady(page, for: response.response.url) { decisionHandler(.allow); return }
         Task {
