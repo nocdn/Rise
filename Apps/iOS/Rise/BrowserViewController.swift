@@ -3143,7 +3143,10 @@ extension BrowserViewController {
                           glyph: UIImage(systemName: "archivebox.fill"), name: "archived-tabs")
         toast.addGestureRecognizer(UITapGestureRecognizer(target: self, action: #selector(openArchivedTabsFromToast)))
         showToast(toast)
+        toast.leave(after: Self.archivedTabsToastDuration)
     }
+    /// Long enough to tap through to the list, then it goes by itself.
+    static let archivedTabsToastDuration: Double = 4
     @objc private func openArchivedTabsFromToast() {
         toast?.dismiss()
         openArchivedTabs()

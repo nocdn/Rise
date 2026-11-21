@@ -66,7 +66,9 @@ import WebKit
         try check("their-closures-are-shared", due.allSatisfy { aloneSync.isClosed($0.id) && aloneSync.isArchived($0.id) })
         try check("a-toast-says-so", alone.toast?.accessibilityLabel == "Archived 3 unused tabs")
         await settle(); shot("toast")
-        alone.toast?.dismiss(animated: false)
+        let archivedToast = alone.toast
+        await settle(Int(BrowserViewController.archivedTabsToastDuration*1000))
+        try check("the-toast-goes-by-itself", archivedToast?.dismissed == true && alone.toast !== archivedToast)
 
         // The list, in History's panel.
         let bar = alone.bottomBar
