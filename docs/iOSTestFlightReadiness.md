@@ -1,3 +1,31 @@
+# TestFlight update — 21 November 2026
+
+Version **0.1.0 (5)** was archived from `205b472` with release Xcode 27.2
+(`27B52`) and uploaded to App Store Connect at 13:10 UTC. **Apple approved it
+for External Beta immediately after submission**, with 90 days remaining. The
+public link is unchanged:
+[Join Rise on TestFlight](https://testflight.apple.com/join/3ZMTjMCB).
+Automatic tester notification was selected; both External Beta and Internal
+Testing contain build 5.
+
+Build: [Rise 0.1.0 (5)](https://appstoreconnect.apple.com/teams/968654d4-7e80-435c-9b7b-3bf5158384d3/apps/6824847354/testflight/ios/e90389af-5fd8-468d-9642-288b20505ff3).
+
+- Fixes the crash at launch on iOS 27.2 build `24B5084k`. That build's Foundation
+  lacks `Date <=` and `>=`, which Xcode 27.2's SDK weak-imports from 27.2.
+  The Release binary has no weak imports of either.
+- Adds Save to Files for pages that are a file (audio, video, PDF and images in
+  WebKit's own viewer), as a toast and in the share sheet, and Open App Store for
+  App Store links that WebKit leaves as a blank page. Toasts now dim with the page
+  behind an open panel.
+- 35 focused simulator tests passed: Save to Files, App Store links, the
+  selection time and currency menus, and tab previews.
+- OS-only encryption compliance was saved again for this build.
+- The app was installed on the iPhone with `scripts/restart.sh` and ran with no
+  new crash logs. This is a focused release check, not a full device or
+  test-suite pass.
+
+---
+
 # TestFlight update — 19 November 2026
 
 Version **0.1.0 (4)** was archived with release Xcode 27.2 (`27B52`) and
