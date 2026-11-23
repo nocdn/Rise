@@ -16,7 +16,7 @@ struct PendingPageKey {
 /// the bar says so runs Rise's command.
 @MainActor extension BrowserController {
     /// How long the bar offers Rise's command for a shortcut the page kept.
-    static let pageShortcutAgainWindow: TimeInterval = 2.5
+    static let pageShortcutAgainWindow: TimeInterval = 1.25
     /// What's the browser's alone, as Chrome keeps them from pages: a page can't stop you leaving it.
     static let browserOnlyCommands: Set<String> = [
         "newTab", "closeCurrentTab", "performClose:", "reopenTab", "nextTab", "previousTab", "showSettings",
