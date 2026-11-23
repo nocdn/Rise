@@ -7,6 +7,7 @@ import AppKit
 /// plays again. While it shows, the page is asked for its position, and its sound's levels while
 /// it plays, 30 times a second.
 @MainActor final class NowPlaying {
+    static let playingInterval: TimeInterval = 1.0/15
     weak var browser: BrowserController?
     private(set) var tabID: UUID?
     /// Tabs put away with the X, and when: their media pauses a moment after.
@@ -95,7 +96,9 @@ import AppKit
     // MARK: The page's position and levels
 
     private func startAsking() {
-        let interval = card?.isPaused == false ? 1.0/30 : 0.5
+        // Fifteen times a second while playing: the bars glide to each level frame by frame, so
+        // asking the page more often only costs its thread and Rise's.
+        let interval = card?.isPaused == false ? Self.playingInterval : 0.5
         if let timer, abs(timer.timeInterval-interval) < 0.001 { return }
         timer?.invalidate()
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in MainActor.assumeIsolated { self?.ask() } }
