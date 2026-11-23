@@ -80,7 +80,7 @@ final class SuggestionFaviconsTests: XCTestCase {
                 : [URL(string: "https://quality.example.org/favicon.ico")!, URL(string: origin+"/")!, URL(string: origin+"/large.png")!]
             XCTAssertEqual(IconProtocol.snapshotRequests(), expected, "Discovery must not send the suggested page's path or query")
             let snapshot = try XCTUnwrap(FaviconSnapshot.encode(sharp))
-            cache.save()
+            cache.save(); BackgroundFiles.flush()
             let restored = SuggestionFavicons(storageURL: file, session: session); defer { restored.cancel() }
             let staleTab = BrowserTab(saved: SavedTab(url: url.absoluteString, title: "YouTube-style page", faviconData: stale, faviconOrigin: origin))
             restored.remember(staleTab)
@@ -162,7 +162,7 @@ final class SuggestionFaviconsTests: XCTestCase {
         XCTAssertEqual(palette.input.stringValue, "draft"); XCTAssertEqual(palette.selectedIndex, -1)
         XCTAssertNil((button.subviews.first as? NSImageView)?.contentTintColor)
         XCTAssertEqual(IconProtocol.snapshotRequests().count, 1)
-        cache.save()
+        cache.save(); BackgroundFiles.flush()
         let restored = SuggestionFavicons(storageURL: file, session: session); defer { restored.cancel() }
         XCTAssertNotNil(restored.image(for: url))
         XCTAssertNil(restored.image(for: URL(string: "https://example.com:8443/docs")))

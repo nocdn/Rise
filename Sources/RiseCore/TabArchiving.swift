@@ -191,10 +191,12 @@ public final class ArchivedTabs {
         }
     }
     public func flush() { writer.sync {} }
+    /// Encoded in the background too: with each tab's engine session, the list runs to megabytes.
     private func save() {
-        guard let data = try? JSONEncoder().encode(entries) else { return }
+        nonisolated(unsafe) let entries = entries
         let file = storageURL
         writer.async {
+            guard let data = try? JSONEncoder().encode(entries) else { return }
             do {
                 try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try data.write(to: file, options: .atomic)

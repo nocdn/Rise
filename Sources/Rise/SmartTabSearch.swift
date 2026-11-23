@@ -62,9 +62,8 @@ import RiseCore
     return [description.slice(0,240),topics.slice(0,100),headings,intro.slice(0,180)].filter(Boolean).join(' · ').replace(/\s+/g,' ').slice(0,650);
     """#
     private func persist() {
-        guard let data=try? JSONEncoder().encode(metadata) else { return }
-        try? FileManager.default.createDirectory(at:storage.deletingLastPathComponent(),withIntermediateDirectories:true)
-        try? data.write(to:storage,options:.atomic)
+        let metadata = metadata
+        BackgroundFiles.write(to: storage) { try JSONEncoder().encode(metadata) }
     }
     func cancel() {
         generation=UUID();task?.cancel();task=nil

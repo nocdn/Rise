@@ -141,11 +141,10 @@ struct DownloadRecord: Codable, Equatable {
         onChange?()
     }
     private func save() {
-        let records = items.filter(\.isFinished).prefix(Self.limit).map(\.record)
-        do {
-            try FileManager.default.createDirectory(at: storeURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try JSONEncoder().encode(Array(records)).write(to: storeURL, options: .atomic)
-        } catch { NSLog("Rise downloads save failed: %@", error.localizedDescription) }
+        nonisolated(unsafe) let records = Array(items.filter(\.isFinished).prefix(Self.limit).map(\.record))
+        BackgroundFiles.write(to: storeURL, failed: { error in NSLog("Rise downloads save failed: %@", error.localizedDescription) }) {
+            try JSONEncoder().encode(records)
+        }
     }
     deinit { timer?.invalidate() }
 }

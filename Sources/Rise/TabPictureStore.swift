@@ -24,11 +24,13 @@ import AppKit
     /// Keeps the tab's current picture, replacing the one before.
     func keep(_ tab: BrowserTab) {
         guard let image = tab.thumbnail, let url = tab.url,
-              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil),
-              let data = NSBitmapImageRep(cgImage: cgImage).representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else { return }
+              let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return }
         addresses[tab.id.uuidString] = url.absoluteString
         let file = fileURL(tab.id), folder = folder
+        // Compressed off the main thread, where it took a frame.
+        nonisolated(unsafe) let picture = cgImage
         queue.async {
+            guard let data = NSBitmapImageRep(cgImage: picture).representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else { return }
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             try? data.write(to: file, options: .atomic)
         }
@@ -56,10 +58,12 @@ import AppKit
         guard unsaved, let data = try? JSONEncoder().encode(addresses) else { return }
         unsaved = false
         let folder = folder, index = indexURL
-        // After the pictures still being written, and before Rise can quit.
-        queue.sync {
+        // After the pictures still being written; quitting waits for it (`flush`).
+        queue.async {
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             try? data.write(to: index, options: .atomic)
         }
     }
+    /// Waits for the pictures and index still being written, as before quitting.
+    func flush() { queue.sync {} }
 }

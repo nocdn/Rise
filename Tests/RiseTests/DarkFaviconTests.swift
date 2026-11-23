@@ -112,7 +112,7 @@ final class DarkFaviconTests: XCTestCase {
         tab.requestedURL = URL(string: "https://example.com/page")
         tab.iconOrigin = SitePermissions.origin(tab.url)
         tab.favicon = FaviconImage.decode(Self.svg, dark: false); tab.darkFavicon = FaviconImage.decode(Self.svg, dark: true)
-        cache.remember(tab); cache.save()
+        cache.remember(tab); cache.save(); BackgroundFiles.flush()
         let restored = SuggestionFavicons(storageURL: file); defer { restored.cancel() }
         XCTAssertGreaterThan(try color(XCTUnwrap(restored.image(for: tab.url, fetch: false, dark: true))).redComponent, 0.95)
         XCTAssertLessThan(try color(XCTUnwrap(restored.image(for: tab.url, fetch: false))).redComponent, 0.2)

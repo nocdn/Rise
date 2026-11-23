@@ -110,7 +110,7 @@ private final class TabMetadataProtocol: URLProtocol {
         loader.update(tabs: [a,b])
         try await wait { a.favicon != nil && b.favicon != nil && loader.activeCount == 0 }
         XCTAssertEqual(a.title, "Title from iPhone"); XCTAssertEqual(b.title, "My name")
-        icons.save()
+        icons.save(); BackgroundFiles.flush()
         let restoredIcons = SuggestionFavicons(storageURL: directory.appendingPathComponent("icons.json"), session: session)
         let restored = SyncedTabMetadata(icons: restoredIcons, session: session)
         defer { restored.cancel(); restoredIcons.cancel() }

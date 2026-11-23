@@ -116,6 +116,7 @@ final class ChangeBreakdownTests: XCTestCase {
         XCTAssertEqual(changes, [request.key, request.key], "Once for each new state")
         XCTAssertNil(summaries.entries[request.key], "No card was opened for it")
         XCTAssertEqual(summaries.entry(for: request).phase, .idle, "Its card still writes a description")
+        BackgroundFiles.flush()
         let reopened = PullRequestSummaries(storageURL: file)
         XCTAssertEqual(reopened.state(of: request), .merged, "Kept across launches")
         XCTAssertEqual(reopened.tabState(of: request), .merged)

@@ -214,11 +214,11 @@ import RiseCore
     func save() {
         saveWork?.cancel(); saveWork = nil
         guard dirty else { return }
-        do {
-            try FileManager.default.createDirectory(at: storageURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try JSONEncoder().encode(Saved(images: data, verified: verified)).write(to: storageURL, options: .atomic)
-            dirty = false
-        } catch { NSLog("Rise suggestion icon save failed: %@", error.localizedDescription) }
+        dirty = false
+        nonisolated(unsafe) let saved = Saved(images: data, verified: verified)
+        BackgroundFiles.write(to: storageURL, failed: { [weak self] error in
+            NSLog("Rise suggestion icon save failed: %@", error.localizedDescription); self?.dirty = true
+        }) { try JSONEncoder().encode(saved) }
     }
     func cancel() { cancelPreview(); tasks.values.forEach { $0.cancel() }; tasks = [:]; requested = [:]; saveWork?.cancel() }
     deinit { previewTimer?.invalidate(); tasks.values.forEach { $0.cancel() }; saveWork?.cancel() }

@@ -96,10 +96,8 @@ struct Bookmark: Codable, Equatable, Identifiable {
         items[index] = item; images[item.id] = nil; changed()
     }
     private func changed() {
-        if let data = try? JSONEncoder().encode(items) {
-            try? FileManager.default.createDirectory(at: storageURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? data.write(to: storageURL, options: .atomic)
-        }
+        nonisolated(unsafe) let items = items
+        BackgroundFiles.write(to: storageURL) { try JSONEncoder().encode(items) }
         onChange?()
     }
 }

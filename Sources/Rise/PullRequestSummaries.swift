@@ -736,7 +736,7 @@ enum PullRequestSummarizer {
         changed(key)
     }
     private func save() {
-        try? FileManager.default.createDirectory(at: storageURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? JSONEncoder().encode(saved).write(to: storageURL, options: .atomic)
+        nonisolated(unsafe) let saved = saved
+        BackgroundFiles.write(to: storageURL) { try JSONEncoder().encode(saved) }
     }
 }
