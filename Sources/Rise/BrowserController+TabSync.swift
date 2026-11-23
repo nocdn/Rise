@@ -2,9 +2,10 @@ import AppKit
 import RiseCore
 
 @MainActor extension BrowserController {
-    var sharedTabsSnapshot: [SharedBrowserTab] {
-        tabs.compactMap { tab in
-            let saved = tab.saved
+    var sharedTabsSnapshot: [SharedBrowserTab] { sharedTabs(from: tabs.map(\.saved)) }
+    /// The tabs as tab sync shares them, from what the session saves of each, read once for both.
+    func sharedTabs(from saved: [SavedTab]) -> [SharedBrowserTab] {
+        zip(tabs, saved).compactMap { tab, saved in
             let address = saved.url
             let value = SharedBrowserTab(id: tab.id, url: address == "about:blank" ? nil : address, title: tab.title,
                                          navigationHistory: saved.navigationHistory)

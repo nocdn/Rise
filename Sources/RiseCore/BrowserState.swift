@@ -131,6 +131,8 @@ public enum SessionStorage {
         guard let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(BrowserSession.self, from: data)
     }
+    /// Encoded and written in the background, in order, so a save doesn't hold up the main thread.
+    public static let writer = DispatchQueue(label: "dev.bartosz.Rise.session-writer", qos: .utility)
     public static func write(_ state: BrowserSession, to url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]

@@ -327,10 +327,30 @@ public final class BrowsingHistory {
         catch { storage = previous; entries = previous.snapshot.entries; dirty = true; throw error }
         onChange?()
     }
+    /// Every write goes through one queue, in order, so a save in the background can't land after
+    /// a later one, such as clearing the history.
+    private let writer = DispatchQueue(label: "dev.bartosz.Rise.history-writer", qos: .utility)
     public func save() throws {
-        guard dirty else { return }
-        try FileManager.default.createDirectory(at: storageURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try JSONEncoder().encode(storage).write(to: storageURL, options: .atomic)
+        guard dirty else { writer.sync {}; return }
+        nonisolated(unsafe) let copy = storage
+        let url = storageURL
+        try writer.sync { try Self.write(copy, to: url) }
         dirty = false
+    }
+    /// As `save()`, but encoded and written in the background: a megabyte or two of JSON. A write
+    /// that fails is saved again next time.
+    public func saveInBackground() {
+        guard dirty else { return }
+        dirty = false
+        nonisolated(unsafe) let copy = storage
+        let url = storageURL
+        writer.async { [weak self] in
+            do { try Self.write(copy, to: url) }
+            catch { DispatchQueue.main.async { self?.dirty = true } }
+        }
+    }
+    private static func write(_ storage: Storage, to url: URL) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(storage).write(to: url, options: .atomic)
     }
 }

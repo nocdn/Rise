@@ -326,6 +326,8 @@ import RiseCore
     /// macOS's certificate choosers showing for pages that asked for a certificate, by page.
     var clientCertificateChoosers: [ObjectIdentifier: ClientCertificateChooser] = [:]
     var lastSaved: BrowserSession?
+    /// The tabs, in order, as tab sync last had them.
+    var syncedTabOrder: [UUID] = []
     var tabSync: SharedTabsSync?
     var isApplyingSharedTabs = false
     var hasPendingSharedTabs = false
@@ -1013,7 +1015,12 @@ import RiseCore
         errorSurface.isHidden = errorWebView == nil || errorWebView !== selectedTab?.page.view
         updatePlainBar()
         layoutChrome(); refreshTabSwitcher(); scheduleSave(); scheduleSwitcherPictures(); openTabLinks.refresh(shownPages)
-        if !isApplyingSharedTabs { tabSync?.capture(sharedTabsSnapshot) }
+        // Tabs opened, closed or moved go to tab sync at once; what changes within them, as a load's
+        // title and history, waits for the save this schedules, rather than reading every tab's
+        // history at every step of a load.
+        if !isApplyingSharedTabs, let sync = tabSync, tabs.map(\.id) != syncedTabOrder {
+            syncedTabOrder = tabs.map(\.id); sync.capture(sharedTabsSnapshot)
+        }
         if hasPendingSharedTabs, canApplySharedTabs { applyPendingSharedTabs() }
     }
     @objc func newTab() { paletteCreatesTab = true; showPalette(text: "") }
@@ -1288,19 +1295,39 @@ import RiseCore
                                image: TablerIcon.image(TablerIcon.zoomIn, size: 12, description: "Page zoom"))
     }
     func scheduleSave() {
-        saveWork?.cancel(); let work = DispatchWorkItem { [weak self] in self?.saveNow() }; saveWork = work
+        saveWork?.cancel(); let work = DispatchWorkItem { [weak self] in self?.save(waiting: false) }; saveWork = work
         DispatchQueue.main.asyncAfter(deadline: .now()+0.4, execute: work)
     }
-    func saveNow() {
-        if !isApplyingSharedTabs { tabSync?.capture(sharedTabsSnapshot) }
-        tabSync?.flush()
+    /// Saves everything at once and waits for it, as on quitting.
+    func saveNow() { save(waiting: true) }
+    /// Without `waiting`, as after changes: the main thread only gathers what to save; the session
+    /// and history, megabytes of JSON, are encoded and written in the background, as tab sync's
+    /// cache is, so a page's load bar and Reload button don't stall while they're written.
+    private func save(waiting: Bool) {
+        saveWork?.cancel(); saveWork = nil
+        let saved = tabs.map(\.saved)
+        if !isApplyingSharedTabs, let sync = tabSync { syncedTabOrder = tabs.map(\.id); sync.capture(sharedTabs(from: saved)) }
+        if waiting { tabSync?.flush() }
         suggestionFavicons.save(); tabPictures.save()
-        do { try browsingHistory.save(); try siteSearchLearner.searches.save() }
-        catch { NSLog("Rise history save failed: %@", error.localizedDescription) }
-        let state = BrowserSession(tabs: tabs.map(\.saved), selectedID: selectedID, theme: automaticTheme ? Self.automaticThemeName : theme.rawValue, sidebarWidth: sidebarWidth, splitGroups: splitGroups, peeks: savedPeeks)
-        guard state != lastSaved else { return }
-        do { try SessionStorage.write(state, to: sessionURL); lastSaved = state }
-        catch { NSLog("Rise session save failed: %@", error.localizedDescription) }
+        do {
+            try siteSearchLearner.searches.save()
+            if waiting { try browsingHistory.save() } else { browsingHistory.saveInBackground() }
+        } catch { NSLog("Rise history save failed: %@", error.localizedDescription) }
+        let state = BrowserSession(tabs: saved, selectedID: selectedID, theme: automaticTheme ? Self.automaticThemeName : theme.rawValue, sidebarWidth: sidebarWidth, splitGroups: splitGroups, peeks: savedPeeks)
+        let changed = state != lastSaved
+        if changed { lastSaved = state }
+        nonisolated(unsafe) let session = state
+        let url = sessionURL
+        let write: @Sendable () -> Void = { [weak self] in
+            guard changed else { return }
+            do { try SessionStorage.write(session, to: url) }
+            catch {
+                NSLog("Rise session save failed: %@", error.localizedDescription)
+                // Tried again at the next save.
+                Task { @MainActor in self?.lastSaved = nil }
+            }
+        }
+        if waiting { SessionStorage.writer.sync(execute: write) } else { SessionStorage.writer.async(execute: write) }
     }
 }
 
