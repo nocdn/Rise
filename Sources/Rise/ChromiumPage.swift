@@ -351,6 +351,8 @@ enum RisePages {
         let now = (url: url, title: title, loading: browserView.isLoading,
                    back: browserView.canGoBack, forward: browserView.canGoForward, progress: browserView.progress)
         let before = seen; seen = now
+        if now.url != before.url || now.title != before.title || now.loading != before.loading
+            || now.back != before.back || now.forward != before.forward { savedState = nil }
         if now.url != before.url { applyBaseBackground(); onChange?(.url) }
         if now.title != before.title { onChange?(.title) }
         if now.loading != before.loading { onChange?(.loading) }
@@ -405,12 +407,27 @@ enum RisePages {
     @discardableResult func setAudioMuted(_ muted: Bool) -> Bool { browserView.setAudioMuted(muted); return true }
     /// Chromium's history is tagged, so a WebKit page's saved history is never handed to it.
     private static let stateTag = Data("RiseChromium1\0".utf8)
-    var sessionState: Data? { browserView.navigationState.map { Self.stateTag + $0 } }
-    var navigationHistory: TabNavigationHistory? {
-        guard let value = browserView.navigationHistory, let data = try? JSONSerialization.data(withJSONObject: value),
-              let history = try? JSONDecoder().decode(TabNavigationHistory.self, from: data) else { return nil }
-        return history.validated()
+    /// What saving reads of the page: its engine state and history, kept between saves, as the
+    /// engine writes out every entry each time it's asked. A change of address, title, load or
+    /// back and forward lets them go, and they're read again after `savedStateLifetime` anyway, for
+    /// what changes without telling, such as where the page is scrolled to.
+    private var savedState: (state: Data?, history: TabNavigationHistory?, at: CFTimeInterval)?
+    static let savedStateLifetime: CFTimeInterval = 10
+    private var currentSavedState: (state: Data?, history: TabNavigationHistory?) {
+        if let saved = savedState, CACurrentMediaTime()-saved.at < Self.savedStateLifetime { return (saved.state, saved.history) }
+        let state = browserView.navigationState.map { Self.stateTag + $0 }
+        let history = browserView.navigationHistory.flatMap { value -> TabNavigationHistory? in
+            guard let data = try? JSONSerialization.data(withJSONObject: value),
+                  let history = try? JSONDecoder().decode(TabNavigationHistory.self, from: data) else { return nil }
+            return history.validated()
+        }
+        savedState = (state, history, CACurrentMediaTime())
+        return (state, history)
     }
+    /// Reads the page afresh next time, as before quitting or letting the page sleep.
+    func forgetSavedState() { savedState = nil }
+    var sessionState: Data? { currentSavedState.state }
+    var navigationHistory: TabNavigationHistory? { currentSavedState.history }
     var backForwardList: TabNavigationHistory? {
         guard let value = browserView.navigationHistory, let data = try? JSONSerialization.data(withJSONObject: value),
               let history = try? JSONDecoder().decode(TabNavigationHistory.self, from: data),

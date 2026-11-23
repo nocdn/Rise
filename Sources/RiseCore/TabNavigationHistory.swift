@@ -15,7 +15,19 @@ public struct TabNavigationHistory: Codable, Equatable, Sendable {
     public init(entries: [Entry], index: Int) { self.entries = entries; self.index = index }
     public var current: Entry? { entries.indices.contains(index) ? entries[index] : nil }
 
+    /// Each history is checked several times a save, address by address; an answer doesn't change.
+    nonisolated(unsafe) private static var allowed: [String: Bool] = [:]
+    private static let allowedLock = NSLock()
     public static func allows(_ address: String) -> Bool {
+        if let known = allowedLock.withLock({ allowed[address] }) { return known }
+        let answer = parsesAsWebPage(address)
+        allowedLock.withLock {
+            if allowed.count >= 4096 { allowed.removeAll(keepingCapacity: true) }
+            allowed[address] = answer
+        }
+        return answer
+    }
+    private static func parsesAsWebPage(_ address: String) -> Bool {
         guard address.utf8.count <= 8192, let url = URL(string: address),
               ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
               let host = url.host, !host.isEmpty, url.user == nil, url.password == nil else { return false }
@@ -36,7 +48,9 @@ public struct TabNavigationHistory: Codable, Equatable, Sendable {
         var bounded = Self(entries: Array(result[start..<end]), index: cursor-start)
         // A CloudKit record has a size ceiling too. Long escaped URLs/titles can
         // reach it before the entry limit; remove the farthest visits first.
-        while bounded.entries.count > 1,
+        // Encoding it to measure, each time a history is checked, cost a few milliseconds a save;
+        // most can't come near the ceiling, as `mostEncodedBytes` shows without encoding.
+        while bounded.entries.count > 1, bounded.mostEncodedBytes > Self.maximumEncodedBytes,
               ((try? JSONEncoder().encode(bounded).count) ?? Int.max) > Self.maximumEncodedBytes {
             if bounded.index > bounded.entries.count-1-bounded.index {
                 bounded.entries.removeFirst(); bounded.index -= 1
@@ -45,6 +59,11 @@ public struct TabNavigationHistory: Codable, Equatable, Sendable {
         return bounded
     }
 
+    /// The most its JSON can take: each byte escaped as six at worst, as a control character's
+    /// \u0000 is, and room for each entry's keys and punctuation and the index.
+    var mostEncodedBytes: Int {
+        entries.reduce(64) { $0 + 64 + 6*$1.url.utf8.count + 6*($1.title?.utf8.count ?? 0) }
+    }
     /// Title-only updates do not require replacing an already loaded page.
     public func hasSameRoute(as other: Self) -> Bool {
         index == other.index && entries.map(\.url) == other.entries.map(\.url)

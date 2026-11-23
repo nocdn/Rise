@@ -35,6 +35,9 @@ import RiseCore
     /// The page keeps playing, but without sound.
     private(set) var isAudioMuted = false
     var onChange: (() -> Void)?
+    /// While `onChange` runs: what changed came from the page itself, as it loads, rather than
+    /// from Rise, and whether only its progress moved.
+    private(set) var reportingPageChange: (progressOnly: Bool, Void)?
     private(set) var hasAttemptedNavigation = false
     var isLoading: Bool { page.isLoading }
     var needsBlockingReload = false
@@ -91,17 +94,23 @@ import RiseCore
     private func observePage() {
         page.onChange = { [weak self] change in
             guard let self else { return }
+            let report = { (progressOnly: Bool) in
+                let outer = self.reportingPageChange
+                self.reportingPageChange = (progressOnly, ()); defer { self.reportingPageChange = outer }
+                self.onChange?()
+            }
             switch change {
-            case .title, .url: changed()
+            case .title, .url: changed(report: { report(false) })
             case .loading:
                 // Checked when the change arrives, so the end of a load the hard reload replaced doesn't clear it.
                 if !isLoading { isHardReloading = false }
                 let finished = wasLoading && !isLoading
                 wasLoading = isLoading
-                onChange?()
+                report(false)
                 if finished { onLoadFinished?() }
             case .fullscreen: onFullscreenChange?()
-            case .progress, .navigation, .audio: onChange?()
+            case .progress: report(true)
+            case .navigation, .audio: report(false)
             }
         }
     }
@@ -180,6 +189,7 @@ import RiseCore
     /// Lets the page go, keeping its history, title, icon and picture; shown again, it comes back
     /// from its history as a tab restored at launch does. Returns the page let go.
     func sleep() -> WebPage? {
+        (page as? ChromiumPage)?.forgetSavedState()
         guard canSleep, let state = sessionState, let url = page.url else { return nil }
         let old = page
         restoredState = (url.absoluteString, state); restoredHistory = navigationHistory.map { (url.absoluteString, $0) }
@@ -196,14 +206,15 @@ import RiseCore
         isAudioMuted = muted; onChange?()
     }
     func cancelLoad() { page.stopLoading() }
-    func changed() {
+    func changed() { changed(report: { self.onChange?() }) }
+    private func changed(report: () -> Void) {
         if AddressResolver.isLocal(url) { developer = true }
         if let customTitle { title = customTitle }
         else if let value = page.title, !value.isEmpty {
             title = hidesNotificationCounts ? TitleNotificationCount.removing(from: value, url: url) : value
         }
         else if let url, url.absoluteString != "about:blank" { title = AddressResolver.displayHost(url) }
-        updateIcon(); onChange?()
+        updateIcon(); report()
     }
     func captureThumbnail() {
         guard !thumbnailCaptureInFlight, page.view.bounds.width > 0, page.view.bounds.height > 0 else { return }

@@ -104,4 +104,11 @@ final class TabNavigationHistoryTests: XCTestCase {
         for record in a.records.values { b.merge(record) }
         XCTAssertTrue(a.tabs.isEmpty); XCTAssertTrue(b.tabs.isEmpty)
     }
+    /// The bound that lets most histories skip being encoded is never below what encoding gives,
+    /// whatever the text needs escaped.
+    func testTheEncodedSizeBoundIsNeverBelowTheEncodedSize() throws {
+        let awkward = "\u{01}\"\\/\n\t\u{1F}é漢😀<>&"
+        let value = TabNavigationHistory(entries: (0..<40).map { .init(url: "https://e.example/\($0)?q=" + awkward, title: awkward + "\($0)") }, index: 3)
+        XCTAssertGreaterThanOrEqual(value.mostEncodedBytes, try JSONEncoder().encode(value).count)
+    }
 }

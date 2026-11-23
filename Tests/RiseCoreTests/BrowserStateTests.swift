@@ -86,6 +86,35 @@ final class BrowserStateTests: XCTestCase {
         try SessionStorage.write(session, to: path)
         XCTAssertEqual(SessionStorage.read(from: path), session)
     }
+    /// Each tab's engine state is a file of its own, written only when it changes, and only one
+    /// whose digest the session names is restored; sessions with it inline still read.
+    func testTabStatesLiveBesideTheSessionAndOnlyTheirOwnRestore() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let path = folder.appendingPathComponent("session.json")
+        let a = SavedTab(url: "https://a.example", title: "A", sessionState: Data(repeating: 1, count: 5000))
+        let b = SavedTab(url: "https://b.example", title: "B", sessionState: Data([2, 3]))
+        try SessionStorage.write(BrowserSession(tabs: [a, b]), to: path)
+        XCTAssertFalse(try String(contentsOf: path, encoding: .utf8).contains("sessionState"), "The states aren't in the session")
+        XCTAssertEqual(SessionStorage.read(from: path)?.tabs, [a, b])
+        let fileA = SessionStorage.stateFile(a.id, for: path), fileB = SessionStorage.stateFile(b.id, for: path)
+        let written = try FileManager.default.attributesOfItem(atPath: fileA.path)[.modificationDate] as? Date
+        Thread.sleep(forTimeInterval: 0.05)
+        var b2 = b; b2.sessionState = Data([4])
+        try SessionStorage.write(BrowserSession(tabs: [a, b2]), to: path)
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: fileA.path)[.modificationDate] as? Date, written, "Unchanged, not written again")
+        // A state file that isn't the one the session names stays unrestored: B opens from its history.
+        try Data([9]).write(to: fileB)
+        XCTAssertNil(SessionStorage.read(from: path)?.tabs[1].sessionState)
+        XCTAssertEqual(SessionStorage.read(from: path)?.tabs[0], a)
+        // A closed tab's state goes with it.
+        try SessionStorage.write(BrowserSession(tabs: [a]), to: path)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileB.path))
+        // A session from before, with its states inline, reads as it did.
+        let encoder = JSONEncoder()
+        try encoder.encode(BrowserSession(tabs: [b])).write(to: path)
+        XCTAssertEqual(SessionStorage.read(from: path)?.tabs, [b])
+    }
     func testCorruptSessionFailsGracefully() throws {
         let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: path) }

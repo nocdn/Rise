@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 public enum AddressResolver {
@@ -126,16 +127,71 @@ public struct BrowserSession: Codable, Equatable {
         peeks = SavedPeek.valid((try? data.decodeIfPresent([SavedPeek].self, forKey: .peeks)) ?? [], tabIDs: tabs.map(\.id))
     }
 }
+/// The session is `session.json`, and each tab's engine state, nearly all of its size, a file of its
+/// own in `Tab States` beside it, written only when it changes. The session names each file by its
+/// digest, so a file that's missing, or left from another time, is never restored: that tab opens
+/// from its saved history instead. Sessions from before keep their state inline, and still read.
 public enum SessionStorage {
-    public static func read(from url: URL) -> BrowserSession? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(BrowserSession.self, from: data)
-    }
     /// Encoded and written in the background, in order, so a save doesn't hold up the main thread.
     public static let writer = DispatchQueue(label: "dev.bartosz.Rise.session-writer", qos: .utility)
+    static func statesFolder(for url: URL) -> URL { url.deletingLastPathComponent().appendingPathComponent("Tab States", isDirectory: true) }
+    static func stateFile(_ id: UUID, for url: URL) -> URL { statesFolder(for: url).appendingPathComponent(id.uuidString + ".state") }
+    static func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+    private struct Stored: Codable {
+        var session: BrowserSession
+        var stateFiles: [String: String]?
+        init(session: BrowserSession, stateFiles: [String: String]?) { self.session = session; self.stateFiles = stateFiles }
+        init(from decoder: Decoder) throws {
+            session = try BrowserSession(from: decoder)
+            stateFiles = try decoder.container(keyedBy: Key.self).decodeIfPresent([String: String].self, forKey: .stateFiles)
+        }
+        func encode(to encoder: Encoder) throws {
+            try session.encode(to: encoder)
+            var container = encoder.container(keyedBy: Key.self)
+            try container.encodeIfPresent(stateFiles, forKey: .stateFiles)
+        }
+        enum Key: String, CodingKey { case stateFiles }
+    }
+    public static func read(from url: URL) -> BrowserSession? {
+        guard let data = try? Data(contentsOf: url), let stored = try? JSONDecoder().decode(Stored.self, from: data) else { return nil }
+        var session = stored.session
+        for index in session.tabs.indices where session.tabs[index].sessionState == nil {
+            let id = session.tabs[index].id
+            guard let digest = stored.stateFiles?[id.uuidString], let state = try? Data(contentsOf: stateFile(id, for: url)),
+                  Self.digest(state) == digest else { continue }
+            session.tabs[index].sessionState = state
+        }
+        return session
+    }
+    /// The digests of the state files last written, so unchanged ones aren't written again.
+    nonisolated(unsafe) private static var written: [String: String] = [:]
+    private static let writtenLock = NSLock()
     public static func write(_ state: BrowserSession, to url: URL) throws {
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(state).write(to: url, options: .atomic)
+        let fileManager = FileManager.default
+        try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let folder = statesFolder(for: url)
+        var session = state, files: [String: String] = [:]
+        for index in session.tabs.indices {
+            guard let data = session.tabs[index].sessionState else { continue }
+            let id = session.tabs[index].id, file = stateFile(id, for: url), digest = Self.digest(data)
+            let known = writtenLock.withLock { written[file.path] }
+            if known != digest || !fileManager.fileExists(atPath: file.path) {
+                try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+                try data.write(to: file, options: .atomic)
+                writtenLock.withLock { written[file.path] = digest }
+            }
+            files[id.uuidString] = digest
+            session.tabs[index].sessionState = nil
+        }
+        // The states first, then the session naming them, so it never names one not yet written.
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        try encoder.encode(Stored(session: session, stateFiles: files)).write(to: url, options: .atomic)
+        // Then the states no tab has any more.
+        let kept = Set(files.keys.map { $0 + ".state" })
+        for name in (try? fileManager.contentsOfDirectory(atPath: folder.path)) ?? [] where name.hasSuffix(".state") && !kept.contains(name) {
+            let file = folder.appendingPathComponent(name)
+            try? fileManager.removeItem(at: file)
+            writtenLock.withLock { written[file.path] = nil }
+        }
     }
 }
