@@ -326,6 +326,8 @@ import RiseCore
     /// macOS's certificate choosers showing for pages that asked for a certificate, by page.
     var clientCertificateChoosers: [ObjectIdentifier: ClientCertificateChooser] = [:]
     var lastSaved: BrowserSession?
+    /// An update pages' changes are waiting for (`BrowserUpdates`).
+    var pendingUpdate: PendingUpdate?
     /// The tabs, in order, as tab sync last had them.
     var syncedTabOrder: [UUID] = []
     var tabSync: SharedTabsSync?
@@ -914,6 +916,9 @@ import RiseCore
         suggestionFavicons.remember(tab)
         tab.onChange = { [weak self, weak tab] in
             guard let self, let tab else { return }
+            // What the page reports as it loads waits for the frame's update, once however many
+            // come; progress alone only moves its loading line and its row's.
+            if let page = tab.reportingPageChange, page.progressOnly { self.setNeedsUpdate(.progress); return }
             self.suggestionFavicons.remember(tab)
             self.siteSearchLearner.addressChanged(tab.page.view, url: tab.page.url)
             self.currencyReplacement.pageChanged(tab)
@@ -922,7 +927,7 @@ import RiseCore
             if !tab.page.isLoading, let url = tab.page.url, let title = tab.page.title {
                 self.browsingHistory.updateTitle(self.historyTitle(title, url: url), for: url)
             }
-            self.update()
+            if tab.reportingPageChange != nil { self.setNeedsUpdate(.full) } else { self.update() }
         }
         tab.onThumbnailChange = { [weak self, weak tab] in
             if let tab { self?.tabPictures.keep(tab) }
@@ -992,6 +997,7 @@ import RiseCore
         findBar.reattached()
     }
     func update() {
+        pendingUpdate = nil
         syncedTabMetadata?.update(tabs: tabs)
         extensionTabsChanged()
         reconcileFullscreenSidebar()
@@ -1305,6 +1311,8 @@ import RiseCore
     /// cache is, so a page's load bar and Reload button don't stall while they're written.
     private func save(waiting: Bool) {
         saveWork?.cancel(); saveWork = nil
+        // Quitting keeps each page exactly as it is, scrolled where it is.
+        if waiting { for tab in tabs { (tab.page as? ChromiumPage)?.forgetSavedState() } }
         let saved = tabs.map(\.saved)
         if !isApplyingSharedTabs, let sync = tabSync { syncedTabOrder = tabs.map(\.id); sync.capture(sharedTabs(from: saved)) }
         if waiting { tabSync?.flush() }
@@ -1327,7 +1335,10 @@ import RiseCore
                 Task { @MainActor in self?.lastSaved = nil }
             }
         }
-        if waiting { SessionStorage.writer.sync(execute: write) } else { SessionStorage.writer.async(execute: write) }
+        if waiting {
+            SessionStorage.writer.sync(execute: write)
+            BackgroundFiles.flush(); archivedTabs.flush(); tabPictures.flush()
+        } else { SessionStorage.writer.async(execute: write) }
     }
 }
 
