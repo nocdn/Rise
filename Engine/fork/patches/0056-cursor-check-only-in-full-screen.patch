@@ -1,0 +1,34 @@
+diff --git a/content/app_shim_remote_cocoa/render_widget_host_view_cocoa.mm b/content/app_shim_remote_cocoa/render_widget_host_view_cocoa.mm
+index 4b3d4e8..919d7c9 100644
+--- a/content/app_shim_remote_cocoa/render_widget_host_view_cocoa.mm
++++ b/content/app_shim_remote_cocoa/render_widget_host_view_cocoa.mm
+@@ -22,6 +22,7 @@
+ #include "base/numerics/safe_conversions.h"
+ #include "base/strings/string_util.h"
+ #include "base/strings/sys_string_conversions.h"
++#include "base/time/time.h"
+ #include "base/trace_event/trace_event.h"
+ #include "components/input/web_input_event_builders_mac.h"
+ #include "components/remote_cocoa/app_shim/immersive_mode_controller_cocoa.h"
+@@ -1172,9 +1173,19 @@ - (void)mouseEvent:(NSEvent*)theEvent {
+   if (type == NSEventTypeMouseMoved || type == NSEventTypeLeftMouseDragged ||
+       type == NSEventTypeRightMouseDragged ||
+       type == NSEventTypeOtherMouseDragged) {
++    // Rise: asking the window server for the system cursor on every move took
++    // about 3% of the main thread while the pointer moved over a page. The
++    // reset it catches comes from the full-screen toolbar window, so it's
++    // checked only in full screen, and at most ten times a second.
++    static base::TimeTicks rise_last_cursor_check;
++    const base::TimeTicks rise_now = base::TimeTicks::Now();
+     if ([self shouldChangeCurrentCursor] &&
+-        [NSCursor currentSystemCursor] != _currentCursor) {
+-      [_currentCursor set];
++        (self.window.styleMask & NSWindowStyleMaskFullScreen) &&
++        rise_now - rise_last_cursor_check >= base::Milliseconds(100)) {
++      rise_last_cursor_check = rise_now;
++      if ([NSCursor currentSystemCursor] != _currentCursor) {
++        [_currentCursor set];
++      }
+     }
+   }
+ 
