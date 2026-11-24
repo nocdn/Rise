@@ -8,8 +8,8 @@ enum RiseTheme: String, CaseIterable {
     /// window's material, Kero's tabs, and a page bar over the page.
     case neutral, dark
     var isLight: Bool { self == .neutral }
-    /// Kero's sidebar colours, which its Plain wash is: a cool grey, and near-black in the dark.
-    static let plainBackground = NSColor(hex: 0xECEEF4), plainDarkBackground = NSColor(hex: 0x141418)
+    /// The window behind the page: a light grey with a trace of cool, and near-black in the dark.
+    static let plainBackground = NSColor(hex: 0xF2F2F4), plainDarkBackground = NSColor(hex: 0x141418)
     var background: NSColor { self == .dark ? Self.plainDarkBackground : Self.plainBackground }
     var pill: NSColor { NSColor(hex: self == .dark ? 0x404040 : 0xDEDEDE) }
     var addressFill: NSColor { isLight ? NSColor(hex: 0xE1E1E1) : pill.blended(withFraction: 0.03, of: .white)! }
