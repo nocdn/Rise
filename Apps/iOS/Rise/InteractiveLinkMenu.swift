@@ -45,6 +45,64 @@ import ObjectiveC
         return result
     }
 
+    /// Refreshing a native row can reset both the list offset and the platter's
+    /// expanded position. Transfer them to the updated menu in the same transaction.
+    static func updateVisibleMenu(on interaction: UIContextMenuInteraction,
+                                  _ update: @escaping (UIMenu) -> UIMenu) -> Bool {
+        let controller = visibleMenuController(for: interaction)
+        let menu = controller.flatMap { object($0, "menuView") }
+        let scroll = menu.flatMap(menuScrollView)
+        let pan = controller.flatMap { object($0, "platterPanController") }
+        let gesture = pan.flatMap { object($0, "panGestureRecognizer") } as? UIPanGestureRecognizer
+        guard scroll?.isTracking != true, scroll?.isDragging != true, scroll?.isDecelerating != true,
+              gesture?.state != .began, gesture?.state != .changed else { return false }
+
+        let offset = scroll?.contentOffset
+        let detent = pan.flatMap(currentDetent)
+        NativeMenuLoading.withoutAnimation {
+            interaction.updateVisibleMenu(update)
+            if let controller, let pan = object(controller, "platterPanController"),
+               let detent, let current = currentDetent(in: pan), current != detent {
+                restoreDetent(detent, in: pan)
+            }
+            if let offset, let controller, let menu = object(controller, "menuView"),
+               let updatedScroll = menuScrollView(in: menu), updatedScroll.contentOffset != offset {
+                updatedScroll.setContentOffset(offset, animated: false)
+            }
+        }
+        return true
+    }
+
+    private static func visibleMenuController(for interaction: UIContextMenuInteraction) -> NSObject? {
+        guard let presentations = object(interaction, "presentationsByIdentifier") as? [AnyHashable: NSObject] else { return nil }
+        let visible = presentations.values.compactMap { object($0, "uiController") }.filter {
+            (object($0, "menuView") as? UIView)?.window != nil
+        }
+        return visible.count == 1 ? visible.first : nil
+    }
+
+    private static func menuScrollView(in menu: NSObject) -> UIScrollView? {
+        guard let list = object(menu, "currentListView") else { return nil }
+        return object(list, "collectionView") as? UIScrollView
+    }
+
+    private static func currentDetent(in pan: NSObject) -> Int? {
+        guard let ivar = class_getInstanceVariable(type(of: pan), "_currentDetentIndex"),
+              let encoding = ivar_getTypeEncoding(ivar), String(cString: encoding) == "Q",
+              let detents = object(pan, "detents") as? NSArray else { return nil }
+        let index = Unmanaged.passUnretained(pan).toOpaque().load(fromByteOffset: ivar_getOffset(ivar), as: UInt.self)
+        return index < UInt(detents.count) ? Int(index) : nil
+    }
+
+    private static func restoreDetent(_ detent: Int, in pan: NSObject) {
+        let selector = NSSelectorFromString("moveToDetentPosition:updateScrubPath:")
+        guard let detents = object(pan, "detents") as? NSArray, detent < detents.count,
+              let method = class_getInstanceMethod(type(of: pan), selector),
+              let encoding = method_getTypeEncoding(method), String(cString: encoding) == "v28@0:8q16B24" else { return }
+        typealias Move = @convention(c) (NSObject, Selector, Int, Bool) -> Void
+        unsafeBitCast(method_getImplementation(method), to: Move.self)(pan, selector, detent, false)
+    }
+
     private static func install(on interaction: UIContextMenuInteraction) {
         guard let originalClass = object_getClass(interaction),
               !NSStringFromClass(originalClass).hasPrefix("RiseInteractiveLinkMenu_"),
@@ -73,12 +131,14 @@ import ObjectiveC
         object_setClass(interaction, subclass)
     }
 
+    private static func object(_ source: NSObject, _ name: String) -> NSObject? {
+        let selector = NSSelectorFromString(name)
+        guard let method = class_getInstanceMethod(type(of: source), selector),
+              let encoding = method_getTypeEncoding(method), String(cString: encoding).hasPrefix("@") else { return nil }
+        return source.perform(selector)?.takeUnretainedValue() as? NSObject
+    }
+
     private static func enablePreview(in presentation: NSObject) {
-        func object(_ source: NSObject, _ name: String) -> NSObject? {
-            let selector = NSSelectorFromString(name)
-            guard source.responds(to: selector) else { return nil }
-            return source.perform(selector)?.takeUnretainedValue() as? NSObject
-        }
         guard let controller = object(presentation, "uiController"),
               let originalStyle = object(controller, "menuStyle") as? NSCopying,
               let style = originalStyle.copy(with: nil) as? NSObject,

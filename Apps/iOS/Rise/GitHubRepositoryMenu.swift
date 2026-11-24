@@ -12,6 +12,7 @@ import WebKit
     private let store: WKWebsiteDataStore
     private var lookup: Task<Void,Never>?
     private var cancelled = false
+    private var refreshScheduled = false
     private(set) var status: MobileGitHubStarrer.Status?
     private(set) var isPresented = false
 
@@ -63,10 +64,12 @@ import WebKit
         guard self.page === page else { return }
         isPresented = true
         // A fast lookup may finish before UIKit has installed its menu view.
-        DispatchQueue.main.async { [weak self] in self?.refresh() }
+        if status != nil {
+            DispatchQueue.main.async { [weak self] in self?.refresh() }
+        }
     }
     private func refresh() {
-        guard !cancelled, isPresented, let page else { return }
+        guard !cancelled, isPresented, !refreshScheduled, let page else { return }
         func update(_ menu: UIMenu) -> UIMenu {
             if menu.identifier == Self.sectionIdentifier { return element() }
             return menu.replacingChildren(menu.children.map { child in
@@ -77,7 +80,15 @@ import WebKit
             })
         }
         for interaction in InteractiveLinkMenu.interactions(in: page) {
-            NativeMenuLoading.withoutAnimation { interaction.updateVisibleMenu(update) }
+            if !InteractiveLinkMenu.updateVisibleMenu(on: interaction, update) {
+                refreshScheduled = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                    guard let self else { return }
+                    refreshScheduled = false
+                    refresh()
+                }
+                return
+            }
         }
     }
     func cancel() {

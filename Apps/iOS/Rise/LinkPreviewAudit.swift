@@ -26,14 +26,14 @@ import ObjectiveC
                 try check(name, false)
             }
             do {
-                let fixture = try LinkPreviewFixture(); try await fixture.start()
+                let automatic = ProcessInfo.processInfo.arguments.contains("-RiseLinkPreviewAutoAudit")
+                let fixture = try LinkPreviewFixture(holdArticle: automatic); try await fixture.start()
                 defer { fixture.stop() }
                 let source = browser.webView
                 source.load(URLRequest(url: fixture.url.appendingPathComponent("home")))
                 try await wait("source-page-ready") { try await source.evaluateJavaScript("document.querySelector('#preview-link') !== null") as? Bool == true }
                 let originalURL = source.url, count = browser.tabs.count
                 try "Ready".write(to: folder.appendingPathComponent("ready.txt"), atomically: true, encoding: .utf8)
-                let automatic = ProcessInfo.processInfo.arguments.contains("-RiseLinkPreviewAutoAudit")
                 var automaticMenu: LinkPreviewAuditMenu?
                 defer { automaticMenu?.host.removeFromSuperview() }
                 if automatic {
@@ -53,6 +53,21 @@ import ObjectiveC
                 // The UI check uses an actual native long press and swipes through Agent Desktop.
                 try await wait("native-menu-has-a-live-preview", seconds: 180) { browser.linkPreview?.viewIfLoaded?.window != nil }
                 let preview = browser.linkPreview!
+                if let automaticMenu {
+                    try await wait("preview-request-is-loading") { preview.page.isLoading }
+                    try await Task.sleep(for: .milliseconds(650))
+                    let scrolled = try automaticMenu.expandAndScroll(preview)
+                    fixture.releaseArticle()
+                    try await wait("scrolled-preview-finishes-loading") { !preview.page.isLoading }
+                    try check("loading-keeps-the-preview-and-menu-position", scrolled.matches(automaticMenu.geometry(preview)))
+                    try check("refresh-updates-the-native-menu", InteractiveLinkMenu.updateVisibleMenu(on: automaticMenu.interaction) { menu in
+                        menu.replacingChildren(menu.children.dropLast() + [UIAction(title: "Star repository") { _ in }])
+                    })
+                    try check("refresh-keeps-the-preview-and-menu-position", scrolled.matches(automaticMenu.geometry(preview)))
+                    try await Task.sleep(for: .milliseconds(500))
+                    try check("the-menu-stays-scrolled-after-refresh", scrolled.matches(automaticMenu.geometry(preview)))
+                    try check("the-updated-action-remains-visible", automaticMenu.isActionVisible("Star repository", in: preview))
+                }
                 try await wait("preview-article-loaded") { try await preview.page.evaluateJavaScript("document.querySelector('#counter') !== null") as? Bool == true }
                 try check("preview-shares-source-data-store", preview.page.configuration.websiteDataStore === source.configuration.websiteDataStore)
                 try check("preview-shares-source-session-cookie", try await preview.page.evaluateJavaScript("document.cookie.includes('rise_preview=approved')") as? Bool == true)
@@ -112,6 +127,72 @@ import ObjectiveC
         super.init()
         host.addInteraction(interaction)
     }
+    struct Geometry {
+        let preview: CGRect
+        let menu: CGRect
+        let offset: CGPoint
+
+        func matches(_ other: Geometry?) -> Bool {
+            guard let other else { return false }
+            let differences = [
+                preview.minX - other.preview.minX, preview.minY - other.preview.minY,
+                preview.width - other.preview.width, preview.height - other.preview.height,
+                menu.minX - other.menu.minX, menu.minY - other.menu.minY,
+                menu.width - other.menu.width, menu.height - other.menu.height,
+                offset.x - other.offset.x, offset.y - other.offset.y
+            ]
+            return differences.allSatisfy { abs($0) < 0.5 }
+        }
+    }
+    private func view(in root: UIView, matching matches: (UIView) -> Bool) -> UIView? {
+        if matches(root) { return root }
+        for child in root.subviews {
+            if let match = view(in: child, matching: matches) { return match }
+        }
+        return nil
+    }
+    private func actionList(in window: UIWindow) -> UICollectionView? {
+        guard let list = view(in: window, matching: { NSStringFromClass(type(of: $0)) == "_UIContextMenuListView" }) else { return nil }
+        // UIKit temporarily adds a second collection view during a row replacement.
+        return view(in: list, matching: { $0 is UICollectionView }) as? UICollectionView
+    }
+    func geometry(_ preview: LinkPreviewController) -> Geometry? {
+        guard let window = preview.page.window, let list = actionList(in: window),
+              let menu = view(in: window, matching: { NSStringFromClass(type(of: $0)) == "_UIContextMenuView" }) else { return nil }
+        return Geometry(preview: preview.page.convert(preview.page.bounds, to: window),
+                        menu: menu.convert(menu.bounds, to: window), offset: list.contentOffset)
+    }
+    func isActionVisible(_ title: String, in preview: LinkPreviewController) -> Bool {
+        guard let window = preview.page.window, let list = actionList(in: window),
+              let label = view(in: list, matching: { ($0 as? UILabel)?.text == title }) else { return false }
+        return window.bounds.contains(label.convert(label.bounds, to: window))
+    }
+    func expandAndScroll(_ preview: LinkPreviewController) throws -> Geometry {
+        func get(_ obj: NSObject, _ name: String) -> NSObject? {
+            let selector = NSSelectorFromString(name)
+            return obj.responds(to: selector) ? obj.perform(selector)?.takeUnretainedValue() as? NSObject : nil
+        }
+        let moveSelector = NSSelectorFromString("moveToDetentPosition:updateScrubPath:")
+        guard let before = geometry(preview), let window = preview.page.window,
+              let list = actionList(in: window),
+              let presentations = get(interaction, "presentationsByIdentifier") as? NSDictionary,
+              let presentation = presentations.allValues.first as? NSObject,
+              let controller = get(presentation, "uiController"),
+              let pan = get(controller, "platterPanController"),
+              pan.responds(to: moveSelector) else { throw NSError(domain: "Native menu layout unavailable", code: 1) }
+        typealias Move = @convention(c) (NSObject, Selector, Int, Bool) -> Void
+        let move = unsafeBitCast(pan.method(for: moveSelector), to: Move.self)
+        // Choose the same expanded position reached by swiping up in the action list.
+        NativeMenuLoading.withoutAnimation { move(pan, moveSelector, 0, false) }
+        let inset = list.adjustedContentInset
+        let bottom = list.contentSize.height + inset.bottom - list.bounds.height
+        list.setContentOffset(CGPoint(x: list.contentOffset.x, y: bottom), animated: false)
+        guard let after = geometry(preview), after.preview.height < before.preview.height,
+              after.menu.minY < before.menu.minY, after.offset.y > before.offset.y else {
+            throw NSError(domain: "Native menu did not expand and scroll", code: 1)
+        }
+        return after
+    }
     func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
         let configuration = browser.linkPreviewConfiguration(for: url, in: source)
         InteractiveLinkMenu.setEnabled(true, on: interaction)
@@ -122,6 +203,7 @@ import ObjectiveC
         [UIAction(title: "Open Link", image: UIImage(systemName: "arrow.up.right.square")) { _ in },
          UIAction(title: "Copy Link", image: UIImage(systemName: "doc.on.doc")) { _ in },
          UIAction(title: "Share…", image: UIImage(systemName: "square.and.arrow.up")) { _ in }]
+            + (1...9).map { index in UIAction(title: "Test action \(index)") { _ in } }
     }
     func contextMenuInteraction(_ interaction: UIContextMenuInteraction, willDisplayMenuFor configuration: UIContextMenuConfiguration, animator: (any UIContextMenuInteractionAnimating)?) {
         browser.beginLinkContextMenu(in: source)
@@ -135,7 +217,19 @@ private final class LinkPreviewFixture: @unchecked Sendable {
     private let listener: NWListener
     private let queue = DispatchQueue(label: "Rise.LinkPreviewAudit.HTTP")
     var url: URL { URL(string: "http://127.0.0.1:\(listener.port!.rawValue)/")! }
-    init() throws { listener = try NWListener(using: .tcp, on: .any) }
+    private var holdArticle: Bool
+    private var articleResponse: (() -> Void)?
+    init(holdArticle: Bool) throws {
+        listener = try NWListener(using: .tcp, on: .any)
+        self.holdArticle = holdArticle
+    }
+    func releaseArticle() {
+        queue.async {
+            self.holdArticle = false
+            self.articleResponse?()
+            self.articleResponse = nil
+        }
+    }
     func start() async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             listener.stateUpdateHandler = { [weak self] state in
@@ -152,8 +246,8 @@ private final class LinkPreviewFixture: @unchecked Sendable {
     func stop() { listener.cancel() }
     private func serve(_ connection: NWConnection) {
         connection.start(queue: queue)
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 16384) { data, _, _, _ in
-            guard let data else { connection.cancel(); return }
+        connection.receive(minimumIncompleteLength: 1, maximumLength: 16384) { [weak self] data, _, _, _ in
+            guard let self, let data else { connection.cancel(); return }
             let request = String(decoding: data, as: UTF8.self)
             let article = request.hasPrefix("GET /article")
             let content = article ? """
@@ -169,7 +263,9 @@ private final class LinkPreviewFixture: @unchecked Sendable {
             let html = "<meta name=viewport content='width=device-width,initial-scale=1'><body style='font:18px -apple-system;padding:20px;background:#f5f4ef;color:#202020'>\(content)</body>"
             let body = Data(html.utf8)
             let header = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(body.count)\r\nSet-Cookie: rise_preview=approved; Path=/; SameSite=Lax\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
-            connection.send(content: Data(header.utf8)+body, completion: .contentProcessed { _ in connection.cancel() })
+            let send = { connection.send(content: Data(header.utf8)+body, completion: .contentProcessed { _ in connection.cancel() }) }
+            if article, holdArticle { articleResponse = send }
+            else { send() }
         }
     }
 }
