@@ -131,7 +131,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private let dimming = PanelDimming()
     /// With Find open, the page under it scrolls and zooms; a tap on it still closes Find.
     private lazy var findPageTap = UITapGestureRecognizer(target: self, action: #selector(closePanelOnTap))
-    private lazy var tint = PageEdgeTint { [weak self] color in self?.setTopColor(color, animated: true) }
+    private(set) lazy var tint = PageEdgeTint { [weak self] color in self?.setTopColor(color, animated: true) }
     private(set) lazy var pullToReload = PullToReload { [weak self] in self?.reloadPage() }
     /// Only the main page has one; Peek pages are closed and opened by their handle.
     let bottomBar = BottomBar()
@@ -709,6 +709,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         LaunchSignposts.event("Browser appeared")
+        // The screenshot editor's Full Page: the whole page, from WebKit (FullPageScreenshot.swift).
+        // Only the window's own browser: it gives a Peek's page when one's open.
+        if allowsPeek { view.window?.windowScene?.screenshotService?.delegate = self }
         startPendingPanelMotion()
         updateAIAvailability()
         if allowsPeek { setUpDownloads() }
@@ -2931,11 +2934,15 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         let items: [Any] = webView.url == nil ? [url] : [url, webView.viewPrintFormatter()]
         // A page that's a file, such as an MP3, can be saved to Files, as in Safari's sheet.
         let page = webView, file = fileDocuments.document(for: page)
-        let share = UIActivityViewController(activityItems: items, applicationActivities: file == nil ? nil : [SaveToFilesActivity()])
+        // A web page can be saved whole, as a PDF or one tall image (FullPageScreenshot.swift).
+        let activities = file != nil ? [SaveToFilesActivity()] : FullPage.canCapture(page) ? fullPageActivities : []
+        let share = UIActivityViewController(activityItems: items, applicationActivities: activities)
         share.completionWithItemsHandler = { [weak self, weak page] type, completed, _, _ in
             DispatchQueue.main.async {
                 self?.applyPendingChanges()
-                if completed, type == SaveToFilesActivity.type, let page, page === self?.webView { self?.saveFile(on: page) }
+                guard completed, let type, let page, page === self?.webView else { return }
+                if type == SaveToFilesActivity.type { self?.saveFile(on: page) }
+                if type == SaveFullPagePDFActivity.type || type == SaveFullPageImageActivity.type { self?.saveFullPage(type, of: page) }
             }
         }
         share.popoverPresentationController?.sourceView = bottomBar.moreButton

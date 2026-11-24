@@ -84,6 +84,12 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             else { PageTranslationAudit.run(in: controller) }
             return
         }
+        if ProcessInfo.processInfo.arguments.contains(FullPageScreenshotAudit.argument) {
+            let controller = BrowserViewController(startURL: nil, websiteDataStore: .nonPersistent())
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            FullPageScreenshotAudit.run(in: controller)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains(AutofillAudit.argument) {
             let controller = BrowserViewController(startURL: nil, websiteDataStore: .nonPersistent())
             window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()

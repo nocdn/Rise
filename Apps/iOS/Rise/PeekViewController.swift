@@ -14,7 +14,7 @@ final class PeekViewController: UIViewController, UIViewControllerTransitioningD
     let header = UIView()
     private let onExpand: @MainActor (WKWebView, UIColor?) -> Void
     private var headerHeight = PeekViewController.headerHeight
-    private lazy var tint = PageEdgeTint { [weak self] color in self?.setHeaderColor(color) }
+    private(set) lazy var tint = PageEdgeTint { [weak self] color in self?.setHeaderColor(color) }
     /// The colour of the strip above the page, which continues the page's top edge.
     var topColor: UIColor? { tint.color }
 
