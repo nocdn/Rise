@@ -43,9 +43,15 @@ import RiseCore
     var needsBlockingReload = false
     /// Set by a hard reload until the tab stops loading, so its progress shows in red.
     var isHardReloading = false
-    var favicon: NSImage? { didSet { faviconData = FaviconSnapshot.encode(favicon) } }
+    var favicon: NSImage? { didSet { if !keepsSavedIcon { faviconData = FaviconSnapshot.encode(favicon) } } }
     private(set) var faviconData: Data?
-    var darkFavicon: NSImage? { didSet { darkFaviconData = FaviconSnapshot.encode(darkFavicon) } }
+    var darkFavicon: NSImage? { didSet { if !keepsSavedIcon { darkFaviconData = FaviconSnapshot.encode(darkFavicon) } } }
+    private var keepsSavedIcon = false
+    /// An icon with the PNG already kept for it, as the suggestion icons have.
+    func setFavicon(_ image: NSImage, data: Data, dark: Bool = false) {
+        keepsSavedIcon = true; defer { keepsSavedIcon = false }
+        if dark { darkFavicon = image; darkFaviconData = data } else { favicon = image; faviconData = data }
+    }
     private(set) var darkFaviconData: Data?
     func favicon(for theme: RiseTheme) -> NSImage? { theme == .dark ? darkFavicon ?? favicon : favicon }
     var iconOrigin: String?
@@ -70,7 +76,14 @@ import RiseCore
     private var thumbnailCaptureInFlight = false
     /// Makes each tab's page: Chromium's, or a blank one where the engine isn't running, as in unit tests.
     static func makePage() -> WebPage { ChromiumEngine.isRunning ? ChromiumPage() : BlankPage() }
-    /// Given `page`, the tab shows that page, as a window a site opened.
+    /// What a tab restored from a session, or put to sleep, holds until it loads: a stand-in that
+    /// costs no renderer process (`DormantPage`). Without the engine, as in unit tests, a blank page.
+    static func makeWaitingPage() -> WebPage { ChromiumEngine.isRunning ? DormantPage() : BlankPage() }
+    /// The tab took a real page in its stand-in's place, which needs Rise's scripts and handlers.
+    var onWake: (() -> Void)?
+    var isDormant: Bool { page is DormantPage }
+    /// Given `page`, the tab shows that page, as a window a site opened. A tab restored from a
+    /// session waits with a stand-in until it's shown or loaded; a new one gets its page at once.
     init(saved: SavedTab? = nil, page: WebPage? = nil) {
         id = saved?.id ?? UUID(); customTitle = saved?.customTitle; title = saved?.customTitle ?? saved?.title ?? "New Tab"
         pinned = saved?.pinned ?? false; developer = saved?.developer ?? false
@@ -79,11 +92,12 @@ import RiseCore
         visitedAddress = BrowsingHistory.key(requestedURL)
         if let saved, let data = saved.sessionState { restoredState = (saved.url, data) }
         if let saved, let history = saved.navigationHistory?.validated(for: saved.url) { restoredHistory = (saved.url, history) }
-        self.page = page ?? Self.makePage()
+        self.page = page ?? (saved != nil ? Self.makeWaitingPage() : Self.makePage())
         super.init()
         if let data = saved?.faviconData,
            let origin = saved?.faviconOrigin, origin == SitePermissions.origin(requestedURL),
            let image = FaviconSnapshot.decode(data) {
+            keepsSavedIcon = true; defer { keepsSavedIcon = false }
             iconOrigin = origin; favicon = image; faviconData = data
             if let darkData = saved?.darkFaviconData, let darkImage = FaviconSnapshot.decode(darkData) {
                 darkFavicon = darkImage; darkFaviconData = darkData
@@ -92,6 +106,7 @@ import RiseCore
         observePage()
     }
     private func observePage() {
+        (page as? DormantPage)?.onLoad = { [weak self] url in self?.load(url) }
         page.onChange = { [weak self] change in
             guard let self else { return }
             let report = { (progressOnly: Bool) in
@@ -134,6 +149,14 @@ import RiseCore
         changed(); other.changed()
     }
     var url: URL? { page.url ?? requestedURL }
+    private var pullRequestAt: (url: URL?, request: PullRequest?)?
+    /// The pull or merge request the tab shows, read from its address once per address: the
+    /// sidebar asks for every tab at every update.
+    var pullRequest: PullRequest? {
+        let url = url
+        if let pullRequestAt, pullRequestAt.url == url { return pullRequestAt.request }
+        let request = PullRequest(url: url); pullRequestAt = (url, request); return request
+    }
     var saved: SavedTab {
         let history = navigationHistory
         let savedURL = history?.current.flatMap { URL(string: $0.url) } ?? url
@@ -161,7 +184,28 @@ import RiseCore
         guard !value.isEmpty else { return }
         customTitle = value; title = value; onChange?()
     }
+    /// Puts a real page where the stand-in is, in its place among its siblings and at its frame, as
+    /// a Peek's card or the page area holds it, before it loads anything.
+    func wake() {
+        guard let dormant = page as? DormantPage else { return }
+        let next = Self.makePage()
+        dormant.onChange = nil; dormant.onLoad = nil
+        let view = dormant.view
+        if let superview = view.superview {
+            let focused = view.window?.firstResponder === view
+            next.view.frame = view.frame; next.view.autoresizingMask = view.autoresizingMask
+            superview.replaceSubview(view, with: next.view)
+            if focused { next.view.window?.makeFirstResponder(next.view) }
+        }
+        page = next
+        // Under a Peek, it stays out of the pointer's way as the stand-in was.
+        page.isCovered = dormant.isCovered
+        if isAudioMuted { page.setAudioMuted(true) }
+        observePage()
+        onWake?()
+    }
     func load(_ url: URL) {
+        wake()
         hasAttemptedNavigation = true
         requestedURL = url
         if AddressResolver.isLocal(url) { developer = true }
@@ -196,7 +240,7 @@ import RiseCore
         requestedURL = url; hasAttemptedNavigation = false
         backgroundPictureURL = nil; heldSinceBackgroundPicture = false; leftWithEdits = false
         old.onChange = nil; old.stopLoading(); old.view.removeFromSuperview()
-        page = Self.makePage()
+        page = Self.makeWaitingPage()
         if isAudioMuted { page.setAudioMuted(true) }
         observePage()
         return old
@@ -222,11 +266,30 @@ import RiseCore
         let capturedURL = url, page = page
         Task { [weak self] in
             let image = await page.snapshot(width: 320)
+            var picture: NSImage?
+            if let image { picture = await Self.scaledPicture(image) }
             guard let self else { return }
             self.thumbnailCaptureInFlight = false
-            guard self.url == capturedURL, let image, image.size.width > 0 else { return }
-            self.thumbnail = image; self.onThumbnailChange?()
+            guard self.url == capturedURL, let picture, picture.size.width > 0 else { return }
+            self.thumbnail = picture; self.onThumbnailChange?()
         }
+    }
+    /// The page at the width pictures are kept at (`TabPictureStore.pixelWidth`), made off the main thread.
+    static func scaledPicture(_ image: NSImage) async -> NSImage? {
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
+        let size = image.size
+        guard cgImage.width > TabPictureStore.pixelWidth else { return image }
+        nonisolated(unsafe) let source = cgImage
+        let scaled: CGImage? = await Task.detached(priority: .utility) {
+            let width = TabPictureStore.pixelWidth, height = max(1, Int((Double(source.height)*Double(width)/Double(source.width)).rounded()))
+            guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+                  let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+            context.interpolationQuality = .high
+            context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
+            return context.makeImage()
+        }.value
+        return scaled.map { NSImage(cgImage: $0, size: size) }
     }
     func updateIcon() {
         let origin = SitePermissions.origin(url)

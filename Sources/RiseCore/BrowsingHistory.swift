@@ -69,7 +69,7 @@ public final class BrowsingHistory {
     }
     /// Local mutations only. Receiving a remote snapshot never counts as a visit.
     public var onChange: (() -> Void)?
-    private struct Storage: Codable {
+    fileprivate struct Storage: Codable {
         var deviceID = UUID()
         var clock: Int64 = 0
         var snapshot = SharedHistorySnapshot()
@@ -83,6 +83,38 @@ public final class BrowsingHistory {
     var snapshot: SharedHistorySnapshot { storage.snapshot }
     private var dirty = false
 
+    /// The saved history, read and decoded on another thread while the browser builds its window;
+    /// the history made from it waits for it, if it must.
+    public final class Preload: @unchecked Sendable {
+        public let storageURL: URL
+        private let ready = DispatchSemaphore(value: 0)
+        fileprivate var decoded: (storage: Storage, entries: [HistoryEntry])?
+        public init(storageURL: URL) {
+            self.storageURL = storageURL
+            DispatchQueue.global(qos: .userInitiated).async { [self] in
+                if let data = try? Data(contentsOf: storageURL), data.count <= 64_000_000, var saved = try? JSONDecoder().decode(Storage.self, from: data) {
+                    saved.snapshot = .init().merging(saved.snapshot)
+                    saved.clock = max(saved.clock, saved.snapshot.maximumClock)
+                    decoded = (saved, saved.snapshot.entries)
+                }
+                ready.signal()
+            }
+        }
+        fileprivate func wait() -> (storage: Storage, entries: [HistoryEntry])? { ready.wait(); ready.signal(); return decoded }
+    }
+    /// As `init(storageURL:)`, with what `preload` read; an older file it couldn't read is read here.
+    public convenience init(preloaded preload: Preload) {
+        if let decoded = preload.wait() {
+            self.init(storageURL: preload.storageURL, decoded: decoded)
+        } else {
+            self.init(storageURL: preload.storageURL)
+        }
+    }
+    private init(storageURL: URL, decoded: (storage: Storage, entries: [HistoryEntry])) {
+        self.storageURL = storageURL
+        storage = decoded.storage
+        entries = decoded.entries
+    }
     public init(storageURL: URL) {
         self.storageURL = storageURL
         if let data = try? Data(contentsOf: storageURL), data.count <= 64_000_000 {

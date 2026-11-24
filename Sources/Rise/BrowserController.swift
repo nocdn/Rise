@@ -133,7 +133,10 @@ import RiseCore
     var isArchivingTabs = false
     /// A pinned tab ⌘W was pressed in, and until when a second press closes it.
     var pinnedCloseRequest: (id: UUID, until: Date)?
-    let browsingHistory: BrowsingHistory
+    /// Read on another thread from the start of `init`, while the window is built; first used as the
+    /// selected tab loads.
+    private let historyPreload: BrowsingHistory.Preload
+    lazy var browsingHistory = BrowsingHistory(preloaded: historyPreload)
     let siteSearchLearner: SiteSearchLearner
     let suggestionFavicons: SuggestionFavicons
     /// Control-Tab's card pictures, kept across launches.
@@ -326,6 +329,7 @@ import RiseCore
     /// macOS's certificate choosers showing for pages that asked for a certificate, by page.
     var clientCertificateChoosers: [ObjectIdentifier: ClientCertificateChooser] = [:]
     var lastSaved: BrowserSession?
+    let launchedAt = Date()
     /// An update pages' changes are waiting for (`BrowserUpdates`).
     var pendingUpdate: PendingUpdate?
     /// The tabs, in order, as tab sync last had them.
@@ -373,8 +377,8 @@ import RiseCore
         youTubeAutoplay = YouTubeAutoplay(preferences: preferences)
         let sessionURL = sessionURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Rise/session.json")
         self.sessionURL = sessionURL
+        historyPreload = BrowsingHistory.Preload(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("history.json"))
         paletteCommandUsage = PaletteCommandUsage(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("command-usage.json"))
-        browsingHistory = BrowsingHistory(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("history.json"))
         siteSearchLearner = SiteSearchLearner(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("searches.json"))
         suggestionFavicons = SuggestionFavicons(storageURL: sessionURL.deletingLastPathComponent().appendingPathComponent("suggestion-icons.json"))
         tabPictures = TabPictureStore(folder: sessionURL.deletingLastPathComponent().appendingPathComponent("Tab Pictures"))
@@ -506,17 +510,23 @@ import RiseCore
             // Each tab's card picture from last time, so Control-Tab needn't load its page for one.
             for tab in tabs { tab.thumbnail = tabPictures.picture(for: tab) }
             tabPictures.keepOnly(Set(tabs.map(\.id)))
+            if ChromiumEngine.isRunning { tabPictures.shrinkOldPictures() }
             // The metadata queue fills dormant pages' missing titles and icons in bounded batches.
             splitGroups = saved.splitGroups
             restorePeeks(saved.peeks)
             selectedID = saved.selectedID.flatMap { id in tabs.contains { $0.id == id } ? id : nil } ?? tabs.first?.id
         }
-        if let selectedID { select(selectedID) }
-        update(); layoutChrome()
-        if syncTabs { startTabSync() }
+        if let selectedID { select(selectedID) } else { update(); layoutChrome() }
+        // Tab sync, and the archive it checks, read 8 MB between them: after the window's first frame.
+        if syncTabs { DispatchQueue.main.asyncAfter(deadline: .now()+0.25) { [weak self] in self?.startTabSync() } }
         startTabSleep()
         // History made ready to type against once launch has settled, not at the first keystroke.
         DispatchQueue.main.asyncAfter(deadline: .now()+3) { [weak self] in self?.browsingHistory.prepareForTyping() }
+        if Self.hoverPreloadDelay > 0 {
+            DispatchQueue.main.asyncAfter(deadline: .now()+Self.hoverPreloadDelay+0.1) { [weak self] in
+                self?.preloadGmailInbox(); self?.preloadProtonMailInbox(); self?.preloadChatInbox(); self?.preloadCalendarAgenda()
+            }
+        }
     }
     required init?(coder: NSCoder) { fatalError() }
     func buildChrome() {
@@ -800,6 +810,12 @@ import RiseCore
     }
     func windowDidBecomeKey(_ notification: Notification) { pictureInPicture.applicationDidReturn() }
     func configure(_ tab: BrowserTab) -> BrowserTab {
+        // A tab restored or asleep waits with a stand-in; the real page it takes when it loads
+        // gets the same as any new page, as a tab coming back from sleep does.
+        tab.onWake = { [weak self, weak tab] in
+            guard let self, let tab else { return }
+            _ = self.configure(tab)
+        }
         // The page reports hovers, new tabs and its menu.
         // The page, not the tab, is captured: it can move to another tab when a Peek becomes one.
         let page = tab.page

@@ -124,10 +124,28 @@ typealias GmailInbox = MailInbox<GmailPageReader>
     private let reader = Reader()
     var loadPage: PageLoader?
 
-    func prepare(_ request: Request, source: WebPage, host: NSView, refreshAfter: TimeInterval = 60) {
+    /// With `background`, as for a tab that's open but not hovered, a page let go for going
+    /// unused (`releasePage`) stays let go: the next hover brings it back.
+    func prepare(_ request: Request, source: WebPage, host: NSView, refreshAfter: TimeInterval = 60, background: Bool = false) {
+        if background, request == self.request {
+            if reader.companion == nil, attemptedAt != .distantPast { return }
+            // Nothing to show, or a failure such as being signed out, isn't asked again at every
+            // change of every tab, only once a minute; a hover always asks.
+            if !isLoading, error != nil || emails.isEmpty, Date().timeIntervalSince(attemptedAt) < 60 { return }
+        }
+        if !background || reader.companion == nil { usedAt = Date() }
         reader.prepare(source: source, host: host)
         show(request, refreshAfter: refreshAfter)
     }
+    /// When the card last showed it, or its page was made.
+    private(set) var usedAt = Date.distantPast
+    /// Lets the hidden page go, a whole web app, keeping what it read for the card to show at once
+    /// next time while it reads again.
+    func releasePage() {
+        guard reader.companion != nil else { return }
+        cancel(); reader.tearDown()
+    }
+    private var attemptedAt = Date.distantPast
     /// A new account or category starts empty. The same one keeps its emails on screen and,
     /// once they're older than `refreshAfter`, replaces them with a fresh first page.
     func show(_ request: Request, refreshAfter: TimeInterval = 60) {
@@ -147,6 +165,7 @@ typealias GmailInbox = MailInbox<GmailPageReader>
     var showsLoading: Bool { isLoading && (emails.isEmpty || loadingPage > 1) }
     private func load(page: Int) {
         guard let request else { return }
+        if page == 1 { attemptedAt = Date() }
         isLoading = true; loadingPage = page
         if emails.isEmpty || page > 1 { error = nil }
         onChange?()
@@ -187,8 +206,8 @@ typealias GmailInbox = MailInbox<GmailPageReader>
 }
 
 extension MailInbox where Reader == GmailPageReader {
-    func prepare(account: GmailAccount, category: GmailCategory, source: WebPage, host: NSView, refreshAfter: TimeInterval = 60) {
-        prepare(Request(account: account, category: category), source: source, host: host, refreshAfter: refreshAfter)
+    func prepare(account: GmailAccount, category: GmailCategory, source: WebPage, host: NSView, refreshAfter: TimeInterval = 60, background: Bool = false) {
+        prepare(Request(account: account, category: category), source: source, host: host, refreshAfter: refreshAfter, background: background)
     }
 }
 

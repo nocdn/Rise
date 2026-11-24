@@ -228,7 +228,7 @@ import AppKit
         let shown = Set(shownPages.map(ObjectIdentifier.init))
         var inView: [PullRequest] = [], others: [PullRequest] = []
         for tab in tabs {
-            guard let pr = PullRequest(url: tab.url) else { continue }
+            guard let pr = tab.pullRequest else { continue }
             if shown.contains(ObjectIdentifier(tab.page)) { inView.append(pr) } else { others.append(pr) }
         }
         tabHoverCards.summaries.refreshTabs(inView: inView, others: others, active: NSApp.isActive && window?.isVisible == true)
@@ -502,8 +502,9 @@ import AppKit
             if chatInbox.request != nil, tabHoverCards.shownID == nil { chatInbox.tearDown() }
             return
         }
-        guard tabHoverCards.shownID == nil, root.window != nil else { return }
-        chatInbox.prepare(.init(account: account, everything: googleChatCardContent == .everything), source: tab.page, host: root, refreshAfter: TabHoverCards.backgroundRefresh)
+        guard tabHoverCards.shownID == nil, root.window != nil, hoverPreloadsStarted else { return }
+        chatInbox.prepare(.init(account: account, everything: googleChatCardContent == .everything), source: tab.page, host: root,
+                          refreshAfter: TabHoverCards.backgroundRefresh, background: true)
     }
     /// As Gmail's: the selected Proton Mail tab's account wins, then the one already loaded.
     func preloadProtonMailInbox() {
@@ -514,8 +515,8 @@ import AppKit
             if protonMailInbox.request != nil, tabHoverCards.shownID == nil { protonMailInbox.tearDown() }
             return
         }
-        guard tabHoverCards.shownID == nil, root.window != nil else { return }
-        protonMailInbox.prepare(.init(account: account), source: tab.page, host: root, refreshAfter: TabHoverCards.backgroundRefresh)
+        guard tabHoverCards.shownID == nil, root.window != nil, hoverPreloadsStarted else { return }
+        protonMailInbox.prepare(.init(account: account), source: tab.page, host: root, refreshAfter: TabHoverCards.backgroundRefresh, background: true)
     }
     /// The tab goes to the card's category, with the email popped out in a Peek over it: Gmail's
     /// light "Open in new window" conversation, not a second Gmail. Without its row, the email
@@ -556,9 +557,10 @@ import AppKit
             return
         }
         // The open card keeps its own list until it closes.
-        guard tabHoverCards.shownID == nil, root.window != nil else { return }
+        // Kept fresh in the background while its page is kept, so the card opens with them.
+        guard tabHoverCards.shownID == nil, root.window != nil, hoverPreloadsStarted else { return }
         gmailInbox.prepare(account: account, category: gmailCategory, source: tab.page, host: root,
-                           refreshAfter: TabHoverCards.backgroundRefresh)
+                           refreshAfter: TabHoverCards.backgroundRefresh, background: true)
     }
 
     func showCalendarTooltip(_ id: UUID) {
@@ -628,8 +630,27 @@ import AppKit
             return
         }
         refreshCalendarBadges()
-        guard tabHoverCards.shownID == nil, root.window != nil else { return }
-        calendarAgenda.prepare(account: account, source: tab.page, host: root, refreshAfter: TabHoverCards.calendarRefresh)
+        guard tabHoverCards.shownID == nil, root.window != nil, hoverPreloadsStarted else { return }
+        // The countdown keeps reading the day; without it, the page goes once unused for a while.
+        calendarAgenda.prepare(account: account, source: tab.page, host: root, refreshAfter: TabHoverCards.calendarRefresh, background: !showsCalendarBadge)
+    }
+}
+
+@MainActor extension BrowserController {
+    /// The hover cards' hidden pages, whole web apps, start loading a while after launch, so they
+    /// don't compete with the page being shown. A hover reads its card at once all the same.
+    static var hoverPreloadDelay: TimeInterval { ChromiumEngine.isRunning ? 30 : 0 }
+    var hoverPreloadsStarted: Bool { Date().timeIntervalSince(launchedAt) >= Self.hoverPreloadDelay }
+    /// How long a card's hidden page stays after it was last shown.
+    static let hoverPageIdleTime: TimeInterval = 10*60
+    /// Lets go of the hidden pages of cards not hovered for a while, keeping what they read. The
+    /// Calendar's stays while its countdown is on the tab, which keeps reading the day.
+    func releaseIdleHoverPages(now: Date = Date()) {
+        let shown = tabHoverCards.shownID.flatMap { id in tabs.first { $0.id == id } }.flatMap { HoverCard(url: $0.url) }
+        if shown != .gmail, now.timeIntervalSince(gmailInbox.usedAt) > Self.hoverPageIdleTime { gmailInbox.releasePage() }
+        if shown != .protonMail, now.timeIntervalSince(protonMailInbox.usedAt) > Self.hoverPageIdleTime { protonMailInbox.releasePage() }
+        if shown != .googleChat, now.timeIntervalSince(chatInbox.usedAt) > Self.hoverPageIdleTime { chatInbox.releasePage() }
+        if shown != .calendar, !showsCalendarBadge, now.timeIntervalSince(calendarAgenda.usedAt) > Self.hoverPageIdleTime { calendarAgenda.releasePage() }
     }
 }
 

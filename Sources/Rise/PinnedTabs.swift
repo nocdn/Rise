@@ -253,9 +253,15 @@ enum PinnedLayout {
         setAccessibilityElement(true); setAccessibilityRole(.button)
     }
     required init?(coder: NSCoder) { fatalError() }
+    /// What the tile last showed: the sidebar updates every tile at every change to any tab, and
+    /// each restyles and relabels it, so an unchanged tile is left alone.
+    private var shown: (title: String, selected: Bool, theme: RiseTheme, icon: ObjectIdentifier?, badge: String?)?
     func update(tab: BrowserTab, selected: Bool, theme: RiseTheme) {
-        self.selected = selected; self.theme = theme
         let image = tab.favicon(for: theme)
+        let now = (title: tab.title, selected: selected, theme: theme, icon: image.map(ObjectIdentifier.init), badge: badgeText)
+        if let shown, shown == now { return }
+        shown = now
+        self.selected = selected; self.theme = theme
         if let image { if icon.image !== image { icon.image = image; accent = FaviconColor.dominant(image) } }
         else { icon.showEmptyPlaceholder(theme: theme); accent = nil }
         title.stringValue = tab.title; title.textColor = TabAppearance.text(theme, selected: selected)

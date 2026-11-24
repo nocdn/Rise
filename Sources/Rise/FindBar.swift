@@ -422,7 +422,12 @@ class FindInputCell: NSTextFieldCell {
         return NSPoint(x: bounds.width-margin-width, y: topInset+top-travel)
     }
 
+    /// The browser applies its theme at every update; only a change restyles the bar and renders its
+    /// answer again.
+    private var appliedTheme: RiseTheme?
     func applyTheme(_ theme: RiseTheme) {
+        guard theme != appliedTheme else { return }
+        appliedTheme = theme
         self.theme = theme
         Self.applyPanelTheme(panel, theme: theme)
         Self.showDeveloperStripes(stripes, developer, theme: theme)

@@ -27,9 +27,8 @@ import AppKit
         case .progress: updateLoadingProgress()
         }
     }
-    /// The page bars' loading lines and the sidebar's rows, which show how far pages have loaded.
+    /// The page bars' loading lines, which show how far pages have loaded; the sidebar doesn't.
     private func updateLoadingProgress() {
-        sidebar.update(tabs: sidebarTabs, selected: sidebarSelectedTab, theme: theme, splits: sidebarSplitGroups)
         updatePlainBar()
     }
 }

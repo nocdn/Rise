@@ -10,8 +10,15 @@ import RiseCore
     static let limit = 128
     private let storageURL: URL
     private let session: URLSession
-    private var images: [String: NSImage] = [:]
+    /// Icons decoded so far: the saved ones are decoded as they're first asked for, not all at launch.
+    private var decoded: [String: NSImage] = [:]
     private var data: [String: Data] = [:]
+    private func icon(_ key: String) -> NSImage? {
+        if let image = decoded[key] { return image }
+        guard let png = data[key] else { return nil }
+        guard let image = FaviconSnapshot.decode(png) else { data[key] = nil; verified.remove(key); return nil }
+        decoded[key] = image; return image
+    }
     /// Older snapshots may have upscaled a 16px favicon. Recheck them on use,
     /// keeping the old icon visible until the site's sharper artwork arrives.
     private var verified = Set<String>()
@@ -34,33 +41,32 @@ import RiseCore
             let saved = current?.images ?? (try? JSONDecoder().decode([String: Data].self, from: bytes)) ?? [:]
             for (key, png) in saved.sorted(by: { $0.key < $1.key }).prefix(Self.limit*2) {
                 let origin = key.hasSuffix("|dark") ? String(key.dropLast(5)) : key
-                guard SitePermissions.origin(URL(string: origin)) == origin,
-                      order.contains(origin) || order.count < Self.limit,
-                      let image = FaviconSnapshot.decode(png) else { continue }
-                images[key] = image; data[key] = png
+                guard png.count <= FaviconSnapshot.maximumBytes, SitePermissions.origin(URL(string: origin)) == origin,
+                      order.contains(origin) || order.count < Self.limit else { continue }
+                data[key] = png
                 if !order.contains(origin) { order.append(origin) }
             }
-            verified = (current?.verified ?? []).intersection(images.keys)
+            verified = (current?.verified ?? []).intersection(data.keys)
         }
     }
     func remember(_ tab: BrowserTab) {
         guard let origin = tab.iconOrigin, origin == SitePermissions.origin(tab.url) else { return }
         if let image = tab.favicon, let png = tab.faviconData, data[origin] != png {
-            if let known = images[origin], FaviconImage.pixels(known) >= FaviconImage.pixels(image) {
-                tab.favicon = known
+            if let known = icon(origin), let knownPNG = data[origin], FaviconImage.pixels(known) >= FaviconImage.pixels(image) {
+                tab.setFavicon(known, data: knownPNG)
             } else { store(image, png: png, origin: origin) }
         }
         let key = Self.key(origin, dark: true)
         if let image = tab.darkFavicon, let png = tab.darkFaviconData, data[key] != png {
-            if let known = images[key], FaviconImage.pixels(known) >= FaviconImage.pixels(image) {
-                tab.darkFavicon = known
+            if let known = icon(key), let knownPNG = data[key], FaviconImage.pixels(known) >= FaviconImage.pixels(image) {
+                tab.setFavicon(known, data: knownPNG, dark: true)
             } else { store(image, png: png, origin: origin, dark: true) }
         }
     }
     func darkImage(for url: URL?) -> NSImage? {
         guard let origin = SitePermissions.origin(url) else { return nil }
         let key = Self.key(origin, dark: true)
-        if let image = images[key] { return image }
+        if let image = icon(key) { return image }
         // GitHub changes its link in JavaScript, rather than declaring a media link.
         // Use its published white PNG even for restored tabs that haven't loaded yet.
         if let icon = FaviconDiscovery.darkIcon(for: url), attempted.insert(key).inserted {
@@ -69,18 +75,18 @@ import RiseCore
         return nil
     }
     func cachedDarkImage(for url: URL) -> NSImage? {
-        SitePermissions.origin(url).flatMap { images[Self.key($0, dark: true)] }
+        SitePermissions.origin(url).flatMap { icon(Self.key($0, dark: true)) }
     }
     func image(for url: URL?, fetch allowFetch: Bool = true, dark: Bool = false) -> NSImage? {
         guard let origin = SitePermissions.origin(url), let url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return nil }
-        if allowFetch, images[origin] != nil, !verified.contains(origin), !AddressResolver.isLocal(url), attempted.insert(origin).inserted {
+        if allowFetch, icon(origin) != nil, !verified.contains(origin), !AddressResolver.isLocal(url), attempted.insert(origin).inserted {
             discoverRootIcon(origin: origin)
         }
         if dark {
             if allowFetch, let image = darkImage(for: url) { return image }
-            if let image = images[Self.key(origin, dark: true)] { return image }
+            if let image = icon(Self.key(origin, dark: true)) { return image }
         }
-        if let image = images[origin] { return image }
+        if let image = icon(origin) { return image }
         guard allowFetch, !AddressResolver.isLocal(url), attempted.insert(origin).inserted,
               let iconURL = Self.defaultIcon(for: url) else { return nil }
         fetch(iconURL, origin: origin, discoverIfNeeded: true)
@@ -92,7 +98,7 @@ import RiseCore
         guard let url, Self.isPreviewAddress(url), let origin = SitePermissions.origin(url) else {
             cancelPreview(); return
         }
-        guard images[origin] == nil, !attempted.contains(origin) else { cancelPreview(); return }
+        guard icon(origin) == nil, !attempted.contains(origin) else { cancelPreview(); return }
         guard previewOrigin != origin else { return }
         cancelPreview(); previewOrigin = origin
         let timer = Timer(timeInterval: 0.25, repeats: false) { [weak self] _ in
@@ -132,7 +138,7 @@ import RiseCore
         guard bytes.count <= 1_000_000, let origin = SitePermissions.origin(pageURL),
               let image = FaviconImage.decode(bytes, dark: dark), image.isValid, let png = FaviconSnapshot.encode(image) else { return false }
         let key = Self.key(origin, dark: dark)
-        if let known = images[key], verified.contains(key), FaviconImage.pixels(known) > FaviconImage.pixels(image) { return true }
+        if let known = icon(key), verified.contains(key), FaviconImage.pixels(known) > FaviconImage.pixels(image) { return true }
         store(image, png: png, origin: origin, dark: dark, verified: discovered || FaviconImage.pixels(image) >= 32)
         if !dark, FaviconImage.hasAppearanceStyles(bytes), let variant = FaviconImage.decode(bytes, dark: true), let png = FaviconSnapshot.encode(variant) {
             store(variant, png: png, origin: origin, dark: true, verified: true)
@@ -177,7 +183,7 @@ import RiseCore
                 let landed = response?.url ?? root
                 let redirectedIcon = SitePermissions.origin(landed) != origin ? Self.defaultIcon(for: landed) : nil
                 guard let icon = FaviconDiscovery.icon(in: bytes, baseURL: landed) ?? redirectedIcon else {
-                    if let image = self.images[origin], let png = self.data[origin] {
+                    if let image = self.icon(origin), let png = self.data[origin] {
                         self.store(image, png: png, origin: origin, verified: true)
                     }
                     return
@@ -197,13 +203,13 @@ import RiseCore
     }
     private func store(_ image: NSImage, png: Data, origin: String, dark: Bool = false, verified isVerified: Bool = false) {
         let key = Self.key(origin, dark: dark)
-        images[key] = image; data[key] = png
+        decoded[key] = image; data[key] = png
         if isVerified { verified.insert(key) }
         dirty = true
         order.removeAll { $0 == origin }; order.append(origin)
         while order.count > Self.limit {
             let old = order.removeFirst()
-            for key in [old, Self.key(old, dark: true)] { images[key] = nil; data[key] = nil; verified.remove(key) }
+            for key in [old, Self.key(old, dark: true)] { decoded[key] = nil; data[key] = nil; verified.remove(key) }
         }
         if !dark { onLoad?(origin, image) }
         onVariantLoad?(origin, image, dark)

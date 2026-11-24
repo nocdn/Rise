@@ -154,7 +154,8 @@ import RiseCore
             }
         }
         selectedTabID = selected?.id
-        for id in Array(rows.keys) where !tabs.contains(where: { $0.id == id }) { if let row = rows.removeValue(forKey: id) { fadeOut(row) } }
+        let ids = Set(tabs.map(\.id))
+        for id in Array(rows.keys) where !ids.contains(id) { if let row = rows.removeValue(forKey: id) { fadeOut(row) } }
         tabsByID = Dictionary(tabs.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         // A split with a pinned tab in it shows in that tab's tile, the other tab with it.
         let allSplits = splits

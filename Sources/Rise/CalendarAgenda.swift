@@ -271,9 +271,18 @@ enum CalendarSchedule {
     /// Whether events have been read since the account was chosen.
     var hasLoaded: Bool { loadedAt != .distantPast }
 
-    func prepare(account: CalendarAccount, source: WebPage, host: NSView, refreshAfter: TimeInterval = 60) {
+    /// With `background`, a page let go for going unused (`releasePage`) stays let go until a hover.
+    func prepare(account: CalendarAccount, source: WebPage, host: NSView, refreshAfter: TimeInterval = 60, background: Bool = false) {
+        if background, account == self.account, reader.companion == nil, hasLoaded { return }
+        if !background || reader.companion == nil { usedAt = Date() }
         reader.prepare(source: source, host: host)
         show(account, refreshAfter: refreshAfter)
+    }
+    private(set) var usedAt = Date.distantPast
+    /// Lets the hidden Calendar go, keeping the events read, which the card shows at once next time.
+    func releasePage() {
+        guard reader.companion != nil else { return }
+        cancel(); reader.tearDown()
     }
     /// A new account starts empty. The same one keeps its events and, once they're older than
     /// `refreshAfter`, reads them again behind them. A new day always reads again.

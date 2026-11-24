@@ -19,6 +19,19 @@ final class BrowsingHistoryTests: XCTestCase {
         try restored.clear()
         XCTAssertTrue(BrowsingHistory(storageURL: file).entries.isEmpty)
     }
+    func testHistoryReadAheadOnAnotherThreadIsTheSameAndKeepsCounting() throws {
+        let file = storage(); defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let history = BrowsingHistory(storageURL: file)
+        history.record(URL(string: "https://example.com/a")!, title: "A")
+        history.record(URL(string: "https://example.com/a")!, title: "A")
+        history.record(URL(string: "https://example.org/b")!, title: "B")
+        try history.save()
+        let preloaded = BrowsingHistory(preloaded: .init(storageURL: file))
+        XCTAssertEqual(preloaded.entries, BrowsingHistory(storageURL: file).entries)
+        preloaded.record(URL(string: "https://example.com/a")!, title: "A"); try preloaded.save()
+        XCTAssertEqual(BrowsingHistory(storageURL: file).visits(to: URL(string: "https://example.com/a")), 3)
+        XCTAssertTrue(BrowsingHistory(preloaded: .init(storageURL: storage())).entries.isEmpty, "No file is no history")
+    }
     func testAMistypedAddressThatNeverLoadedStopsBeingSuggested() {
         let file = storage(); defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
         let history = BrowsingHistory(storageURL: file)

@@ -63,7 +63,7 @@ import RiseCore
             configuration.constructionBorder = developerLook.border
             if developerLook.hammer { configuration.subtitleAccessory = hammer }
         }
-        if tab.showsRepositorySubtitle, let request = PullRequest(url: tab.url) {
+        if tab.showsRepositorySubtitle, let request = tab.pullRequest {
             let repository = request.project as NSString
             let slash = repository.range(of: "/", options: .backwards)
             let start = slash.location == NSNotFound ? 0 : NSMaxRange(slash)

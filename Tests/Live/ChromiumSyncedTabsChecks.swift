@@ -42,7 +42,7 @@ import RiseChromium
         browser.applySharedTabs(imports + [.init(id: selected.id, url: nil, title: selected.title)])
         let imported = browser.tabs.filter { imports.map(\.id).contains($0.id) }
         check(imported.count == 3 && browser.selectedID == selected.id, "Remote insert preserves the selected tab")
-        check(imported.allSatisfy { $0.page is ChromiumPage && !$0.hasAttemptedNavigation && $0.page.url == nil }, "Imported Chromium pages remain unloaded")
+        check(imported.allSatisfy { $0.isDormant && !$0.hasAttemptedNavigation && $0.page.url == nil }, "Imported pages wait unloaded, without an engine page")
         let deadline = Date().addingTimeInterval(40)
         while Date() < deadline {
             peak = max(peak, browser.syncedTabMetadata?.activeCount ?? 0)

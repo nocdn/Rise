@@ -21,6 +21,7 @@ import RiseCore
             MainActor.assumeIsolated {
                 self?.sleepIdleTabs()
                 self?.tabUseTick()
+                self?.releaseIdleHoverPages()
             }
         }
         timer.tolerance = 10

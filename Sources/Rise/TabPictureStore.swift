@@ -19,7 +19,35 @@ import AppKit
     /// The picture kept for `tab`, if it was taken where the tab is now.
     func picture(for tab: BrowserTab) -> NSImage? {
         guard let url = tab.url, addresses[tab.id.uuidString] == url.absoluteString else { return nil }
-        return NSImage(contentsOf: fileURL(tab.id))
+        // Read from disk only once drawn, as by the tab switcher, rather than every tab's at launch.
+        let file = fileURL(tab.id)
+        guard FileManager.default.fileExists(atPath: file.path) else { return nil }
+        return NSImage(byReferencing: file)
+    }
+    /// How wide a picture is kept, in pixels: enough for a split's half, where it stands in for its
+    /// page as that loads. The engine's are the screen's full width, about 3000 pixels, which made
+    /// each 24 MB once drawn and slow to compress.
+    nonisolated static let pixelWidth = 1024
+    /// Pictures kept full size by earlier versions are made as small as new ones, one at a time in
+    /// the background, a while after launch; quitting waits for at most the one under way.
+    func shrinkOldPictures(after delay: TimeInterval = 15) {
+        let folder = folder, queue = queue
+        DispatchQueue.global(qos: .background).asyncAfter(deadline: .now()+delay) {
+            let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil))?.filter { $0.pathExtension == "jpg" } ?? []
+            for file in files { queue.sync { Self.shrink(file) } }
+        }
+    }
+    nonisolated static func shrink(_ file: URL) {
+        guard let source = CGImageSourceCreateWithURL(file as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int, let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              width > pixelWidth else { return }
+        let longest = Int((Double(max(width, height))*Double(pixelWidth)/Double(width)).rounded())
+        let options = [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: longest,
+                       kCGImageSourceCreateThumbnailWithTransform: true] as CFDictionary
+        guard let small = CGImageSourceCreateThumbnailAtIndex(source, 0, options),
+              let data = NSBitmapImageRep(cgImage: small).representation(using: .jpeg, properties: [.compressionFactor: 0.8]) else { return }
+        try? data.write(to: file, options: .atomic)
     }
     /// Keeps the tab's current picture, replacing the one before.
     func keep(_ tab: BrowserTab) {

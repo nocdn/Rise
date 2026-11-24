@@ -119,12 +119,13 @@ import AppKit
     func linksOpenElsewhere(than page: WebPage) -> OpenTabLinks.Open {
         let own = page.url?.absoluteString, ownRequest = PullRequest(url: page.url)
         var open = OpenTabLinks.Open()
+        var links = Set<String>(), requests = Set<String>()
         for tab in tabs where tab.page !== page {
             guard let url = tab.url, url.absoluteString != own else { continue }
-            let request = PullRequest(url: url)
+            let request = tab.pullRequest
             if let request, request == ownRequest { continue }
-            if !open.links.contains(url.absoluteString) { open.links.append(url.absoluteString) }
-            if let overview = request?.overviewURL?.absoluteString, !open.requests.contains(overview) { open.requests.append(overview) }
+            if links.insert(url.absoluteString).inserted { open.links.append(url.absoluteString) }
+            if let overview = request?.overviewURL?.absoluteString, requests.insert(overview).inserted { open.requests.append(overview) }
         }
         return open
     }

@@ -107,8 +107,9 @@ import os
     /// Whether a YouTube video page's video is paused, or nil for any other tab,
     /// whose play button follows all of its media instead.
     func playbackPaused(_ id: UUID) -> Bool? {
-        guard let tab = browser?.tabs.first(where: { $0.id == id }), YouTubeVideoPage.containsVideo(tab.url) else { return nil }
-        return states[id]?.paused
+        // Asked for every tab at every update: most have no video state to look further for.
+        guard let state = states[id], let tab = browser?.tabs.first(where: { $0.id == id }), YouTubeVideoPage.containsVideo(tab.url) else { return nil }
+        return state.paused
     }
     /// Plays or pauses a tab's video, whether or not the tab is showing.
     func togglePlayback(_ id: UUID) {

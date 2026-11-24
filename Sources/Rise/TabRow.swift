@@ -134,7 +134,7 @@ import RiseCore
         var subtitle: String?, subtitleColor: NSColor?, subtitleRange: NSRange?, subtitleIcon: ObjectIdentifier?, constructionBorder: Bool
         var accessory: ObjectIdentifier?, peekIcon: ObjectIdentifier?, peekTitle: String?
         var favicon: ObjectIdentifier?, host: String?
-        var playing: Bool, muted: Bool, loading: Bool, progress: Double, hardReloading: Bool
+        var playing: Bool, muted: Bool
     }
     private var shown: Shown?
     func update(tab: BrowserTab, selected: Bool, theme: RiseTheme, configuration: TabRowConfiguration) {
@@ -145,8 +145,7 @@ import RiseCore
                         accessory: configuration.subtitleAccessory.map(ObjectIdentifier.init),
                         peekIcon: configuration.peek?.favicon.map(ObjectIdentifier.init), peekTitle: configuration.peek?.title,
                         favicon: tab.favicon(for: theme).map(ObjectIdentifier.init), host: tab.url?.host,
-                        playing: tab.isPlayingAudio, muted: tab.isAudioMuted, loading: tab.isLoading,
-                        progress: tab.page.estimatedProgress, hardReloading: tab.isHardReloading)
+                        playing: tab.isPlayingAudio, muted: tab.isAudioMuted)
         guard now != shown else { return }
         shown = now
         let previouslyShowedSubtitle = showsSubtitle

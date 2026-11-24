@@ -72,10 +72,17 @@ import RiseChromium
             if tab.id == browser.selectedID { active = views.count }
             views.append(page.browserView)
         }
+        // Every change to any tab asks; the extensions hear only of a change to the strip itself.
+        // Buttons follow their actions' own changes (`observeActions`) and the pinned list.
+        let sent = Sent(views: views.map(ObjectIdentifier.init), pinned: pinned, active: active)
+        guard sent != lastSent else { return }
+        lastSent = sent
         strip.setTabs(views, pinnedCount: pinned, activeIndex: active)
         // A button's icon, badge and title can be the tab's own.
         refreshButtons()
     }
+    private struct Sent: Equatable { let views: [ObjectIdentifier], pinned: Int, active: Int }
+    private var lastSent: Sent?
 
     /// The pinned extensions' buttons in the page bar, as they are for the selected tab; the site
     /// controls show the list again when extensions come or go.
