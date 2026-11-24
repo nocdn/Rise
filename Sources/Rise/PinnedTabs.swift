@@ -415,16 +415,20 @@ enum PinnedLayout {
         let split = CGFloat(splitness.value), peek = CGFloat(peekness.value), ownSide = CGFloat(self.ownSide.value)
         let spacing = (bounds.width-2*side)/3, leftSlot = spacing, rightSlot = 2*spacing+side
         let ownSlot = leftSlot+(rightSlot-leftSlot)*ownSide, otherSlot = rightSlot+(leftSlot-rightSlot)*ownSide
-        let own = NSPoint(x: tile.x+(split*(ownSlot-tile.x)+peek*PinnedLayout.peekIconOffset.dx)*(1-r),
-                          y: tile.y+peek*PinnedLayout.peekIconOffset.dy*(1-r))
+        let margin = PinnedLayout.peekMargin, inset = PinnedLayout.peekInset(width: bounds.width, height: bounds.height, side: side)
+        let own = NSPoint(x: tile.x+(split*(ownSlot-tile.x)+peek*(inset-tile.x))*(1-r),
+                          y: tile.y+peek*(margin-tile.y)*(1-r))
         let iconFrame = NSRect(x: (own.x+(row.x-own.x)*r).rounded(), y: (own.y+(row.y-own.y)*r).rounded(), width: side, height: side)
         icon.layer?.removeAnimation(forKey: TabListMotion.movementKey)
         icon.frame = iconFrame
+        // With a Peek open, the tab's own favicon steps back for the Peek's.
+        icon.alphaValue = 1-(1-PinnedLayout.peekFaviconOpacity)*min(1, max(0, peek))*(1-r)
         paint.frame = bounds
         // The companion: from the tile's middle, out to the Peek's chip or the split's other slot.
         let shown = max(peek, split)
-        let centre = NSPoint(x: tile.x+side/2+peek*PinnedLayout.peekChipOffset.dx+split*(otherSlot-tile.x),
-                             y: tile.y+side/2+peek*PinnedLayout.peekChipOffset.dy)
+        let chipCentre = NSPoint(x: bounds.width-inset-PinnedLayout.peekChip/2, y: bounds.height-margin-PinnedLayout.peekChip/2)
+        let centre = NSPoint(x: tile.x+side/2+peek*(chipCentre.x-tile.x-side/2)+split*(otherSlot-tile.x),
+                             y: tile.y+side/2+peek*(chipCentre.y-tile.y-side/2))
         let chipShare = peek+split > 0.001 ? min(1, max(0, peek/(peek+split))) : 1
         companion.place(centre: centre, scale: PinnedLayout.peekChipScale+(1-PinnedLayout.peekChipScale)*shown,
                         chip: chipShare, faviconSide: side-2*chipShare*(side/2-PinnedLayout.peekChip/2+PinnedLayout.peekChipInset))
@@ -624,7 +628,27 @@ extension PinnedLayout {
     static let splitBlend: CGFloat = 12
     /// A Peek's chip, at the tile's bottom right, and where the tile's own favicon moves to make room.
     static let peekChip: CGFloat = 20, peekChipInset: CGFloat = 3, peekChipRadius: CGFloat = 7
-    static let peekChipOffset = CGVector(dx: 8, dy: 7), peekIconOffset = CGVector(dx: -6, dy: -5)
+    /// How far the tile's favicon sits from its top and left edges with a Peek open, and the
+    /// Peek's chip from the bottom and right ones: the same each way, in any tile's width.
+    static let peekMargin: CGFloat = 7
+    static let peekFaviconOpacity: CGFloat = 0.6
+    /// How far in from the left the favicon sits, and the chip from the right, with a Peek open:
+    /// as far that the gap between them is as long as each one's diagonal from its corner, each
+    /// `peekMargin` from the top or bottom. Wider tiles bring them further in.
+    static func peekInset(width: CGFloat, height: CGFloat, side: CGFloat) -> CGFloat {
+        func gap(_ inset: CGFloat) -> CGFloat {
+            let across = width-2*inset-side-peekChip, down = height-2*peekMargin-side-peekChip
+            return hypot(max(0, across), max(0, down))
+        }
+        var low = peekMargin, high = max(peekMargin, (width-side-peekChip)/2)
+        guard gap(low) > hypot(low, peekMargin) else { return low }
+        for _ in 0..<24 {
+            let middle = (low+high)/2
+            if gap(middle) > hypot(middle, peekMargin) { low = middle } else { high = middle }
+        }
+        return low.rounded()
+    }
+    static let peekChipBorder: CGFloat = 1, peekChipEdgeDarkening: CGFloat = 0.16
     static let peekChipScale: CGFloat = 0.7
     /// A landing row's held fill fades out over about as long as it takes to land.
     static let settleDuration = 0.24
@@ -1012,9 +1036,13 @@ extension PinnedLayout {
     }
     required init?(coder: NSCoder) { fatalError() }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    /// Its fill in the favicon's colour, edged in the same a little darker, to stand apart from
+    /// the tile while keeping its colours.
     func setChip(_ color: NSColor) {
         CATransaction.begin(); CATransaction.setDisableActions(true)
         chip.backgroundColor = color.cgColor
+        chip.borderColor = (color.blended(withFraction: PinnedLayout.peekChipEdgeDarkening, of: .black) ?? color).cgColor
+        chip.borderWidth = PinnedLayout.peekChipBorder
         CATransaction.commit()
     }
     /// `chip` is how much of the Peek's chip shows, from none, as a split's favicon, to all of it.
