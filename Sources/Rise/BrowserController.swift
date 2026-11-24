@@ -515,6 +515,8 @@ import RiseCore
         update(); layoutChrome()
         if syncTabs { startTabSync() }
         startTabSleep()
+        // History made ready to type against once launch has settled, not at the first keystroke.
+        DispatchQueue.main.asyncAfter(deadline: .now()+3) { [weak self] in self?.browsingHistory.prepareForTyping() }
     }
     required init?(coder: NSCoder) { fatalError() }
     func buildChrome() {
@@ -1044,6 +1046,7 @@ import RiseCore
         cancelTabScroll()
         sidebar.endTabSearch()
         if searchProvider.isGoogle { googleSearchSuggestions.warmUp() }
+        browsingHistory.prepareForTyping()
         historySwipe.cancel(); cancelTabSwitch(); hideLinkStatus()
         siteControlsPopover.close(); extensionPopup?.close(); permissionCoordinator.cancel()
         let veilWasHidden = dismissArea.isHidden

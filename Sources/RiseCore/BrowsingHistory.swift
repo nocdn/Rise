@@ -12,7 +12,61 @@ public struct HistoryEntry: Codable, Equatable {
 public final class BrowsingHistory {
     public static let maximumEntries = 2000
     public let storageURL: URL
-    public private(set) var entries: [HistoryEntry] = []
+    public private(set) var entries: [HistoryEntry] = [] { didSet { searchable = nil; destinationPages = nil } }
+    /// What typing matches each entry against, lowered once rather than at every keystroke.
+    private struct Searchable { let source: String, title: String, text: [UInt8], forms: [String], shortForm: String }
+    private var searchable: [Searchable]?
+    /// Kept by address across changes, so a visit only lowers what's new or retitled.
+    private var searchableByAddress: [String: Searchable] = [:]
+    private var searchableEntries: [Searchable] {
+        if let searchable { return searchable }
+        var kept: [String: Searchable] = [:]
+        let made = entries.map { entry -> Searchable in
+            if let known = searchableByAddress[entry.url], known.source == entry.title { kept[entry.url] = known; return known }
+            let title = entry.title.lowercased(), address = entry.url.lowercased()
+            let value = Searchable(source: entry.title, title: title, text: Array((title + " " + address).precomposedStringWithCanonicalMapping.utf8),
+                                   forms: Self.forms(address, for: "ab"), shortForm: Self.forms(address, for: "a")[0])
+            kept[entry.url] = value
+            return value
+        }
+        searchableByAddress = kept; searchable = made
+        return made
+    }
+    /// Gets what typing matches against ready, so the first keystroke doesn't wait for it.
+    public func prepareForTyping() { _ = searchableEntries; _ = weighedPages }
+    /// An address's parts that finding where typing leads needs, parsed once for each address.
+    private struct ParsedAddress { let url: URL?, site: URL?, forms: [String], shortForm: String }
+    private var parsedAddresses: [String: ParsedAddress] = [:]
+    /// Each page's weight for `destination`, its visits and typings, with its address parsed:
+    /// the same for every keystroke until the history changes.
+    private typealias WeighedPage = (entry: HistoryEntry, weight: Int, address: ParsedAddress)
+    private var destinationPages: [WeighedPage]?
+    private var weighedPages: [WeighedPage] {
+        if let known = destinationPages { return known }
+        var weighed: [String: (entry: HistoryEntry, weight: Int)] = [:]
+        for entry in entries { weighed[entry.url] = (entry, entry.visits) }
+        for (key, typed) in storage.typed ?? [:] {
+            let extra = Self.typedWeight*typed.count
+            if var page = weighed[key] {
+                page.weight += extra; page.entry.lastVisited = max(page.entry.lastVisited, typed.last); weighed[key] = page
+            } else {
+                weighed[key] = (HistoryEntry(url: key, title: URL(string: key)?.host ?? key, visits: 0, lastVisited: typed.last), extra)
+            }
+        }
+        let pages = weighed.values.map { ($0.entry, $0.weight, parsed($0.entry.url)) }
+        destinationPages = pages
+        return pages
+    }
+    private func parsed(_ address: String) -> ParsedAddress {
+        if let known = parsedAddresses[address] { return known }
+        let url = URL(string: address), key = Self.key(url)
+        let value = ParsedAddress(url: url, site: url.flatMap(Self.site(of:)),
+                                  forms: key.map { Self.forms($0, for: "ab").map { $0.lowercased() } } ?? [],
+                                  shortForm: key.map { Self.forms($0, for: "a")[0].lowercased() } ?? "")
+        if parsedAddresses.count > 20_000 { parsedAddresses.removeAll(keepingCapacity: true) }
+        parsedAddresses[address] = value
+        return value
+    }
     /// Local mutations only. Receiving a remote snapshot never counts as a visit.
     public var onChange: (() -> Void)?
     private struct Storage: Codable {
@@ -25,7 +79,7 @@ public final class BrowsingHistory {
     struct Typed: Codable, Equatable { var count: Int; var last: Date }
     /// A typed visit is a stronger wish to go somewhere than following a link: it counts as this many.
     static let typedWeight = 4
-    private var storage = Storage()
+    private var storage = Storage() { didSet { destinationPages = nil } }
     var snapshot: SharedHistorySnapshot { storage.snapshot }
     private var dirty = false
 
@@ -125,12 +179,15 @@ public final class BrowsingHistory {
     public func ranked(for query: String, limit: Int = 5, at date: Date = Date()) -> [HistoryEntry] {
         let query = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let words = query.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-        let scored = entries.compactMap { entry -> (HistoryEntry, Double)? in
-            let title = entry.title.lowercased(), address = entry.url.lowercased()
-            let searchable = title + " " + address
-            guard words.allSatisfy({ searchable.contains($0) }) else { return nil }
-            let prefix = !query.isEmpty && !query.contains(where: { $0.isWhitespace }) && Self.forms(address, for: query).contains { $0.hasPrefix(query) && $0 != query }
-            let match: Double = prefix ? 1000 : !query.isEmpty && title.hasPrefix(query) ? 500 : 0
+        let oneWord = !query.isEmpty && !query.contains(where: { $0.isWhitespace })
+        // Addresses run long, with their queries: a byte search, of text in one Unicode form,
+        // finds what String's search does in a thirtieth of the time.
+        let needles = words.map { Array($0.precomposedStringWithCanonicalMapping.utf8) }
+        let scored = zip(entries, searchableEntries).compactMap { entry, lowered -> (HistoryEntry, Double)? in
+            guard needles.allSatisfy({ Self.bytes(lowered.text, contain: $0) }) else { return nil }
+            let forms = query.count == 1 ? [lowered.shortForm] : lowered.forms
+            let prefix = oneWord && forms.contains { $0.hasPrefix(query) && $0 != query }
+            let match: Double = prefix ? 1000 : !query.isEmpty && lowered.title.hasPrefix(query) ? 500 : 0
             return (entry, match+Self.frecency(visits: entry.visits, lastVisited: entry.lastVisited, at: date))
         }
         return scored.sorted {
@@ -140,6 +197,25 @@ public final class BrowsingHistory {
         }.prefix(max(0, limit)).map(\.0)
     }
 
+    static func bytes(_ haystack: [UInt8], contain needle: [UInt8]) -> Bool {
+        guard let first = needle.first else { return true }
+        guard needle.count <= haystack.count else { return false }
+        return haystack.withUnsafeBufferPointer { text in
+            needle.withUnsafeBufferPointer { word in
+                var index = 0
+                let last = text.count-word.count
+                while index <= last {
+                    if text[index] == first {
+                        var matched = 1
+                        while matched < word.count && text[index+matched] == word[matched] { matched += 1 }
+                        if matched == word.count { return true }
+                    }
+                    index += 1
+                }
+                return false
+            }
+        }
+    }
     /// How often and how lately: more visits count for less each, and a visit's weight halves over about a week.
     static func frecency(visits: Int, lastVisited: Date, at date: Date) -> Double {
         let age = max(0, date.timeIntervalSince(lastVisited)/86400)
@@ -214,21 +290,14 @@ public final class BrowsingHistory {
     public func destination(for query: String, at date: Date = Date()) -> (site: URL, page: HistoryEntry?)? {
         // Each page's weight: its visits, and each time its address was typed counting for more. An
         // address typed but never kept, as one that sent the browser elsewhere, still counts.
-        var weighed: [String: (entry: HistoryEntry, weight: Int)] = [:]
-        for entry in entries { weighed[entry.url] = (entry, entry.visits) }
-        for (key, typed) in storage.typed ?? [:] {
-            let extra = Self.typedWeight*typed.count
-            if var page = weighed[key] {
-                page.weight += extra; page.entry.lastVisited = max(page.entry.lastVisited, typed.last); weighed[key] = page
-            } else {
-                weighed[key] = (HistoryEntry(url: key, title: URL(string: key)?.host ?? key, visits: 0, lastVisited: typed.last), extra)
-            }
-        }
         var sites: [String: (site: URL, pages: [(entry: HistoryEntry, weight: Int)])] = [:]
-        for page in weighed.values {
-            guard let url = URL(string: page.entry.url), Self.startsWith(query, url: url),
-                  let site = Self.site(of: url) else { continue }
-            sites[site.absoluteString, default: (site, [])].pages.append(page)
+        let lowered = query.lowercased(), oneWord = !query.isEmpty && !query.contains(where: { $0.isWhitespace })
+        for page in weighedPages {
+            guard oneWord else { break }
+            let address = page.address
+            guard address.url != nil, (query.count == 1 ? [address.shortForm] : address.forms).contains(where: { $0.hasPrefix(lowered) }),
+                  let site = address.site else { continue }
+            sites[site.absoluteString, default: (site, [])].pages.append((page.entry, page.weight))
         }
         func score(_ page: (entry: HistoryEntry, weight: Int)) -> Double { Self.frecency(visits: page.weight, lastVisited: page.entry.lastVisited, at: date) }
         func score(_ pages: [(entry: HistoryEntry, weight: Int)]) -> Double {
@@ -280,10 +349,6 @@ public final class BrowsingHistory {
     }
     /// The address starts with what's typed, including when both are the same:
     /// a page typed in full is still the destination, with nothing left to fill in.
-    private static func startsWith(_ query: String, url: URL) -> Bool {
-        guard !query.isEmpty, !query.contains(where: { $0.isWhitespace }), let key = key(url) else { return false }
-        return forms(key, for: query).contains { $0.lowercased().hasPrefix(query.lowercased()) }
-    }
     /// The site a page is on: its address with only "/" for a path.
     public static func site(of url: URL) -> URL? {
         guard let key = key(url), var parts = URLComponents(string: key) else { return nil }

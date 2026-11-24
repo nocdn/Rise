@@ -243,9 +243,9 @@ struct AddressSuggestion {
         render()
     }
     func render() {
-        buttons.forEach { $0.removeFromSuperview() }; buttons = []
         emptyCommands.isHidden = !isCentered || !isCommandMode || !suggestions.isEmpty
         if isCentered { renderCentered(); return }
+        buttons.forEach { $0.removeFromSuperview() }; buttons = []
         for (index, suggestion) in suggestions.enumerated() {
             let button = NSButton(); button.title = ""; button.isBordered = false
             button.wantsLayer = true; button.layer?.cornerRadius = AddressAppearance.tuning.rowRadius; button.layer?.cornerCurve = .continuous
@@ -308,32 +308,50 @@ struct AddressSuggestion {
         return bare(suggestion.title) != bare(suggestion.subtitle)
     }
     /// Kero's rows: a symbol or the site's icon, the title, and its address beside it, fainter.
+    /// The rows are kept from one keystroke to the next and filled in again, rather than made
+    /// anew: building eight rows of views each time took a few milliseconds of every keystroke.
     private func renderCentered() {
         let style = CenteredPaletteStyle.self
+        while buttons.count > suggestions.count { buttons.removeLast().removeFromSuperview() }
         for (index, suggestion) in suggestions.enumerated() {
-            let button = NSButton(); button.title = ""; button.isBordered = false
-            button.wantsLayer = true; button.layer?.cornerRadius = style.rowRadius; button.layer?.cornerCurve = .continuous
-            button.tag = index; button.target = self; button.action = #selector(choose(_:))
+            let button: NSButton
+            if buttons.indices.contains(index) { button = buttons[index] } else {
+                button = NSButton(); button.title = ""; button.isBordered = false
+                button.wantsLayer = true; button.layer?.cornerRadius = style.rowRadius; button.layer?.cornerCurve = .continuous
+                button.target = self; button.action = #selector(choose(_:))
+                button.addSubview(FaviconView(frame: .zero))
+                let title = NSTextField(labelWithString: "")
+                title.lineBreakMode = .byTruncatingTail; title.identifier = Self.titleID; button.addSubview(title)
+                addSubview(button); buttons.append(button)
+            }
+            button.tag = index
             button.setAccessibilityLabel(suggestion.title)
-            if suggestion.tabID != nil { button.setAccessibilityHelp("Open existing tab") }
-            let imageView = FaviconView(frame: .zero)
-            imageView.image = Self.isThemeCommand(suggestion.command) ? TablerIcon.themeImage(size: style.rowIconSize)
-                : suggestion.favicon ?? (suggestion.symbol == "magnifyingglass" ? style.searchIcon
-                    : NSImage(systemSymbolName: suggestion.symbol, accessibilityDescription: nil))
-            imageView.contentTintColor = suggestion.favicon != nil ? nil : style.detail(theme)
-            if suggestion.favicon == nil, suggestion.symbol == "globe", suggestion.command != "Change Theme" {
-                imageView.showEmptyPlaceholder(theme: theme)
+            button.setAccessibilityHelp(suggestion.tabID != nil ? "Open existing tab" : nil)
+            if let imageView = button.subviews.first as? FaviconView {
+                imageView.image = Self.isThemeCommand(suggestion.command) ? TablerIcon.themeImage(size: style.rowIconSize)
+                    : suggestion.favicon ?? (suggestion.symbol == "magnifyingglass" ? style.searchIcon
+                        : NSImage(systemSymbolName: suggestion.symbol, accessibilityDescription: nil))
+                imageView.contentTintColor = suggestion.favicon != nil ? nil : style.detail(theme)
+                if suggestion.favicon == nil, suggestion.symbol == "globe", suggestion.command != "Change Theme" {
+                    imageView.showEmptyPlaceholder(theme: theme)
+                }
             }
-            button.addSubview(imageView)
-            let title = NSTextField(labelWithString: Self.shownTitle(suggestion))
-            title.font = style.titleFont; title.textColor = style.title(theme); title.lineBreakMode = .byTruncatingTail
-            title.identifier = Self.titleID; button.addSubview(title)
+            let labels = button.subviews.compactMap { $0 as? NSTextField }
+            if let title = labels.first(where: { $0.identifier == Self.titleID }) {
+                let text = Self.shownTitle(suggestion)
+                if title.stringValue != text { title.stringValue = text }
+                title.font = style.titleFont; title.textColor = style.title(theme)
+            }
+            let detail = labels.first { $0.identifier == Self.detailID }
             if Self.showsAddress(suggestion) {
-                let address = NSTextField(labelWithString: AddressDisplay.text(suggestion.subtitle))
-                address.font = style.detailFont; address.textColor = style.detail(theme); address.lineBreakMode = .byTruncatingTail
-                address.identifier = Self.detailID; button.addSubview(address)
-            }
-            addSubview(button); buttons.append(button)
+                let address = detail ?? {
+                    let label = NSTextField(labelWithString: ""); label.lineBreakMode = .byTruncatingTail
+                    label.identifier = Self.detailID; button.addSubview(label); return label
+                }()
+                let text = AddressDisplay.text(suggestion.subtitle)
+                if address.stringValue != text { address.stringValue = text }
+                address.font = style.detailFont; address.textColor = style.detail(theme)
+            } else { detail?.removeFromSuperview() }
         }
         emptyCommands.font = style.titleFont; emptyCommands.textColor = style.detail(theme)
         restingFrame.size.height = style.height(rows: emptyCommands.isHidden ? suggestions.count : 1)
