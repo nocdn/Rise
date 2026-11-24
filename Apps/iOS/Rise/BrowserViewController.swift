@@ -320,6 +320,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     private func updateAppSettings() {
         bottomBar.aiOptions.ai.refresh()
+        bottomBar.appSettings.autofill.refresh()
         updateAIAvailability()
         bottomBar.appSettings.showAutoplay(enabled: videoPlayback.allowsAutoplay)
         bottomBar.appSettings.showTabArchiving(hours: tabArchiveHours) { [weak self] in self?.setTabArchiveHours($0) }
@@ -452,6 +453,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         configuration.userContentController.addUserScript(InputZoomPolicy.userScript)
         let webView = RiseWebView(frame: .zero, configuration: configuration)
         SelectionTimeMenu.install(on: webView)
+        FormAutofillScript.install(on: webView)
         videoPlayback.track(webView)
         // In dark mode, see-through until it paints, rather than flashing WebKit's white.
         PagePaintWatcher.shared.install(on: webView)
@@ -1052,6 +1054,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
                 return bottomBar.aiOptions.canPullToClose(at: panelPan.location(in: bottomBar.aiOptions),
                                                          velocity: panelPan.velocity(in: view))
             }
+            if bottomBar.panel == .autofillInfo {
+                return bottomBar.autofillInfo.canPullToClose(at: panelPan.location(in: bottomBar.autofillInfo),
+                                                            velocity: panelPan.velocity(in: view))
+            }
             if bottomBar.panel == .aiPrompt {
                 // Up against resistance or down to close, as App settings; in the field, only when
                 // it isn't being edited and has nothing to scroll that way.
@@ -1176,7 +1182,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     var canReturnFromPanel: Bool {
         guard isPanelOpen else { return false }
         switch bottomBar.panel {
-        case .history, .downloads, .siteSettings, .appSettings, .aiOptions, .aiPrompt, .privacyPolicy, .fontInfo, .linkSummary: return true
+        case .history, .downloads, .siteSettings, .appSettings, .aiOptions, .aiPrompt, .autofillInfo, .privacyPolicy, .fontInfo, .linkSummary: return true
         default: return false
         }
     }
@@ -1191,6 +1197,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         case .appSettings: closeAppSettings()
         case .aiOptions: closeAIOptions()
         case .aiPrompt: closeAIPrompt()
+        case .autofillInfo: closeAutofillInfo()
         case .privacyPolicy: closePrivacyPolicy()
         default: closePanel()
         }
@@ -1425,7 +1432,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         addTranslationCancelHold(to: address.translateButton)
         for button in [bottomBar.history.closeButton, bottomBar.downloads.closeButton,
                        bottomBar.siteSettings.closeButton, bottomBar.appSettings.closeButton,
-                       bottomBar.aiOptions.closeButton, bottomBar.aiPrompt.closeButton,
+                       bottomBar.aiOptions.closeButton, bottomBar.aiPrompt.closeButton, bottomBar.autofillInfo.closeButton,
                        bottomBar.privacyPolicy.closeButton, bottomBar.fontInfo.closeButton,
                        bottomBar.linkSummary.closeButton] {
             button.addAction(UIAction { [weak self] _ in self?.returnFromPanel() }, for: .primaryActionTriggered)
@@ -1437,6 +1444,15 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.aiPrompt.onHeightChange = { [weak self] in
             guard let self, isPanelOpen, bottomBar.panel == .aiPrompt, panelPan.state != .changed else { return }
             UIView.animate(springDuration: 0.3, bounce: 0, initialSpringVelocity: 0, delay: 0,
+                           options: [.beginFromCurrentState, .allowUserInteraction]) {
+                self.setPanel(self.panelExpansion)
+            }
+        }
+        bottomBar.appSettings.autofill.onEdit = { [weak self] in self?.openAutofillInfo() }
+        // A row more or fewer, and the sheet follows, up to its limit.
+        bottomBar.autofillInfo.onHeightChange = { [weak self] in
+            guard let self, isPanelOpen, bottomBar.panel == .autofillInfo, panelPan.state != .changed else { return }
+            UIView.animate(springDuration: 0.35, bounce: 0, initialSpringVelocity: 0, delay: 0,
                            options: [.beginFromCurrentState, .allowUserInteraction]) {
                 self.setPanel(self.panelExpansion)
             }
@@ -1562,6 +1578,8 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         case .aiOptions: min(view.bounds.height-view.safeAreaInsets.top-12, BottomBar.aiOptionsHeight(safeBottom: safeBottom))
         case .aiPrompt: min(view.bounds.height-view.safeAreaInsets.top-12,
                             BottomBar.aiPromptHeight(bottomBar.aiPrompt, width: view.bounds.width, keyboard: keyboardHeight, safeBottom: safeBottom))
+        case .autofillInfo: min(view.bounds.height-view.safeAreaInsets.top-12,
+                                BottomBar.autofillInfoHeight(bottomBar.autofillInfo, width: view.bounds.width, safeBottom: safeBottom))
         case .privacyPolicy: min(view.bounds.height-view.safeAreaInsets.top-12, BottomBar.privacyPolicyHeight(safeBottom: safeBottom))
         case .downloads: downloadsSheet.height(in: downloadsHeights)
         case .history: BottomBar.historyHeight(screenHeight: view.bounds.height, safeTop: view.safeAreaInsets.top)
@@ -1674,6 +1692,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         pendingPanelMotion = false
         bottomBar.aiOptions.endEditing(true)
         bottomBar.aiPrompt.endEditing(true)
+        bottomBar.autofillInfo.endEditing(true)
         historyReturnPanel = nil
         isPanelOpen = false
         findPageTap.isEnabled = false
@@ -1810,6 +1829,20 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         swapMenuPanel(to: .appSettings)
     }
 
+    /// Source's Edit goes a level deeper than Settings, as AI options does.
+    func openAutofillInfo() {
+        guard isPanelOpen, bottomBar.panel == .appSettings else { return }
+        bottomBar.autofillInfo.reload()
+        swapMenuPanel(to: .autofillInfo)
+    }
+
+    func closeAutofillInfo() {
+        guard isPanelOpen, bottomBar.panel == .autofillInfo else { return }
+        bottomBar.autofillInfo.endEditing(true)
+        updateAppSettings()
+        swapMenuPanel(to: .appSettings)
+    }
+
     func openAIPrompt(_ prompt: AIPrompt) {
         guard isPanelOpen, bottomBar.panel == .aiOptions else { return }
         bottomBar.aiPrompt.keyboardOverlap = 0
@@ -1912,6 +1945,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private func swapMenuPanel(to panel: BottomBar.Panel) {
         if panel != .aiOptions { bottomBar.aiOptions.endEditing(true) }
         if panel != .aiPrompt { bottomBar.aiPrompt.endEditing(true) }
+        if panel != .autofillInfo { bottomBar.autofillInfo.endEditing(true) }
         bottomBar.panel = panel
         bottomBar.showContents(of: panel)
         let change = { self.setPanel(1); self.setNeedsStatusBarAppearanceUpdate() }
@@ -1945,6 +1979,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         keyboardHeight = frame.minY < view.bounds.maxY ? view.bounds.maxY-frame.minY : 0
         if isPanelOpen, bottomBar.panel == .aiOptions {
             bottomBar.aiOptions.keyboardInset = max(0, keyboardHeight-(view.window?.safeAreaInsets.bottom ?? 0))
+            return
+        }
+        if isPanelOpen, bottomBar.panel == .autofillInfo {
+            bottomBar.autofillInfo.keyboardInset = max(0, keyboardHeight-(view.window?.safeAreaInsets.bottom ?? 0))
             return
         }
         guard isPanelOpen, [.find, .search, .aiPrompt].contains(bottomBar.panel) else { return }

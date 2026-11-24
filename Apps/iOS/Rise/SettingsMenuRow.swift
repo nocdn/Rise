@@ -45,7 +45,8 @@ final class SettingsMenuRow: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        let iconColumn: CGFloat = 28, textX: CGFloat = 16+iconColumn+10
+        // Without an icon, the title starts at the row's edge, as Autofill Information's do.
+        let iconColumn: CGFloat = 28, textX: CGFloat = symbol.image == nil ? 16 : 16+iconColumn+10
         symbol.frame = CGRect(x: 16+(iconColumn-iconSide)/2, y: bounds.midY-iconSide/2, width: iconSide, height: iconSide)
         let width = min(bounds.width*0.47, button.sizeThatFits(bounds.size).width)
         button.frame = CGRect(x: bounds.width-16-width, y: 0, width: width, height: bounds.height)

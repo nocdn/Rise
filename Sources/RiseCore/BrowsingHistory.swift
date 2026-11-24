@@ -441,9 +441,11 @@ public final class BrowsingHistory {
         dirty = false
         nonisolated(unsafe) let copy = storage
         let url = storageURL
-        writer.async { [weak self] in
+        // Only ever touched on the main thread, where the failure is handed back.
+        nonisolated(unsafe) weak let history = self
+        writer.async {
             do { try Self.write(copy, to: url) }
-            catch { DispatchQueue.main.async { self?.dirty = true } }
+            catch { DispatchQueue.main.async { history?.dirty = true } }
         }
     }
     private static func write(_ storage: Storage, to url: URL) throws {

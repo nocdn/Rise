@@ -7,7 +7,7 @@ import UIKit
 /// page's address and a few actions, whose Find turns it into a find field above the keyboard.
 /// Either way the bar's contents swap with a quick, blurred crossfade.
 final class BottomBar: UIView {
-    enum Panel { case search, menu, tabMenu, find, siteSettings, appSettings, aiOptions, aiPrompt, privacyPolicy, downloads, history, fontInfo, linkSummary }
+    enum Panel { case search, menu, tabMenu, find, siteSettings, appSettings, aiOptions, aiPrompt, autofillInfo, privacyPolicy, downloads, history, fontInfo, linkSummary }
 
     /// The buttons' row, and the space above it.
     static let rowHeight: CGFloat = 42
@@ -112,6 +112,8 @@ final class BottomBar: UIView {
     let appSettings = AppSettingsPanel()
     let aiOptions = AIOptionsPanel()
     let aiPrompt = AIPromptPanel()
+    /// Settings' Source, Edit: the contact card's copy that Autofill fills from.
+    let autofillInfo = AutofillInfoPanel()
     let privacyPolicy = PrivacyPolicyPanel()
     /// More's Downloads: the list of downloads.
     let downloads = DownloadsPanel()
@@ -142,7 +144,7 @@ final class BottomBar: UIView {
     private var copySuccessTask: Task<Void, Never>?
     /// Whichever of the row, the search and the menu is showing, if any.
     private(set) var shown: UIView?
-    private var contents: [UIView] { [home, search, menu, tabMenu, find, siteSettings, appSettings, aiOptions, aiPrompt, privacyPolicy, downloads, history, fontInfo, linkSummary] }
+    private var contents: [UIView] { [home, search, menu, tabMenu, find, siteSettings, appSettings, aiOptions, aiPrompt, autofillInfo, privacyPolicy, downloads, history, fontInfo, linkSummary] }
     /// Collapsed, only the strip remains; set it inside an animation to animate.
     var isCollapsed = false {
         didSet {
@@ -203,6 +205,11 @@ final class BottomBar: UIView {
     /// How far into the prompt's panel the keyboard reaches, leaving 12 points above it.
     static func aiPromptKeyboardOverlap(keyboard: CGFloat, safeBottom: CGFloat) -> CGFloat {
         keyboard > 0 ? max(0, keyboard+12-max(safeBottom, 16)) : 0
+    }
+
+    /// As tall as all its rows, up to the screen's limit, where they scroll.
+    static func autofillInfoHeight(_ panel: AutofillInfoPanel, width: CGFloat, safeBottom: CGFloat) -> CGFloat {
+        searchTop+panel.naturalHeight(width: width)+max(safeBottom, 16)
     }
 
     static func privacyPolicyHeight(safeBottom: CGFloat) -> CGFloat {
@@ -276,7 +283,7 @@ final class BottomBar: UIView {
         for button in [tabsButton, newPageButton] { row.addSubview(button) }
         row.addSubview(moreLanding)
         moreLanding.addSubview(moreButton)
-        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton, search.privateButton, tabMenu.incognitoRow, tabMenu.historyButton, history.closeButton]+menu.buttons+siteSettings.buttons+appSettings.buttons+aiOptions.buttons+aiPrompt.buttons+privacyPolicy.buttons+fontInfo.buttons+linkSummary.buttons+downloads.buttons+find.buttons+[find.modeButton, find.sendButton] {
+        for button in [tabsButton, newPageButton, moreButton]+menu.address.buttons+[search.clearButton, search.privateButton, tabMenu.incognitoRow, tabMenu.historyButton, history.closeButton]+menu.buttons+siteSettings.buttons+appSettings.buttons+aiOptions.buttons+aiPrompt.buttons+autofillInfo.buttons+privacyPolicy.buttons+fontInfo.buttons+linkSummary.buttons+downloads.buttons+find.buttons+[find.modeButton, find.sendButton] {
             // A light, crisp tap as the finger lands, rather than a soft thud; actions wait for it to lift.
             button.addAction(UIAction { [weak self, weak button] _ in
                 guard let self else { return }
@@ -333,6 +340,7 @@ final class BottomBar: UIView {
         case .appSettings: appSettings
         case .aiOptions: aiOptions
         case .aiPrompt: aiPrompt
+        case .autofillInfo: autofillInfo
         case .privacyPolicy: privacyPolicy
         case .downloads: downloads
         case .history: history
@@ -467,6 +475,7 @@ final class BottomBar: UIView {
         let safeBottom = window?.safeAreaInsets.bottom ?? 0
         place(aiPrompt, Self.searchTop, max(0, bounds.height-Self.searchTop-max(safeBottom, 16)))
         place(privacyPolicy, Self.searchTop, max(0, bounds.height-Self.searchTop-max(safeBottom,16)))
+        place(autofillInfo, Self.searchTop, max(0, bounds.height-Self.searchTop-max(safeBottom, 16)))
         // To the bar's bottom edge, its last lines fading under it.
         place(fontInfo, Self.searchTop, max(0, bounds.height-Self.searchTop))
         place(linkSummary, Self.searchTop, max(0, bounds.height-Self.searchTop-max(safeBottom, 16)))

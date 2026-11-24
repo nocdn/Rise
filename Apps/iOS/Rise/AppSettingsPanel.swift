@@ -14,11 +14,12 @@ final class AppSettingsPanel: UIView {
     static let currencyPink = UIColor { $0.userInterfaceStyle == .dark
         ? UIColor(displayP3Red: 232/255, green: 72/255, blue: 132/255, alpha: 1)
         : UIColor(displayP3Red: 196/255, green: 30/255, blue: 98/255, alpha: 1) }
-    let archiveRow = SettingsMenuRow("Archive unused tabs", icon: UIImage(systemName: "archivebox.fill"), colour: .systemOrange)
+    let autofill = AutofillSettingsGroup()
+    let archiveRow = SettingsMenuRow("Archive unused tabs", icon: MenuIcons.archiveTabs, colour: .systemOrange)
     let aiOptionsRow = SettingsNavigationRow("AI Options")
     let privacyRow = SettingsNavigationRow("Privacy Policy")
     private let scroll = UIScrollView()
-    var buttons: [UIButton] { [closeButton, syncRow, autoplayRow, incognitoLockRow, currencyRow.button, archiveRow.button, aiOptionsRow, privacyRow] }
+    var buttons: [UIButton] { [closeButton, syncRow, autoplayRow, incognitoLockRow]+autofill.buttons+[currencyRow.button, archiveRow.button, aiOptionsRow, privacyRow] }
     private let detail = UILabel()
     private let autoplayDetail = UILabel()
     private let incognitoLockDetail = UILabel()
@@ -41,6 +42,8 @@ final class AppSettingsPanel: UIView {
         archiveRow.layer.cornerRadius = MenuPanel.cornerRadius
         archiveRow.clipsToBounds = true
         scroll.addSubview(archiveRow)
+        scroll.addSubview(autofill)
+        autofill.onChanged = { [weak self] in self?.setNeedsLayout() }
         scroll.addSubview(aiOptionsRow)
         scroll.addSubview(privacyRow)
         for row in [syncRow, autoplayRow, incognitoLockRow] {
@@ -137,7 +140,9 @@ final class AppSettingsPanel: UIView {
         incognitoLockRow.center = CGPoint(x: bounds.midX, y: autoplayDetail.frame.maxY+SiteSettingsPanel.groupGap+SiteSettingsPanel.rowHeight/2)
         let lockSize = incognitoLockDetail.sizeThatFits(CGSize(width: textWidth, height: .greatestFiniteMagnitude))
         incognitoLockDetail.frame = CGRect(x: detail.frame.minX, y: incognitoLockRow.frame.maxY+12, width: textWidth, height: lockSize.height)
-        currencyRow.frame = CGRect(x: syncRow.frame.minX, y: incognitoLockDetail.frame.maxY+SiteSettingsPanel.groupGap,
+        autofill.frame = CGRect(x: syncRow.frame.minX, y: incognitoLockDetail.frame.maxY+SiteSettingsPanel.groupGap,
+                                width: width, height: autofill.height(for: width))
+        currencyRow.frame = CGRect(x: syncRow.frame.minX, y: autofill.frame.maxY+SiteSettingsPanel.groupGap,
                                    width: width, height: SiteSettingsPanel.rowHeight)
         let currencySize = currencyDetail.sizeThatFits(CGSize(width: textWidth, height: .greatestFiniteMagnitude))
         currencyDetail.frame = CGRect(x: detail.frame.minX, y: currencyRow.frame.maxY+12, width: textWidth, height: currencySize.height)

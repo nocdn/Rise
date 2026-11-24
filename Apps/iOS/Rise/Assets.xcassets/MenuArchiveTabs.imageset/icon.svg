@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24">
+  <!-- CodeX Icons by CodeX, MIT: https://github.com/davidabou/icons/blob/master/LICENSE. Enlarged a little to
+       the Tabler icons' size, its stroke thinned to match theirs on screen. -->
+  <g fill="none" stroke="#000" stroke-width="1.453846" transform="translate(12 12) scale(1.142857) translate(-12 -12)">
+    <rect width="14" height="4.5" x="5" y="5" rx="2.25"/>
+    <path stroke-linecap="round" stroke-linejoin="round" d="M6.5 9.5V16a3 3 0 0 0 3 3h5a3 3 0 0 0 3-3V9.5m-7 4h3"/>
+  </g>
+</svg>

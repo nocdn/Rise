@@ -6,16 +6,20 @@ import WebKit
 /// Rise's pages: WebKit's own, with a time selected in another zone and an amount in another
 /// currency leading the selection menu, Explain in Context beside Look Up, and no Copy Link with Highlight.
 final class RiseWebView: WKWebView {
-    /// WebKit's bar above the keyboard, with a microphone before its ✓ (`FormAccessoryDictation`),
-    /// and the stretch between ↓ and it moving the caret (`FormAccessoryCaretSwipe`).
+    /// WebKit's bar above the keyboard, with Autofill My Information's button after its ↓ while the
+    /// field is one the card fits (`FormAccessoryAutofill`), a microphone before its ✓
+    /// (`FormAccessoryDictation`), and the stretch between them moving the caret (`FormAccessoryCaretSwipe`).
     override var inputAccessoryView: UIView? {
         let accessory = super.inputAccessoryView
         if let accessory {
+            FormAccessoryAutofill.install(in: accessory, for: self)
             FormAccessoryDictation.install(in: accessory, for: self)
             FormAccessoryCaretSwipe.install(in: accessory, for: self)
         }
         return accessory
     }
+    /// The focused field, and what the person's contact card has for it.
+    lazy var autofill = FormAutofill(webView: self)
     override var keyCommands: [UIKeyCommand]? {
         var commands = super.keyCommands ?? []
         if let receipt = selectionItemBrowser?.selectionItemReceipt, receipt.allowsUndo {

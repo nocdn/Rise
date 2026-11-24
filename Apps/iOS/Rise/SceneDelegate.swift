@@ -84,6 +84,12 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
             else { PageTranslationAudit.run(in: controller) }
             return
         }
+        if ProcessInfo.processInfo.arguments.contains(AutofillAudit.argument) {
+            let controller = BrowserViewController(startURL: nil, websiteDataStore: .nonPersistent())
+            window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
+            AutofillAudit.run(in: controller)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains(AIPromptsAudit.argument) {
             let controller = HistoryPanelAudit.makeBrowser()
             window.rootViewController = controller; self.window = window; window.makeKeyAndVisible()
@@ -319,6 +325,8 @@ final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         let browser = window?.rootViewController as? BrowserViewController
         if let window { browser?.quickActions.setActive(true, in: window) }
         browser?.applyPendingChanges()
+        // The UK county of a card picked offline, or before Rise looked counties up.
+        AutofillStore.shared.lookUpCounties()
         browser?.backgroundSearch.becameActive { [weak browser] in browser?.reopenSearchAfterInactivity() }
         // Back after a while, sync starts over as a launch does: a phone left suspended overnight
         // was seen not to fetch on returning, while a fresh start always does.

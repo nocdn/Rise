@@ -65,7 +65,8 @@ import WebKit
         return item.perform(selector)?.takeUnretainedValue() as? UIView
     }
 
-    /// Between ↓ and the microphone, or ✓ where there's no microphone, in the toolbar's space.
+    /// Between ↓ (or the autofill button after it, while it's shown) and the microphone, or ✓ where
+    /// there's no microphone, in the toolbar's space.
     var gap: ClosedRange<CGFloat>? {
         guard let toolbar, let items = toolbar.items else { return nil }
         let view = Self.view(of:)
@@ -73,8 +74,9 @@ import WebKit
             items.first { $0.action.map(NSStringFromSelector) == action }.flatMap(view).flatMap { $0.superview?.convert($0.frame, to: toolbar) }
         }
         let microphone = items.first { $0.customView is FormAccessoryDictation }.flatMap(view).flatMap { $0.superview?.convert($0.frame, to: toolbar) }
+        let autofill = items.first { !$0.isHidden && $0.customView is FormAccessoryAutofill }.flatMap(view).flatMap { $0.superview?.convert($0.frame, to: toolbar) }
         guard let next = frame("_nextTapped"), let end = microphone ?? frame("_done") else { return nil }
-        let start = next.maxX+Self.buttonMargin, finish = end.minX-Self.buttonMargin
+        let start = max(next.maxX, autofill?.maxX ?? 0)+Self.buttonMargin, finish = end.minX-Self.buttonMargin
         return start < finish ? start...finish : nil
     }
 

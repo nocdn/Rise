@@ -21,6 +21,11 @@ import UIKit
     static let openRouter = UIImage(named: "MenuOpenRouter")
     static let openAI = UIImage(named: "MenuOpenAI")
     static let apiKey = UIImage(named: "MenuAPIKey")
+    /// CodeX icons, MIT: https://github.com/davidabou/icons/blob/master/LICENSE, enlarged a little to these
+    /// icons' size, their stroke matching on screen.
+    static let archiveTabs = UIImage(named: "MenuArchiveTabs")
+    static let autofill = UIImage(named: "MenuAutofill")
+    static let autofillSource = UIImage(named: "MenuAutofillSource")
     /// Phosphor's coins, MIT: https://github.com/phosphor-icons/core/blob/main/LICENSE, scaled and
     /// weighted to sit with these.
     static let currency = UIImage(named: "MenuCurrency")
