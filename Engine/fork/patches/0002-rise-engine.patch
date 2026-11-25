@@ -1296,10 +1296,10 @@ index 0000000000..cabcb68258
 +#endif  // CHROME_BROWSER_RISE_CHROME_BROWSER_MAIN_EXTRA_PARTS_RISE_H_
 diff --git a/chrome/browser/rise/rise_bridge.mm b/chrome/browser/rise/rise_bridge.mm
 new file mode 100644
-index 0000000000..e20460669c
+index 0000000000..70179a2794
 --- /dev/null
 +++ b/chrome/browser/rise/rise_bridge.mm
-@@ -0,0 +1,3989 @@
+@@ -0,0 +1,3993 @@
 +// Copyright 2026 The Rise Authors. All rights reserved.
 +// Use of this source code is governed by a BSD-style license that can be
 +// found in the LICENSE file.
@@ -1626,10 +1626,14 @@ index 0000000000..e20460669c
 +      dialogs_ = [NSHashTable weakObjectsHashTable];
 +    }
 +    Class dialog = NSClassFromString(@"NativeWidgetMacNSWindow");
++    // A page's picture-in-picture window (Meet's call, a video) is one of
++    // Chrome's too, of a class of its own, and floats on its own: no dialog.
++    Class floating = NSClassFromString(@"NativeWidgetMacFramelessNSWindow");
 +    bool waiting = false;
 +    for (NSWindow* window in NSApp.windows) {
 +      if (window == parent || ![window isKindOfClass:dialog] ||
-+          window.parentWindow || [dialogs_ containsObject:window]) {
++          [window isKindOfClass:floating] || window.parentWindow ||
++          [dialogs_ containsObject:window]) {
 +        continue;
 +      }
 +      if (!window.visible) {
