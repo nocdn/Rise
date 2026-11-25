@@ -85,19 +85,18 @@ import RiseCore
         check(tucked, "A quick flick off the right side tucks it")
         check(midway, "It blurs on its way")
         let showing = window.frame.intersection(area).width
-        check(abs(showing-window.frame.width*FloatingVideoMotion.tuckedShowing) < 1.5, "A tenth of it stays on the screen (\(showing) of \(window.frame.width))")
+        check(abs(showing-FloatingVideoMotion.tuckedShowing) < 1.5, "A strip of it stays on the screen (\(showing) of \(window.frame.width))")
         guard let veil = tuck.veil(of: window) else { check(false, "It has its veil"); finish(); return }
         check(veil.frame == window.frame && !veil.ignoresMouseEvents, "The veil covers it and takes its clicks")
         check(veil.pageIsBlurred, "Its page is blurred")
         await pause("tucked", window.frame)
         veil.handle.setHovered(true)
-        check(veil.handle.isShowingChevron, "Under the pointer it shows the chevron")
-        veil.handle.layoutSubtreeIfNeeded()
+        check(veil.handle.isHovered, "Under the pointer it grows")
         let part = window.frame.intersection(screen.frame).offsetBy(dx: -window.frame.minX, dy: -window.frame.minY)
-        let center = veil.handle.chevronCenter
+        let center = veil.handle.showingCenter
         check(abs(center.x-part.midX) <= 0.5 && abs(center.y-part.midY) <= 0.5,
-              "The chevron sits in the middle of the part showing (\(center) in \(part))")
-        await pause("chevron", window.frame)
+              "Its click target is the middle of the part showing (\(center) in \(part))")
+        await pause("hovered", window.frame)
 
         // Two fingers anywhere on the veil move it, and a nudge leaves it tucked.
         move(by: CGVector(dx: -2, dy: 0), steps: 6, at: 20, in: veil, at: NSPoint(x: 20, y: 40))
@@ -105,7 +104,7 @@ import RiseCore
         check(tuck.edge(of: window) == .right, "A nudge on the veil leaves it tucked")
 
         _ = veil.handle.accessibilityPerformPress()
-        check(!veil.handle.isShowingChevron, "The chevron brings it out, and goes")
+        check(!veil.handle.isHovered, "A press brings it out")
         var unveiling = false
         let back = await waitUntil(3, poll: 8) {
             let progress = FloatingVideoMotion.tuckProgress(content: window.frame, visibleFrame: area)

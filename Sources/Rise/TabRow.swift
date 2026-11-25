@@ -55,6 +55,9 @@ import RiseCore
     var onDragMove: ((NSEvent) -> Void)?
     var onDragEnd: ((NSEvent) -> Void)?
     var onHover: ((Bool) -> Void)?
+    /// The pointer came over the Peek's favicon, or left it, in the hovered row: its card is the Peek's.
+    var onPeekHover: ((Bool) -> Void)?
+    private var peekHover = false
     var onPress: (() -> Void)?
     private var pressEvent: NSEvent?
     private var dragging = false
@@ -355,7 +358,14 @@ import RiseCore
     private func setHovered(_ hovered: Bool) {
         let hovered = scrollFocus == nil && hovered
         guard hover != hovered else { return }
+        if !hovered { peekHover = false }
         hover = hovered; style(); onHover?(hovered)
+    }
+    /// Over the Peek's favicon, a little beyond its square, while the row is hovered.
+    private func updatePeekHover(at location: NSPoint) {
+        let over = hover && showsPeek && peekIndicator.frame.insetBy(dx: -3, dy: -3).contains(convert(location, from: nil))
+        guard over != peekHover else { return }
+        peekHover = over; onPeekHover?(over)
     }
     /// Moving or releasing a row can leave its tracking state at the old geometry.
     func refreshHover(at location: NSPoint? = nil) {
@@ -363,14 +373,17 @@ import RiseCore
         guard let window, window.isVisible, !isHiddenOrHasHiddenAncestor else { setHovered(false); return }
         let location = location ?? window.mouseLocationOutsideOfEventStream
         setHovered(visibleRect.intersection(bounds).contains(convert(location, from: nil)) && isFrontmost(at: location))
+        updatePeekHover(at: location)
     }
     /// Only where the row is in front: under the current-tab pill, or anything else over the list,
     /// it isn't hovered, as tracking areas report the pointer either way.
     override func mouseEntered(with event: NSEvent) {
         setHovered(takesPointer(event)); if hover { onPointerMove?() }
+        updatePeekHover(at: event.locationInWindow)
     }
     override func mouseMoved(with event: NSEvent) {
         setHovered(takesPointer(event)); if hover { onPointerMove?() }
+        updatePeekHover(at: event.locationInWindow)
     }
     private func takesPointer(_ event: NSEvent) -> Bool { window == nil || isFrontmost(at: event.locationInWindow) }
     override func mouseExited(with event: NSEvent) { if pressEvent == nil { setHovered(false) } else { onHover?(false) } }

@@ -67,7 +67,7 @@ For more about the engine, see [Engine/README.md](Engine/README.md). For passkey
 ### Tabs and sidebar
 
 - **Sidebar tabs**: your tabs are in a list at the left. Drag a tab to move it. Double-click a title to rename it. Middle-click a tab to close it.
-- ⭐ **Pinned tabs**: drag a tab up into the tiles at the top to pin it. Drag a tile down to unpin it. Tiles take the color of the site's icon. A split made from a pinned tab stays in its tile, with both icons and both colors. A Peek opened from a pinned tab shows as a small icon at the tile's bottom right.
+- ⭐ **Pinned tabs**: drag a tab up into the tiles at the top to pin it. Drag a tile down to unpin it. Tiles take the color of the site's icon. A split made from a pinned tab stays in its tile, with both icons and both colors. A Peek opened from a pinned tab shows as a small icon at the tile's bottom right. Pinned tabs load in the background when Rise opens and never sleep, so sites such as Google Chat get new messages, and their hover cards are up to date, from the start.
 - ⭐ **Wide sidebar**: hold ⌃⌘ to make the sidebar wider, so you can see long titles.
 - **Hidden sidebar**: press ⌘B to hide the sidebar. Move the pointer to the left edge of the window and the sidebar slides out.
 - **Tab switcher**: press ⌃Tab to go to your recent tabs, with page pictures. Release ⌃ to switch. Set how many tabs it shows in Settings → Tabs.
@@ -121,6 +121,8 @@ For more about the engine, see [Engine/README.md](Engine/README.md). For passkey
 
 Hover over these tabs in the sidebar to see a card. All cards are on by default. You can turn each one off in Settings → Tabs.
 
+A tab with a Peek shows the Peek's icon at the end of its row. Hover over that icon to see the Peek's card, such as a merge request's, and move back over the rest of the row to see the tab's again.
+
 - ⭐ **Gmail and Proton Mail**: your newest emails. Click one to open it. Choose the Gmail category in Settings → Tabs.
 - ⭐ **Google Chat**: your direct messages, newest first. Unread ones have a blue dot. To also see spaces, such as team and announcement spaces, set Google Chat preview to Everything in Settings → Tabs.
 - ⭐ **Google Calendar**: your day as a timeline. Swipe sideways to go to other days. Right-click empty space and choose Refresh to get the newest events. Pinch to make the card taller or shorter while it's open. Calendar tabs also show a countdown, such as "in 17m", before an event starts.
@@ -128,7 +130,7 @@ Hover over these tabs in the sidebar to see a card. All cards are on by default.
 
 ### Media
 
-- ⭐ **Floating video**: when you leave Rise while a video plays with sound, the video floats in its own small window. Drag or flick it into a corner. Pinch to resize it, also from another app, or drag one of its edges or corners. Flick it past the side of the screen to tuck it away. Click the tucked window, or flick it back out, and it goes back to where you tucked it from. Right-click it to play, pause or untuck it.
+- ⭐ **Floating video**: when you leave Rise while a video plays with sound, the video floats in its own small window. Drag or flick it into a corner. Pinch to resize it, also from another app, or drag one of its edges or corners. Flick it past the side of the screen to tuck it away. The same thin strip of it stays on the screen whatever its size, and it grows a little when you point at it. Click the tucked window, or flick it back out, and it goes back to where you tucked it from. Right-click it to play, pause or untuck it.
 - ⭐ **Now Playing**: when media plays in a tab that you left, a card at the bottom of the sidebar has its controls. Short sounds, such as a site's notification sound, do not show a card.
 - **Tab audio**: a tab that plays sound has a button to pause or mute it.
 - ⭐ **Meet's floating window**: move it with two fingers on its title bar, and flick it into a corner.

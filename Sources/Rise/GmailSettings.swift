@@ -7,7 +7,7 @@ import AppKit
     }
     func selectGmailCategory(_ category: GmailCategory) {
         preferences.set(category.rawValue, forKey: Self.gmailCategoryKey)
-        if let id = tabHoverCards.shownID, GmailAccount(url: tabs.first(where: { $0.id == id })?.url) != nil {
+        if let id = tabHoverCards.shownID, GmailAccount(url: hoverTab(id)?.url) != nil {
             showGmailTooltip(id)
         } else { preloadGmailInbox() }
     }

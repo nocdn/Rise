@@ -521,11 +521,17 @@ import RiseCore
         // Tab sync, and the archive it checks, read 8 MB between them: after the window's first frame.
         if syncTabs { DispatchQueue.main.asyncAfter(deadline: .now()+0.25) { [weak self] in self?.startTabSync() } }
         startTabSleep()
+        // Pinned tabs load in the background soon after the shown one, so their sites are live
+        // from launch rather than from when each is first opened.
+        DispatchQueue.main.asyncAfter(deadline: .now()+2) { [weak self] in self?.loadPinnedTabs() }
         // History made ready to type against once launch has settled, not at the first keystroke.
         DispatchQueue.main.asyncAfter(deadline: .now()+3) { [weak self] in self?.browsingHistory.prepareForTyping() }
         if Self.hoverPreloadDelay > 0 {
-            DispatchQueue.main.asyncAfter(deadline: .now()+Self.hoverPreloadDelay+0.1) { [weak self] in
-                self?.preloadGmailInbox(); self?.preloadProtonMailInbox(); self?.preloadChatInbox(); self?.preloadCalendarAgenda()
+            // Pinned tabs' cards straight away, after the window's first frame; the rest later.
+            for delay in [1, Self.hoverPreloadDelay+0.1] {
+                DispatchQueue.main.asyncAfter(deadline: .now()+delay) { [weak self] in
+                    self?.preloadGmailInbox(); self?.preloadProtonMailInbox(); self?.preloadChatInbox(); self?.preloadCalendarAgenda()
+                }
             }
         }
     }
@@ -552,6 +558,7 @@ import RiseCore
         sidebar.onReorderPinned = { [weak self] in self?.reorderPinnedTabs($0) }
         sidebar.onRename = { [weak self] id, title in self?.renameTab(id, title: title) }
         sidebar.onTabHover = { [weak self] id, hovering in self?.tabHoverChanged(id, hovering: hovering) }
+        sidebar.onTabPeekHover = { [weak self] id, over in self?.tabPeekHoverChanged(id, overPeek: over) }
         sidebar.onScrollFocusChanged = { [weak self] in self?.layoutTabScrollArrow() }
         sidebar.playbackState = { [weak self] id in self?.playbackPaused(id) }
         sidebar.peekState = { [weak self] id in self?.peek(for: id) }

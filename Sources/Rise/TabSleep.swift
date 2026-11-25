@@ -70,4 +70,19 @@ import RiseCore
         update()
     }
     static let editingScript = TabArchiveRules.editingScript
+
+    /// Pinned tabs are the sites kept open all day, a chat, mail, a calendar: each loads in the
+    /// background after launch, one after another, so its messages and notifications arrive from
+    /// the start and it's up to date when opened. Like every pinned tab, it never sleeps.
+    func loadPinnedTabs() {
+        guard ChromiumEngine.isRunning else { return }
+        let waiting = tabs.filter { $0.pinned && $0.page.url == nil && !$0.hasAttemptedNavigation && !$0.page.isLoading && $0.requestedURL != nil }
+        for (index, tab) in waiting.enumerated() {
+            DispatchQueue.main.asyncAfter(deadline: .now()+Double(index)*0.75) { [weak tab] in
+                guard let tab, tab.pinned, tab.page.url == nil, !tab.hasAttemptedNavigation, !tab.page.isLoading,
+                      let url = tab.requestedURL else { return }
+                tab.load(url)
+            }
+        }
+    }
 }

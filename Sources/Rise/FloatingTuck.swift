@@ -1,70 +1,51 @@
 import AppKit
 
-/// Covers a floating window while it's tucked past the screen's side: under the pointer it shows a
-/// chevron in the part still on the screen, pointing the way it comes back out, and a click brings
-/// it out, and a right-click shows what its window offers there. The chevron comes and goes with
-/// a quick, plain fade.
+/// Covers a floating window while it's tucked past the screen's side: under the pointer the window
+/// grows a touch (`onHover`), a little less than it does as two fingers move it; a click brings it
+/// out, and a right-click shows what its window offers there.
 @MainActor final class FloatingTuckHandle: NSView {
     var onClick: (() -> Void)?
     /// What a right-click (or a Control-click) shows while it's tucked.
     var makeMenu: (() -> NSMenu?)?
     /// A drag on the tucked window moves it, as one on its picture does.
     var mouseDrag: ((NSEvent) -> Void)?
+    /// The pointer came over the tucked window, or left it: the window grows, or settles back.
+    var onHover: ((Bool) -> Void)?
     /// The side the window is tucked past; nil when it isn't, which lets clicks through.
     var edge: FloatingVideoMotion.Edge? {
         didSet {
             guard edge != oldValue else { return }
-            if let edge { pointing = edge; needsLayout = true }
             update()
         }
     }
-    private var pointing = FloatingVideoMotion.Edge.left
     private var hovered = false
     private var shown = false
-    var isShowingChevron: Bool { shown }
-    /// Where the chevron's middle is, in its own coordinates.
-    var chevronCenter: CGPoint { CGPoint(x: chevron.frame.midX, y: chevron.frame.midY) }
-    private let chevron = CAShapeLayer()
+    /// Whether it's grown under the pointer.
+    var isHovered: Bool { shown }
+    /// The middle of the part on the screen, in its own coordinates, where a click brings it out.
+    var showingCenter: CGPoint {
+        let part = showing ?? bounds
+        return CGPoint(x: part.midX, y: part.midY)
+    }
     private var downPoint: NSPoint?, dragged = false
-    /// The part of it on the screen, in its own coordinates, which the chevron sits in the middle of.
-    var showing: NSRect? { didSet { if showing != oldValue { needsLayout = true } } }
-    /// How far tucked the window has to be for the chevron to show.
+    /// The part of it on the screen, in its own coordinates.
+    var showing: NSRect?
+    /// How far tucked the window has to be for the pointer to grow it.
     static let showsFrom: CGFloat = 0.95
     /// Follows the pointer itself, in a window that takes the mouse while it's tucked.
     var tracksHover = false {
         didSet { if tracksHover { addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)) } }
     }
-    /// Whether the pointer coming over it shows the chevron; the veil says, as the window moves.
+    /// Whether the pointer coming over it grows it; the veil says, as the window moves.
     var allowsHover: () -> Bool = { true }
     override func mouseEntered(with event: NSEvent) { if tracksHover, allowsHover() { setHovered(true) } }
     override func mouseExited(with event: NSEvent) { if tracksHover { setHovered(false) } }
 
     override init(frame: NSRect) {
         super.init(frame: frame)
-        wantsLayer = true
-        chevron.fillColor = nil; chevron.strokeColor = NSColor.white.cgColor
-        chevron.lineWidth = 2.5; chevron.lineCap = .round; chevron.lineJoin = .round
-        chevron.shadowColor = NSColor.black.cgColor; chevron.shadowOpacity = 0.35; chevron.shadowRadius = 3; chevron.shadowOffset = .zero
-        chevron.opacity = 0
-        layer?.addSublayer(chevron)
         setAccessibilityElement(true); setAccessibilityRole(.button); setAccessibilityLabel("Bring Back")
     }
     required init?(coder: NSCoder) { fatalError() }
-
-    override func layout() {
-        super.layout()
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        // In the middle of the part on the screen; pointing back out, away from the side. The
-        // chevron's ink, 5.5 by 12 points, is centred on its frame's middle.
-        let fallback = bounds.width*FloatingVideoMotion.tuckedShowing
-        let part = showing ?? NSRect(x: pointing == .left ? bounds.width-fallback : 0, y: 0, width: fallback, height: bounds.height)
-        chevron.frame = CGRect(x: (part.midX-8).rounded(), y: (part.midY-10).rounded(), width: 16, height: 20)
-        let path = CGMutablePath(), near: CGFloat = 5.25, far: CGFloat = 10.75
-        let tip = pointing == .left ? far : near, ends = pointing == .left ? near : far
-        path.move(to: CGPoint(x: ends, y: 4)); path.addLine(to: CGPoint(x: tip, y: 10)); path.addLine(to: CGPoint(x: ends, y: 16))
-        chevron.path = path
-        CATransaction.commit()
-    }
 
     func setHovered(_ hovered: Bool) {
         guard hovered != self.hovered else { return }
@@ -74,17 +55,7 @@ import AppKit
         let show = edge != nil && hovered
         guard show != shown else { return }
         shown = show
-        let reduce = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
-        let opacity = chevron.presentation()?.opacity ?? chevron.opacity
-        CATransaction.begin(); CATransaction.setDisableActions(true)
-        chevron.removeAllAnimations()
-        chevron.opacity = show ? 1 : 0
-        CATransaction.commit()
-        guard !reduce, window != nil else { return }
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = opacity; fade.toValue = show ? 1 : 0
-        fade.duration = show ? 0.14 : 0.12; fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
-        chevron.add(fade, forKey: "fade")
+        onHover?(show)
     }
 
     // Only while tucked does it take the window's clicks.
@@ -216,6 +187,7 @@ enum FloatingTuckLook {
         content.autoresizesSubviews = true
         handle.frame = content.bounds; handle.autoresizingMask = [.width, .height]; handle.tracksHover = true
         handle.allowsHover = { [weak self] in (self?.progress ?? 0) > FloatingTuckHandle.showsFrom }
+        handle.onHover = { [weak page] hovered in if let page { FloatingPageHover.shared.grow(hovered, page) } }
         content.addSubview(handle)
         contentView = content
         page.contentView?.layerUsesCoreImageFilters = true
@@ -228,6 +200,8 @@ enum FloatingTuckLook {
     func update(progress: CGFloat, edge: FloatingVideoMotion.Edge?, dragging: Bool = false) {
         guard let page else { return }
         self.edge = edge; self.progress = progress
+        // Moving, it's back at its size: the window server's scaling is placed for where it was.
+        if dragging || edge == nil { FloatingPageHover.shared.settle(page) }
         if frame != page.frame { setFrame(page.frame, display: false) }
         blur(page, by: progress)
         if let screen = FloatingTuckLook.screen(holding: page.frame) {
@@ -252,7 +226,7 @@ enum FloatingTuckLook {
 
     func remove() {
         if let closeObserver { NotificationCenter.default.removeObserver(closeObserver); self.closeObserver = nil }
-        if let page { blur(page, by: 0) }
+        if let page { blur(page, by: 0); FloatingPageHover.shared.settle(page) }
         page?.removeChildWindow(self); orderOut(nil)
     }
 }

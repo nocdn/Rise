@@ -42,6 +42,34 @@ final class TabTitleTooltipTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(350))
         XCTAssertEqual(hover.shownID, second.id)
     }
+    /// Over a row's Peek favicon, the card is the Peek's own, at once while one shows; back over
+    /// the rest of the row, the tab's again; and leaving the row closes it either way.
+    @MainActor func testAPeeksFaviconShowsThePeeksCard() async throws {
+        _ = NSApplication.shared
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let browser = BrowserController(sessionURL: folder.appendingPathComponent("session.json"), restore: false)
+        browser.window?.setFrameAutosaveName(""); browser.window?.alphaValue = 0.01; browser.showWindow(nil)
+        defer { browser.tabPressed(); browser.closePeek(); for owner in Array(browser.suspendedPeeks.keys) { browser.discardPeek(for: owner) }
+                browser.saveWork?.cancel(); browser.tabs.forEach { $0.cancelLoad() }; browser.window?.orderOut(nil); try? FileManager.default.removeItem(at: folder) }
+        let tab = browser.addTab(url: URL(string: "https://example.com/a")!)
+        browser.showPeek(url: URL(string: "https://example.com/peek")!, from: tab.page.view, animated: false)
+        _ = browser.addTab(url: URL(string: "https://example.com/b")!)
+        let peek = try XCTUnwrap(browser.peek(for: tab.id))
+        browser.update(); browser.root.layoutSubtreeIfNeeded()
+        let hover = browser.tabHoverCards
+        browser.tabHoverChanged(tab.id, hovering: true)
+        try await Task.sleep(for: .milliseconds(Int(TabHoverCards.delay*1000)+150))
+        XCTAssertEqual(hover.shownID, tab.id)
+        browser.tabPeekHoverChanged(tab.id, overPeek: true)
+        XCTAssertEqual(hover.shownID, peek.id, "The Peek's card, at once")
+        XCTAssertEqual(browser.hoverRowID(peek.id), tab.id)
+        XCTAssertTrue(browser.hoverAnchor(peek.id) === browser.sidebar.anchor(for: tab.id), "beside the tab's row")
+        browser.tabPeekHoverChanged(tab.id, overPeek: false)
+        XCTAssertEqual(hover.shownID, tab.id, "The tab's again")
+        browser.tabPeekHoverChanged(tab.id, overPeek: true)
+        browser.tabHoverChanged(tab.id, hovering: false)
+        XCTAssertNil(hover.shownID, "Leaving the row closes the Peek's card")
+    }
     /// A Peek opened after a card was first shown goes in above it; the card comes back over it.
     @MainActor func testCardsShowOverAPeekOpenedSince() async throws {
         _ = NSApplication.shared

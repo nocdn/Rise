@@ -106,7 +106,7 @@ final class FloatingVideoMotionTests: XCTestCase {
         for _ in 0..<Int(seconds*120) { motion.step(elapsed: 1.0/120) }
     }
 
-    func testFlickingOffEitherSideTucksAllButATenthAwayAtItsHeight() {
+    func testFlickingOffEitherSideTucksAllButAStripAwayAtItsHeight() {
         for dx: CGFloat in [-30, 30] {
             // Snap's rule: the flick's projection has to cross the side, so from near it.
             let start = CGRect(x: dx < 0 ? -1300 : -500, y: 350, width: size.width, height: size.height)
@@ -116,7 +116,7 @@ final class FloatingVideoMotionTests: XCTestCase {
             settle(&motion)
             XCTAssertEqual(motion.phase, .idle)
             let onScreen = motion.frame.intersection(screen).width
-            XCTAssertEqual(onScreen, size.width*0.1, accuracy: 0.5)
+            XCTAssertEqual(onScreen, FloatingVideoMotion.tuckedShowing, accuracy: 0.5)
             XCTAssertEqual(motion.frame.minY, start.minY, accuracy: 1)
             XCTAssertEqual(FloatingVideoMotion.tuckProgress(content: motion.frame, visibleFrame: screen), 1, accuracy: 0.001)
         }

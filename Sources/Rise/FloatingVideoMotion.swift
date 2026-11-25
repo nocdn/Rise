@@ -4,7 +4,7 @@ import CoreGraphics
 /// Adapted from Snap's ScreenshotPreviewController and ScreenshotFeedbackStyle.
 /// Slow releases keep their placement; flicks use its velocity projection and corner spring.
 /// Where Snap's preview would be flicked off the screen's side and dismissed, a floating window
-/// is tucked instead: all but a tenth of it past that side, until it's brought back, to where it
+/// is tucked instead: all but a strip of it past that side, until it's brought back, to where it
 /// was before. Flicks off the top or bottom go to a corner as any other.
 struct FloatingVideoMotion {
     enum Phase { case idle, dragging, settling }
@@ -40,8 +40,11 @@ struct FloatingVideoMotion {
     /// Snap's dismissal: a flick at least this fast whose projection crosses the side.
     static let tuckSpeed: CGFloat = 900
     static let projectionTime: CGFloat = 0.22
-    /// How much of the window stays on the screen tucked.
-    static let tuckedShowing: CGFloat = 0.1
+    /// How much of the window stays on the screen tucked, in points: the same strip for every
+    /// window, a wide video's or a square call's, however big it is.
+    static let tuckedShowing: CGFloat = 32
+    /// What shows of a window `content` wide tucked: the strip, or half of one narrower than two.
+    static func showing(content: CGFloat) -> CGFloat { min(tuckedShowing, content/2) }
     /// Tucked, flicks that move it up and down out of the way shouldn't bring it out: only one
     /// out from the side this fast, mostly sideways, after the fingers have gone this far does.
     static let untuckSpeed: CGFloat = 650, untuckTravel: CGFloat = 28, untuckSideways: CGFloat = 1.5
@@ -58,15 +61,15 @@ struct FloatingVideoMotion {
     static func tuckedX(_ edge: Edge, width: CGFloat, visibleFrame: CGRect, contentInset: CGFloat = 0) -> CGFloat {
         let content = width-2*contentInset
         switch edge {
-        case .left: return visibleFrame.minX-content*(1-tuckedShowing)-contentInset
-        case .right: return visibleFrame.maxX-content*tuckedShowing-contentInset
+        case .left: return visibleFrame.minX-(content-showing(content: content))-contentInset
+        case .right: return visibleFrame.maxX-showing(content: content)-contentInset
         }
     }
     func tuckedX(_ edge: Edge) -> CGFloat { Self.tuckedX(edge, width: frame.width, visibleFrame: area, contentInset: contentInset) }
     /// How far a window showing `content` is tucked: 0 on the screen, 1 tucked, by how much of it is past a side.
     static func tuckProgress(content: CGRect, visibleFrame: CGRect) -> CGFloat {
         let past = max(visibleFrame.minX-content.minX, content.maxX-visibleFrame.maxX, 0)
-        return min(1, past/max(1, content.width*(1-tuckedShowing)))
+        return min(1, past/max(1, content.width-showing(content: content.width)))
     }
     private func tuckProgress(at origin: CGPoint) -> CGFloat {
         Self.tuckProgress(content: CGRect(origin: origin, size: frame.size).insetBy(dx: contentInset, dy: contentInset), visibleFrame: area)
@@ -286,6 +289,8 @@ struct FloatingVideoMotion {
 /// land, and back to its size on release, settled before a flick reaches its corner.
 struct FloatingLift {
     static let scale: CGFloat = 1.02
+    /// What a tucked window grows to under the pointer: a little less than two fingers lift it.
+    static let hoverScale: CGFloat = 1.015
     struct Spring { let response: Double, bounce: Double }
     static let up = Spring(response: 0.32, bounce: 0.35), down = Spring(response: 0.26, bounce: 0.12)
     private(set) var value: CGFloat = 1

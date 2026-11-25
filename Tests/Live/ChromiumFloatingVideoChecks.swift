@@ -237,21 +237,21 @@ import RiseChromium
         // The pointer stays where the fingers flicked it from, as the window leaves it.
         let flickedFrom = NSPoint(x: again.videoFrame.midX, y: again.videoFrame.midY)
         again.pointerLocation = { flickedFrom }
-        var chevronInFlight = false
+        var grownInFlight = false
         move(again, by: CGVector(dx: -(start/4+20), dy: 0), steps: 4, interval: 1.0/120, at: 31)
         check(again.tuckedEdge == .left, "A quick flick off the left side tucks it")
         var midway = false
         let tucked = await waitUntil(3, pollMilliseconds: 8) {
             let p = again.tuckProgress; if p > 0.1 && p < 0.9 && again.pictureIsBlurred { midway = true }
-            if again.tuckHandle.isShowingChevron { chevronInFlight = true }
+            if again.tuckHandle.isHovered { grownInFlight = true }
             return p > 0.999
         }
         check(tucked && midway, "It blurs by how far it has gone, all the way as it tucks")
         let showing = again.videoFrame.intersection(area).width
-        check(abs(showing-again.videoFrame.width*FloatingVideoMotion.tuckedShowing) < 1.5, "A tenth of it stays on the screen (\(showing) of \(again.videoFrame.width))")
+        check(abs(showing-FloatingVideoMotion.tuckedShowing) < 1.5, "A strip of it stays on the screen (\(showing) of \(again.videoFrame.width))")
         check(again.overlay.isHidden && again.pictureIsBlurred, "Tucked, it shows no controls, only a blur")
         await pause("tucked", again.videoFrame)
-        check(!chevronInFlight && !again.tuckHandle.isShowingChevron, "No chevron as it goes, with the pointer left behind")
+        check(!grownInFlight && !again.tuckHandle.isHovered, "It doesn't grow as it goes, with the pointer left behind")
         // The screen's arrangement changing (the Dock, the menu bar, a display) refits the window,
         // which never passes back over the screen on the way.
         var seen: [NSRect] = []
@@ -267,13 +267,14 @@ import RiseChromium
         check(worst > 0.999 && again.tuckProgress > 0.999, "A change to the screens keeps it tucked throughout (\(seen.count) moves, least \(worst))")
         again.pointerLocation = { NSPoint(x: again.videoFrame.maxX-4, y: again.videoFrame.midY) }
         again.updateMousePassThrough()
-        check(again.tuckHandle.isShowingChevron, "Under the pointer it shows the chevron")
-        again.tuckHandle.layoutSubtreeIfNeeded()
+        check(again.tuckHandle.isHovered, "Under the pointer it grows")
+        let grown = await waitUntil(1) { (again.contentView?.layer?.transform.m11 ?? 1) > 1.01 }
+        check(grown, "It grows a touch, less than two fingers lift it (\(again.contentView?.layer?.transform.m11 ?? 1))")
         let part = again.videoFrame.intersection(screen.frame).offsetBy(dx: -again.videoFrame.minX, dy: -again.videoFrame.minY)
-        let center = again.tuckHandle.chevronCenter
+        let center = again.tuckHandle.showingCenter
         check(abs(center.x-part.midX) <= 0.5 && abs(center.y-part.midY) <= 0.5,
-              "The chevron sits in the middle of the part showing (\(center) in \(part))")
-        await pause("chevron", again.videoFrame)
+              "Its click target is the middle of the part showing (\(center) in \(part))")
+        await pause("hovered", again.videoFrame)
         browser.pictureInPicture.returnToTab()
         _ = await waitUntil(4) { self.browser.pictureInPicture.panel == nil && video.page.view.window === self.browser.window }
         try? await Task.sleep(for: .milliseconds(500))
@@ -283,7 +284,7 @@ import RiseChromium
         }
         check(third.tuckedEdge == .left && third.tuckProgress > 0.999 && third.pictureIsBlurred, "Tucked, it floats tucked again")
         _ = third.tuckHandle.accessibilityPerformPress()
-        check(third.tuckedEdge == nil && !third.tuckHandle.isShowingChevron, "The chevron brings it out, and goes")
+        check(third.tuckedEdge == nil && !third.tuckHandle.isHovered, "A press brings it out")
         var unblurring = false
         let out = await waitUntil(3, pollMilliseconds: 8) {
             let p = third.tuckProgress; if p > 0.1 && p < 0.9 && third.pictureIsBlurred { unblurring = true }

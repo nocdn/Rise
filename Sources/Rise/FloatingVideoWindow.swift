@@ -157,6 +157,7 @@ struct FloatingVideoScrollInput {
         tuckHandle.onClick = { [weak self] in self?.untuck() }
         tuckHandle.makeMenu = { [weak self] in self?.tuckMenu() }
         tuckHandle.mouseDrag = { [weak self] event in self?.handleMouse(event) }
+        tuckHandle.onHover = { [weak self] hovered in self?.hoverGrow(hovered) }
         overlay.closeAction = { [weak self] in self?.onClose?() }
         overlay.returnAction = { [weak self] in self?.onReturn?() }
         overlay.togglePlayback = { [weak self] in self?.onTogglePlayback?() }
@@ -752,6 +753,12 @@ struct FloatingVideoScrollInput {
         isLifted = lifted
         scale(to: lifted ? FloatingLift.scale : 1, spring: lifted ? FloatingLift.up : FloatingLift.down)
     }
+    /// Tucked, it grows a little less under the pointer, with the same spring; fingers moving it
+    /// lift it instead.
+    private func hoverGrow(_ hovered: Bool) {
+        guard !isLifted, !isDismissing, closeStarted == nil else { return }
+        scale(to: hovered ? FloatingLift.hoverScale : 1, spring: hovered ? FloatingLift.up : FloatingLift.down)
+    }
 
     private func endDrag(at timestamp: TimeInterval, cancelled: Bool) {
         lift(false)
@@ -854,9 +861,9 @@ struct FloatingVideoScrollInput {
         guard motion.tucked != nil, !isDismissing else { return }
         motion.untuck(); startClock(); applyTuck()
     }
-    /// The chevron shows only once the window is all but tucked, while the pointer is over it where
-    /// it is now (it moves out from under a still pointer as it's flicked away), and not while
-    /// fingers move it.
+    /// It grows under the pointer only once the window is all but tucked, while the pointer is over
+    /// it where it is now (it moves out from under a still pointer as it's flicked away), and not
+    /// while fingers move it.
     private func refreshTuckHover() {
         guard let screen = screen ?? NSScreen.main else { return }
         let tucked = FloatingVideoMotion.tuckProgress(content: videoFrame, visibleFrame: placementArea(on: screen)) > FloatingTuckHandle.showsFrom
@@ -866,7 +873,7 @@ struct FloatingVideoScrollInput {
     private func applyTuck() {
         guard let screen = screen ?? NSScreen.main, let layer = picture.layer else { return }
         let progress = FloatingVideoMotion.tuckProgress(content: videoFrame, visibleFrame: placementArea(on: screen))
-        // The chevron sits in the middle of the part on the screen.
+        // The part on the screen, where a click brings it out.
         let part = videoFrame.intersection(screen.frame)
         tuckHandle.showing = part.isNull ? nil : part.offsetBy(dx: -videoFrame.minX, dy: -videoFrame.minY)
         tuckHandle.edge = motion.tucked

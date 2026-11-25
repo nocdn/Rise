@@ -222,7 +222,7 @@ import AppKit
               let screen = window.screen ?? NSScreen.main else { return }
         finish(self.window)
         self.window = window; startTime = nil; waitingSince = CACurrentMediaTime()
-        apply(Self.startScale, to: window)
+        Self.apply(Self.startScale, to: window)
         let link = screen.displayLink(target: self, selector: #selector(tick(_:)))
         link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
         link.add(to: .main, forMode: .common); displayLink = link
@@ -238,28 +238,84 @@ import AppKit
         guard let window else { displayLink?.invalidate(); displayLink = nil; return }
         guard window.isVisible else {
             // Held small until it shows, unless it never does.
-            if startTime == nil, let waitingSince, CACurrentMediaTime()-waitingSince < 1 { apply(Self.startScale, to: window) } else { finish(window) }
+            if startTime == nil, let waitingSince, CACurrentMediaTime()-waitingSince < 1 { Self.apply(Self.startScale, to: window) } else { finish(window) }
             return
         }
         let start = startTime ?? link.timestamp; startTime = start
         let time = link.targetTimestamp-start, scale = Self.scale(at: time)
         if time > 0.2 && abs(scale-1) < 0.0005 { finish(window); return }
-        apply(scale, to: window)
+        Self.apply(scale, to: window)
     }
     /// Ends the entrance at full size, as a move taking the window does.
     func finish(_ window: NSWindow?) {
         guard let window, window === self.window else { return }
         displayLink?.invalidate(); displayLink = nil; self.window = nil
-        apply(1, to: window)
+        Self.apply(1, to: window)
     }
     /// Shows `window` at `scale` about its middle. The transform takes screen points (top-left
     /// origin) to the window's own, so a smaller window divides by the scale.
-    private func apply(_ scale: CGFloat, to window: NSWindow) {
+    static func apply(_ scale: CGFloat, to window: NSWindow) {
         guard let setTransform = Self.setTransform, let connection = Self.connection,
               let top = NSScreen.screens.first?.frame.maxY else { return }
         let frame = window.frame
         let origin = CGPoint(x: frame.midX-frame.width*scale/2, y: top-frame.midY-frame.height*scale/2)
         _ = setTransform(connection(), Int32(window.windowNumber), CGAffineTransform(scaleX: 1/scale, y: 1/scale).translatedBy(x: -origin.x, y: -origin.y))
+    }
+}
+
+/// A page's floating window, tucked, grows a touch under the pointer as Rise's floating video does,
+/// by the window server's scaling, as its entrance is; it settles back as the pointer leaves, and
+/// at once as it's moved, since the scaling is placed for where the window is.
+@MainActor final class FloatingPageHover {
+    static let shared = FloatingPageHover()
+    private weak var window: NSWindow?
+    private var value: CGFloat = 1, velocity: CGFloat = 0, target: CGFloat = 1
+    private var displayLink: CADisplayLink?, lastFrame: CFTimeInterval?
+
+    func grow(_ hovered: Bool, _ window: NSWindow) {
+        guard FloatingPageEntrance.isAvailable, !FloatingPageEntrance.shared.isEntering else { return }
+        if let current = self.window, current !== window { settle(current) }
+        let goal = hovered ? FloatingLift.hoverScale : 1
+        guard goal != target || self.window !== window else { return }
+        self.window = window; target = goal
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            value = goal; velocity = 0; FloatingPageEntrance.apply(value, to: window)
+            if goal == 1 { stop() }
+            return
+        }
+        guard displayLink == nil, let screen = window.screen ?? NSScreen.main else { return }
+        let link = screen.displayLink(target: self, selector: #selector(tick(_:)))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+        link.add(to: .main, forMode: .common); displayLink = link; lastFrame = nil
+    }
+    /// Back to its size at once, as the window is about to move.
+    func settle(_ window: NSWindow) {
+        guard window === self.window else { return }
+        stop(); FloatingPageEntrance.apply(1, to: window)
+    }
+    private func stop() {
+        displayLink?.invalidate(); displayLink = nil; lastFrame = nil
+        value = 1; velocity = 0; target = 1; window = nil
+    }
+    @objc private func tick(_ link: CADisplayLink) {
+        guard let window, window.isVisible else { stop(); return }
+        let elapsed = lastFrame.map { link.timestamp-$0 } ?? 1.0/120
+        lastFrame = link.timestamp
+        let spring = target > 1 ? FloatingLift.up : FloatingLift.down
+        let stiffness = pow(2*Double.pi/spring.response, 2), damping = 4*Double.pi*(1-spring.bounce)/spring.response
+        var remaining = max(0, min(1.0/30, elapsed))
+        while remaining > 0 {
+            let dt = min(1.0/480, remaining); remaining -= dt
+            velocity += CGFloat(stiffness*Double(target-value)-damping*Double(velocity))*CGFloat(dt)
+            value += velocity*CGFloat(dt)
+        }
+        if abs(value-target) < 0.0004 && abs(velocity) < 0.01 {
+            value = target; velocity = 0
+            FloatingPageEntrance.apply(value, to: window)
+            if target == 1 { stop() } else { displayLink?.invalidate(); displayLink = nil; lastFrame = nil }
+            return
+        }
+        FloatingPageEntrance.apply(value, to: window)
     }
 }
 

@@ -101,6 +101,8 @@ import RiseCore
     var onReorder: (([UUID]) -> Void)?
     var onRename: ((UUID, String) -> Void)?
     var onTabHover: ((UUID, Bool) -> Void)?
+    /// The pointer came over a row's Peek favicon, or left it.
+    var onTabPeekHover: ((UUID, Bool) -> Void)?
     /// Whether a tab's video is paused, or nil when it shows none.
     var playbackState: ((UUID) -> Bool?)?
     var peekState: ((UUID) -> BrowserTab?)?
@@ -187,6 +189,7 @@ import RiseCore
                     if !hovering { self?.pointerLeftSearchedTab(id) }
                 }
                 row.onPointerMove = { [weak self] in self?.pointerMovedOverSearchedTab(id) }
+                row.onPeekHover = { [weak self] over in self?.onTabPeekHover?(id, over) }
                 row.onPress = { [weak self] in self?.onTabPress?() }
                 row.onTogglePlayback = { [weak self] in self?.onTogglePlayback?(id) }
                 row.onToggleMute = { [weak self] in self?.onToggleMute?(id) }
@@ -329,7 +332,7 @@ import RiseCore
         }
         if leavingRows.superview !== rowsHost { rowsHost.addSubview(leavingRows, positioned: .below, relativeTo: nil) }
         leavingRows.frame = rowsHost.bounds
-        row.onHover = nil
+        row.onHover = nil; row.onPeekHover = nil
         CATransaction.begin(); CATransaction.setDisableActions(true)
         leavingRows.addSubview(row)
         CATransaction.commit()

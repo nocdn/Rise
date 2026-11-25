@@ -55,7 +55,7 @@ enum GoogleChatCardContent: String, CaseIterable {
         if on { off.remove(card.rawValue) } else { off.insert(card.rawValue) }
         preferences.set(off.sorted(), forKey: Self.disabledHoverCardsKey)
         if !on {
-            if let id = tabHoverCards.shownID, HoverCard(url: tabs.first(where: { $0.id == id })?.url) == card { hideTabHoverCard() }
+            if let id = tabHoverCards.shownID, HoverCard(url: hoverTab(id)?.url) == card { hideTabHoverCard() }
             if let shown = linkPullRequests.shown?.pullRequest, HoverCard(shown) == card { hideLinkCard() }
         }
         update()
@@ -66,7 +66,7 @@ enum GoogleChatCardContent: String, CaseIterable {
     }
     func selectGoogleChatCardContent(_ content: GoogleChatCardContent) {
         preferences.set(content.rawValue, forKey: Self.googleChatCardContentKey)
-        if let id = tabHoverCards.shownID, GoogleChatAccount(url: tabs.first(where: { $0.id == id })?.url) != nil { hideTabHoverCard() }
+        if let id = tabHoverCards.shownID, GoogleChatAccount(url: hoverTab(id)?.url) != nil { hideTabHoverCard() }
         preloadChatInbox()
     }
 }
