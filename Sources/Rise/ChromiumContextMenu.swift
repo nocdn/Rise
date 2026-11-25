@@ -79,6 +79,9 @@ import RiseChromium
         let currencyReplaced = shown?.replacedCurrency != nil
         let amounts = info.selectionText.isEmpty ? [] : selectedAmounts(info.selectionText, in: page, replaced: currencyReplaced)
         if let shown { currencyItems(for: amounts, in: shown, replaced: currencyReplaced).forEach(menu.addItem) }
+        // A weight, distance, temperature or speed in other units, in the person's.
+        let measurements = measurementItems(for: info.selectionText, in: page)
+        measurements.forEach(menu.addItem)
         // An address, on Google Maps in a Peek that grows out of the selection: beside a link's own
         // Peek when the address is a link, or else heading the menu. Not from a Peek's own page.
         let address = info.selectionText.isEmpty || page === peekTab?.page ? nil : SelectionAddresses.find(in: info.selectionText)
@@ -89,7 +92,7 @@ import RiseChromium
             }
         }
         if info.linkURL == nil { addMap() }
-        if event != nil || !times.isEmpty || !amounts.isEmpty || (address != nil && info.linkURL == nil) { menu.addItem(.separator()) }
+        if event != nil || !times.isEmpty || !amounts.isEmpty || !measurements.isEmpty || (address != nil && info.linkURL == nil) { menu.addItem(.separator()) }
 
         // A misspelling: the spellchecker's suggestions, first.
         if info.editable, !info.misspelledWord.isEmpty {

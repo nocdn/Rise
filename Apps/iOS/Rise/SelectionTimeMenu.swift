@@ -3,8 +3,8 @@ import EventKitUI
 import UIKit
 import WebKit
 
-/// Rise's pages: WebKit's own, with a time selected in another zone and an amount in another
-/// currency leading the selection menu, Explain in Context beside Look Up, and no Copy Link with Highlight.
+/// Rise's pages: WebKit's own, with a time selected in another zone, an amount in another
+/// currency and a measurement in other units leading the selection menu, Explain in Context beside Look Up, and no Copy Link with Highlight.
 final class RiseWebView: WKWebView {
     /// WebKit's bar above the keyboard, with Autofill My Information's button after its ↓ while the
     /// field is one the card fits (`FormAccessoryAutofill`), a microphone before its ✓
@@ -42,6 +42,7 @@ final class RiseWebView: WKWebView {
         super.buildMenu(with: builder)
         SelectionTimeMenu.build(builder, in: self)
         SelectionCurrencyMenu.build(builder, in: self)
+        SelectionMeasurementMenu.build(builder, in: self)
         SelectionExplanation.build(builder, in: self)
         SelectionFontInfo.build(builder, in: self)
         SelectionTimeNativeMenu.removeCopyLinkWithHighlight(from: builder)
@@ -80,6 +81,32 @@ final class RiseWebView: WKWebView {
     private lazy var timeConversion = TimePageConversion { [weak self] body, arguments in
         guard let page = self?.page else { throw CancellationError() }
         return try await page.callAsyncJavaScript(body, arguments: arguments, in: nil, contentWorld: Self.world)
+    }
+
+    /// Replace on Page for measurements (`SelectionMeasurementMenu`), by the same writer as times'.
+    private lazy var measurementConversion = PageTextConversion(global: "riseMeasurements") { [weak self] body, arguments in
+        guard let page = self?.page else { throw CancellationError() }
+        return try await page.callAsyncJavaScript(body, arguments: arguments, in: nil, contentWorld: Self.world)
+    }
+
+    static func isMeasurementReplaced(in page: WKWebView) -> Bool { installed.object(forKey: page)?.measurementConversion.isActive ?? false }
+    static func replaceMeasurements(_ on: Bool, in page: WKWebView, announces: Bool = true) {
+        guard let owner = installed.object(forKey: page) else { return }
+        let units = PreferredUnits.current(), locale = Locale.current
+        Task { [weak owner, weak page] in
+            guard let owner, let page else { return }
+            do {
+                let count = try await owner.measurementConversion.set(on) { SelectionMeasurements.edits(in: $0, to: units, locale: locale) }
+                UISelectionFeedbackGenerator().selectionChanged()
+                guard announces else { return }
+                let revert: (() -> Void)? = on && count > 0 ? { [weak page] in
+                    if let page { replaceMeasurements(false, in: page, announces: false) }
+                } : nil
+                owner.browser?.showMeasurementToast(on ? SelectionMeasurements.message(count, in: units) : SelectionMeasurements.restoredMessage, revert: revert)
+            } catch {
+                owner.browser?.showMeasurementToast("Couldn’t replace measurements on this page")
+            }
+        }
     }
 
     static func isTimeReplaced(in page: WKWebView) -> Bool { installed.object(forKey: page)?.timeConversion.isActive ?? false }
@@ -219,11 +246,12 @@ final class RiseWebView: WKWebView {
         let text = selection(in: page), times = SelectionTimes.find(in: text)
         let hasEvent = SelectionEvents.find(in: text, pageTitle: page.title) != nil
         guard let owner = installed.object(forKey: page) else { return }
-        // Every selection menu loses Copy Link with Highlight; one with an amount, the system's
-        // conversion; one with a time or event, the system's date actions, moved into Rise's.
+        // Every selection menu loses Copy Link with Highlight; one with an amount or a measurement,
+        // the system's conversion; one with a time or event, the system's date actions, moved into Rise's.
         if owner.nativeMenu == nil { owner.nativeMenu = SelectionTimeNativeMenu(page: page) }
         owner.nativeMenu?.begin(relocatesDates: hasEvent || !times.isEmpty && times.allSatisfy({ !$0.isZoneOnly }),
-                                replacesConversion: !SelectionCurrencyMenu.elements(for: text, in: page).isEmpty)
+                                replacesConversion: !SelectionCurrencyMenu.elements(for: text, in: page).isEmpty
+                                    || SelectionMeasurementMenu.hasMeasurement(in: text))
     }
 
     static func willDismiss(in page: WKWebView) {

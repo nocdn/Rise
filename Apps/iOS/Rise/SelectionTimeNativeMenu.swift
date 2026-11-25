@@ -4,7 +4,7 @@ import WebKit
 /// Data Detectors append their date section *after* buildMenu and UITextInput's menu
 /// callback. Update the completed native menu instead, retaining the original actions:
 /// their icons, localized titles, handlers and Calendar/Reminders permission behavior.
-/// The same pass takes out the system's currency conversion where Rise has its own, and
+/// The same pass takes out the system's conversion of an amount or a measurement where Rise reads it itself, and
 /// WebKit's Copy Link with Highlight.
 @MainActor final class SelectionTimeNativeMenu {
     private weak var page: WKWebView?
@@ -33,7 +33,8 @@ import WebKit
                 NativeMenuLoading.withoutAnimation {
                     interaction.updateVisibleMenu { menu in
                         if menu.identifier.rawValue.hasPrefix(SelectionTimeMenu.menuIdentifier.rawValue + ".")
-                            || menu.identifier.rawValue.hasPrefix(SelectionCurrencyMenu.menuIdentifier.rawValue + ".") {
+                            || menu.identifier.rawValue.hasPrefix(SelectionCurrencyMenu.menuIdentifier.rawValue + ".")
+                            || menu.identifier.rawValue.hasPrefix(SelectionMeasurementMenu.menuIdentifier.rawValue + ".") {
                             // Opening a compact-menu submenu directly exposes only
                             // that submenu. Its four fallback actions already work.
                             updated = true

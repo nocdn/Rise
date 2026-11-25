@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24">
+  <!-- CodeX Icons by CodeX, MIT: https://github.com/davidabou/icons/blob/master/LICENSE. Enlarged a little to
+       the Tabler icons' size, its stroke thinned to match theirs on screen, as Archive unused tabs' is. -->
+  <g fill="none" stroke="#000" stroke-width="1.453846" transform="translate(12 12) scale(1.142857) translate(-12 -12)">
+    <circle cx="12" cy="12" r="7"/>
+    <path stroke-linecap="round" stroke-linejoin="round" d="M16.9 7H14a2 2 0 0 0-2 2a2 2 0 0 0 2 2a1.75 1.75 0 0 1 1.75 1.75a1.75 1.75 0 0 0 1.75 1.75h1.04m-13.38-4h.59a2 2 0 0 1 2 2a1.75 1.75 0 0 0 1.75 1.75a2 2 0 0 1 2 2v2.73"/>
+  </g>
+</svg>

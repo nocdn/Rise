@@ -53,6 +53,7 @@ import RiseCore
     lazy var permissionCoordinator = PermissionCoordinator(browser: self)
     lazy var currencyReplacement = CurrencyReplacement(browser: self)
     lazy var timeReplacement = TimeReplacement(browser: self)
+    lazy var measurementReplacement = MeasurementReplacement(browser: self)
     lazy var adBlockPrompt = AdBlockPrompt(browser: self)
     lazy var pictureInPicture = VideoPictureInPicture(browser: self)
     lazy var tabMedia: TabMedia = {
@@ -739,7 +740,7 @@ import RiseCore
         retryButton.frame = NSRect(x: body.width/2-55, y: body.height/2+55, width: 110, height: 32)
         // The panels come down from beneath the page bar and what's under it.
         selectedFindBar.frame = pageShadow.frame; selectedFindBar.topInset = barHeight; selectedFindBar.tuckedInset = barHeight
-        permissionCoordinator.layoutPanel(); currencyReplacement.layoutPanel(); timeReplacement.layoutPanel(); adBlockPrompt.layoutPanel()
+        permissionCoordinator.layoutPanel(); currencyReplacement.layoutPanel(); timeReplacement.layoutPanel(); measurementReplacement.layoutPanel(); adBlockPrompt.layoutPanel()
         dismissArea.frame = b
         // Both centred panels share the same window-wide dim.
         veil.frame = b

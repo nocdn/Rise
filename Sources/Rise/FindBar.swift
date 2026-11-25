@@ -975,7 +975,7 @@ class FindInputCell: NSTextFieldCell {
         layoutPeekFindBar()
         bar.present()
         // A permission's panel moves down out of its way.
-        permissionCoordinator.layoutPanel(); currencyReplacement.layoutPanel(); timeReplacement.layoutPanel(); adBlockPrompt.layoutPanel()
+        permissionCoordinator.layoutPanel(); currencyReplacement.layoutPanel(); timeReplacement.layoutPanel(); measurementReplacement.layoutPanel(); adBlockPrompt.layoutPanel()
     }
     @objc func findNext() { findAgain(.next) }
     @objc func findPrevious() { findAgain(.previous) }
@@ -988,7 +988,7 @@ class FindInputCell: NSTextFieldCell {
     }
     func hideFind() { if let tab = findTab { hideFind(in: tab) } else { tablessFindBar.hide() } }
     private func hideFind(in tab: BrowserTab) {
-        findBars[tab.id]?.hide(); permissionCoordinator.layoutPanel(); currencyReplacement.layoutPanel(); timeReplacement.layoutPanel(); adBlockPrompt.layoutPanel()
+        findBars[tab.id]?.hide(); permissionCoordinator.layoutPanel(); currencyReplacement.layoutPanel(); timeReplacement.layoutPanel(); measurementReplacement.layoutPanel(); adBlockPrompt.layoutPanel()
         let page = tab.page
         Task { await PageFind.clear(page, selectingCurrent: true); await PageFind.clearPassage(page) }
         if findTab === tab { window?.makeFirstResponder(page.view) }

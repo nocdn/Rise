@@ -29,6 +29,8 @@ import UIKit
     /// Phosphor's coins, MIT: https://github.com/phosphor-icons/core/blob/main/LICENSE, scaled and
     /// weighted to sit with these.
     static let currency = UIImage(named: "MenuCurrency")
+    /// CodeX's globe, for Measurement units.
+    static let units = UIImage(named: "MenuUnits")
     /// The same coins at Phosphor's light weight, sized and weighted like the selection menu's symbols.
     static let selectionCurrency = UIImage(named: "SelectionCurrency")
 

@@ -1,5 +1,6 @@
 import AppKit
 import RiseChromium
+import RiseCore
 
 /// Rise's own settings, among Chrome's at rise://settings: the settings page asks Rise for each
 /// section's rows, and changes them, through the `riseSettings` object Rise's script gives it.
@@ -86,6 +87,9 @@ import RiseChromium
             rows.append(["key": "capturesFolder", "type": "button", "label": "Page captures folder",
                          "sublabel": (capturesFolder.path as NSString).abbreviatingWithTildeInPath, "button": "Change…"])
             rows.append(toggle("copiesCaptures", "Copy page captures to the clipboard", nil, copiesCaptures))
+            rows.append(select("measurementUnits", "Measurement units",
+                               "Weights, distances, temperatures and speeds you select in other units show in these when you right-click them",
+                               preferredUnits.rawValue, PreferredUnits.allCases.map { ($0.rawValue, "\($0.title) (\($0.detail))") }))
             return rows
         case "privacy":
             var rows: [[String: Any]] = [
@@ -145,6 +149,7 @@ import RiseChromium
         case "autoHideFullscreenNavigation": setAutoHidesFullscreenNavigation(on)
         case "savesCaptures": setSavesCapturesAutomatically(on)
         case "copiesCaptures": setCopiesCaptures(on)
+        case "measurementUnits": if let units = PreferredUnits(rawValue: text) { PreferredUnits.set(units, in: preferences) }
         case "notificationPermission":
             sitePermissions.defaultNotifications = text == "block" ? .block : .ask
             refreshPermissionScripts()

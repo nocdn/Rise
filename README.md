@@ -108,6 +108,7 @@ For more about the engine, see [Engine/README.md](Engine/README.md). For passkey
 - **AI chat**: press ⌘E to open a chat beside the page. It can read and use your tabs, and you can mention a tab by its name. Choose the AI provider and model in Settings → AI.
 - ⭐ **Local times**: select a time in another time zone, such as "3pm PST", and right-click it. The menu shows that time in your own time zone. Press ⌥⌘T to change all the times on a page to your time zone, and again to change them back.
 - ⭐ **Currency conversion**: select a price in another currency and right-click it. The menu shows the price in your own currency, and can change all the prices on the page to your currency.
+- **Unit conversion**: select a weight, distance, temperature or speed in other units, such as "5 km" or "75°F", and right-click it. The menu shows it in your own units, and can change all the measurements on the page to them. Choose metric, US or UK in Settings → System; until you do, Rise uses your region's.
 - ⭐ **Events**: select an event, such as "Dinner on Friday at 7pm at Dishoom", and right-click it. You can add it to Calendar, Reminders or Google Calendar, with its title, times and place. It also understands locations and complex layouts, such as invitations where the date, time and place are in different parts of the page.
 - **History menu**: right-click (or ⌃-click) the Back or Forward button to go straight to an earlier page.
 - **Page bar color**: the bar above the page takes the color of the top of the page.
@@ -198,6 +199,7 @@ The iPhone app uses Apple's WebKit engine. To build it, see [Apps/iOS/README.md]
 - ⭐ **Font info**: select text and choose Font info to see its font and size.
 - ⭐ **Translation**: on a page that isn't in English, tap the translate button in More. The page is translated on your iPhone.
 - ⭐ **Local times**: select a time in another time zone, such as "11pm PST". The menu shows it in your own time, and you can copy it or add it to Calendar.
+- **Unit conversion**: select a weight, distance, temperature or speed in other units, such as "5 km" or "75°F". The menu shows it in your own units instead of the system's conversion, and can change all the measurements on the page to them. Choose metric, US or UK in More → Site settings → App settings.
 - ⭐ **Events**: select an event, such as an invitation's date, time and place. You can add it to Calendar or Reminders.
 - **Find**: in Find, touch and hold an arrow to skip past the matches on the screen.
 - **Pull to reload**: pull down from the top of the page. Haptics tell you when it will reload.

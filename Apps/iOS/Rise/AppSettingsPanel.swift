@@ -14,16 +14,18 @@ final class AppSettingsPanel: UIView {
     static let currencyPink = UIColor { $0.userInterfaceStyle == .dark
         ? UIColor(displayP3Red: 232/255, green: 72/255, blue: 132/255, alpha: 1)
         : UIColor(displayP3Red: 196/255, green: 30/255, blue: 98/255, alpha: 1) }
+    let unitsRow = SettingsMenuRow("Measurement units", icon: MenuIcons.units, colour: .systemTeal)
     let autofill = AutofillSettingsGroup()
     let archiveRow = SettingsMenuRow("Archive unused tabs", icon: MenuIcons.archiveTabs, colour: .systemOrange)
     let aiOptionsRow = SettingsNavigationRow("AI Options")
     let privacyRow = SettingsNavigationRow("Privacy Policy")
     private let scroll = UIScrollView()
-    var buttons: [UIButton] { [closeButton, syncRow, autoplayRow, incognitoLockRow]+autofill.buttons+[currencyRow.button, archiveRow.button, aiOptionsRow, privacyRow] }
+    var buttons: [UIButton] { [closeButton, syncRow, autoplayRow, incognitoLockRow]+autofill.buttons+[currencyRow.button, unitsRow.button, archiveRow.button, aiOptionsRow, privacyRow] }
     private let detail = UILabel()
     private let autoplayDetail = UILabel()
     private let incognitoLockDetail = UILabel()
     private let currencyDetail = UILabel()
+    private let unitsDetail = UILabel()
     private let archiveDetail = UILabel()
     var onSyncChanged: ((Bool) -> Void)?
     var onAutoplayChanged: ((Bool) -> Void)?
@@ -38,6 +40,10 @@ final class AppSettingsPanel: UIView {
         currencyRow.layer.cornerRadius = MenuPanel.cornerRadius
         currencyRow.clipsToBounds = true
         scroll.addSubview(currencyRow)
+        unitsRow.layer.cornerCurve = .continuous
+        unitsRow.layer.cornerRadius = MenuPanel.cornerRadius
+        unitsRow.clipsToBounds = true
+        scroll.addSubview(unitsRow)
         archiveRow.layer.cornerCurve = .continuous
         archiveRow.layer.cornerRadius = MenuPanel.cornerRadius
         archiveRow.clipsToBounds = true
@@ -56,7 +62,7 @@ final class AppSettingsPanel: UIView {
         syncRow.onChanged = { [weak self] enabled in self?.onSyncChanged?(enabled) }
         autoplayRow.onChanged = { [weak self] enabled in self?.onAutoplayChanged?(enabled) }
         incognitoLockRow.onChanged = { enabled in IncognitoLock.isEnabled = enabled }
-        for label in [detail, autoplayDetail, incognitoLockDetail, currencyDetail, archiveDetail] {
+        for label in [detail, autoplayDetail, incognitoLockDetail, currencyDetail, unitsDetail, archiveDetail] {
             label.font = PanelHeader.font("OpenRunde-Regular", size: 13, fallbackWeight: .regular)
             label.adjustsFontForContentSizeCategory = true
             label.textColor = .secondaryLabel
@@ -70,9 +76,25 @@ final class AppSettingsPanel: UIView {
         incognitoLockRow.toggle.accessibilityHint = incognitoLockDetail.text
         currencyDetail.text = "Amounts you select in other currencies are converted to this one."
         currencyRow.button.accessibilityHint = currencyDetail.text
+        unitsDetail.text = "Weights, distances, temperatures and speeds you select in other units are shown in these."
+        unitsRow.button.accessibilityHint = unitsDetail.text
         archiveDetail.text = "Search pages and duplicates go sooner, tabs you keep returning to stay longer. Reopen them from Archived Tabs in the tab view's More."
         archiveRow.button.accessibilityHint = archiveDetail.text
         showCurrency()
+        showUnits()
+    }
+
+    /// The person's units: their choice, or their region's until they choose.
+    func showUnits() {
+        let units = PreferredUnits.current()
+        unitsRow.show(units.title, menu: UIMenu(options: .singleSelection, children: PreferredUnits.allCases.map { choice in
+            let action = UIAction(title: choice.title, state: choice == units ? .on : .off) { [weak self] _ in
+                PreferredUnits.set(choice)
+                self?.showUnits()
+            }
+            action.subtitle = choice.detail
+            return action
+        }))
     }
 
     /// How long a tab may go unused, with the choices of what to change it to.
@@ -146,7 +168,11 @@ final class AppSettingsPanel: UIView {
                                    width: width, height: SiteSettingsPanel.rowHeight)
         let currencySize = currencyDetail.sizeThatFits(CGSize(width: textWidth, height: .greatestFiniteMagnitude))
         currencyDetail.frame = CGRect(x: detail.frame.minX, y: currencyRow.frame.maxY+12, width: textWidth, height: currencySize.height)
-        archiveRow.frame = CGRect(x: syncRow.frame.minX, y: currencyDetail.frame.maxY+SiteSettingsPanel.groupGap,
+        unitsRow.frame = CGRect(x: syncRow.frame.minX, y: currencyDetail.frame.maxY+SiteSettingsPanel.groupGap,
+                                width: width, height: SiteSettingsPanel.rowHeight)
+        let unitsSize = unitsDetail.sizeThatFits(CGSize(width: textWidth, height: .greatestFiniteMagnitude))
+        unitsDetail.frame = CGRect(x: detail.frame.minX, y: unitsRow.frame.maxY+12, width: textWidth, height: unitsSize.height)
+        archiveRow.frame = CGRect(x: syncRow.frame.minX, y: unitsDetail.frame.maxY+SiteSettingsPanel.groupGap,
                                   width: width, height: SiteSettingsPanel.rowHeight)
         let archiveSize = archiveDetail.sizeThatFits(CGSize(width: textWidth, height: .greatestFiniteMagnitude))
         archiveDetail.frame = CGRect(x: detail.frame.minX, y: archiveRow.frame.maxY+12, width: textWidth, height: archiveSize.height)
