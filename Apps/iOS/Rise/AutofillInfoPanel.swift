@@ -5,7 +5,7 @@ import UIKit
 /// numbers, emails and websites, each list ending in a row that adds one more; then the birthday,
 /// with the system's date picker. Each change is kept as it's made, and remembered as made here,
 /// so that picking the card again replaces only what the card has (`AutofillProfile.refreshed`).
-final class AutofillInfoPanel: UIView, UITextFieldDelegate {
+final class AutofillInfoPanel: UIView, UITextFieldDelegate, UIGestureRecognizerDelegate {
     private typealias Detail = AutofillProfile.Detail
     enum List: CaseIterable { case phones, emails, websites }
 
@@ -66,6 +66,12 @@ final class AutofillInfoPanel: UIView, UITextFieldDelegate {
         for list in List.allCases {
             addRows[list]?.addAction(UIAction { [weak self] _ in self?.add(list) }, for: .primaryActionTriggered)
         }
+        // A tap off the rows puts the keyboard away: between groups, at the sides, on the notes
+        // or the title bar. Rows focus their own field, and buttons and menus act as they do.
+        let dismiss = UITapGestureRecognizer(target: self, action: #selector(dismissKeyboard))
+        dismiss.cancelsTouchesInView = false
+        dismiss.delegate = self
+        addGestureRecognizer(dismiss)
         birthdayRow.onChange = { [weak self] components in self?.setBirthday(components) }
         birthdayRow.onRemove = { [weak self] in self?.setBirthday(nil) }
         for label in [ageNote, footnote] {
@@ -435,6 +441,18 @@ final class AutofillInfoPanel: UIView, UITextFieldDelegate {
         scroll.contentInset.bottom = keyboardInset
         scroll.verticalScrollIndicatorInsets.bottom = keyboardInset
         layoutContent()
+    }
+
+    @objc private func dismissKeyboard() { endEditing(true) }
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard editingRow != nil, var view = touch.view else { return false }
+        while view !== self {
+            if view is FieldRow || view is UIControl { return false }
+            guard let parent = view.superview else { return false }
+            view = parent
+        }
+        return true
     }
 
     private func layoutContent() {

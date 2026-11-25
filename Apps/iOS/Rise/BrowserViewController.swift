@@ -73,9 +73,6 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     private lazy var barCollapseSwipe = UIPanGestureRecognizer(target: self, action: #selector(swipeBarDown))
     /// Holding New Page listens for a search; letting go opens New Page with it transcribed.
     private lazy var newPageHold = UILongPressGestureRecognizer(target: self, action: #selector(holdNewPage))
-    /// Holding Reload in More reloads without the cache, as ⌘⇧R does on the Mac.
-    private lazy var hardReloadHold = UILongPressGestureRecognizer(target: self, action: #selector(holdReload))
-    private let hardReloadClick = UIImpactFeedbackGenerator(style: .rigid)
     /// Holding More copies the page's link, More's checkmark saying so, instead of opening it.
     private lazy var copyLinkHold = UILongPressGestureRecognizer(target: self, action: #selector(holdMore))
     let voice = VoiceInput()
@@ -1101,8 +1098,6 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         if gestureRecognizer === newPageHold {
             return VoiceInput.isSupported && !isPanelOpen && presentedViewController == nil && !isSwipingToTabs
         }
-        // While the address is being edited, the button is X, which only clears.
-        if gestureRecognizer === hardReloadHold { return isPanelOpen && !bottomBar.menu.address.isEditingURL }
         // Without a link to copy, the hold gives way and letting go opens More as a tap does.
         if gestureRecognizer === copyLinkHold { return shareableURL != nil && presentedViewController == nil && !isSwipingToTabs && !isTabSwitcherOpen }
         if gestureRecognizer === panelBackSwipe {
@@ -1326,6 +1321,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.search.onOpen = { [weak self] url in self?.openFromPanel(url) }
         bottomBar.search.onAsk = { [weak self] request in self?.openFromPanel(request.service.entryURL, assistantPrompt: request) }
         bottomBar.search.onClose = { [weak self] in self?.closePanel() }
+        bottomBar.find.onClose = { [weak self] in self?.closePanel() }
         bottomBar.search.onSiteSearchChanged = { [weak self] in
             guard let self, isPanelOpen, bottomBar.panel == .search else { return }
             settlePanelOpen()
@@ -1422,10 +1418,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         for (control, action) in actions {
             control.addAction(UIAction { [weak self] _ in if let self { action(self) } }, for: .primaryActionTriggered)
         }
-        hardReloadHold.minimumPressDuration = 0.4
-        hardReloadHold.delegate = self
-        address.reloadButton.addGestureRecognizer(hardReloadHold)
-        address.reloadButton.addAction(UIAction { [weak self] _ in self?.hardReloadClick.prepare() }, for: .touchDown)
+        installReloadMenu(on: address.reloadButton)
         address.reloadButton.accessibilityCustomActions = [UIAccessibilityCustomAction(name: "Reload Without Cache") { [weak self] _ in
             guard let self, !bottomBar.menu.address.isEditingURL else { return false }
             hardReload(); return true
@@ -2873,12 +2866,6 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         hardReloadPage = ignoringCache ? webView : nil
         currentTab.reload(ignoringCache: ignoringCache)
         updateNavigationStatus()
-    }
-
-    @objc private func holdReload(_ hold: UILongPressGestureRecognizer) {
-        guard hold.state == .began, !webView.isLoading, !bottomBar.menu.address.isEditingURL else { return }
-        hardReloadClick.impactOccurred(intensity: 1)
-        hardReload()
     }
 
     /// Closes More, as tapping Reload does, and says so briefly.

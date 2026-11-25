@@ -44,7 +44,10 @@ final class FindPanel: UIView, UITextFieldDelegate {
     }
     let previousButton = FindPanel.button("chevron.up", label: "Previous Match")
     let nextButton = FindPanel.button("chevron.down", label: "Next Match")
-    var buttons: [UIButton] { [previousButton, nextButton] }
+    /// As in the new tab's field: clears the field, or closes Find once it's empty.
+    let closeButton = AnimatedSymbolButton(symbol: "xmark", pointSize: 14, weight: .bold)
+    var onClose: (() -> Void)?
+    var buttons: [UIButton] { [previousButton, nextButton, closeButton] }
     /// Which match is showing, of how many.
     let count: FindCount
     private let counter: UIView
@@ -66,6 +69,8 @@ final class FindPanel: UIView, UITextFieldDelegate {
     private static let counterGap: CGFloat = 8
     private static let sendGap: CGFloat = 4
     private static let sendWidth: CGFloat = 36
+    /// The X's place at the field's end, which the accessories beside it leave free.
+    private static let closeSlot: CGFloat = 36
     /// A subtle inset button in light mode too; dark mode keeps its existing translucent fill.
     private static let modeButtonFill = UIColor { traits in
         traits.userInterfaceStyle == .dark ? SearchPanel.fill.resolvedColor(with: traits)
@@ -109,7 +114,7 @@ final class FindPanel: UIView, UITextFieldDelegate {
         field.adjustsFontForContentSizeCategory = true
         field.leftView = UIView(frame: CGRect(x: 0, y: 0, width: 18, height: 1))
         field.leftViewMode = .always
-        field.returnKeyType = .next
+        field.returnKeyType = .done
         field.enablesReturnKeyAutomatically = true
         field.autocorrectionType = .no
         field.autocapitalizationType = .none
@@ -142,7 +147,7 @@ final class FindPanel: UIView, UITextFieldDelegate {
         titleHost.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         modeButton.addSubview(titleHost.view)
         modeAccessory.bounds = CGRect(x: 0, y: 0,
-            width: Self.titleWidth("Find")+Self.sendGap+Self.sendWidth+16, height: SearchPanel.fieldHeight)
+            width: Self.titleWidth("Find")+Self.sendGap+Self.sendWidth+16+Self.closeSlot, height: SearchPanel.fieldHeight)
         modeAccessory.addSubview(modeButton)
         modeAccessory.addSubview(sendButton)
         sendButton.accessibilityLabel = "Ask about the Page"
@@ -159,7 +164,11 @@ final class FindPanel: UIView, UITextFieldDelegate {
             if isAnswering { cancelAnswer() } else { submitQuestion() }
         }, for: .primaryActionTriggered)
         answerView.onHeightChanged = { [weak self] in self?.onHeightChanged?() }
+        closeButton.accessibilityLabel = "Clear"
+        closeButton.shrinksWhenPressed(to: AddressBar.pressedScale)
+        closeButton.addAction(UIAction { [weak self] _ in self?.clearOrClose() }, for: .primaryActionTriggered)
         addSubview(field)
+        addSubview(closeButton)
         addSubview(answerView)
         layoutModeAccessory()
         updateSend()
@@ -178,12 +187,13 @@ final class FindPanel: UIView, UITextFieldDelegate {
 
     private func layoutModeAccessory() {
         let width = Self.titleWidth(mode == .ask ? "Find" : "Ask")
+        let right = modeAccessory.bounds.width-Self.closeSlot-8
         modeButton.bounds = CGRect(x: 0, y: 0, width: width, height: 30)
-        modeButton.center = CGPoint(x: mode == .ask ? 8+width/2 : modeAccessory.bounds.width-8-width/2,
+        modeButton.center = CGPoint(x: mode == .ask ? 8+width/2 : right-width/2,
                                     y: SearchPanel.fieldHeight/2)
         modeHost.view.frame = modeButton.bounds
         sendButton.bounds = CGRect(x: 0, y: 0, width: Self.sendWidth, height: SearchPanel.fieldHeight)
-        sendButton.center = CGPoint(x: modeAccessory.bounds.width-8-Self.sendWidth/2, y: SearchPanel.fieldHeight/2)
+        sendButton.center = CGPoint(x: right-Self.sendWidth/2, y: SearchPanel.fieldHeight/2)
     }
 
     private func setMode(_ next: Mode) {
@@ -214,9 +224,11 @@ final class FindPanel: UIView, UITextFieldDelegate {
     override func layoutSubviews() {
         super.layoutSubviews()
         field.frame = CGRect(x: SearchPanel.inset, y: 0, width: bounds.width-2*SearchPanel.inset, height: SearchPanel.fieldHeight)
-        // As Back and Forward sit in the address: the outer one as far in as Reload, the inner close by.
+        // The X as far in as Reload; the arrows as Back and Forward sit in the address, beside it.
         let width = AddressBar.buttonWidth, height = SearchPanel.fieldHeight
-        let outer = AddressBar.outerCentre, inner = outer+AddressBar.pairSpacing
+        closeButton.bounds = CGRect(x: 0, y: 0, width: width, height: height)
+        closeButton.center = CGPoint(x: field.frame.maxX-AddressBar.outerCentre, y: field.frame.midY)
+        let outer = AddressBar.outerCentre+Self.closeSlot, inner = outer+AddressBar.pairSpacing
         // UITextField owns each accessory's origin. Only set its size here; resetting its frame
         // to zero moves the buttons over the question whenever the sheet relayouts.
         controls.bounds = CGRect(x: 0, y: 0, width: Self.counterWidth+Self.counterGap+inner+width/2, height: height)
@@ -300,15 +312,26 @@ final class FindPanel: UIView, UITextFieldDelegate {
         field.rightView = empty ? modeAccessory : controls
         field.rightViewMode = .always
         let steps = (total ?? 0) > 0
-        for button in buttons { button.isEnabled = steps }
+        for button in [previousButton, nextButton] { button.isEnabled = steps }
         field.accessibilityValue = total.map { $0 == 0 ? "No matches" : "\(index+1) of \($0)" }
     }
 
+    /// Return puts the keyboard away to look through the matches with the arrows; with none, it
+    /// asks about the page instead.
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         if mode == .ask { if !isAnswering, !isAnswered { submitQuestion() } }
-        else if (count.total ?? 0) > 0 { search(.next) }
-        else if queryHasNoMatches { enterAsk() }
+        else if queryHasNoMatches, aiEnabled { enterAsk() }
+        else { _ = field.resignFirstResponder() }
         return false
+    }
+
+    /// The first tap empties the field, ready for another search or question; once it's empty,
+    /// the next closes Find.
+    private func clearOrClose() {
+        guard !(field.text ?? "").isEmpty else { onClose?(); return }
+        field.text = ""
+        field.sendActions(for: .editingChanged)
+        _ = field.becomeFirstResponder()
     }
 
     private func edited() {
@@ -355,7 +378,7 @@ final class FindPanel: UIView, UITextFieldDelegate {
         answerView.reset()
         setMode(.find)
         field.placeholder = "Find on Page"
-        field.returnKeyType = .next
+        field.returnKeyType = .done
     }
 
     private func updateSend() {

@@ -843,7 +843,11 @@ final class WebKitBehaviorTests: XCTestCase {
         let initialReloadCenter = address.reloadButton.center
         XCTAssertEqual(address.host.text, "example.test")
         XCTAssertFalse(address.lock.isHidden)
+        XCTAssertNotNil(address.reloadButton.menu, "Holding Reload opens its menu")
+        XCTAssertFalse(address.reloadButton.showsMenuAsPrimaryAction, "A tap still reloads")
+        XCTAssertTrue(address.reloadButton.isContextMenuInteractionEnabled)
         address.sendActions(for: .touchUpInside)
+        XCTAssertFalse(address.reloadButton.isContextMenuInteractionEnabled, "The address's X has no menu")
         XCTAssertEqual(bar.panel, .search)
         XCTAssertTrue(bar.shown === bar.search)
         XCTAssertTrue(bar.search.editingAddress === address)
@@ -918,6 +922,7 @@ final class WebKitBehaviorTests: XCTestCase {
         XCTAssertFalse(address.isEditingURL)
         XCTAssertEqual(address.host.text, "example.test")
         XCTAssertEqual(address.reloadButton.symbolName, "arrow.clockwise")
+        XCTAssertTrue(address.reloadButton.isContextMenuInteractionEnabled)
         XCTAssertFalse(address.lock.isHidden)
         XCTAssertEqual(address.lock.alpha, 1)
         browser.closePanel()
@@ -1020,11 +1025,20 @@ final class WebKitBehaviorTests: XCTestCase {
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertEqual(find.count.index, 1)
         XCTAssertFalse(find.textFieldShouldReturn(find.field), "Return keeps the field")
+        XCTAssertFalse(find.field.isFirstResponder, "Return puts the keyboard away, leaving the arrows to step")
+        XCTAssertEqual(bar.panel, .find)
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(find.count.index, 1, "Return doesn't step")
+        find.nextButton.sendActions(for: .primaryActionTriggered)
         try await Task.sleep(for: .milliseconds(300))
         XCTAssertEqual(find.count.index, 2)
         find.nextButton.sendActions(for: .primaryActionTriggered)
         try await Task.sleep(for: .milliseconds(600))
         XCTAssertEqual(find.count.index, 3)
+        find.layoutIfNeeded(); find.field.layoutIfNeeded()
+        let next = find.nextButton.convert(find.nextButton.bounds, to: find)
+        XCTAssertLessThanOrEqual(next.maxX, find.closeButton.frame.minX, "The arrows sit before the X")
+        XCTAssertEqual(find.closeButton.center.x, find.field.frame.maxX-AddressBar.outerCentre, "The X sits where the address's Reload does")
         let scrolled = browser.webView.scrollView.contentOffset.y
         XCTAssertGreaterThan(scrolled, 100, "The page scrolls to the match")
         find.previousButton.sendActions(for: .primaryActionTriggered)
@@ -1066,6 +1080,26 @@ final class WebKitBehaviorTests: XCTestCase {
         let highlighted = try await browser.webView.callAsyncJavaScript(
             "return CSS.highlights.get('rise-find')?.size ?? 0", arguments: [:], in: nil, contentWorld: PageFind.world) as? Int
         XCTAssertEqual(highlighted, 0)
+
+        // X empties the field, ready for another search, then closes Find once it's empty.
+        browser.openPanel(.find)
+        try await Task.sleep(for: .milliseconds(500))
+        find.field.text = "needle"
+        find.field.sendActions(for: .editingChanged)
+        _ = find.field.resignFirstResponder()
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertEqual(find.count.total, 4)
+        find.closeButton.sendActions(for: .primaryActionTriggered)
+        XCTAssertEqual(find.field.text, "")
+        XCTAssertNil(find.count.total)
+        XCTAssertTrue(find.field.isFirstResponder, "Clearing brings the keyboard back to type again")
+        XCTAssertTrue(browser.isPanelOpen)
+        XCTAssertEqual(bar.panel, .find)
+        try await Task.sleep(for: .milliseconds(300))
+        find.closeButton.sendActions(for: .primaryActionTriggered)
+        try await Task.sleep(for: .milliseconds(700))
+        XCTAssertFalse(browser.isPanelOpen, "An empty field's X closes Find")
+        XCTAssertFalse(find.field.isFirstResponder)
     }
 
     @MainActor func testReturnWithNoMatchesKeepsTheQueryInAskUntilSend() async throws {

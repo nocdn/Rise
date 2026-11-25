@@ -76,7 +76,7 @@ extension BrowserViewController {
     }
 
     /// Alerts go over whatever is showing, such as a Peek.
-    private var topPresenter: UIViewController {
+    var topPresenter: UIViewController {
         var top: UIViewController = self
         while let presented = top.presentedViewController, !presented.isBeingDismissed { top = presented }
         return top

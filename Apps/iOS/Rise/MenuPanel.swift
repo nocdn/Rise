@@ -184,6 +184,8 @@ final class AddressBar: UIControl {
         settleHistoryButtons()
         reloadButton.setSymbol("xmark")
         reloadButton.accessibilityLabel = "Clear Address"
+        // While the address is being edited, the button is X, which only clears.
+        reloadButton.isContextMenuInteractionEnabled = false
         backButton.isUserInteractionEnabled = false
         forwardButton.isUserInteractionEnabled = false
         setNeedsLayout()
@@ -211,6 +213,7 @@ final class AddressBar: UIControl {
         editor = nil
         editingContentsAligned = false
         isEditingURL = false
+        reloadButton.isContextMenuInteractionEnabled = true
         translateButton.isHidden = !offersTranslation
         host.alpha = 1
         host.lineBreakMode = .byTruncatingHead
