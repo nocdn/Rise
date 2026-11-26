@@ -110,11 +110,20 @@ enum ModelService {
         return (object?["error"] as? [String: Any])?["message"] as? String
     }
 
-    /// Reads a failed response's body for the service's own explanation.
-    static func failure(_ bytes: URLSession.AsyncBytes, status: Int) async throws -> Error {
+    /// Reads a failed response's body for the service's own explanation. A key the service
+    /// doesn't accept says so, as its own words don't: OpenRouter answers "User not found."
+    static func failure(_ bytes: URLSession.AsyncBytes, status: Int, provider: AIProvider) async throws -> Error {
+        if status == 401 { return PageAssistant.Failure.service(invalidKey(provider)) }
         var data = Data()
         for try await byte in bytes { data.append(byte) }
         return PageAssistant.Failure.service(errorMessage(in: data) ?? "The model couldn’t answer (HTTP \(status)).")
+    }
+    static func invalidKey(_ provider: AIProvider) -> String {
+        #if os(iOS)
+        "The \(provider.title) API key isn’t valid. Check it in App settings."
+        #else
+        "The \(provider.title) API key isn’t valid. Check it in Rise’s settings, under AI."
+        #endif
     }
 }
 
@@ -138,7 +147,7 @@ enum OpenRouterClient {
             "reasoning": ["effort": choice.effort], "messages": messages])
         let (bytes, response) = try await session.bytes(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            throw try await ModelService.failure(bytes, status: http.statusCode)
+            throw try await ModelService.failure(bytes, status: http.statusCode, provider: .openRouter)
         }
         for try await line in bytes.lines {
             try Task.checkCancellation()
@@ -178,7 +187,7 @@ enum OpenAIClient {
             "reasoning": ["effort": choice.effort], "input": messages])
         let (bytes, response) = try await session.bytes(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            throw try await ModelService.failure(bytes, status: http.statusCode)
+            throw try await ModelService.failure(bytes, status: http.statusCode, provider: .openAI)
         }
         for try await line in bytes.lines {
             try Task.checkCancellation()

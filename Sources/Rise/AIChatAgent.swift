@@ -267,7 +267,8 @@ extension AIChatModel {
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
         let (bytes, response) = try await session.bytes(for: request)
         if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-            throw try await ModelService.failure(bytes, status: http.statusCode)
+            throw try await ModelService.failure(bytes, status: http.statusCode,
+                                                    provider: url.host?.hasSuffix("openai.com") == true ? .openAI : .openRouter)
         }
         return bytes
     }

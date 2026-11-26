@@ -166,6 +166,36 @@ final class AISettingsTests: XCTestCase {
             XCTAssertEqual(summary.paragraphs, ["First paragraph.", "Second paragraph."])
         }
     }
+
+    /// A key the service turns away says so: OpenRouter's own words for it are "User not found."
+    @MainActor func testARejectedKeySaysItIsntValid() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [AIRejectedKeyProtocol.self]
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
+        let page = PageAssistant.Page(title: "Test", url: "https://example.test", selection: "", text: "A page")
+        for provider in AIProvider.allCases {
+            let choice = ModelChoice(provider: provider, model: provider.defaultModel, effort: "low", apiKey: "revoked")
+            do {
+                _ = try await AIConsentTestScope.allowing { try await PageSummary.make(of: page, provider: choice, session: session) }
+                XCTFail("A rejected key summarised")
+            } catch {
+                XCTAssertEqual(error.localizedDescription, "The \(provider.title) API key isn’t valid. Check it in App settings.")
+            }
+        }
+    }
+}
+
+private final class AIRejectedKeyProtocol: URLProtocol, @unchecked Sendable {
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil,
+            headerFields: ["Content-Type": "application/json"])!, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(#"{"error":{"message":"User not found.","code":401}}"#.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
 }
 
 private final class AIReplyProtocol: URLProtocol, @unchecked Sendable {
