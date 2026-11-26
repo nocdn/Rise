@@ -24,7 +24,6 @@ import RiseCore
     private var audioHideWork: DispatchWorkItem?
     private var slideText = false
     private var toggleConfirmationDeadline: CFTimeInterval = 0
-    let subtitleAccessory = NSImageView(frame: .zero)
     /// Kero's chosen row and hover, fading.
     let plainBackground = PlainTabBackground()
     /// Developer mode's yellow and black border, over the chosen tab's card.
@@ -91,7 +90,7 @@ import RiseCore
         isBordered = false; title = ""; wantsLayer = true; clipsToBounds = false
         layer?.cornerRadius = TabAppearance.radius; layer?.cornerCurve = .continuous
         target = self; action = #selector(selectTab)
-        addSubview(plainBackground); addSubview(constructionBorder); addSubview(icon); addSubview(titleField); addSubview(subtitle); addSubview(subtitleAccessory); addSubview(close); addSubview(playback); addSubview(audio)
+        addSubview(plainBackground); addSubview(constructionBorder); addSubview(icon); addSubview(titleField); addSubview(subtitle); addSubview(close); addSubview(playback); addSubview(audio)
         addSubview(peekIndicator, positioned: .below, relativeTo: close)
         addSubview(badge); badge.isHidden = true
         peekIndicator.isHidden = true; peekIndicator.alphaValue = 0
@@ -111,8 +110,6 @@ import RiseCore
             self.toggleConfirmationDeadline = CACurrentMediaTime()+1
             self.onTogglePlayback?()
         }
-        subtitleAccessory.imageScaling = .scaleNone; subtitleAccessory.isHidden = true
-        subtitleAccessory.setAccessibilityElement(false)
         icon.wantsLayer = true; subtitle.wantsLayer = true; subtitle.alphaValue = 0
         titleField.delegate = self; titleField.focusRingType = .none
         titleField.cell?.usesSingleLineMode = true
@@ -135,7 +132,7 @@ import RiseCore
     private struct Shown: Equatable {
         var title: String, selected: Bool, theme: RiseTheme, renaming: Bool, splitMember: Bool
         var subtitle: String?, subtitleColor: NSColor?, subtitleRange: NSRange?, subtitleIcon: ObjectIdentifier?, constructionBorder: Bool
-        var accessory: ObjectIdentifier?, peekIcon: ObjectIdentifier?, peekTitle: String?
+        var peekIcon: ObjectIdentifier?, peekTitle: String?
         var favicon: ObjectIdentifier?, host: String?
         var playing: Bool, muted: Bool
     }
@@ -145,7 +142,6 @@ import RiseCore
                         subtitle: configuration.subtitle?.text, subtitleColor: configuration.subtitle?.color,
                         subtitleRange: configuration.subtitle?.highlightRange, subtitleIcon: configuration.subtitle?.icon.map(ObjectIdentifier.init),
                         constructionBorder: configuration.constructionBorder,
-                        accessory: configuration.subtitleAccessory.map(ObjectIdentifier.init),
                         peekIcon: configuration.peek?.favicon.map(ObjectIdentifier.init), peekTitle: configuration.peek?.title,
                         favicon: tab.favicon(for: theme).map(ObjectIdentifier.init), host: tab.url?.host,
                         playing: tab.isPlayingAudio, muted: tab.isAudioMuted)
@@ -177,8 +173,6 @@ import RiseCore
             }; icon.image = image
         } else { icon.showEmptyPlaceholder(theme: theme) }
         icon.contentTintColor = theme.sidebarIcon
-        subtitleAccessory.image = configuration.subtitleAccessory
-        subtitleAccessory.contentTintColor = theme.sidebarIcon
         close.contentTintColor = theme == .dark ? NSColor.white.withAlphaComponent(0.8) : theme.sidebarIcon
         close.hoverColor = theme == .dark ? NSColor.white.withAlphaComponent(0.08) : NSColor.black.withAlphaComponent(0.05)
         playback.color = close.contentTintColor ?? theme.sidebarIcon; playback.hoverColor = close.hoverColor
@@ -270,7 +264,6 @@ import RiseCore
         // A split half has room for its close button only.
         playback.isHidden = close.isHidden || playbackPaused == nil || isSplitMember
         if !playback.isHidden { playback.refreshHover() }
-        subtitleAccessory.isHidden = configuration.subtitleAccessory == nil || hover || isSplitMember || showsPeek
         constructionBorder.isHidden = !(selected && configuration.constructionBorder)
         constructionBorder.radius = isSplitMember ? 8 : TabAppearance.radius
         needsLayout = true
@@ -308,13 +301,11 @@ import RiseCore
         } else {
             place(titleField, NSRect(x: textX, y: textY, width: textWidth, height: titleHeight))
         }
-        let subtitleWidth = max(0, textWidth - (subtitleAccessory.isHidden ? 0 : 24))
-        titleField.setFadeBoundary(subtitleAccessory.isHidden ? nil : subtitleWidth)
         let subtitleY = showsSubtitle ? textY + titleHeight + 1 : max(0, bounds.height-subtitleHeight-2)
         let iconX: CGFloat = isSplitMember ? 6 : 8
         let iconY = showsSubtitle ? textY + (titleHeight-16)/2 + 2 : (bounds.height-16)/2
         TabListMotion.move(icon, to: NSRect(x: iconX, y: iconY, width: 16, height: 16), animated: animated)
-        let subtitleFrame = NSRect(x: textX, y: subtitleY, width: subtitleWidth, height: subtitleHeight)
+        let subtitleFrame = NSRect(x: textX, y: subtitleY, width: max(0, textWidth), height: subtitleHeight)
         if animated && showsSubtitle && subtitleOpacity == 0 { subtitle.frame = subtitleFrame.offsetBy(dx: 0, dy: -2) }
         place(subtitle, subtitleFrame)
         if animated {
@@ -346,9 +337,6 @@ import RiseCore
                                width: PeekFaviconIndicator.side, height: PeekFaviconIndicator.side)
         peekIndicator.frame = peekFrame
         audio.frame = NSRect(x: iconX+21, y: (iconY+8-12).rounded(), width: 24, height: 24)
-        let accessorySize = subtitleAccessory.image?.size ?? .zero
-        subtitleAccessory.frame = NSRect(x: close.frame.midX - accessorySize.width/2,
-            y: close.frame.midY - accessorySize.height/2, width: accessorySize.width, height: accessorySize.height)
     }
     override func updateTrackingAreas() {
         super.updateTrackingAreas(); removeOwnTrackingAreas()

@@ -4,36 +4,21 @@ import RiseCore
 @testable import Rise
 
 final class TabRowTests: XCTestCase {
-    @MainActor func testSharedRowAcceptsIndependentPresentationOptionsAndSwapsAccessoryOnHover() {
+    @MainActor func testSharedRowAcceptsIndependentPresentationOptions() {
         _ = NSApplication.shared
         let tab = BrowserTab()
         let row = TabRow(tab: tab, onClose: {})
-        let image = TablerIcon.image(LucideIcon.hammer, size: 12, description: "Developer mode")
-        let configuration = TabRowConfiguration(subtitle: .init(text: "custom subtitle", color: .systemPurple),
-            constructionBorder: true, subtitleAccessory: image)
+        let configuration = TabRowConfiguration(subtitle: .init(text: "custom subtitle", color: .systemPurple), constructionBorder: true)
         row.update(tab: tab, selected: true, theme: .neutral, configuration: configuration)
         row.frame = NSRect(x: 0, y: 0, width: 240, height: row.rowHeight)
         row.layoutSubtreeIfNeeded()
         XCTAssertFalse(tab.developer, "Presentation options do not depend on a page mode")
         XCTAssertTrue(row.configuration.constructionBorder)
         XCTAssertEqual(row.subtitle.attributedStringValue.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor, .systemPurple)
-        XCTAssertEqual(row.subtitleAccessory.frame.midY, row.close.frame.midY)
-        XCTAssertEqual(row.subtitleAccessory.frame.midX, row.close.frame.midX)
-        XCTAssertEqual(row.subtitleAccessory.frame.size, NSSize(width: 12, height: 12))
-        XCTAssertLessThanOrEqual(row.subtitle.frame.maxX, row.subtitleAccessory.frame.minX)
-        XCTAssertFalse(row.subtitleAccessory.isHidden)
-        XCTAssertTrue(row.close.isHidden)
-
-        row.mouseEntered(with: NSEvent())
-        XCTAssertTrue(row.subtitleAccessory.isHidden)
-        XCTAssertFalse(row.close.isHidden)
-        row.mouseExited(with: NSEvent())
-        XCTAssertFalse(row.subtitleAccessory.isHidden)
         XCTAssertTrue(row.close.isHidden)
 
         row.update(tab: tab, selected: true, theme: .neutral, configuration: .init())
         XCTAssertFalse(row.configuration.constructionBorder)
-        XCTAssertTrue(row.subtitleAccessory.isHidden)
         XCTAssertFalse(row.showsSubtitle)
     }
 
@@ -51,7 +36,6 @@ final class TabRowTests: XCTestCase {
         XCTAssertEqual(value.attribute(.foregroundColor, at: suffix.location-1, effectiveRange: nil) as? NSColor, RiseTheme.neutral.muted)
         XCTAssertEqual(value.attribute(.foregroundColor, at: suffix.location, effectiveRange: nil) as? NSColor, subtitle.color)
         XCTAssertFalse(first.constructionBorder)
-        XCTAssertNil(first.subtitleAccessory)
     }
 
     @MainActor func testGitLabRepositorySubtitleFitsAndMovesFollowingTabs() throws {
@@ -184,15 +168,13 @@ final class TabRowTests: XCTestCase {
         _ = NSApplication.shared
         let tab = BrowserTab(); tab.developer = true; tab.requestedURL = URL(string: "http://localhost:3000")
         let all = TabRowConfiguration.forTab(tab, theme: .neutral)
-        XCTAssertEqual(all.subtitle?.text, "localhost:3000"); XCTAssertTrue(all.constructionBorder); XCTAssertNotNil(all.subtitleAccessory)
+        XCTAssertEqual(all.subtitle?.text, "localhost:3000"); XCTAssertTrue(all.constructionBorder)
         let noAddress = TabRowConfiguration.forTab(tab, theme: .neutral, developerLook: .init(address: false))
-        XCTAssertNil(noAddress.subtitle); XCTAssertTrue(noAddress.constructionBorder); XCTAssertNotNil(noAddress.subtitleAccessory)
+        XCTAssertNil(noAddress.subtitle); XCTAssertTrue(noAddress.constructionBorder)
         XCTAssertFalse(TabRowConfiguration.forTab(tab, theme: .neutral, developerLook: .init(border: false)).constructionBorder)
-        XCTAssertNil(TabRowConfiguration.forTab(tab, theme: .neutral, developerLook: .init(hammer: false)).subtitleAccessory)
-        // The hammer shows on a one-line tab too.
         let row = TabRow(tab: tab, onClose: {})
         row.update(tab: tab, selected: true, theme: .neutral, configuration: noAddress)
-        XCTAssertEqual(row.rowHeight, TabAppearance.height); XCTAssertFalse(row.subtitleAccessory.isHidden)
+        XCTAssertEqual(row.rowHeight, TabAppearance.height)
     }
 
     @MainActor func testDeveloperTabSettingsAreOnByDefaultAndReachTheSidebar() throws {
@@ -203,12 +185,12 @@ final class TabRowTests: XCTestCase {
         defer { browser.tabs.forEach { $0.page.stopLoading() }; browser.saveWork?.cancel() }
         let tab = browser.addTab(); tab.developer = true; tab.requestedURL = URL(string: "http://localhost:3000"); browser.update()
         let rows = browser.riseSettingRows("tabs").filter { ($0["key"] as? String)?.hasPrefix("developerTab") == true }
-        XCTAssertEqual(rows.compactMap { $0["value"] as? Bool }, [true, true, true])
+        XCTAssertEqual(rows.compactMap { $0["value"] as? Bool }, [true, true])
         let row = try XCTUnwrap(browser.sidebar.rows[tab.id])
         XCTAssertTrue(row.showsSubtitle); XCTAssertFalse(row.constructionBorder.isHidden)
-        browser.setRiseSetting("developerTabAddress", false); browser.setRiseSetting("developerTabBorder", false); browser.setRiseSetting("developerTabHammer", false)
-        XCTAssertFalse(row.showsSubtitle); XCTAssertTrue(row.constructionBorder.isHidden); XCTAssertTrue(row.subtitleAccessory.isHidden)
-        XCTAssertEqual(browser.developerTabLook, DeveloperTabLook(address: false, border: false, hammer: false))
+        browser.setRiseSetting("developerTabAddress", false); browser.setRiseSetting("developerTabBorder", false)
+        XCTAssertFalse(row.showsSubtitle); XCTAssertTrue(row.constructionBorder.isHidden)
+        XCTAssertEqual(browser.developerTabLook, DeveloperTabLook(address: false, border: false))
     }
 
     @MainActor func testSplitMergeRequestHasRoomForRepositorySubtitle() throws {
