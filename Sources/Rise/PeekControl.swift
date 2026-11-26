@@ -5,7 +5,25 @@ import AppKit
 /// left and right once on hover. The button shrinks slightly while pressed, and it can sit
 /// tucked behind the card's right edge, then slide out from under it.
 @MainActor final class PeekControl: NSView {
-    enum Glyph { case cross, arrows, split }
+    enum Glyph: CaseIterable {
+        case cross, arrows, split
+
+        var symbol: String {
+            switch self {
+            case .cross: "xmark"
+            case .arrows: "arrow.up.left.and.arrow.down.right"
+            case .split: "rectangle.split.2x1"
+            }
+        }
+
+        var title: String {
+            switch self {
+            case .cross: "Close Peek"
+            case .arrows: "Expand Peek to tab"
+            case .split: "Open Peek in split view"
+            }
+        }
+    }
     static let side: CGFloat = 34, gap: CGFloat = 12
     /// Room around the button for its shadow; the view clips at the card's edge.
     static let shadowRoom: CGFloat = 6
@@ -120,7 +138,7 @@ import AppKit
             strokes[1].frame = face.bounds; strokes[1].lineWidth = line; strokes[1].path = divider
         case .arrows:
             let scale = window?.backingScaleFactor ?? 2
-            if scale != renderedScale, let image = NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: nil)?
+            if scale != renderedScale, let image = NSImage(systemSymbolName: glyph.symbol, accessibilityDescription: nil)?
                 .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13*k, weight: .semibold).applying(.init(paletteColors: [Self.tint]))) {
                 renderedScale = scale
                 let size = image.size

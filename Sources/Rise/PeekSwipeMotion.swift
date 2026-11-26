@@ -28,7 +28,8 @@ import AppKit
         guard peekMotionAllowed else { return }
         let progress = CGFloat(Self.peekVisualProgress(for: peekSwipePull))
         let scale = 1 - 0.03 * progress, shift = 20 * progress
-        let pivot = NSPoint(x: peekCardFrame.midX, y: peekCardFrame.midY)
+        let frame = peekCard?.frame ?? peekCardFrame
+        let pivot = NSPoint(x: frame.midX, y: frame.midY)
         CATransaction.begin(); CATransaction.setDisableActions(true)
         for view in peekSwipeViews {
             guard let layer = view.layer else { continue }

@@ -15,10 +15,25 @@ import AppKit
         ]
         (peekBarButtons[2] as? ReloadButton)?.onRepeatedPress = { [weak self] in self?.adBlockPrompt.noteReload() }
         peekBar.navigation = peekBarButtons
+        peekBar.installTrailingButtons(PeekControl.Glyph.allCases.map { glyph in
+            let button = ChromeButton(symbol: glyph.symbol, size: 14, title: glyph.title) { [weak self] in
+                self?.performPeekControl(glyph)
+            }
+            button.setHoverHint(glyph.title)
+            return button
+        })
         peekBar.navigationCentres = PlainNavBar.Metrics.navigationCentres.dropFirst().map { $0-room }
         peekBar.leadingRoom = room
         peekBar.onOpenAddress = { [weak self] in self?.focusAddress() }
         peekBar.addressMenu = { [weak self] bar in self?.addressMenu(for: bar) }
+    }
+    func performPeekControl(_ glyph: PeekControl.Glyph) {
+        peekFullscreenExpansion?.motion?.finish()
+        switch glyph {
+        case .cross: closePeek(animated: true)
+        case .arrows: expandPeek()
+        case .split: splitPeek()
+        }
     }
     /// The page that menus, shortcuts and the page bars' buttons act on: an open Peek's, in front of
     /// the selected tab's.

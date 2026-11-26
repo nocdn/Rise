@@ -73,13 +73,26 @@ final class KeyboardShortcutsTests: XCTestCase {
             XCTAssertEqual(item.menu?.items.filter { $0.action == #selector(ShortcutActionProbe.invoke) }.count, 2)
         }
     }
-    @MainActor func testPageMenuOrderDefaultsScopeAndPersistentCheckmarks() throws {
+    @MainActor func testConsolidatedMenusAndPageOptionCheckmarks() throws {
         try withBrowser { browser, preferences in
-            XCTAssertEqual(Array(NSApp.mainMenu!.items.prefix(5).map(\.title)), ["Rise", "File", "Edit", "Page", "View"])
-            let page = try XCTUnwrap(NSApp.mainMenu?.items.first { $0.title == "Page" }?.submenu)
-            let toggles = Array(page.items.dropFirst(3))
-            XCTAssertEqual(Array(page.items.prefix(2).map(\.title)), ["Annotate Selection", "Remove All Annotations on This Page"])
-            XCTAssertEqual(toggles.map(\.title), ["Dismiss Cookie Banners", "Automatic PiP", "Preload Links on Hover", "Autoplay YouTube Videos"])
+            let bar = try XCTUnwrap(NSApp.mainMenu)
+            XCTAssertEqual(bar.items.map(\.title), ["Rise", "File", "Edit", "View", "History", "Bookmarks", "Tabs", "Window", "Help"])
+            let rise = try XCTUnwrap(bar.item(withTitle: "Rise")?.submenu)
+            XCTAssertNotNil(rise.item(withTitle: "Manage Extensions"))
+            let view = try XCTUnwrap(bar.item(withTitle: "View")?.submenu)
+            let annotations = try XCTUnwrap(view.item(withTitle: "Annotations")?.submenu)
+            XCTAssertEqual(annotations.items.map(\.title), ["Annotate Selection", "Remove All Annotations on This Page"])
+            let developerTools = try XCTUnwrap(view.item(withTitle: "Developer Tools")?.submenu)
+            XCTAssertEqual(developerTools.items.filter { !$0.isSeparatorItem }.map(\.title), [
+                "Developer Mode", "Inspect Elements", "Show Console", "JavaScript Console…", "Show Page Source", "Card Motion Tester", "Link Pulse Tester"
+            ])
+            let page = try XCTUnwrap(view.item(withTitle: "Page Options")?.submenu)
+            let options = page.items.filter { !$0.isSeparatorItem }
+            XCTAssertEqual(options.map(\.title), [
+                "Dismiss Cookie Banners", "Automatic PiP", "Preload Links on Hover", "Autoplay YouTube Videos",
+                "Site Information", "Reset Site Permissions"
+            ])
+            let toggles = Array(options.prefix(4))
             let first = browser.addTab(); first.requestedURL = URL(string: "https://example.com/path")!
             func states() -> [NSControl.StateValue] {
                 for item in toggles { item.isEnabled = browser.validateMenuItem(item) }
@@ -100,6 +113,24 @@ final class KeyboardShortcutsTests: XCTestCase {
             XCTAssertEqual(states(), [.off, .off, .off, .on])
             XCTAssertFalse(toggles[0].isEnabled); XCTAssertFalse(toggles[1].isEnabled)
             XCTAssertTrue(toggles[2].isEnabled); XCTAssertTrue(toggles[3].isEnabled)
+        }
+    }
+    @MainActor func testShortcutsReachCommandsMovedIntoSubmenus() throws {
+        try withBrowser { browser, _ in
+            let shortcuts = browser.keyboardShortcuts
+            let target = ShortcutActionProbe()
+            for id in ["annotateSelection", "toggleDeveloper"] {
+                let item = try XCTUnwrap(shortcuts.commands.first { $0.id == id }?.items.first)
+                item.target = target; item.action = #selector(ShortcutActionProbe.invoke)
+            }
+            XCTAssertNil(shortcuts.assign("F8", to: "toggleDeveloper"))
+            for event in [key("a", [.command, .control], code: 0, in: browser),
+                          key("d", .control, code: 2, in: browser),
+                          key("\u{F70B}", [], code: 100, in: browser)] {
+                let before = target.calls
+                XCTAssertTrue(NSApp.mainMenu!.performKeyEquivalent(with: event))
+                XCTAssertEqual(target.calls, before+1)
+            }
         }
     }
     @MainActor func testNativeDispatchCoversDeleteFunctionAndShiftedKeys() throws {

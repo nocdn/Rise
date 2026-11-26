@@ -1,7 +1,7 @@
 # Page annotations and contextual questions
 
 On desktop, select readable page text and choose **Ask About Selection…**, or press
-**Control–Command–A** (**Page → Annotate Selection**, also remappable in Keyboard shortcuts).
+**Control–Command–A** (**View → Annotations → Annotate Selection**, also remappable in Keyboard shortcuts).
 Rise opens a question panel directly from the selection's bottom-right corner, with the
 same `CardMotionAnimator` and selected spring as the pinned Calendar card. The input says
 “Ask about this selection…”. Clicking outside, Escape or Close folds the panel into its
@@ -12,8 +12,8 @@ together, preventing either a missing badge frame or an extra shadow appearing a
 The badge also fades, including its shadow, as the panel opens. Click the number to reopen the question and
 answer. Collapsed badges take their background, border and shadow from the actual native
 Ask panel, including theme changes. Middle-click a marker (or an expanded panel) to remove
-it; right-click also offers Remove Annotation. **Page → Remove All Annotations on This Page** clears
-that page's notes and conversation.
+it; right-click also offers Remove Annotation. **View → Annotations → Remove All Annotations on This Page**
+clears that page's notes and conversation.
 
 The question card is the existing `FindBar` in anchored Ask mode: the same border,
 shadow, typography, input shimmer, token rendering, answer-height spring, copy and

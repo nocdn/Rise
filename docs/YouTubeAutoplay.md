@@ -2,8 +2,9 @@
 
 A YouTube video you open (a link, a typed address, a restored or reloaded tab, a Peek) waits on
 its thumbnail and large play button instead of playing. **Settings → Tabs → Autoplay YouTube
-videos**, or **Page → Autoplay YouTube Videos** in the menu bar, turns this off; it's off by default. Changing it reaches open YouTube pages without a
-reload. `YouTubeAutoplay` holds the setting and the page script.
+videos**, or **View → Page Options → Autoplay YouTube Videos**, lets videos play when opened.
+Autoplay is off by default. Changes reach open YouTube pages without a reload. `YouTubeAutoplay`
+holds the setting and the page script.
 
 ## How
 

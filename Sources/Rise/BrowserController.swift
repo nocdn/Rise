@@ -269,6 +269,7 @@ import RiseCore
     var peekPromotion: PeekPromotion?
     /// The Peek card moving frame by frame with its live page inside, when Live Peek Resize is on.
     var peekLiveMotion: PeekLiveMotion?
+    var peekFullscreenExpansion: (start: NSRect, progress: CGFloat, motion: PeekLiveMotion?)?
     /// ⇧⌘D's copy lifting off the page into the right half (`SplitDuplicate.swift`).
     var duplicateMotion: PeekLiveMotion?
     /// The targets over the page while a tab is dragged from the sidebar, and a tab let go on one
@@ -391,7 +392,7 @@ import RiseCore
             syncedTabMetadata = SyncedTabMetadata(icons: suggestionFavicons)
             syncedTabMetadata?.onChange = { [weak self] in self?.update() }
         }
-        pageFullscreen.onChange = { [weak self] in self?.reconcileFullscreenSidebar(); self?.layoutChrome() }
+        pageFullscreen.onChange = { [weak self] in self?.pageFullscreenChanged() }
         fullscreenNavigationHover.changed = { [weak self] in self?.refreshFullscreenNavigation() }
         googleSearchSuggestions.onLoad = { [weak self] query in
             guard let self, self.palette.isPresented, self.palette.query.trimmingCharacters(in: .whitespacesAndNewlines) == query,

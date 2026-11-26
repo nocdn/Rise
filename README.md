@@ -135,16 +135,16 @@ A tab with a Peek shows the Peek's icon at the end of its row. Hover over that i
 - ⭐ **Now Playing**: when media plays in a tab that you left, a card at the bottom of the sidebar has its controls. Short sounds, such as a site's notification sound, do not show a card.
 - **Tab audio**: a tab that plays sound has a button to pause or mute it.
 - ⭐ **Meet's floating window**: move it with two fingers on its title bar, and flick it into a corner.
-- **YouTube**: videos that you open wait for you to press play. Turn autoplay on in Settings → Tabs or the Page menu.
+- **YouTube**: videos that you open wait for you to press play. Turn autoplay on in Settings → Tabs or View → Page Options.
 
 ### Privacy, permissions and notifications
 
 - ⭐ **Ad blocking**: Rise has uBlock Origin built in. Click the shield in the site controls to turn it off for a site.
-- **Cookie banners**: Rise closes cookie banners for you. Turn this off in the Page menu.
+- **Cookie banners**: Rise closes cookie banners for you. Turn this off in View → Page Options.
 - **Site permissions**: Rise asks before a site can use your camera, microphone or location. Your answer stays for that site. Press ⌥⌘Return to allow or ⌥⌘⌫ to deny.
 - **Notifications**: allowed sites, such as Google Chat, show their notifications in Notification Centre.
 - ⭐ **Passkeys**: use Touch ID, security keys such as YubiKeys, password manager extensions, or your phone.
-- ⭐ **Link preloading**: turn on Page → Preload Links on Hover to load links before you click them. It is off by default.
+- ⭐ **Link preloading**: turn on View → Page Options → Preload Links on Hover to load links before you click them. It is off by default.
 
 ### Downloads
 

@@ -22,7 +22,7 @@ import XCTest
 
     func testOverflowSettingIsCheckableOnlyInSimulatedModeAndPersists() throws {
         let browser = makeBrowser(); defer { clean(browser) }
-        let title = "Collapse Sidebar in Simulated Full Screen"
+        let title = "Collapse Sidebar for Fullscreen Tabs"
         var item = try XCTUnwrap(browser.makeMoreSiteMenu().items.first { $0.title == title })
         XCTAssertEqual(item.state, .on)
         (item.target as? MenuAction)?.invoke()

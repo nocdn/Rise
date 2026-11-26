@@ -272,6 +272,30 @@ import RiseCore
     /// right page has no sidebar button, so its back, forward and reload move up a place.
     var navigationCentres = Metrics.navigationCentres
     var leadingRoom: CGFloat = 0 { didSet { needsLayout = true } }
+    private(set) var trailingButtons: [ChromeButton] = []
+    var trailingButtonProgress: CGFloat = 0 {
+        didSet {
+            guard trailingButtonProgress != oldValue else { return }
+            for button in trailingButtons {
+                button.isHidden = trailingButtonProgress == 0
+                button.alphaValue = trailingButtonProgress
+            }
+            needsLayout = true
+        }
+    }
+    // Make room early so the new buttons fade through most of the expansion.
+    private var trailingRoom: CGFloat { Metrics.extensionStride*CGFloat(trailingButtons.count)*min(1, trailingButtonProgress*2.5) }
+
+    func installTrailingButtons(_ buttons: [ChromeButton]) {
+        for button in trailingButtons { button.removeFromSuperview() }
+        trailingButtons = buttons
+        for button in buttons {
+            button.isHidden = trailingButtonProgress == 0
+            button.alphaValue = trailingButtonProgress
+            addSubview(button)
+        }
+        applyInk(); needsLayout = true
+    }
     /// Rise's titlebar buttons, carried here while the bar shows.
     var navigation: [ChromeButton] = [] {
         didSet {
@@ -388,7 +412,7 @@ import RiseCore
         hairline.backgroundColor = ink.hairline.cgColor; field.backgroundColor = ink.field.cgColor
         CATransaction.commit()
         // The buttons that stay over developer mode's bar take its ink.
-        let staying: [ChromeButton] = extensionButtons + [permissionButton, currencyButton], field: [ChromeButton] = fieldControls
+        let staying: [ChromeButton] = extensionButtons + [permissionButton, currencyButton], field: [ChromeButton] = fieldControls + trailingButtons
         for (buttons, ink) in [(staying, shownInk), (field, ink)] {
             for button in buttons {
                 if button.contentTintColor != ink.strong { button.contentTintColor = ink.strong }
@@ -432,12 +456,12 @@ import RiseCore
 
     /// Where the field ends: before the row of the page's buttons and the pinned extensions.
     private var fieldMaxX: CGFloat {
-        guard rowCount > 0 else { return bounds.width-12 }
+        guard rowCount > 0 else { return bounds.width-trailingRoom-12 }
         return rowCentre(0)-Metrics.fieldEndGap
     }
     private var rowCount: Int { pageButtons.count+extensionButtons.count }
     private func rowCentre(_ index: Int) -> CGFloat {
-        bounds.width-Metrics.extensionInset-Metrics.extensionStride*CGFloat(rowCount-1-index)
+        bounds.width-trailingRoom-Metrics.extensionInset-Metrics.extensionStride*CGFloat(rowCount-1-index)
     }
     private func extensionCentre(_ index: Int) -> CGFloat { rowCentre(pageButtons.count+index) }
     var fieldRect: NSRect {
@@ -450,8 +474,9 @@ import RiseCore
     /// is, its controls and its address's copy, for any page with an address.
     private var pageButtons: [SidebarHoverButton] {
         guard url != nil else { return [] }
-        return (showsPermission ? [permissionButton] : []) + [settingsButton, copyButton] + (showsZoom ? [zoomButton] : [])
-            + (showsCurrency ? [currencyButton] : [])
+        let leading = (showsPermission ? [permissionButton] : []) + [settingsButton]
+        let optional = (showsZoom ? [zoomButton] : []) + (showsCurrency ? [currencyButton] : [])
+        return trailingButtonProgress > 0 ? leading + optional + [copyButton] : leading + [copyButton] + optional
     }
 
     override func layout() {
@@ -472,6 +497,10 @@ import RiseCore
         addressHost.frame = bounds
         layoutProgress()
         for (button, centre) in zip(navigation, navigationCentres) {
+            button.frame = NSRect(x: centre-14, y: mid-14, width: 28, height: 28)
+        }
+        for (index, button) in trailingButtons.enumerated() where trailingButtonProgress > 0 {
+            let centre = bounds.width-Metrics.extensionInset-trailingRoom+Metrics.extensionStride*CGFloat(index+1)
             button.frame = NSRect(x: centre-14, y: mid-14, width: 28, height: 28)
         }
         layoutExtensions()

@@ -169,6 +169,7 @@ struct PeekUndo {
             if hoveredWebView === peek.page.view { hideLinkStatus() }
         }
         let views = (card: peekCard, backdrop: peekBackdrop, controls: peekControls)
+        stopPeekFullscreenExpansion()
         finishPeekMotion(); finishPeekPromotion()
         peekSourceTabID = nil; peekOpensNewTab = false; peekSwipePull = 0; peekOrigin = nil
         peekTab = nil; peekCard = nil; peekBackdrop = nil; peekControls = []

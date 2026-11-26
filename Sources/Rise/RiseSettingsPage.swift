@@ -78,7 +78,7 @@ import RiseCore
         case "system":
             var rows = [toggle("simulatedFullscreen", "Simulated full screen", "Pages go full screen inside Rise's window (⇧⌘F)", pageFullscreen.isSimulated)]
             if pageFullscreen.isSimulated {
-                rows.append(toggle("collapseSidebar", "Collapse sidebar in simulated full screen", nil, collapsesSidebarInSimulatedFullscreen))
+                rows.append(toggle("collapseSidebar", "Collapse sidebar for fullscreen tabs", "The sidebar always collapses when a Peek goes fullscreen", collapsesSidebarInSimulatedFullscreen))
                 rows.append(toggle("autoHideFullscreenNavigation", "Auto-hide URL bar in simulated full screen", "Hover over the top of the page to reveal it. Always shown while the sidebar is open", autoHidesFullscreenNavigation))
             }
             rows.append(toggle("savesCaptures", "Save page captures automatically",

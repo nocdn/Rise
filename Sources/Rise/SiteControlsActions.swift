@@ -49,7 +49,7 @@ import Vision
         })
         menu.addItem(menuItem("Simulated Full Screen", checked: pageFullscreen.isSimulated) { [weak self] in self?.toggleSimulatedFullscreen() })
         if pageFullscreen.isSimulated {
-            menu.addItem(menuItem("Collapse Sidebar in Simulated Full Screen", checked: collapsesSidebarInSimulatedFullscreen) { [weak self] in
+            menu.addItem(menuItem("Collapse Sidebar for Fullscreen Tabs", checked: collapsesSidebarInSimulatedFullscreen) { [weak self] in
                 guard let self else { return }
                 self.setCollapsesSidebarInSimulatedFullscreen(!self.collapsesSidebarInSimulatedFullscreen)
             })

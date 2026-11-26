@@ -124,13 +124,10 @@ import RiseCore
         card.addSubview(clip); clip.addSubview(tab.page.view)
         attachPeekBar(to: clip, above: tab.page.view)
         root.addSubview(card, positioned: .below, relativeTo: dismissArea); peekCard = card
-        for (glyph, title, action) in [
-            (PeekControl.Glyph.cross, "Close Peek", { [weak self] in self?.closePeek(animated: true) }),
-            (.arrows, "Expand Peek to tab", { [weak self] in self?.expandPeek() }),
-            (.split, "Open Peek in split view", { [weak self] in self?.splitPeek() })
-        ] as [(PeekControl.Glyph, String, () -> Void)] {
-            let button = PeekControl(glyph: glyph, title: title); button.action = action; button.applyTheme(theme)
-            root.addSubview(button, positioned: .below, relativeTo: dismissArea); peekControls.append(button)
+        for glyph in PeekControl.Glyph.allCases {
+            let button = PeekControl(glyph: glyph, title: glyph.title)
+            button.action = { [weak self] in self?.performPeekControl(glyph) }; button.applyTheme(theme)
+            root.addSubview(button, positioned: .below, relativeTo: card); peekControls.append(button)
         }
         layoutPeek(); if standby == nil, existing == nil { tab.load(url) }; window?.makeFirstResponder(tab.page.view)
         updatePeekCovers()
@@ -139,24 +136,52 @@ import RiseCore
         update()
         findBars[tab.id]?.reattached()
     }
+    static let peekVerticalInset: CGFloat = 12
+
+    var isPeekSimulatedFullscreen: Bool {
+        guard let peekTab else { return false }
+        return pageFullscreen.isActive(in: peekTab.page.view)
+    }
+
     var peekCardFrame: NSRect {
+        let inset = Self.peekVerticalInset
+        if isPeekSimulatedFullscreen { return root.bounds.insetBy(dx: inset, dy: inset) }
         let page = pageShadow.frame; let margin = min(120, page.width*0.1)
-        return NSRect(x: page.minX+margin, y: 12, width: page.width-margin*2, height: root.bounds.height-24)
+        return NSRect(x: page.minX+margin, y: inset, width: page.width-margin*2, height: root.bounds.height-2*inset)
     }
     func layoutPeek() {
         layoutPeekStandby()
         // The card is mid-way through a live resize, which places it every frame.
         guard let peekCard, let peekTab, peekLiveMotion?.isRunning != true else { return }
         peekBackdrop?.frame = pageClip.bounds
-        peekCard.frame = peekCardFrame
+        let target = peekCardFrame
+        let expansion = peekFullscreenExpansion
+        let progress = expansion?.progress ?? (isPeekSimulatedFullscreen ? 1 : 0)
+        peekCard.frame = expansion.map { $0.start.interpolated(to: target, by: progress) } ?? target
         // Keep a settled, receded page centered after the window resizes.
         if let layer = pageShadow.layer, layer.animation(forKey: "peek.recede") == nil, !CATransform3DIsIdentity(layer.transform) {
             recedePage(true, along: nil)
         }
         (peekCard as? PageSurface)?.refreshOutline()
+        peekBar.trailingButtonProgress = progress
+        var controlsX = peekCard.frame.maxX
+        if let expansion {
+            let distance = target.maxX-expansion.start.maxX
+            let buttonReach = PeekControl.gap+PeekControl.side+PeekControl.shadowReach
+            let travel = min(distance*0.35, max(distance*0.12, distance-buttonReach))
+            controlsX = expansion.start.maxX+travel*progress
+        }
+        for (index, button) in peekControls.enumerated() {
+            button.frame = PeekControl.frame(cardMaxX: controlsX, top: 20+CGFloat(index)*44)
+            // At narrow window sizes a sliver can still be outside the card near the end.
+            button.alphaValue = min(1, (1-progress)*8)
+            if button.isHidden != (progress == 1) {
+                button.isHidden = progress == 1
+                button.refreshHover()
+            }
+        }
         layoutPeekContents(peekCard, web: peekTab.page.view)
         layoutPeekFindBar()
-        for (i, button) in peekControls.enumerated() { button.frame = PeekControl.frame(cardMaxX: peekCard.frame.maxX, top: 20+CGFloat(i)*44) }
         if peekSwipePull > 0 { applyPeekSwipeTransform() }
     }
     /// Animated closes spring the Peek back into its link, reversing one that is still
@@ -171,6 +196,7 @@ import RiseCore
         if let popup = extensionPopup, popup.anchor?.isDescendant(of: peekBar) == true { popup.close() }
         // The card's stand-in carries the bar away with it.
         let bar = animated ? peekBarStill() : nil
+        stopPeekFullscreenExpansion()
         // An interrupted live resize leaves the pages for layout to put back.
         let interrupted = peekLiveMotion?.isRunning == true
         // A hold of the pages' layout is a motion's, let go with it; ⌘Z's for a split holds the
@@ -201,7 +227,8 @@ import RiseCore
                 playPeekClose(card: card, backdrop: backdrop, page: still, live: nil, origin: origin, bar: bar, token: token)
             }
             else if card.alphaValue == 1, let web {
-                dismissPeek(card: card, backdrop: backdrop, page: web, origin: origin, bar: bar, hold: peekControls.isEmpty ? 0 : Self.peekCloseHold)
+                let hold = peekControls.contains { !$0.isHidden } ? Self.peekCloseHold : 0
+                dismissPeek(card: card, backdrop: backdrop, page: web, origin: origin, bar: bar, hold: hold)
             }
             else { backdrop?.removeFromSuperview(); card.removeFromSuperview() }
         } else {

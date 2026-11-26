@@ -730,6 +730,7 @@ private final class HeaderRecordingServer {
     func runAll() async {
         let only = ProcessInfo.processInfo.environment["RISE_CASES"]?.split(separator: ",").map(String.init)
         for (name, run) in [("SimulatedFullscreenLiftsTheElementOverThePageAndLeavesCleanly", testSimulatedFullscreenLiftsTheElementOverThePageAndLeavesCleanly),
+                            ("SimulatedFullscreenWidensPeekAndRestoresItsLayout", testSimulatedFullscreenWidensPeekAndRestoresItsLayout),
                             ("NativeModeLeavesTheFullscreenAPIToChromium", testNativeModeLeavesTheFullscreenAPIToChromium),
                             ("ScriptReportsEntryReplacementExitAndElementRemovalToTheBrowser", testScriptReportsEntryReplacementExitAndElementRemovalToTheBrowser),
                             ("SwitchingModesChangesTheScriptForLaterPages", testSwitchingModesChangesTheScriptForLaterPages)]
@@ -788,6 +789,100 @@ private final class HeaderRecordingServer {
         XCTAssertEqual(events, "box,null")
         let leftovers = try await value(web, "document.querySelectorAll('[data-rise-fullscreen], [data-rise-fullscreen-ancestor], [popover]').length")
         XCTAssertEqual(leftovers, "0")
+    }
+
+    func testSimulatedFullscreenWidensPeekAndRestoresItsLayout() async throws {
+        let browser = browser(simulated: true); defer { browser.closePeek(); clean(browser) }
+        let window = try XCTUnwrap(browser.window)
+        let size = NSSize(width: 1024, height: 680)
+        window.setContentSize(size)
+        _ = browser.addTab()
+        let url = URL(string: "https://fullscreen.example/peek")!
+        let clip = LiveFixtures.repository("Tests/RiseTests/Resources/PiPTestVideo.mp4")
+        let video = try Data(contentsOf: clip).base64EncodedString()
+        try LiveFixtures.register("<video id=player controls src='data:video/mp4;base64,\(video)'></video>", at: url)
+        browser.showPeek(url: url, animated: false)
+        let web = try XCTUnwrap(browser.peekTab).web, card = try XCTUnwrap(browser.peekCard)
+        let normal = card.frame
+        let normalControls = browser.peekControls.map(\.frame)
+
+        func wait(_ description: String, until ready: () async throws -> Bool) async throws {
+            for _ in 0..<200 {
+                if try await ready() { return }
+                try await Task.sleep(for: .milliseconds(16))
+            }
+            XCTFail("Timed out: \(description)")
+            throw XCTUnwrapError(description: description)
+        }
+        try await wait("the Peek video is ready") {
+            guard web.url == url, !web.isLoading else { return false }
+            return try await self.value(web, "String(player.readyState >= 2)") == "true"
+        }
+        _ = try await web.evaluateJavaScript("player.requestFullscreen(); 0")
+        let inset = normal.minY-browser.root.bounds.minY
+        let target = browser.root.bounds.insetBy(dx: inset, dy: inset)
+        let bar = browser.peekBar
+        if browser.peekMotionAllowed {
+            try await wait("the card and the new buttons are mid-transition") {
+                bar.trailingButtonProgress > 0 && bar.trailingButtonProgress < 1
+            }
+            XCTAssertGreaterThan(card.frame.width, normal.width)
+            XCTAssertLessThan(card.frame.width, target.width)
+            let floating = try XCTUnwrap(browser.peekControls.first)
+            let start = try XCTUnwrap(normalControls.first)
+            XCTAssertLessThan(try XCTUnwrap(browser.root.subviews.firstIndex(of: floating)),
+                              try XCTUnwrap(browser.root.subviews.firstIndex(of: card)))
+            XCTAssertGreaterThan(floating.frame.minX, start.minX)
+            XCTAssertLessThan(floating.frame.minX-start.minX, card.frame.maxX-normal.maxX)
+            XCTAssertEqual(bar.trailingButtons.map(\.alphaValue), Array(repeating: bar.trailingButtonProgress, count: 3))
+        }
+        try await wait("the sidebar collapses and Peek finishes expanding") { browser.sidebar.isHidden && card.frame == target }
+        XCTAssertTrue(browser.pageFullscreen.isActive(in: web))
+        XCTAssertGreaterThan(card.frame.width, normal.width)
+        XCTAssertTrue(browser.peekControls.allSatisfy(\.isHidden))
+        XCTAssertEqual(bar.trailingButtons.count, 3)
+        var previous = bar.copyButton.frame
+        for button in bar.trailingButtons {
+            XCTAssertTrue(button.superview === bar)
+            XCTAssertGreaterThan(button.frame.minX, previous.maxX)
+            XCTAssertTrue(bar.bounds.contains(button.frame))
+            XCTAssertEqual(button.frame.size, bar.copyButton.frame.size)
+            XCTAssertEqual(button.contentTintColor, bar.copyButton.contentTintColor)
+            XCTAssertEqual(button.alphaValue, 1)
+            let centre = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
+            XCTAssertTrue(button.isFrontmost(at: centre), "The \(button.accessibilityLabel() ?? "Peek") control can be clicked")
+            previous = button.frame
+        }
+
+        window.setContentSize(NSSize(width: 930, height: 620))
+        XCTAssertEqual(card.frame, browser.root.bounds.insetBy(dx: inset, dy: inset))
+        try await wait("the video fills its wider viewport") {
+            let width = web.bounds.width
+            let cssWidth = try await self.value(web, "String(player.getBoundingClientRect().width)")
+            return abs((Double(cssWidth) ?? 0)-Double(width)) <= 1
+        }
+        window.setContentSize(size)
+        _ = try await web.evaluateJavaScript("document.exitFullscreen(); 0")
+        try await wait("the regular Peek and sidebar return") { browser.sidebarVisible && card.frame == normal }
+        XCTAssertEqual(browser.peekControls.map(\.frame), normalControls)
+        XCTAssertTrue(browser.peekControls.allSatisfy { !$0.isHidden })
+        XCTAssertTrue(bar.trailingButtons.allSatisfy(\.isHidden))
+
+        window.setContentSize(window.minSize)
+        let floating = try XCTUnwrap(browser.peekControls.first)
+        let narrowStart = floating.frame.minX
+        _ = try await web.evaluateJavaScript("player.requestFullscreen(); 0")
+        if browser.peekMotionAllowed {
+            try await wait("the floating button moves even in a narrow window") {
+                bar.trailingButtonProgress > 0 && bar.trailingButtonProgress < 1 && floating.frame.minX > narrowStart
+            }
+        }
+        try await wait("the narrow Peek finishes expanding") { bar.trailingButtonProgress == 1 }
+        XCTAssertTrue(browser.peekControls.allSatisfy(\.isHidden))
+        let close = try XCTUnwrap(bar.trailingButtons.first)
+        close.performClick(nil)
+        XCTAssertNil(browser.peekTab)
+        XCTAssertTrue(browser.sidebarVisible, "Closing a fullscreen Peek restores the sidebar too")
     }
 
     func testNativeModeLeavesTheFullscreenAPIToChromium() async throws {

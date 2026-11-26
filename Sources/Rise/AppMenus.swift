@@ -4,9 +4,9 @@ import AppKit
     func buildMenu() {
         browser.keyboardShortcuts.clearMenuItems()
         let bar = NSMenu(); NSApp.mainMenu = bar
-        func addMenu(_ title: String) -> NSMenu {
+        func addMenu(_ title: String, to parent: NSMenu = bar) -> NSMenu {
             let item = NSMenuItem(); item.title = title
-            let menu = NSMenu(title: title); item.submenu = menu; bar.addItem(item); return menu
+            let menu = NSMenu(title: title); item.submenu = menu; parent.addItem(item); return menu
         }
         @discardableResult func item(_ menu: NSMenu, _ title: String, _ action: Selector, _ key: String = "", modifiers: NSEvent.ModifierFlags = .command, target: AnyObject? = nil, id: String? = nil) -> NSMenuItem {
             let entry = NSMenuItem(title: title, action: action, keyEquivalent: key)
@@ -24,6 +24,7 @@ import AppKit
         item(app, "About Rise", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), target: NSApp)
         if let updates = AppUpdater.shared.menuItem() { app.addItem(updates) }
         item(app, "Settings…", #selector(BrowserController.showSettings), ",", target: browser)
+        item(app, "Manage Extensions", #selector(BrowserController.manageExtensions), target: browser)
         item(app, "Sync Tabs with iCloud", #selector(toggleTabSync), target: self)
         app.addItem(.separator())
         let services = NSMenu(title: "Services")
@@ -78,15 +79,6 @@ import AppKit
         item(edit, "Find Previous", #selector(BrowserController.findPrevious), "G", modifiers: [.command, .shift], target: browser)
         item(edit, "Skip to Previous Match Above", #selector(BrowserController.skipToPreviousMatch), "G", modifiers: [.command, .option, .shift], target: browser).isAlternate = true
 
-        let page = addMenu("Page")
-        item(page, "Annotate Selection", #selector(BrowserController.annotateSelection), "a", modifiers: [.command, .control], target: browser)
-        item(page, "Remove All Annotations on This Page", #selector(BrowserController.removePageAnnotations), target: browser)
-        page.addItem(.separator())
-        item(page, "Dismiss Cookie Banners", #selector(BrowserController.toggleCookieConsent), target: browser)
-        item(page, "Automatic PiP", #selector(BrowserController.toggleAutomaticPictureInPicture), target: browser)
-        item(page, "Preload Links on Hover", #selector(BrowserController.toggleLinkPreloading), target: browser)
-        item(page, "Autoplay YouTube Videos", #selector(BrowserController.toggleYouTubeAutoplay), target: browser)
-
         let view = addMenu("View")
         item(view, "Hide Sidebar", #selector(BrowserController.toggleSidebar), "b", target: browser)
         view.addItem(.separator())
@@ -100,6 +92,18 @@ import AppKit
         item(view, "Zoom Out", #selector(BrowserController.zoomOut), "-", target: browser)
         item(view, "Actual Size", #selector(BrowserController.actualSize), "0", target: browser)
         view.addItem(.separator())
+        let annotations = addMenu("Annotations", to: view)
+        item(annotations, "Annotate Selection", #selector(BrowserController.annotateSelection), "a", modifiers: [.command, .control], target: browser)
+        item(annotations, "Remove All Annotations on This Page", #selector(BrowserController.removePageAnnotations), target: browser)
+        let pageOptions = addMenu("Page Options", to: view)
+        item(pageOptions, "Dismiss Cookie Banners", #selector(BrowserController.toggleCookieConsent), target: browser)
+        item(pageOptions, "Automatic PiP", #selector(BrowserController.toggleAutomaticPictureInPicture), target: browser)
+        item(pageOptions, "Preload Links on Hover", #selector(BrowserController.toggleLinkPreloading), target: browser)
+        item(pageOptions, "Autoplay YouTube Videos", #selector(BrowserController.toggleYouTubeAutoplay), target: browser)
+        pageOptions.addItem(.separator())
+        item(pageOptions, "Site Information", #selector(BrowserController.showSiteInformation), target: browser)
+        item(pageOptions, "Reset Site Permissions", #selector(BrowserController.resetSitePermissions), target: browser)
+        view.addItem(.separator())
         item(view, "Show Downloads", #selector(BrowserController.toggleDownloads), "l", modifiers: [.command, .option], target: browser)
         item(view, "Show Chat", #selector(BrowserController.toggleAIChat), "e", target: browser)
         let theme = browser.makeThemeMenu()
@@ -109,6 +113,16 @@ import AppKit
         view.addItem(.separator())
         item(view, "Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", modifiers: [.command, .control], target: browser.window)
         item(view, "Simulated Full Screen", #selector(BrowserController.toggleSimulatedFullscreen), "f", modifiers: [.command, .shift], target: browser)
+        view.addItem(.separator())
+        let developerTools = addMenu("Developer Tools", to: view)
+        item(developerTools, "Developer Mode", #selector(BrowserController.toggleDeveloper), "d", modifiers: .control, target: browser)
+        item(developerTools, "Inspect Elements", #selector(BrowserController.toggleDevTools), "j", modifiers: [.command, .option], target: browser)
+        item(developerTools, "Show Console", #selector(BrowserController.toggleDevToolsConsole), "k", modifiers: [.command, .option], target: browser)
+        item(developerTools, "JavaScript Console…", #selector(BrowserController.javascriptConsole), target: browser)
+        item(developerTools, "Show Page Source", #selector(BrowserController.showPageSource), "u", modifiers: [.command, .option], target: browser)
+        developerTools.addItem(.separator())
+        item(developerTools, "Card Motion Tester", #selector(BrowserController.toggleCardMotionTester), target: browser)
+        item(developerTools, "Link Pulse Tester", #selector(BrowserController.toggleLinkPulseTester), target: browser)
 
         let history = addMenu("History")
         item(history, "Back", #selector(BrowserController.goBack), "[", target: browser)
@@ -154,20 +168,6 @@ import AppKit
             let entry = item(tabs, "Tab \(index+1)", #selector(BrowserController.selectNumberedTab(_:)), target: browser, id: "selectTab\(index+1)")
             entry.tag = index
         }
-
-        let develop = addMenu("Develop")
-        item(develop, "Developer Mode", #selector(BrowserController.toggleDeveloper), "d", modifiers: .control, target: browser)
-        item(develop, "Inspect Elements", #selector(BrowserController.toggleDevTools), "j", modifiers: [.command, .option], target: browser)
-        item(develop, "Show Console", #selector(BrowserController.toggleDevToolsConsole), "k", modifiers: [.command, .option], target: browser)
-        item(develop, "JavaScript Console…", #selector(BrowserController.javascriptConsole), target: browser)
-        item(develop, "Show Page Source", #selector(BrowserController.showPageSource), "u", modifiers: [.command, .option], target: browser)
-        develop.addItem(.separator())
-        item(develop, "Manage Extensions", #selector(BrowserController.manageExtensions), target: browser)
-        item(develop, "Site Information", #selector(BrowserController.showSiteInformation), target: browser)
-        item(develop, "Reset Site Permissions", #selector(BrowserController.resetSitePermissions), target: browser)
-        develop.addItem(.separator())
-        item(develop, "Card Motion Tester", #selector(BrowserController.toggleCardMotionTester), target: browser)
-        item(develop, "Link Pulse Tester", #selector(BrowserController.toggleLinkPulseTester), target: browser)
 
         let window = addMenu("Window"); NSApp.windowsMenu = window
         item(window, "Minimize", #selector(NSWindow.performMiniaturize(_:)), "m")

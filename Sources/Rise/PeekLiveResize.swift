@@ -52,6 +52,39 @@ import QuartzCore
 }
 
 @MainActor extension BrowserController {
+    func pageFullscreenChanged() {
+        if isPeekSimulatedFullscreen { beginPeekFullscreenExpansion() }
+        else { stopPeekFullscreenExpansion() }
+        reconcileFullscreenSidebar()
+        layoutChrome()
+    }
+
+    private func beginPeekFullscreenExpansion() {
+        guard peekMotionAllowed, let card = peekCard, card.alphaValue == 1,
+              !isPromotingPeek, peekLiveMotion?.isRunning != true,
+              peekFullscreenExpansion == nil, peekBar.trailingButtonProgress == 0 else { return }
+        // Capture the card before the sidebar starts collapsing. Its live page and both
+        // sets of controls follow the same progress while the sidebar animates separately.
+        peekFullscreenExpansion = (card.frame, 0, nil)
+        let spring = CASpringAnimation(perceptualDuration: 0.28, bounce: 0)
+        let motion = PeekLiveMotion(on: card, spring: spring, step: { [weak self] progress in
+            guard let self else { return }
+            self.peekFullscreenExpansion?.progress = min(1, max(0, progress))
+            CATransaction.begin(); CATransaction.setDisableActions(true)
+            self.layoutPeek()
+            self.peekBar.layoutSubtreeIfNeeded()
+            CATransaction.commit()
+        }, completion: { [weak self] in
+            self?.peekFullscreenExpansion = nil
+        })
+        peekFullscreenExpansion?.motion = motion
+    }
+
+    func stopPeekFullscreenExpansion() {
+        peekFullscreenExpansion?.motion?.stop()
+        peekFullscreenExpansion = nil
+    }
+
     static let livePeekResizeKey = "Rise.LivePeekResize"
     /// Whether expanding a Peek and ⌘Z resize the live page as they go, instead of moving a still of it.
     var livePeekResize: Bool { preferences.object(forKey: Self.livePeekResizeKey) as? Bool ?? true }
