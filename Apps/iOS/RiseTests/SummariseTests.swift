@@ -197,4 +197,79 @@ final class SummariseTests: XCTestCase {
         XCTAssertEqual(controller.bottomBar.transform, .identity)
         XCTAssertTrue(controller.bottomBar.isUserInteractionEnabled)
     }
+
+    @MainActor private func summariseScene() async throws -> (BrowserViewController, UIWindow) {
+        let controller = BrowserViewController(startURL: nil)
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        window.layoutIfNeeded()
+        controller.webView.loadHTMLString("<html><body><p>A page to summarise.</p></body></html>",
+                                          baseURL: URL(string: "https://rise.test/"))
+        for _ in 0..<100 where controller.webView.isLoading { try await Task.sleep(for: .milliseconds(10)) }
+        return (controller, window)
+    }
+
+    /// The field fades in with the page as it shrinks into the card, there to type in before the
+    /// summary comes. Sent first, the summary is stopped and never shown, and the question is
+    /// answered from the page alone, first under the card.
+    @MainActor func testAskingBeforeTheSummaryDropsItAndAsksFirst() async throws {
+        let (controller, window) = try await summariseScene()
+        defer { controller.summarise?.finish(); window.isHidden = true }
+        controller.startSummarise(.pinch)
+        let summarise = try XCTUnwrap(controller.summarise)
+        var returned = false, kept = false, sentSummary: PageSummary?
+        summarise.manualTime = 0
+        // Stopped while it waits to ask, or as it asks: either way it never comes back.
+        summarise.makeSummary = { _ in
+            try await Task.sleep(for: .seconds(0.6))
+            returned = true
+            return PageSummary(paragraphs: ["Too late."])
+        }
+        summarise.onSummary = { _ in kept = true }
+        summarise.answerFollowUp = { _, summary, _, _ in sentSummary = summary; return ["It's a test page."] }
+        summarise.startFromMenu()
+        XCTAssertEqual(summarise.followUpField.alpha, 0, accuracy: 0.01, "Not there before the page moves")
+        XCTAssertFalse(summarise.followUpField.hidden)
+        summarise.advance(to: 0.08)
+        let partway = summarise.followUpField.alpha
+        XCTAssertGreaterThan(partway, 0.05); XCTAssertLessThan(partway, 0.95, "Fading in with the shrink")
+        summarise.advance(to: 1.2)
+        XCTAssertEqual(summarise.followUpField.alpha, 1, accuracy: 0.001, "Whole once the page has shrunk")
+        XCTAssertTrue(summarise.followUpField.enabled, "Takes a press before the summary comes")
+
+        // The request waits a moment in real time before asking.
+        try await Task.sleep(for: .seconds(SummariseMotion.requestDelay+0.1))
+        summarise.sendFollowUp("What is this page?")
+        for _ in 0..<200 where summarise.shownSummary.answers.first??.isEmpty ?? true { try await Task.sleep(for: .milliseconds(10)) }
+        try await Task.sleep(for: .seconds(1))
+        XCTAssertFalse(returned, "The summary's request is stopped")
+        XCTAssertEqual(sentSummary?.paragraphs, [], "The question goes without a summary")
+        XCTAssertEqual(summarise.shownSummary.paragraphs, [], "No summary shows")
+        XCTAssertEqual(summarise.shownSummary.questions, ["What is this page?"])
+        XCTAssertEqual(summarise.shownSummary.answers.first ?? nil, ["It's a test page."])
+        XCTAssertFalse(kept, "A conversation without its summary isn't kept")
+        summarise.advance(to: 3)
+        XCTAssertEqual(summarise.followUpField.alpha, 1, accuracy: 0.001)
+    }
+
+    /// Typed in before the summary comes, the field keeps its text as the summary is revealed.
+    @MainActor func testTextTypedBeforeTheSummaryStaysAsItIsRevealed() async throws {
+        let (controller, window) = try await summariseScene()
+        defer { controller.summarise?.finish(); window.isHidden = true }
+        controller.startSummarise(.pinch)
+        let summarise = try XCTUnwrap(controller.summarise)
+        summarise.manualTime = 0
+        summarise.makeSummary = { _ in PageSummary(paragraphs: ["A page about tests."]) }
+        summarise.startFromMenu()
+        summarise.advance(to: 0.6)
+        summarise.typeFollowUp("Half a quest")
+        for _ in 0..<200 where summarise.shownSummary.paragraphs == nil { try await Task.sleep(for: .milliseconds(10)) }
+        summarise.advance(to: 4)
+        XCTAssertEqual(summarise.shownSummary.paragraphs, ["A page about tests."])
+        XCTAssertEqual(summarise.followUpField.text, "Half a quest", "What was typed stays")
+        XCTAssertEqual(summarise.followUpField.alpha, 1, accuracy: 0.001, "The field doesn't fade again")
+        XCTAssertTrue(summarise.followUpField.enabled)
+    }
 }

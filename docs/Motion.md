@@ -390,7 +390,15 @@ fades in `backDelay` 0.38 s after the card starts settling, over `backDuration` 
   The keyboard picks it up once it reaches it. The keyboard layout guide doesn't use the bottom safe area: the browser raises that
   over its bar, which held the field about 75 pt too high. Its
   text is on the paragraphs' 24 pt edge, unfocused, with "Ask follow up about page" in 35% grey.
-  It fades in as one more block after the last paragraph. It focuses, and the keyboard starts
+  It used to fade in as one more block after the last paragraph; since 26 November it fades in
+  with the page as it shrinks into the card (its opacity following the card's scale from where
+  the page was let go, or from full size for Summarise in More, to the loading size), and takes
+  a press from then, before the summary comes (asked for on 26 November). What's typed stays as
+  the summary is revealed. Sent before the summary shows, the summary is dropped: its request is
+  cancelled (or, come already but not shown, it's forgotten), the card settles where a summary
+  leaves it, and the question goes first, with no "Summary" heading or menu, answered from the
+  page alone (`PageSummary.questionPrompt`). Such a conversation isn't kept, so summarising the
+  page again asks for a summary afresh. It focuses, and the keyboard starts
   up, the moment a finger lands on it (a zero-duration press), not when the finger lifts; he
   asked for that over telling taps from scrolls.
   The old pull-out ("Keep pulling to ask follow-up", rising and growing from the bottom of the

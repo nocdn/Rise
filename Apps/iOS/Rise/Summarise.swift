@@ -250,6 +250,13 @@ struct PageSummary: Equatable {
     Answer from the page. Be short and direct: usually one short paragraph, at most two, with no preamble, and don't restate the question. If the page doesn't say, say so in one short sentence; only then add what you know, clearly marked as not from the page. Write plain text: no headings, bullet points, lists or Markdown. Write in the language of the question.
     """
 
+    /// For a question asked before the summary came, which it then goes without.
+    static let questionPrompt = """
+    You answer questions in Rise, a web browser, about the web page the user is reading. The page's text is below.
+
+    Answer from the page. Be short and direct: usually one short paragraph, at most two, with no preamble, and don't restate the question. If the page doesn't say, say so in one short sentence; only then add what you know, clearly marked as not from the page. Write plain text: no headings, bullet points, lists or Markdown. Write in the language of the question.
+    """
+
     enum Failure: LocalizedError {
         case unreadable
         var errorDescription: String? { "The summary didn’t come back in a form Rise could read." }
@@ -294,11 +301,14 @@ struct PageSummary: Equatable {
     @MainActor static func answer(_ question: String, after summary: PageSummary, history: [PageAssistant.Turn],
                                   of page: PageAssistant.Page, provider: ModelChoice = .openRouter, session: URLSession = .shared,
                                   streamed: @MainActor (String) -> Void = { _ in }) async throws -> [String] {
-        var messages: [[String: Any]] = [
-            ["role": "system", "content": followUpPrompt+"\n\n"+context(of: page)],
-            ["role": "user", "content": "Summarise this page."],
-            ["role": "assistant", "content": summary.paragraphs.joined(separator: "\n\n")],
-        ]
+        // Asked before the summary came, it went without one: the page and the questions alone.
+        var messages: [[String: Any]] = summary.paragraphs.isEmpty
+            ? [["role": "system", "content": questionPrompt+"\n\n"+context(of: page)]]
+            : [
+                ["role": "system", "content": followUpPrompt+"\n\n"+context(of: page)],
+                ["role": "user", "content": "Summarise this page."],
+                ["role": "assistant", "content": summary.paragraphs.joined(separator: "\n\n")],
+            ]
         for turn in history {
             messages.append(["role": "user", "content": turn.question])
             messages.append(["role": "assistant", "content": turn.answer])
@@ -487,6 +497,8 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     /// Resting at the end: from when, and after how many blocks of what was just revealed, which
     /// it fades in after, as one more; nil blocks when it comes forward with a recalled summary.
     private var followUpShown: (t0: Double, after: Int?)?
+    /// The card's shrink, which the field fades in with, from nothing to whole, as the page goes.
+    private var followUpFadeIn: Tween?
     /// Asking the model about a question sent from the field, and when its answer was revealed.
     private var followUpTask: Task<Void, Never>?
     private var followUpReveals: [(followUp: SummaryFollowUp, t0: Double)] = []
@@ -877,7 +889,8 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
                 summary = .failure(error); failed = true
             }
             guard !Task.isCancelled, let self else { return }
-            log?.event("summary", String(format: "%@after %.2f s", failed ? "failed " : "", (log?.now ?? 0)-(asked ?? 0)))
+            log?.event("summary", String(format: "%@after %.2f s", failed ? "failed " : "", (log?.now ?? 0)-(asked ?? 0))
+                       + (failed ? ": "+(summary.paragraphs.first ?? "") : ""))
             summaryFailed = failed
             if !failed { onSummary?(summary) }
             summaryArrived(summary)
@@ -1060,6 +1073,10 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
             revealT = t; pendingReveal = nil
             stopOrbit(t)
             restFollowUp(t, after: nil)
+        } else {
+            // There to type in as the page shrinks, before the summary comes.
+            restFollowUp(t, after: nil)
+            followUpFadeIn = reducesMotion ? nil : tweens[.scale]
         }
     }
 
@@ -1104,7 +1121,8 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         stopHum()
         playRevealHaptic()
         glowsFrom = nil
-        restFollowUp(t, after: reveal.blockCount)
+        // Already there since the page shrank, perhaps typed in: left as it is.
+        if followUpShown == nil { restFollowUp(t, after: reveal.blockCount) }
     }
 
     /// Grows the card back into the page, from wherever it shows, as the summary fades and sinks
@@ -1412,6 +1430,16 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     }
     /// For replays: types `question` into the field and sends it, as Return would.
     func sendFollowUp(_ question: String) { followUp.text = question; sendFollowUp() }
+    /// For tests: types into the field without sending it.
+    func typeFollowUp(_ text: String) { followUp.text = text }
+    /// For tests: the field as it shows, and whether it takes a press.
+    var followUpField: (text: String?, alpha: Double, enabled: Bool, hidden: Bool) {
+        (followUp.text, Double(followUp.alpha), followUp.isUserInteractionEnabled, dock.isHidden)
+    }
+    /// For tests: the summary as it shows, and the questions under it with their answers.
+    var shownSummary: (paragraphs: [String]?, questions: [String], answers: [[String]?]) {
+        (reveal.summary?.paragraphs, reveal.followUps.map(\.question), reveal.followUps.map { $0.answer ?? $0.finished })
+    }
     /// For replays: the scroll as it is, and the furthest it goes.
     var followUpScroll: (offset: Double, max: Double) {
         (Double(scroll.contentOffset.y), Double(scroll.contentSize.height+scroll.contentInset.bottom)-height)
@@ -1433,8 +1461,10 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     /// shimmers there while the model answers it to the summary's hum.
     private func sendFollowUp() {
         let question = (followUp.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard mode == .card, followUpTask == nil, !question.isEmpty, let summary = reveal.summary, let answerFollowUp else { return }
+        guard mode == .card, followUpTask == nil, !question.isEmpty, clearT == nil, let answerFollowUp else { return }
         let t = tick()
+        if revealT == nil { dropSummary(t) }
+        guard let summary = reveal.summary else { return }
         log?.event("follow-up asked")
         let history = reveal.followUps.compactMap { asked in
             asked.answer.map { PageAssistant.Turn(question: asked.question, answer: $0.joined(separator: "\n\n")) }
@@ -1505,6 +1535,25 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         }
     }
 
+    /// Asked before the summary showed: the summary is stopped, or, come already, never shown nor
+    /// kept, and the question goes first, under the card as it settles where a summary leaves it.
+    private func dropSummary(_ t: Double) {
+        log?.event("summary dropped", reveal.summary == nil ? "asked before it came" : "asked before it showed")
+        task?.cancel(); task = nil
+        if reveal.summary != nil { onForget?() }
+        summaryFailed = false
+        readyT = .infinity; pendingReveal = nil
+        reveal.summary = PageSummary(paragraphs: [])
+        reveal.followUps = []; followUpReveals = []
+        measureSummary()
+        summaryHost.view.isHidden = false
+        revealT = t
+        tween(.scale, to: M.revealScale, .spring(M.reveal), t)
+        tween(.top, to: M.revealTop, .spring(M.reveal), t)
+        stopOrbit(t)
+        glowsFrom = nil
+    }
+
     /// The top of what's left in sight above a question that has flown up: just under the status bar.
     private var sendTop: Double { max(Double(safeAreaInsets.top), 20)+SendMotion.topGap }
 
@@ -1570,7 +1619,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
             playRevealHaptic()
         }
         followUp.isUserInteractionEnabled = true
-        if let summary = currentSummary(withStreamed: true) { onSummary?(summary) }
+        if let summary = currentSummary(withStreamed: true), !summary.paragraphs.isEmpty { onSummary?(summary) }
         render(t)
     }
 
@@ -1633,7 +1682,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
     /// The field at the bottom of the screen. It fades in after what was just revealed, comes
     /// forward with a recalled summary, and sinks back with the summary on closing.
     private func renderFollowUp(_ t: Double, fadingOut: Double, forward: (scale: Double, alpha: Double)?) {
-        guard revealT != nil || clearT != nil, let shown = followUpShown, mode == .card || mode == .closing else { dock.isHidden = true; return }
+        guard let shown = followUpShown, mode == .card || mode == .closing else { dock.isHidden = true; return }
         dock.isHidden = false
         layOutFollowUpRow()
         if let called = keyboardCalled, followUpTop < called.top-0.5 {
@@ -1660,6 +1709,12 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
                 let elapsed = t-shown.t0-M.textDelay-M.stagger*Double(blocks)
                 alpha *= elapsed <= 0 ? 0 : 1-exp(-elapsed/M.fadeTau)
             }
+        }
+        // As far as the page has shrunk into the card, until it's all the way.
+        if let fade = followUpFadeIn, mode == .card {
+            let travel = fade.from-fade.to
+            let k = abs(travel) < 0.001 ? 1 : clamp((fade.from-fade.value(at: t))/travel)
+            if k >= 0.999 { followUpFadeIn = nil } else { alpha *= k }
         }
         followUp.alpha = alpha
     }
@@ -1914,7 +1969,7 @@ final class SummariseView: UIView, UIGestureRecognizerDelegate, UIScrollViewDele
         // The menu comes in with the heading, as its first block does, without the blur.
         let heading = reveal.elapsed-M.textDelay
         summaryMenu.frame = reveal.menuFrame
-        summaryMenu.alpha = heading <= 0 ? 0 : reducesMotion ? 1 : 1-exp(-heading/M.fadeTau)
+        summaryMenu.alpha = heading <= 0 || reveal.blockCount == 0 ? 0 : reducesMotion ? 1 : 1-exp(-heading/M.fadeTau)
         summaryMenu.isUserInteractionEnabled = revealed && mode == .card && clearT == nil && summaryMenu.alpha > 0.5
         scroll.isScrollEnabled = revealed && mode == .card
         // Clear of the field from the first summary on, not only once the keyboard has moved.
@@ -2083,9 +2138,12 @@ struct SummaryBlocks: View {
     var body: some View {
         if let summary = reveal.summary {
             VStack(alignment: .leading, spacing: 0) {
-                SummaryHeading(reveal: reveal)
-                    .modifier(BlockReveal(reveal: reveal, followUp: nil, index: 0))
-                    .padding(.bottom, SummariseMotion.headingSpacing)
+                // Asked before it came, the summary went: the questions alone, under the card.
+                if !summary.paragraphs.isEmpty {
+                    SummaryHeading(reveal: reveal)
+                        .modifier(BlockReveal(reveal: reveal, followUp: nil, index: 0))
+                        .padding(.bottom, SummariseMotion.headingSpacing)
+                }
                 ForEach(Array(summary.paragraphs.enumerated()), id: \.offset) { index, paragraph in
                     SummaryParagraph(text: paragraph)
                         .modifier(BlockReveal(reveal: reveal, followUp: nil, index: index))
