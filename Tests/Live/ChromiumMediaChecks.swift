@@ -333,6 +333,7 @@ private final class HeaderRecordingServer {
     func runAll() async {
         let only = ProcessInfo.processInfo.environment["RISE_CASES"]?.split(separator: ",").map(String.init)
         if only?.contains("SearchingOnASiteTeachesTheAddressBarToSearchItWithTab") ?? true { await liveCase("SearchingOnASiteTeachesTheAddressBarToSearchItWithTab") { try await self.testSearchingOnASiteTeachesTheAddressBarToSearchItWithTab(); self.tearDown() } }
+        if only?.contains("ChoosingASearchBoxsShowAllResultsTeachesItsSearch") ?? true { await liveCase("ChoosingASearchBoxsShowAllResultsTeachesItsSearch") { try await self.testChoosingASearchBoxsShowAllResultsTeachesItsSearch(); self.tearDown() } }
         if only?.contains("TypingASiteFillsInTheSiteNotItsLastPage") ?? true { await liveCase("TypingASiteFillsInTheSiteNotItsLastPage") { try self.testTypingASiteFillsInTheSiteNotItsLastPage(); self.tearDown() } }
     }
     @MainActor private func waitUntil(_ message: String, _ predicate: () -> Bool) async throws {
@@ -375,6 +376,43 @@ private final class HeaderRecordingServer {
         palette.submit = { _, suggestion in opened = suggestion?.url }
         editor.doCommand(by: #selector(NSResponder.insertNewline(_:)))
         XCTAssertEqual(opened?.absoluteString, "https://lamps.example/results/?term=floor%20lamp")
+    }
+    /// As on speedrun.com: a search box's suggestions offer a "Show all results" link, and the box
+    /// closes as it's chosen. A suggestion leading elsewhere teaches nothing.
+    @MainActor func testChoosingASearchBoxsShowAllResultsTeachesItsSearch() async throws {
+        _ = NSApplication.shared
+        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"), restore: false)
+        defer {
+            browser.saveWork?.cancel(); browser.tabs.forEach { $0.cancelLoad() }
+            browser.window?.orderOut(nil); try? FileManager.default.removeItem(at: browser.sessionURL.deletingLastPathComponent())
+        }
+        let tab = browser.addTab(), web = tab.web
+        let page = """
+        <!doctype html><meta property="og:site_name" content="Runs"><title>Runs</title>
+        <div id=box><input role=combobox autocomplete=off aria-label=Search placeholder="Search for anything..."></div>
+        <div role=listbox><a role=option id=game href="/game">Jump to the game</a><a role=option id=all href="/search">Show all results</a></div>
+        <script>
+          const box = document.querySelector('input')
+          box.addEventListener('input', () => all.href = '/search?q=' + box.value.trim().split(/ +/).map(encodeURIComponent).join('+'))
+          for (const link of document.querySelectorAll('a')) link.addEventListener('pointerdown', () => document.getElementById('box').remove())
+          addEventListener('click', event => { const link = event.target.closest('a'); if (!link) return
+            event.preventDefault(); history.pushState({}, '', link.getAttribute('href')) })
+        </script>
+        """
+        web.loadHTMLString(page, baseURL: URL(string: "https://runs.example/"))
+        try await waitUntil("Runs loaded") { !web.isLoading && web.title == "Runs" }
+        let type = "const box = document.querySelector('input'); box.value = 'gta 6'; box.dispatchEvent(new Event('input', {bubbles: true}));"
+        func choose(_ id: String) -> String { "const link = document.getElementById('\(id)'); link.dispatchEvent(new PointerEvent('pointerdown', {bubbles: true})); link.click(); location.href" }
+        _ = try await web.evaluateJavaScript(type + choose("game"))
+        try await Task.sleep(for: .milliseconds(500))
+        XCTAssertNil(browser.siteSearchLearner.searches.site(forAddress: "runs.example"), "A suggestion going elsewhere teaches nothing")
+        web.loadHTMLString(page, baseURL: URL(string: "https://runs.example/?again"))
+        try await waitUntil("Runs loaded again") { !web.isLoading && web.url?.query == "again" }
+        _ = try await web.evaluateJavaScript(type + choose("all"))
+        try await waitUntil("Learned from Show all results") { browser.siteSearchLearner.searches.site(forAddress: "runs.example") != nil }
+        let site = try XCTUnwrap(browser.siteSearchLearner.searches.site(forAddress: "runs.example"))
+        XCTAssertEqual(site.name, "Runs")
+        XCTAssertEqual(site.searchURL(for: "mario 64")?.absoluteString, "https://runs.example/search?q=mario%2064")
     }
     @MainActor func testTypingASiteFillsInTheSiteNotItsLastPage() throws {
         _ = NSApplication.shared

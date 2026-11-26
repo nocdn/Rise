@@ -62,7 +62,8 @@ import WebKit
         pending[id] = nil; onLearn?()
     }
 
-    /// Posts the words in a page's search field when it's searched with Enter, a form or a button.
+    /// Posts the words in a page's search field when it's searched with Enter, a form or a button,
+    /// or with a link or row in its suggestions, such as speedrun.com's "Show all results".
     /// Fields for sign-ins and personal details are left alone.
     public static let script = #"""
     (() => {
@@ -82,17 +83,30 @@ import WebKit
         if (terms.length) handlers.riseSiteSearch.postMessage({ terms, name: siteName() });
       };
       const fields = root => [...root.querySelectorAll('input, textarea')];
+      const searchBox = el => searchable(el) && (el.type === 'search' ||
+        /^(searchbox|combobox)$/.test(el.getAttribute('role') || '') ||
+        /search|query|find/i.test([el.name, el.id, el.placeholder, el.getAttribute('aria-label')].join(' ')));
+      // What was last typed in a search box, as its suggestions can close it before their click lands.
+      let typed = '';
+      addEventListener('input', event => {
+        const field = event.composedPath()[0];
+        if (searchBox(field)) typed = field.value.trim();
+      }, true);
       addEventListener('keydown', event => {
         if (event.key === 'Enter' && !event.isComposing) post(words([event.composedPath()[0]]));
       }, true);
       addEventListener('submit', event => post(words(fields(event.target))), true);
       addEventListener('click', event => {
-        const button = event.composedPath().find(node => node instanceof Element &&
-          node.matches('button, [role=button], input[type=submit], input[type=image]'));
-        if (!button) return;
-        const form = button.closest('form');
-        post(words(form ? fields(form) : fields(document).filter(el =>
-          el.type === 'search' || /^(searchbox|combobox)$/.test(el.getAttribute('role') || ''))));
+        const target = event.composedPath().find(node => node instanceof Element &&
+          node.matches('button, [role=button], input[type=submit], input[type=image], a[href], [role=option]'));
+        if (!target) return;
+        const form = target.closest('form');
+        if (form && !target.matches('a, [role=option]')) return post(words(fields(form)));
+        // A link or row chosen with words in a search box: Rise learns from it only if the page
+        // it goes to holds those words, so other links on the page teach it nothing.
+        const terms = words(fields(document).filter(searchBox));
+        if (typed && !terms.includes(typed) && typed.length <= 200) terms.push(typed);
+        post(terms.slice(0, 6));
       }, true);
     })();
     """#

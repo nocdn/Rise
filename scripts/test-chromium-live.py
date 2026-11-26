@@ -59,7 +59,7 @@ check = sys.argv[1] if len(sys.argv) > 1 else "peek"
 # Checks written as XCTest cases, with pages at the HTTPS addresses they name.
 fixtures = check in ("youtube", "media")
 fixture_hosts = ["www.youtube.com", "youtube.com", "videos.example", "other.example", "media.example",
-                 "fullscreen.example", "example.com", "vimeo.com", "mail.google.com", "mail.proton.me", "calendar.google.com", "github.com", "lamps.example",
+                 "fullscreen.example", "example.com", "vimeo.com", "mail.google.com", "mail.proton.me", "calendar.google.com", "github.com", "lamps.example", "runs.example",
                  "chat.google.com", "contacts.google.com", "clients6.google.com"]
 if check not in checks and not check.endswith(".swift"):
     raise SystemExit(f"Unknown check {check}; choose from {', '.join(checks)}.")
