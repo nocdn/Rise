@@ -200,6 +200,8 @@ import RiseCore
     let signedInPages = SignedInPages()
     /// Option was held at the last change of the hovered link's modifiers.
     var hoveredWithOption = false
+    /// Someone's day, from Schedule 1:1 in their Google profile card (`PersonCalendarCards.swift`).
+    let personCalendars = PersonCalendarCards()
     lazy var calendarAgenda: CalendarAgenda = {
         let agenda = CalendarAgenda()
         agenda.onChange = { [weak self] in self?.calendarAgendaChanged() }
@@ -422,17 +424,17 @@ import RiseCore
         window.smartRenameEvent = { [weak self] event in self?.handleSmartRenameKey(event) ?? false }
         window.extensionShortcutEvent = { [weak self] event in self?.runExtensionShortcut(event) ?? false }
         window.pageMouseDown = { [weak self] event in
-            if event.type == .rightMouseDown { self?.linkCardPagePressed(event) }
+            if event.type == .rightMouseDown { self?.linkCardPagePressed(event); self?.personCalendarPagePressed(event) }
             self?.focusSplitPage(at: event)
         }
         // Any press, even one Rise takes for a Peek or a copy, closes a link's card first.
         window.linkClickEvent = { [weak self] event in
-            if event.type == .leftMouseDown { self?.linkCardPagePressed(event) }
+            if event.type == .leftMouseDown { self?.linkCardPagePressed(event); self?.personCalendarPagePressed(event) }
             return self?.takeLinkClick(event) ?? false
         }
         window.historyScrollEvent = { [weak self] event in
             guard let self else { return false }
-            if let handled = self.tabHoverCards.calendarCard.routeScroll(event) {
+            if let handled = self.tabHoverCards.calendarCard.routeScroll(event) ?? self.personCalendars.card.routeScroll(event) {
                 self.historySwipe.cancel()
                 return handled
             }
@@ -444,6 +446,7 @@ import RiseCore
             self?.refreshFullscreenNavigation(pointer: event.locationInWindow)
             self?.sidebar.refreshReturningTabHover(at: event.locationInWindow)
             self?.tabHoverPointerMoved()
+            self?.personCalendarPointerMoved()
         }
         tabSwitcher.choose = { [weak self] id in self?.commitTabSwitch(id) }
         tabSwitcher.hover = { [weak self] id in self?.pickTabSwitchCard(id) }
@@ -802,12 +805,12 @@ import RiseCore
     }
     func windowDidResize(_ notification: Notification) { layoutChrome(); watchPlainBarColor(for: 0.5) }
     func windowDidChangeOcclusionState(_ notification: Notification) { if window?.occlusionState.contains(.visible) == true { watchPlainBarColor(for: 0.5) } }
-    func windowWillClose(_ notification: Notification) { annotations.close(); smartTabSearch.tearDown(); cancelTabScroll(); githubLinkStatus.hover(nil); timeReplacement.cancelHold(); githubStarrer.tearDown(); signedInPages.tearDown(); linkPullRequests.summaries.tearDown(); tabHoverCards.pullRequestClock?.invalidate(); tabHoverCards.pullRequestClock = nil; plainBarTimer?.invalidate(); plainBarTimer = nil; plainBarMonitor.map(NSEvent.removeMonitor); plainBarMonitor = nil; tabPressed(); gmailInbox.tearDown(); protonMailInbox.tearDown(); chatInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); stopTabSleep(); saveNow() }
+    func windowWillClose(_ notification: Notification) { annotations.close(); smartTabSearch.tearDown(); cancelTabScroll(); githubLinkStatus.hover(nil); timeReplacement.cancelHold(); githubStarrer.tearDown(); signedInPages.tearDown(); linkPullRequests.summaries.tearDown(); tabHoverCards.pullRequestClock?.invalidate(); tabHoverCards.pullRequestClock = nil; plainBarTimer?.invalidate(); plainBarTimer = nil; plainBarMonitor.map(NSEvent.removeMonitor); plainBarMonitor = nil; tabPressed(); gmailInbox.tearDown(); protonMailInbox.tearDown(); chatInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; hidePersonCalendar(fades: false); personCalendars.tearDown(); settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); stopTabSleep(); saveNow() }
     func windowDidResignKey(_ notification: Notification) {
         cancelTabScroll()
         timeReplacement.cancelHold()
         cancelShortcutRecording()
-        pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch(); endSidebarPeek(); endBookmarksHold(); tabPressed()
+        pendingMiddleTabID = nil; historySwipe.cancel(); cancelTabSwitch(); endSidebarPeek(); endBookmarksHold(); tabPressed(); hidePersonCalendar()
         refreshBookmarksBar()
         sidebar?.cancelTabInteractions()
         // Leaving Rise floats a shown video in Rise's own window, as leaving its tab does.
@@ -933,6 +936,7 @@ import RiseCore
         HistorySwipeController.install(on: tab.page)
         siteSearchLearner.install(on: tab.page)
         linkPreloader.install(on: tab.page); openTabLinks.install(on: tab.page)
+        installPersonCalendar(on: tab.page)
         permissionCoordinator.install(on: tab.page)
         pageFullscreen.install(on: tab.page)
         pictureInPicture.install(on: tab.page)
@@ -1039,7 +1043,7 @@ import RiseCore
         annotations.layout()
         refreshTabScroll()
         nowPlaying.setNeedsRefresh()
-        refreshTabHoverCard(); refreshPullRequestTabs(); preloadGmailInbox(); preloadProtonMailInbox(); preloadChatInbox(); preloadCalendarAgenda()
+        refreshTabHoverCard(); refreshPersonCalendar(); refreshPullRequestTabs(); preloadGmailInbox(); preloadProtonMailInbox(); preloadChatInbox(); preloadCalendarAgenda()
         window?.title = (selectedTab?.title).map { "\($0) — Rise" } ?? "Rise"
         updateNavigationButtons()
         refreshAIChatPage()

@@ -3,7 +3,8 @@ import AppKit
 /// The tab hover cards that can be turned off in Settings, each on until it is. A card that's
 /// off leaves its tabs with the title card every other tab has, and its page isn't read.
 enum HoverCard: String, CaseIterable {
-    case gmail, protonMail, googleChat, calendar, github, gitlab
+    case gmail, protonMail, googleChat, calendar, personCalendar, github, gitlab
+    /// A tab's card; someone else's calendar is a page's, from their profile card.
     init?(url: URL?) {
         if GmailAccount(url: url) != nil { self = .gmail }
         else if ProtonMailAccount(url: url) != nil { self = .protonMail }
@@ -20,6 +21,7 @@ enum HoverCard: String, CaseIterable {
         case .protonMail: "Proton Mail hover card"
         case .googleChat: "Google Chat hover card"
         case .calendar: "Google Calendar hover card"
+        case .personCalendar: "Other people’s calendar cards"
         case .github: "GitHub pull request cards"
         case .gitlab: "GitLab merge request cards"
         }
@@ -30,6 +32,7 @@ enum HoverCard: String, CaseIterable {
         case .protonMail: "Your newest emails, on hovering over a Proton Mail tab"
         case .googleChat: "Your newest conversations, on hovering over a Google Chat tab"
         case .calendar: "Your day, on hovering over a Google Calendar tab"
+        case .personCalendar: "Someone’s day, on hovering over Schedule 1:1 in their Google profile card"
         case .github: "A pull request's status, checks and files, on hovering over its tab or a link to it"
         case .gitlab: "A merge request's status, pipeline and files, on hovering over its tab or a link to it"
         }
@@ -57,6 +60,7 @@ enum GoogleChatCardContent: String, CaseIterable {
         if !on {
             if let id = tabHoverCards.shownID, HoverCard(url: hoverTab(id)?.url) == card { hideTabHoverCard() }
             if let shown = linkPullRequests.shown?.pullRequest, HoverCard(shown) == card { hideLinkCard() }
+            if card == .personCalendar { hidePersonCalendar() }
         }
         update()
     }

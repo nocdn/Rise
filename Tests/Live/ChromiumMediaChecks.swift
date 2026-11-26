@@ -1,6 +1,7 @@
 // Any site's floating video, the tab's play and sound buttons, page full screen, Gmail's inbox
-// and Google Calendar's readers, pausing downloads, what Page Assistant reads, site search learning, the swipe's page
-// probe and hard reloads, on Chromium: the XCTest cases these were written as, run in Rise windows
+// and Google Calendar's readers, someone's calendar from their Google profile card, pausing
+// downloads, what Page Assistant reads, site search learning, the swipe's page probe and hard
+// reloads, on Chromium: the XCTest cases these were written as, run in Rise windows
 // (Tests/Live/LiveXCTest.swift), with pages at the addresses they name. Run with
 // scripts/test-chromium-live.py media; RISE_CASES=<names> runs some.
 import AppKit
@@ -32,6 +33,7 @@ import RiseChromium
             await GmailReaderCases().runAll()
             await ProtonMailReaderCases().runAll()
             await CalendarReaderCases().runAll()
+            await PersonCalendarCases().runAll()
             await DownloadCases().runAll()
             await PageAssistantCases().runAll()
             await SiteSearchLearningCases().runAll()
@@ -602,6 +604,85 @@ private final class HeaderRecordingServer {
         XCTAssertEqual(stepped, true)
         let tomorrow = try await reader(CalendarPageReader.snapshot) as? [String: Any]
         XCTAssertEqual(tomorrow?["key"] as? Int, 29011)
+    }
+}
+
+/// Someone's day, from Schedule 1:1 in Google's profile card, which Chat holds in a frame of
+/// contacts.google.com, read from Calendar's API at clients6.google.com.
+@MainActor final class PersonCalendarCases {
+    func runAll() async {
+        let only = ProcessInfo.processInfo.environment["RISE_CASES"]?.split(separator: ",").map(String.init)
+        if only?.contains("ScheduleOneToOneShowsTheirDayOutOfTheButtonsCorner") ?? true {
+            await liveCase("ScheduleOneToOneShowsTheirDayOutOfTheButtonsCorner") { try await testScheduleOneToOneShowsTheirDayOutOfTheButtonsCorner() }
+        }
+    }
+    func testScheduleOneToOneShowsTheirDayOutOfTheButtonsCorner() async throws {
+        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"),
+                                        restore: false, preferences: UserDefaults(suiteName: "Rise.PersonCalendarChecks.\(UUID().uuidString)")!)
+        browser.window?.setFrameAutosaveName(""); browser.window?.setFrame(NSRect(x: 0, y: 0, width: 1300, height: 900), display: true)
+        browser.window?.center(); browser.showWindow(nil)
+        defer { browser.saveWork?.cancel(); browser.tabs.forEach { $0.cancelLoad() }; browser.window?.orderOut(nil) }
+        let today = Calendar.current.startOfDay(for: Date()), format = ISO8601DateFormatter()
+        func at(_ hour: Double) -> String { format.string(from: today.addingTimeInterval(hour*3600)) }
+        // Busy only, but for a meeting you're invited to, and one in full.
+        try LiveFixtures.register(#"{"accessRole": "freeBusyReader", "items": [{"id": "standup", "start": {"dateTime": "\#(at(10))"}, "end": {"dateTime": "\#(at(11))"}}, {"id": "busy", "start": {"dateTime": "\#(at(12))"}, "end": {"dateTime": "\#(at(13))"}}, {"id": "office", "summary": "Office", "eventType": "workingLocation", "start": {"date": "2026-01-01"}, "end": {"date": "2026-01-02"}}]}"#,
+                                  at: URL(string: "https://clients6.google.com/calendar/v3/calendars/dkezi%40example.com/events")!)
+        try LiveFixtures.register(#"{"items": [{"id": "standup", "summary": "Stand-up", "start": {"dateTime": "\#(at(10))"}, "end": {"dateTime": "\#(at(11))"}}]}"#,
+                                  at: URL(string: "https://clients6.google.com/calendar/v3/calendars/primary/events")!)
+        let card = "https://contacts.google.com/widget/hovercard/v/2?hl=en&origin=https%3A%2F%2Fchat.google.com"
+        try LiveFixtures.register("""
+        <!doctype html><body style="margin: 0; font: 14px system-ui">
+        <div jsname="a4WWq" data-email="DKezi@example.com">David Kezi</div>
+        <button jsname="LyTtqb" jslog="133090; track:click" data-tooltip-id="tt-c16" aria-label="Schedule 1:1"
+          style="position: absolute; left: 288px; top: 100px; width: 40px; height: 40px; border-radius: 50%; border: 0; padding: 0"><svg width="20" height="20"></svg></button>
+        <div id="tt-c16" style="position: absolute; left: 260px; top: 146px">Schedule 1:1</div>
+        </body>
+        """, at: URL(string: card)!)
+        let tab = browser.addTab(), web = tab.web
+        web.loadHTMLString("""
+        <!doctype html><body style="margin: 0"><h1>Home</h1>
+        <iframe name="I__HC_1" src="\(card)" style="position: absolute; left: 300px; top: 200px; width: 340px; height: 274px; border: 0"></iframe>
+        <script>document.cookie = 'SAPISID=fixture; Secure; path=/';</script>
+        """, baseURL: URL(string: "https://chat.google.com/u/0/app/home"))
+        for _ in 0..<200 where web.isLoading || web.url?.host != "chat.google.com" { try await Task.sleep(for: .milliseconds(25)) }
+        try await Task.sleep(for: .milliseconds(500))
+        func wait(_ seconds: Double = 5, _ ready: () async -> Bool) async -> Bool {
+            let end = Date().addingTimeInterval(seconds)
+            while !(await ready()), Date() < end { try? await Task.sleep(for: .milliseconds(50)) }
+            return await ready()
+        }
+        let cards = browser.personCalendars
+        _ = await tab.page.devTools("Input.dispatchMouseEvent", ["type": "mouseMoved", "x": 100, "y": 100])
+        _ = await tab.page.devTools("Input.dispatchMouseEvent", ["type": "mouseMoved", "x": 608, "y": 320])
+        let shown = await wait { cards.shown == CalendarPerson(email: "dkezi@example.com", authUser: 0) && !cards.card.isHidden }
+        XCTAssertTrue(shown, "Resting on Schedule 1:1 shows their day")
+        var button = NSRect(x: 588, y: 300, width: 40, height: 40)
+        if !web.isFlipped { button.origin.y = web.bounds.height-button.maxY }
+        button = web.convert(button, to: browser.root)
+        XCTAssertEqual(cards.buttonFrame.minX, button.minX, accuracy: 1); XCTAssertEqual(cards.buttonFrame.minY, button.minY, accuracy: 1)
+        XCTAssertEqual(cards.card.frame.minX, button.maxX, accuracy: 1, "Its left edge at the button's right")
+        XCTAssertEqual(cards.card.frame.minY, button.maxY, accuracy: 1, "Its top at the button's foot")
+        let read = await wait { cards.card.chips.count == 2 }
+        XCTAssertTrue(read, "Both timed events, not where they work")
+        XCTAssertEqual(cards.card.chips.map(\.event.title), ["Stand-up", "Busy"], "Your own title for a meeting you share with them")
+        XCTAssertEqual(cards.card.chips.map(\.event.color), [0xF09300, 0xF09300])
+        func tooltip() async -> String? {
+            guard let frame = cards.shownFrame else { return nil }
+            return try? await tab.page.evaluate("return getComputedStyle(document.getElementById('tt-c16')).visibility", arguments: [:],
+                                                in: frame, world: .named(PersonCalendarScript.world)) as? String
+        }
+        let quiet = await wait { await tooltip() == "hidden" }
+        XCTAssertTrue(quiet, "The button's own tooltip doesn't show half under the card")
+        let frame = try XCTUnwrap(cards.shownFrame)
+        let press = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: NSPoint(x: 20, y: 20), modifierFlags: [], timestamp: 0,
+                                                     windowNumber: browser.window?.windowNumber ?? 0, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+        browser.personCalendarPagePressed(press)
+        XCTAssertNil(cards.shown, "A press on the page closes it")
+        let back = await wait {
+            (try? await tab.page.evaluate("return getComputedStyle(document.getElementById('tt-c16')).visibility", arguments: [:],
+                                          in: frame, world: .named(PersonCalendarScript.world)) as? String) == "visible"
+        }
+        XCTAssertTrue(back, "And the button's tooltip is its own again")
     }
 }
 

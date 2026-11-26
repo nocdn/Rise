@@ -265,6 +265,8 @@ enum CalendarSchedule {
     private var answering: Task<Void, Never>?, answersWaiting = 0
     var load: Loader?
     var loadDay: DayLoader?
+    /// Reads a day's events itself, rather than from Calendar's page: someone else's, from Calendar's API.
+    var readsEvents: ((Date) async throws -> [CalendarEvent])?
     var answerer: Answerer?
     /// Moves the tabs' countdowns on; the browser owns it.
     var clock: Timer?
@@ -368,12 +370,9 @@ enum CalendarSchedule {
         task = Task { [weak self] in
             guard let self else { return }
             do {
-                let read = try await HiddenAccessibilityView.reading(reader.companion) {
-                    if let requestedDay { return try await (self.loadDay ?? self.reader.loadDay)(account, requestedDay) }
-                    return try await (self.load ?? self.reader.load)(account)
-                }
+                let read = try await self.read(account, day: requestedDay)
                 guard !Task.isCancelled, token == generation, self.account == account else { return }
-                if let requestedDay, !read.contains(where: { Calendar.current.date(from: $0.date).map { Calendar.current.isDate($0, inSameDayAs: requestedDay) } == true }) {
+                if let requestedDay, !read.days.contains(where: { Calendar.current.isDate($0, inSameDayAs: requestedDay) }) {
                     throw CalendarPageReader.Failure.unavailable
                 }
                 cache(read, baseline: requestedDay == nil)
@@ -388,13 +387,25 @@ enum CalendarSchedule {
             prefetchNextDay()
         }
     }
-    private func cache(_ read: [CalendarDay], baseline: Bool = false) {
-        let readEvents = CalendarSchedule.events(read), now = Date()
-        if baseline { events = readEvents; loadedAt = now }
-        for day in read {
-            guard let date = Calendar.current.date(from: day.date) else { continue }
-            days[Calendar.current.startOfDay(for: date)] = DaySnapshot(events: readEvents, loadedAt: now)
+    /// The days read, at their midnights, and every event on them.
+    private struct Read { let days: [Date]; let events: [CalendarEvent] }
+    /// Today, or `day`: from Calendar's page, which reads tomorrow with today, or from `readsEvents`.
+    private func read(_ account: CalendarAccount, day: Date?) async throws -> Read {
+        if let readsEvents {
+            let date = Calendar.current.startOfDay(for: day ?? Date())
+            return Read(days: [date], events: try await readsEvents(date))
         }
+        let read = try await HiddenAccessibilityView.reading(reader.companion) {
+            if let day { return try await (self.loadDay ?? self.reader.loadDay)(account, day) }
+            return try await (self.load ?? self.reader.load)(account)
+        }
+        return Read(days: read.compactMap { Calendar.current.date(from: $0.date).map(Calendar.current.startOfDay) },
+                    events: CalendarSchedule.events(read))
+    }
+    private func cache(_ read: Read, baseline: Bool = false) {
+        let readEvents = read.events, now = Date()
+        if baseline { events = readEvents; loadedAt = now }
+        for day in read.days { days[day] = DaySnapshot(events: readEvents, loadedAt: now) }
         // Keep the baseline countdown and selected day during long swipe sessions.
         let today = Calendar.current.startOfDay(for: now), tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: today)
         for date in days.keys.sorted(by: { days[$0]!.loadedAt < days[$1]!.loadedAt }) where days.count > 14 && date != today && date != tomorrow && date != browsingDay {
@@ -412,13 +423,9 @@ enum CalendarSchedule {
         task = Task { [weak self] in
             guard let self else { return }
             do {
-                let read = try await HiddenAccessibilityView.reading(reader.companion) {
-                    try await (self.loadDay ?? self.reader.loadDay)(account, day)
-                }
+                let read = try await self.read(account, day: day)
                 guard !Task.isCancelled, token == generation, self.account == account else { return }
-                if read.contains(where: { Calendar.current.date(from: $0.date).map { Calendar.current.isDate($0, inSameDayAs: day) } == true }) {
-                    cache(read)
-                }
+                if read.days.contains(where: { Calendar.current.isDate($0, inSameDayAs: day) }) { cache(read) }
             } catch {
                 guard !Task.isCancelled, token == generation else { return }
                 // A background miss never replaces the current day's content or error.
@@ -442,10 +449,14 @@ enum CalendarSchedule {
 @MainActor final class CalendarPageReader {
     enum Failure: Error {
         case signedOut, unavailable
+        /// Someone else's calendar: one not shared with you, and the page signed out of Google.
+        case notShared, personSignedOut
         var message: String {
             switch self {
             case .signedOut: "Sign in to Google Calendar in this tab to see your events."
             case .unavailable: "Couldn’t load events. Try again."
+            case .notShared: "Their calendar isn’t shared with you."
+            case .personSignedOut: "Sign in to Google to see their calendar."
             }
         }
     }

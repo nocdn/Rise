@@ -51,6 +51,7 @@ import RiseCore
         }
         if let page = page(showing: webView) { historySwipe.cancel(for: page) }
         if hoveredWebView === webView { hideLinkStatus() }
+        if personCalendars.shownPage?.view === webView || personCalendars.hoveredPage?.view === webView { hidePersonCalendar() }
         if errorWebView === webView { errorWebView = nil }; update()
     }
     /// A page, as its view, has loaded: it goes in the history, and its tab's picture, icon

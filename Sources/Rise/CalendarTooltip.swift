@@ -276,10 +276,11 @@ final class CalendarTimeline: FlippedView {
         format.setLocalizedDateFormatFromTemplate(calendar.isDate(date, equalTo: now, toGranularity: .year) ? "EEEEdMMMM" : "EEEEdMMMMy")
         return format.string(from: date)
     }
-    /// Only the event under the pointer is highlighted, including after the timeline scrolls under it.
+    /// Only the event under the pointer is highlighted, including after the timeline scrolls under
+    /// it, and only on a card whose events open.
     func updateHover() {
         let inside = !isHidden && window.map { bounds.contains(convert($0.mouseLocationOutsideOfEventStream, from: nil)) } == true
-        let hit = inside ? window.flatMap { window in hitTest(superview?.convert(window.mouseLocationOutsideOfEventStream, from: nil) ?? .zero) } : nil
+        let hit = inside && onOpen != nil ? window.flatMap { window in hitTest(superview?.convert(window.mouseLocationOutsideOfEventStream, from: nil) ?? .zero) } : nil
         for chip in chips + allDayChips { chip.isHovered = menuEvent.map { chip.event.id == $0 } ?? (chip === hit) }
     }
     /// Right-clicking the card anywhere but on an event: Refresh reads the day shown again, so

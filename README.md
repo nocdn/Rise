@@ -126,6 +126,7 @@ A tab with a Peek shows the Peek's icon at the end of its row. Hover over that i
 - ⭐ **Gmail and Proton Mail**: your newest emails. Click one to open it. Choose the Gmail category in Settings → Tabs.
 - ⭐ **Google Chat**: your direct messages, newest first. Unread ones have a blue dot. To also see spaces, such as team and announcement spaces, set Google Chat preview to Everything in Settings → Tabs.
 - ⭐ **Google Calendar**: your day as a timeline. Swipe sideways to go to other days. Right-click empty space and choose Refresh to get the newest events. Pinch to make the card taller or shorter while it's open. Calendar tabs also show a countdown, such as "in 17m", before an event starts.
+- **Other people's calendars**: in a Google profile card, such as the one that opens when you hover over a person in Google Chat, hover over Schedule 1:1 to see that person's day. It is the same timeline as your own calendar card. If the person only shares when they are busy, their events show as Busy, but meetings that you are both in show their titles.
 - ⭐ **GitHub pull requests and GitLab merge requests**: the title, status, checks and changed files. These cards also open from links to pull requests in pages.
 
 ### Media

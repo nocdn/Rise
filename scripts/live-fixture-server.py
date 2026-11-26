@@ -4,7 +4,9 @@ https://www.youtube.com/watch?v=rise-fixture, which Chromium is told to send her
     python3 scripts/live-fixture-server.py <folder> <port> [<certificate> <key>]
 
 A check registers a page by writing it to <folder>/pages/<hex of its address's UTF-8>, the address
-without its fragment; anything else is a file in <folder>. With a certificate and key it's HTTPS."""
+without its fragment, or without its query too for any query; anything else is a file in <folder>.
+A page that's JSON is served as JSON, to any of the fixture sites' scripts, as an API is. With a
+certificate and key it's HTTPS."""
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -21,14 +23,32 @@ class Handler(SimpleHTTPRequestHandler):
         address = f"{'https' if secure else 'http'}://{host}{self.path}"
         page = folder / "pages" / address.encode().hex()
         if not page.exists():
+            page = folder / "pages" / address.split("?")[0].encode().hex()
+        if not page.exists():
             return super().do_GET()
         body = page.read_bytes()
+        json = body.lstrip()[:1] in (b"{", b"[")
         self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Type", "application/json" if json else "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        if json:
+            self.allow_origin()
         self.end_headers()
         self.wfile.write(body)
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.allow_origin()
+        self.send_header("Access-Control-Allow-Methods", "GET")
+        self.send_header("Access-Control-Allow-Headers", self.headers.get("Access-Control-Request-Headers") or "")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def allow_origin(self):
+        if self.headers.get("Origin"):
+            self.send_header("Access-Control-Allow-Origin", self.headers["Origin"])
+            self.send_header("Access-Control-Allow-Credentials", "true")
 
     def log_message(self, format, *args):
         sys.stderr.write(f"{self.headers.get('Host')} {format % args}\n")
