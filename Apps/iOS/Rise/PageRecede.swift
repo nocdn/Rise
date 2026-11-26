@@ -9,10 +9,12 @@ enum PageRecede {
     static let cornerRadius: CGFloat = 32
 
     /// 0 leaves the page at full size and 1 sets it back behind a sheet; beyond 1 it carries on
-    /// shrinking at the same rate, as behind a sheet that keeps growing. Reduce Motion keeps it in
-    /// place. The page should clip to its bounds, so its corners round.
+    /// shrinking at the same rate, as behind a sheet that keeps growing, down to half its size: any
+    /// further and its scale would cross zero and flip it, which an animation shows as a spin.
+    /// Reduce Motion keeps it in place. The page should clip to its bounds, so its corners round.
+    static let maximumAmount: CGFloat = 5
     @MainActor static func apply(_ amount: CGFloat, to page: UIView) {
-        let amount = UIAccessibility.isReduceMotionEnabled ? 0 : max(0, amount)
+        let amount = UIAccessibility.isReduceMotionEnabled ? 0 : min(Self.maximumAmount, max(0, amount))
         let scale = 1-(1-Self.scale)*amount, scaleBefore = page.transform.a
         page.transform = CGAffineTransform(translationX: 0, y: drop*amount).scaledBy(x: scale, y: scale)
         page.layer.cornerCurve = .continuous

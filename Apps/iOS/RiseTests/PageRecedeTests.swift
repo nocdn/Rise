@@ -92,4 +92,43 @@ final class PageRecedeTests: XCTestCase {
     @MainActor func testDetachedViewsUseTheFallbackWithoutAScreenLookup() {
         XCTAssertEqual(PageRecede.screenCornerRadius(of: UIView()), PageRecede.cornerRadius)
     }
+
+    /// Searching a site from its own search: Return puts the keyboard away, the panel's height
+    /// follows it, and the page behind was set back 26 times over, its scale crossing zero, so it
+    /// spun away to the top right as the result grew in.
+    @MainActor func testASiteSearchsResultGrowsInWithoutFlippingThePageBehind() async throws {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.first as? UIWindowScene)
+        let window = UIWindow(windowScene: scene)
+        let browser = InteractionAudit.makeBrowser()
+        window.rootViewController = browser
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        window.layoutIfNeeded()
+        browser.openPanel()
+        try await Task.sleep(for: .milliseconds(500))
+        let search = browser.bottomBar.search
+        search.field.text = "youtube.com"
+        search.field.sendActions(for: .editingChanged)
+        for _ in 0..<100 where search.offeredSite == nil { try await Task.sleep(for: .milliseconds(10)) }
+        search.enterSiteSearch()
+        try await Task.sleep(for: .milliseconds(500))
+        let before = browser.content.transform.a
+        browser.openFromPanel(URL(string: "about:blank")!)
+        XCTAssertGreaterThanOrEqual(browser.content.transform.a, 1-(1-PageRecede.scale)*PageRecede.maximumAmount,
+                                    "The page behind recedes further, never past half its size (was \(before))")
+        XCTAssertLessThanOrEqual(browser.content.transform.a, before, "The page behind carries on receding")
+        for _ in 0..<40 {
+            let shown = browser.content.layer.presentation()?.transform ?? browser.content.layer.transform
+            XCTAssertGreaterThan(shown.m11, 0, "The page behind never flips")
+            XCTAssertEqual(shown.m12, 0, accuracy: 0.001, "The page behind never turns")
+            try await Task.sleep(for: .milliseconds(15))
+        }
+    }
+
+    @MainActor func testRecedingFarPastASheetStopsAtHalfSize() {
+        let page = UIView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        PageRecede.apply(26, to: page)
+        XCTAssertEqual(page.transform.a, 0.5, accuracy: 0.001)
+        XCTAssertEqual(page.transform.d, 0.5, accuracy: 0.001)
+    }
 }

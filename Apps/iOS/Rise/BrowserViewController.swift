@@ -2062,6 +2062,10 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             if let assistantPrompt { submitAssistantPrompt(assistantPrompt, in: webView) }
             return
         }
+        // How far the page is set back for each point the panel has grown, measured before the
+        // keyboard goes: a site search's panel is sized by it, and without it is only about 30
+        // points tall, which set the page back 26 times over, flipping it so it spun away.
+        let recedeRate = panelRecede/max(1, panelTravel)
         isPanelOpen = false
         bottomBar.search.end()
         dimming.isUserInteractionEnabled = false
@@ -2096,7 +2100,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             arrival.frame = self.bottomBar.bounds
             page.frame = self.pageFrame
             // The page behind carries on receding at the rate it did as the panel opened.
-            PageRecede.apply(fills, to: self.content)
+            PageRecede.apply(recedeRate*(self.view.bounds.height-BottomBar.height(collapsed: false, safeBottom: safeBottom)), to: self.content)
         }
         // The panel now looks just as the page will, so swapping them is invisible.
         let land = { [weak self] in
