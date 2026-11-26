@@ -298,6 +298,28 @@ private final class FaviconProtocol: URLProtocol {
         let restoredBrowser = BrowserViewController(sessionStore: store, suggestionsDirectory: folder)
         try require(restoredBrowser.tabs[0].favicon != nil, "restored-card-adopts-site-artwork-without-network")
     }
+    /// A full cache made room by dropping the alphabetically first site, so a new site sorting
+    /// early (speedrun.com) lost its icon as it was saved. The least recently used site goes now.
+    func testAFullCacheMakesRoomWithItsLeastRecentlyUsedSiteAndSharesWwwIcons() throws {
+        let folder = URL.temporaryDirectory.appendingPathComponent("RiseFaviconCapacity-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("icons.json")
+        let cache = MobileSuggestionFavicons(storageURL: file, allowsNetwork: false)
+        let site = { (name: String) in URL(string: "https://\(name).example.org/")! }
+        for index in 0..<MobileSuggestionFavicons.capacity { cache.remember(image(.black), for: site("z\(index)")) }
+        cache.remember(image(.black), for: site("a-new"))
+        try require(cache.image(for: site("a-new"), fetch: false) != nil, "new-early-site-is-kept-when-full")
+        try require(cache.image(for: site("z0"), fetch: false) == nil, "least-recently-used-site-makes-room")
+        try require(cache.image(for: site("z1"), fetch: false) != nil, "other-sites-stay")
+        cache.flush()
+        let restored = MobileSuggestionFavicons(storageURL: file, allowsNetwork: false)
+        try require(restored.image(for: site("a-new"), fetch: false) != nil, "new-early-site-survives-relaunch")
+        let www = MobileSuggestionFavicons(storageURL: nil, allowsNetwork: false)
+        www.remember(image(.black), for: URL(string: "https://www.speedrun.com/search?q=gta")!)
+        try require(www.image(for: URL(string: "https://speedrun.com/")!, fetch: false) != nil, "site-without-www-shows-www-icon")
+        www.remember(image(.white), for: URL(string: "https://lichess.org/")!)
+        try require(www.image(for: URL(string: "https://www.lichess.org/")!, fetch: false) != nil, "www-site-shows-its-sites-icon")
+    }
     static func exercise() async throws -> [String: Bool] {
         let audit = MobileFaviconAudit()
         try await audit.testLegacyGitHubCacheUpgradesAndPersistsBothAppearancesWithoutNetwork()
@@ -310,6 +332,7 @@ private final class FaviconProtocol: URLProtocol {
         try await audit.testSVGArtworkAndBrokenDeclarations()
         try await audit.testFinishedPageRechecksDeclarationsUsingItsOwnCookiesIncludingPrivateTabs()
         try await audit.testLoadedPageSharesIconWithSuggestionsAndRestoredTabCards()
+        try audit.testAFullCacheMakesRoomWithItsLeastRecentlyUsedSiteAndSharesWwwIcons()
         return audit.checks
     }
     private static func checkReportedSite(folder: URL) async throws -> [String: Bool] {

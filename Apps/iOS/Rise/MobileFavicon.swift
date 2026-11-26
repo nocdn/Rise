@@ -11,6 +11,9 @@ enum MobileFavicon {
         /// When the site was last asked for appearance variants. A site with no dark icon
         /// is asked again after a week rather than on every launch.
         var checked: Date?
+        /// When the icon was last saved or shown: the cache keeps the most recently used sites.
+        var used: Date?
+        var recency: Date { max(used ?? .distantPast, checked ?? .distantPast) }
 
         init?(_ image: UIImage) {
             guard let light = MobileFavicon.variant(image, style: .light).pngData(), light.count <= 100_000 else { return nil }

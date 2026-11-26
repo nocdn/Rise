@@ -16,6 +16,7 @@ import UIKit
     private var dirty = false
     private var savePending = false
     static let recheckInterval: TimeInterval = 7*24*60*60
+    static let capacity = 128
 
     init(storageURL: URL?, session: URLSession? = nil, allowsNetwork: Bool = true) {
         self.allowsNetwork = allowsNetwork
@@ -27,7 +28,7 @@ import UIKit
         if let storageURL, let data = try? Data(contentsOf: storageURL), data.count <= 16_000_000 {
             if let saved = try? JSONDecoder().decode([String: MobileFavicon.Saved].self, from: data) {
                 // Decoded when first shown (`cached`): decoding all of them held up launch.
-                for (key, value) in saved.sorted(by: { $0.key < $1.key }).prefix(128) {
+                for (key, value) in saved.sorted(by: { $0.value.recency > $1.value.recency }).prefix(Self.capacity) {
                     bytes[key] = value
                     if value.dark != nil || value.checked.map({ -$0.timeIntervalSinceNow < Self.recheckInterval }) == true {
                         attempted.insert(key)
@@ -35,7 +36,7 @@ import UIKit
                 }
             } else if let saved = try? JSONDecoder().decode([String: Data].self, from: data) {
                 // Old single-image caches remain usable while their appearance variants load.
-                for (key, value) in saved.sorted(by: { $0.key < $1.key }).prefix(128) {
+                for (key, value) in saved.sorted(by: { $0.key < $1.key }).prefix(Self.capacity) {
                     remember(MobileFavicon.decode(value), for: URL(string: key))
                 }
             }
@@ -61,8 +62,12 @@ import UIKit
         }
         // Same artwork again, as from a restored tab: nothing to write.
         if let known = bytes[origin], known.light == saved.light, known.dark == saved.dark { return }
-        saved.checked = checked; bytes[origin] = saved; dirty = true
-        while bytes.count > 128, let oldest = bytes.keys.sorted().first { images[oldest] = nil; bytes[oldest] = nil }
+        saved.checked = checked; saved.used = Date(); bytes[origin] = saved; dirty = true
+        // The least recently used sites make room, never the one just saved.
+        while bytes.count > Self.capacity,
+              let oldest = bytes.filter({ $0.key != origin }).min(by: { $0.value.recency < $1.value.recency })?.key {
+            images[oldest] = nil; bytes[oldest] = nil
+        }
     }
     private static func pixels(_ image: UIImage) -> Int {
         let image = MobileFavicon.variant(image, style: .light)
@@ -86,7 +91,7 @@ import UIKit
         guard fetch, allowsNetwork, !AddressResolver.isLocal(url), let host = url.host, host.contains("."),
               !host.hasSuffix(".test"), !host.hasSuffix(".example"), !host.hasSuffix(".invalid"),
               tasks[origin] == nil, !((retryAfter[origin] ?? .distantPast) > Date()),
-              attempted.insert(origin).inserted else { return cached(origin) }
+              attempted.insert(origin).inserted else { return known(origin) }
         tasks[origin] = Task { [weak self] in
             guard let self else { return }
             defer {
@@ -121,9 +126,21 @@ import UIKit
             }
             if let light = light ?? dark { store(MobileFavicon.adaptive(light: light, dark: dark), origin: origin) }
         }
-        return cached(origin)
+        return known(origin)
+    }
+    /// The site's icon, or until it has one of its own, its www. twin's: speedrun.com's pages
+    /// are at www.speedrun.com, where its icon is learned.
+    private func known(_ origin: String) -> UIImage? {
+        if let image = cached(origin) { return image }
+        guard var parts = URLComponents(string: origin), let host = parts.host else { return nil }
+        parts.host = host.hasPrefix("www.") ? String(host.dropFirst(4)) : "www." + host
+        return parts.string.flatMap(cached)
     }
     private func cached(_ origin: String) -> UIImage? {
+        // Shown again: keep it ahead of the sites that make room for new ones.
+        if bytes[origin] != nil, (bytes[origin]?.used).map({ -$0.timeIntervalSinceNow >= 60*60 }) ?? true {
+            bytes[origin]?.used = Date(); dirty = true
+        }
         if let image = images[origin] { return image }
         guard let saved = bytes[origin] else { return nil }
         guard let image = saved.image else { bytes[origin] = nil; dirty = true; return nil }
