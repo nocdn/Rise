@@ -12,6 +12,24 @@ extension BrowserViewController {
             busy: adBlockingPage === webView && reloadingCookieBanners)
         bottomBar.siteSettings.setPopups(enabled: adBlocker.popups.isEnabled(for: url),
             available: CookieConsentPolicy.site(url) != nil)
+        let paywalls = adBlocker.paywallBypass
+        bottomBar.siteSettings.setPaywallBypass(enabled: paywalls.isEnabled(for: url),
+            available: paywalls.isAvailable(for: url) && adBlockingPage == nil)
+    }
+
+    func changePaywallBypass(_ enabled: Bool) {
+        let page = webView
+        let paywalls = blocker(for: page).paywallBypass
+        guard let url = page.url, paywalls.isAvailable(for: url), adBlockingPage == nil else {
+            updateAdBlockingSettings()
+            return
+        }
+        guard paywalls.isEnabled(for: url) != enabled else { return }
+        paywalls.setEnabled(enabled, for: url)
+        // Apply immediately too, so stopping the reload leaves the chosen state visible.
+        paywalls.apply(to: page)
+        updateAdBlockingSettings()
+        reloadPage(ignoringCache: true)
     }
 
     func changePopupBlocking(_ enabled: Bool) {

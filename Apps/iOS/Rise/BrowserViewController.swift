@@ -891,6 +891,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
     }
     private func pageChanged(from topColor: UIColor? = nil) {
         guard allowsPeek else { return }
+        adBlocker.paywallBypass.apply(to: webView)
         if isPrivateBrowsing { lastPrivateTabID = currentTab.id } else { lastRegularTabID = currentTab.id }
         recordTabUse()
         updatePrivacyAppearance(animated: false)
@@ -1465,6 +1466,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         bottomBar.siteSettings.onAdBlockingChanged = { [weak self] enabled in self?.changeAdBlocking(enabled) }
         bottomBar.siteSettings.onCookieBannersChanged = { [weak self] enabled in self?.changeCookieBanners(enabled) }
         bottomBar.siteSettings.onPopupsChanged = { [weak self] enabled in self?.changePopupBlocking(enabled) }
+        bottomBar.siteSettings.onPaywallBypassChanged = { [weak self] enabled in self?.changePaywallBypass(enabled) }
         bottomBar.appSettings.onSyncChanged = { [weak self] enabled in
             self?.tabSync?.setEnabled(enabled)
             self?.updateAppSettings()
@@ -3049,7 +3051,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         if webView.url?.scheme == MobileTabHistory.scheme { return }
-        blocker(for: webView).popups.didCommit(webView)
+        let protections = blocker(for: webView)
+        protections.popups.didCommit(webView)
+        protections.paywallBypass.apply(to: webView)
         pageTranslation.didCommit(webView)
         finishOpeningHere(webView, navigation: navigation)
         fileDocuments.didCommit(webView) { [weak self, weak webView] in
@@ -3066,7 +3070,9 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
             MobileTabHistory.finishInternalDocument(in: webView)
             return
         }
-        blocker(for: webView).popups.noteNavigation("navigation.finished", in: webView)
+        let protections = blocker(for: webView)
+        protections.popups.noteNavigation("navigation.finished", in: webView)
+        protections.paywallBypass.apply(to: webView)
         tabs.first { $0.webView === webView }?.didFinish()
         pageTranslation.didFinish(webView)
         finishAdBlockingReload(on: webView, navigation: navigation)

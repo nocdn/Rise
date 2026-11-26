@@ -12,6 +12,7 @@ import WebKit
     private var privateDisabledSites = Set<String>()
     let cookieBanners: MobileCookieBannerBlocker
     let popups: MobilePopupBlocker
+    let paywallBypass: MobilePaywallBypass
     // Pages can move between browser owners (Peek -> full tab). A single ledger also
     // prevents an old owner's pending preparation from undoing the new owner's policy.
     private static let versions = NSMapTable<WKWebView, NSNumber>.weakToStrongObjects()
@@ -66,6 +67,7 @@ import WebKit
         self.preferences = preferences
         cookieBanners = MobileCookieBannerBlocker(preferences: preferences)
         popups = MobilePopupBlocker(preferences: preferences)
+        paywallBypass = MobilePaywallBypass(preferences: preferences)
         _ = Self.compilation // Prepare the immutable catalog while the initial UI opens.
     }
 

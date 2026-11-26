@@ -54,6 +54,11 @@ final class AdBlockHTTPFixture: @unchecked Sendable {
             let route = request.split(separator: " ").dropFirst().first.map(String.init) ?? "/"
             lock.lock(); paths[route, default: 0] += 1; let attempt = paths[route]!; lock.unlock()
             if shouldFail { connection.cancel(); return }
+            if route == "/paywall/redirect" {
+                let destination = "http://localhost:\(url.port!)/paywall"
+                let redirect = Data("HTTP/1.1 302 Found\r\nLocation: \(destination)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
+                connection.send(content: redirect, completion: .contentProcessed { _ in connection.cancel() }); return
+            }
             if route == "/app-store/redirect" {
                 // Apple's iPhone response is an empty redirect to its store scheme.
                 let redirect = Data("HTTP/1.1 301 Moved Permanently\r\nLocation: itms-appss://apps.apple.com/uk/app/gov-uk-one-login/id6737119425?pt=123&ct=qr\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".utf8)
@@ -88,6 +93,15 @@ final class AdBlockHTTPFixture: @unchecked Sendable {
                 body = "<html><head><title>Declared artwork</title></head><body><script>document.cookie='rise-icon=allowed; path=/'</script>Article</body></html>"
                 type = "text/html"
             }
+            else if route == "/paywall" {
+                body = """
+                <!doctype html><title>Metered article</title>
+                <article><p>First paragraph</p><p>Second paragraph</p><p>Last paragraph</p></article>
+                <div role="dialog" data-paywall>Subscribe to continue</div>
+                <div role="dialog" id="other">Unrelated dialog</div>
+                """
+                type = "text/html"
+            }
             else if route == "/favicon-audit/protected.svg" {
                 body = "<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32'><rect width='32' height='32' fill='#ee3322'/></svg>"
                 type = "image/svg+xml"
@@ -110,7 +124,8 @@ final class AdBlockHTTPFixture: @unchecked Sendable {
             let bytes = route == "/preview/icon.png" || route == "/favicon.ico"
                 ? Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAEUlEQVR4nGNQmHAXK2IYWhIAmMJjQXFQF3IAAAAASUVORK5CYII=")!
                 : Data(body.utf8)
-            let headers = Data("HTTP/1.1 200 OK\r\nContent-Type: \(type)\r\nContent-Length: \(bytes.count)\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n".utf8)
+            let csp = route == "/paywall" ? "Content-Security-Policy: style-src 'none'\r\n" : ""
+            let headers = Data("HTTP/1.1 200 OK\r\nContent-Type: \(type)\r\n\(csp)Content-Length: \(bytes.count)\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nConnection: close\r\n\r\n".utf8)
             // A short delay keeps the native spinner observable during a real reload.
             let delay = route == "/preview/precommit" ? 3.0
                 : route == "/preview/slow.js" || (slowIcons && route == "/preview/icon.png") ? 12.0 : 0.15

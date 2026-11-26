@@ -19,7 +19,6 @@ final class SiteSettingsPanel: UIView {
                         SettingsToggleRow("Block popups", icon: MenuIcons.blockPopups, colour: .systemOrange, iconSide: 26),
                         SettingsToggleRow("Block cookie banners", icon: MenuIcons.blockCookieBanners, colour: .systemGreen, iconSide: 26)]
     private let dividers = [UIView(), UIView()]
-    /// Off by default, and for now it changes nothing.
     private let paywallGroup = UIView()
     private let paywallRow = SettingsToggleRow("Bypass paywall", icon: MenuIcons.bypassPaywall, colour: .systemBlue, iconSide: 26, on: false)
     let appSettingsRow = SettingsNavigationRow("App settings")
@@ -28,8 +27,17 @@ final class SiteSettingsPanel: UIView {
     var onAdBlockingChanged: ((Bool) -> Void)?
     var onCookieBannersChanged: ((Bool) -> Void)?
     var onPopupsChanged: ((Bool) -> Void)?
+    var onPaywallBypassChanged: ((Bool) -> Void)?
     var isUpdatingAdBlocking: Bool { rows[0].spinner.isAnimating }
     var isUpdatingCookieBanners: Bool { rows[2].spinner.isAnimating }
+
+    func setPaywallBypass(enabled: Bool, available: Bool) {
+        paywallRow.toggle.setOn(enabled, animated: window != nil)
+        paywallRow.isEnabled = available
+        paywallRow.toggle.isEnabled = available
+        paywallRow.toggle.accessibilityHint = "Reveals article content already loaded by compatible sites and reloads this page."
+        paywallRow.updateIcon()
+    }
 
     func setPopups(enabled: Bool, available: Bool) {
         let row = rows[1]
@@ -75,6 +83,7 @@ final class SiteSettingsPanel: UIView {
         }
         paywallRow.toggle.onTintColor = Self.switchBlue
         paywallGroup.addSubview(paywallRow)
+        paywallRow.onChanged = { [weak self] enabled in self?.onPaywallBypassChanged?(enabled) }
         rows[0].onChanged = { [weak self] enabled in self?.onAdBlockingChanged?(enabled) }
         rows[1].onChanged = { [weak self] enabled in self?.onPopupsChanged?(enabled) }
         rows[2].onChanged = { [weak self] enabled in self?.onCookieBannersChanged?(enabled) }
