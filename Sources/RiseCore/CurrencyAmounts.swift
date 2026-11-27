@@ -461,6 +461,8 @@ public struct ExchangeRates: Codable, Equatable, Sendable {
 /// Only the rates are fetched: nothing selected or visited leaves the device.
 public final class ExchangeRateStore: @unchecked Sendable {
     public static let shared = ExchangeRateStore()
+    /// Posted on the main queue when newly fetched rates arrive, for answers waiting on them.
+    public static let didUpdate = Notification.Name("RiseExchangeRatesDidUpdate")
     static let source = URL(string: "https://open.er-api.com/v6/latest/USD")!
     static let refreshInterval: TimeInterval = 12*3600, retryInterval: TimeInterval = 10*60
 
@@ -505,6 +507,7 @@ public final class ExchangeRateStore: @unchecked Sendable {
                 try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try? JSONEncoder().encode(fetched).write(to: file, options: .atomic)
             }
+            DispatchQueue.main.async { NotificationCenter.default.post(name: Self.didUpdate, object: self) }
         }.resume()
     }
 }

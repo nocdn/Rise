@@ -22,6 +22,98 @@ final class AddressSuggestionsTests: XCTestCase {
         XCTAssertFalse(browser.palette.suggestions.contains { ["Wikipedia", "GitHub"].contains($0.title) })
     }
 
+    @MainActor func testLocalCalculatorIsFirstWithoutFocusAndRendersTheSwatch() throws {
+        let browser = browser(); defer { browser.hidePalette(); clean(browser) }
+        browser.showWindow(nil); browser.newTab()
+        let palette = browser.palette
+        let query = "hex ff6600 to rgb"
+        palette.input.stringValue = query
+        palette.refresh(query: query)
+        XCTAssertEqual(palette.selectedIndex, -1)
+        let first = try XCTUnwrap(palette.suggestions.first)
+        XCTAssertEqual(first.title, "rgb(255, 102, 0)")
+        XCTAssertEqual(first.symbol, "calculator")
+        XCTAssertEqual(AddressPalette.fieldText(for: first), query)
+        XCTAssertEqual(first.url, browser.searchProvider.searchURL(query))
+        let row = try XCTUnwrap(palette.buttons.first)
+        let swatch = try XCTUnwrap(row.subviews.compactMap { $0 as? CalculationSwatch }.first)
+        let label = try XCTUnwrap(row.subviews.compactMap { $0 as? NSTextField }.first)
+        let icon = try XCTUnwrap(row.subviews.compactMap { $0 as? FaviconView }.first)
+        XCTAssertTrue(icon.isHidden)
+        XCTAssertEqual(swatch.frame, icon.frame)
+        XCTAssertLessThan(swatch.frame.maxX, label.frame.minX)
+        XCTAssertEqual(swatch.frame.width, swatch.frame.height)
+        XCTAssertEqual(swatch.layer?.cornerRadius, swatch.frame.height/2)
+        XCTAssertEqual(swatch.layer?.borderWidth, 2)
+        XCTAssertEqual(swatch.layer?.sublayers?.first?.backgroundColor?.alpha, 1)
+        func ring(_ swatch: CalculationSwatch) throws -> NSColor {
+            try XCTUnwrap(swatch.layer?.borderColor.flatMap { NSColor(cgColor: $0) }?.usingColorSpace(.sRGB))
+        }
+        // An orange shows on the palette: its ring is the orange, faint.
+        let background = try XCTUnwrap(CenteredPaletteStyle.background(palette.theme).usingColorSpace(.sRGB))
+        XCTAssertEqual(try ring(swatch).greenComponent, 0.18*102/255+0.82*background.greenComponent, accuracy: 0.01)
+        // The copy icon ends the row, as the row copies the answer, in a quick answer's grey,
+        // there only while the row is picked.
+        let copy = try XCTUnwrap(row.subviews.compactMap { $0 as? CalculationCopyIcon }.first)
+        XCTAssertTrue(copy.isHidden)
+        palette.selectResult(0)
+        XCTAssertFalse(copy.isHidden)
+        XCTAssertNil(copy.layer?.animationKeys())
+        palette.selectResult(-1)
+        XCTAssertTrue(copy.isHidden)
+        XCTAssertLessThanOrEqual(label.frame.maxX, copy.frame.minX)
+        XCTAssertEqual(copy.frame.maxX, row.bounds.width-CenteredPaletteStyle.rowPadding, accuracy: 0.5)
+        XCTAssertEqual(copy.frame.size, NSSize(width: CalculationCopyIcon.size, height: CalculationCopyIcon.size))
+        let stroke = try XCTUnwrap((copy.layer?.sublayers?.first as? CAShapeLayer)?.strokeColor)
+        XCTAssertEqual(stroke, CenteredPaletteStyle.detail(palette.theme).cgColor)
+        XCTAssertEqual(row.accessibilityHelp(), "Copy")
+        XCTAssertEqual(copy.hoverHint?.text, "Copy to clipboard")
+        for (query, expected) in [("black to rgb", "rgb(0, 0, 0)"), ("#FDFDFD to rgb", "rgb(253, 253, 253)")] {
+            palette.refresh(query: query)
+            XCTAssertEqual(palette.suggestions.first?.title, expected)
+            XCTAssertTrue(palette.buttons.first?.subviews.contains { $0 is CalculationSwatch } == true)
+        }
+        // Near-white on white: a ring darker than the colour parts it from the palette.
+        if palette.theme == .neutral {
+            let pale = try XCTUnwrap(palette.buttons.first?.subviews.compactMap { $0 as? CalculationSwatch }.first)
+            XCTAssertLessThan(try ring(pale).redComponent, 0.86)
+        }
+        palette.refresh(query: "1920x1080 aspect ratio")
+        XCTAssertEqual(palette.suggestions.first?.title, "16:9")
+        XCTAssertFalse(palette.buttons[0].subviews.contains { $0 is CalculationSwatch })
+        XCTAssertTrue(palette.buttons[0].subviews.contains { $0 is CalculationCopyIcon })
+        XCTAssertFalse(icon.isHidden)
+        // A search's row has no copy icon.
+        palette.refresh(query: "weather in london")
+        XCTAssertFalse(palette.buttons.contains { $0.subviews.contains { $0 is CalculationCopyIcon } })
+    }
+
+    @MainActor func testPickingACalculationCopiesItsAnswer() throws {
+        _ = NSApplication.shared
+        let suite = "rise-copy-answer-\(UUID())", preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let browser = BrowserController(sessionURL: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json"),
+                                        restore: false, preferences: preferences)
+        defer { browser.hidePalette(); browser.linkPasteboard.releaseGlobally(); clean(browser); preferences.removePersistentDomain(forName: suite) }
+        browser.linkPasteboard = .withUniqueName()
+        browser.showWindow(nil)
+        func pick(_ query: String) throws -> String? {
+            browser.newTab()
+            let palette = browser.palette, tabs = browser.tabs.count
+            palette.input.stringValue = query
+            palette.refresh(query: query)
+            palette.choose(try XCTUnwrap(palette.buttons.first))
+            XCTAssertFalse(palette.isPresented)
+            XCTAssertEqual(browser.tabs.count, tabs)
+            return browser.linkPasteboard.string(forType: .string)
+        }
+        // A colour copies as it reads; a conversion, its number alone, unless units are kept.
+        XCTAssertEqual(try pick("hex ff6600 to rgb"), "rgb(255, 102, 0)")
+        XCTAssertEqual(try pick("2.5 hours in minutes"), "150")
+        browser.setRiseSetting("copiesConversionUnits", true)
+        XCTAssertEqual(try pick("2.5 hours in minutes"), "150 minutes")
+        XCTAssertEqual(browser.riseSettingRows("system").first { $0["key"] as? String == "copiesConversionUnits" }?["value"] as? Bool, true)
+    }
+
     @MainActor func testALongSearchUsesTheRowsWidthWhileAPageLeavesRoomForItsAddress() throws {
         let browser = browser(); defer { browser.hidePalette(); clean(browser) }
         browser.showWindow(nil); browser.newTab()

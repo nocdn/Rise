@@ -89,6 +89,8 @@ import RiseCore
             rows.append(select("measurementUnits", "Measurement units",
                                "Weights, distances, temperatures and speeds you select in other units show in these when you right-click them",
                                preferredUnits.rawValue, PreferredUnits.allCases.map { ($0.rawValue, "\($0.title) (\($0.detail))") }))
+            rows.append(toggle("copiesConversionUnits", "Copy conversions with their currency or unit",
+                               "Copying a converted amount from the address panel or a right-click gives £10.68 rather than 10.68", copiesConversionUnits))
             return rows
         case "privacy":
             var rows: [[String: Any]] = [
@@ -148,6 +150,7 @@ import RiseCore
         case "savesCaptures": setSavesCapturesAutomatically(on)
         case "copiesCaptures": setCopiesCaptures(on)
         case "measurementUnits": if let units = PreferredUnits(rawValue: text) { PreferredUnits.set(units, in: preferences) }
+        case "copiesConversionUnits": setCopiesConversionUnits(on)
         case "notificationPermission":
             sitePermissions.defaultNotifications = text == "block" ? .block : .ask
             refreshPermissionScripts()

@@ -21,7 +21,10 @@ private final class SearchProtocol: URLProtocol, @unchecked Sendable {
             stateLock.lock(); let cancelled = stopped; stateLock.unlock()
             guard !cancelled else { return }
             let terms = [query, query+" beans", query+" cake", query+" recipe", query+" near me", query+" reviews", query+" online", query+" extra"]
-            let bytes = try! JSONSerialization.data(withJSONObject: [query, terms])
+            let responseBody: [Any] = query == "18% of 240"
+                ? [query, ["", "= 43.2", "18 of 240"], [], [], ["google:suggesttype": ["QUERY", "CALCULATOR", "QUERY"]]]
+                : [query, terms]
+            let bytes = try! JSONSerialization.data(withJSONObject: responseBody)
             let response = HTTPURLResponse(url: request.url!, statusCode: query == "offline query" ? 503 : 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             client?.urlProtocol(self, didLoad: bytes); client?.urlProtocolDidFinishLoading(self)
@@ -169,6 +172,39 @@ final class GoogleSearchSuggestionsTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(warmUps.first).httpShouldHandleCookies)
         XCTAssertTrue(SearchProtocol.snapshot().isEmpty)
     }
+    @MainActor func testCalculatorMetadataSelectsOnlyTheCalculatorRowIcon() async throws {
+        _ = NSApplication.shared
+        let session = session(); defer { session.invalidateAndCancel() }
+        let provider = GoogleSearchSuggestions(session: session, delay: 0.005)
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("session.json")
+        let browser = BrowserController(sessionURL: file, restore: false, searchSuggestions: provider)
+        defer {
+            browser.hidePalette(); browser.suggestionFavicons.cancel(); browser.saveWork?.cancel(); browser.window?.orderOut(nil)
+            try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
+        }
+        browser.showWindow(nil); browser.newTab()
+        let palette = browser.palette, editor = try XCTUnwrap(palette.input.currentEditor() as? NSTextView)
+        editor.insertText("18% of 240", replacementRange: editor.selectedRange())
+        for _ in 0..<100 where !palette.suggestions.contains(where: { $0.title == "43.2" }) {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let calculator = try XCTUnwrap(palette.suggestions.firstIndex { $0.title == "43.2" })
+        let plain = try XCTUnwrap(palette.suggestions.firstIndex { $0.title == "18 of 240" })
+        let icon = try XCTUnwrap(palette.buttons[calculator].subviews.first as? FaviconView)
+        let search = try XCTUnwrap(palette.buttons[plain].subviews.first as? FaviconView)
+        XCTAssertTrue(icon.image === CenteredPaletteStyle.calculatorIcon)
+        XCTAssertTrue(search.image === CenteredPaletteStyle.searchIcon)
+        XCTAssertEqual(icon.contentTintColor, search.contentTintColor)
+        XCTAssertEqual(icon.frame.size, search.frame.size)
+        // Picked, Google's answer leaves what's typed in the field, and copies.
+        palette.selectResult(calculator)
+        XCTAssertEqual(editor.string, "18% of 240")
+        XCTAssertTrue(palette.suggestions[calculator].copiesAnswer)
+        XCTAssertEqual(palette.suggestions[calculator].calculationAmount, "43.2")
+        provider.cancel()
+        XCTAssertEqual(provider.results(for: "18% of 240").map(\.isCalculator), [true, false])
+    }
+
     func testJSONValidationDeduplicationAndUntrustedTextRemainPlainStrings() throws {
         let bytes = try JSONSerialization.data(withJSONObject: ["coffee", ["coffee", "coffee beans", "COFFEE BEANS", "", " coffee cake ", "<b>coffee</b>", "bad\nterm"]])
         XCTAssertEqual(GoogleSearchSuggestions.parse(bytes, query: "coffee"), ["coffee beans", "coffee cake", "<b>coffee</b>"])

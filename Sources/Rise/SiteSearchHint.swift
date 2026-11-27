@@ -4,7 +4,10 @@ import AppKit
 /// After Tab, "Search" and the keycap fade, and the site's name takes its colour and springs over
 /// to the end, where the keycap was; Escape puts it all back.
 @MainActor final class SiteSearchHint: FlippedView {
-    static let gap: CGFloat = 8, keyHeight: CGFloat = 20, keyPadding: CGFloat = 6, keySize: CGFloat = 11
+    static let gap: CGFloat = 8, keyHeight: CGFloat = 20, keyPadding: CGFloat = 6, keySize: CGFloat = 11, keyRadius: CGFloat = 5
+    /// The keycap's type and fill, which a calculation's Copy pill shares.
+    static let keyFont = NSFont.systemFont(ofSize: keySize, weight: .medium)
+    static func keyFill(_ theme: RiseTheme) -> NSColor { theme.text.withAlphaComponent(theme == .dark ? 0.13 : 0.08) }
     /// The find bar's Ask button on iOS: quick, with a light bounce.
     static let slideDuration: CGFloat = 0.3, slideBounce: CGFloat = 0.25
     private let searchText = CATextLayer(), nameText = CATextLayer()
@@ -20,7 +23,7 @@ import AppKit
     /// The centred new tab palette's own, in place of the address palette's.
     var fontOverride: NSFont?
     private var font: NSFont { fontOverride ?? AddressAppearance.siteSearchFont }
-    private var keyFont: NSFont { .systemFont(ofSize: Self.keySize, weight: .medium) }
+    private var keyFont: NSFont { Self.keyFont }
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
@@ -29,7 +32,7 @@ import AppKit
             layer?.addSublayer(text)
         }
         searchText.string = "Search "
-        key.cornerRadius = 5; key.cornerCurve = .continuous
+        key.cornerRadius = Self.keyRadius; key.cornerCurve = .continuous
         keyText.string = "Tab"; keyText.alignmentMode = .center
         keyText.font = keyFont; keyText.fontSize = Self.keySize
         key.addSublayer(keyText); layer?.addSublayer(key)
@@ -54,7 +57,7 @@ import AppKit
         CATransaction.begin(); CATransaction.setDisableActions(true)
         searchText.foregroundColor = muted.cgColor
         nameText.foregroundColor = (isSearching ? siteColor : muted).cgColor
-        key.backgroundColor = theme.text.withAlphaComponent(theme == .dark ? 0.13 : 0.08).cgColor
+        key.backgroundColor = Self.keyFill(theme).cgColor
         keyText.foregroundColor = muted.cgColor
         CATransaction.commit()
     }

@@ -21,6 +21,8 @@ import RiseCore
                 AddressSuggestion(title: $0.title, subtitle: "", symbol: $0.symbol, url: nil, tabID: nil, command: $0.id)
             }
         }
+        let composing = (palette.input.currentEditor() as? NSTextView)?.hasMarkedText() == true
+        let calculation = composing ? nil : AddressCalculation.evaluate(query)
         // One more than shown, for the search for what's typed, which the palette keeps out of its rows.
         let rows = AddressAppearance.maximumSuggestions
         let candidates = AddressSuggestionEngine.suggestions(for: query, history: browsingHistory,
@@ -35,16 +37,30 @@ import RiseCore
                 isTypedAction: value.isTypedAction, isAutofill: value.isAutofill, isVerbatimSearch: verbatim)
         }
         if searchProvider.isGoogle, palette.isPresented, (palette.input.currentEditor() as? NSTextView)?.hasMarkedText() != true {
-            let remote = googleSearchSuggestions.suggestions(for: query)
-            let mixed = AddressSuggestionEngine.merging(remote, into: result.map {
+            let remote = googleSearchSuggestions.results(for: query).filter { calculation == nil || !$0.isCalculator }
+            let calculator = Set(remote.filter(\.isCalculator).map(\.text))
+            let mixed = AddressSuggestionEngine.merging(remote.map(\.text), into: result.map {
                 AddressCandidate(title: $0.title, subtitle: $0.subtitle, symbol: $0.symbol, url: $0.url, tabID: $0.tabID,
                     completion: $0.completion, fetchFavicon: $0.fetchFavicon, isTypedAction: $0.isTypedAction, isAutofill: $0.isAutofill)
             }, search: searchProvider, limit: rows+1)
             result = mixed.map { value in
-                result.first { $0.title == value.title && $0.url == value.url } ??
-                    AddressSuggestion(title: value.title, subtitle: value.subtitle, symbol: value.symbol, url: value.url, tabID: value.tabID, command: nil)
+                if calculator.contains(value.title), value.symbol == "magnifyingglass" {
+                    let title = value.title.hasPrefix("=") ? String(value.title.dropFirst()).trimmingCharacters(in: .whitespaces) : value.title
+                    // Picked, it leaves what's typed in the field, as Rise's own answers do: Enter copies it.
+                    return AddressSuggestion(title: title, subtitle: value.subtitle, symbol: "calculator",
+                                             url: value.url, tabID: value.tabID, command: nil, calculationQuery: query,
+                                             calculationAmount: AddressCalculation.bareNumber(in: title))
+                }
+                return result.first { $0.title == value.title && $0.url == value.url } ??
+                    AddressSuggestion(title: value.title, subtitle: value.subtitle, symbol: value.symbol,
+                                      url: value.url, tabID: value.tabID, command: nil)
             }
         } else { googleSearchSuggestions.cancel() }
+        if let calculation {
+            result.insert(AddressSuggestion(title: calculation.text, subtitle: "", symbol: "calculator",
+                url: searchProvider.searchURL(query), tabID: nil, command: nil, calculationQuery: query,
+                calculationColor: calculation.color, calculationAmount: calculation.amount), at: 0)
+        }
         let typedURL = candidates.first { $0.isTypedAction && !$0.fetchFavicon }?.url
         suggestionFavicons.preview(typedURL)
         return result.prefix(result.contains { $0.isVerbatimSearch } ? rows+1 : rows).map { suggestion in

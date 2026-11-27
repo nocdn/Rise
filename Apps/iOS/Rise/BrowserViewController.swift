@@ -2841,7 +2841,7 @@ final class BrowserViewController: UIViewController, WKUIDelegate, WKNavigationD
         }
     }
 
-    private var shareableURL: URL? { currentTab.addressURL.flatMap { Self.canPeek($0) ? $0 : nil } }
+    var shareableURL: URL? { currentTab.addressURL.flatMap { Self.canPeek($0) ? $0 : nil } }
     func updateNavigationStatus() {
         navigationStatus.show(address: currentTab.addressURL, committed: currentTab.hasCommittedDocument,
                               error: currentTab.navigationError, stopped: currentTab.wasStopped,

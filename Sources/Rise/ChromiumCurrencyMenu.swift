@@ -29,7 +29,8 @@ import RiseCore
             let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
             item.image = NSImage(systemSymbolName: "banknote", accessibilityDescription: nil)
             let submenu = NSMenu(); submenu.autoenablesItems = false
-            let copy = menuItem("Copy “\(converted)”") { Self.copyAmount(converted) }
+            let copied = convertedCopy(converted)
+            let copy = menuItem("Copy “\(copied)”") { Self.copyAmount(copied) }
             copy.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: nil)
             submenu.addItem(copy)
             let replace = menuItem("Replace on Page", checked: replaced) { [weak self, weak tab] in
@@ -46,7 +47,7 @@ import RiseCore
                 if index > 0, !group.isEmpty, !list.items.isEmpty { list.addItem(.separator()) }
                 for currency in group {
                     let entry = NSMenuItem(title: "\(currency.name) (\(currency.code))", action: nil, keyEquivalent: "")
-                    entry.submenu = CurrencyAmountMenu(amount, in: currency.code, rates: rates)
+                    entry.submenu = CurrencyAmountMenu(amount, in: currency.code, rates: rates, keepsUnits: copiesConversionUnits)
                     list.addItem(entry)
                 }
             }
@@ -64,12 +65,13 @@ import RiseCore
 }
 
 /// A currency's submenu: the amount in it, to copy, worked out only as it opens, so a menu of
-/// every currency costs nothing until one is looked at.
+/// every currency costs nothing until one is looked at. Copied, it's the number alone unless
+/// units are kept (`copiesConversionUnits`).
 @MainActor final class CurrencyAmountMenu: NSMenu, NSMenuDelegate {
-    private let amount: CurrencyAmount, currency: String, rates: ExchangeRates
+    private let amount: CurrencyAmount, currency: String, rates: ExchangeRates, keepsUnits: Bool
 
-    init(_ amount: CurrencyAmount, in currency: String, rates: ExchangeRates) {
-        self.amount = amount; self.currency = currency; self.rates = rates
+    init(_ amount: CurrencyAmount, in currency: String, rates: ExchangeRates, keepsUnits: Bool = false) {
+        self.amount = amount; self.currency = currency; self.rates = rates; self.keepsUnits = keepsUnits
         super.init(title: "")
         autoenablesItems = false
         delegate = self
@@ -82,7 +84,7 @@ import RiseCore
         guard let text = CurrencyAmounts.converted(amount, to: currency, rates: rates) else { return }
         removeAllItems()
         let item = NSMenuItem(title: text, action: #selector(copyAmount(_:)), keyEquivalent: "")
-        item.target = self; item.representedObject = text
+        item.target = self; item.representedObject = keepsUnits ? text : AddressCalculation.bareNumber(in: text) ?? text
         addItem(item)
     }
 

@@ -70,4 +70,14 @@ import AppKit
         image.size = NSSize(width: 16, height: 16); image.isTemplate = true; image.accessibilityDescription = "Search"
         return image
     }()
+    /// Gravity UI Icons, © YANDEX LLC. https://github.com/gravity-ui/icons/blob/main/LICENSE
+    static let calculatorIcon: NSImage = {
+        let svg = """
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path fill="none" stroke="#000" stroke-width="1.15" stroke-linecap="round" d="M2.25 4.5h4.5m3.41-1.59 3.18 3.18m0-3.18-3.18 3.18M4.5 9.25v4.5m-2.25-2.25h4.5m3-1.5h4m-4 3h4"/></svg>
+        """
+        let image = NSImage(data: Data(svg.utf8)) ?? NSImage(systemSymbolName: "calculator", accessibilityDescription: nil) ?? searchIcon
+        image.size = searchIcon.size; image.isTemplate = true; image.accessibilityDescription = "Calculator"
+        return image
+    }()
+
 }

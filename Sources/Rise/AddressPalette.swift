@@ -19,10 +19,18 @@ struct AddressSuggestion {
     /// The search for exactly what's typed: what Enter does anyway, so it gets no row of its own.
     var isVerbatimSearch = false
     var assistantPrompt: AssistantPrompt? = nil
+    var calculationQuery: String? = nil
+    var calculationColor: AddressCalculation.Color? = nil
+    /// A conversion's number alone, which copying it gives unless units are kept.
+    var calculationAmount: String? = nil
+    /// A calculation's answer, Rise's own or Google's: its row copies the answer rather than
+    /// searching for it, and says so with a Copy pill at its end.
+    var copiesAnswer: Bool { command == nil && symbol == "calculator" }
 }
 @MainActor final class AddressPalette: Surface, NSTextFieldDelegate {
     let input = AddressInputField(frame: .zero)
     let leadingIcon = FaviconView(frame: .zero)
+    private let answerPreview = AddressAnswerPreview()
     private let emptyCommands = NSTextField(labelWithString: "No matching commands")
     var suggestions: [AddressSuggestion] = []
     var buttons: [NSButton] = []
@@ -155,7 +163,11 @@ struct AddressSuggestion {
         placementCenter = center; restingFrame.size.width = width
         applyPresentation()
     }
-    func hide() { isHidden = true; completionRange = nil; selectionBeforeHover = nil; resetSiteSearch() }
+    func hide() {
+        isHidden = true; completionRange = nil; selectionBeforeHover = nil
+        answerPreview.focus(nil, row: nil, theme: theme)
+        resetSiteSearch()
+    }
     private func applyPresentation() {
         CATransaction.begin(); CATransaction.setDisableActions(true)
         if let center = placementCenter {
@@ -176,7 +188,14 @@ struct AddressSuggestion {
     private func takeAutofill(_ list: [AddressSuggestion]) -> [AddressSuggestion] {
         autofill = list.first { $0.isAutofill }
         typedSearch = list.first { $0.isVerbatimSearch }
-        return list.filter { !$0.isAutofill && !$0.isVerbatimSearch }
+        var rows = list.filter { !$0.isAutofill && !$0.isVerbatimSearch }
+        // Give an explicit lookup a focusable row even when autocomplete omits the exact phrase.
+        if isCentered, let typedSearch, AddressQuickAnswer(typedSearch.title) != nil,
+           !rows.contains(where: { $0.url == typedSearch.url && $0.symbol == "magnifyingglass" }) {
+            if rows.count >= AddressAppearance.maximumSuggestions { rows.removeLast() }
+            rows.insert(typedSearch, at: 0)
+        }
+        return rows
     }
     /// The site the field holds, or is filling in, or is searching: its icon leads the field.
     private var fieldSite: PopularSite? { siteSearch ?? site(forAddress: input.stringValue) }
@@ -252,17 +271,20 @@ struct AddressSuggestion {
             button.layer?.backgroundColor = (index == selectedIndex ? AddressAppearance.selection(theme) : .clear).cgColor
             button.tag = index; button.target = self; button.action = #selector(choose(_:))
             button.setAccessibilityLabel(suggestion.title)
-            if suggestion.tabID != nil {
+            if suggestion.copiesAnswer {
+                button.setAccessibilityHelp("Copy")
+            } else if suggestion.tabID != nil {
                 button.setAccessibilityHelp("Open existing tab")
             }
             let imageView = FaviconView(frame: .zero)
             imageView.image = Self.isThemeCommand(suggestion.command)
                 ? TablerIcon.themeImage(size: 16)
-                : suggestion.favicon ?? (suggestion.symbol == "magnifyingglass" ? AddressAppearance.searchIcon
+                : suggestion.favicon ?? (suggestion.symbol == "calculator" ? CenteredPaletteStyle.calculatorIcon
+                    : suggestion.symbol == "magnifyingglass" ? AddressAppearance.searchIcon
                     : NSImage(systemSymbolName: suggestion.symbol, accessibilityDescription: nil))
             // Search rows' glyphs sit a shade lighter than the field's own.
             imageView.contentTintColor = suggestion.favicon != nil ? nil
-                : suggestion.symbol == "magnifyingglass" ? AddressAppearance.iconColor(theme).withAlphaComponent(0.75) : AddressAppearance.iconColor(theme)
+                : ["magnifyingglass", "calculator"].contains(suggestion.symbol) ? AddressAppearance.iconColor(theme).withAlphaComponent(0.75) : AddressAppearance.iconColor(theme)
             // A page without its icon gets the sidebar's empty square, until its icon loads.
             if suggestion.favicon == nil, suggestion.symbol == "globe", suggestion.command != "Change Theme" {
                 imageView.showEmptyPlaceholder(theme: theme)
@@ -282,6 +304,8 @@ struct AddressSuggestion {
                 text.attributedStringValue = title
             }
             button.addSubview(imageView, positioned: .below, relativeTo: button.subviews.first); button.addSubview(text)
+            updateSwatch(suggestion.calculationColor, in: button)
+            updateCopyIcon(suggestion.copiesAnswer, in: button)
             addSubview(button); buttons.append(button)
         }
         let count = CGFloat(suggestions.count)
@@ -326,10 +350,11 @@ struct AddressSuggestion {
             }
             button.tag = index
             button.setAccessibilityLabel(suggestion.title)
-            button.setAccessibilityHelp(suggestion.tabID != nil ? "Open existing tab" : nil)
+            button.setAccessibilityHelp(suggestion.copiesAnswer ? "Copy" : suggestion.tabID != nil ? "Open existing tab" : nil)
             if let imageView = button.subviews.first as? FaviconView {
                 imageView.image = Self.isThemeCommand(suggestion.command) ? TablerIcon.themeImage(size: style.rowIconSize)
-                    : suggestion.favicon ?? (suggestion.symbol == "magnifyingglass" ? style.searchIcon
+                    : suggestion.favicon ?? (suggestion.symbol == "calculator" ? style.calculatorIcon
+                        : suggestion.symbol == "magnifyingglass" ? style.searchIcon
                         : NSImage(systemSymbolName: suggestion.symbol, accessibilityDescription: nil))
                 imageView.contentTintColor = suggestion.favicon != nil ? nil : style.detail(theme)
                 if suggestion.favicon == nil, suggestion.symbol == "globe", suggestion.command != "Change Theme" {
@@ -352,6 +377,8 @@ struct AddressSuggestion {
                 if address.stringValue != text { address.stringValue = text }
                 address.font = style.detailFont; address.textColor = style.detail(theme)
             } else { detail?.removeFromSuperview() }
+            updateSwatch(suggestion.calculationColor, in: button)
+            updateCopyIcon(suggestion.copiesAnswer, in: button)
         }
         emptyCommands.font = style.titleFont; emptyCommands.textColor = style.detail(theme)
         restingFrame.size.height = style.height(rows: emptyCommands.isHidden ? suggestions.count : 1)
@@ -359,6 +386,25 @@ struct AddressSuggestion {
         updateSelection()
         applyPresentation()
     }
+    private func updateSwatch(_ color: AddressCalculation.Color?, in button: NSButton) {
+        let existing = button.subviews.compactMap { $0 as? CalculationSwatch }.first
+        button.subviews.first { $0 is FaviconView }?.isHidden = color != nil
+        if let color {
+            let swatch = existing ?? CalculationSwatch()
+            swatch.show(color, on: isCentered ? CenteredPaletteStyle.background(theme) : AddressAppearance.background(theme))
+            if existing == nil { button.addSubview(swatch, positioned: .above, relativeTo: button.subviews.first) }
+        } else { existing?.removeFromSuperview() }
+    }
+    /// Kept behind the row's first view, its icon, so the title stays the last.
+    private func updateCopyIcon(_ shown: Bool, in button: NSButton) {
+        let existing = button.subviews.compactMap { $0 as? CalculationCopyIcon }.first
+        if shown {
+            let icon = existing ?? CalculationCopyIcon()
+            icon.applyTheme(theme)
+            if existing == nil { button.addSubview(icon, positioned: .above, relativeTo: button.subviews.first) }
+        } else { existing?.removeFromSuperview() }
+    }
+
     /// The field as typed, kept while the arrow keys fill in the rows they pick, to put back past
     /// the first row.
     private struct TypedField { let text: String, selection: NSRange, completionRange: NSRange?, completionPrefix: String }
@@ -398,6 +444,7 @@ struct AddressSuggestion {
     /// What a row puts in the field: a search's words or a page's address; a command leaves it.
     static func fieldText(for suggestion: AddressSuggestion) -> String? {
         guard suggestion.command == nil else { return nil }
+        if let query = suggestion.calculationQuery { return query }
         if suggestion.symbol == "magnifyingglass" {
             // "Search Kagi for “x”" is a search for x.
             if let open = suggestion.title.range(of: " for “"), suggestion.title.hasSuffix("”") {
@@ -425,6 +472,9 @@ struct AddressSuggestion {
         scrollToSelection()
         for (index, button) in buttons.enumerated() {
             let selected = index == selectedIndex
+            // A calculation's copy icon is there on the row picked alone, coming and going at once;
+            // its room stays, so the title doesn't move.
+            for case let copy as CalculationCopyIcon in button.subviews { copy.isHidden = !selected }
             if isCentered {
                 // One gray, under the pointer or the arrow keys alike.
                 button.layer?.backgroundColor = (selected ? CenteredPaletteStyle.hover(theme) : .clear).cgColor
@@ -438,6 +488,16 @@ struct AddressSuggestion {
             text.attributedStringValue = title
         }
         CATransaction.commit()
+        let index = selectedIndex
+        if isCentered, isPresented, siteSearch == nil, !isChoosing,
+           (input.currentEditor() as? NSTextView)?.hasMarkedText() != true,
+           buttons.indices.contains(index), suggestions.indices.contains(index),
+           suggestions[index].symbol == "magnifyingglass", suggestions[index].url != nil, suggestions[index].command == nil,
+           let lookup = AddressQuickAnswer(suggestions[index].title) {
+            answerPreview.focus(lookup, row: buttons[index], theme: theme)
+        } else {
+            answerPreview.focus(nil, row: nil, theme: theme)
+        }
     }
     override func updateTrackingAreas() {
         super.updateTrackingAreas(); removeOwnTrackingAreas()
@@ -527,9 +587,19 @@ struct AddressSuggestion {
             if let icon = button.subviews.first as? NSImageView {
                 icon.frame = NSRect(x: tuning.rowIconInset, y: (button.bounds.height-tuning.rowIconSize)/2, width: tuning.rowIconSize, height: tuning.rowIconSize)
             }
+            for case let swatch as CalculationSwatch in button.subviews {
+                swatch.frame = NSRect(x: tuning.rowIconInset, y: (button.bounds.height-tuning.rowIconSize)/2,
+                                     width: tuning.rowIconSize, height: tuning.rowIconSize)
+            }
+            var trailing = tuning.rowTrailingInset
+            for case let copy as CalculationCopyIcon in button.subviews {
+                let size = CalculationCopyIcon.size
+                copy.frame = NSRect(x: button.bounds.width-tuning.rowTrailingInset-size, y: (button.bounds.height-size)/2, width: size, height: size)
+                trailing += size+8
+            }
             if let text = button.subviews.last as? NSTextField {
                 let height = text.intrinsicContentSize.height
-                text.frame = NSRect(x: tuning.rowTextInset, y: (button.bounds.height-height)/2, width: max(0, button.bounds.width-tuning.rowTextInset-tuning.rowTrailingInset), height: height)
+                text.frame = NSRect(x: tuning.rowTextInset, y: (button.bounds.height-height)/2, width: max(0, button.bounds.width-tuning.rowTextInset-trailing), height: height)
             }
         }
     }
@@ -551,16 +621,28 @@ struct AddressSuggestion {
             let rowIcon = style.rowIconSize, inner = button.bounds
             button.subviews.first { $0 is NSImageView }?.frame = NSRect(x: style.rowPadding, y: (inner.height-rowIcon)/2, width: rowIcon, height: rowIcon)
             var x = style.rowPadding+rowIcon+style.gap
-            let end = inner.width-style.rowPadding
+            var end = inner.width-style.rowPadding
+            // The copy icon ends the row.
+            if let copy = button.subviews.first(where: { $0 is CalculationCopyIcon }) {
+                let size = CalculationCopyIcon.size
+                copy.frame = NSRect(x: end-size, y: (inner.height-size)/2, width: size, height: size)
+                end -= size+style.gap
+            }
             // A title leaves room for the address beside it; alone, as a search's is, it takes the row.
-            let hasAddress = button.subviews.contains { ($0 as? NSTextField)?.identifier == Self.detailID }
+            let showsAnswer = answerPreview.superview === button && !answerPreview.isHidden
+            let showsDetail = showsAnswer || button.subviews.contains { ($0 as? NSTextField)?.identifier == Self.detailID }
+            let swatch = button.subviews.compactMap { $0 as? CalculationSwatch }.first
             for case let text as NSTextField in button.subviews {
                 let size = text.intrinsicContentSize
                 // Measured from the text itself: a truncating label's own measure falls short.
                 let natural = ceil(text.attributedStringValue.size().width)+4
-                let width = text.identifier == Self.titleID && hasAddress ? min(natural, style.titleMaximumWidth, end-x) : end-x
+                let width = text.identifier == Self.titleID && showsDetail ? min(natural, style.titleMaximumWidth, end-x) : end-x
                 text.frame = NSRect(x: x, y: (inner.height-size.height)/2, width: max(0, width), height: size.height)
                 x += width+style.gap
+            }
+            swatch?.frame = NSRect(x: style.rowPadding, y: (inner.height-rowIcon)/2, width: rowIcon, height: rowIcon)
+            if showsAnswer {
+                answerPreview.frame = NSRect(x: x, y: 0, width: max(0, end-x), height: inner.height)
             }
         }
     }

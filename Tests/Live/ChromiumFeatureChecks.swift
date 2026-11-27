@@ -359,10 +359,10 @@ typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged
         let price = await rightClick(center("#price"), in: menus.page, "a selected price")
         let amount = price?.items.first
         check(amount?.title == "€105.70", "A price leads the menu in the person's currency: \(titles(price))")
-        check(titles(amount?.submenu) == ["Copy “€105.70”", "Replace on Page", "Other Currencies"], "Its menu: \(titles(amount?.submenu))")
+        check(titles(amount?.submenu) == ["Copy “105.70”", "Replace on Page", "Other Currencies"], "Its menu: \(titles(amount?.submenu))")
         pasteboard.clearContents()
-        choose("Copy “€105.70”", in: amount?.submenu)
-        check(pasteboard.string(forType: .string) == "€105.70", "Copy copies the converted amount")
+        choose("Copy “105.70”", in: amount?.submenu)
+        check(pasteboard.string(forType: .string) == "105.70", "Copy copies the converted amount's number")
         let zloty = amount?.submenu?.items.last?.submenu?.items.first { $0.title.hasSuffix("(PLN)") }?.submenu
         if let zloty { zloty.delegate?.menuNeedsUpdate?(zloty) }
         check(zloty?.items.first?.title.contains("528.48") == true, "Another currency's submenu has the amount in it: \(titles(zloty))")

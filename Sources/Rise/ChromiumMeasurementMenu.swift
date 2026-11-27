@@ -16,7 +16,8 @@ import RiseCore
             let item = NSMenuItem(title: conversion.label, action: nil, keyEquivalent: "")
             item.image = NSImage(systemSymbolName: conversion.measurement.unit.kind.symbol, accessibilityDescription: nil)
             let submenu = NSMenu(); submenu.autoenablesItems = false
-            let copy = menuItem("Copy “\(conversion.converted)”") { Self.copyAmount(conversion.converted) }
+            let copied = convertedCopy(conversion.converted)
+            let copy = menuItem("Copy “\(copied)”") { Self.copyAmount(copied) }
             copy.image = NSImage(systemSymbolName: "doc.on.doc", accessibilityDescription: nil)
             submenu.addItem(copy)
             let replace = menuItem("Replace on Page", checked: replaced) { [weak self, weak page] in
@@ -31,7 +32,8 @@ import RiseCore
                 others.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
                 let list = NSMenu(); list.autoenablesItems = false
                 for other in conversion.others {
-                    let entry = menuItem(other.value) { Self.copyAmount(other.value) }
+                    let copied = convertedCopy(other.value)
+                    let entry = menuItem(other.value) { Self.copyAmount(copied) }
                     entry.toolTip = "Copy in \(other.name.lowercased())"
                     list.addItem(entry)
                 }

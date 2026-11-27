@@ -1,4 +1,5 @@
 import AppKit
+import RiseCore
 
 @MainActor extension BrowserController {
     /// ⇧⌘C, the page bar's copy button and the Copy URL items put the page's address on the
@@ -55,6 +56,23 @@ import AppKit
         guard linkPasteboard.setString("[\(title)](\(address))", forType: .string) else { return }
         siteInfoPopover.close(); siteControlsPopover.close(); hidePalette()
         selectedBar.showNotice("Copied Markdown Link", image: BarNotice.linkImage)
+    }
+    static let copiesConversionUnitsKey = "copiesConversionUnits"
+    /// Copying a converted amount keeps its currency or unit, "£10.68"; off, as it starts, it's the
+    /// number alone, "10.68", to paste where a number goes.
+    var copiesConversionUnits: Bool { preferences.bool(forKey: Self.copiesConversionUnitsKey) }
+    func setCopiesConversionUnits(_ on: Bool) { preferences.set(on, forKey: Self.copiesConversionUnitsKey) }
+    /// A converted amount as copying gives it: its number alone (`amount`, or as read from `text`),
+    /// unless units are kept, and `text` as it is where it isn't one amount.
+    func convertedCopy(_ text: String, amount: String? = nil) -> String {
+        copiesConversionUnits ? text : amount ?? AddressCalculation.bareNumber(in: text) ?? text
+    }
+    /// A calculation's row, picked in the palette, puts its answer on the pasteboard, and the page
+    /// bar says what was copied.
+    func copyAnswer(_ answer: String) {
+        linkPasteboard.clearContents()
+        guard linkPasteboard.setString(answer, forType: .string) else { return }
+        selectedBar.showNotice("Copied \(answer)", image: BarNotice.copyImage)
     }
     /// An Option-click on a link puts its address on the pasteboard, and says so in the page bar.
     func copyLink(_ url: URL) {

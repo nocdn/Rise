@@ -604,11 +604,16 @@ import RiseCore
         notice.frame = NSRect(x: x, y: 0, width: min(notice.width, max(0, end-8-x)), height: bounds.height)
     }
     private func exchange(_ old: NSView, for new: NSView) {
+        let done = { if let old = old as? BarNotice, old !== self.notice { old.removeFromSuperview() } }
+        guard Self.exchangeRows(old, for: new) else { done(); return }
+        DispatchQueue.main.asyncAfter(deadline: .now()+Notice.exitDuration+0.05) { done() }
+    }
+
+    /// Shares the address notice's upward exit and delayed entrance with inline answers.
+    @discardableResult static func exchangeRows(_ old: NSView, for new: NSView) -> Bool {
         let from = old.layer?.presentation()?.opacity ?? 1
         old.alphaValue = 0; new.alphaValue = 1
-        // Words that have gone are done with.
-        let done = { if let old = old as? BarNotice, old !== self.notice { old.removeFromSuperview() } }
-        guard window != nil, let oldLayer = old.layer, let newLayer = new.layer else { done(); return }
+        guard old.window != nil, let oldLayer = old.layer, let newLayer = new.layer else { return false }
         let still = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         // Up the screen, in the bar's flipped layers.
         let up: CGFloat = oldLayer.superlayer?.contentsAreFlipped() == false ? 1 : -1
@@ -624,7 +629,7 @@ import RiseCore
              timing: CAMediaTimingFunction(controlPoints: 0.5, 0, 0.9, 0.6))
         move(newLayer, opacity: (0, 1), y: (-up*Notice.entry, 0), begin: now+Notice.entryDelay, duration: Notice.entryDuration,
              timing: CAMediaTimingFunction(controlPoints: 0.2, 0.7, 0.3, 1))
-        DispatchQueue.main.asyncAfter(deadline: .now()+Notice.exitDuration+0.05) { done() }
+        return true
     }
 
     // MARK: Becoming developer mode's bar
@@ -879,6 +884,7 @@ import RiseCore
         set { words.dotted = newValue; needsLayout = true }
     }
     static let linkImage = TablerIcon.image(TablerIcon.linkCopied, size: 16, description: nil)
+    static let copyImage = TablerIcon.image(TablerIcon.copy, size: 14, description: nil)
     /// The arrows of the full screen notices, drawn as heavy as the link.
     static let fullScreenImage = symbol("arrow.up.left.and.arrow.down.right")
     static let starImage = TablerIcon.image(TablerIcon.star, size: 14, description: nil)

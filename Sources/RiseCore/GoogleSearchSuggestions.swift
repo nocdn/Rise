@@ -11,8 +11,12 @@ import Foundation
     private static let maximumInFlight = 6
     private var token = UUID()
     private var query: String?
-    private var values: [String] = []
-    private var cache: [String: [String]] = [:]
+    public struct Suggestion: Equatable, Sendable {
+        public let text: String
+        public let isCalculator: Bool
+    }
+    private var values: [Suggestion] = []
+    private var cache: [String: [Suggestion]] = [:]
     private var order: [String] = []
     private var warmedAt: Date?
     public var onLoad: ((String) -> Void)?
@@ -30,7 +34,9 @@ import Foundation
     }
     deinit { timer?.cancel(); tasks.forEach { $0.task.cancel() } }
 
-    public func suggestions(for text: String) -> [String] {
+    public func suggestions(for text: String) -> [String] { results(for: text).map(\.text) }
+
+    public func results(for text: String) -> [Suggestion] {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard Self.isSearchQuery(text) else { cancel(); return [] }
         if query == text { return values }
@@ -41,7 +47,7 @@ import Foundation
         // The rows already showing stay until this query's own answer replaces them, so the
         // list keeps its height instead of collapsing to the direct search while Google answers.
         values = shown
-        if values.isEmpty, let prefix = cachedPrefix(of: text) { values = Self.narrow(cache[prefix] ?? [], to: text) }
+        if values.isEmpty, let prefix = cachedPrefix(of: text) { values = Self.narrowResults(cache[prefix] ?? [], to: text) }
         guard !tasks.contains(where: { $0.query == text }) else { return values }
         let requestToken = token
         timer = Task { [weak self] in
@@ -70,6 +76,10 @@ import Foundation
         let typed = text.lowercased()
         return terms.filter { $0.lowercased().hasPrefix(typed) && $0.lowercased() != typed }
     }
+    nonisolated private static func narrowResults(_ results: [Suggestion], to text: String) -> [Suggestion] {
+        let terms = Set(narrow(results.map(\.text), to: text))
+        return results.filter { terms.contains($0.text) }
+    }
     private func cachedPrefix(of text: String) -> String? {
         order.last { $0.count < text.count && text.lowercased().hasPrefix($0.lowercased()) }
     }
@@ -85,9 +95,9 @@ import Foundation
         request.httpShouldHandleCookies = false
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         let task = session.dataTask(with: request) { [weak self] data, response, error in
-            let results: [String]?
+            let results: [Suggestion]?
             if error == nil, (response as? HTTPURLResponse)?.statusCode == 200, let data {
-                results = Self.parse(data, query: text)
+                results = Self.parseResults(data, query: text)
             } else { results = nil }
             Task { @MainActor [weak self] in
                 guard let self, self.token == requestToken else { return }
@@ -106,7 +116,7 @@ import Foundation
                 } else if self.cache[current] == nil, current.lowercased().hasPrefix(text.lowercased()) {
                     // An earlier prefix answered first: show what still fits until the current answer
                     // lands, unless that would shorten the list in the meantime.
-                    let narrowed = Self.narrow(results, to: current)
+                    let narrowed = Self.narrowResults(results, to: current)
                     guard !narrowed.isEmpty, narrowed.count >= self.values.count, narrowed != self.values else { return }
                     self.values = narrowed; self.onLoad?(current)
                 }
@@ -124,14 +134,19 @@ import Foundation
         SearchEngine.google.searchURL(for: term)
     }
     nonisolated public static func parse(_ data: Data, query: String) -> [String]? {
+        parseResults(data, query: query)?.map(\.text)
+    }
+    nonisolated static func parseResults(_ data: Data, query: String) -> [Suggestion]? {
         guard data.count <= 128_000, let response = try? JSONSerialization.jsonObject(with: data) as? [Any],
               response.count >= 2, response[0] as? String == query, let results = response[1] as? [String] else { return nil }
+        let metadata = response.dropFirst(4).first as? [String: Any]
+        let types = metadata?["google:suggesttype"] as? [Any] ?? []
         var seen: Set<String> = [query.lowercased()]
-        return results.compactMap { value -> String? in
+        return results.enumerated().compactMap { index, value -> Suggestion? in
             let term = value.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !term.isEmpty, term.count <= 256, !term.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
                   seen.insert(term.lowercased()).inserted else { return nil }
-            return term
+            return Suggestion(text: term, isCalculator: types.indices.contains(index) && (types[index] as? String) == "CALCULATOR")
         }.prefix(maximumResults).map { $0 }
     }
 }

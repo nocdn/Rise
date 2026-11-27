@@ -143,6 +143,7 @@ import RiseCore
     /// Control-Tab's card pictures, kept across launches.
     let tabPictures: TabPictureStore
     let googleSearchSuggestions: GoogleSearchSuggestions
+    private var exchangeRateObserver: NSObjectProtocol?
     let paletteCommandUsage: PaletteCommandUsage
     var theme: RiseTheme = .neutral
     /// The palette lab's panel, in its build (`PaletteLab`).
@@ -398,6 +399,15 @@ import RiseCore
             guard let self, self.palette.isPresented, self.palette.query.trimmingCharacters(in: .whitespacesAndNewlines) == query,
                   (self.palette.input.currentEditor() as? NSTextView)?.hasMarkedText() != true else { return }
             self.palette.replaceSuggestions(self.suggestions(for: query))
+        }
+        // A currency typed before the day's rates arrived gets its answer once they do.
+        exchangeRateObserver = NotificationCenter.default.addObserver(forName: ExchangeRateStore.didUpdate, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.palette.isPresented, (self.palette.input.currentEditor() as? NSTextView)?.hasMarkedText() != true else { return }
+                let query = self.palette.query.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !query.isEmpty else { return }
+                self.palette.replaceSuggestions(self.suggestions(for: query))
+            }
         }
         suggestionFavicons.onVariantLoad = { [weak self] origin, image, dark in
             guard let self else { return }
@@ -806,7 +816,7 @@ import RiseCore
     }
     func windowDidResize(_ notification: Notification) { layoutChrome(); watchPlainBarColor(for: 0.5) }
     func windowDidChangeOcclusionState(_ notification: Notification) { if window?.occlusionState.contains(.visible) == true { watchPlainBarColor(for: 0.5) } }
-    func windowWillClose(_ notification: Notification) { annotations.close(); smartTabSearch.tearDown(); cancelTabScroll(); githubLinkStatus.hover(nil); timeReplacement.cancelHold(); githubStarrer.tearDown(); signedInPages.tearDown(); linkPullRequests.summaries.tearDown(); tabHoverCards.pullRequestClock?.invalidate(); tabHoverCards.pullRequestClock = nil; plainBarTimer?.invalidate(); plainBarTimer = nil; plainBarMonitor.map(NSEvent.removeMonitor); plainBarMonitor = nil; tabPressed(); gmailInbox.tearDown(); protonMailInbox.tearDown(); chatInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; hidePersonCalendar(fades: false); personCalendars.tearDown(); settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); stopTabSleep(); saveNow() }
+    func windowWillClose(_ notification: Notification) { annotations.close(); smartTabSearch.tearDown(); cancelTabScroll(); githubLinkStatus.hover(nil); timeReplacement.cancelHold(); githubStarrer.tearDown(); signedInPages.tearDown(); linkPullRequests.summaries.tearDown(); tabHoverCards.pullRequestClock?.invalidate(); tabHoverCards.pullRequestClock = nil; plainBarTimer?.invalidate(); plainBarTimer = nil; plainBarMonitor.map(NSEvent.removeMonitor); plainBarMonitor = nil; tabPressed(); gmailInbox.tearDown(); protonMailInbox.tearDown(); chatInbox.tearDown(); calendarAgenda.tearDown(); calendarAgenda.clock?.invalidate(); calendarAgenda.clock = nil; hidePersonCalendar(fades: false); personCalendars.tearDown(); settleSidebarFloat(docking: false); pictureInPicture.tearDown(); googleSearchSuggestions.cancel(); exchangeRateObserver.map(NotificationCenter.default.removeObserver); exchangeRateObserver = nil; quickLookDownloadID = nil; developerMotion.cancel(); sidebar.cancelTabInteractions(); historySwipe.cancel(); siteInfoPopover.close(); siteControlsPopover.close(); permissionCoordinator.cancel(); cancelTabSwitch(); syncedTabMetadata?.cancel(); stopTabSleep(); saveNow() }
     func windowDidResignKey(_ notification: Notification) {
         cancelTabScroll()
         timeReplacement.cancelHold()
@@ -1105,6 +1115,7 @@ import RiseCore
         // An unmatched command stays in the palette rather than becoming a web search.
         if PaletteCommand.query(in: text) != nil, suggestion == nil { return }
         hidePalette()
+        if let suggestion, suggestion.copiesAnswer { copyAnswer(convertedCopy(suggestion.title, amount: suggestion.calculationAmount)); return }
         if let command = suggestion?.command { runPaletteCommand(command); return }
         if let request = suggestion?.assistantPrompt { submitAssistantPrompt(request); return }
         guard let url = suggestion?.url ?? AddressResolver.resolve(text, search: searchProvider.searchURL) else { return }
