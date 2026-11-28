@@ -35,11 +35,14 @@ enum AddressQuickAnswer: Hashable, Sendable {
         return nil
     }
 
-    static func definition(for term: String) -> String? {
-        func lookup(_ word: String) -> String? {
+    static func definition(for term: String) -> String? { dictionaryEntry(for: term)?.answer }
+
+    /// The Mac dictionary's entry for `term`, as `entry(_:for:)` reads it.
+    static func dictionaryEntry(for term: String) -> DictionaryEntry? {
+        func lookup(_ word: String) -> DictionaryEntry? {
             let text = word as CFString
             guard let raw = DCSCopyTextDefinition(nil, text, CFRange(location: 0, length: CFStringGetLength(text)))?.takeRetainedValue() else { return nil }
-            return definitionText(raw as String, for: word)
+            return entry(raw as String, for: word)
         }
         if let found = lookup(term) { return found }
         // The Mac's dictionary is American: "colour" finds "unicolor", which is turned away, and
@@ -67,6 +70,12 @@ enum AddressQuickAnswer: Hashable, Sendable {
     /// "unicolor" for "colour", is turned away; one for the word's root, as "child" for
     /// "children", or that lists it among its forms, as "go" for "went", is kept.
     static func definitionText(_ entry: String, for term: String? = nil) -> String? {
+        Self.entry(entry, for: term)?.answer
+    }
+
+    /// A dictionary entry's parts, as `definitionText` reads them, for showing it as the
+    /// dictionary does.
+    static func entry(_ entry: String, for term: String? = nil) -> DictionaryEntry? {
         let text = entry.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         // The pronunciation's bars, not those of a form's in brackets before it:
         // "mouse noun (plural mice | mīs |) | mous | 1 a small rodent…".
@@ -81,7 +90,7 @@ enum AddressQuickAnswer: Hashable, Sendable {
         }
         guard bars.count == 2 else { return nil }
         let open = bars[0]
-        var rest = text[text.index(after: bars[1])...], classified = false
+        var rest = text[text.index(after: bars[1])...], classified = false, classes: [String] = [], labels: [String] = []
         while true {
             rest = rest.drop { $0 == " " || $0 == "," }
             guard let first = rest.first else { return nil }
@@ -97,10 +106,12 @@ enum AddressQuickAnswer: Hashable, Sendable {
                 rest = rest[space...]; continue
             }
             if let match = rest.range(of: wordClass, options: [.regularExpression, .anchored]) {
+                if classes.isEmpty { classes.append(String(rest[match])) }
                 rest = rest[match.upperBound...]; classified = true; continue
             }
             if let match = rest.range(of: label, options: [.regularExpression, .anchored])
                 ?? (classified ? rest.range(of: subject, options: [.regularExpression, .anchored]) : nil) {
+                labels.append(rest[match].trimmingCharacters(in: .whitespaces))
                 rest = rest[match.upperBound...]; continue
             }
             break
@@ -114,7 +125,18 @@ enum AddressQuickAnswer: Hashable, Sendable {
         }
         let answer = sense.trimmingCharacters(in: CharacterSet(charactersIn: " ;,."))
         guard let initial = answer.first, initial.isLetter else { return nil }
-        return initial.uppercased() + String(answer.dropFirst())
+        let pronunciation = text[open...bars[1]]
+        return DictionaryEntry(headword: headword(String(text[..<open])), pronunciation: String(pronunciation),
+                               wordClass: classes.first, labels: labels, sense: answer)
+    }
+
+    /// The headword as the dictionary shows it, split into syllables when the entry gives them:
+    /// "whiteboard white·board" is "white·board".
+    private static func headword(_ head: String) -> String {
+        let words = head.split(separator: " ").map(String.init)
+        guard words.count >= 2, words.count.isMultiple(of: 2) else { return words.joined(separator: " ") }
+        let half = words.count/2, plain = Array(words[..<half]), split = Array(words[half...])
+        return split.map { $0.replacingOccurrences(of: "·", with: "") } == plain ? split.joined(separator: " ") : words.joined(separator: " ")
     }
 
     /// Past the bracket `text` starts with, counting the brackets inside it.
@@ -216,4 +238,20 @@ enum AddressQuickAnswer: Hashable, Sendable {
               date <= today, let age = calendar.dateComponents([.year], from: date, to: today).year, (0...125).contains(age) else { return nil }
         return age
     }
+}
+
+/// A dictionary entry's first sense, with what the dictionary says before it.
+struct DictionaryEntry: Equatable {
+    /// As the dictionary shows it, in syllables where it gives them: "white·board".
+    let headword: String
+    /// Between its bars: "| ˈ(h)wītˌbôrd |".
+    let pronunciation: String
+    /// "noun", "adjective"; nil where the entry names none.
+    let wordClass: String?
+    /// Its register and subject: "informal", "Mathematics".
+    let labels: [String]
+    /// As the dictionary writes it, in lower case: "a wipeable board with a white surface…".
+    let sense: String
+    /// The sense on its own, as an answer: capitalised.
+    var answer: String { sense.prefix(1).uppercased()+sense.dropFirst() }
 }
